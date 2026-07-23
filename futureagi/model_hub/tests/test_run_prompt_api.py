@@ -1598,383 +1598,244 @@ class TestRunPromptOrganizationIsolation:
 
 @pytest.mark.django_db
 class TestAddRunPromptColumnConfigVariations:
-    """Tests for various config variations in AddRunPromptColumnView."""
+    """Tests for various config variations in AddRunPromptColumnView.
 
-    def test_add_run_prompt_with_output_format_array(
-        self, auth_client, dataset, input_column
-    ):
-        """Test adding run prompt column with array output format."""
-        config = {
-            "model": "gpt-4",
-            "messages": [
-                {"role": "user", "content": [{"type": "text", "text": "List items"}]}
-            ],
-            "output_format": "array",
-        }
-        payload = {
-            "dataset_id": str(dataset.id),
-            "name": "Array Output",
-            "config": config,
-        }
+    All variants share the same shape: POST ``/develops/add_run_prompt_column/``
+    with a config dict that varies one field, assert 200, then verify a
+    downstream property on either the ``Column`` or the ``RunPrompter`` row.
+    Consolidated into a single parametrized method (11 cases) — mirrors the
+    pattern applied to ``TestDatatypeConverter`` under TH-7128.
+    """
 
-        with patch(
-            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
-        ) as mock_task:
-            response = auth_client.post(
-                "/model-hub/develops/add_run_prompt_column/",
-                payload,
-                format="json",
+    # ── Assertion helpers ──────────────────────────────────────────────
+    @staticmethod
+    def _assert_column_data_type(dataset, name, expected):
+        column = Column.objects.get(name=name, dataset=dataset, deleted=False)
+        assert column.data_type == expected
+
+    @staticmethod
+    def _assert_run_prompter_attrs(name, **expected):
+        run_prompter = RunPrompter.objects.get(name=name, deleted=False)
+        for attr, value in expected.items():
+            actual = getattr(run_prompter, attr)
+            assert actual == value, (
+                f"RunPrompter.{attr}: expected {value!r}, got {actual!r}"
             )
 
-        assert response.status_code == status.HTTP_200_OK
-        # Verify column was created with correct data type
-        column = Column.objects.get(name="Array Output", dataset=dataset, deleted=False)
-        assert column.data_type == "array"
+    @staticmethod
+    def _assert_run_prompter_messages(name, expected_len, first_role=None):
+        run_prompter = RunPrompter.objects.get(name=name, deleted=False)
+        assert len(run_prompter.messages) == expected_len
+        if first_role is not None:
+            assert run_prompter.messages[0]["role"] == first_role
 
-    def test_add_run_prompt_with_output_format_number(
-        self, auth_client, dataset, input_column
-    ):
-        """Test adding run prompt column with number output format."""
-        config = {
-            "model": "gpt-4",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": "Calculate total"}],
-                }
-            ],
-            "output_format": "number",
-        }
-        payload = {
-            "dataset_id": str(dataset.id),
-            "name": "Number Output",
-            "config": config,
-        }
-
-        with patch(
-            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
-        ) as mock_task:
-            response = auth_client.post(
-                "/model-hub/develops/add_run_prompt_column/",
-                payload,
-                format="json",
-            )
-
-        assert response.status_code == status.HTTP_200_OK
-        column = Column.objects.get(
-            name="Number Output", dataset=dataset, deleted=False
-        )
-        assert column.data_type == "integer"
-
-    def test_add_run_prompt_with_output_format_object(
-        self, auth_client, dataset, input_column
-    ):
-        """Test adding run prompt column with object output format."""
-        config = {
-            "model": "gpt-4",
-            "messages": [
-                {"role": "user", "content": [{"type": "text", "text": "Return JSON"}]}
-            ],
-            "output_format": "object",
-        }
-        payload = {
-            "dataset_id": str(dataset.id),
-            "name": "JSON Output",
-            "config": config,
-        }
-
-        with patch(
-            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
-        ) as mock_task:
-            response = auth_client.post(
-                "/model-hub/develops/add_run_prompt_column/",
-                payload,
-                format="json",
-            )
-
-        assert response.status_code == status.HTTP_200_OK
-        column = Column.objects.get(name="JSON Output", dataset=dataset, deleted=False)
-        assert column.data_type == "json"
-
-    def test_add_run_prompt_with_output_format_audio(
-        self, auth_client, dataset, input_column
-    ):
-        """Test adding run prompt column with audio output format."""
-        config = {
-            "model": "tts-1",
-            "messages": [{"role": "user", "content": "Say hello"}],
-            "output_format": "audio",
-            "run_prompt_config": {"voice": "alloy"},
-        }
-        payload = {
-            "dataset_id": str(dataset.id),
-            "name": "Audio Output",
-            "config": config,
-        }
-
-        with patch(
-            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
-        ) as mock_task:
-            response = auth_client.post(
-                "/model-hub/develops/add_run_prompt_column/",
-                payload,
-                format="json",
-            )
-
-        assert response.status_code == status.HTTP_200_OK
-        column = Column.objects.get(name="Audio Output", dataset=dataset, deleted=False)
-        assert column.data_type == "audio"
-
-    def test_add_run_prompt_with_custom_temperature(
-        self, auth_client, dataset, input_column
-    ):
-        """Test adding run prompt with custom temperature settings."""
-        config = {
-            "model": "gpt-4",
-            "messages": [
-                {"role": "user", "content": [{"type": "text", "text": "Generate text"}]}
-            ],
-            "output_format": "string",
-            "run_prompt_config": {
-                "temperature": 0.2,
-                "max_tokens": 500,
+    # ── Case table ────────────────────────────────────────────────────
+    _RESPONSE_FORMAT_SCHEMA = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "response",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "answer": {"type": "string"},
+                    "confidence": {"type": "number"},
+                },
             },
-        }
-        payload = {
-            "dataset_id": str(dataset.id),
-            "name": "Custom Temp",
-            "config": config,
-        }
+        },
+    }
 
-        with patch(
-            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
-        ) as mock_task:
-            response = auth_client.post(
-                "/model-hub/develops/add_run_prompt_column/",
-                payload,
-                format="json",
-            )
-
-        assert response.status_code == status.HTTP_200_OK
-        # Verify RunPrompter was created with correct temperature
-        run_prompter = RunPrompter.objects.get(name="Custom Temp", deleted=False)
-        assert run_prompter.temperature == 0.2
-        assert run_prompter.max_tokens == 500
-
-    def test_add_run_prompt_with_concurrency(self, auth_client, dataset, input_column):
-        """Test adding run prompt with custom concurrency."""
-        config = {
-            "model": "gpt-4",
-            "messages": [
-                {"role": "user", "content": [{"type": "text", "text": "Process"}]}
-            ],
-            "output_format": "string",
-            "concurrency": 10,
-        }
-        payload = {
-            "dataset_id": str(dataset.id),
-            "name": "Concurrent Run",
-            "config": config,
-        }
-
-        with patch(
-            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
-        ) as mock_task:
-            response = auth_client.post(
-                "/model-hub/develops/add_run_prompt_column/",
-                payload,
-                format="json",
-            )
-
-        assert response.status_code == status.HTTP_200_OK
-        run_prompter = RunPrompter.objects.get(name="Concurrent Run", deleted=False)
-        assert run_prompter.concurrency == 10
-
-    def test_add_run_prompt_with_response_format(
-        self, auth_client, dataset, input_column
-    ):
-        """Test adding run prompt with response format schema."""
-        response_format = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "response",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "answer": {"type": "string"},
-                        "confidence": {"type": "number"},
+    _CASES = [
+        # (id, column_name, config_dict, verify_callable)
+        (
+            "output_format_array",
+            "Array Output",
+            {
+                "model": "gpt-4",
+                "messages": [
+                    {"role": "user", "content": [{"type": "text", "text": "List items"}]}
+                ],
+                "output_format": "array",
+            },
+            lambda self, ds: self._assert_column_data_type(ds, "Array Output", "array"),
+        ),
+        (
+            "output_format_number",
+            "Number Output",
+            {
+                "model": "gpt-4",
+                "messages": [
+                    {"role": "user", "content": [{"type": "text", "text": "Calculate total"}]}
+                ],
+                "output_format": "number",
+            },
+            lambda self, ds: self._assert_column_data_type(ds, "Number Output", "integer"),
+        ),
+        (
+            "output_format_object",
+            "JSON Output",
+            {
+                "model": "gpt-4",
+                "messages": [
+                    {"role": "user", "content": [{"type": "text", "text": "Return JSON"}]}
+                ],
+                "output_format": "object",
+            },
+            lambda self, ds: self._assert_column_data_type(ds, "JSON Output", "json"),
+        ),
+        (
+            "output_format_audio",
+            "Audio Output",
+            {
+                "model": "tts-1",
+                "messages": [{"role": "user", "content": "Say hello"}],
+                "output_format": "audio",
+                "run_prompt_config": {"voice": "alloy"},
+            },
+            lambda self, ds: self._assert_column_data_type(ds, "Audio Output", "audio"),
+        ),
+        (
+            "custom_temperature",
+            "Custom Temp",
+            {
+                "model": "gpt-4",
+                "messages": [
+                    {"role": "user", "content": [{"type": "text", "text": "Generate text"}]}
+                ],
+                "output_format": "string",
+                "run_prompt_config": {"temperature": 0.2, "max_tokens": 500},
+            },
+            lambda self, ds: self._assert_run_prompter_attrs(
+                "Custom Temp", temperature=0.2, max_tokens=500
+            ),
+        ),
+        (
+            "concurrency",
+            "Concurrent Run",
+            {
+                "model": "gpt-4",
+                "messages": [
+                    {"role": "user", "content": [{"type": "text", "text": "Process"}]}
+                ],
+                "output_format": "string",
+                "concurrency": 10,
+            },
+            lambda self, ds: self._assert_run_prompter_attrs("Concurrent Run", concurrency=10),
+        ),
+        (
+            "response_format",
+            "Structured Output",
+            {
+                "model": "gpt-4",
+                "messages": [
+                    {"role": "user", "content": [{"type": "text", "text": "Analyze this"}]}
+                ],
+                "output_format": "object",
+                "response_format": _RESPONSE_FORMAT_SCHEMA,
+            },
+            lambda self, ds: self._assert_run_prompter_attrs(
+                "Structured Output",
+                response_format=self._RESPONSE_FORMAT_SCHEMA,
+            ),
+        ),
+        (
+            "tool_choice",
+            "Tool Choice Run",
+            {
+                "model": "gpt-4",
+                "messages": [
+                    {"role": "user", "content": [{"type": "text", "text": "Use tools"}]}
+                ],
+                "output_format": "string",
+                "tool_choice": "auto",
+            },
+            lambda self, ds: self._assert_run_prompter_attrs(
+                "Tool Choice Run", tool_choice="auto"
+            ),
+        ),
+        (
+            "all_penalties",
+            "Creative Run",
+            {
+                "model": "gpt-4",
+                "messages": [
+                    {"role": "user", "content": [{"type": "text", "text": "Creative text"}]}
+                ],
+                "output_format": "string",
+                "run_prompt_config": {
+                    "temperature": 0.9,
+                    "frequency_penalty": 0.5,
+                    "presence_penalty": 0.3,
+                    "top_p": 0.95,
+                },
+            },
+            lambda self, ds: self._assert_run_prompter_attrs(
+                "Creative Run",
+                temperature=0.9,
+                frequency_penalty=0.5,
+                presence_penalty=0.3,
+                top_p=0.95,
+            ),
+        ),
+        (
+            "system_message",
+            "System Message Run",
+            {
+                "model": "gpt-4",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": [{"type": "text", "text": "You are helpful"}],
                     },
-                },
+                    {"role": "user", "content": [{"type": "text", "text": "Hello"}]},
+                ],
+                "output_format": "string",
             },
-        }
-        config = {
-            "model": "gpt-4",
-            "messages": [
-                {"role": "user", "content": [{"type": "text", "text": "Analyze this"}]}
-            ],
-            "output_format": "object",
-            "response_format": response_format,
-        }
-        payload = {
-            "dataset_id": str(dataset.id),
-            "name": "Structured Output",
-            "config": config,
-        }
-
-        with patch(
-            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
-        ) as mock_task:
-            response = auth_client.post(
-                "/model-hub/develops/add_run_prompt_column/",
-                payload,
-                format="json",
-            )
-
-        assert response.status_code == status.HTTP_200_OK
-        run_prompter = RunPrompter.objects.get(name="Structured Output", deleted=False)
-        assert run_prompter.response_format == response_format
-
-    def test_add_run_prompt_with_tool_choice(self, auth_client, dataset, input_column):
-        """Test adding run prompt with tool choice setting."""
-        config = {
-            "model": "gpt-4",
-            "messages": [
-                {"role": "user", "content": [{"type": "text", "text": "Use tools"}]}
-            ],
-            "output_format": "string",
-            "tool_choice": "auto",
-        }
-        payload = {
-            "dataset_id": str(dataset.id),
-            "name": "Tool Choice Run",
-            "config": config,
-        }
-
-        with patch(
-            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
-        ) as mock_task:
-            response = auth_client.post(
-                "/model-hub/develops/add_run_prompt_column/",
-                payload,
-                format="json",
-            )
-
-        assert response.status_code == status.HTTP_200_OK
-        run_prompter = RunPrompter.objects.get(name="Tool Choice Run", deleted=False)
-        assert run_prompter.tool_choice == "auto"
-
-    def test_add_run_prompt_with_all_penalties(
-        self, auth_client, dataset, input_column
-    ):
-        """Test adding run prompt with frequency and presence penalties."""
-        config = {
-            "model": "gpt-4",
-            "messages": [
-                {"role": "user", "content": [{"type": "text", "text": "Creative text"}]}
-            ],
-            "output_format": "string",
-            "run_prompt_config": {
-                "temperature": 0.9,
-                "frequency_penalty": 0.5,
-                "presence_penalty": 0.3,
-                "top_p": 0.95,
+            lambda self, ds: self._assert_run_prompter_messages(
+                "System Message Run", expected_len=2, first_role="system"
+            ),
+        ),
+        (
+            "multi_turn_conversation",
+            "Multi Turn Run",
+            {
+                "model": "gpt-4",
+                "messages": [
+                    {"role": "system", "content": [{"type": "text", "text": "Assistant"}]},
+                    {"role": "user", "content": [{"type": "text", "text": "First question"}]},
+                    {"role": "assistant", "content": [{"type": "text", "text": "First answer"}]},
+                    {"role": "user", "content": [{"type": "text", "text": "Follow up"}]},
+                ],
+                "output_format": "string",
             },
-        }
-        payload = {
-            "dataset_id": str(dataset.id),
-            "name": "Creative Run",
-            "config": config,
-        }
+            lambda self, ds: self._assert_run_prompter_messages(
+                "Multi Turn Run", expected_len=4
+            ),
+        ),
+    ]
 
-        with patch(
-            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
-        ) as mock_task:
-            response = auth_client.post(
-                "/model-hub/develops/add_run_prompt_column/",
-                payload,
-                format="json",
-            )
-
-        assert response.status_code == status.HTTP_200_OK
-        run_prompter = RunPrompter.objects.get(name="Creative Run", deleted=False)
-        assert run_prompter.temperature == 0.9
-        assert run_prompter.frequency_penalty == 0.5
-        assert run_prompter.presence_penalty == 0.3
-        assert run_prompter.top_p == 0.95
-
-    def test_add_run_prompt_with_system_message(
-        self, auth_client, dataset, input_column
+    @pytest.mark.parametrize(
+        "column_name,config,verify",
+        [case[1:] for case in _CASES],
+        ids=[case[0] for case in _CASES],
+    )
+    def test_add_run_prompt_config_variation(
+        self, auth_client, dataset, input_column, column_name, config, verify
     ):
-        """Test adding run prompt with system message."""
-        config = {
-            "model": "gpt-4",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": [{"type": "text", "text": "You are helpful"}],
-                },
-                {"role": "user", "content": [{"type": "text", "text": "Hello"}]},
-            ],
-            "output_format": "string",
-        }
         payload = {
             "dataset_id": str(dataset.id),
-            "name": "System Message Run",
+            "name": column_name,
             "config": config,
         }
-
         with patch(
             "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
-        ) as mock_task:
+        ):
             response = auth_client.post(
                 "/model-hub/develops/add_run_prompt_column/",
                 payload,
                 format="json",
             )
-
         assert response.status_code == status.HTTP_200_OK
-        run_prompter = RunPrompter.objects.get(name="System Message Run", deleted=False)
-        assert len(run_prompter.messages) == 2
-        assert run_prompter.messages[0]["role"] == "system"
-
-    def test_add_run_prompt_with_multi_turn_conversation(
-        self, auth_client, dataset, input_column
-    ):
-        """Test adding run prompt with multi-turn conversation."""
-        config = {
-            "model": "gpt-4",
-            "messages": [
-                {"role": "system", "content": [{"type": "text", "text": "Assistant"}]},
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": "First question"}],
-                },
-                {
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": "First answer"}],
-                },
-                {"role": "user", "content": [{"type": "text", "text": "Follow up"}]},
-            ],
-            "output_format": "string",
-        }
-        payload = {
-            "dataset_id": str(dataset.id),
-            "name": "Multi Turn Run",
-            "config": config,
-        }
-
-        with patch(
-            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
-        ) as mock_task:
-            response = auth_client.post(
-                "/model-hub/develops/add_run_prompt_column/",
-                payload,
-                format="json",
-            )
-
-        assert response.status_code == status.HTTP_200_OK
-        run_prompter = RunPrompter.objects.get(name="Multi Turn Run", deleted=False)
-        assert len(run_prompter.messages) == 4
+        verify(self, dataset)
 
 
 # ==================== Database State Verification Tests ====================
@@ -2419,144 +2280,92 @@ class TestRunPromptExtendedOrganizationIsolation:
 class TestRunPromptSerializerValidation:
     """Tests for serializer validation edge cases."""
 
-    def test_add_run_prompt_empty_messages_rejected(self, auth_client, dataset):
-        """Test that empty messages array is rejected."""
-        config = {
-            "model": "gpt-4",
-            "messages": [],
-            "output_format": "string",
-        }
-        payload = {
-            "dataset_id": str(dataset.id),
-            "name": "Empty Messages",
-            "config": config,
-        }
+    # ── /develops/add_run_prompt_column/ rejection matrix ────────────────
+    # All 6 cases share the same shape: build a config dict with one invalid
+    # field, POST, assert 400. Consolidated per TH-7137 (mirrors the pattern
+    # applied to ``TestGroundTruthSetupAPI`` under TH-7128).
+    #
+    # Each case: (id, config_dict, name_in_payload)
+    _ADD_RUN_PROMPT_INVALID_CASES = [
+        (
+            "empty_messages",
+            {"model": "gpt-4", "messages": [], "output_format": "string"},
+            "Empty Messages",
+        ),
+        (
+            "invalid_message_role",
+            {
+                "model": "gpt-4",
+                "messages": [
+                    {"role": "invalid_role", "content": [{"type": "text", "text": "Test"}]}
+                ],
+                "output_format": "string",
+            },
+            "Invalid Role",
+        ),
+        (
+            "first_message_assistant",
+            {
+                "model": "gpt-4",
+                "messages": [
+                    {"role": "assistant", "content": [{"type": "text", "text": "Hi"}]},
+                    {"role": "user", "content": [{"type": "text", "text": "Hello"}]},
+                ],
+                "output_format": "string",
+            },
+            "Assistant First",
+        ),
+        (
+            "message_missing_content",
+            {
+                "model": "gpt-4",
+                "messages": [{"role": "user"}],  # missing content key
+                "output_format": "string",
+            },
+            "No Content",
+        ),
+        (
+            "invalid_output_format",
+            {
+                "model": "gpt-4",
+                "messages": [
+                    {"role": "user", "content": [{"type": "text", "text": "Test"}]}
+                ],
+                "output_format": "invalid_format",
+            },
+            "Invalid Format",
+        ),
+        (
+            "invalid_tool_choice",
+            {
+                "model": "gpt-4",
+                "messages": [
+                    {"role": "user", "content": [{"type": "text", "text": "Test"}]}
+                ],
+                "output_format": "string",
+                "tool_choice": "invalid_choice",
+            },
+            "Invalid Tool Choice",
+        ),
+    ]
 
-        response = auth_client.post(
-            "/model-hub/develops/add_run_prompt_column/",
-            payload,
-            format="json",
-        )
-
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-
-    def test_add_run_prompt_invalid_message_role_rejected(self, auth_client, dataset):
-        """Test that invalid message role is rejected."""
-        config = {
-            "model": "gpt-4",
-            "messages": [
-                {"role": "invalid_role", "content": [{"type": "text", "text": "Test"}]}
-            ],
-            "output_format": "string",
-        }
-        payload = {
-            "dataset_id": str(dataset.id),
-            "name": "Invalid Role",
-            "config": config,
-        }
-
-        response = auth_client.post(
-            "/model-hub/develops/add_run_prompt_column/",
-            payload,
-            format="json",
-        )
-
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-
-    def test_add_run_prompt_first_message_assistant_rejected(
-        self, auth_client, dataset
+    @pytest.mark.parametrize(
+        "config,column_name",
+        [case[1:] for case in _ADD_RUN_PROMPT_INVALID_CASES],
+        ids=[case[0] for case in _ADD_RUN_PROMPT_INVALID_CASES],
+    )
+    def test_add_run_prompt_rejects_invalid_config(
+        self, auth_client, dataset, config, column_name
     ):
-        """Test that first message from assistant is rejected."""
-        config = {
-            "model": "gpt-4",
-            "messages": [
-                {"role": "assistant", "content": [{"type": "text", "text": "Hi"}]},
-                {"role": "user", "content": [{"type": "text", "text": "Hello"}]},
-            ],
-            "output_format": "string",
-        }
-        payload = {
-            "dataset_id": str(dataset.id),
-            "name": "Assistant First",
-            "config": config,
-        }
-
         response = auth_client.post(
             "/model-hub/develops/add_run_prompt_column/",
-            payload,
+            {
+                "dataset_id": str(dataset.id),
+                "name": column_name,
+                "config": config,
+            },
             format="json",
         )
-
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-
-    def test_add_run_prompt_message_missing_content_rejected(
-        self, auth_client, dataset
-    ):
-        """Test that message without content is rejected."""
-        config = {
-            "model": "gpt-4",
-            "messages": [{"role": "user"}],  # Missing content
-            "output_format": "string",
-        }
-        payload = {
-            "dataset_id": str(dataset.id),
-            "name": "No Content",
-            "config": config,
-        }
-
-        response = auth_client.post(
-            "/model-hub/develops/add_run_prompt_column/",
-            payload,
-            format="json",
-        )
-
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-
-    def test_add_run_prompt_invalid_output_format_rejected(self, auth_client, dataset):
-        """Test that invalid output_format is rejected."""
-        config = {
-            "model": "gpt-4",
-            "messages": [
-                {"role": "user", "content": [{"type": "text", "text": "Test"}]}
-            ],
-            "output_format": "invalid_format",
-        }
-        payload = {
-            "dataset_id": str(dataset.id),
-            "name": "Invalid Format",
-            "config": config,
-        }
-
-        response = auth_client.post(
-            "/model-hub/develops/add_run_prompt_column/",
-            payload,
-            format="json",
-        )
-
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-
-    def test_add_run_prompt_invalid_tool_choice_rejected(self, auth_client, dataset):
-        """Test that invalid tool_choice is rejected."""
-        config = {
-            "model": "gpt-4",
-            "messages": [
-                {"role": "user", "content": [{"type": "text", "text": "Test"}]}
-            ],
-            "output_format": "string",
-            "tool_choice": "invalid_choice",
-        }
-        payload = {
-            "dataset_id": str(dataset.id),
-            "name": "Invalid Tool Choice",
-            "config": config,
-        }
-
-        response = auth_client.post(
-            "/model-hub/develops/add_run_prompt_column/",
-            payload,
-            format="json",
-        )
-
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_preview_requires_first_n_rows_or_row_indices(self, auth_client, dataset):

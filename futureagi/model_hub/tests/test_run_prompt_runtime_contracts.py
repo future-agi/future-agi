@@ -17,10 +17,25 @@ def prompt_config():
     }
 
 
-@pytest.mark.django_db
-def test_litellm_run_prompt_rejects_unknown_request_fields(auth_client):
-    response = auth_client.post(
-        "/model-hub/run-prompt/",
+# ────────────────────────────────────────────────────────────────────────
+# Endpoint × (canonical field, legacy camel-alias) matrix.
+#
+# All entries share the same shape assertion: POST the endpoint with a
+# valid payload + one legacy camelCase alias field → the serializer must
+# reject the alias with an "unknown field" error. The base serializer's
+# ``extra = "forbid"`` guard is a single library behaviour; testing it
+# once per endpoint (previously 5 nearly-identical tests) is what this
+# parametrization replaces. Mirrors the pattern applied to
+# ``test_dataset_runtime_contracts.py`` under TH-7128.
+#
+# Each case: (id, url_factory, payload, legacy_alias)
+# url_factory is a callable so per-test UUIDs are fresh (evaluating
+# ``uuid.uuid4()`` at import time would produce a shared value).
+# ────────────────────────────────────────────────────────────────────────
+_REJECT_UNKNOWN_FIELD_CASES = [
+    (
+        "litellm_run_prompt",
+        lambda: "/model-hub/run-prompt/",
         {
             "dataset_id": str(uuid.uuid4()),
             "model": "gpt-4o",
@@ -28,32 +43,22 @@ def test_litellm_run_prompt_rejects_unknown_request_fields(auth_client):
             "messages": [{"role": "user", "content": "Answer {{input}}"}],
             "modelName": "legacy camel alias",
         },
-        format="json",
-    )
-
-    assert_unknown_field(response, "modelName")
-
-
-@pytest.mark.django_db
-def test_add_run_prompt_column_rejects_unknown_request_fields(auth_client):
-    response = auth_client.post(
-        "/model-hub/develops/add_run_prompt_column/",
+        "modelName",
+    ),
+    (
+        "add_run_prompt_column",
+        lambda: "/model-hub/develops/add_run_prompt_column/",
         {
             "dataset_id": str(uuid.uuid4()),
             "name": "prompt-column",
             "config": prompt_config(),
             "datasetId": "legacy camel alias",
         },
-        format="json",
-    )
-
-    assert_unknown_field(response, "datasetId")
-
-
-@pytest.mark.django_db
-def test_preview_run_prompt_column_rejects_unknown_request_fields(auth_client):
-    response = auth_client.post(
-        "/model-hub/develops/preview_run_prompt_column/",
+        "datasetId",
+    ),
+    (
+        "preview_run_prompt_column",
+        lambda: "/model-hub/develops/preview_run_prompt_column/",
         {
             "dataset_id": str(uuid.uuid4()),
             "name": "prompt-column",
@@ -61,16 +66,11 @@ def test_preview_run_prompt_column_rejects_unknown_request_fields(auth_client):
             "first_n_rows": 1,
             "firstNRows": 1,
         },
-        format="json",
-    )
-
-    assert_unknown_field(response, "firstNRows")
-
-
-@pytest.mark.django_db
-def test_edit_run_prompt_column_rejects_unknown_request_fields(auth_client):
-    response = auth_client.post(
-        "/model-hub/develops/edit_run_prompt_column/",
+        "firstNRows",
+    ),
+    (
+        "edit_run_prompt_column",
+        lambda: "/model-hub/develops/edit_run_prompt_column/",
         {
             "dataset_id": str(uuid.uuid4()),
             "column_id": str(uuid.uuid4()),
@@ -78,23 +78,30 @@ def test_edit_run_prompt_column_rejects_unknown_request_fields(auth_client):
             "config": prompt_config(),
             "columnId": "legacy camel alias",
         },
-        format="json",
-    )
-
-    assert_unknown_field(response, "columnId")
-
-
-@pytest.mark.django_db
-def test_run_prompt_for_rows_rejects_unknown_request_fields(auth_client):
-    response = auth_client.post(
-        "/model-hub/run-prompt-for-rows/",
+        "columnId",
+    ),
+    (
+        "run_prompt_for_rows",
+        lambda: "/model-hub/run-prompt-for-rows/",
         {
             "run_prompt_ids": [str(uuid.uuid4())],
             "row_ids": [str(uuid.uuid4())],
             "selected_all_rows": False,
             "selectedAllRows": True,
         },
-        format="json",
-    )
+        "selectedAllRows",
+    ),
+]
 
-    assert_unknown_field(response, "selectedAllRows")
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "url_factory,payload,legacy_alias",
+    [case[1:] for case in _REJECT_UNKNOWN_FIELD_CASES],
+    ids=[case[0] for case in _REJECT_UNKNOWN_FIELD_CASES],
+)
+def test_endpoint_rejects_unknown_request_field(
+    auth_client, url_factory, payload, legacy_alias
+):
+    response = auth_client.post(url_factory(), payload, format="json")
+    assert_unknown_field(response, legacy_alias)
