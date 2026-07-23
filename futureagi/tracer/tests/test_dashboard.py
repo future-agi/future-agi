@@ -5366,3 +5366,255 @@ class TestWidgetExecutePreviewBranches:
             format="json",
         )
         assert response.status_code == 400
+
+
+class TestWidgetWriteIsolation:
+    """Foreign-workspace widget *writes* must be rejected with no mutation.
+    (Read isolation is covered by TestWidgetReadEndpoints; this covers writes:
+    create / update / destroy / reorder / duplicate.)"""
+
+    def _foreign(self, organization, user):
+        other_ws = Workspace.objects.create(
+            name="Other WS",
+            organization=organization,
+            is_active=True,
+            created_by=user,
+        )
+        dash = Dashboard.objects.create(
+            workspace=other_ws,
+            name="Foreign Dashboard",
+            created_by=user,
+            updated_by=user,
+        )
+        widget = DashboardWidget.objects.create(
+            dashboard=dash,
+            name="Foreign Widget",
+            position=0,
+            width=6,
+            height=4,
+            query_config={},
+            chart_config={},
+            created_by=user,
+        )
+        return dash, widget
+
+    @pytest.mark.django_db
+    def test_create_under_foreign_dashboard_blocked(
+        self, auth_client, organization, user
+    ):
+        dash, _ = self._foreign(organization, user)
+        before = DashboardWidget.objects.filter(dashboard=dash).count()
+        resp = auth_client.post(
+            f"/tracer/dashboard/{dash.id}/widgets/",
+            {
+                "name": "Injected",
+                "position": 0,
+                "width": 6,
+                "height": 4,
+                "query_config": {},
+                "chart_config": {},
+            },
+            format="json",
+        )
+        assert resp.status_code in (400, 403, 404)
+        assert DashboardWidget.objects.filter(dashboard=dash).count() == before
+
+    @pytest.mark.django_db
+    def test_update_foreign_widget_blocked(self, auth_client, organization, user):
+        dash, widget = self._foreign(organization, user)
+        resp = auth_client.put(
+            f"/tracer/dashboard/{dash.id}/widgets/{widget.id}/",
+            {
+                "name": "Hijacked",
+                "position": 0,
+                "width": 6,
+                "height": 4,
+                "query_config": {},
+                "chart_config": {},
+            },
+            format="json",
+        )
+        assert resp.status_code in (400, 403, 404)
+        widget.refresh_from_db()
+        assert widget.name == "Foreign Widget"
+
+    @pytest.mark.django_db
+    def test_destroy_foreign_widget_blocked(self, auth_client, organization, user):
+        dash, widget = self._foreign(organization, user)
+        resp = auth_client.delete(
+            f"/tracer/dashboard/{dash.id}/widgets/{widget.id}/"
+        )
+        assert resp.status_code in (400, 403, 404)
+        widget.refresh_from_db()
+        assert widget.deleted is False
+
+    @pytest.mark.django_db
+    def test_reorder_foreign_dashboard_blocked(self, auth_client, organization, user):
+        dash, widget = self._foreign(organization, user)
+        resp = auth_client.post(
+            f"/tracer/dashboard/{dash.id}/widgets/reorder/",
+            {"order": [str(widget.id)]},
+            format="json",
+        )
+        assert resp.status_code in (400, 403, 404)
+        widget.refresh_from_db()
+        assert widget.position == 0
+
+    @pytest.mark.django_db
+    def test_duplicate_foreign_widget_blocked(self, auth_client, organization, user):
+        dash, widget = self._foreign(organization, user)
+        before = DashboardWidget.objects.filter(dashboard=dash).count()
+        resp = auth_client.post(
+            f"/tracer/dashboard/{dash.id}/widgets/{widget.id}/duplicate/"
+        )
+        assert resp.status_code in (400, 403, 404)
+        assert DashboardWidget.objects.filter(dashboard=dash).count() == before
+
+
+class TestQueryEngineFailure:
+    """A ClickHouse error mid-execution must degrade gracefully (no 500 crash)
+    on every query-executing endpoint."""
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_query_action_survives_ch_failure(
+        self, mock_analytics_cls, auth_client, observe_project
+    ):
+        service = MagicMock()
+        service.execute_ch_query.side_effect = Exception("CH exploded")
+        mock_analytics_cls.return_value = service
+        resp = auth_client.post(
+            "/tracer/dashboard/query/",
+            {
+                "project_ids": [str(observe_project.id)],
+                "granularity": "day",
+                "time_range": {"preset": "7D"},
+                "metrics": [
+                    {
+                        "id": "latency",
+                        "name": "latency",
+                        "type": "system_metric",
+                        "aggregation": "avg",
+                    }
+                ],
+            },
+            format="json",
+        )
+        # Per-metric isolation swallows the CH error -> 200 with an empty series,
+        # never a 500.
+        assert resp.status_code == 200
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.get_clickhouse_client")
+    def test_execute_query_survives_ch_failure(
+        self, mock_get_client, _mock_enabled, auth_client, dashboard, dashboard_widget
+    ):
+        client = MagicMock()
+        client.execute_read.side_effect = Exception("CH exploded")
+        mock_get_client.return_value = client
+        resp = auth_client.post(
+            f"/tracer/dashboard/{dashboard.id}/widgets/{dashboard_widget.id}/query/"
+        )
+        assert resp.status_code in (200, 400)
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.get_clickhouse_client")
+    def test_preview_survives_ch_failure(
+        self, mock_get_client, _mock_enabled, auth_client, dashboard, sample_query_config
+    ):
+        client = MagicMock()
+        client.execute_read.side_effect = Exception("CH exploded")
+        mock_get_client.return_value = client
+        resp = auth_client.post(
+            f"/tracer/dashboard/{dashboard.id}/widgets/preview/",
+            {"query_config": sample_query_config},
+            format="json",
+        )
+        assert resp.status_code in (200, 400)
+
+
+class TestWidgetMutationErrorBranches:
+    """Nonexistent-target error branches for the mutation actions."""
+
+    @pytest.mark.django_db
+    def test_destroy_nonexistent_widget_returns_404(
+        self, auth_client, dashboard
+    ):
+        resp = auth_client.delete(
+            f"/tracer/dashboard/{dashboard.id}/widgets/{uuid.uuid4()}/"
+        )
+        assert resp.status_code == 404
+
+    @pytest.mark.django_db
+    def test_duplicate_nonexistent_widget_rejected(self, auth_client, dashboard):
+        before = DashboardWidget.objects.filter(dashboard=dashboard).count()
+        resp = auth_client.post(
+            f"/tracer/dashboard/{dashboard.id}/widgets/{uuid.uuid4()}/duplicate/"
+        )
+        assert resp.status_code in (400, 404)
+        assert DashboardWidget.objects.filter(dashboard=dashboard).count() == before
+
+
+class TestQueryMalformedInput:
+    @pytest.mark.django_db
+    def test_malformed_project_uuid_returns_400(self, auth_client):
+        resp = auth_client.post(
+            "/tracer/dashboard/query/",
+            {
+                "project_ids": ["not-a-uuid"],
+                "granularity": "day",
+                "time_range": {"preset": "7D"},
+                "metrics": [
+                    {
+                        "id": "latency",
+                        "name": "latency",
+                        "type": "system_metric",
+                        "aggregation": "avg",
+                    }
+                ],
+            },
+            format="json",
+        )
+        assert resp.status_code == 400
+
+
+class TestXSSPayloadNonExecutable:
+    """A markup/XSS metric name is currently echoed back in the response body
+    (pre-existing; the parameterize-the-attribute-key follow-up removes the
+    reflection). Until then, assert the reflection is inert: the response is
+    served as application/json, so a reflected <script> is JSON text, never
+    rendered HTML."""
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_xss_metric_name_response_is_json_not_html(
+        self, mock_analytics_cls, auth_client, observe_project
+    ):
+        service = MagicMock()
+        result = MagicMock()
+        result.data = []
+        service.execute_ch_query.return_value = result
+        mock_analytics_cls.return_value = service
+        payload = '<script>alert("xss")</script>'
+        resp = auth_client.post(
+            "/tracer/dashboard/query/",
+            {
+                "project_ids": [str(observe_project.id)],
+                "granularity": "day",
+                "time_range": {"preset": "7D"},
+                "metrics": [
+                    {
+                        "id": payload,
+                        "name": payload,
+                        "type": "system_metric",
+                        "aggregation": "avg",
+                    }
+                ],
+            },
+            format="json",
+        )
+        assert resp.status_code == 200
+        # Non-executable: served as JSON, so a reflected payload is inert text.
+        assert resp["Content-Type"].startswith("application/json")
