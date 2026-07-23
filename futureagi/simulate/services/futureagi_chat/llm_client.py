@@ -45,6 +45,25 @@ def generate_simulator_response(
     Returns:
         Dict containing content, tool_calls, has_chat_ended, usage (LLMUsage), model.
     """
+    # The session transcript is stored from the agent-under-test's perspective:
+    # the persona's lines are "user" and the agent's are "assistant". The
+    # persona LLM must speak as the customer, so flip the seating before the
+    # call — its own past lines become "assistant" (the side it generates) and
+    # the agent's become "user" (the side it replies to). Without the flip the
+    # context ends on an assistant turn and the model continues the agent's
+    # message instead of answering it; on Vertex/Gemini a trailing "model"
+    # turn is literally treated as a continuation, yielding empty or echoed
+    # customer messages. Any role other than user/assistant passes through.
+    flipped_messages = [
+        {
+            **m,
+            "role": {"user": "assistant", "assistant": "user"}.get(
+                m.get("role"), m.get("role")
+            ),
+        }
+        for m in messages
+    ]
+
     # Use content block format with cache_control so Anthropic/Bedrock can
     # cache the system prompt across turns (avoids re-processing each call).
     full_messages = [
@@ -58,7 +77,7 @@ def generate_simulator_response(
                 }
             ],
         }
-    ] + messages
+    ] + flipped_messages
 
     provider = ModelConfigs.get_provider(model)
     llm = LLM(
