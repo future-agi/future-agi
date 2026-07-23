@@ -23,6 +23,7 @@ import { AGENT_TYPES } from "../agents/constants";
 import axios, { endpoints } from "src/utils/axios";
 import TestDetailBreadcrumb from "./TestDetailBreadcrumb";
 import useTestRunDetails from "src/hooks/useTestRunDetails";
+import useTestExecutionDetail from "src/hooks/useTestExecutionDetail";
 import CallStatus from "../test/CallLogs/CallStatus";
 import CallMetadataSection from "./components/CallMetadataSection";
 import { formatStartTimeByRequiredFormat } from "src/utils/utils";
@@ -53,6 +54,7 @@ const TestRunDetailHeader = () => {
     },
   );
   const { data: testData } = useTestRunDetails(testId);
+  const { data: executionDetail } = useTestExecutionDetail(executionId);
   const { data: kpis } = useKpis(executionId);
   const agentType = kpis?.agent_type;
   const handleRerun = () => {
@@ -92,8 +94,14 @@ const TestRunDetailHeader = () => {
       },
     });
   };
+  // Prefer the current execution's start time so rerun detail pages show
+  // that execution's timestamp instead of the parent RunTest.created_at.
+  const runStartTimestamp =
+    executionDetail?.started_at ??
+    executionDetail?.created_at ??
+    testData?.created_at;
   const formattedStartTime = formatStartTimeByRequiredFormat(
-    testData?.created_at,
+    runStartTimestamp,
     "dd-MM-yyyy HH:mm:ss",
   );
 
@@ -343,7 +351,7 @@ const TestRunDetailHeader = () => {
                   },
                   {
                     id: "time",
-                    condition: testData?.created_at && !!formattedStartTime,
+                    condition: !!runStartTimestamp && !!formattedStartTime,
                     value: `Run Start: ${formattedStartTime}`,
                   },
                   {

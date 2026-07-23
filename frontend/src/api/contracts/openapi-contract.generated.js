@@ -70432,6 +70432,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "readOnly": true,
           "minLength": 1
+        },
+        "started_at": {
+          "title": "Started at",
+          "type": "string",
+          "format": "date-time",
+          "readOnly": true,
+          "x-nullable": true
+        },
+        "created_at": {
+          "title": "Created at",
+          "type": "string",
+          "format": "date-time",
+          "readOnly": true,
+          "x-nullable": true
         }
       }
     },

@@ -33346,7 +33346,9 @@ export const SimulateTestExecutionsReadResponse = zod.object({
   "error_messages": zod.array(zod.string().min(1)).optional(),
   "status": zod.string().min(1).optional(),
   "provider": zod.string().min(1).optional(),
-  "agent_type": zod.string().min(1).optional()
+  "agent_type": zod.string().min(1).optional(),
+  "started_at": zod.string().datetime({"offset":true}).optional(),
+  "created_at": zod.string().datetime({"offset":true}).optional()
 })
 
 
