@@ -84,6 +84,8 @@ import {
   getSuggestedUnitConfig,
   getUnitRendering,
   getYAxisRangeWarning,
+  makeSeriesKey,
+  resolveVisibleSeries,
   toAxisConfigPayload,
 } from "./widgetUtils";
 import {
@@ -1146,6 +1148,8 @@ export default function WidgetEditorView() {
   const [isDragging, setIsDragging] = useState(false);
   const [tableSearch, setTableSearch] = useState("");
   const [visibleSeries, setVisibleSeries] = useState(null); // null = all visible, Set = selected indices
+  // Saved selection keys, applied once previewSeries loads.
+  const pendingVisibleSeriesRef = useRef(undefined);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [customDateRange, setCustomDateRange] = useState(null); // [startDate, endDate]
   const customDateAnchorRef = useRef(null);
@@ -1360,6 +1364,8 @@ export default function WidgetEditorView() {
         setChartDescription(widget.description || "");
         const qc = widget.queryConfig || widget.query_config || {};
         const cc = widget.chartConfig || widget.chart_config || {};
+        // undefined = nothing to restore; null = all visible; array = saved keys.
+        pendingVisibleSeriesRef.current = cc.visible_series;
         const { timePreset: initialPreset, customDateRange: initialRange } =
           resolveInitialTimeRange(
             qc.timeRange || qc.time_range,
@@ -2047,6 +2053,8 @@ export default function WidgetEditorView() {
       return;
     }
 
+    // visible_series lives in chart_config since query_config's serializer
+    // rejects unknown fields.
     const data = {
       name: chartName.trim() || "Untitled widget",
       description: chartDescription,
@@ -2054,6 +2062,7 @@ export default function WidgetEditorView() {
       chart_config: {
         chart_type: chartType,
         axis_config: toAxisConfigPayload(axisConfig),
+        visible_series: currentVisibleSeriesKeys(),
       },
     };
 
@@ -2110,6 +2119,7 @@ export default function WidgetEditorView() {
         }
         allSeries.push({
           name: seriesLabel,
+          key: makeSeriesKey(metric, s.name),
           unit: metric.unit ?? "",
           data: (s.data || []).map((point) => ({
             x: new Date(point.timestamp).getTime(),
@@ -2121,9 +2131,29 @@ export default function WidgetEditorView() {
     return allSeries;
   }, [previewResult]);
 
+  // Current selection as stable keys for persistence; null = all visible.
+  const currentVisibleSeriesKeys = useCallback(
+    () =>
+      visibleSeries === null
+        ? null
+        : [...visibleSeries].map((i) => previewSeries[i]?.key).filter(Boolean),
+    [visibleSeries, previewSeries],
+  );
+
   // Auto-select top 10 series when there are more than 10 breakdown series
   const MAX_CHART_SERIES = 10;
   useEffect(() => {
+    if (previewSeries.length === 0) return;
+
+    // Restore a saved selection once, on the first non-empty previewSeries;
+    // consuming the ref lets later re-queries fall through to the default below.
+    if (pendingVisibleSeriesRef.current !== undefined) {
+      const saved = pendingVisibleSeriesRef.current;
+      pendingVisibleSeriesRef.current = undefined;
+      setVisibleSeries(resolveVisibleSeries(saved, previewSeries));
+      return;
+    }
+
     if (previewSeries.length <= MAX_CHART_SERIES) {
       // Show all if within limit
       if (visibleSeries !== null) setVisibleSeries(null);
@@ -3045,6 +3075,7 @@ export default function WidgetEditorView() {
                   chart_config: {
                     chart_type: chartType,
                     axis_config: toAxisConfigPayload(axisConfig),
+                    visible_series: currentVisibleSeriesKeys(),
                   },
                 };
                 createMutation

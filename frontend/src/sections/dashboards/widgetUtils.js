@@ -212,3 +212,17 @@ export const formatValueWithConfig = (
     ? `${str}${separator}${unit}`
     : `${unit}${separator}${str}`;
 };
+
+// Stable identity for a chart series: metric id + aggregation + raw bucket
+// name. Survives metric renames and series reordering, unlike the display label.
+export const makeSeriesKey = (metric, bucketName) =>
+  `${metric?.id ?? ""}|${metric?.aggregation ?? ""}|${bucketName ?? ""}`;
+
+// Resolve a saved key list to the current series' indices. null => all visible.
+export const resolveVisibleSeries = (savedKeys, series) => {
+  if (savedKeys === null) return null;
+  const keyToIndex = new Map(series.map((s, i) => [s.key, i]));
+  return new Set(
+    savedKeys.map((k) => keyToIndex.get(k)).filter((i) => i !== undefined),
+  );
+};
