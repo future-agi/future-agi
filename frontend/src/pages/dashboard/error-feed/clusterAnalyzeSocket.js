@@ -117,6 +117,11 @@ function ensureSocket(token, workspaceId) {
       const convId = parsed?.data?.conversation_id;
       if (convId && handlers.has(convId)) {
         handlers.get(convId)(parsed);
+        return;
+      }
+    
+      if (!convId && handlers.size === 1) {
+        handlers.values().next().value(parsed);
       }
     };
   });
@@ -432,10 +437,102 @@ export async function startRun({ clusterId, projectId, token, workspaceId }) {
   let reasoningSeq = 0;
   let firstFrameSeen = false; // delivery watchdog: did the run actually start?
 
+
+  let agentMsgId = null;
+  let agentAnswer = "";
+  const agentOpenCalls = new Map(); // call_id → step id
+  const ensureAgentMsg = () => {
+    if (agentMsgId) return;
+    agentMsgId = `agent-${conversationId}`;
+    patchThread(clusterId, (t) => ({
+      ...t,
+      status: null,
+      messages: [
+        ...t.messages,
+        {
+          id: agentMsgId,
+          type: MESSAGE_TYPE.SUBAGENT,
+          title: "Falcon",
+          status: STREAM_STATUS.STREAMING,
+          steps: [],
+          answer: null,
+        },
+      ],
+    }));
+  };
+
   const handler = (parsed) => {
     const { type, data } = parsed;
     if (!data) return;
     firstFrameSeen = true; // any frame proves the run actually started
+
+    // ── Agent/chat-protocol frames (see ensureAgentMsg above) ──────────────
+    if (type === "iteration_start") {
+      ensureAgentMsg();
+      return;
+    }
+    if (type === CHAT_FRAME.TOOL_CALL_START) {
+      ensureAgentMsg();
+      const stepId = `${agentMsgId}-${data.call_id}`;
+      agentOpenCalls.set(data.call_id, stepId);
+      patchThread(clusterId, (t) => ({
+        ...t,
+        messages: t.messages.map((m) =>
+          m.id === agentMsgId
+            ? {
+                ...m,
+                steps: [
+                  ...m.steps,
+                  {
+                    id: stepId,
+                    title: data.tool_description || data.tool_name,
+                    detail: "",
+                    status: STEP_STATUS.RUNNING,
+                  },
+                ],
+              }
+            : m,
+        ),
+      }));
+      return;
+    }
+    if (type === CHAT_FRAME.TOOL_CALL_RESULT) {
+      ensureAgentMsg();
+      const stepId = agentOpenCalls.get(data.call_id);
+      patchThread(clusterId, (t) => ({
+        ...t,
+        messages: t.messages.map((m) =>
+          m.id === agentMsgId
+            ? {
+                ...m,
+                steps: m.steps.map((s) =>
+                  s.id === stepId
+                    ? {
+                        ...s,
+                        status: STEP_STATUS.DONE,
+                        detail: truncate(data.result_summary, 90),
+                      }
+                    : s,
+                ),
+              }
+            : m,
+        ),
+      }));
+      agentOpenCalls.delete(data.call_id);
+      return;
+    }
+    if (type === CHAT_FRAME.TEXT_DELTA) {
+      ensureAgentMsg();
+      agentAnswer += data.delta || "";
+      patchThread(clusterId, (t) => ({
+        ...t,
+        status: null,
+        messages: t.messages.map((m) =>
+          m.id === agentMsgId ? { ...m, answer: agentAnswer } : m,
+        ),
+      }));
+      return;
+    }
 
     if (type === RCA_FRAME.STATUS) {
       // Setup progress ping (before the first LLM round-trip). Held on the
@@ -556,7 +653,16 @@ export async function startRun({ clusterId, projectId, token, workspaceId }) {
     }
 
     if (type === RCA_FRAME.DONE) {
-      patchThread(clusterId, (t) => ({ ...t, runState: RUN_STATE.DONE }));
+      patchThread(clusterId, (t) => ({
+        ...t,
+        runState: RUN_STATE.DONE,
+        // Finalize the agent-protocol subagent block (if this run used it).
+        messages: agentMsgId
+          ? t.messages.map((m) =>
+              m.id === agentMsgId ? { ...m, status: STREAM_STATUS.DONE } : m,
+            )
+          : t.messages,
+      }));
       handlers.delete(conversationId);
       return;
     }
