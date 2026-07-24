@@ -472,7 +472,9 @@ def process_and_store_logs(
             log, project_id=str(project.id)
         ),
         ProviderChoices.ELEVEN_LABS: normalize_eleven_labs_data,
-        ProviderChoices.BLAND: normalize_bland_data,
+        ProviderChoices.BLAND: lambda log: normalize_bland_data(
+            log, project_id=str(project.id)
+        ),
         ProviderChoices.TWILIO: normalize_twilio_data,
     }
 

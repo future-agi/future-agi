@@ -91,6 +91,86 @@ def test_normalize_bland_call_length_is_minutes():
     assert (out["end_time"] - out["start_time"]).total_seconds() == 150
 
 
+_BLAND_RECORDING_URL = "https://bland-cdn.example.test/call-bl-123-recording.mp3"
+_DURABLE_BLAND_URL = (
+    "https://fi-customer-data.s3.amazonaws.com/call-recordings/project-1/"
+    "bland/bl-123/mono_combined.mp3"
+)
+
+
+@pytest.mark.unit
+def test_bland_rehosts_combined_recording_with_provider_and_project_scope():
+    log = {**BLAND_CALL, "recording_url": _BLAND_RECORDING_URL}
+    with patch(
+        "tracer.utils.bland.convert_audio_url_to_s3_sync",
+        return_value=(_DURABLE_BLAND_URL, 150),
+    ) as mock_convert:
+        result = normalize_bland_data(log, project_id="project-1")
+
+    attrs = result["span_attributes"]
+    assert attrs["conversation.recording.mono.combined"] == _DURABLE_BLAND_URL
+    assert result["rehost_uploads"] == {"mono_combined": 150}
+    assert result["rehost_bytes_uploaded"] == 150
+    kwargs = mock_convert.call_args.kwargs
+    assert kwargs["provider"] == "bland"
+    assert kwargs["url_type"] == "mono_combined"
+    assert kwargs["artifact_type"] == "mono_combined"
+    assert kwargs["project_id"] == "project-1"
+    assert kwargs["call_id"] == "bl-123"
+
+
+@pytest.mark.unit
+def test_bland_no_project_or_no_recording_skips_rehost():
+    with patch("tracer.utils.bland.convert_audio_url_to_s3_sync") as mock_convert:
+        no_project = normalize_bland_data(
+            {**BLAND_CALL, "recording_url": _BLAND_RECORDING_URL}
+        )
+        no_url = normalize_bland_data(
+            {**BLAND_CALL, "recording_url": None}, project_id="project-1"
+        )
+
+    mock_convert.assert_not_called()
+    assert no_project["rehost_uploads"] == {}
+    # Without a project_id the raw combined URL is still surfaced (the sim path
+    # rehosts separately) but not rehosted here.
+    assert (
+        no_project["span_attributes"]["conversation.recording.mono.combined"]
+        == _BLAND_RECORDING_URL
+    )
+    assert "conversation.recording.mono.combined" not in no_url["span_attributes"]
+
+
+@pytest.mark.unit
+def test_bland_already_owned_recording_is_not_rehosted():
+    log = {**BLAND_CALL, "recording_url": _DURABLE_BLAND_URL}
+    with patch("tracer.utils.bland.convert_audio_url_to_s3_sync") as mock_convert:
+        result = normalize_bland_data(log, project_id="project-1")
+
+    mock_convert.assert_not_called()
+    assert (
+        result["span_attributes"]["conversation.recording.mono.combined"]
+        == _DURABLE_BLAND_URL
+    )
+    assert result["rehost_uploads"] == {}
+
+
+@pytest.mark.unit
+def test_bland_rehost_failure_preserves_source_and_does_not_raise():
+    log = {**BLAND_CALL, "recording_url": _BLAND_RECORDING_URL}
+    with patch(
+        "tracer.utils.bland.convert_audio_url_to_s3_sync",
+        side_effect=RuntimeError("download failed"),
+    ):
+        result = normalize_bland_data(log, project_id="project-1")
+
+    # A rehost failure must not drop the span; the source URL is left for retry.
+    assert (
+        result["span_attributes"]["conversation.recording.mono.combined"]
+        == _BLAND_RECORDING_URL
+    )
+    assert result["rehost_uploads"] == {}
+
+
 @pytest.mark.unit
 def test_normalize_twilio_data_shape():
     out = normalize_twilio_data(TWILIO_CALL)
