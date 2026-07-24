@@ -55937,12 +55937,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "provider": {
           "title": "Provider",
-          "description": "Voice provider. One of: vapi, retell, eleven_labs, others.",
+          "description": "Voice provider. One of: vapi, retell, eleven_labs, bland, others.",
           "type": "string",
           "enum": [
             "vapi",
             "retell",
             "eleven_labs",
+            "bland",
             "others"
           ],
           "default": "vapi"
@@ -73936,7 +73937,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "enum": [
             "vapi",
-            "retell"
+            "retell",
+            "bland"
           ]
         },
         "api_key": {
@@ -73962,7 +73964,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "enum": [
             "vapi",
-            "retell"
+            "retell",
+            "bland"
           ]
         },
         "assistant_id": {

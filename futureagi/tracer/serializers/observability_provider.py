@@ -3,7 +3,11 @@ from rest_framework import serializers
 from tracer.models.observability_provider import ObservabilityProvider, ProviderChoices
 
 # Providers whose api-key / assistant verification is actually implemented.
-VERIFIABLE_PROVIDERS = [ProviderChoices.VAPI.value, ProviderChoices.RETELL.value]
+VERIFIABLE_PROVIDERS = [
+    ProviderChoices.VAPI.value,
+    ProviderChoices.RETELL.value,
+    ProviderChoices.BLAND.value,
+]
 
 
 class ObservabilityProviderSerializer(serializers.ModelSerializer):

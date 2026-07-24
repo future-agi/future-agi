@@ -127,6 +127,61 @@ class TestVerifyApiKey:
             timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
         )
 
+    @patch("tracer.services.observability_providers.requests.get")
+    def test_bland_verification_hits_me_endpoint_with_raw_auth(self, mock_requests_get):
+        # Bland takes the raw key in `authorization` (NO "Bearer " prefix) and
+        # validates against its read-only /v1/me endpoint.
+        from tracer.constants.external_endpoints import ObservabilityRoutes
+        from tracer.services.observability_providers import (
+            OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+            ObservabilityService,
+        )
+
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_requests_get.return_value = mock_response
+
+        result = ObservabilityService.verify_api_key(
+            ProviderChoices.BLAND,
+            "org_bland_key",
+        )
+
+        assert result == 200
+        mock_requests_get.assert_called_once_with(
+            ObservabilityRoutes.BLAND_ME_URL.value,
+            headers={"authorization": "org_bland_key"},
+            timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+        )
+
+    @patch("tracer.services.observability_providers.requests.get")
+    def test_bland_assistant_verification_hits_pathway_with_raw_auth(
+        self, mock_requests_get
+    ):
+        # Bland's "assistant" is a pathway; verify GETs /v1/pathway/{id} with the
+        # raw authorization header.
+        from tracer.constants.external_endpoints import ObservabilityRoutes
+        from tracer.services.observability_providers import (
+            OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+            ObservabilityService,
+        )
+
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_requests_get.return_value = mock_response
+
+        result = ObservabilityService.verify_assistant_id(
+            ProviderChoices.BLAND,
+            "2fdd4db9-5e81-4422-b11c-168f0182d4fc",
+            "org_bland_key",
+        )
+
+        assert result == 200
+        mock_requests_get.assert_called_once_with(
+            f"{ObservabilityRoutes.BLAND_PATHWAY_URL.value}/2fdd4db9-5e81-4422-b11c-168f0182d4fc",
+            headers={"authorization": "org_bland_key"},
+            timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+        )
+
 
 class TestFetchVapiLogs:
     """Tests for _fetch_vapi_logs method."""
