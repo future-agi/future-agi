@@ -160,20 +160,37 @@ async function assignForPr(prNumber) {
   }
 
   const files = await ghPaginated(`/repos/${OWNER}/${REPO}/pulls/${prNumber}/files?per_page=100`);
-  const matchedTeams = new Map(); // id → team
+
+  // Group matched files per owning team, tracking whether the team was hit on
+  // its frontend (frontend/**) or backend paths — one PR can hit both.
+  const matched = new Map(); // id → { team, fe, be }
   for (const f of files) {
     const t = ownerOf(f.filename);
-    if (t) matchedTeams.set(t.id, t);
+    if (!t) continue;
+    const m = matched.get(t.id) || { team: t, fe: false, be: false };
+    if (f.filename.startsWith('frontend/')) m.fe = true;
+    else m.be = true;
+    matched.set(t.id, m);
   }
 
-  let leads = [...new Set([...matchedTeams.values()].map((t) => t.lead))];
+  // Frontend files route to the team's frontend_lead, backend files to its
+  // backend_lead; either falls back to `lead` if that role isn't set.
+  const reviewerSet = new Set();
+  for (const { team, fe, be } of matched.values()) {
+    if (fe) reviewerSet.add(team.frontend_lead || team.lead);
+    if (be) reviewerSet.add(team.backend_lead || team.lead);
+  }
+
   const author = pr.user?.login;
-  leads = leads.filter((l) => l !== author);
+  let leads = [...reviewerSet].filter((l) => l && l !== author);
 
   if (leads.length === 0) {
-    if (config.fallback_lead && config.fallback_lead !== author) {
-      leads = [config.fallback_lead];
-      log(`  no team matched (or author was the only lead) → fallback ${config.fallback_lead}`);
+    // No team matched (or the author was the only routed reviewer) → fallbacks.
+    const fallbacks = (config.fallback_leads || (config.fallback_lead ? [config.fallback_lead] : []))
+      .filter((l) => l && l !== author);
+    if (fallbacks.length) {
+      leads = [...new Set(fallbacks)];
+      log(`  no team matched (or author was the only reviewer) → fallback ${leads.join(', ')}`);
     } else {
       log('  no reviewers to assign (no match and author == fallback)');
       return;
@@ -192,17 +209,21 @@ async function assignForPr(prNumber) {
     body: JSON.stringify({ reviewers: leads }),
   });
 
-  if (matchedTeams.size > 1) {
-    const lines = [...matchedTeams.values()].map(
-      (t) => `• **${t.display_name}** (${t.ownership}) — @${t.lead}`,
-    );
+  if (matched.size > 1) {
+    const lines = [...matched.values()].map(({ team, fe, be }) => {
+      const who = [...new Set([
+        fe && (team.frontend_lead || team.lead),
+        be && (team.backend_lead || team.lead),
+      ].filter(Boolean))];
+      return `• **${team.display_name}** (${team.ownership}) — ${who.map((w) => `@${w}`).join(', ')}`;
+    });
     const body = `This PR touches code owned by multiple teams:\n\n${lines.join('\n')}\n\nPlease coordinate on review.`;
     await gh(`/repos/${OWNER}/${REPO}/issues/${prNumber}/comments`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ body }),
     });
-    log(`  posted cross-team coordination comment (${matchedTeams.size} teams)`);
+    log(`  posted cross-team coordination comment (${matched.size} teams)`);
   }
 }
 
