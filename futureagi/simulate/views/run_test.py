@@ -3220,14 +3220,25 @@ class CallExecutionDetailView(APIView):
                     vapi_data, include_call_logs=False
                 )
             else:
-                # Fallback for other providers (retell etc.): ship the raw
-                # payload under `raw_log` so the Attributes tab at least
-                # renders the full object tree.
-                provider_data = next(
-                    (v for v in pcd.values() if isinstance(v, dict)), None
+                # Other providers (Bland, Retell, ElevenLabs, Twilio): reuse the
+                # same per-provider normalizer the ingest pipeline runs, so the
+                # Attributes tab renders flat eval attributes (call.duration,
+                # conversation.transcript.*, cost, ...) instead of a single
+                # collapsed raw_log tree. Falls back to raw_log if no normalizer
+                # matches the provider key.
+                from tracer.utils.observability_provider import (
+                    flatten_provider_call_attributes,
+                )
+
+                provider_key, provider_data = next(
+                    ((k, v) for k, v in pcd.items() if isinstance(v, dict)),
+                    (None, None),
                 )
                 if provider_data:
-                    response_data["attributes"] = {"raw_log": provider_data}
+                    attrs = flatten_provider_call_attributes(
+                        provider_key, provider_data
+                    )
+                    response_data["attributes"] = attrs or {"raw_log": provider_data}
 
             return Response(response_data, status=status.HTTP_200_OK)
 

@@ -65,6 +65,24 @@ class SpeakerRoleResolver:
     }
     _LIVEKIT_OUTBOUND: dict[str, str] = _LIVEKIT_INBOUND
 
+    # Bland is a customer-only outbound provider (inbound Bland flows through
+    # VAPI). Its own maps — same values as VAPI today, but independent so a Bland
+    # payload change is edited here directly, not through a shared alias.
+    _BLAND_INBOUND: dict[str, str] = {
+        "bot": "simulator",
+        "assistant": "simulator",
+        "agent": "simulator",
+        "user": "tested_agent",
+        "customer": "tested_agent",
+    }
+    _BLAND_OUTBOUND: dict[str, str] = {
+        "bot": "tested_agent",
+        "assistant": "tested_agent",
+        "agent": "tested_agent",
+        "user": "simulator",
+        "customer": "simulator",
+    }
+
     @staticmethod
     def detect_provider(
         provider_call_data: dict[str, Any] | None,
@@ -81,6 +99,8 @@ class SpeakerRoleResolver:
             return ProviderChoices.LIVEKIT
         if provider_call_data.get(ProviderChoices.VAPI.value):
             return ProviderChoices.VAPI
+        if provider_call_data.get(ProviderChoices.BLAND.value):
+            return ProviderChoices.BLAND
         logger.error(
             "speaker_role_resolver_unknown_provider",
             provider_call_data_keys=list(provider_call_data.keys()),
@@ -123,6 +143,8 @@ class SpeakerRoleResolver:
             return cls._VAPI_OUTBOUND if is_outbound else cls._VAPI_INBOUND
         if provider == ProviderChoices.LIVEKIT:
             return cls._LIVEKIT_OUTBOUND if is_outbound else cls._LIVEKIT_INBOUND
+        if provider == ProviderChoices.BLAND:
+            return cls._BLAND_OUTBOUND if is_outbound else cls._BLAND_INBOUND
         logger.error(
             "speaker_role_resolver_unsupported_provider",
             provider=str(provider),

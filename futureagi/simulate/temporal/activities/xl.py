@@ -1510,6 +1510,18 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
             logger.info(f"Using customer_call_id: {customer_call_id}")
 
             customer_provider = snapshot.get("provider", ProviderChoices.VAPI)
+            from simulate.semantics import ToolCallingSupportedProviders
+
+            provider_value = getattr(customer_provider, "value", customer_provider)
+            if provider_value not in [p.value for p in ToolCallingSupportedProviders]:
+                # Only some providers have a tool-call adapter; gate here so an
+                # unsupported provider (e.g. Bland) skips cleanly instead of
+                # raising into the broad except and silently no-op'ing.
+                logger.info(
+                    f"Tool evaluation not supported for provider "
+                    f"'{provider_value}' (call {call_execution.id}), skipping"
+                )
+                return
             adapter = get_tool_call_adapter(customer_provider)
             messages = adapter.get_tool_call_transcript(
                 call_execution=call_execution,

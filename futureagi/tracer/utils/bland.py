@@ -2,21 +2,54 @@
 
 from datetime import UTC, datetime, timedelta
 
+from simulate.temporal.utils.async_storage import convert_audio_url_to_s3_sync
 from tracer.utils.otel import (
     CallAttributes,
     ConversationAttributes,
     MessageAttributes,
     SpanAttributes,
 )
+from tracer.utils.vapi_recording import VapiRecordingService
+
+# Bland returns a single combined (mono-mixed) recording — no channel
+# separation, so only the combined key is written (per-channel needs diarization).
+_BLAND_COMBINED_RECORDING_KEY = (
+    f"{ConversationAttributes.CONVERSATION_RECORDING}."
+    f"{ConversationAttributes.MONO_COMBINED}"
+)
 
 
-def normalize_bland_data(log: dict) -> dict:
+def normalize_bland_data(log: dict, *, project_id: str | None = None) -> dict:
     """Normalizes a single detailed Bland call into the standard log shape."""
     status_map = {"completed": "ok", "complete": "ok", "failed": "error", "error": "error"}
     raw_status = (log.get("status") or "") if isinstance(log.get("status"), str) else ""
     status = status_map.get(raw_status.lower(), "ok" if log.get("completed") else "unset")
 
     eval_attributes = _extract_eval_attributes(log)
+
+    # Observe ingest only (project_id set): rehost the combined recording to our
+    # storage via the shared converter — Bland's raw URL has cross-origin
+    # problems. The sim path rehosts separately, so gating on project_id avoids a
+    # double-rehost. Best-effort: a failure leaves the source URL in place so a
+    # later poll can retry, and must not drop the whole span.
+    rehost_uploads: dict[str, int] = {}
+    source_url = eval_attributes.get(_BLAND_COMBINED_RECORDING_KEY)
+    if project_id and source_url and not VapiRecordingService.is_fagi_s3_url(source_url):
+        try:
+            durable_url, artifact_bytes = convert_audio_url_to_s3_sync(
+                call_id=log.get("call_id") or log.get("c_id"),
+                audio_url=source_url,
+                url_type="mono_combined",
+                provider="bland",
+                artifact_type="mono_combined",
+                project_id=project_id,
+            )
+            if durable_url and durable_url != source_url:
+                eval_attributes[_BLAND_COMBINED_RECORDING_KEY] = durable_url
+                rehost_uploads = {"mono_combined": artifact_bytes}
+        except Exception:
+            pass
+
     start_time, end_time = _extract_timestamps(log)
     transcript = _transcript_messages(log)
 
@@ -42,6 +75,8 @@ def normalize_bland_data(log: dict) -> dict:
         "prompt_tokens": None,
         "completion_tokens": None,
         "total_tokens": None,
+        "rehost_bytes_uploaded": sum(rehost_uploads.values()),
+        "rehost_uploads": rehost_uploads,
     }
 
 
@@ -63,8 +98,15 @@ def _extract_eval_attributes(log: dict) -> dict:
         "raw_log": log,
     }
     _extract_transcript(log, eval_attributes)
+    _extract_recording(log, eval_attributes)
     _extract_common_call_fields(log, eval_attributes)
     return eval_attributes
+
+
+def _extract_recording(log: dict, eval_attributes: dict):
+    recording_url = log.get("recording_url")
+    if recording_url:
+        eval_attributes[_BLAND_COMBINED_RECORDING_KEY] = recording_url
 
 
 def _extract_transcript(log: dict, eval_attributes: dict):
