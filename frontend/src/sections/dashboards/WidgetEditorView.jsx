@@ -85,7 +85,7 @@ import {
   getUnitRendering,
   getYAxisRangeWarning,
   makeSeriesKey,
-  resolveVisibleSeries,
+  resolveSavedSelection,
   toAxisConfigPayload,
 } from "./widgetUtils";
 import {
@@ -2150,8 +2150,12 @@ export default function WidgetEditorView() {
     if (pendingVisibleSeriesRef.current !== undefined) {
       const saved = pendingVisibleSeriesRef.current;
       pendingVisibleSeriesRef.current = undefined;
-      setVisibleSeries(resolveVisibleSeries(saved, previewSeries));
-      return;
+      const decision = resolveSavedSelection(saved, previewSeries);
+      // undefined = the saved selection is stale → fall through to the default.
+      if (decision !== undefined) {
+        setVisibleSeries(decision);
+        return;
+      }
     }
 
     if (previewSeries.length <= MAX_CHART_SERIES) {

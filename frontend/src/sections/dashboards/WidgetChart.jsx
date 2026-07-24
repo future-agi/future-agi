@@ -17,7 +17,7 @@ import {
   getUnitRendering,
   getYAxisRangeWarning,
   makeSeriesKey,
-  resolveVisibleSeries,
+  resolveSavedSelection,
   seriesHasDataPoints,
 } from "./widgetUtils";
 import { toTimeRangePayload } from "./dashboardDateRange";
@@ -184,9 +184,11 @@ export default function WidgetChart({ widget, globalDateRange }) {
   useEffect(() => {
     if (series.length === 0) return;
 
-    // Honor the editor's saved selection; undefined = none, fall through to default.
-    if (savedVisibleSeries !== undefined) {
-      setVisibleSeries(resolveVisibleSeries(savedVisibleSeries, series));
+    // Honor the editor's saved selection. Nothing saved, or a stale selection
+    // (saved keys that match no current series), falls through to the default.
+    const decision = resolveSavedSelection(savedVisibleSeries, series);
+    if (decision !== undefined) {
+      setVisibleSeries(decision);
       return;
     }
 
