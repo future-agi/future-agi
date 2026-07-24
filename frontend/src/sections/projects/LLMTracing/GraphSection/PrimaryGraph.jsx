@@ -31,6 +31,8 @@ import { useParams } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
 import {
   format,
+  isValid,
+  parseISO,
   startOfToday,
   startOfTomorrow,
   startOfYesterday,
@@ -350,9 +352,14 @@ const PrimaryGraph = ({
 
     for (const item of items) {
       if (item.timestamp == null) continue;
-      const ts = item.timestamp.replace(/\+00:00$/, "");
-      mData.push({ x: new Date(ts).getTime(), y: item.value ?? 0 });
-      tData.push({ x: new Date(ts).getTime(), y: item.primary_traffic ?? 0 });
+      const date =
+        typeof item.timestamp === "string"
+          ? parseISO(item.timestamp)
+          : new Date(item.timestamp);
+      if (!isValid(date)) continue;
+      const ts = date.getTime();
+      mData.push({ x: ts, y: item.value ?? 0 });
+      tData.push({ x: ts, y: item.primary_traffic ?? 0 });
     }
 
     return { metricData: mData, trafficData: tData };
