@@ -155,6 +155,10 @@ const CustomJsonInput = ({
       prev.length !== variables.length ||
       !prev.every((v, i) => v === variables[i]);
 
+    // Only reconcile when the variable set changes. On any other re-render
+    // (every keystroke, since jsonText is a dep) leave the user's text alone.
+    if (!varsChanged) return;
+
     let current;
     try {
       current = JSON.parse(jsonText || "{}");
@@ -175,16 +179,14 @@ const CustomJsonInput = ({
     let changed = false;
 
     // Drop a removed variable's empty field only — never a user's key.
-    if (varsChanged) {
-      for (const k of Object.keys(updated)) {
-        if (
-          !varSet.has(k) &&
-          prevSet.has(k) &&
-          (updated[k] === "" || updated[k] === null || updated[k] === undefined)
-        ) {
-          delete updated[k];
-          changed = true;
-        }
+    for (const k of Object.keys(updated)) {
+      if (
+        !varSet.has(k) &&
+        prevSet.has(k) &&
+        (updated[k] === "" || updated[k] === null || updated[k] === undefined)
+      ) {
+        delete updated[k];
+        changed = true;
       }
     }
 
@@ -215,18 +217,37 @@ const CustomJsonInput = ({
       try {
         const parsed = JSON.parse(text);
         setJsonError(null);
-        if (typeof parsed === "object" && !Array.isArray(parsed)) {
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
           Object.entries(parsed).forEach(([k, v]) => {
             const val =
               typeof v === "object" ? JSON.stringify(v) : String(v ?? "");
             onInputChange(k, val);
+          });
+          // Resolve each variable from its source — a direct key, or the
+          // key it's bound to in the mapping panel. Clear only when it has
+          // no source, so a deleted key's stale value isn't silently
+          // submitted while a mapped binding is left intact.
+          variables.forEach((v) => {
+            if (v in parsed) return;
+            const mapped = varMapping[v];
+            const val = mapped
+              ? mapped.split(".").reduce((obj, k) => obj?.[k], parsed)
+              : undefined;
+            onInputChange(
+              v,
+              val === undefined
+                ? ""
+                : typeof val === "object"
+                  ? JSON.stringify(val)
+                  : String(val ?? ""),
+            );
           });
         }
       } catch {
         setJsonError("Invalid JSON");
       }
     },
-    [onInputChange],
+    [onInputChange, variables, varMapping],
   );
 
   // Call AI
