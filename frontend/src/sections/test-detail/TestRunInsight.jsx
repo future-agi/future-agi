@@ -13,6 +13,7 @@ import { useParams } from "react-router";
 import { camelCaseToTitleCase } from "src/utils/utils";
 import { extractKpis } from "./common";
 import TestRunInsightSkeletonCard from "./TestRunInsightSkeletonCard";
+import { AGENT_TYPES } from "src/sections/agents/constants";
 
 const TestRunInsight = () => {
   const { executionId } = useParams();
@@ -88,6 +89,8 @@ const TestRunInsight = () => {
     return extractKpis(kpis, kpis?.agent_type);
   }, [kpis]);
 
+  const isVoice = kpis?.agent_type === AGENT_TYPES.VOICE;
+
   const renderMetrics = () => {
     if (isPending) {
       return (
@@ -125,36 +128,44 @@ const TestRunInsight = () => {
           secondaryText={`(Connected Calls: ${systemMetrics?.connectedCalls})`}
           tooltipTitle="Mean customer satisfaction score across all completed calls"
         />
-        <TestRunInsightCard
-          title="Avg. Agent Latency (ms)"
-          value={systemMetrics?.avgAgentLatency}
-          suffix={"ms"}
-          tooltipTitle="Average time (ms) for the agent to start a response after the user finishes speaking"
-        />
+        {isVoice && (
+          <TestRunInsightCard
+            title="Avg. Agent Latency (ms)"
+            value={systemMetrics?.avgAgentLatency}
+            suffix={"ms"}
+            tooltipTitle="Average time (ms) for the agent to start a response after the user finishes speaking"
+          />
+        )}
         {/* <TestRunInsightCard
           title="Sim Interrupts"
           value={systemMetrics?.avgUserInterruptionCount}
         /> */}
-        <TestRunInsightCard
-          title="Agent WPM"
-          value={Math.round(systemMetrics?.avgBotWpm)}
-          tooltipTitle="Agent's average speaking rate, measuring conversational pace"
-        />
-        <TestRunInsightCard
-          title="Talk Ratio (A/S%)"
-          value={`${Math.round(systemMetrics?.agentTalkPercentage)}%/${Math.round(systemMetrics?.customerTalkPercentage)}%`}
-          tooltipTitle="Ratio of time the Agent (A) spoke versus the simulator (S) spoke"
-        />
+        {isVoice && (
+          <TestRunInsightCard
+            title="Agent WPM"
+            value={Math.round(systemMetrics?.avgBotWpm)}
+            tooltipTitle="Agent's average speaking rate, measuring conversational pace"
+          />
+        )}
+        {isVoice && (
+          <TestRunInsightCard
+            title="Talk Ratio (A/S%)"
+            value={`${Math.round(systemMetrics?.agentTalkPercentage)}%/${Math.round(systemMetrics?.customerTalkPercentage)}%`}
+            tooltipTitle="Ratio of time the Agent (A) spoke versus the simulator (S) spoke"
+          />
+        )}
         {/* <TestRunInsightCard
           title="Agent Interrupts"
           value={systemMetrics?.avgAiInterruptionCount}
         /> */}
-        <TestRunInsightCard
-          title="Agent Stop Latency (ms)"
-          value={systemMetrics?.avgStopTimeAfterInterruption}
-          suffix={"ms"}
-          tooltipTitle=" Average time (ms) the agent takes to react to, and stop speaking, when interrupted by the user"
-        />
+        {isVoice && (
+          <TestRunInsightCard
+            title="Agent Stop Latency (ms)"
+            value={systemMetrics?.avgStopTimeAfterInterruption}
+            suffix={"ms"}
+            tooltipTitle=" Average time (ms) the agent takes to react to, and stop speaking, when interrupted by the user"
+          />
+        )}
 
         {Object.entries(evalMetrics || {}).map(([key, value]) => (
           <TestRunInsightCard
