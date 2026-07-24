@@ -543,3 +543,11 @@ If Future AGI helps you ship better AI, a ⭐ helps more teams find us.
 [🌐 futureagi.com](https://futureagi.com) · [📖 docs.futureagi.com](https://docs.futureagi.com) · [☁️ app.futureagi.com](https://app.futureagi.com) · [📊 status.futureagi.com](https://status.futureagi.com)
 
 </div>
+
+## Setup
+
+Copy the example environment file and adjust values:
+
+```bash
+cp .env.example .env
+```
