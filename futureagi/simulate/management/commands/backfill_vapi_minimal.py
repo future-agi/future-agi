@@ -4,13 +4,19 @@ import uuid
 
 from django.core.management.base import BaseCommand, CommandError
 
+from temporalio.common import WorkflowIDReusePolicy
+
 from tfc.temporal import start_workflow_sync
 from tfc.temporal.backfill.minimal_backfill import (
     VapiBackfillInput,
     VapiMinimalBackfillWorkflow,
     reconcile_backfill_sample,
 )
-from tfc.temporal.common.client import query_workflow_sync, signal_workflow_sync
+from tfc.temporal.common.client import (
+    cancel_workflow_sync,
+    query_workflow_sync,
+    signal_workflow_sync,
+)
 
 
 class Command(BaseCommand):
@@ -105,26 +111,48 @@ class Command(BaseCommand):
             raise CommandError(
                 "--run-id may contain only letters, digits, and underscores"
             )
-        for shard in range(options["shards"]):
-            workflow_id = (
-                f"vapi-backfill-{options['source']}-"
-                f"{options['project_id'] or 'all'}-{run_id}-{shard}"
-            )
-            start_workflow_sync(
-                VapiMinimalBackfillWorkflow,
-                VapiBackfillInput(
-                    source=options["source"],
-                    dry_run=options["dry_run"],
-                    limit=limit,
-                    project_id=options["project_id"],
-                    shards=options["shards"],
-                    shard=shard,
-                    batch_size=options["batch_size"],
-                    run_id=run_id,
-                    proof_gate=options["proof_gate"],
-                    min_records_per_second=options["min_records_per_second"],
-                ),
-                workflow_id=workflow_id,
-                task_queue="backfill",
-            )
-            self.stdout.write(self.style.SUCCESS(f"Started {workflow_id}"))
+        started: list[str] = []
+        try:
+            for shard in range(options["shards"]):
+                workflow_id = (
+                    f"vapi-backfill-{options['source']}-"
+                    f"{options['project_id'] or 'all'}-{run_id}-{shard}"
+                )
+                start_workflow_sync(
+                    VapiMinimalBackfillWorkflow,
+                    VapiBackfillInput(
+                        source=options["source"],
+                        dry_run=options["dry_run"],
+                        limit=limit,
+                        project_id=options["project_id"],
+                        shards=options["shards"],
+                        shard=shard,
+                        batch_size=options["batch_size"],
+                        run_id=run_id,
+                        proof_gate=options["proof_gate"],
+                        min_records_per_second=options["min_records_per_second"],
+                    ),
+                    workflow_id=workflow_id,
+                    task_queue="backfill",
+                    # Fail closed: never terminate an in-flight backfill by ID reuse.
+                    cancel_existing=False,
+                    id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
+                )
+                started.append(workflow_id)
+                self.stdout.write(self.style.SUCCESS(f"Started {workflow_id}"))
+        except Exception as exc:
+            for workflow_id in started:
+                try:
+                    cancel_workflow_sync(workflow_id)
+                except Exception as cancel_exc:
+                    self.stderr.write(
+                        self.style.WARNING(
+                            f"Failed to cancel {workflow_id} after partial start: {cancel_exc}"
+                        )
+                    )
+            if started:
+                raise CommandError(
+                    f"Multi-shard start failed after launching {len(started)} "
+                    f"workflow(s); cancelled: {', '.join(started)}. Error: {exc}"
+                ) from exc
+            raise

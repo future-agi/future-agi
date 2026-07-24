@@ -13,14 +13,17 @@ from tfc.temporal.backfill.minimal_backfill import (
     _ch_predicate,
     _ch_scan_settings,
     _ch_shape,
+    _download,
     _extra_artifacts,
     _is_retryable,
     _is_vapi_url,
     _json_replace,
     _mapping_table,
     _row_artifacts,
+    _stored,
     _update_pg,
     _validate_storage_stat,
+    _valid_direct_audio,
     _verify_proof_gate,
     get_activities,
     get_workflows,
@@ -472,3 +475,349 @@ def test_reconcile_map_only_all_projects_and_day_chunked_extra(monkeypatch):
     extra_queries = [q for q in queries if "attributes_extra" in q and "count()" in q]
     assert extra_queries
     assert all("toDate(start_time)" in q for q in extra_queries)
+
+
+def test_valid_direct_audio_uses_existing_detector(monkeypatch):
+    from simulate.temporal.utils import async_storage as storage_helpers
+
+    class HtmlResp:
+        content = b"<!doctype html><html>expired</html>"
+        headers = {"Content-Type": "text/html"}
+
+    class EmptyResp:
+        content = b""
+        headers = {"Content-Type": "audio/wav"}
+
+    class GoodResp:
+        content = b"fake-aac-or-wav-bytes-here"
+        headers = {"Content-Type": "audio/aac"}
+
+    assert _valid_direct_audio(HtmlResp()) is None
+    assert _valid_direct_audio(EmptyResp()) is None
+
+    # Detector accepts this body as a supported extension (aac/wav/etc.).
+    monkeypatch.setattr(
+        storage_helpers, "_detected_audio_extension", lambda content: "aac"
+    )
+    assert _valid_direct_audio(GoodResp()) == (GoodResp.content, "aac")
+
+    # Detector rejection (unsupported / non-audio) falls through.
+    monkeypatch.setattr(
+        storage_helpers,
+        "_detected_audio_extension",
+        lambda content: (_ for _ in ()).throw(ValueError("bad")),
+    )
+    assert _valid_direct_audio(GoodResp()) is None
+
+
+def test_download_valid_direct_audio_never_resolves_api_key(monkeypatch):
+    import requests as requests_mod
+    from simulate.temporal.utils import async_storage as storage_helpers
+
+    class Resp:
+        content = b"ID3-or-aac-payload-bytes"
+        headers = {"Content-Type": "audio/mpeg"}
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr(requests_mod, "get", lambda *args, **kwargs: Resp())
+    monkeypatch.setattr(
+        storage_helpers, "_detected_audio_extension", lambda content: "mp3"
+    )
+    called = {"n": 0}
+
+    def provider():
+        called["n"] += 1
+        raise AssertionError("api key must not be resolved on valid direct audio")
+
+    data, ext = _download(
+        "https://storage.vapi.ai/call.wav", "call-1", "mono_combined", provider
+    )
+    assert data == b"ID3-or-aac-payload-bytes"
+    assert ext == "mp3"
+    assert called["n"] == 0
+
+
+def test_download_invalid_storage_vapi_html_uses_api_fallback(monkeypatch):
+    """storage.vapi.ai 200 HTML/error body must not count as audio."""
+    import requests as requests_mod
+    from tracer.utils.vapi_recording import VapiRecordingService
+
+    class HtmlResp:
+        content = b"<!doctype html><html>expired</html>"
+        headers = {"Content-Type": "text/html"}
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr(requests_mod, "get", lambda *args, **kwargs: HtmlResp())
+    monkeypatch.setenv("VAPI_API_RATE_LIMIT_PER_SECOND", "5")
+    monkeypatch.setattr(
+        VapiRecordingService,
+        "artifact_for_url_type",
+        staticmethod(lambda kind: "recording"),
+    )
+    monkeypatch.setattr(
+        VapiRecordingService,
+        "download_artifact_sync",
+        staticmethod(lambda call_id, artifact, api_key: b"from-api"),
+    )
+    monkeypatch.setattr(
+        "tfc.temporal.backfill.minimal_backfill._wait_for_api_slot", lambda rate: None
+    )
+    called = {"n": 0}
+
+    def provider():
+        called["n"] += 1
+        return "secret-key"
+
+    data, ext = _download(
+        "https://storage.vapi.ai/call.wav", "call-1", "mono_combined", provider
+    )
+    assert data == b"from-api"
+    assert ext is None
+    assert called["n"] == 1
+
+
+def test_download_empty_storage_vapi_body_uses_api_fallback(monkeypatch):
+    import requests as requests_mod
+    from tracer.utils.vapi_recording import VapiRecordingService
+
+    class EmptyResp:
+        content = b""
+        headers = {"Content-Type": "audio/wav"}
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr(requests_mod, "get", lambda *args, **kwargs: EmptyResp())
+    monkeypatch.setenv("VAPI_API_RATE_LIMIT_PER_SECOND", "5")
+    monkeypatch.setattr(
+        VapiRecordingService,
+        "artifact_for_url_type",
+        staticmethod(lambda kind: "recording"),
+    )
+    monkeypatch.setattr(
+        VapiRecordingService,
+        "download_artifact_sync",
+        staticmethod(lambda call_id, artifact, api_key: b"from-api"),
+    )
+    monkeypatch.setattr(
+        "tfc.temporal.backfill.minimal_backfill._wait_for_api_slot", lambda rate: None
+    )
+    data, ext = _download(
+        "https://storage.vapi.ai/call.wav",
+        "call-1",
+        "mono_combined",
+        lambda: "secret",
+    )
+    assert data == b"from-api"
+    assert ext is None
+
+
+def test_download_private_r2_failure_uses_api_fallback_when_configured(monkeypatch):
+    """r2.dev is private; failed direct GET may use authenticated Vapi API only."""
+    import requests as requests_mod
+    from tracer.utils.vapi_recording import VapiRecordingService
+
+    def boom(*args, **kwargs):
+        err = requests_mod.HTTPError("forbidden")
+        err.response = SimpleNamespace(status_code=403)
+        raise err
+
+    monkeypatch.setattr(requests_mod, "get", boom)
+    monkeypatch.setenv("VAPI_API_RATE_LIMIT_PER_SECOND", "5")
+    monkeypatch.setattr(
+        VapiRecordingService,
+        "artifact_for_url_type",
+        staticmethod(lambda kind: "recording"),
+    )
+    monkeypatch.setattr(
+        VapiRecordingService,
+        "download_artifact_sync",
+        staticmethod(lambda call_id, artifact, api_key: b"from-api"),
+    )
+    monkeypatch.setattr(
+        "tfc.temporal.backfill.minimal_backfill._wait_for_api_slot", lambda rate: None
+    )
+    called = {"n": 0}
+
+    def provider():
+        called["n"] += 1
+        return "secret-key"
+
+    data, ext = _download(
+        "https://pub-abc.r2.dev/call.wav", "call-1", "mono_combined", provider
+    )
+    assert data == b"from-api"
+    assert ext is None
+    assert called["n"] == 1
+
+
+def test_download_cdn_failure_skips_key_when_rate_disabled(monkeypatch):
+    import requests as requests_mod
+
+    def boom(*args, **kwargs):
+        raise requests_mod.HTTPError("gone")
+
+    monkeypatch.setattr(requests_mod, "get", boom)
+    monkeypatch.delenv("VAPI_API_RATE_LIMIT_PER_SECOND", raising=False)
+    called = {"n": 0}
+
+    def provider():
+        called["n"] += 1
+        raise AssertionError("must not resolve key when rate limit unset")
+
+    with pytest.raises(RuntimeError, match="authenticated fallback is disabled"):
+        _download(
+            "https://storage.vapi.ai/call.wav", "call-1", "mono_combined", provider
+        )
+    assert called["n"] == 0
+
+
+def test_download_cdn_failure_uses_api_fallback_when_configured(monkeypatch):
+    import requests as requests_mod
+    from tracer.utils.vapi_recording import VapiRecordingService
+
+    def boom(*args, **kwargs):
+        err = requests_mod.HTTPError("expired")
+        err.response = SimpleNamespace(status_code=403)
+        raise err
+
+    monkeypatch.setattr(requests_mod, "get", boom)
+    monkeypatch.setenv("VAPI_API_RATE_LIMIT_PER_SECOND", "5")
+    monkeypatch.setattr(
+        VapiRecordingService,
+        "artifact_for_url_type",
+        staticmethod(lambda kind: "recording"),
+    )
+    monkeypatch.setattr(
+        VapiRecordingService,
+        "download_artifact_sync",
+        staticmethod(lambda call_id, artifact, api_key: b"from-api"),
+    )
+    monkeypatch.setattr(
+        "tfc.temporal.backfill.minimal_backfill._wait_for_api_slot", lambda rate: None
+    )
+    called = {"n": 0}
+
+    def provider():
+        called["n"] += 1
+        return "secret-key"
+
+    data, ext = _download(
+        "https://storage.vapi.ai/call.wav", "call-1", "mono_combined", provider
+    )
+    assert data == b"from-api"
+    assert ext is None
+    assert called["n"] == 1
+
+
+def test_stored_resolves_existing_webm_without_restat(monkeypatch):
+    from simulate.temporal.utils import async_storage as storage_helpers
+    from tracer.utils.vapi_recording import VapiRecordingService
+
+    base = "call-recordings/p/vapi/call-1/mono_combined"
+    webm_url = "https://fi-content-dev.s3.amazonaws.com/" + base + ".webm"
+
+    monkeypatch.setattr(
+        storage_helpers,
+        "_existing_rehosted_audio",
+        lambda object_key_base: (webm_url, 12),
+    )
+    monkeypatch.setattr(
+        storage_helpers,
+        "_rehost_object_key_base",
+        lambda call_id, kind, project_id, provider: base,
+    )
+    monkeypatch.setattr(
+        storage_helpers,
+        "_rehost_object_key",
+        lambda object_key_base, extension: f"{object_key_base}.{extension}",
+    )
+
+    class Storage:
+        def stat_object(self, bucket, key):
+            # Final HEAD validation only — no extension probe loop.
+            assert key.endswith(".webm")
+            return SimpleNamespace(size=12, content_type="audio/webm")
+
+    monkeypatch.setattr(
+        "tfc.utils.storage_client.get_storage_client", lambda: Storage()
+    )
+    monkeypatch.setattr(
+        "tfc.settings.settings.UPLOAD_BUCKET_NAME", "fi-content-dev", raising=False
+    )
+    monkeypatch.setattr(
+        VapiRecordingService, "is_fagi_s3_url", staticmethod(lambda url: True)
+    )
+
+    url = _stored("p", "call-1", "mono_combined", "https://storage.vapi.ai/old.wav", None)
+    assert url == webm_url
+
+
+def test_stored_reuses_carried_audio_ext_without_redetection(monkeypatch):
+    from simulate.temporal.utils import async_storage as storage_helpers
+    from tracer.utils.vapi_recording import VapiRecordingService
+
+    base = "call-recordings/p/vapi/call-1/mono_combined"
+    detected = {"n": 0}
+
+    monkeypatch.setattr(
+        storage_helpers, "_existing_rehosted_audio", lambda object_key_base: None
+    )
+    monkeypatch.setattr(
+        storage_helpers,
+        "_rehost_object_key_base",
+        lambda call_id, kind, project_id, provider: base,
+    )
+    monkeypatch.setattr(
+        storage_helpers,
+        "_rehost_object_key",
+        lambda object_key_base, extension: f"{object_key_base}.{extension}",
+    )
+
+    def boom_detect(content):
+        detected["n"] += 1
+        raise AssertionError("must not re-detect when audio_ext is carried")
+
+    monkeypatch.setattr(storage_helpers, "_detected_audio_extension", boom_detect)
+    monkeypatch.setattr(
+        "tfc.utils.storage.upload_audio_to_s3",
+        lambda payload, object_key=None: f"https://fi-content-dev.s3.amazonaws.com/{object_key}",
+    )
+
+    class Storage:
+        def stat_object(self, bucket, key):
+            return SimpleNamespace(size=12, content_type="audio/aac")
+
+    monkeypatch.setattr(
+        "tfc.utils.storage_client.get_storage_client", lambda: Storage()
+    )
+    monkeypatch.setattr(
+        "tfc.settings.settings.UPLOAD_BUCKET_NAME", "fi-content-dev", raising=False
+    )
+    monkeypatch.setattr(
+        VapiRecordingService, "is_fagi_s3_url", staticmethod(lambda url: True)
+    )
+
+    url = _stored(
+        "p",
+        "call-1",
+        "mono_combined",
+        "https://storage.vapi.ai/old.wav",
+        b"aac-bytes",
+        audio_ext="aac",
+    )
+    assert url.endswith(".aac")
+    assert detected["n"] == 0
+
+
+def test_run_worker_rejects_backfill_multi_slot():
+    import asyncio
+
+    from tfc.temporal.common.worker import run_worker
+
+    with pytest.raises(ValueError, match="max_concurrent_activities=1"):
+        asyncio.run(run_worker("backfill", max_concurrent_activities=2, skip_otel_init=True))

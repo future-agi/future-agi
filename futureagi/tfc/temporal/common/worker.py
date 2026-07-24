@@ -51,6 +51,11 @@ async def run_worker(
             Only used when target_memory_usage is set. Default: 1.0 (no CPU limit).
         skip_otel_init: Skip OTel initialization (caller already did it).
     """
+    if task_queue == "backfill" and max_concurrent_activities != 1:
+        raise ValueError(
+            "backfill queue requires max_concurrent_activities=1 "
+            "(process-wide Vapi rate limiter)"
+        )
     # Initialize OpenTelemetry FIRST (before any other imports)
     # This ensures all activities, DB queries, Redis, and HTTP calls are traced
     if not skip_otel_init:

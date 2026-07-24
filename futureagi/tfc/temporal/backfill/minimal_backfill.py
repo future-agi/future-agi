@@ -329,41 +329,83 @@ def _validate_storage_stat(stat: Any) -> None:
         raise RuntimeError(f"S3 HEAD validation failed ({content_type!r})")
 
 
-PUBLIC_VAPI_CDN_HOSTS = ("storage.vapi.ai",)
+def _valid_direct_audio(response: Any) -> tuple[bytes, str] | None:
+    """Accept a direct URL response only when the body is non-empty real audio.
 
-def _is_public_vapi_cdn(url: str) -> bool:
-    host = (urllib.parse.urlparse(url).hostname or "").lower()
-    return host == "storage.vapi.ai" or host.endswith(".storage.vapi.ai")
+    storage.vapi.ai and other hosts can return 200 HTML/JSON error pages.
+    Reuse ``_detected_audio_extension`` (ffmpeg + supported format map) and
+    return the detected extension so ``_stored`` does not run ffmpeg again.
+    """
+    from simulate.temporal.utils.async_storage import _detected_audio_extension
+
+    content = getattr(response, "content", None) or b""
+    if not content:
+        return None
+    headers = getattr(response, "headers", None) or {}
+    content_type = str(headers.get("Content-Type") or headers.get("content-type") or "")
+    content_type = content_type.split(";", 1)[0].strip().lower()
+    # Explicit non-audio types lose before the expensive detector.
+    if content_type.startswith(("text/", "application/json", "application/xml")):
+        return None
+    try:
+        ext = _detected_audio_extension(content)
+    except Exception:
+        return None
+    return content, ext
 
 
-def _download(url: str, call_id: str, kind: str, api_key: str | None) -> bytes:
+def _raise_direct_fallback_disabled(direct_error: BaseException | None) -> None:
+    if isinstance(direct_error, Exception) and _is_retryable(direct_error):
+        raise direct_error
+    if direct_error is not None:
+        raise RuntimeError(
+            f"Direct URL failed and authenticated fallback is disabled: {direct_error}"
+        ) from direct_error
+    raise RuntimeError("Direct URL failed and authenticated fallback is disabled")
+
+
+def _download(
+    url: str,
+    call_id: str,
+    kind: str,
+    api_key_provider: Any | None = None,
+) -> tuple[bytes, str | None]:
+    """Direct-URL first with audio validation; API key only on authenticated fallback.
+
+    Returns ``(audio_bytes, detected_extension_or_None)``. Extension is set when
+    the direct URL path validated via ``_detected_audio_extension``; API fallback
+    leaves it None so ``_stored`` detects once on upload.
+    """
     import requests
 
     from tracer.utils.vapi_recording import VapiRecordingService
 
-    # CDN-only mode for public storage.vapi.ai / r2.dev URLs — never resolve API key
-    if _is_public_vapi_cdn(url):
-        response = requests.get(url, timeout=60, allow_redirects=True)
-        response.raise_for_status()
-        if not response.content:
-            raise RuntimeError("Empty CDN response")
-        return response.content
-
-    # Non-CDN URL: authenticated fallback only if key + rate limit configured
-    cdn_error: requests.RequestException | None = None
+    direct_error: BaseException | None = None
     try:
         response = requests.get(url, timeout=60, allow_redirects=True)
         response.raise_for_status()
-        if response.content:
-            return response.content
+        validated = _valid_direct_audio(response)
+        if validated is not None:
+            return validated
+        headers = getattr(response, "headers", None) or {}
+        content_type = str(
+            headers.get("Content-Type") or headers.get("content-type") or ""
+        )
+        direct_error = RuntimeError(
+            f"Direct URL response is not valid audio (content_type={content_type!r}, "
+            f"bytes={len(getattr(response, 'content', b'') or b'')})"
+        )
     except requests.RequestException as exc:
-        cdn_error = exc
+        direct_error = exc
 
     rate = int(os.getenv("VAPI_API_RATE_LIMIT_PER_SECOND", "0") or "0")
-    if not api_key or rate <= 0:
-        if cdn_error is not None and _is_retryable(cdn_error):
-            raise cdn_error
-        raise RuntimeError("CDN failed and authenticated fallback is disabled")
+    if rate <= 0:
+        _raise_direct_fallback_disabled(direct_error)
+
+    # Only resolve credentials when authenticated fallback is actually enabled.
+    api_key = api_key_provider() if callable(api_key_provider) else None
+    if not api_key:
+        _raise_direct_fallback_disabled(direct_error)
 
     artifact = VapiRecordingService.artifact_for_url_type(kind)
     if not artifact:
@@ -372,11 +414,31 @@ def _download(url: str, call_id: str, kind: str, api_key: str | None) -> bytes:
     data = VapiRecordingService.download_artifact_sync(call_id, artifact, api_key)
     if not data:
         raise RuntimeError("Empty Vapi artifact")
-    return data
+    return data, None
+
+
+def _object_key_from_existing_url(base: str, url: str) -> str | None:
+    """Map a durable storage URL back to its object key without re-stat."""
+    from simulate.temporal.utils.async_storage import (
+        _REHOST_AUDIO_EXTENSIONS,
+        _rehost_object_key,
+    )
+
+    path = urllib.parse.urlparse(url).path.lstrip("/")
+    for ext in _REHOST_AUDIO_EXTENSIONS:
+        candidate = _rehost_object_key(base, ext)
+        if path == candidate or path.endswith("/" + candidate):
+            return candidate
+    return None
 
 
 def _stored(
-    project_id: str, call_id: str, kind: str, original: str, audio: bytes | None
+    project_id: str,
+    call_id: str,
+    kind: str,
+    original: str,
+    audio: bytes | None,
+    audio_ext: str | None = None,
 ) -> str:
     from simulate.temporal.utils.async_storage import (
         _detected_audio_extension,
@@ -393,34 +455,22 @@ def _stored(
     existing = _existing_rehosted_audio(base)
     if existing:
         url = existing[0]
-        storage = get_storage_client()
-        object_key = None
-        for ext in ("mp3", "wav", "ogg", "m4a", "aac", "flac", "wma", "aiff", "au"):
-            candidate = _rehost_object_key(base, ext)
-            try:
-                storage.stat_object(UPLOAD_BUCKET_NAME, candidate)
-                object_key = candidate
-                break
-            except Exception as exc:
-                if getattr(exc, "code", "") in {
-                    "NoSuchKey",
-                    "NoSuchObject",
-                    "NoSuchFile",
-                }:
-                    continue
-                raise
+        object_key = _object_key_from_existing_url(base, url)
         if not object_key:
-            raise RuntimeError("Existing S3 URL has no matching object")
+            raise RuntimeError("Existing S3 URL has no matching object key")
     else:
         if not audio:
             raise RuntimeError("Missing audio bytes")
-        object_key = _rehost_object_key(base, _detected_audio_extension(audio))
+        # Prefer extension carried from direct-URL validation (one ffmpeg).
+        ext = audio_ext or _detected_audio_extension(audio)
+        object_key = _rehost_object_key(base, ext)
         url = upload_audio_to_s3({"bytes": audio}, object_key=object_key)
     if url == original or not VapiRecordingService.is_fagi_s3_url(url):
         raise RuntimeError("Upload returned an invalid storage URL")
     stat = get_storage_client().stat_object(UPLOAD_BUCKET_NAME, object_key)
     _validate_storage_stat(stat)
     return url
+
 
 
 def _update_pg(row: Any, kind: str, old: str, new: str) -> bool:
@@ -617,7 +667,6 @@ def vapi_simulation_backfill_batch(inp: VapiBackfillInput) -> VapiBackfillResult
                 continue
             try:
                 project_id = _project_id(row)
-                key = None if inp.dry_run else _api_key(row, project_id)
             except Exception as exc:
                 out.fatal += len(artifacts)
                 out.errors.append(
@@ -625,19 +674,30 @@ def vapi_simulation_backfill_batch(inp: VapiBackfillInput) -> VapiBackfillResult
                 )
                 out.processed += 1
                 continue
+            api_key_provider = lambda row=row, project_id=project_id: _api_key(
+                row, project_id
+            )
             for kind, old in artifacts.items():
                 if inp.dry_run:
                     out.changed += 1
                     continue
                 try:
                     base = _rehost_object_key_base(call_id, kind, project_id, "vapi")
-                    audio = (
-                        None
-                        if _existing_rehosted_audio(base)
-                        else _download(old, call_id, kind, key)
-                    )
+                    audio = None
+                    audio_ext = None
+                    if not _existing_rehosted_audio(base):
+                        audio, audio_ext = _download(
+                            old, call_id, kind, api_key_provider
+                        )
                     try:
-                        new = _stored(project_id, call_id, kind, old, audio)
+                        new = _stored(
+                            project_id,
+                            call_id,
+                            kind,
+                            old,
+                            audio,
+                            audio_ext=audio_ext,
+                        )
                     finally:
                         # Drop recording bytes immediately — never hold batch audio in RAM.
                         audio = None
@@ -1140,14 +1200,27 @@ def vapi_observability_backfill_batch(inp: VapiBackfillInput) -> VapiBackfillRes
                 base = _rehost_object_key_base(
                     str(call_id), kind, str(project_id), "vapi"
                 )
-                api_key = _api_key_for_attributes(attrs, str(project_id))
-                audio = (
-                    None
-                    if _existing_rehosted_audio(base)
-                    else _download(old, str(call_id), kind, api_key)
-                )
+                audio = None
+                audio_ext = None
+                if not _existing_rehosted_audio(base):
+                    # Resolve credentials only if authenticated Vapi API fallback runs.
+                    audio, audio_ext = _download(
+                        old,
+                        str(call_id),
+                        kind,
+                        lambda attrs=attrs, project_id=str(project_id): (
+                            _api_key_for_attributes(attrs, project_id)
+                        ),
+                    )
                 try:
-                    new = _stored(str(project_id), str(call_id), kind, old, audio)
+                    new = _stored(
+                        str(project_id),
+                        str(call_id),
+                        kind,
+                        old,
+                        audio,
+                        audio_ext=audio_ext,
+                    )
                 finally:
                     # Drop recording bytes immediately — never hold batch audio in RAM.
                     audio = None
