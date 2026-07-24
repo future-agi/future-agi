@@ -1111,6 +1111,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "evaluation_data",
             "error_message",
             "observation_span",
+            "call_logs",
+            "raw_log",
         }
     )
 
@@ -3856,11 +3858,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             attrs_result = analytics.execute_ch_query(
                 "SELECT id, provider, "
                 "attributes_extra AS span_attributes, "
-                "attrs_string, attrs_number, attrs_bool "
-                "FROM spans FINAL "
-                "PREWHERE id IN %(span_ids)s "
-                "WHERE is_deleted = 0",
-                {"span_ids": tuple(span_ids)},
+                "mapFilter((k, v) -> k != 'call_logs', attrs_string) AS attrs_string, "
+                "attrs_number, attrs_bool "
+                "FROM spans "
+                "PREWHERE id IN %(span_ids)s AND project_id = %(project_id)s "
+                "WHERE is_deleted = 0 "
+                "ORDER BY _version DESC LIMIT 1 BY id",
+                {"span_ids": tuple(span_ids), "project_id": str(project_id)},
                 timeout_ms=10000,
             )
             for arow in attrs_result.data:
@@ -4027,9 +4031,18 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 else []
             )
 
-            # Include span attributes for custom columns (skip heavy/nested values)
+            # Include span attributes for custom columns (skip heavy/nested values).
+            # provider_transcript / fi.conversation.transcript / metrics_data are
+            # detail-only transcript payloads — never in a list row.
             for key, value in span_attrs.items():
-                if key in ("raw_log", "call") or key in entry:
+                if key in (
+                    "raw_log",
+                    "call",
+                    "call_logs",
+                    "provider_transcript",
+                    "fi.conversation.transcript",
+                    "metrics_data",
+                ) or key in entry:
                     continue
                 if isinstance(value, (str, int, float, bool)):
                     entry[key] = value
