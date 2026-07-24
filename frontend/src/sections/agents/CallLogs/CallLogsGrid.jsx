@@ -111,7 +111,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
   const theme = useTheme();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
-  const [pageLimit, setPageLimit] = useState(25);
+  const [pageLimit, setPageLimit] = useState(15);
   const [totalPages, setTotalPages] = useState(1);
   const [lastFilters, setLastFilters] = useState(params?.filters);
   const { selectedVersion } = useAgentDetailsStore();
@@ -552,7 +552,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
               }}
               sx={{ height: 36, bgcolor: "background.paper" }}
             >
-              {[10, 25, 50].map((size) => (
+              {[10, 15, 25, 50].map((size) => (
                 <MenuItem key={size} value={size}>
                   {size}
                 </MenuItem>
