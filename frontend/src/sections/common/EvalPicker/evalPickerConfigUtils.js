@@ -104,6 +104,55 @@ export const buildEvalTemplateConfig = ({
   return nextConfig;
 };
 
+// Build the nested `{ mapping, config, run_config, params }` payload the
+// experiment endpoints expect (matches the shape EvaluationDrawer sends to
+// /edit_and_run_user_eval). Kept here so both the creation wizard and the
+// Manage-Evaluations drawer emit an identical shape — otherwise runtime
+// overrides picked in the drawer (agent_mode, tools, summary, …) never
+// reach `UserEvalMetric.config.run_config` and the pinned version snapshot
+// ends up equal to the template default.
+export const buildExperimentEvalRuntimePayload = (evalConfig, mapping) => {
+  const isComposite = evalConfig.templateType === "composite";
+  const templateConfig =
+    evalConfig.config || evalConfig.evalTemplate?.config || {};
+  const runConfig = {};
+  if (!isComposite) {
+    if (evalConfig.model) runConfig.model = evalConfig.model;
+    if (evalConfig.agent_mode) runConfig.agent_mode = evalConfig.agent_mode;
+    if (evalConfig.check_internet !== undefined)
+      runConfig.check_internet = !!evalConfig.check_internet;
+    if (evalConfig.summary) runConfig.summary = evalConfig.summary;
+    if (evalConfig.knowledge_base_id)
+      runConfig.knowledge_base_id = evalConfig.knowledge_base_id;
+    if (evalConfig.knowledge_bases)
+      runConfig.knowledge_bases = evalConfig.knowledge_bases;
+    if (evalConfig.tools) runConfig.tools = evalConfig.tools;
+    if (evalConfig.pass_threshold !== undefined)
+      runConfig.pass_threshold = evalConfig.pass_threshold;
+    if (
+      evalConfig.choice_scores &&
+      Object.keys(evalConfig.choice_scores).length
+    )
+      runConfig.choice_scores = evalConfig.choice_scores;
+    if (evalConfig.multi_choice !== undefined)
+      runConfig.multi_choice = !!evalConfig.multi_choice;
+  }
+  if (evalConfig.data_injection)
+    runConfig.data_injection = evalConfig.data_injection;
+  if (evalConfig.error_localizer_enabled !== undefined)
+    runConfig.error_localizer_enabled = !!evalConfig.error_localizer_enabled;
+  const evalParams =
+    evalConfig.params && typeof evalConfig.params === "object"
+      ? evalConfig.params
+      : {};
+  return {
+    mapping,
+    config: isComposite ? {} : templateConfig,
+    ...(Object.keys(evalParams).length ? { params: evalParams } : {}),
+    ...(Object.keys(runConfig).length ? { run_config: runConfig } : {}),
+  };
+};
+
 export const buildCompositeSourceModeProps = ({
   isComposite,
   fullEval,

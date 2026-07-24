@@ -439,6 +439,7 @@ const RunExperimentForm = ({
               control={control}
               errors={errors}
               isEditingExperiment={Boolean(selectedExperiment)}
+              experimentId={selectedExperiment}
             />
           </ShowComponent>
 

@@ -1591,6 +1591,195 @@ class TestExperimentInlineEvalMetrics:
             "expected": "expected_column",
         }
 
+    # ==================== TH-6979: pinned_version_id parity ====================
+
+    @pytest.fixture
+    def user_eval_template(self, db, organization, workspace):
+        from model_hub.models.choices import OwnerChoices
+
+        return EvalTemplate.objects.create(
+            name="th-6979-user-template",
+            organization=organization,
+            workspace=workspace,
+            owner=OwnerChoices.USER.value,
+            criteria="Check {{output}}",
+            model="turing_large",
+        )
+
+    def test_create_eval_metrics_inline_pins_v1_for_user_template(
+        self, experiment, dataset, organization, user, workspace, user_eval_template
+    ):
+        """Baseline: creation without an explicit pin still creates + pins V1
+        (parity with the dataset EditAndRunUserEvalView side)."""
+        from model_hub.models.evals_metric import EvalTemplateVersion
+        from model_hub.views.experiments import _create_eval_metrics_inline
+
+        metrics = _create_eval_metrics_inline(
+            eval_entries=[
+                {
+                    "name": "pinned-parity-v1",
+                    "template_id": user_eval_template.id,
+                    "config": {"mapping": {"output": "output_column"}},
+                    "model": "turing_small",
+                }
+            ],
+            experiment=experiment,
+            snapshot_dataset=dataset,
+            organization=organization,
+            user=user,
+            workspace=workspace,
+        )
+        m = metrics[0]
+        assert m.pinned_version_id is not None
+        v1 = EvalTemplateVersion.objects.get(id=m.pinned_version_id)
+        assert v1.version_number == 1
+        assert v1.is_default is True
+
+    def test_create_eval_metrics_inline_honors_explicit_pinned_version(
+        self, experiment, dataset, organization, user, workspace, user_eval_template
+    ):
+        """TH-6979 core: passing `pinned_version_id` on the entry re-baselines
+        the pin so `maybe_pin_new_version` dedups against the user's pick
+        instead of silently creating a new version."""
+        from model_hub.models.evals_metric import EvalTemplateVersion
+        from model_hub.views.experiments import _create_eval_metrics_inline
+
+        # Two pre-existing versions on the template. v1's snapshot mirrors
+        # what `maybe_pin_new_version` would build for the entry below so
+        # dedup can hit exactly (`template.config | inner | {"model": ...}`).
+        v1_snap = {"foo": "one", "model": user_eval_template.model}
+        v1 = EvalTemplateVersion.objects.create_version(
+            eval_template=user_eval_template,
+            config_snapshot=v1_snap,
+            model=user_eval_template.model,
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        v2 = EvalTemplateVersion.objects.create_version(
+            eval_template=user_eval_template,
+            config_snapshot={"foo": "two", "model": user_eval_template.model},
+            model=user_eval_template.model,
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+
+        # Entry replays v1's snapshot exactly (so dedup fires) and asks
+        # the FE version pin to snap back to v1.
+        metrics = _create_eval_metrics_inline(
+            eval_entries=[
+                {
+                    "name": "pinned-parity-explicit",
+                    "template_id": user_eval_template.id,
+                    "config": {
+                        "mapping": {"output": "output_column"},
+                        "config": {"foo": "one"},
+                    },
+                    "model": user_eval_template.model,
+                    "pinned_version_id": str(v1.id),
+                }
+            ],
+            experiment=experiment,
+            snapshot_dataset=dataset,
+            organization=organization,
+            user=user,
+            workspace=workspace,
+        )
+        m = metrics[0]
+        # Dedup fired: pinned_version_id == v1, no v3 created.
+        assert str(m.pinned_version_id) == str(v1.id)
+        assert (
+            EvalTemplateVersion.objects.filter(eval_template=user_eval_template).count()
+            == 2
+        )
+        # v2 stays around and still exists; v1 is the pin.
+        assert EvalTemplateVersion.objects.filter(id=v2.id).exists()
+
+    def test_apply_pinned_version_baseline_rejects_foreign_template(
+        self, experiment, dataset, organization, user, workspace, user_eval_template
+    ):
+        """Guard: pin id belonging to a different template raises so the
+        wrapping view surfaces it as a 400 rather than silently ignoring."""
+        from model_hub.models.choices import OwnerChoices
+        from model_hub.models.evals_metric import EvalTemplateVersion
+        from model_hub.views.experiments import (
+            _apply_entry_pinned_version_baseline,
+        )
+
+        other_tpl = EvalTemplate.objects.create(
+            name="th-6979-other-template",
+            organization=organization,
+            workspace=workspace,
+            owner=OwnerChoices.USER.value,
+        )
+        other_v1 = EvalTemplateVersion.objects.create_version(
+            eval_template=other_tpl,
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        # Create a metric bound to user_eval_template but reference a version
+        # from other_tpl in the entry — this should error out.
+        metric = UserEvalMetric.objects.create(
+            name="th-6979-mismatch",
+            organization=organization,
+            workspace=workspace,
+            dataset=dataset,
+            template=user_eval_template,
+            config={"mapping": {"output": "output_column"}},
+            status=StatusType.EXPERIMENT_EVALUATION.value,
+            source_id=str(experiment.id),
+            user=user,
+        )
+        with pytest.raises(ValueError, match="not found for template"):
+            _apply_entry_pinned_version_baseline(
+                {"pinned_version_id": str(other_v1.id)}, metric
+            )
+
+    def test_has_eval_changed_detects_version_only_switch(
+        self, experiment, dataset, organization, user, workspace, user_eval_template
+    ):
+        """Switching versions without editing config still triggers re-run —
+        otherwise `_diff_and_update_evals` would skip the update branch and
+        the pin would never be re-applied."""
+        from model_hub.models.evals_metric import EvalTemplateVersion
+        from model_hub.views.experiments import _has_eval_changed
+
+        v1 = EvalTemplateVersion.objects.create_version(
+            eval_template=user_eval_template,
+            user=user, organization=organization, workspace=workspace,
+        )
+        v2 = EvalTemplateVersion.objects.create_version(
+            eval_template=user_eval_template,
+            user=user, organization=organization, workspace=workspace,
+        )
+        metric = UserEvalMetric.objects.create(
+            name="th-6979-switch",
+            organization=organization,
+            workspace=workspace,
+            dataset=dataset,
+            template=user_eval_template,
+            config={"mapping": {"output": "output_column"}, "config": {}},
+            status=StatusType.EXPERIMENT_EVALUATION.value,
+            source_id=str(experiment.id),
+            user=user,
+            pinned_version=v1,
+        )
+        entry = {
+            "id": str(metric.id),
+            "name": metric.name,
+            "template_id": str(user_eval_template.id),
+            "model": metric.model or "",
+            "kb_id": None,
+            "error_localizer": False,
+            "config": {"mapping": {"output": "output_column"}, "config": {}},
+            "pinned_version_id": str(v2.id),
+        }
+        assert (
+            _has_eval_changed(metric, entry, {"output": "output_column"}) is True
+        )
+
 
 @pytest.mark.django_db
 class TestExperimentComparisonWeights:

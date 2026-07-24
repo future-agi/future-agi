@@ -4522,6 +4522,63 @@ def _with_default_reason_column(config):
     return config
 
 
+def _apply_entry_pinned_version_baseline(entry, metric):
+    """Re-point `metric.pinned_version` to the version the FE picker chose,
+    so `maybe_pin_new_version` uses it as the dedup baseline.
+
+    Mirrors `EditAndRunUserEvalView.post` (`develop_dataset.py:8031-8045`):
+    picking a version with no other edits → snap matches → dedup keeps it
+    pinned; picking a version with edits → new version created off that
+    baseline. Raises ValueError if the id was supplied but doesn't belong
+    to the metric's template (the calling views translate this to a 400).
+    """
+    from model_hub.models.evals_metric import EvalTemplateVersion
+
+    ver_id = entry.get("pinned_version_id")
+    if not ver_id:
+        return
+    ver = EvalTemplateVersion.objects.filter(
+        id=ver_id, eval_template=metric.template
+    ).first()
+    if not ver:
+        raise ValueError(
+            f"Selected eval version {ver_id} not found for template"
+        )
+    metric.pinned_version = ver
+
+
+def _pin_experiment_metric_version(metric, entry, user, organization, workspace):
+    """Create + pin the initial EvalTemplateVersion for an experiment eval.
+
+    Mirrors what the dataset "Edit Eval" path does via
+    `EditAndRunUserEvalView.post` → `maybe_pin_new_version`. Without this
+    call, experiment-scoped UserEvalMetric rows never get a version row
+    in `model_hub_eval_template_version` and `pinned_version_id` stays
+    NULL. The service dedupes: on subsequent updates whose snapshot
+    matches the current pin, no new row is created — same as dataset.
+
+    `entry["config"]` is already the `{ mapping, config, run_config }`
+    shape the service expects, so it's passed through unwrapped. Callers
+    that want to honor an explicit `pinned_version_id` on `entry` should
+    call `_apply_entry_pinned_version_baseline` first.
+    """
+    from model_hub.services.eval_version_pinning import maybe_pin_new_version
+
+    maybe_pin_new_version(
+        metric,
+        {
+            "config": entry.get("config") or {},
+            "model": entry.get("model") or metric.model or "",
+            "composite_weight_overrides": entry.get("composite_weight_overrides"),
+        },
+        user=user,
+        organization=organization,
+        workspace=workspace,
+    )
+    if metric.pinned_version_id:
+        metric.save(update_fields=["pinned_version"])
+
+
 def _create_eval_metrics_inline(
     eval_entries,
     experiment,
@@ -4581,6 +4638,13 @@ def _create_eval_metrics_inline(
             # Per-binding weight overrides for composite evals. Ignored
             # for single-template metrics. See Phase 7 wiring plan.
             composite_weight_overrides=entry.get("composite_weight_overrides"),
+        )
+        # Honor an explicit version pick before pinning so dedup keeps the
+        # chosen version when the user made no other edits (parity with
+        # EditAndRunUserEvalView).
+        _apply_entry_pinned_version_baseline(entry, metric)
+        _pin_experiment_metric_version(
+            metric, entry, user, organization, workspace
         )
         created.append(metric)
     return created
@@ -5100,6 +5164,11 @@ def _has_eval_changed(metric, entry, translated_mapping):
         return True
     if metric.name != entry.get("name", ""):
         return True
+    # Version-switch with no other edits still counts as a change — the
+    # drawer needs to re-pin and re-run against the newly-selected version.
+    entry_pin = entry.get("pinned_version_id")
+    if entry_pin and str(entry_pin) != str(metric.pinned_version_id or ""):
+        return True
     return False
 
 
@@ -5151,6 +5220,15 @@ def _diff_and_update_evals(
                 metric.error_localizer = entry.get("error_localizer", False)
                 metric.kb_id = entry.get("kb_id")
                 metric.save()
+                # Honor an explicit version pick before pinning so dedup can
+                # keep the chosen version pinned when only the version was
+                # switched (parity with EditAndRunUserEvalView).
+                _apply_entry_pinned_version_baseline(entry, metric)
+                # Pin a new version so drawer edits get versioned the same
+                # way dataset edits do. Dedupes internally.
+                _pin_experiment_metric_version(
+                    metric, entry, user, organization, workspace
+                )
                 rerun_ids.append(entry_id)
         else:
             # NEW metric — create and pre-create eval columns

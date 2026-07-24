@@ -22,6 +22,7 @@ import { ShowComponent } from "src/components/show";
 import ConfirmRunEvaluations from "src/sections/common/EvaluationDrawer/ConfirmRunEvaluations";
 import { getVersionedEvalName } from "src/components/run-tests/common";
 import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
+import { buildExperimentEvalRuntimePayload } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 
 const isUUID = (str) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
@@ -38,6 +39,11 @@ const transformEvals = (evalList) =>
     model: evalItem.model,
     error_localizer: evalItem.errorLocalizer,
     kb_id: evalItem.kbId || null,
+    // Carry the version dropdown pick so the backend can pin it as the
+    // dedup baseline in `_diff_and_update_evals` /
+    // `_create_eval_metrics_inline`.
+    pinned_version_id:
+      evalItem.pinned_version_id ?? evalItem.pinnedVersionId ?? null,
     // Forward composite per-binding weight overrides when the bound
     // template is a composite. The experiment runner's composite branch
     // (Phase C) reads this off `UserEvalMetric.composite_weight_overrides`
@@ -178,16 +184,15 @@ const ManageExperimentEvalsDrawer = ({
       translatedMapping[variable] = col?.field || colName;
     }
 
-    const templateConfig =
-      evalConfig.config || evalConfig.evalTemplate?.config || {};
-
     const builtEval = {
       templateId: evalConfig.templateId,
       evalTemplateName: evalConfig.name,
       model: evalConfig.model,
       mapping: translatedMapping,
-      config: { ...templateConfig, mapping: translatedMapping },
+      config: buildExperimentEvalRuntimePayload(evalConfig, translatedMapping),
       templateType: evalConfig.templateType,
+      // Carry the picker's version selection through to `transformEvals`.
+      pinned_version_id: evalConfig.versionId ?? null,
       ...(evalConfig.templateType === "composite" &&
       evalConfig.compositeWeightOverrides
         ? { compositeWeightOverrides: evalConfig.compositeWeightOverrides }
@@ -255,6 +260,11 @@ const ManageExperimentEvalsDrawer = ({
       mapping: evalItem.config?.mapping || evalItem.mapping,
       model: evalItem.model || evalItem.selected_model,
       run_config: evalItem.config,
+      // Seed EvalPickerConfigFull's version dropdown with the currently
+      // pinned version so reopening after Update Evaluation renders the
+      // just-saved version rather than the template default.
+      pinned_version_id:
+        evalItem.pinned_version_id ?? evalItem.pinnedVersionId ?? null,
       compositeWeightOverrides:
         evalItem.compositeWeightOverrides ||
         evalItem.composite_weight_overrides,
