@@ -62,9 +62,16 @@ jobs:
     needs: [guard, build]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: future-agi
+          repositories: ee
       - name: Dispatch platform-release to ee
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           VERSION: ${{ needs.guard.outputs.version }}
         run: |
           set -eu
@@ -80,9 +87,16 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: future-agi
+          repositories: docs
       - name: Dispatch platform-release to docs
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           VERSION: ${{ needs.guard.outputs.version }}
         run: |
           set -eu
@@ -108,11 +122,18 @@ jobs:
         .temporal_worker_trace.image.tag .temporal_worker_agent_compass.image.tag
         .agentcc_gateway.image.tag .codeExecutor.image.tag
     steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: future-agi
+          repositories: deployment
       - name: Checkout deployment repo
         uses: actions/checkout@v4
         with:
           repository: future-agi/deployment
-          token: ${{ secrets.RELEASE_BOT_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           ref: main
       - name: Install yq
         run: sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64 && sudo chmod +x /usr/local/bin/yq
@@ -139,7 +160,7 @@ jobs:
           bump us/gcp/deployment/values.yaml  $COMMON_PATHS .fiCollector.image.tag
       - name: Open bump PR
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -eu
           branch="chore/bump-platform-${VERSION}"
