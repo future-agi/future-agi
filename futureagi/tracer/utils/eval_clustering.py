@@ -5,7 +5,6 @@ Mirrors trace_scanner.cluster_issues() — orchestrates the embed → match → 
 pipeline for failing eval results.
 """
 
-import uuid
 from typing import List
 
 import structlog
@@ -54,7 +53,7 @@ def cluster_eval_results(project_id: str) -> EvalClusteringSummary:
     texts = [r.embedding_text for r in results]
     embeddings = embed_texts(texts)
 
-    summary = EvalClusteringSummary()
+    summary = EvalClusteringSummary(fetched=len(results))
 
     for result, embedding in zip(results, embeddings):
         try:
@@ -91,52 +90,22 @@ def cluster_eval_results(project_id: str) -> EvalClusteringSummary:
         assigned=summary.assigned,
     )
 
-    # Continue draining only when the batch was full AND we made forward
-    # progress.
-    #
-    # The continuation must use a DISTINCT workflow id — not the fixed
-    # per-project id + USE_EXISTING. That id+policy is for coalescing the
-    # per-row trigger burst; reusing it here is fatal: this code runs
-    # inside the still-open parent workflow, so USE_EXISTING resolves the
-    # conflict against the running parent at request time, coalesces the
-    # follow-up into it, the parent completes, and the backlog never
-    # advances past one batch (start_delay defers execution, not conflict
-    # resolution). A distinct id always starts a fresh run. The chain stays
-    # bounded — exactly one continuation per completed run, strictly
-    # sequential per project.
-    #
-    # The progress guard prevents a hot loop: a full batch with zero
-    # clustered means a downstream dependency (embeddings / centroid store)
-    # is failing — re-triggering would spin with no effect, so stop and
-    # surface it instead.
-    if len(results) >= _CLUSTER_BATCH_LIMIT:
-        if summary.clustered > 0:
-            try:
-                from datetime import timedelta
-
-                from tracer.tasks.eval_clustering import cluster_eval_results_task
-
-                cluster_eval_results_task.apply_async(
-                    args=(project_id,),
-                    task_id=f"eval-cluster-{project_id}-cont-{uuid.uuid4().hex[:8]}",
-                    start_delay=timedelta(seconds=5),
-                )
-                logger.info(
-                    "eval_clustering_continuation_scheduled",
-                    project_id=project_id,
-                    drained=summary.clustered,
-                )
-            except Exception:
-                logger.debug(
-                    "eval_clustering_continuation_skipped",
-                    project_id=project_id,
-                    exc_info=True,
-                )
-        else:
-            logger.error(
-                "eval_clustering_stuck_no_progress",
-                project_id=project_id,
-                fetched=len(results),
-            )
+    # Draining past this batch is handled by the caller
+    # (``cluster_eval_results_task`` loops until a batch comes back short), NOT a
+    # self-continuation here. A self-continuation would necessarily use a distinct
+    # workflow id (this run completes right after scheduling it), so it would run
+    # concurrently with the next per-eval trigger — both claim the same unlocked
+    # oldest-``_CLUSTER_BATCH_LIMIT`` rows (no row lock) and double-count on
+    # ``assign_to_cluster``. Omitted on purpose: the trigger's fixed-id +
+    # USE_EXISTING coalescing is the only per-project concurrency guard.
+    if summary.fetched >= _CLUSTER_BATCH_LIMIT and summary.clustered == 0:
+        # A full batch that clustered nothing means a downstream dependency
+        # (embeddings / centroid store) is failing. Surface it rather than let the
+        # caller's loop spin silently.
+        logger.error(
+            "eval_clustering_stuck_no_progress",
+            project_id=project_id,
+            fetched=summary.fetched,
+        )
 
     return summary

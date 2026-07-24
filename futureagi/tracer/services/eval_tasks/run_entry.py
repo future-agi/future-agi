@@ -68,7 +68,54 @@ def run_entry(entry: EvalLogger) -> str:
     fresh.refresh_from_db()
     status = EvalEntryStatus.ERRORED if fresh.error else EvalEntryStatus.COMPLETED
     mark_terminal(fresh, status, config_hash=config_hash)
+    if status == EvalEntryStatus.COMPLETED:
+        _reseed_eval_clustering(fresh, config.project_id)
     return status
+
+
+def _reseed_eval_clustering(entry: EvalLogger, project_id) -> None:
+    """Re-trigger eval-result clustering for a completed *failing* eval-task eval.
+
+    Clustering used to be seeded inside the ``evaluate_*_observe`` wrappers, which
+    the (now-retired) eval-task cron drove. The per-task workflows that replaced
+    the cron call the inner eval cores directly and bypass those wrappers, so the
+    trigger has to live here or eval-task failures never cluster — the exact gap
+    the cutover opened. ``run_entry`` is the single activity core both the
+    historical AND continuous workflows drain every entry through, so hooking it
+    covers both (a per-task-completion hook would miss continuous tasks, which
+    never finalize).
+
+    Coalesced per project via the fixed ``eval-cluster-{project_id}`` id +
+    USE_EXISTING; ``cluster_eval_results_task`` drains the project's backlog in
+    one run, so a burst of triggers collapses onto one draining run and loses
+    nothing. Fail-open, but at WARNING — never DEBUG: a silently swallowed
+    dispatch is exactly what hid the cutover regression. A clustering hiccup must
+    not fail an eval that already produced a result, but it must stay visible.
+    """
+    # Mirror _FAILING_EVAL_Q's failure clause. A failing eval with no explanation
+    # has nothing to embed/cluster, so skip the no-op dispatch RPC.
+    is_clusterable_failure = (
+        entry.output_bool is False
+        or (entry.output_float is not None and entry.output_float < 1.0)
+    ) and entry.eval_explanation
+    if not is_clusterable_failure:
+        return
+    try:
+        # Lazy import: cluster_eval_results_task's module pulls the tracer task
+        # graph, so importing at module top risks a cycle (mirrors eval.py).
+        from temporalio.common import WorkflowIDConflictPolicy
+
+        from tracer.tasks.eval_clustering import cluster_eval_results_task
+
+        cluster_eval_results_task.apply_async(
+            args=(str(project_id),),
+            task_id=f"eval-cluster-{project_id}",
+            id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+        )
+    except Exception:
+        logger.warning(
+            "eval_clustering_dispatch_failed for project %s", project_id, exc_info=True
+        )
 
 
 def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
