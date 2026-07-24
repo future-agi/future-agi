@@ -20,17 +20,37 @@ const HuggingFaceDetailDrawer = ({
 }) => {
   useEffect(() => {
     if (!show) return;
-    if (show && showNameField && huggingFaceDetail?.name) {
-      const defaultValues = { name: huggingFaceDetail.name };
-      if (subsetOptions?.length > 0) {
-        defaultValues.huggingface_dataset_config = subsetOptions[0].value;
-      }
-      if (splitOptions?.length > 0) {
-        defaultValues.huggingface_dataset_split = splitOptions[0].value;
-      }
-      defaultValues.num_rows = 1;
-      reset(defaultValues);
+
+    const defaultValues = {};
+
+    // Set name field only when creating a new dataset (showNameField=true
+    // and an existing huggingFaceDetail is being edited). When adding
+    // rows to an already-created dataset, showNameField=false and we
+    // intentionally skip the name field — the existing dataset's name
+    // should not be overwritten.
+    if (showNameField && huggingFaceDetail?.name) {
+      defaultValues.name = huggingFaceDetail.name;
     }
+
+    // subset / split / num_rows must populate in BOTH flows
+    // (create-new-dataset AND add-rows-to-existing-dataset). The previous
+    // implementation gated `reset(defaultValues)` inside the
+    // `if (showNameField && huggingFaceDetail?.name)` block, which meant
+    // the add-rows flow never reset the form and the new rows were
+    // submitted with stale (or missing) subset/split/num_rows values —
+    // causing them to be written to the wrong location in the dataset.
+    // See issue #1500.
+    if (subsetOptions?.length > 0) {
+      defaultValues.huggingface_dataset_config = subsetOptions[0].value;
+    }
+    if (splitOptions?.length > 0) {
+      defaultValues.huggingface_dataset_split = splitOptions[0].value;
+    }
+
+    // Always set default row count.
+    defaultValues.num_rows = 1;
+
+    reset(defaultValues);
   }, [
     show,
     showNameField,
