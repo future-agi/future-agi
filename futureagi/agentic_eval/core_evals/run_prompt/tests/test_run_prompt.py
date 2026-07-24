@@ -22,21 +22,17 @@ Run with:
     python -m pytest agentic_eval/core_evals/run_prompt/tests/ -v -k "openai"
 """
 
-import os
-import json
-import time
-from unittest.mock import Mock, MagicMock, patch, AsyncMock
-from uuid import uuid4
+from unittest.mock import Mock, patch
 
 import pytest
 
 # Import test fixtures
-from .conftest import skip_if_no_api_key
 
 
 # =============================================================================
 # Unit Tests - RunPrompt Class Initialization
 # =============================================================================
+
 
 @pytest.mark.unit
 class TestRunPromptInitialization:
@@ -44,7 +40,9 @@ class TestRunPromptInitialization:
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_init_basic(self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id):
+    def test_init_basic(
+        self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id
+    ):
         """Test basic RunPrompt initialization."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -72,7 +70,14 @@ class TestRunPromptInitialization:
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_init_with_run_prompt_config(self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id, run_prompt_config_creative):
+    def test_init_with_run_prompt_config(
+        self,
+        mock_custom_model,
+        mock_api_key,
+        simple_messages,
+        mock_organization_id,
+        run_prompt_config_creative,
+    ):
         """Test RunPrompt initialization with config overrides."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -100,7 +105,14 @@ class TestRunPromptInitialization:
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_init_explicit_overrides_config(self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id, run_prompt_config_creative):
+    def test_init_explicit_overrides_config(
+        self,
+        mock_custom_model,
+        mock_api_key,
+        simple_messages,
+        mock_organization_id,
+        run_prompt_config_creative,
+    ):
         """Test that explicit parameters override config values."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -131,13 +143,16 @@ class TestRunPromptInitialization:
 # Unit Tests - Payload Creation
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestPayloadCreation:
     """Test payload creation for different model types."""
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_standard_model_payload(self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id):
+    def test_standard_model_payload(
+        self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id
+    ):
         """Test payload creation for standard chat models."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -168,7 +183,9 @@ class TestPayloadCreation:
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_reasoning_model_payload_o1(self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id):
+    def test_reasoning_model_payload_o1(
+        self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id
+    ):
         """Test payload creation for o1 reasoning models."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -206,7 +223,9 @@ class TestPayloadCreation:
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_reasoning_model_payload_o3_mini(self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id):
+    def test_reasoning_model_payload_o3_mini(
+        self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id
+    ):
         """Test payload creation for o3-mini reasoning model."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -237,7 +256,9 @@ class TestPayloadCreation:
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_azure_reasoning_model_payload(self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id):
+    def test_azure_reasoning_model_payload(
+        self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id
+    ):
         """Test payload creation for Azure-prefixed reasoning models."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -258,7 +279,13 @@ class TestPayloadCreation:
             tools=None,
         )
 
-        payload = run_prompt._create_payload(provider="azure", api_key={"api_key": "test-key", "api_base": "https://test.openai.azure.com"})
+        payload = run_prompt._create_payload(
+            provider="azure",
+            api_key={
+                "api_key": "test-key",
+                "api_base": "https://test.openai.azure.com",
+            },
+        )
 
         # Azure reasoning models should also use max_completion_tokens
         assert "max_completion_tokens" in payload
@@ -268,7 +295,13 @@ class TestPayloadCreation:
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_json_response_format_payload(self, mock_custom_model, mock_api_key, json_format_messages, mock_organization_id):
+    def test_json_response_format_payload(
+        self,
+        mock_custom_model,
+        mock_api_key,
+        json_format_messages,
+        mock_organization_id,
+    ):
         """Test payload creation with JSON response format."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -295,7 +328,14 @@ class TestPayloadCreation:
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_tools_payload(self, mock_custom_model, mock_api_key, tool_messages, mock_organization_id, sample_tools):
+    def test_tools_payload(
+        self,
+        mock_custom_model,
+        mock_api_key,
+        tool_messages,
+        mock_organization_id,
+        sample_tools,
+    ):
         """Test payload creation with function/tool calling."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -326,21 +366,45 @@ class TestPayloadCreation:
 # Unit Tests - Reasoning Model Detection
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestReasoningModelDetection:
     """Test detection and handling of reasoning models."""
 
-    @pytest.mark.parametrize("model_name", [
-        "o1", "o1-2024-12-17", "o1-mini", "o1-mini-2024-09-12",
-        "o1-preview", "o1-preview-2024-09-12", "o1-pro",
-        "o3", "o3-mini", "o3-mini-2025-01-31", "o3-pro",
-        "o4-mini",
-        "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-5-pro",
-        "gpt-5.1", "gpt-5.2", "gpt-5.2-pro",
-    ])
+    @pytest.mark.parametrize(
+        "model_name",
+        [
+            "o1",
+            "o1-2024-12-17",
+            "o1-mini",
+            "o1-mini-2024-09-12",
+            "o1-preview",
+            "o1-preview-2024-09-12",
+            "o1-pro",
+            "o3",
+            "o3-mini",
+            "o3-mini-2025-01-31",
+            "o3-pro",
+            "o4-mini",
+            "gpt-5",
+            "gpt-5-mini",
+            "gpt-5-nano",
+            "gpt-5-pro",
+            "gpt-5.1",
+            "gpt-5.2",
+            "gpt-5.2-pro",
+        ],
+    )
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_reasoning_model_detected(self, mock_custom_model, mock_api_key, model_name, simple_messages, mock_organization_id):
+    def test_reasoning_model_detected(
+        self,
+        mock_custom_model,
+        mock_api_key,
+        model_name,
+        simple_messages,
+        mock_organization_id,
+    ):
         """Test that all reasoning models are properly detected."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -363,16 +427,33 @@ class TestReasoningModelDetection:
 
         payload = run_prompt._create_payload(provider="openai", api_key="test-key")
 
-        assert "max_completion_tokens" in payload, f"Model {model_name} should use max_completion_tokens"
-        assert "max_tokens" not in payload, f"Model {model_name} should not have max_tokens"
+        assert "max_completion_tokens" in payload, (
+            f"Model {model_name} should use max_completion_tokens"
+        )
+        assert "max_tokens" not in payload, (
+            f"Model {model_name} should not have max_tokens"
+        )
 
-    @pytest.mark.parametrize("model_name", [
-        "azure/o1", "azure/o1-mini", "azure/o3-mini",
-        "bedrock/o1", "openai/o3-mini",
-    ])
+    @pytest.mark.parametrize(
+        "model_name",
+        [
+            "azure/o1",
+            "azure/o1-mini",
+            "azure/o3-mini",
+            "bedrock/o1",
+            "openai/o3-mini",
+        ],
+    )
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_prefixed_reasoning_model_detected(self, mock_custom_model, mock_api_key, model_name, simple_messages, mock_organization_id):
+    def test_prefixed_reasoning_model_detected(
+        self,
+        mock_custom_model,
+        mock_api_key,
+        model_name,
+        simple_messages,
+        mock_organization_id,
+    ):
         """Test that prefixed reasoning models are properly detected."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -394,20 +475,41 @@ class TestReasoningModelDetection:
         )
 
         # Use appropriate provider based on prefix
-        provider = model_name.split('/')[0]
-        api_key = {"api_key": "test-key", "api_base": "https://test.example.com"} if provider == "azure" else "test-key"
+        provider = model_name.split("/")[0]
+        api_key = (
+            {"api_key": "test-key", "api_base": "https://test.example.com"}
+            if provider == "azure"
+            else "test-key"
+        )
 
         payload = run_prompt._create_payload(provider=provider, api_key=api_key)
 
-        assert "max_completion_tokens" in payload, f"Model {model_name} should use max_completion_tokens"
+        assert "max_completion_tokens" in payload, (
+            f"Model {model_name} should use max_completion_tokens"
+        )
 
-    @pytest.mark.parametrize("model_name", [
-        "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo",
-        "claude-3-5-sonnet-20241022", "claude-3-opus-20240229",
-    ])
+    @pytest.mark.parametrize(
+        "model_name",
+        [
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4-turbo",
+            "gpt-4",
+            "gpt-3.5-turbo",
+            "claude-3-5-sonnet-20241022",
+            "claude-3-opus-20240229",
+        ],
+    )
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_standard_model_not_reasoning(self, mock_custom_model, mock_api_key, model_name, simple_messages, mock_organization_id):
+    def test_standard_model_not_reasoning(
+        self,
+        mock_custom_model,
+        mock_api_key,
+        model_name,
+        simple_messages,
+        mock_organization_id,
+    ):
         """Test that standard models are NOT detected as reasoning models."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -432,12 +534,15 @@ class TestReasoningModelDetection:
         payload = run_prompt._create_payload(provider=provider, api_key="test-key")
 
         assert "max_tokens" in payload, f"Model {model_name} should use max_tokens"
-        assert "max_completion_tokens" not in payload, f"Model {model_name} should NOT use max_completion_tokens"
+        assert "max_completion_tokens" not in payload, (
+            f"Model {model_name} should NOT use max_completion_tokens"
+        )
 
 
 # =============================================================================
 # Unit Tests - LiteLLM Model Manager
 # =============================================================================
+
 
 @pytest.mark.unit
 class TestLiteLLMModelManager:
@@ -446,7 +551,9 @@ class TestLiteLLMModelManager:
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
     def test_init_without_organization(self, mock_custom_model):
         """Test ModelManager initialization without organization."""
-        from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+        from agentic_eval.core_evals.run_prompt.litellm_models import (
+            LiteLLMModelManager,
+        )
 
         mock_custom_model.objects.filter.return_value.values.return_value = []
 
@@ -458,20 +565,26 @@ class TestLiteLLMModelManager:
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
     def test_init_with_organization(self, mock_custom_model, mock_organization_id):
         """Test ModelManager initialization with organization."""
-        from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+        from agentic_eval.core_evals.run_prompt.litellm_models import (
+            LiteLLMModelManager,
+        )
 
         mock_custom_model.objects.filter.return_value.values.return_value = [
             {"user_model_id": "custom-gpt-4", "provider": "openai"}
         ]
 
-        manager = LiteLLMModelManager(model_name="custom-gpt-4", organization_id=mock_organization_id)
+        manager = LiteLLMModelManager(
+            model_name="custom-gpt-4", organization_id=mock_organization_id
+        )
 
         assert any(m["model_name"] == "custom-gpt-4" for m in manager.models)
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
     def test_get_provider(self, mock_custom_model):
         """Test getting provider for a model."""
-        from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+        from agentic_eval.core_evals.run_prompt.litellm_models import (
+            LiteLLMModelManager,
+        )
 
         mock_custom_model.objects.filter.return_value.values.return_value = []
 
@@ -483,7 +596,9 @@ class TestLiteLLMModelManager:
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
     def test_get_provider_anthropic(self, mock_custom_model):
         """Test getting provider for Anthropic model."""
-        from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+        from agentic_eval.core_evals.run_prompt.litellm_models import (
+            LiteLLMModelManager,
+        )
 
         mock_custom_model.objects.filter.return_value.values.return_value = []
 
@@ -495,7 +610,9 @@ class TestLiteLLMModelManager:
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
     def test_get_model_by_provider(self, mock_custom_model):
         """Test getting all models for a provider."""
-        from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+        from agentic_eval.core_evals.run_prompt.litellm_models import (
+            LiteLLMModelManager,
+        )
 
         mock_custom_model.objects.filter.return_value.values.return_value = []
 
@@ -508,7 +625,9 @@ class TestLiteLLMModelManager:
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
     def test_failed_models_removed(self, mock_custom_model):
         """Test that failed/deprecated models are removed."""
-        from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+        from agentic_eval.core_evals.run_prompt.litellm_models import (
+            LiteLLMModelManager,
+        )
 
         mock_custom_model.objects.filter.return_value.values.return_value = []
 
@@ -524,13 +643,16 @@ class TestLiteLLMModelManager:
 # Unit Tests - Retry Logic
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestRetryLogic:
     """Test retry logic for API calls."""
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_retry_on_timeout_success(self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id):
+    def test_retry_on_timeout_success(
+        self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id
+    ):
         """Test successful call after retry."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -559,13 +681,17 @@ class TestRetryLogic:
                 raise TimeoutError("Connection timeout")
             return "success"
 
-        result = run_prompt._retry_on_timeout(mock_func, max_retries=5, initial_delay=0.01)
+        result = run_prompt._retry_on_timeout(
+            mock_func, max_retries=5, initial_delay=0.01
+        )
         assert result == "success"
         assert call_count[0] == 3
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_retry_exhausted(self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id):
+    def test_retry_exhausted(
+        self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id
+    ):
         """Test that retries are exhausted properly."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -590,12 +716,15 @@ class TestRetryLogic:
             raise TimeoutError("Always timeout")
 
         with pytest.raises(TimeoutError):
-            run_prompt._retry_on_timeout(always_timeout, max_retries=3, initial_delay=0.01)
+            run_prompt._retry_on_timeout(
+                always_timeout, max_retries=3, initial_delay=0.01
+            )
 
 
 # =============================================================================
 # Unit Tests - Message Handling
 # =============================================================================
+
 
 @pytest.mark.unit
 class TestMessageHandling:
@@ -603,7 +732,9 @@ class TestMessageHandling:
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_get_input_text_from_simple_messages(self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id):
+    def test_get_input_text_from_simple_messages(
+        self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id
+    ):
         """Test extracting text from simple messages."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -630,7 +761,9 @@ class TestMessageHandling:
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_get_input_text_from_multimodal_messages(self, mock_custom_model, mock_api_key, multimodal_messages, mock_organization_id):
+    def test_get_input_text_from_multimodal_messages(
+        self, mock_custom_model, mock_api_key, multimodal_messages, mock_organization_id
+    ):
         """Test extracting text from multimodal messages."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -656,7 +789,9 @@ class TestMessageHandling:
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_get_input_text_empty_raises_error(self, mock_custom_model, mock_api_key, mock_organization_id):
+    def test_get_input_text_empty_raises_error(
+        self, mock_custom_model, mock_api_key, mock_organization_id
+    ):
         """Test that empty messages raise an error."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -685,6 +820,7 @@ class TestMessageHandling:
 # Integration Tests - Live LLM Calls (OpenAI)
 # =============================================================================
 
+
 @pytest.mark.integration
 @pytest.mark.live_llm
 @pytest.mark.external
@@ -700,7 +836,14 @@ class TestOpenAILiveIntegration:
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_gpt4o_basic_chat(self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id, api_keys):
+    def test_gpt4o_basic_chat(
+        self,
+        mock_custom_model,
+        mock_api_key,
+        simple_messages,
+        mock_organization_id,
+        api_keys,
+    ):
         """Test basic chat with GPT-4o."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -739,7 +882,9 @@ class TestOpenAILiveIntegration:
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_gpt4o_json_response(self, mock_custom_model, mock_api_key, mock_organization_id, api_keys):
+    def test_gpt4o_json_response(
+        self, mock_custom_model, mock_api_key, mock_organization_id, api_keys
+    ):
         """Test JSON response format with GPT-4o."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -755,7 +900,10 @@ class TestOpenAILiveIntegration:
 
         messages = [
             {"role": "system", "content": "You output valid JSON only."},
-            {"role": "user", "content": "Return a JSON with name 'test' and value 123."}
+            {
+                "role": "user",
+                "content": "Return a JSON with name 'test' and value 123.",
+            },
         ]
 
         run_prompt = RunPrompt(
@@ -781,6 +929,7 @@ class TestOpenAILiveIntegration:
 # Integration Tests - Live LLM Calls (Anthropic)
 # =============================================================================
 
+
 @pytest.mark.integration
 @pytest.mark.live_llm
 @pytest.mark.external
@@ -796,7 +945,14 @@ class TestAnthropicLiveIntegration:
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_claude_sonnet_basic_chat(self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id, api_keys):
+    def test_claude_sonnet_basic_chat(
+        self,
+        mock_custom_model,
+        mock_api_key,
+        simple_messages,
+        mock_organization_id,
+        api_keys,
+    ):
         """Test basic chat with Claude Sonnet."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -834,6 +990,7 @@ class TestAnthropicLiveIntegration:
 # Integration Tests - Live LLM Calls (Groq)
 # =============================================================================
 
+
 @pytest.mark.integration
 @pytest.mark.live_llm
 @pytest.mark.external
@@ -849,7 +1006,14 @@ class TestGroqLiveIntegration:
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_groq_llama_basic_chat(self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id, api_keys):
+    def test_groq_llama_basic_chat(
+        self,
+        mock_custom_model,
+        mock_api_key,
+        simple_messages,
+        mock_organization_id,
+        api_keys,
+    ):
         """Test basic chat with Groq Llama."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -886,6 +1050,7 @@ class TestGroqLiveIntegration:
 # Integration Tests - Live LLM Calls (xAI)
 # =============================================================================
 
+
 @pytest.mark.integration
 @pytest.mark.live_llm
 @pytest.mark.external
@@ -901,7 +1066,14 @@ class TestXAILiveIntegration:
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_grok_basic_chat(self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id, api_keys):
+    def test_grok_basic_chat(
+        self,
+        mock_custom_model,
+        mock_api_key,
+        simple_messages,
+        mock_organization_id,
+        api_keys,
+    ):
         """Test basic chat with Grok."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -939,6 +1111,7 @@ class TestXAILiveIntegration:
 # Integration Tests - Live LLM Calls (Perplexity)
 # =============================================================================
 
+
 @pytest.mark.integration
 @pytest.mark.live_llm
 @pytest.mark.external
@@ -953,7 +1126,14 @@ class TestPerplexityLiveIntegration:
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_perplexity_sonar_basic_chat(self, mock_custom_model, mock_api_key, simple_messages, mock_organization_id, api_keys):
+    def test_perplexity_sonar_basic_chat(
+        self,
+        mock_custom_model,
+        mock_api_key,
+        simple_messages,
+        mock_organization_id,
+        api_keys,
+    ):
         """Test basic chat with Perplexity Sonar."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -990,6 +1170,7 @@ class TestPerplexityLiveIntegration:
 # Stress Tests
 # =============================================================================
 
+
 @pytest.mark.slow
 @pytest.mark.integration
 class TestStressTests:
@@ -997,7 +1178,9 @@ class TestStressTests:
 
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_large_message_handling(self, mock_custom_model, mock_api_key, long_messages, mock_organization_id):
+    def test_large_message_handling(
+        self, mock_custom_model, mock_api_key, long_messages, mock_organization_id
+    ):
         """Test handling of large messages."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -1027,6 +1210,7 @@ class TestStressTests:
 # Configuration Tests
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestConfigurationVariations:
     """Test various configuration combinations."""
@@ -1034,7 +1218,14 @@ class TestConfigurationVariations:
     @pytest.mark.parametrize("temperature", [0.0, 0.5, 1.0, 2.0])
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_temperature_variations(self, mock_custom_model, mock_api_key, temperature, simple_messages, mock_organization_id):
+    def test_temperature_variations(
+        self,
+        mock_custom_model,
+        mock_api_key,
+        temperature,
+        simple_messages,
+        mock_organization_id,
+    ):
         """Test various temperature settings."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -1061,7 +1252,14 @@ class TestConfigurationVariations:
     @pytest.mark.parametrize("max_tokens", [1, 100, 1000, 4000, 8000])
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_max_tokens_variations(self, mock_custom_model, mock_api_key, max_tokens, simple_messages, mock_organization_id):
+    def test_max_tokens_variations(
+        self,
+        mock_custom_model,
+        mock_api_key,
+        max_tokens,
+        simple_messages,
+        mock_organization_id,
+    ):
         """Test various max_tokens settings."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -1088,7 +1286,14 @@ class TestConfigurationVariations:
     @pytest.mark.parametrize("top_p", [0.1, 0.5, 0.9, 1.0])
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.ApiKey")
     @patch("agentic_eval.core_evals.run_prompt.litellm_models.CustomAIModel")
-    def test_top_p_variations(self, mock_custom_model, mock_api_key, top_p, simple_messages, mock_organization_id):
+    def test_top_p_variations(
+        self,
+        mock_custom_model,
+        mock_api_key,
+        top_p,
+        simple_messages,
+        mock_organization_id,
+    ):
         """Test various top_p settings."""
         from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 
@@ -1117,6 +1322,7 @@ class TestConfigurationVariations:
 # Available Models Tests
 # =============================================================================
 
+
 @pytest.mark.unit
 class TestAvailableModels:
     """Test available models configuration."""
@@ -1130,24 +1336,26 @@ class TestAvailableModels:
 
     def test_oss_catalog_excludes_ee_only_models(self):
         """Test that OSS metadata does not expose private EE-only model aliases."""
-        from agentic_eval.core_evals.run_prompt.available_models import OSS_AVAILABLE_MODELS
+        from agentic_eval.core_evals.run_prompt.available_models import (
+            OSS_AVAILABLE_MODELS,
+        )
 
         model_names = {m["model_name"] for m in OSS_AVAILABLE_MODELS}
 
         assert "turing_large" not in model_names
         assert "protect_toxicity" not in model_names
         assert not any(
-            name.startswith("bedrock/arn:aws:bedrock:")
-            for name in model_names
+            name.startswith("bedrock/arn:aws:bedrock:") for name in model_names
         )
 
     def test_oss_public_catalog_keeps_pricing_metadata(self):
         """Test that public model pricing stays with the OSS catalog."""
-        from agentic_eval.core_evals.run_prompt.available_models import OSS_AVAILABLE_MODELS
+        from agentic_eval.core_evals.run_prompt.available_models import (
+            OSS_AVAILABLE_MODELS,
+        )
 
         gpt4o = next(
-            model for model in OSS_AVAILABLE_MODELS
-            if model["model_name"] == "gpt-4o"
+            model for model in OSS_AVAILABLE_MODELS if model["model_name"] == "gpt-4o"
         )
 
         assert gpt4o["pricing"] == {
@@ -1186,7 +1394,9 @@ class TestAvailableModels:
         reasoning_model_names = ["o1", "o3-mini", "o3", "o4-mini"]
         for model in AVAILABLE_MODELS:
             if model["model_name"] in reasoning_model_names:
-                assert "fields_not_allowed" in model, f"Model {model['model_name']} should have fields_not_allowed"
+                assert "fields_not_allowed" in model, (
+                    f"Model {model['model_name']} should have fields_not_allowed"
+                )
 
     def test_azure_reasoning_models_present(self):
         """Test that Azure reasoning models are present."""
@@ -1206,4 +1416,148 @@ class TestAvailableModels:
 
         for model in AVAILABLE_MODELS[:10]:  # Check first 10 models
             for field in required_fields:
-                assert field in model, f"Model {model.get('model_name', 'unknown')} missing {field}"
+                assert field in model, (
+                    f"Model {model.get('model_name', 'unknown')} missing {field}"
+                )
+
+
+# =============================================================================
+# get_api_key workspace scoping
+#
+# "API key not configured" was raised even though the AI Providers page
+# showed the key as added. Root cause: get_api_key() filtered strictly by
+# workspace_id with no fallback to an org-level key (workspace unset),
+# unlike every other org+workspace-scoped lookup in this codebase (see
+# model_hub/utils/eval_list.py, model_hub/serializers/tools.py, etc., which
+# all use Q(workspace=X) | Q(workspace__isnull=True)). A key saved before a
+# workspace was selected — or by any path that doesn't carry workspace
+# context — has workspace=None and was invisible to a workspace-scoped run.
+# =============================================================================
+
+
+@pytest.mark.django_db
+class TestGetApiKeyWorkspaceFallback:
+    """Real-DB tests for LiteLLMModelManager.get_api_key — the exact call
+    path litellm_response.py uses to run a prompt (RunPrompt.litellm_response
+    -> model_manager.get_api_key(organization_id, workspace_id, provider))."""
+
+    @pytest.fixture
+    def organization(self, db):
+        from accounts.models import Organization
+
+        return Organization.objects.create(name="Acme Org", ws_enabled=True)
+
+    @pytest.fixture
+    def user(self, db, organization):
+        from accounts.models import User
+
+        return User.objects.create_user(
+            email="apikeyfallback@example.com",
+            password="testpassword123",
+            name="Test User",
+            organization=organization,
+        )
+
+    @pytest.fixture
+    def default_workspace(self, db, organization, user):
+        from accounts.models.workspace import Workspace
+
+        return Workspace.objects.create(
+            name="Default Workspace",
+            organization=organization,
+            is_default=True,
+            created_by=user,
+        )
+
+    def _manager(self, organization_id, model_name="gpt-5.5"):
+        from agentic_eval.core_evals.run_prompt.litellm_models import (
+            LiteLLMModelManager,
+        )
+
+        return LiteLLMModelManager(model_name, organization_id=organization_id)
+
+    def test_org_level_key_found_when_run_with_explicit_workspace(
+        self, organization, default_workspace
+    ):
+        """A key saved with no workspace (workspace=None) must still resolve
+        when running a prompt inside a workspace — this is RED without the
+        fix (raises ValueError) and GREEN with it."""
+        from model_hub.models.api_key import ApiKey
+
+        ApiKey.objects.create(
+            provider="openai", organization=organization, key="sk-org-level-key"
+        )
+
+        manager = self._manager(organization.id)
+        provider = manager.get_provider(
+            model_name="gpt-5.5", organization_id=organization.id
+        )
+        assert provider == "openai"
+
+        api_key = manager.get_api_key(
+            organization_id=organization.id,
+            workspace_id=str(default_workspace.id),
+            provider=provider,
+        )
+
+        assert api_key == "sk-org-level-key"
+
+    def test_org_level_key_found_when_workspace_id_omitted(
+        self, organization, default_workspace
+    ):
+        """Same org-level key, called the way callers that don't track a
+        workspace_id at all invoke it (workspace_id=None) — must still
+        fall back to the default workspace's org-level key."""
+        from model_hub.models.api_key import ApiKey
+
+        ApiKey.objects.create(
+            provider="openai", organization=organization, key="sk-org-level-key"
+        )
+
+        manager = self._manager(organization.id)
+        api_key = manager.get_api_key(
+            organization_id=organization.id, workspace_id=None, provider="openai"
+        )
+
+        assert api_key == "sk-org-level-key"
+
+    def test_workspace_specific_key_takes_priority_over_org_level(
+        self, organization, default_workspace
+    ):
+        """When both an org-level and a workspace-specific key exist, the
+        workspace-specific one must win — the fallback must not clobber
+        intentional per-workspace overrides."""
+        from model_hub.models.api_key import ApiKey
+
+        ApiKey.objects.create(
+            provider="openai", organization=organization, key="sk-org-level-key"
+        )
+        ApiKey.objects.create(
+            provider="openai",
+            organization=organization,
+            workspace=default_workspace,
+            key="sk-workspace-specific-key",
+        )
+
+        manager = self._manager(organization.id)
+        api_key = manager.get_api_key(
+            organization_id=organization.id,
+            workspace_id=str(default_workspace.id),
+            provider="openai",
+        )
+
+        assert api_key == "sk-workspace-specific-key"
+
+    def test_raises_when_no_key_configured_for_provider(
+        self, organization, default_workspace
+    ):
+        """Negative branch: no key at all for the provider must still raise
+        with the user-facing settings message, not a KeyError/None leak."""
+        manager = self._manager(organization.id)
+
+        with pytest.raises(ValueError, match="API key not configured for openai"):
+            manager.get_api_key(
+                organization_id=organization.id,
+                workspace_id=str(default_workspace.id),
+                provider="openai",
+            )

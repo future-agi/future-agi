@@ -586,7 +586,6 @@ const ObserveHeader = ({
                   queryClient.invalidateQueries({
                     queryKey: ["observe-projects"],
                   });
-                  queryClient.invalidateQueries({ queryKey: ["callLogs"] });
                   // Dispatch a custom event that the grid can listen to
                   window.dispatchEvent(new CustomEvent("observe-refresh"));
                 }}

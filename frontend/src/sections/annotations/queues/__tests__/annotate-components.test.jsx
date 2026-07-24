@@ -842,6 +842,55 @@ describe("LabelPanel", () => {
     );
   });
 
+  it("enables submit only when every label is answered and re-disables on clear", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <LabelPanel
+        labels={[
+          {
+            id: "ql-1",
+            label_id: "label-1",
+            name: "Content",
+            type: "thumbs_up_down",
+            settings: {},
+            allow_notes: false,
+          },
+          {
+            id: "ql-2",
+            label_id: "label-2",
+            name: "Latency",
+            type: "thumbs_up_down",
+            settings: {},
+            allow_notes: false,
+          },
+        ]}
+        annotations={[]}
+        onSubmit={vi.fn()}
+        queueId="queue-1"
+        itemId="item-1"
+        submitLabel="Submit for Review"
+      />,
+    );
+
+    const submit = () =>
+      screen.getByRole("button", { name: /submit for review/i });
+
+    expect(submit()).toBeDisabled();
+
+    // One of two labels answered → still disabled.
+    await user.click(screen.getAllByText("Yes")[0]);
+    expect(submit()).toBeDisabled();
+
+    // Both answered → enabled.
+    await user.click(screen.getAllByText("No")[1]);
+    expect(submit()).toBeEnabled();
+
+    // Clearing the first label re-disables it.
+    await user.click(screen.getAllByText("Yes")[0]);
+    expect(submit()).toBeDisabled();
+  });
+
   it("prefills and submits whole-item notes", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();

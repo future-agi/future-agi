@@ -2130,6 +2130,7 @@ def _build_annotation_queue_export_fields(queue, sample_items=None):
         sample_items = (
             QueueItem.objects.filter(queue=queue, deleted=False)
             .select_related(
+                "project",
                 "dataset_row",
                 "prototype_run",
                 "call_execution",
@@ -3326,6 +3327,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             .select_related(
                 "queue",
                 "reviewed_by",
+                "project",
                 "dataset_row",
                 "prototype_run",
                 "call_execution",
@@ -3343,9 +3345,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         export_max = getattr(
             settings, "ANNOTATION_EXPORT_SYNC_MAX", EXPORT_SYNC_MAX_ITEMS
         )
-        items_list = list(
-            items_qs.order_by("order", "created_at")[: export_max + 1]
-        )
+        items_list = list(items_qs.order_by("order", "created_at")[: export_max + 1])
         if len(items_list) > export_max:
             return self._gm.custom_error_response(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -3662,6 +3662,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             .select_related(
                 "queue",
                 "reviewed_by",
+                "project",
                 "dataset_row",
                 "prototype_run",
                 "call_execution",
@@ -5838,6 +5839,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             # Tracer sources (trace / observation_span) resolve CH-native — no PG
             # select_related on them (a join to the dropped tracer tables would 500).
             item = QueueItem.objects.select_related(
+                "project",
                 "dataset_row",
                 "prototype_run",
                 "call_execution",
