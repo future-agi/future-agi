@@ -246,8 +246,12 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 logger.exception("login_config_save_failed", email=email)
 
             # --- Password check (must come before any token issuance) ---
-            password_entered = validated_data["password"]
-            if password_entered and not check_password(password_entered, user.password):
+            password_entered = request.data.get("password")
+            if (
+                not password_entered
+                or not str(password_entered).strip()
+                or not check_password(password_entered, user.password)
+            ):
                 failed_attempts += 1
                 cache.set(
                     attempts_key, failed_attempts, settings.FAILED_ATTEMPTS_TIMEOUT

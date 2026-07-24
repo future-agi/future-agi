@@ -151,6 +151,33 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 }
 
+func TestAuthEnabledCannotBeDisabledWhenInternalKeyPresent(t *testing.T) {
+	t.Setenv("AGENTCC_INTERNAL_API_KEY", "secret-key")
+	t.Setenv("AGENTCC_AUTH_ENABLED", "false")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+
+	if !cfg.Auth.Enabled {
+		t.Errorf("Auth.Enabled = false, want true — AGENTCC_AUTH_ENABLED=false must not override a registered AGENTCC_INTERNAL_API_KEY (re-opens the proxy)")
+	}
+}
+
+func TestAuthEnabledHonoredWithoutInternalKey(t *testing.T) {
+	t.Setenv("AGENTCC_AUTH_ENABLED", "true")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+
+	if !cfg.Auth.Enabled {
+		t.Errorf("Auth.Enabled = false, want true — AGENTCC_AUTH_ENABLED=true should still work with no internal key set")
+	}
+}
+
 func TestAddr(t *testing.T) {
 	cfg := DefaultConfig()
 	if addr := cfg.Addr(); addr != "0.0.0.0:8080" {
