@@ -12,7 +12,7 @@ Covers:
 
 import json
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import MagicMock, patch
 from urllib.parse import urlencode
 
@@ -41,10 +41,15 @@ from tracer.services.clickhouse.query_builders.dashboard import (
 from tracer.services.clickhouse.query_builders.dashboard_base import (
     DashboardQueryBuilderBase,
 )
+from tracer.services.dashboard_metrics_catalog import _annotate_metric_roles
 from tracer.services.clickhouse.v2.query_builders.dashboard import (
     DashboardQueryBuilderV2,
 )
-from tracer.views.dashboard import DashboardViewSet, _normalize_dashboard_query_filters
+from tracer.views.dashboard import (
+    DashboardViewSet,
+    _normalize_dashboard_query_filters,
+    _resolve_project_filter_values,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -521,19 +526,20 @@ class TestMetricsEndpoint:
         assert str(label.id) in metric_names
 
     @pytest.mark.django_db
-    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=False)
-    @patch("tracer.views.dashboard.SQL_query_handler.get_span_attributes_for_project")
+    @patch(
+        "tracer.services.dashboard_metrics_catalog.AnalyticsQueryService."
+        "get_span_attribute_keys_ch_for_projects"
+    )
     def test_metrics_suppresses_customer_attribute_aliases_when_canonical_metric_exists(
         self,
         mock_get_span_attrs,
-        _mock_clickhouse_enabled,
         auth_client,
         observe_project,
     ):
         mock_get_span_attrs.return_value = [
-            "call.bot_wpm",
-            "call.user_wpm",
-            "freeform.attr",
+            {"key": "call.bot_wpm", "type": "number"},
+            {"key": "call.user_wpm", "type": "number"},
+            {"key": "freeform.attr", "type": "string"},
         ]
 
         response = auth_client.get(
@@ -550,12 +556,13 @@ class TestMetricsEndpoint:
         assert "freeform.attr" in metric_names
 
     @pytest.mark.django_db
-    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=False)
-    @patch("tracer.views.dashboard.SQL_query_handler.get_span_attributes_for_project")
+    @patch(
+        "tracer.services.dashboard_metrics_catalog.AnalyticsQueryService."
+        "get_span_attribute_keys_ch_for_projects"
+    )
     def test_metrics_exposes_agent_talk_percentage_for_simulator_project(
         self,
         mock_get_span_attrs,
-        _mock_clickhouse_enabled,
         auth_client,
         organization,
         workspace,
@@ -571,7 +578,10 @@ class TestMetricsEndpoint:
             trace_type="observe",
             source=ProjectSourceChoices.SIMULATOR.value,
         )
-        mock_get_span_attrs.return_value = ["call.talk_ratio", "freeform.attr"]
+        mock_get_span_attrs.return_value = [
+            {"key": "call.talk_ratio", "type": "number"},
+            {"key": "freeform.attr", "type": "string"},
+        ]
 
         response = auth_client.get(
             f"/tracer/dashboard/metrics/?project_ids={simulator_project.id}"
@@ -1153,6 +1163,36 @@ class TestDashboardQueryBuilder:
         assert "usage_apicalllog" in sql
         assert "eval_score" in sql
 
+    def test_eval_metric_uses_trace_start_time_and_non_trace_eval_time_fallback(self):
+        config = {
+            "project_ids": ["proj1"],
+            "workspace_id": str(uuid.uuid4()),
+            "granularity": "day",
+            "time_range": {"preset": "7D"},
+            "metrics": [
+                {
+                    "id": "e1",
+                    "name": "accuracy",
+                    "type": "eval_metric",
+                    "config_id": str(uuid.uuid4()),
+                    "output_type": "SCORE",
+                    "aggregation": "avg",
+                }
+            ],
+        }
+
+        for builder_cls in (DashboardQueryBuilder, DashboardQueryBuilderV2):
+            sql, _, _ = builder_cls(config).build_all_queries()[0]
+            assert "if(e.eval_trace_id = '', e.created_at, s.start_time)" in sql
+            version_column = (
+                "_version"
+                if builder_cls is DashboardQueryBuilderV2
+                else "_peerdb_version"
+            )
+            assert f"ORDER BY {version_column} DESC LIMIT 1 BY trace_id" in sql
+            assert "d.created_at >= %(start_date)s" not in sql
+            assert "d.created_at < %(end_date)s" not in sql
+
     def test_eval_metric_pass_fail(self):
         config = {
             "project_ids": ["proj1"],
@@ -1459,10 +1499,15 @@ class TestDashboardQueryBuilder:
                 }
             ],
         }
-        builder = DashboardQueryBuilder(config)
-        queries = builder.build_all_queries()
-        sql, _, _ = queries[0]
-        assert "(parent_span_id IS NULL OR parent_span_id = '')" in sql
+        for builder_cls in (DashboardQueryBuilder, DashboardQueryBuilderV2):
+            sql, _, _ = builder_cls(config).build_all_queries()[0]
+            assert "parent_span_id IS NULL OR parent_span_id = ''" in sql
+            version_column = (
+                "_version"
+                if builder_cls is DashboardQueryBuilderV2
+                else "_peerdb_version"
+            )
+            assert f"ORDER BY {version_column} DESC LIMIT 1 BY trace_id" in sql
 
     def test_eval_metric_pass_rate_aggregation(self):
         config = {
@@ -2420,7 +2465,7 @@ class TestDashboardQueryExecution:
 
         assert response.status_code == 200
         sql = mock_service.execute_ch_query.call_args.args[0]
-        assert "span_attr_num" in sql
+        assert "attrs_number" in sql
         assert "simulate_call_execution" not in sql
 
     def test_query_action_simulation_metric_failure_does_not_blank_other_metrics(
@@ -2778,6 +2823,8 @@ class TestDashboardQueryExecution:
         assert "SELECT DISTINCT model AS val FROM spans" in sql
 
     @pytest.mark.django_db
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
     def test_filter_values_session_search_adds_ilike_and_limits_to_20(
         self, _mock_enabled, mock_analytics_cls, auth_client, observe_project
     ):
@@ -2805,6 +2852,8 @@ class TestDashboardQueryExecution:
         assert "LIMIT 500" not in sql
 
     @pytest.mark.django_db
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
     def test_filter_values_session_no_search_uses_limit_500_without_ilike(
         self, _mock_enabled, mock_analytics_cls, auth_client, observe_project
     ):
@@ -3100,6 +3149,74 @@ class TestWidgetQueryExecution:
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
     @patch("tracer.views.dashboard.get_clickhouse_client")
+    def test_annotation_filter_breakdown_and_timezone_reach_widget_query(
+        self,
+        mock_get_client,
+        mock_enabled,
+        auth_client,
+        dashboard,
+        dashboard_widget,
+        observe_project,
+    ):
+        label_id = str(uuid.uuid4())
+        dashboard_widget.query_config = {
+            "project_ids": [str(observe_project.id)],
+            "timezone": "Asia/Kolkata",
+            "granularity": "day",
+            "time_range": {"preset": "7D"},
+            "metrics": [
+                {
+                    "id": label_id,
+                    "name": "Voice Tone",
+                    "label_id": label_id,
+                    "type": "annotation_metric",
+                    "output_type": "categorical",
+                    "aggregation": "count",
+                    "source": "traces",
+                }
+            ],
+            "filters": [
+                {
+                    "column_id": label_id,
+                    "output_type": "categorical",
+                    "source": "traces",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "contains",
+                        "filter_value": "calm",
+                        "col_type": "ANNOTATION",
+                    },
+                }
+            ],
+            "breakdowns": [
+                {
+                    "name": label_id,
+                    "label_id": label_id,
+                    "type": "annotation_metric",
+                    "output_type": "categorical",
+                    "source": "traces",
+                }
+            ],
+        }
+        dashboard_widget.save(update_fields=["query_config"])
+        mock_client = MagicMock()
+        mock_client.execute_read.return_value = ([], [], 1.0)
+        mock_get_client.return_value = mock_client
+
+        response = auth_client.post(
+            f"/tracer/dashboard/{dashboard.id}/widgets/{dashboard_widget.id}/query/"
+        )
+
+        assert response.status_code == 200
+        sql, params = mock_client.execute_read.call_args.args[:2]
+        assert "AS breakdown_value" in sql
+        assert "LIKE" in sql
+        assert "toStartOfDay(a.created_at, %(timezone)s)" in sql
+        assert params["timezone"] == "Asia/Kolkata"
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.get_clickhouse_client")
     def test_execute_query_eval_widget_threads_workspace_scope(
         self,
         mock_get_client,
@@ -3208,7 +3325,7 @@ class TestWidgetQueryExecution:
 
         assert response.status_code == 200
         sql = mock_client.execute_read.call_args.args[0]
-        assert "span_attr_num" in sql
+        assert "attrs_number" in sql
         assert "simulate_call_execution" not in sql
 
     @pytest.mark.django_db
@@ -4552,3 +4669,271 @@ class TestInvalidMetricCombination:
         }
         result = base._format_metric_result(metric_info, [], all_buckets, {})
         assert result["error"].startswith("'avg' can't be applied")
+
+
+class TestDashboardAnnotationFilterTimezoneIntegration:
+    @staticmethod
+    def _config(metric, *, filters=None, breakdowns=None, timezone="UTC"):
+        return {
+            "project_ids": [str(uuid.uuid4())],
+            "organization_id": str(uuid.uuid4()),
+            "workspace_id": str(uuid.uuid4()),
+            "timezone": timezone,
+            "granularity": "day",
+            "time_range": {"preset": "7D"},
+            "metrics": [metric],
+            "filters": filters or [],
+            "breakdowns": breakdowns or [],
+        }
+
+    @pytest.mark.parametrize(
+        ("operator", "value", "expected"),
+        [
+            ("equal_to", 3, " = "),
+            ("not_equal_to", 3, " != "),
+            ("greater_than", 3, " > "),
+            ("greater_than_or_equal", 3, " >= "),
+            ("less_than", 3, " < "),
+            ("less_than_or_equal", 3, " <= "),
+            ("between", [1, 3], " BETWEEN "),
+            ("not_between", [1, 3], " NOT BETWEEN "),
+            ("contains", ["calm"], " IN "),
+            ("not_contains", ["calm"], " NOT IN "),
+            ("str_contains", "cal", " LIKE "),
+            ("str_not_contains", "cal", " NOT LIKE "),
+            ("is_set", None, " IS NOT NULL"),
+            ("is_not_set", None, " IS NULL"),
+        ],
+    )
+    def test_annotation_filter_operator_reaches_executable_sql(
+        self, operator, value, expected
+    ):
+        label_id = str(uuid.uuid4())
+        output_type = "categorical" if operator in {
+            "contains",
+            "not_contains",
+            "str_contains",
+            "str_not_contains",
+        } else "numeric"
+        config = self._config(
+            {
+                "id": label_id,
+                "name": "Quality",
+                "label_id": label_id,
+                "type": "annotation_metric",
+                "output_type": output_type,
+                "aggregation": "avg",
+            },
+            filters=[
+                {
+                    "metric_type": "annotation_metric",
+                    "metric_name": label_id,
+                    "output_type": output_type,
+                    "operator": operator,
+                    "value": value,
+                }
+            ],
+        )
+        sql, params, _ = DashboardQueryBuilder(config).build_all_queries()[0]
+        assert expected in sql
+        assert params["timezone"] == "UTC"
+
+    @pytest.mark.parametrize(
+        ("operator", "value", "metric_name", "expected"),
+        [
+            ("equal_to", 100, "latency", " = "),
+            ("not_equal_to", 100, "latency", " != "),
+            ("greater_than", 100, "latency", " > "),
+            ("greater_than_or_equal", 100, "latency", " >= "),
+            ("less_than", 100, "latency", " < "),
+            ("less_than_or_equal", 100, "latency", " <= "),
+            ("between", [100, 200], "latency", " BETWEEN "),
+            ("not_between", [100, 200], "latency", " NOT BETWEEN "),
+            ("contains", ["gpt-4o"], "model", " IN "),
+            ("not_contains", ["gpt-4o"], "model", " NOT IN "),
+            ("str_contains", "gpt", "model", " LIKE "),
+            ("str_not_contains", "test", "model", " NOT LIKE "),
+            ("is_set", None, "model", " != ''"),
+            ("is_not_set", None, "model", " = ''"),
+        ],
+    )
+    def test_system_filter_operators_generate_sql(
+        self, operator, value, metric_name, expected
+    ):
+        config = self._config(
+            {
+                "id": "latency",
+                "name": "latency",
+                "type": "system_metric",
+                "aggregation": "avg",
+            },
+            filters=[
+                {
+                    "metric_type": "system_metric",
+                    "metric_name": metric_name,
+                    "operator": operator,
+                    "value": value,
+                }
+            ],
+        )
+        sql, _, _ = DashboardQueryBuilder(config).build_all_queries()[0]
+        assert expected in sql
+
+    def test_categorical_annotation_remains_available_as_metric(self):
+        metrics = _annotate_metric_roles(
+            [
+                {
+                    "name": str(uuid.uuid4()),
+                    "category": "annotation_metric",
+                    "type": "string",
+                }
+            ]
+        )
+        assert metrics[0]["role"] == "metric"
+
+    def test_annotation_can_break_down_by_same_annotation(self):
+        label_id = str(uuid.uuid4())
+        config = self._config(
+            {
+                "id": label_id,
+                "name": "Voice Tone",
+                "label_id": label_id,
+                "type": "annotation_metric",
+                "output_type": "categorical",
+                "aggregation": "count",
+            },
+            breakdowns=[
+                {
+                    "name": label_id,
+                    "label_id": label_id,
+                    "type": "annotation_metric",
+                    "output_type": "categorical",
+                }
+            ],
+        )
+        sql, _, _ = DashboardQueryBuilder(config).build_all_queries()[0]
+        assert "AS breakdown_value" in sql
+        assert "JSONExtract(a.value, 'selected', 'Array(String)')" in sql
+        assert "GROUP BY time_bucket, breakdown_value" in sql
+
+    def test_timezone_controls_sql_and_generated_buckets(self):
+        config = self._config(
+            {
+                "id": "latency",
+                "name": "latency",
+                "type": "system_metric",
+                "aggregation": "avg",
+            },
+            timezone="Asia/Kolkata",
+        )
+        builder = DashboardQueryBuilder(config)
+        sql, params, _ = builder.build_all_queries()[0]
+        assert "toStartOfDay(start_time, %(timezone)s)" in sql
+        assert params["timezone"] == "Asia/Kolkata"
+        start, end = builder.parse_time_range()
+        assert start.utcoffset() == timedelta(hours=5, minutes=30)
+        assert all(
+            bucket.endswith("+05:30")
+            for bucket in _generate_time_buckets(start, end, "day", builder.timezone)
+        )
+
+    def test_merged_formatter_handles_clickhouse_date_buckets(self):
+        config = self._config(
+            {
+                "id": "user_count",
+                "name": "user_count",
+                "type": "system_metric",
+                "aggregation": "count",
+            },
+            timezone="UTC",
+        )
+        result = DashboardViewSet()._format_merged_metric_results(
+            config,
+            [
+                (
+                    {
+                        "id": "user_count",
+                        "name": "user_count",
+                        "aggregation": "count",
+                    },
+                    [{"time_bucket": date(2026, 7, 15), "value": 4}],
+                )
+            ],
+        )
+        points = result["metrics"][0]["series"][0]["data"]
+        assert any(
+            point["timestamp"] == "2026-07-15T00:00:00+00:00"
+            and point["value"] == 4
+            for point in points
+        )
+
+    def test_serializer_rejects_invalid_timezone(self):
+        serializer = DashboardQuerySerializer(
+            data={
+                "time_range": {"preset": "7D"},
+                "timezone": "Mars/Olympus_Mons",
+                "metrics": [
+                    {
+                        "name": "latency",
+                        "type": "system_metric",
+                        "aggregation": "avg",
+                    }
+                ],
+            }
+        )
+        assert not serializer.is_valid()
+        assert "timezone" in serializer.errors
+
+    @pytest.mark.django_db
+    def test_project_contains_resolves_display_name_to_ids(
+        self, workspace, organization
+    ):
+        matching = Project.objects.create(
+            name="iForm - Prod",
+            organization=organization,
+            workspace=workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        Project.objects.create(
+            name="Support Bot",
+            organization=organization,
+            workspace=workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        config = {
+            "filters": [
+                {
+                    "metric_type": "system_metric",
+                    "metric_name": "project",
+                    "operator": "str_contains",
+                    "value": "iform",
+                }
+            ],
+            "metrics": [],
+        }
+        resolved = _resolve_project_filter_values(config, workspace)
+        project_filter = resolved["filters"][0]
+        assert project_filter["operator"] == "contains"
+        assert project_filter["value"] == [str(matching.id)]
+
+    @pytest.mark.django_db
+    def test_project_contains_without_matches_filters_out_all_rows(
+        self, workspace
+    ):
+        config = {
+            "filters": [
+                {
+                    "metric_type": "system_metric",
+                    "metric_name": "project",
+                    "operator": "str_contains",
+                    "value": "does-not-exist",
+                }
+            ],
+            "metrics": [],
+        }
+        resolved = _resolve_project_filter_values(config, workspace)
+        assert resolved["filters"][0]["value"] == [
+            "00000000-0000-0000-0000-000000000000"
+        ]

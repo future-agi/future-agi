@@ -18708,6 +18708,8 @@ export interface DashboardQueryApi {
   project_ids?: string[];
   time_range: DashboardTimeRangeApi;
   granularity?: DashboardQueryApiGranularity;
+  /** @minLength 1 */
+  timezone?: string;
   metrics: DashboardMetricApi[];
   filters?: DashboardQueryApiFiltersItem[];
   breakdowns?: DashboardBreakdownApi[];
