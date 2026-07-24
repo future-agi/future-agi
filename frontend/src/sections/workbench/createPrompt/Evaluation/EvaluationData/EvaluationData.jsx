@@ -16,6 +16,7 @@ import {
   calculateRowHeight,
   CELL_STATE,
   isUnsavedRow,
+  mergeUnsavedRows,
 } from "../common";
 import { OriginTypes } from "src/sections/common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
 import axios, { endpoints } from "src/utils/axios";
@@ -576,12 +577,8 @@ const EvaluationData = () => {
   }, [evaluationData, processColumnConfig, hasDeletableRow, handleDeleteRow]);
 
   useEffect(() => {
-    setRows((prev) => {
-      const next = processRowData(evaluationData);
-      const unsavedTail = prev.slice(next.length).filter(isUnsavedRow);
-      if (!unsavedTail.length) return next;
-      return [...next, ...unsavedTail];
-    });
+    const next = processRowData(evaluationData);
+    setRows((prev) => mergeUnsavedRows(next, prev));
     return () => {
       if (addRowTimeoutRef.current) {
         clearTimeout(addRowTimeoutRef.current);
