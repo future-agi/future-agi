@@ -32,6 +32,7 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import Enum
+from functools import wraps
 
 import structlog
 from django.core.cache import cache
@@ -41,6 +42,7 @@ logger = structlog.get_logger(__name__)
 
 class ResourceType(Enum):
     """Types of resources that can be managed"""
+
     DB_CONNECTION = "db_connection"
     OPTIMIZATION_WORKER = "optimization_worker"
     EVALUATION_WORKER = "evaluation_worker"
@@ -51,6 +53,7 @@ class ResourceType(Enum):
 @dataclass
 class ResourceQuota:
     """Resource quota configuration per organization"""
+
     max_db_connections: int = 10
     max_optimization_workers: int = 5
     max_evaluation_workers: int = 10
@@ -61,6 +64,7 @@ class ResourceQuota:
 @dataclass
 class ResourceUsage:
     """Current resource usage tracking"""
+
     db_connections: int = 0
     optimization_workers: int = 0
     evaluation_workers: int = 0
@@ -71,13 +75,14 @@ class ResourceUsage:
 
 class CircuitBreakerState(Enum):
     CLOSED = "closed"  # Normal operation
-    OPEN = "open"      # Failing, reject requests
+    OPEN = "open"  # Failing, reject requests
     HALF_OPEN = "half_open"  # Testing if service recovered
 
 
 @dataclass
 class CircuitBreaker:
     """Circuit breaker for downstream services"""
+
     failure_threshold: int = 5
     recovery_timeout: int = 60  # seconds
     failure_count: int = 0
@@ -87,16 +92,19 @@ class CircuitBreaker:
 
 class ResourceManagerError(Exception):
     """Base exception for resource manager errors"""
+
     pass
 
 
 class ResourceExhaustedException(ResourceManagerError):
     """Raised when resource quota is exceeded"""
+
     pass
 
 
 class CircuitBreakerOpenError(ResourceManagerError):
     """Raised when circuit breaker is open"""
+
     pass
 
 
@@ -185,7 +193,9 @@ class ResourceManager:
         return False
 
     @asynccontextmanager
-    async def acquire(self, resource_type: ResourceType, org_id: str, timeout: float = 30.0):
+    async def acquire(
+        self, resource_type: ResourceType, org_id: str, timeout: float = 30.0
+    ):
         """
         Acquire a resource with automatic cleanup.
 
@@ -241,8 +251,10 @@ class ResourceManager:
                 "Resource acquisition timeout",
                 resource_type=resource_type.value,
                 org_id=org_id,
-                timeout=timeout
+                timeout=timeout,
             )
+            raise
+        except ResourceExhaustedException:
             raise
         except Exception:
             if resource_type in [ResourceType.DB_CONNECTION, ResourceType.LLM_REQUEST]:
@@ -290,6 +302,7 @@ class ResourceManager:
         if resource_type == ResourceType.DB_CONNECTION:
             # Use Django's connection handling but ensure it's properly managed
             from django.db import connection
+
             # Ensure connection is ready
             connection.ensure_connection()
             return connection
@@ -338,7 +351,9 @@ class ResourceManager:
             usage.async_tasks = max(0, usage.async_tasks - 1)
         # Note: LLM requests are not decremented as they're time-window based
 
-    def _get_usage_for_type(self, usage: ResourceUsage, resource_type: ResourceType) -> int:
+    def _get_usage_for_type(
+        self, usage: ResourceUsage, resource_type: ResourceType
+    ) -> int:
         """Get current usage count for a specific resource type"""
         if resource_type == ResourceType.DB_CONNECTION:
             return usage.db_connections
@@ -352,7 +367,9 @@ class ResourceManager:
             return usage.async_tasks
         return 0
 
-    def _get_quota_for_type(self, quota: ResourceQuota, resource_type: ResourceType) -> int:
+    def _get_quota_for_type(
+        self, quota: ResourceQuota, resource_type: ResourceType
+    ) -> int:
         """Get quota limit for a specific resource type"""
         if resource_type == ResourceType.DB_CONNECTION:
             return quota.max_db_connections
@@ -397,7 +414,7 @@ class ResourceManager:
             logger.warning(
                 "Circuit breaker opened",
                 circuit_key=circuit_key,
-                failure_count=breaker.failure_count
+                failure_count=breaker.failure_count,
             )
 
     def _record_success(self, circuit_key: str):
@@ -408,13 +425,15 @@ class ResourceManager:
         breaker = self._circuit_breakers[circuit_key]
         if breaker.state == CircuitBreakerState.HALF_OPEN:
             breaker.state = CircuitBreakerState.CLOSED
-            breaker.failure_count = 0
             logger.info("Circuit breaker closed", circuit_key=circuit_key)
+        breaker.failure_count = 0
 
     def get_metrics(self) -> dict:
         """Get resource manager metrics for monitoring"""
         uptime = time.time() - self._start_time
-        success_rate = (self._total_requests - self._rejected_requests) / max(1, self._total_requests)
+        success_rate = (self._total_requests - self._rejected_requests) / max(
+            1, self._total_requests
+        )
 
         return {
             "uptime_seconds": uptime,
@@ -426,7 +445,7 @@ class ResourceManager:
                 key: {
                     "state": breaker.state.value,
                     "failure_count": breaker.failure_count,
-                    "last_failure_time": breaker.last_failure_time
+                    "last_failure_time": breaker.last_failure_time,
                 }
                 for key, breaker in self._circuit_breakers.items()
             },
@@ -436,10 +455,10 @@ class ResourceManager:
                     "optimization_workers": usage.optimization_workers,
                     "evaluation_workers": usage.evaluation_workers,
                     "llm_requests_last_minute": usage.llm_requests_last_minute,
-                    "async_tasks": usage.async_tasks
+                    "async_tasks": usage.async_tasks,
                 }
                 for org_id, usage in self._usage_by_org.items()
-            }
+            },
         }
 
     async def set_quota(self, org_id: str, quota: ResourceQuota):
@@ -447,15 +466,12 @@ class ResourceManager:
         self._quota_by_org[org_id] = quota
         cache.set(f"resource_quota:{org_id}", quota, 300)
 
-        logger.info(
-            "Resource quota updated",
-            org_id=org_id,
-            quota=quota.__dict__
-        )
+        logger.info("Resource quota updated", org_id=org_id, quota=quota.__dict__)
 
 
 # Global instance
 _resource_manager = None
+
 
 def get_resource_manager() -> ResourceManager:
     """Get the global resource manager instance"""
@@ -476,16 +492,18 @@ def with_resource_management(resource_type: ResourceType):
             # Function body
             pass
     """
+
     def decorator(func):
+        @wraps(func)
         async def wrapper(*args, **kwargs):
             # Extract org_id from function arguments
-            org_id = kwargs.get('org_id') or kwargs.get('organization_id')
+            org_id = kwargs.get("org_id") or kwargs.get("organization_id")
             if not org_id and args:
                 # Try to extract from first argument if it's an object with organization
                 first_arg = args[0]
-                if hasattr(first_arg, 'organization_id'):
+                if hasattr(first_arg, "organization_id"):
                     org_id = str(first_arg.organization_id)
-                elif hasattr(first_arg, 'organization'):
+                elif hasattr(first_arg, "organization"):
                     org_id = str(first_arg.organization.id)
 
             if not org_id:
@@ -496,4 +514,5 @@ def with_resource_management(resource_type: ResourceType):
                 return await func(*args, **kwargs)
 
         return wrapper
+
     return decorator

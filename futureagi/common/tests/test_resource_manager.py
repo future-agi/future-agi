@@ -1,6 +1,7 @@
 import pytest
 
 from common.resource_manager import (
+    CircuitBreakerState,
     ResourceExhaustedException,
     ResourceManager,
     ResourceQuota,
@@ -80,3 +81,38 @@ async def test_resource_released_when_create_resource_fails():
             pass
 
     assert await manager.can_acquire(ResourceType.OPTIMIZATION_WORKER, "org-a")
+
+
+@pytest.mark.asyncio
+async def test_quota_rejection_does_not_open_circuit_breaker():
+    manager = InMemoryResourceManager()
+    manager.set_test_quota(
+        "org-a",
+        ResourceQuota(max_llm_requests_per_minute=1),
+    )
+
+    async with manager.acquire(ResourceType.LLM_REQUEST, "org-a"):
+        for _ in range(6):
+            with pytest.raises(ResourceExhaustedException, match="llm_request"):
+                async with manager.acquire(ResourceType.LLM_REQUEST, "org-a"):
+                    pass
+
+    breaker = manager._circuit_breakers["llm_request:org-a"]
+    assert breaker.state == CircuitBreakerState.CLOSED
+    assert breaker.failure_count == 0
+
+
+@pytest.mark.asyncio
+async def test_success_resets_closed_circuit_breaker_failures():
+    manager = InMemoryResourceManager()
+    circuit_key = "llm_request:org-a"
+
+    manager._record_failure(circuit_key)
+    assert manager._circuit_breakers[circuit_key].failure_count == 1
+
+    async with manager.acquire(ResourceType.LLM_REQUEST, "org-a"):
+        pass
+
+    breaker = manager._circuit_breakers[circuit_key]
+    assert breaker.state == CircuitBreakerState.CLOSED
+    assert breaker.failure_count == 0
