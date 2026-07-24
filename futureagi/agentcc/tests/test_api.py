@@ -338,6 +338,244 @@ class TestAgentccGatewayAPI:
         assert no_mcp.status_code == status.HTTP_400_BAD_REQUEST
         mock_client.mcp_test_tool.assert_not_called()
 
+    def test_retrieve_gateway_unauthenticated(self, api_client, gateway_id):
+        response = api_client.get(f"/agentcc/gateways/{gateway_id}/")
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_get_providers_unauthenticated(self, api_client, gateway_id):
+        response = api_client.get(f"/agentcc/gateways/{gateway_id}/providers/")
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_get_providers_when_gateway_client_unreachable(
+        self, auth_client, gateway_id
+    ):
+        from agentcc.services.gateway_client import GatewayClientError
+
+        with patch("agentcc.views.gateway.get_gateway_client") as mock_get:
+            mock_client = MagicMock()
+            mock_client.list_providers.side_effect = GatewayClientError("down")
+            mock_get.return_value = mock_client
+
+            response = auth_client.get(
+                f"/agentcc/gateways/{gateway_id}/providers/"
+            )
+        # The endpoint handles unreachable upstream gracefully; either falls
+        # back to the DB-only view (200) or returns a bad_request (400).
+        assert response.status_code in (
+            status.HTTP_200_OK,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+    @patch("agentcc.views.gateway.push_org_config", return_value=True)
+    def test_reload_happy_path_pushes_current_config(
+        self, mock_push, auth_client, gateway_id, organization
+    ):
+        # Seed an active org config so _push_current_config has something to push.
+        AgentccOrgConfig.no_workspace_objects.create(
+            organization=organization, version=1, is_active=True
+        )
+        response = auth_client.post(f"/agentcc/gateways/{gateway_id}/reload/")
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        assert response.json()["result"]["gateway_synced"] is True
+
+    def test_reload_unauthenticated(self, api_client, gateway_id):
+        response = api_client.post(f"/agentcc/gateways/{gateway_id}/reload/")
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    @patch("agentcc.views.gateway.push_org_config", return_value=False)
+    def test_reload_when_gateway_unreachable_reports_warning(
+        self, mock_push, auth_client, gateway_id, organization
+    ):
+        AgentccOrgConfig.no_workspace_objects.create(
+            organization=organization, version=1, is_active=True
+        )
+        response = auth_client.post(f"/agentcc/gateways/{gateway_id}/reload/")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["gateway_synced"] is False
+        assert "gateway_warning" in response.json()["result"]
+
+    @patch("agentcc.views.gateway.push_org_config", return_value=True)
+    def test_update_provider_standalone_creates_credential(
+        self, mock_push, auth_client, gateway_id, organization
+    ):
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/update-provider/",
+            {
+                "name": "standalone-openai",
+                "config": {
+                    "api_key": "sk-standalone",
+                    "display_name": "Standalone OpenAI",
+                    "api_format": "openai",
+                    "models": ["gpt-4o"],
+                    "default_timeout": 20,
+                    "max_concurrent": 4,
+                    "conn_pool_size": 6,
+                    "base_url": "https://api.openai.com/v1",
+                },
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        assert AgentccProviderCredential.no_workspace_objects.filter(
+            organization=organization,
+            provider_name="standalone-openai",
+            deleted=False,
+        ).exists()
+
+    @patch("agentcc.views.gateway.push_org_config", return_value=True)
+    def test_remove_provider_standalone_soft_deletes(
+        self, mock_push, auth_client, gateway_id, organization
+    ):
+        cred = AgentccProviderCredential.no_workspace_objects.create(
+            organization=organization,
+            provider_name="to-remove",
+            display_name="To Remove",
+            encrypted_credentials=b"placeholder",
+            api_format="openai",
+        )
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/remove-provider/",
+            {"name": "to-remove"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        cred.refresh_from_db()
+        assert cred.deleted is True
+
+    @patch("agentcc.views.gateway.push_org_config", return_value=True)
+    def test_update_config_patches_active_row_and_bumps_version(
+        self, mock_push, auth_client, gateway_id, organization
+    ):
+        AgentccOrgConfig.no_workspace_objects.create(
+            organization=organization,
+            version=1,
+            is_active=True,
+            routing={"strategy": "round_robin"},
+        )
+
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/update-config/",
+            {"cache": {"enabled": True, "default_ttl": 60}},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        result = response.json()["result"]
+        assert result["version"] == 2  # bump
+        assert result["gateway_synced"] is True
+        mock_push.assert_called_once()
+
+        new_active = AgentccOrgConfig.no_workspace_objects.get(
+            organization=organization, is_active=True, deleted=False
+        )
+        # Patched field applied, untouched field preserved.
+        assert new_active.cache == {"enabled": True, "default_ttl": 60}
+        assert new_active.routing == {"strategy": "round_robin"}
+        assert new_active.version == 2
+
+    def test_update_config_rejects_unknown_field(
+        self, auth_client, gateway_id, organization
+    ):
+        AgentccOrgConfig.no_workspace_objects.create(
+            organization=organization, version=1, is_active=True
+        )
+
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/update-config/",
+            {"not_a_real_field": {"x": 1}},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    @patch("agentcc.views.gateway.push_org_config", return_value=True)
+    def test_set_budget_writes_level_and_bumps_version(
+        self, mock_push, auth_client, gateway_id, organization
+    ):
+        AgentccOrgConfig.no_workspace_objects.create(
+            organization=organization, version=1, is_active=True, budgets={}
+        )
+
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/set-budget/",
+            {
+                "level": "organization",
+                "config": {"limit_usd": 100, "action_mode": "hard"},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        result = response.json()["result"]
+        assert result["budget"] == "organization"
+        assert result["action"] == "set"
+        assert result["gateway_synced"] is True
+
+        new_active = AgentccOrgConfig.no_workspace_objects.get(
+            organization=organization, is_active=True, deleted=False
+        )
+        # Budget should be present under the "organization" level in some form.
+        assert new_active.budgets  # not empty
+        assert new_active.version == 2
+
+    def test_set_budget_rejects_missing_fields(
+        self, auth_client, gateway_id, organization
+    ):
+        AgentccOrgConfig.no_workspace_objects.create(
+            organization=organization, version=1, is_active=True
+        )
+
+        # Empty body: reject_unknown_fields=True, so validator rejects.
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/set-budget/",
+            {},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    @patch("agentcc.views.gateway.push_org_config", return_value=True)
+    def test_remove_budget_strips_level_and_bumps_version(
+        self, mock_push, auth_client, gateway_id, organization
+    ):
+        AgentccOrgConfig.no_workspace_objects.create(
+            organization=organization,
+            version=1,
+            is_active=True,
+            budgets={
+                "organization": {"limit_usd": 100, "action_mode": "hard"},
+                "user": {"limit_usd": 20, "action_mode": "warn"},
+            },
+        )
+
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/remove-budget/",
+            {"level": "organization"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        result = response.json()["result"]
+        assert result["budget"] == "organization"
+        assert result["action"] == "removed"
+
+        new_active = AgentccOrgConfig.no_workspace_objects.get(
+            organization=organization, is_active=True, deleted=False
+        )
+        assert "organization" not in new_active.budgets
+        assert "user" in new_active.budgets  # other levels preserved
+        assert new_active.version == 2
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -713,6 +951,182 @@ class TestAgentccAPIKeyAPI:
         key.refresh_from_db()
         assert key.status == AgentccAPIKey.ACTIVE
 
+    def test_retrieve_api_key_returns_key_metadata(
+        self, auth_client, organization, workspace
+    ):
+        key = AgentccAPIKey.objects.create(
+            gateway_key_id="gw-retrieve",
+            key_prefix="pk-retrieve",
+            name="retrieve-me",
+            organization=organization,
+            workspace=workspace,
+        )
+
+        response = auth_client.get(f"/agentcc/api-keys/{key.id}/")
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()["result"]
+        assert data["id"] == str(key.id)
+        assert data["name"] == "retrieve-me"
+        assert data["gateway_key_id"] == "gw-retrieve"
+        # Raw key is never rehydrated on retrieve; only the prefix survives.
+        assert "key" not in data
+        assert data["key_prefix"] == "pk-retrieve"
+
+    def test_retrieve_api_key_unauthenticated(self, api_client, organization, workspace):
+        key = AgentccAPIKey.objects.create(
+            gateway_key_id="gw-retrieve-unauth",
+            name="unauth",
+            organization=organization,
+            workspace=workspace,
+        )
+
+        response = api_client.get(f"/agentcc/api-keys/{key.id}/")
+        assert response.status_code in [
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        ]
+
+    def test_destroy_api_key_removes_row(
+        self, auth_client, organization, workspace
+    ):
+        key = AgentccAPIKey.objects.create(
+            gateway_key_id="gw-destroy",
+            name="destroy-me",
+            organization=organization,
+            workspace=workspace,
+        )
+
+        response = auth_client.delete(f"/agentcc/api-keys/{key.id}/")
+
+        assert response.status_code in (
+            status.HTTP_200_OK,
+            status.HTTP_204_NO_CONTENT,
+        )
+        # DELETE either soft-deletes (deleted=True) or hard-deletes; either way
+        # the key must not appear on a subsequent list call.
+        list_response = auth_client.get("/agentcc/api-keys/")
+        ids = {item["id"] for item in list_response.json()["result"]}
+        assert str(key.id) not in ids
+
+    @patch("agentcc.views.api_key.auth_bridge")
+    def test_sync_api_keys_calls_bridge_sync_keys(
+        self, mock_bridge, auth_client, organization
+    ):
+        mock_bridge.sync_keys.return_value = 3
+
+        response = auth_client.post("/agentcc/api-keys/sync/")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"] == {"synced": 3}
+        mock_bridge.sync_keys.assert_called_once()
+        # Sync is scoped to the active-request organization.
+        assert (
+            mock_bridge.sync_keys.call_args.kwargs["org"].id == organization.id
+        )
+
+    def test_sync_api_keys_unauthenticated(self, api_client):
+        response = api_client.post("/agentcc/api-keys/sync/")
+        assert response.status_code in [
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        ]
+
+    def test_list_api_keys_cross_tenant_isolation(
+        self, auth_client, api_client, organization, workspace, user
+    ):
+        from accounts.models.organization import Organization
+
+        # Seed a key belonging to the current org and one to a foreign org.
+        AgentccAPIKey.objects.create(
+            gateway_key_id="gw-mine",
+            name="mine",
+            organization=organization,
+            workspace=workspace,
+        )
+        foreign_org = Organization.objects.create(name="API Key Foreign Org")
+        AgentccAPIKey.no_workspace_objects.create(
+            gateway_key_id="gw-not-mine",
+            name="not-mine",
+            organization=foreign_org,
+            workspace=None,
+        )
+
+        response = auth_client.get("/agentcc/api-keys/")
+        assert response.status_code == status.HTTP_200_OK
+        ids = {row["gateway_key_id"] for row in response.json()["result"]}
+        assert "gw-mine" in ids
+        assert "gw-not-mine" not in ids
+
+    @patch("agentcc.views.api_key.auth_bridge")
+    def test_put_api_key_cross_tenant_returns_404(
+        self, mock_bridge, auth_client, user, organization
+    ):
+        from accounts.models.organization import Organization
+
+        foreign_org = Organization.objects.create(name="PUT Foreign Org")
+        foreign_key = AgentccAPIKey.no_workspace_objects.create(
+            gateway_key_id="gw-foreign",
+            name="foreign",
+            organization=foreign_org,
+            workspace=None,
+        )
+
+        response = auth_client.put(
+            f"/agentcc/api-keys/{foreign_key.id}/",
+            {"name": "hijacked"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        mock_bridge.update_key.assert_not_called()
+
+    def test_patch_api_key_updates_name(
+        self, auth_client, organization, workspace
+    ):
+        key = AgentccAPIKey.objects.create(
+            gateway_key_id="gw-patch",
+            name="before",
+            organization=organization,
+            workspace=workspace,
+        )
+        with patch("agentcc.views.api_key.auth_bridge") as mock_bridge:
+            def _update(api_key, **kwargs):
+                for k, v in kwargs.items():
+                    setattr(api_key, k, v)
+                api_key.save(update_fields=[*kwargs.keys(), "updated_at"])
+                return api_key
+
+            mock_bridge.update_key.side_effect = _update
+            response = auth_client.patch(
+                f"/agentcc/api-keys/{key.id}/",
+                {"name": "after"},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_200_OK
+        key.refresh_from_db()
+        assert key.name == "after"
+
+    def test_revoke_api_key_idempotence(
+        self, auth_client, organization, workspace
+    ):
+        # Revoking an already-revoked key returns 200 and stays revoked;
+        # auth_bridge.revoke_key is what enforces the state transition, so
+        # the endpoint just re-runs the same flow.
+        key = AgentccAPIKey.objects.create(
+            gateway_key_id="gw-revoke-twice",
+            name="revoke-twice",
+            status=AgentccAPIKey.REVOKED,
+            organization=organization,
+            workspace=workspace,
+        )
+        with patch("agentcc.views.api_key.auth_bridge") as mock_bridge:
+            mock_bridge.revoke_key.return_value = (key, False)
+            response = auth_client.post(f"/agentcc/api-keys/{key.id}/revoke/")
+
+        assert response.status_code == status.HTTP_200_OK
+        key.refresh_from_db()
+        assert key.status == AgentccAPIKey.REVOKED
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -821,6 +1235,22 @@ class TestAgentccRequestLogAPI:
 
     def test_list_request_logs_unauthenticated(self, api_client):
         response = api_client.get("/agentcc/request-logs/")
+        assert response.status_code in [
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        ]
+
+    def test_retrieve_request_log_unknown_id_returns_404(self, auth_client):
+        # A random UUID that does not belong to any log row.
+        import uuid
+
+        response = auth_client.get(f"/agentcc/request-logs/{uuid.uuid4()}/")
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_retrieve_request_log_unauthenticated(self, api_client):
+        import uuid
+
+        response = api_client.get(f"/agentcc/request-logs/{uuid.uuid4()}/")
         assert response.status_code in [
             status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
