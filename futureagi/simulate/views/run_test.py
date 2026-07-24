@@ -170,7 +170,6 @@ from simulate.utils.test_execution_utils import (
 )
 from simulate.views.scoping import run_test_workspace_filter
 from tfc.ee_gates import strip_turing_from_config_options
-from tfc.settings import settings as app_settings
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
@@ -706,13 +705,6 @@ class RunTestExecutionView(APIView):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
-        self._test_executor = None
-
-    @property
-    def test_executor(self):
-        if self._test_executor is None:
-            self._test_executor = TestExecutor()
-        return self._test_executor
 
     @validated_request(
         request_serializer=ExecuteRunTestSerializer,
@@ -780,21 +772,11 @@ class RunTestExecutionView(APIView):
             if gate_response is not None:
                 return gate_response
 
-            # Check if Temporal test execution is enabled
-            if getattr(app_settings, "TEMPORAL_TEST_EXECUTION_ENABLED", False):
-                result = self._execute_with_temporal(
-                    run_test=run_test,
-                    scenario_ids=final_scenario_ids,
-                    simulator_id=simulator_id,
-                )
-            else:
-                # Execute the test using the legacy test executor (Celery)
-                result = self.test_executor.execute_test(
-                    run_test_id=str(run_test.id),
-                    user_id=str(request.user.id),
-                    scenario_ids=final_scenario_ids,
-                    simulator_id=simulator_id,
-                )
+            result = self._execute_with_temporal(
+                run_test=run_test,
+                scenario_ids=final_scenario_ids,
+                simulator_id=simulator_id,
+            )
 
             if result["success"]:
                 return Response(
@@ -974,7 +956,6 @@ class TestExecutionCancelView(APIView):
                     run_test__organization=user_organization,
                     run_test__deleted=False,
                 )
-                run_test_id = str(test_execution.run_test_id)
             elif run_test_id:
                 # Verify user has access to this run test
                 get_object_or_404(
@@ -983,7 +964,6 @@ class TestExecutionCancelView(APIView):
                     organization=user_organization,
                     deleted=False,
                 )
-                test_execution_id = None
             else:
                 return self.gm.bad_request(
                     "Either run_test_id or test_execution_id must be provided"
@@ -992,19 +972,7 @@ class TestExecutionCancelView(APIView):
             test_execution.status = TestExecution.ExecutionStatus.CANCELLING
             test_execution.save()
 
-            # Check if Temporal test execution is enabled
-            if getattr(app_settings, "TEMPORAL_TEST_EXECUTION_ENABLED", False):
-                result = self._cancel_with_temporal(test_execution)
-            else:
-                # Cancel using legacy test executor (Celery)
-                test_executor = TestExecutor(
-                    initialize_voice_service=self._needs_voice_service_for_cancel(
-                        test_execution
-                    )
-                )
-                result = test_executor.cancel_test(
-                    run_test_id=run_test_id, test_execution_id=test_execution_id
-                )
+            result = self._cancel_with_temporal(test_execution)
 
             if result["success"]:
                 response_data = {

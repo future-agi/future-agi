@@ -521,12 +521,6 @@ CELERY_IMPORTS = [
     "agentcc.tasks",
 ]
 
-# Temporal Test Execution Configuration
-# When enabled, test executions use Temporal workflows instead of Celery tasks
-TEMPORAL_TEST_EXECUTION_ENABLED = os.getenv(
-    "TEMPORAL_TEST_EXECUTION_ENABLED", "false"
-).lower() in ("true", "1", "yes")
-
 # Structured logging configuration with django-structlog
 # This provides:
 # - JSON output in production, colored console in development
