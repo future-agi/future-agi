@@ -1039,3 +1039,154 @@ class TestGenerateScenarioRowsPrefetch:
                     description="test",
                     new_rows_id=row_ids,
                 )
+
+
+class TestKnowledgeBaseWiring:
+    """Wiring the agent's KB reference through generate_scenario_rows."""
+
+    def test_resolve_returns_none_when_agent_has_no_kb(self, db, agent_definition):
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
+
+        assert build_agent_kb_payload(agent_definition, "anything") is None
+
+    def test_resolve_returns_none_when_indexer_returns_empty(
+        self, db, agent_definition, organization
+    ):
+        from model_hub.models.develop_dataset import KnowledgeBaseFile
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
+
+        kb = KnowledgeBaseFile.objects.create(name="empty-kb", organization=organization)
+        agent_definition.knowledge_base = kb
+        agent_definition.save(update_fields=["knowledge_base"])
+
+        with patch(
+            "model_hub.utils.kb_indexer.KBIndexer.get_subset_kb_id", return_value=[]
+        ):
+            payload = build_agent_kb_payload(agent_definition, "anything")
+
+        assert payload is None
+
+    def test_resolve_returns_shaped_dict_when_kb_present(
+        self, db, agent_definition, organization
+    ):
+        from model_hub.models.develop_dataset import KnowledgeBaseFile
+        from model_hub.utils.kb_indexer import KB_TABLE_NAME
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
+
+        kb = KnowledgeBaseFile.objects.create(name="kb", organization=organization)
+        agent_definition.knowledge_base = kb
+        agent_definition.save(update_fields=["knowledge_base"])
+
+        with patch(
+            "model_hub.utils.kb_indexer.KBIndexer.get_subset_kb_id",
+            return_value=["doc-a", "doc-b"],
+        ) as mock_get:
+            payload = build_agent_kb_payload(agent_definition, "scenario desc")
+
+        mock_get.assert_called_once()
+        assert payload == {
+            "table_name": KB_TABLE_NAME,
+            "kb_id": str(kb.id),
+            "doc_ids": ["doc-a", "doc-b"],
+        }
+
+    def test_resolve_returns_none_on_indexer_exception(
+        self, db, agent_definition, organization
+    ):
+        from model_hub.models.develop_dataset import KnowledgeBaseFile
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
+
+        kb = KnowledgeBaseFile.objects.create(name="kb", organization=organization)
+        agent_definition.knowledge_base = kb
+        agent_definition.save(update_fields=["knowledge_base"])
+
+        with patch(
+            "model_hub.utils.kb_indexer.KBIndexer.get_subset_kb_id",
+            side_effect=RuntimeError("boom"),
+        ):
+            payload = build_agent_kb_payload(agent_definition, "anything")
+
+        assert payload is None
+
+    def test_generate_scenario_rows_forwards_kb_payload_to_enhanced_agent(
+        self, db, scenario_dataset, agent_definition, organization, workspace
+    ):
+        from model_hub.models.develop_dataset import KnowledgeBaseFile
+        from model_hub.utils.kb_indexer import KB_TABLE_NAME
+        from simulate.tasks.scenario_tasks import generate_scenario_rows
+
+        kb = KnowledgeBaseFile.objects.create(name="kb", organization=organization)
+        agent_definition.knowledge_base = kb
+        agent_definition.save(update_fields=["knowledge_base"])
+
+        columns = list(Column.objects.filter(dataset=scenario_dataset))
+        row_ids = TestGenerateScenarioRowsPrefetch._seed_rows(
+            scenario_dataset, num_rows=1
+        )
+        TestGenerateScenarioRowsPrefetch._seed_cells(scenario_dataset, columns, row_ids)
+        scenario = TestGenerateScenarioRowsPrefetch._make_scenario_and_graph(
+            scenario_dataset, agent_definition, organization, workspace
+        )
+        cases = TestGenerateScenarioRowsPrefetch._build_cases(1, columns)
+
+        with patch(
+            "simulate.tasks.scenario_tasks.EnhancedScenariosAgent"
+        ) as mock_agent_cls, patch(
+            "simulate.tasks.scenario_tasks.close_old_connections"
+        ), patch(
+            "model_hub.utils.kb_indexer.KBIndexer.get_subset_kb_id",
+            return_value=["doc-a"],
+        ):
+            agent = mock_agent_cls.return_value
+            agent.graph_generator.get_branches.return_value = []
+            agent._generate_cases_for_branches.return_value = cases
+
+            generate_scenario_rows(
+                dataset_id=scenario_dataset.id,
+                scenario_id=scenario.id,
+                num_rows=1,
+                description="scenario desc",
+                new_rows_id=row_ids,
+            )
+
+        kwargs = mock_agent_cls.call_args.kwargs
+        assert kwargs["knowledge_base"] == {
+            "table_name": KB_TABLE_NAME,
+            "kb_id": str(kb.id),
+            "doc_ids": ["doc-a"],
+        }
+
+    def test_generate_scenario_rows_forwards_none_when_agent_has_no_kb(
+        self, db, scenario_dataset, agent_definition, organization, workspace
+    ):
+        from simulate.tasks.scenario_tasks import generate_scenario_rows
+
+        columns = list(Column.objects.filter(dataset=scenario_dataset))
+        row_ids = TestGenerateScenarioRowsPrefetch._seed_rows(
+            scenario_dataset, num_rows=1
+        )
+        TestGenerateScenarioRowsPrefetch._seed_cells(scenario_dataset, columns, row_ids)
+        scenario = TestGenerateScenarioRowsPrefetch._make_scenario_and_graph(
+            scenario_dataset, agent_definition, organization, workspace
+        )
+        cases = TestGenerateScenarioRowsPrefetch._build_cases(1, columns)
+
+        with patch(
+            "simulate.tasks.scenario_tasks.EnhancedScenariosAgent"
+        ) as mock_agent_cls, patch(
+            "simulate.tasks.scenario_tasks.close_old_connections"
+        ):
+            agent = mock_agent_cls.return_value
+            agent.graph_generator.get_branches.return_value = []
+            agent._generate_cases_for_branches.return_value = cases
+
+            generate_scenario_rows(
+                dataset_id=scenario_dataset.id,
+                scenario_id=scenario.id,
+                num_rows=1,
+                description="anything",
+                new_rows_id=row_ids,
+            )
+
+        kwargs = mock_agent_cls.call_args.kwargs
+        assert kwargs["knowledge_base"] is None

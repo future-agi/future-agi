@@ -30,6 +30,23 @@ from agentic_eval.core.utils.model_config import (
 
 logger = structlog.get_logger(__name__)
 
+
+def _scenario_kb_payload(agent_or_id, description):
+    """Resolve an agent's KB into the SDA payload shape from either an object or an id."""
+    if agent_or_id is None:
+        return None
+    from model_hub.utils.kb_indexer import build_agent_kb_payload
+
+    if hasattr(agent_or_id, "knowledge_base_id"):
+        return build_agent_kb_payload(agent_or_id, description)
+    from simulate.models import AgentDefinition
+
+    agent = AgentDefinition.no_workspace_objects.filter(id=agent_or_id).first()
+    if agent is None:
+        return None
+    return build_agent_kb_payload(agent, description)
+
+
 from accounts.models.user import User
 
 # Use the activity-aware stub: invocations raise a Temporal non-retryable
@@ -2061,6 +2078,9 @@ def _create_script_scenario_sync(
             str(agent_definition_id),
             no_of_rows=no_of_rows,
             custom_columns=custom_columns,
+            knowledge_base=_scenario_kb_payload(
+                agent_definition_id, scenario.description
+            ),
         )
         s, d = enhanced_agent.run(
             name=scenario.name,
@@ -2534,6 +2554,9 @@ def _create_graph_scenario_sync(
             no_of_rows=no_of_rows,
             custom_columns=custom_columns,
             agent_definition=agent_definition,
+            knowledge_base=_scenario_kb_payload(
+                agent_definition, scenario.description
+            ),
         )
 
         agent_description = getattr(agent_definition, "description", "")
@@ -2975,6 +2998,9 @@ def _setup_graph_scenario_sync(
             no_of_rows=no_of_rows,
             custom_columns=custom_columns,
             agent_definition=agent_definition,
+            knowledge_base=_scenario_kb_payload(
+                agent_definition, scenario.description
+            ),
         )
         agent_definition_data = enhanced_agent.serialize_agent_definition()
 
