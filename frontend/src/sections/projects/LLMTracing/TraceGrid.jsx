@@ -38,7 +38,7 @@ import { useShallowToggleAnnotationsStore } from "../../agents/store";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
-const ROWS_LIMIT = 100;
+const ROWS_LIMIT = 25;
 const EMPTY_EXTRA_FILTERS = [];
 
 const TraceGrid = React.forwardRef(
@@ -564,7 +564,7 @@ const TraceGrid = React.forwardRef(
           pagination={false}
           cacheBlockSize={ROWS_LIMIT}
           maxBlocksInCache={undefined}
-          rowBuffer={10}
+          rowBuffer={5}
           suppressServerSideFullWidthLoadingRow={true}
           rowModelType="serverSide"
           serverSideDatasource={dataSource}
