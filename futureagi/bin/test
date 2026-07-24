@@ -33,6 +33,14 @@ export DATABASE_URL=postgres://test_user:test_password@localhost:15432/test_tfc
 export REDIS_URL=redis://localhost:16379/0
 export TEST_CLICKHOUSE_HOST=localhost
 export TEST_CLICKHOUSE_PORT=18123
+
+# CH-backed tests: use the compose sidecar, not the dev .env host; :- lets CI override.
+export CH_HOST="${CH_HOST:-localhost}"
+export CH_DATABASE="${CH_DATABASE:-futureagi}"
+export CH25_HOST="${CH25_HOST:-localhost}"
+export CH25_HTTP_PORT="${CH25_HTTP_PORT:-18123}"
+export CH25_DATABASE="${CH25_DATABASE:-futureagi}"
+
 export MINIO_ENDPOINT=localhost:19005
 export MINIO_ACCESS_KEY=minioadmin
 export MINIO_SECRET_KEY=minioadmin

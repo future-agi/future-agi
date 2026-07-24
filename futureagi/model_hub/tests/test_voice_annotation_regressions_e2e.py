@@ -862,7 +862,25 @@ class TestVoiceAnnotationRegressionE2E:
         root_conversation_span,
         simulation_call_execution,
     ):
-        from tracer.tests._ch_seed import seed_ch_span
+        """voice_call_detail must surface the simulation path context.
+
+        TODO(TH-7116): the ``OPTIMIZE TABLE spans FINAL`` below is a test-side
+        workaround for a real production bug. ``voice_call_detail``'s root-span
+        query (``tracer/views/trace.py``, ``FROM spans ... LIMIT 1``) has no
+        ``FINAL`` and no ``argMax(_, _version)`` dedup, so in production — where
+        the eval pipeline writes ``eval_attributes`` after ingest and both
+        ReplacingMergeTree versions coexist until a background merge — the
+        endpoint can non-deterministically return the pre-eval row and drop
+        ``call_execution_id``. The fix belongs in the query (``FROM spans
+        FINAL``, or the ``argMax``/``GROUP BY id`` pattern already used in
+        ``tracer/services/clickhouse/v2/span_reader.py``); once it lands, the
+        OPTIMIZE here can be deleted.
+        """
+        from tracer.tests._ch_seed import (
+            _get_ch_client,
+            seed_ch_span,
+            seed_ch_trace,
+        )
 
         ScenarioGraph.objects.create(
             name="Order flow",
@@ -898,6 +916,23 @@ class TestVoiceAnnotationRegressionE2E:
 
         # Seed AFTER .save() so CH has the updated span_attributes/eval_attributes
         seed_ch_span(root_conversation_span)
+        # voice_call_detail resolves the trace's project from the CH `traces` table
+        # (PG tracer_trace is dropped on CH25), so the trace row must be seeded too;
+        # seeding only the span leaves the traces lookup empty (404).
+        seed_ch_trace(observe_trace)
+        # The root_conversation_span fixture already seeded this span WITHOUT
+        # eval_attributes; the re-seed above added them, leaving two
+        # ReplacingMergeTree(_version) rows for the same id. The endpoint reads
+        # `spans` without FINAL, so it can return the stale (no-eval) version and
+        # drop the simulation context (flaky KeyError: call_execution_id). Force the
+        # merge so the later, eval-bearing re-seed (higher insert-time _version)
+        # wins, leaving one deterministic row. See the TODO in this test's
+        # docstring: the durable fix belongs in the endpoint query.
+        _ch = _get_ch_client()
+        try:
+            _ch.command("OPTIMIZE TABLE spans FINAL")
+        finally:
+            _ch.close()
 
         resp = auth_client.get(
             "/tracer/trace/voice_call_detail/",
