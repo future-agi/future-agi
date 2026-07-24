@@ -1288,6 +1288,18 @@ class AddScenarioColumnsView(APIView):
             )
 
 
+def _resolve_agent_kb_payload(agent_definition_id, description):
+    """Fetch AgentDefinition by id and resolve its KB into the SDA payload shape."""
+    if not agent_definition_id:
+        return None
+    from model_hub.utils.kb_indexer import build_agent_kb_payload
+
+    agent = AgentDefinition.no_workspace_objects.filter(id=agent_definition_id).first()
+    if agent is None:
+        return None
+    return build_agent_kb_payload(agent, description)
+
+
 # DEPRECATED: Migrated to Temporal - CreateDatasetScenarioWorkflow
 # This task is no longer called. Use start_create_dataset_scenario_workflow_sync() instead.
 # @celery_app.task(
@@ -1631,6 +1643,9 @@ def _deprecated_create_script_scenario_background_task(validated_data, scenario_
             str(agent_definition_id),
             no_of_rows=no_of_rows,
             custom_columns=custom_columns,
+            knowledge_base=_resolve_agent_kb_payload(
+                agent_definition_id, scenario.description
+            ),
         )
         s, d = enhanced_agent.run(
             name=scenario.name,
@@ -1731,6 +1746,9 @@ def _deprecated_create_graph_scenario_background_task(validated_data, scenario_i
             str(agent_definition_id),
             no_of_rows=no_of_rows,
             custom_columns=custom_columns,
+            knowledge_base=_resolve_agent_kb_payload(
+                agent_definition_id, scenario.description
+            ),
         )
         s, d = enhanced_agent.run(
             name=scenario.name,

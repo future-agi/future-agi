@@ -32,6 +32,24 @@ KB_INDEX_COL_TYPE = "text"
 KB_INDEX_COL_NAME = "chunk_text"
 
 
+def build_agent_kb_payload(agent_definition, description):
+    """Resolve the agent's KB into the payload shape SDA callers expect, or None."""
+    kb_id = getattr(agent_definition, "knowledge_base_id", None)
+    if not kb_id:
+        return None
+    try:
+        doc_ids = [
+            str(d)
+            for d in (KBIndexer().get_subset_kb_id(description or "", str(kb_id)) or [])
+        ]
+    except Exception as exc:
+        logger.warning("agent_kb_payload_resolve_failed", kb_id=str(kb_id), error=str(exc))
+        return None
+    if not doc_ids:
+        return None
+    return {"table_name": KB_TABLE_NAME, "kb_id": str(kb_id), "doc_ids": doc_ids}
+
+
 @dataclass
 class Chunk:
     """Represents a chunk of text with metadata"""

@@ -1045,15 +1045,15 @@ class TestKnowledgeBaseWiring:
     """Wiring the agent's KB reference through generate_scenario_rows."""
 
     def test_resolve_returns_none_when_agent_has_no_kb(self, db, agent_definition):
-        from simulate.tasks.scenario_tasks import _resolve_knowledge_base_payload
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
 
-        assert _resolve_knowledge_base_payload(agent_definition, "anything") is None
+        assert build_agent_kb_payload(agent_definition, "anything") is None
 
     def test_resolve_returns_none_when_indexer_returns_empty(
         self, db, agent_definition, organization
     ):
         from model_hub.models.develop_dataset import KnowledgeBaseFile
-        from simulate.tasks.scenario_tasks import _resolve_knowledge_base_payload
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
 
         kb = KnowledgeBaseFile.objects.create(name="empty-kb", organization=organization)
         agent_definition.knowledge_base = kb
@@ -1062,7 +1062,7 @@ class TestKnowledgeBaseWiring:
         with patch(
             "model_hub.utils.kb_indexer.KBIndexer.get_subset_kb_id", return_value=[]
         ):
-            payload = _resolve_knowledge_base_payload(agent_definition, "anything")
+            payload = build_agent_kb_payload(agent_definition, "anything")
 
         assert payload is None
 
@@ -1071,7 +1071,7 @@ class TestKnowledgeBaseWiring:
     ):
         from model_hub.models.develop_dataset import KnowledgeBaseFile
         from model_hub.utils.kb_indexer import KB_TABLE_NAME
-        from simulate.tasks.scenario_tasks import _resolve_knowledge_base_payload
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
 
         kb = KnowledgeBaseFile.objects.create(name="kb", organization=organization)
         agent_definition.knowledge_base = kb
@@ -1081,7 +1081,7 @@ class TestKnowledgeBaseWiring:
             "model_hub.utils.kb_indexer.KBIndexer.get_subset_kb_id",
             return_value=["doc-a", "doc-b"],
         ) as mock_get:
-            payload = _resolve_knowledge_base_payload(agent_definition, "scenario desc")
+            payload = build_agent_kb_payload(agent_definition, "scenario desc")
 
         mock_get.assert_called_once()
         assert payload == {
@@ -1094,7 +1094,7 @@ class TestKnowledgeBaseWiring:
         self, db, agent_definition, organization
     ):
         from model_hub.models.develop_dataset import KnowledgeBaseFile
-        from simulate.tasks.scenario_tasks import _resolve_knowledge_base_payload
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
 
         kb = KnowledgeBaseFile.objects.create(name="kb", organization=organization)
         agent_definition.knowledge_base = kb
@@ -1104,7 +1104,7 @@ class TestKnowledgeBaseWiring:
             "model_hub.utils.kb_indexer.KBIndexer.get_subset_kb_id",
             side_effect=RuntimeError("boom"),
         ):
-            payload = _resolve_knowledge_base_payload(agent_definition, "anything")
+            payload = build_agent_kb_payload(agent_definition, "anything")
 
         assert payload is None
 
