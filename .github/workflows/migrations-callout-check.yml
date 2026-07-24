@@ -26,7 +26,7 @@ jobs:
         run: |
           set -eu
           # Steady state: a reachable release tag exists on main and the diff is
-          # last_tag..origin/main. A one-time seed tag (v1.22.73, on the commit
+          # last_tag..origin/main. A one-time seed tag (v1.22.74, on the commit
           # the last shipped backend image was built from) must be pushed as a
           # rollout prerequisite so this steady state holds from the first release.
           # --exclude '*-dev*' skips pre-release/-dev tags so only stable release
