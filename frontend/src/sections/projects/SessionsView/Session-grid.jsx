@@ -236,14 +236,15 @@ const SessionGrid = React.forwardRef(
                 ...(dateInterval && { interval: dateInterval }),
               });
 
-              // Use prefetched data if available, otherwise fetch
+              // Await the in-flight prefetch promise if present, else fetch —
+              // dedupes a concurrent getRows for the same page.
               const cached = prefetchCache.current.get(pageNumber);
               prefetchCache.current.delete(pageNumber);
-              const results =
-                cached ||
-                (await axios.get(endpoints.project.projectSessionList(), {
-                  params: buildParams(pageNumber),
-                }));
+              const results = cached
+                ? await cached
+                : await axios.get(endpoints.project.projectSessionList(), {
+                    params: buildParams(pageNumber),
+                  });
               const res = results?.data?.result;
               const newCols = normalizeConfigKeys(res?.config);
 
@@ -337,16 +338,17 @@ const SessionGrid = React.forwardRef(
                 rowCount: lastRow,
               });
 
-              // Prefetch next page so scroll feels instant
+              // Prefetch next page so scroll feels instant. Cache the promise
+              // (not the resolved value) so a concurrent getRows dedupes.
               if (!isLastPage) {
-                axios
-                  .get(endpoints.project.projectSessionList(), {
-                    params: buildParams(pageNumber + 1),
-                  })
-                  .then((res) => {
-                    prefetchCache.current.set(pageNumber + 1, res);
-                  })
-                  .catch(() => {});
+                const prefetch = axios.get(
+                  endpoints.project.projectSessionList(),
+                  { params: buildParams(pageNumber + 1) },
+                );
+                prefetchCache.current.set(pageNumber + 1, prefetch);
+                prefetch.catch(() => {
+                  prefetchCache.current.delete(pageNumber + 1);
+                });
               }
             } catch (error) {
               const message =

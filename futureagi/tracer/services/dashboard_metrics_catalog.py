@@ -693,19 +693,15 @@ def build_metrics_catalog(
         from model_hub.models.develop_annotations import AnnotationsLabels
 
         if filter_by_project:
-            from model_hub.models.score import Score
-
-            used_label_ids = list(
-                Score.objects.filter(
-                    Q(project_id__in=project_ids)
-                    | Q(trace__project_id__in=project_ids)
-                    | Q(observation_span__project_id__in=project_ids)
-                    | Q(trace_session__project_id__in=project_ids),
-                    deleted=False,
-                )
-                .values_list("label_id", flat=True)
-                .distinct()
+            # Used-label ids via dispatched ANNOTATION_LABELS source (no dropped-table JOIN).
+            from tracer.services.clickhouse.v2.dispatch import (
+                get_query_builder_class,
             )
+
+            source = get_query_builder_class("ANNOTATION_LABELS")()
+            used_label_ids: set = set()
+            for pid in project_ids:
+                used_label_ids.update(source.label_ids_for_project(pid))
             if used_label_ids:
                 annotation_labels = AnnotationsLabels.no_workspace_objects.filter(
                     id__in=used_label_ids,

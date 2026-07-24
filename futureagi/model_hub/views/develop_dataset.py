@@ -125,6 +125,7 @@ from model_hub.models.evals_metric import (
 from model_hub.models.experiments import ExperimentDatasetTable, ExperimentsTable
 from model_hub.models.optimize_dataset import OptimizeDataset
 from model_hub.models.run_prompt import PromptVersion, RunPrompter
+from model_hub.selectors.feedback import resolve_feedback_template_data
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     AddAsNewDatasetRequestSerializer,
@@ -190,6 +191,7 @@ from model_hub.serializers.develop_dataset import (
     CompareDatasetSerializer,
     DatasetSerializer,
     FeedbackSerializer,
+    FeedbackTemplateResponseSerializer,
     FileSerializer,
     KnowledgeBaseFileSerializer,
 )
@@ -230,6 +232,10 @@ from model_hub.services.derived_variable_service import (
 )
 from model_hub.tasks.develop_dataset import ingest_files_to_s3, remove_kb_files
 from model_hub.types import ConversionResult
+from model_hub.utils.annotation_queue_helpers import (
+    TEXT_FILTER_LOOKUPS,
+    or_text_filter_q,
+)
 from model_hub.utils.eval_reasons import (
     MIN_ROWS_FOR_CRITICAL_ISSUES,
     get_explanation_summary,
@@ -255,7 +261,6 @@ from model_hub.utils.synthetic_task_manager import SyntheticTaskManager
 from model_hub.utils.utils import contains_sql, get_diff
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.run_prompt import PROVIDERS_WITH_JSON
-from model_hub.views.utils.constants import EVAL_OUTPUT_TYPES
 from model_hub.views.utils.evals import process_eval_for_single_row
 from model_hub.views.utils.utils import (
     get_recommendations,
@@ -2033,36 +2038,15 @@ class GetDatasetTableView(APIView):
                         )
                         continue
 
-                    filter_value = str(filter_value).lower()
-                    text_ops = {
-                        "contains": {"value__icontains": filter_value},
-                        "not_contains": {
-                            "value__icontains": filter_value,
-                            "negate": True,
-                        },
-                        "equals": {"value__iexact": filter_value},
-                        "not_equals": {
-                            "value__iexact": filter_value,
-                            "negate": True,
-                        },
-                        "starts_with": {"value__istartswith": filter_value},
-                        "ends_with": {"value__iendswith": filter_value},
-                    }
-
-                    if filter_op not in text_ops:
+                    condition = or_text_filter_q("value", filter_op, filter_value)
+                    if condition is None:
                         message = (
-                            "Invalid filter operation. \
-                            Allowed operations are: "
-                            + ", ".join(text_ops.keys())
+                            "Invalid filter operation. Allowed operations are: "
+                            + ", ".join(TEXT_FILTER_LOOKUPS)
                         )
                         error_messages.append(message)
                         raise ValueError(message)
-
-                    filter_kwargs = text_ops[filter_op]
-                    if filter_kwargs.pop("negate", False):
-                        cells = cells.filter(~Q(**filter_kwargs), deleted=False)
-                    else:
-                        cells = cells.filter(**filter_kwargs, deleted=False)
+                    cells = cells.filter(condition, deleted=False)
 
                 elif filter_type == "boolean":
                     filter_value = str(filter_value).lower()
@@ -7286,6 +7270,7 @@ class GetEvalConfigView(APIView):
                     template.config.get("config_params_option", {})
                 ),
                 "param_modalities": template.config.get("param_modalities", {}),
+                "multi_choice": bool(getattr(template, "multi_choice", False)),
                 "kb_id": None,
                 "error_localizer": template.error_localizer_enabled,
                 "api_key_available": (
@@ -7356,6 +7341,7 @@ class GetEvalConfigView(APIView):
                 ),
                 "param_modalities": template.config.get("param_modalities", {}),
                 "choices": choices,
+                "multi_choice": bool(getattr(template, "multi_choice", False)),
                 "check_internet": template.config.get("check_internet", False),
             }
 
@@ -8003,13 +7989,25 @@ class EditAndRunUserEvalView(APIView):
                     new_config = normalize_eval_runtime_config(
                         eval_metric.template.config, new_config
                     )
+                    from model_hub.utils.eval_prompt_variables import (
+                        sync_required_keys_from_prompt,
+                    )
+
+                    sync_required_keys_from_prompt(
+                        new_config.get("config"),
+                        mapping=new_config.get("mapping", {}),
+                    )
                     from model_hub.utils.eval_validators import (
                         get_required_mapping_keys_for_template,
                         validate_required_key_mapping,
                     )
+                    required_mapping_keys = (
+                        new_config.get("config", {}).get("required_keys")
+                        or get_required_mapping_keys_for_template(eval_metric.template)
+                    )
                     missing_keys = validate_required_key_mapping(
                         new_config.get("mapping", {}),
-                        get_required_mapping_keys_for_template(eval_metric.template),
+                        required_mapping_keys,
                     )
                     if missing_keys:
                         return self._gm.bad_request(
@@ -11169,6 +11167,10 @@ class FeedbackViewSet(viewsets.ModelViewSet):
         kwargs["partial"] = True
         return self.update(request, *args, **kwargs)
 
+    @swagger_auto_schema(
+        method="get",
+        responses={200: FeedbackTemplateResponseSerializer},
+    )
     @action(detail=False, methods=["GET"])
     def get_template(self, request):
         """
@@ -11202,41 +11204,9 @@ class FeedbackViewSet(viewsets.ModelViewSet):
             return self._gm.not_found(get_error_message("EVAL_TEMP_NOT_FOUND"))
 
         try:
-            template_data = {
-                "output_type": eval_template.config.get("output"),
-                "eval_description": eval_template.description,
-                "eval_name": eval_template.name,
-                "user_eval_name": user_eval_metric.name,
-            }
-
-            if template_data["output_type"] == EVAL_OUTPUT_TYPES["PASS_FAIL"]:
-                template_data["choices"] = ["Passed", "Failed"]
-
-            elif template_data["output_type"] == EVAL_OUTPUT_TYPES["CHOICES"]:
-                if (
-                    user_eval_metric.config
-                    and isinstance(user_eval_metric.config, dict)
-                    and "config" in user_eval_metric.config
-                    and "choices" in user_eval_metric.config["config"]
-                    and user_eval_metric.config["config"]["choices"]
-                ):
-                    template_data["choices"] = user_eval_metric.config["config"][
-                        "choices"
-                    ]
-                    template_data["multi_choice"] = user_eval_metric.config[
-                        "config"
-                    ].get("multi_choice", False)
-
-                elif hasattr(eval_template, "choices") and eval_template.choices:
-                    template_data["choices"] = eval_template.choices
-                    template_data["multi_choice"] = eval_template.config.get(
-                        "multi_choice", False
-                    )
-
-                else:
-                    template_data["choices"] = []
-                    template_data["multi_choice"] = False
-
+            template_data = resolve_feedback_template_data(
+                user_eval_metric, eval_template
+            )
             return self._gm.success_response(template_data)
 
         except UserEvalMetric.DoesNotExist:

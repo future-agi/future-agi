@@ -1,12 +1,15 @@
 import concurrent.futures
+import hashlib
 import io
 import json
 import uuid
 from collections import defaultdict
 from dataclasses import asdict
+from datetime import datetime, timedelta
 
 import pandas as pd
 import structlog
+from django.core.cache import cache as django_cache
 from django.db import close_old_connections
 from django.db.models import (
     Avg,
@@ -86,6 +89,7 @@ from tracer.services.clickhouse.graph_dispatch import (
     fetch_eval_graph_ch,
     fetch_system_metric_graph_ch,
 )
+from tracer.services.clickhouse.page_dedup import paginate_deduped
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
 from tracer.services.clickhouse.v2.span_selectors import (
     flatten_span_attributes_into_entry,
@@ -1500,16 +1504,61 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             ).select_related("eval_template")
             eval_config_ids = [str(c.id) for c in eval_configs]
         else:
-            ch_ids = analytics.get_eval_config_ids_with_data_ch(
-                str(project_id), timeout_ms=30000
-            )
-            if ch_ids:
-                eval_configs = CustomEvalConfig.objects.filter(
-                    id__in=ch_ids, deleted=False
+            # PERF: resolve this project's configs from PG first (indexed by the
+            # project FK), then ask CH which of them have recent data via a
+            # ``custom_eval_config_id IN (…)`` scope — the eval table's leading
+            # sort key, so CH prunes to just those configs. This replaces the old
+            # full-table trace-join discovery (tens of seconds / OOM-prone at
+            # scale) with a sub-second read. See
+            # AnalyticsQueryService.get_eval_config_ids_with_data_ch.
+            project_configs = list(
+                CustomEvalConfig.objects.filter(
+                    project_id=project_id, deleted=False
                 ).select_related("eval_template")
-                eval_config_ids = [str(c.id) for c in eval_configs]
-            else:
-                eval_configs = []
+            )
+            candidate_ids = [str(c.id) for c in project_configs]
+            # Discover eval columns over the SAME window the user is viewing, not
+            # a fixed 30 days: cover [requested-start, now] so a config with data
+            # anywhere in the requested range keeps its column (no missing columns
+            # on a 6-month view, no spurious empty columns on a 24h view).
+            # candidate_config_ids keeps the scan bounded by the eval table's
+            # leading sort key at any depth. Default (unfiltered) view → ~30 days.
+            window_days = SpanListQueryBuilder.window_days_covering(filters)
+            # Short-TTL cache: "which configs have data" changes on config
+            # creation / first eval write, not per page load — the fast-path CH
+            # read still costs ~0.4-0.9s per request at 10M eval rows (measured),
+            # and this endpoint fires it on EVERY page. Key includes the
+            # candidate set and window so a newly-created config or a different
+            # time range gets a fresh entry; worst case a brand-new config's
+            # column appears one TTL late.
+            ids_with_data: set[str] = set()
+            if candidate_ids:
+                cache_key = (
+                    "span_list_eval_cfgs:"
+                    + hashlib.sha256(
+                        (
+                            str(project_id)
+                            + "|"
+                            + ",".join(sorted(candidate_ids))
+                            + f"|w={window_days}"
+                        ).encode()
+                    ).hexdigest()
+                )
+                cached_ids = django_cache.get(cache_key)
+                if cached_ids is not None:
+                    ids_with_data = set(cached_ids)
+                else:
+                    ids_with_data = set(
+                        analytics.get_eval_config_ids_with_data_ch(
+                            str(project_id),
+                            timeout_ms=30000,
+                            candidate_config_ids=candidate_ids,
+                            window_days=window_days,
+                        )
+                    )
+                    django_cache.set(cache_key, list(ids_with_data), timeout=120)
+            eval_configs = [c for c in project_configs if str(c.id) in ids_with_data]
+            eval_config_ids = [str(c.id) for c in eval_configs]
 
         # Labels can be project-local or org/shared labels that are referenced
         # by span scores. Use the score-backed helper so span columns and
@@ -1533,65 +1582,174 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             annotation_label_ids=annotation_label_ids,
         )
 
-        # Phase 1: Paginated spans (light columns — no input/output)
-        query, params = builder.build()
-        result = analytics.execute_ch_query(query, params, timeout_ms=10000)
+        # Phase 1: Paginated spans (light columns — no input/output).
+        #
+        # Progressive time slices: the sort is `start_time DESC`, so every row
+        # in a newer slice sorts before every older row — a slice that already
+        # yields the full prefix [0, offset + 2*page_size) IS the global
+        # prefix, and older data cannot change the page. Try the newest slices
+        # first (7d → 30d → 180d), fall back to the full requested window only
+        # when the prefix is short. Typical pages fill from recent data and
+        # read ~100x fewer rows (measured 0.02-0.17s vs ~1.2s over 18 months at
+        # 10M spans). Slices that don't narrow the requested window are
+        # skipped, so a "last 24h" view still runs exactly one query.
+        prefix_needed = (page_number * page_size) + 2 * page_size
+        win_start, _win_end = SpanListQueryBuilder.parse_time_range(filters)
+        utc_now = datetime.utcnow()
+        slice_starts = [
+            utc_now - timedelta(days=d)
+            for d in (7, 30, 180)
+            if win_start is None or utc_now - timedelta(days=d) > win_start
+        ]
+        result = None
+        for since in [*slice_starts, None]:
+            query, params = builder.build(since=since)
+            result = analytics.execute_ch_query(query, params, timeout_ms=10000)
+            if len(result.data) >= prefix_needed:
+                break
 
-        # Truncate to page_size (query fetches page_size+1 for has_more detection)
-        has_more = len(result.data) > page_size
-        if has_more:
-            result.data = result.data[:page_size]
-
-        # Phase 1b: Fetch input/output/attributes_extra for the page
-        span_ids = [str(row.get("id", "")) for row in result.data]
-        if span_ids:
-            content_query, content_params = builder.build_content_query(span_ids)
-            if content_query:
-                content_result = analytics.execute_ch_query(
-                    content_query, content_params, timeout_ms=10000
-                )
-                merge_content_rows(
-                    result.data,
-                    content_result.data,
-                    id_key="id",
-                    keys=(
-                        "input",
-                        "output",
-                        "attributes_extra",
-                        "attrs_string",
-                        "attrs_number",
-                        "attrs_bool",
-                    ),
-                )
-
-        # Count
-        count_query, count_params = builder.build_count_query()
-        count_result = analytics.execute_ch_query(
-            count_query, count_params, timeout_ms=10000
+        # Prefix-dedup pagination: Phase 1 dropped `LIMIT 1 BY id` (its
+        # O(window) full sort OOM-crashed CH — see SpanListQueryBuilder.build)
+        # and instead fetched the sorted prefix [0, offset + 2*page_size).
+        # De-dup the prefix by span id and slice the page — every page is a
+        # disjoint slice of the same globally de-duplicated stream, so a span
+        # can never appear on two pages and none is skipped. See page_dedup.py.
+        result.data, has_more = paginate_deduped(
+            result.data, "id", page_number, page_size
         )
-        total_count = count_result.data[0].get("total", 0) if count_result.data else 0
 
-        # Phase 2: Eval scores
-        eval_map = {}
-        if span_ids and eval_config_ids:
-            eval_query, eval_params = builder.build_eval_query(span_ids)
-            if eval_query:
-                eval_result = analytics.execute_ch_query(
-                    eval_query, eval_params, timeout_ms=5000
-                )
-                eval_map = SpanListQueryBuilder.pivot_eval_results(eval_result.data)
+        span_ids = [str(row.get("id", "")) for row in result.data]
+        # Oldest created_at on the page — lower bound for the eval/annotation
+        # reads below. Both tables are PARTITION BY toYYYYMM(created_at) and an
+        # eval/score row cannot be created before its span row exists, so the
+        # bound (with a 7-day margin in the builder) only prunes partitions
+        # that cannot hold matches — measured 55x fewer rows read.
+        page_created_ats = [
+            row.get("created_at") for row in result.data if row.get("created_at")
+        ]
+        page_min_created_at = min(page_created_ats) if page_created_ats else None
 
-        # Phase 3: Annotations
-        annotation_map = {}
-        if span_ids and annotation_label_ids:
-            ann_query, ann_params = builder.build_annotation_query(span_ids)
-            if ann_query:
-                ann_result = analytics.execute_ch_query(
-                    ann_query, ann_params, timeout_ms=5000
+        # Phases 1b/2/3 + count are independent once the page ids are known —
+        # run them concurrently so request latency is Phase1 + max(rest), not
+        # the serial sum. `analytics.ch_client` pools connections behind a lock
+        # (see ClickHouseClient._get_client), so concurrent execute_ch_query
+        # calls are safe. Any worker exception propagates via .result() and is
+        # handled by the endpoint's outer try/except, same as the serial code.
+        def _fetch_content():
+            if not span_ids:
+                return []
+            content_query, content_params = builder.build_content_query(span_ids)
+            if not content_query:
+                return []
+            return analytics.execute_ch_query(
+                content_query, content_params, timeout_ms=10000
+            ).data
+
+        def _fetch_count():
+            # Short-TTL cache keyed by the query + bindings: the count re-scans
+            # the full filtered window (measured 0.65-1.15s at 10M+ rows) and is
+            # identical across pages of the same view. Value is exact; staleness
+            # is bounded by the TTL.
+            #
+            # The time-window params are bucketed to the minute before hashing.
+            # On a default (unfiltered) view start_date/end_date default to
+            # `datetime.utcnow()`-based values that are microsecond-fresh per
+            # request (base.py parse_time_range), so hashing them raw mints a new
+            # key every request and the cache never hits on exactly the view it
+            # targets. Minute-bucketing makes the key stable across a view's
+            # pages; the count is a display value, so a sub-minute window drift
+            # against the cached value is immaterial and TTL-bounded.
+            cache_params = {
+                k: (
+                    v.replace(second=0, microsecond=0) if isinstance(v, datetime) else v
                 )
-                annotation_map = SpanListQueryBuilder.pivot_annotation_results(
-                    ann_result.data, label_types
-                )
+                for k, v in count_params.items()
+            }
+            count_key = (
+                "span_list_count:"
+                + hashlib.sha256(
+                    (count_query + repr(sorted(cache_params.items(), key=str))).encode()
+                ).hexdigest()
+            )
+            cached_total = django_cache.get(count_key)
+            if cached_total is not None:
+                return cached_total
+            count_result = analytics.execute_ch_query(
+                count_query, count_params, timeout_ms=10000
+            )
+            total = count_result.data[0].get("total", 0) if count_result.data else 0
+            django_cache.set(count_key, total, timeout=60)
+            return total
+
+        def _fetch_evals():
+            if not (span_ids and eval_config_ids):
+                return {}
+            eval_query, eval_params = builder.build_eval_query(
+                span_ids, created_after=page_min_created_at
+            )
+            if not eval_query:
+                return {}
+            eval_result = analytics.execute_ch_query(
+                eval_query, eval_params, timeout_ms=5000
+            )
+            return SpanListQueryBuilder.pivot_eval_results(eval_result.data)
+
+        def _fetch_annotations():
+            if not (span_ids and annotation_label_ids):
+                return {}
+            ann_query, ann_params = builder.build_annotation_query(
+                span_ids, created_after=page_min_created_at
+            )
+            if not ann_query:
+                return {}
+            ann_result = analytics.execute_ch_query(
+                ann_query, ann_params, timeout_ms=5000
+            )
+            return SpanListQueryBuilder.pivot_annotation_results(
+                ann_result.data, label_types
+            )
+
+        # Build the count SQL on the request thread, NOT inside the pool worker.
+        # build_count_query() runs fb.translate(), which issues ORM queries
+        # (CustomEvalConfig/EvalTemplate) for eval/annotation filters. DB
+        # connections opened inside an ad-hoc ThreadPoolExecutor thread are
+        # thread-local and never closed by the request lifecycle
+        # (close_old_connections fires on the request thread only), so running
+        # translate() in a worker leaks a PG connection per filtered request.
+        # Only the CH execute below runs in the pool. This also keeps count
+        # SQL-building off the shared builder state that the pool reads.
+        count_query, count_params = builder.build_count_query()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            content_f = pool.submit(_fetch_content)
+            count_f = pool.submit(_fetch_count)
+            evals_f = pool.submit(_fetch_evals)
+            anns_f = pool.submit(_fetch_annotations)
+            content_rows = content_f.result()
+            total_count = count_f.result()
+            eval_map = evals_f.result()
+            annotation_map = anns_f.result()
+
+        # Phase 1b merge: input/output/attributes_extra AND the typed attr maps
+        # (attrs_string/attrs_number/attrs_bool) onto the page rows. The typed
+        # maps are read by flatten_span_attributes_into_entry() below to populate
+        # custom span-attribute columns — build_content_query fetches them, so
+        # dropping them here renders every typed-map custom column empty. Use the
+        # shared helper (null-safe factory defaults for the map keys), matching
+        # the trace-list read path.
+        merge_content_rows(
+            result.data,
+            content_rows,
+            id_key="id",
+            keys=(
+                "input",
+                "output",
+                "attributes_extra",
+                "attrs_string",
+                "attrs_number",
+                "attrs_bool",
+            ),
+        )
 
         # Build column config (from PG config tables)
         column_config = get_default_span_config()
@@ -1808,10 +1966,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         query, params = builder.build()
         result = analytics.execute_ch_query(query, params, timeout_ms=10000)
 
-        # Truncate to page_size (query fetches page_size+1 for has_more detection)
-        has_more = len(result.data) > page_size
-        if has_more:
-            result.data = result.data[:page_size]
+        # Prefix-dedup pagination: Phase 1 dropped `LIMIT 1 BY id` (its
+        # O(window) full sort OOM-crashed CH — see SpanListQueryBuilder.build)
+        # and instead fetched the sorted prefix [0, offset + 2*page_size).
+        # De-dup the prefix by span id and slice the page — every page is a
+        # disjoint slice of the same globally de-duplicated stream, so a span
+        # can never appear on two pages and none is skipped. See page_dedup.py.
+        result.data, has_more = paginate_deduped(
+            result.data, "id", page_number, page_size
+        )
 
         # Phase 1b: Fetch input/output for the page
         span_ids = [str(row.get("id", "")) for row in result.data]
@@ -2539,6 +2702,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     # (rare, e.g. orphaned span).
                     from model_hub.utils.annotation_queue_helpers import (
                         resolve_default_queue_item_for_source,
+                        tracer_project_id_for_source,
                     )
 
                     default_item = resolve_default_queue_item_for_source(
@@ -2561,6 +2725,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                             label_id=str(annotation_label.pk),
                         )
                         continue
+                    tracer_project_id = tracer_project_id_for_source(
+                        "observation_span", observation_span
+                    )
                     score, _ = Score.no_workspace_objects.update_or_create(
                         observation_span_id=observation_span.pk,
                         label_id=annotation_label.pk,
@@ -2573,6 +2740,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                             "score_source": "human",
                             "notes": notes or "",
                             "organization": request.user.organization,
+                            **(
+                                {"tracer_project_id": tracer_project_id}
+                                if tracer_project_id
+                                else {}
+                            ),
                         },
                     )
                     if notes is not None:

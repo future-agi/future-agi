@@ -1417,19 +1417,40 @@ def download_audio_from_url(
     timeout=200,
     min_duration_seconds: float | None = 1.0,
     pad_silence: bool = True,
+    *,
+    provider: str | None = None,
+    api_key: str | None = None,
+    call_id: str | None = None,
+    artifact_type: str | None = None,
 ):
-    # PYTHONWARNINGS="error::AssertionError"
-    """
-    Downloads an audio file from the provided URL with retries and error handling.
-    Processes audio data in memory and converts to MP3 format if needed.
-    """
-    # headers = {
-    #     "User-Agent": (
-    #         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    #         "AppleWebKit/537.36 (KHTML, like Gecko) "
-    #         "Chrome/91.0.4472.124 Safari/537.36"
-    #     )
-    # }
+    """Download an audio file and return MP3 bytes; routes Vapi through the auth endpoint."""
+    from tracer.utils.vapi_recording import (
+        VapiArtifactNotReadyError,
+        VapiAuthError,
+        VapiRateLimitError,
+        VapiRecordingService,
+    )
+
+    if VapiRecordingService.is_authenticated_download(
+        provider, api_key, call_id, artifact_type
+    ):
+        try:
+            return VapiRecordingService.download_artifact_sync(
+                call_id=call_id,
+                artifact_type=artifact_type,
+                api_key=api_key,
+                timeout_seconds=timeout,
+            )
+        except (VapiAuthError, VapiArtifactNotReadyError, VapiRateLimitError):
+            raise
+        except Exception as exc:
+            logger.warning(
+                "vapi_authenticated_download_failed_falling_back",
+                audio_url=audio_url,
+                call_id=call_id,
+                artifact_type=artifact_type,
+                error=str(exc),
+            )
 
     for attempt in range(max_retries):
         audio_data = b""  # Reset audio_data for each attempt
@@ -1677,6 +1698,17 @@ def upload_audio_to_s3(
         _generated_object_key = object_key is None
 
         bucket_name = UPLOAD_BUCKET_NAME
+        logger.info(
+            "upload_audio_to_s3: ENTRY",
+            resolved_bucket=bucket_name,
+            upload_bucket_name_env=os.getenv("UPLOAD_BUCKET_NAME"),
+            minio_bucket_name_env=os.getenv("MINIO_BUCKET_NAME"),
+            object_key=object_key,
+            audio_data_type=type(audio_data).__name__,
+            org_id=org_id,
+            storage_backend=os.getenv("STORAGE_BACKEND"),
+            s3_endpoint=os.getenv("S3_ENDPOINT") or os.getenv("S3_ENDPOINT_URL"),
+        )
 
         if isinstance(audio_data, str) and is_own_storage_url(audio_data, bucket_name):
             return audio_data
@@ -1807,9 +1839,17 @@ def upload_audio_to_s3(
             object_key = f"tempcust/{uuid.uuid4()}.{ext}"
 
         minio_client = get_storage_client()
+        logger.info(
+            "upload_audio_to_s3: about to ensure_bucket + put_object",
+            bucket=bucket_name,
+            object_key=object_key,
+            bytes=len(audio_bytes),
+            client_host=getattr(minio_client, "_base_url", None),
+        )
         ensure_bucket(minio_client, bucket_name)
 
         # Upload the audio bytes to S3
+        logger.info("s3_upload_start", bucket=bucket_name, object_key=object_key, bytes=len(audio_bytes))
         with BytesIO(audio_bytes) as audio_buffer:
             minio_client.put_object(
                 bucket_name=bucket_name,
@@ -1818,6 +1858,11 @@ def upload_audio_to_s3(
                 length=len(audio_bytes),
                 content_type=content_type,
             )
+        logger.info(
+            "upload_audio_to_s3: put_object OK",
+            bucket=bucket_name,
+            object_key=object_key,
+        )
 
         if org_id:
             try:
@@ -1849,7 +1894,8 @@ def upload_audio_to_s3(
         return url
 
     except Exception as e:
-        logger.exception(f"Error uploading audio to S3: {str(e)}")
+        error_code = str(e.code) if hasattr(e, "code") else str(e)
+        logger.error("s3_upload_failed", bucket=bucket_name, object_key=object_key, error_code=error_code, exc_info=True)
         raise ValueError(get_error_message("ERROR_AUDIO_UPLOAD").format(str(e))) from e
 
 

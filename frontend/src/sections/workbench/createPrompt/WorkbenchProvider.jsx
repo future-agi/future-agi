@@ -574,6 +574,7 @@ const WorkbenchProvider = ({ children }) => {
       skipLatestLoadOnce.current = false;
       return;
     }
+    const loadedVersion = selectedVersions?.[0]?.version;
     setPromptName(data?.name);
     setSelectedVersions([
       {
@@ -591,7 +592,15 @@ const WorkbenchProvider = ({ children }) => {
       setCurrentTab("Playground");
     }
 
-    if (data?.prompt_config?.[0]?.messages && !prompts?.[0]?.prompts.length) {
+    // Load messages when the editor is empty or the fetched version differs from the
+    // one already loaded. Guarding only on empty `prompts` left stale content from
+    // another version in the editor after a switch; reloading on every `data` refetch
+    // (rename/commit/tag invalidations) would clobber the current same-version editor.
+    const isVersionSwitch = loadedVersion !== data?.version;
+    if (
+      data?.prompt_config?.[0]?.messages &&
+      (!prompts?.[0]?.prompts.length || isVersionSwitch)
+    ) {
       const newPrompts = data?.prompt_config?.[0]?.messages?.map((prompt) => ({
         ...prompt,
         id: getRandomId(),
@@ -1441,6 +1450,7 @@ const WorkbenchProvider = ({ children }) => {
     const newPlaceholders = [];
     const newResults = [];
     const newModelConfigs = [];
+    const addedVariableData = {};
 
     newCompareVersions.forEach((eachCompareVersions) => {
       newVersions.push({
@@ -1456,6 +1466,10 @@ const WorkbenchProvider = ({ children }) => {
         prompts: eachCompareVersions.prompt_config_snapshot.messages,
         id: getRandomId(),
       });
+
+      if (eachCompareVersions?.variable_names) {
+        Object.assign(addedVariableData, eachCompareVersions.variable_names);
+      }
 
       const placeholderArray =
         eachCompareVersions.prompt_config_snapshot.placeholders || [];
@@ -1485,6 +1499,8 @@ const WorkbenchProvider = ({ children }) => {
     setPlaceholders((e) => [e[0], ...newPlaceholders]);
     setModelConfig((e) => [e[0], ...newModelConfigs]);
     setResults((e) => [e[0], ...newResults]);
+    // Merge added versions' variables into the shared panel; base (index 0) wins on conflicts.
+    setVariableData((prev) => ({ ...addedVariableData, ...prev }));
   };
 
   const removeFromCompare = (index) => {

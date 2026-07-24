@@ -4618,13 +4618,6 @@ class TestExecutor:
                     transcript_data["voice_recording"] = s3_url
                     recording_object["combined"] = s3_url
 
-                if recording_object:
-                    call_execution.provider_call_data.get(
-                        self.system_voice_provider.value
-                    )["recording"] = recording_object
-                    fields_to_update.append("provider_call_data")
-                    needs_save = True
-
             # Save the call_execution if any URLs were converted
             if needs_save:
                 call_execution.save(update_fields=fields_to_update)

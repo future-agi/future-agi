@@ -408,9 +408,9 @@ class TestClickHouseSchema:
         assert names.index("span_metrics_hourly_mv") < names.index(
             "span_metrics_hourly"
         ), "MV must drop before its source table"
-        assert names.index("spans_mv") < names.index("tracer_observation_span"), (
-            "spans_mv must drop before tracer_observation_span"
-        )
+        assert names.index("spans_mv") < names.index(
+            "tracer_observation_span"
+        ), "spans_mv must drop before tracer_observation_span"
         # Idempotency: every drop wraps IF EXISTS so reruns are no-ops.
         for _, sql in drops:
             assert "IF EXISTS" in sql, f"drop must be idempotent: {sql}"
@@ -848,6 +848,122 @@ class TestClickHouseFilterBuilder:
         assert "sp.project_id IN %(project_ids)s" in where
         assert "sp.project_id = %(project_id)s" not in where
         assert params == {}
+
+    # ── eval-filter subqueries: eval_logger_source routing, no FINAL, window ──
+
+    @staticmethod
+    def _patched_eval_config_resolution(config_id):
+        """Patch the PG config/template lookup `_build_eval_condition` performs
+        so the SQL shape can be pinned without database fixtures. The template
+        resolves to None → output_type stays SCORE (output_float compare)."""
+        values = mock.MagicMock()
+        values.__iter__ = lambda self: iter([config_id])
+        values.first.return_value = None
+        fake_qs = mock.MagicMock()
+        fake_qs.exists.return_value = True
+        fake_qs.filter.return_value = fake_qs
+        fake_qs.values_list.return_value = values
+        objects = mock.MagicMock()
+        objects.filter.return_value = fake_qs
+        template_mgr = mock.MagicMock()
+        template_mgr.filter.return_value.values.return_value.first.return_value = None
+        return (
+            mock.patch(
+                "tracer.models.custom_eval_config.CustomEvalConfig.objects", objects
+            ),
+            mock.patch(
+                "model_hub.models.evals_metric.EvalTemplate.no_workspace_objects",
+                template_mgr,
+            ),
+        )
+
+    def _eval_metric_where(self, score_date_scope=True):
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        cfg_id = "22222222-2222-2222-2222-222222222222"
+        builder = ClickHouseFilterBuilder(
+            project_id="11111111-1111-1111-1111-111111111111",
+            query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
+            score_date_scope=score_date_scope,
+        )
+        p1, p2 = self._patched_eval_config_resolution(cfg_id)
+        with p1, p2:
+            where, params = builder.translate(
+                [
+                    {
+                        "column_id": cfg_id,
+                        "filter_config": {
+                            "col_type": "EVAL_METRIC",
+                            "filter_type": "number",
+                            "filter_op": "greater_than",
+                            "filter_value": 80,
+                        },
+                    }
+                ]
+            )
+        return where, params
+
+    def test_eval_metric_filter_routes_via_eval_logger_source_v2(self):
+        """The eval FILTER must read the same table the displayed eval cells
+        read (eval_logger_source), with no table-level FINAL (whole-table
+        merge — the OOM class the span-list Phase-2 rewrite removed) and a
+        window-aligned created_at bound for monthly partition pruning."""
+        from django.test import override_settings
+
+        with override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2"):
+            where, _ = self._eval_metric_where()
+        assert "FROM tracer_eval_logger_v2 " in where
+        assert "FINAL" not in where
+        assert "is_deleted = 0" in where
+        assert "_peerdb_is_deleted" not in where
+        assert "created_at >= %(start_date)s - INTERVAL 7 DAY" in where
+
+    def test_eval_metric_filter_keeps_legacy_predicate(self):
+        from django.test import override_settings
+
+        with override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger"):
+            where, _ = self._eval_metric_where()
+        assert "FROM tracer_eval_logger " in where
+        assert "tracer_eval_logger_v2" not in where
+        assert "FINAL" not in where
+        assert "_peerdb_is_deleted = 0" in where
+
+    def test_eval_metric_filter_omits_date_bound_without_scope(self):
+        """Callers that don't bind %(start_date)s (score_date_scope=False)
+        must not receive the created_at bound — a missing-parameter error
+        otherwise (dependency-failure path)."""
+        where, _ = self._eval_metric_where(score_date_scope=False)
+        assert "created_at >=" not in where
+
+    def test_has_eval_no_final_and_window_bound(self):
+        from django.test import override_settings
+
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder(
+            project_id="11111111-1111-1111-1111-111111111111"
+        )
+        with override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2"):
+            where, _ = builder.translate(
+                [
+                    {
+                        "column_id": "has_eval",
+                        "filter_config": {
+                            "filter_type": "boolean",
+                            "filter_op": "equals",
+                            "filter_value": True,
+                        },
+                    }
+                ]
+            )
+        assert "tracer_eval_logger_v2 AS el" in where
+        assert "FINAL" not in where
+        assert "el.is_deleted = 0" in where
+        assert "el.created_at >= %(start_date)s - INTERVAL 7 DAY" in where
 
     def test_span_mode_my_annotations_filter_targets_span_id(self):
         """my_annotations uses span ids in span mode and trace ids elsewhere."""
@@ -2431,9 +2547,10 @@ class TestTraceListQueryBuilder:
         )
         query, params = builder.build()
         assert "LIMIT" in query
-        assert "OFFSET" in query
+        # Prefix-fetch pagination: no SQL OFFSET (see page_dedup.py).
+        assert "OFFSET" not in query
         assert "parent_span_id IS NULL" in query
-        assert params["limit"] == 10
+        assert params["limit"] == 20  # offset 0 + 2 * page_size 10
 
     def test_build_query_selects_expected_columns(self):
         """Phase-1 query should select trace metadata columns."""
@@ -2566,8 +2683,9 @@ class TestTraceListQueryBuilder:
             page_size=25,
         )
         query, params = builder.build()
-        assert params["offset"] == 75  # 3 * 25
-        assert params["limit"] == 25
+        assert "OFFSET" not in query
+        assert "offset" not in params
+        assert params["limit"] == 125  # offset 75 + 2 * page_size 25
 
     def test_build_user_id_query(self):
         """build_user_id_query() should use enduser_dict for single-query lookup."""
@@ -3244,9 +3362,7 @@ class TestUserListQueryBuilder:
             offset=0,
         )
         builder.build()
-        query, _ = builder.build_eval_query(
-            ["00000000-0000-0000-0000-000000000003"]
-        )
+        query, _ = builder.build_eval_query(["00000000-0000-0000-0000-000000000003"])
 
         assert "e.trace_id = toUUIDOrNull(ut.trace_id)" in query
         assert "toString(e.trace_id)" not in query
@@ -4618,9 +4734,9 @@ class TestTraceListQueryBuilderComprehensive:
             page_number=0,
             page_size=50,
         )
-        _, params = builder.build()
-        assert params["offset"] == 0
-        assert params["limit"] == 50
+        query, params = builder.build()
+        assert "OFFSET" not in query
+        assert params["limit"] == 100  # offset 0 + 2 * page_size 50
 
     def test_pagination_large_page(self):
         """Large page number should calculate correct offset."""
@@ -4631,9 +4747,9 @@ class TestTraceListQueryBuilderComprehensive:
             page_number=10,
             page_size=100,
         )
-        _, params = builder.build()
-        assert params["offset"] == 1000
-        assert params["limit"] == 100
+        query, params = builder.build()
+        assert "OFFSET" not in query
+        assert params["limit"] == 1200  # offset 1000 + 2 * page_size 100
 
     def test_pagination_small_page_size(self):
         """Small page size should work correctly."""
@@ -4644,9 +4760,9 @@ class TestTraceListQueryBuilderComprehensive:
             page_number=5,
             page_size=10,
         )
-        _, params = builder.build()
-        assert params["offset"] == 50
-        assert params["limit"] == 10
+        query, params = builder.build()
+        assert "OFFSET" not in query
+        assert params["limit"] == 70  # offset 50 + 2 * page_size 10
 
     # ------------------------------------------------------------------
     # Count query
@@ -5061,8 +5177,11 @@ class TestSpanListQueryBuilderComprehensive:
         query, params = builder.build()
         assert "spans" in query
         assert "LIMIT" in query
-        assert "OFFSET" in query
-        assert params["limit"] == 50
+        # Prefix-fetch pagination: no SQL OFFSET — the query reads the sorted
+        # prefix [0, offset + 2*page_size) as a bounded top-K and the view
+        # dedups by span id then slices the page (see page_dedup.py).
+        assert "OFFSET" not in query
+        assert params["limit"] == 100  # offset 0 + 2 * page_size 50
         # Unlike trace list, span list shows ALL spans (no parent_span_id filter)
         assert "parent_span_id IS NULL" not in query
 
@@ -5188,7 +5307,7 @@ class TestSpanListQueryBuilderComprehensive:
         assert "end_user_id =" not in query
 
     def test_pagination_offset(self):
-        """Offset should be page_number * page_size."""
+        """LIMIT covers the prefix [0, offset + 2*page_size); slicing is in Python."""
         from tracer.services.clickhouse.query_builders import SpanListQueryBuilder
 
         builder = SpanListQueryBuilder(
@@ -5196,9 +5315,10 @@ class TestSpanListQueryBuilderComprehensive:
             page_number=3,
             page_size=20,
         )
-        _, params = builder.build()
-        assert params["offset"] == 60
-        assert params["limit"] == 20
+        query, params = builder.build()
+        assert "OFFSET" not in query
+        assert params["limit"] == 100  # offset 60 + 2 * page_size 20
+        assert "offset" not in params
 
     def test_sort_default(self):
         """Default sort should be ORDER BY start_time DESC."""
@@ -5244,8 +5364,12 @@ class TestSpanListQueryBuilderComprehensive:
         )
         builder.build()
         query, _ = builder.build_count_query()
-        # Post-revamp, the count query uses uniqExact(id) rather than count().
-        assert "uniqExact(id)" in query
+        # PERF: count() rather than uniqExact(id) — uniqExact built an unbounded
+        # exact hash set of every span id (GBs of memory, OOM-prone). count()
+        # reads only filter columns; a transient un-merged duplicate counts once
+        # extra, which is immaterial for a pagination total.
+        assert "count() AS total" in query
+        assert "uniqExact" not in query
         assert "LIMIT" not in query
         assert "OFFSET" not in query
 
@@ -6772,9 +6896,9 @@ class TestVoiceCallListPhase1bMigration:
         src = self._voice_list_source()
         # `FROM spans FINAL` collapses ReplacingMergeTree duplicates — the
         # v2 dedup contract. FINAL alone (without `spans`) is too permissive.
-        assert re.search(r"FROM\s+spans\s+FINAL", src), (
-            "_list_voice_calls_clickhouse must hydrate from v2 `spans FINAL`."
-        )
+        assert re.search(
+            r"FROM\s+spans\s+FINAL", src
+        ), "_list_voice_calls_clickhouse must hydrate from v2 `spans FINAL`."
         assert "is_deleted = 0" in src
 
     def test_phase_1b_selects_typed_map_columns_for_reconstruction(self):
@@ -7186,9 +7310,9 @@ class TestVoiceCallListQueryBuilderComprehensive:
         # Each phone number is still recognised as a simulator call in Python.
         for phone in VAPI_PHONE_NUMBERS:
             span_attrs = {"raw_log": {"customer": {"number": phone}}}
-            assert VoiceCallListQueryBuilder.is_simulator_call(span_attrs, "vapi"), (
-                f"Missing phone number: {phone}"
-            )
+            assert VoiceCallListQueryBuilder.is_simulator_call(
+                span_attrs, "vapi"
+            ), f"Missing phone number: {phone}"
 
     def test_simulation_filter_uses_json_extract(self):
         """Simulation filtering is now Python-side against parsed raw_log.

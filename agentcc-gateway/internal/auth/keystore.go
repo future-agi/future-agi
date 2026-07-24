@@ -367,6 +367,27 @@ type SyncedKey struct {
 	Models    []string          `json:"models"`
 	Providers []string          `json:"providers"`
 	Metadata  map[string]string `json:"metadata"`
+	ExpiresAt *time.Time        `json:"expires_at"`
+}
+
+// syncedKeyToAPIKey is the single construction site for both sync paths, so a
+// field can't be wired into one and missed in the other.
+func syncedKeyToAPIKey(sk SyncedKey, id string) *APIKey {
+	return &APIKey{
+		ID:               id,
+		KeyHash:          sk.KeyHash,
+		Name:             sk.Name,
+		Owner:            sk.Owner,
+		Status:           "active",
+		KeyType:          "byok",
+		Source:           "sync",
+		AllowedModels:    sk.Models,
+		AllowedProviders: sk.Providers,
+		Metadata:         sk.Metadata,
+		ExpiresAt:        sk.ExpiresAt,
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
+	}
 }
 
 // LoadFromHashes merges control-plane keys (identified by pre-computed hashes)
@@ -392,20 +413,7 @@ func (ks *KeyStore) LoadFromHashes(keys []SyncedKey) int {
 			id = fmt.Sprintf("key_%d", ks.counter)
 		}
 
-		key := &APIKey{
-			ID:               id,
-			KeyHash:          sk.KeyHash,
-			Name:             sk.Name,
-			Owner:            sk.Owner,
-			Status:           "active",
-			KeyType:          "byok",
-			Source:           "sync",
-			AllowedModels:    sk.Models,
-			AllowedProviders: sk.Providers,
-			Metadata:         sk.Metadata,
-			CreatedAt:        time.Now(),
-			UpdatedAt:        time.Now(),
-		}
+		key := syncedKeyToAPIKey(sk, id)
 
 		ks.byHash[sk.KeyHash] = key
 		ks.byID[id] = key
@@ -468,20 +476,7 @@ func (ks *KeyStore) SyncFromHashes(keys []SyncedKey) int {
 			id = fmt.Sprintf("key_%d", ks.counter)
 		}
 
-		key := &APIKey{
-			ID:               id,
-			KeyHash:          sk.KeyHash,
-			Name:             sk.Name,
-			Owner:            sk.Owner,
-			Status:           "active",
-			KeyType:          "byok",
-			Source:           "sync",
-			AllowedModels:    sk.Models,
-			AllowedProviders: sk.Providers,
-			Metadata:         sk.Metadata,
-			CreatedAt:        time.Now(),
-			UpdatedAt:        time.Now(),
-		}
+		key := syncedKeyToAPIKey(sk, id)
 
 		ks.byHash[sk.KeyHash] = key
 		ks.byID[id] = key

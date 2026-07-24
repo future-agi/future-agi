@@ -437,7 +437,12 @@ class ObservabilityService:
             return None
 
     @staticmethod
-    def _process_vapi_logs(raw_log: dict) -> VoiceCallLogs:
+    def _process_vapi_logs(
+        raw_log: dict,
+        span_attributes: dict | None = None,
+    ) -> VoiceCallLogs:
+
+        sa = span_attributes or {}
 
         def raw_log_get(key: str) -> Any:
             return raw_log.get(key)
@@ -451,21 +456,28 @@ class ObservabilityService:
         created_at = raw_log_get("createdAt")
         ended_at = raw_log_get("endedAt")
         status = "completed" if raw_log_get("status") == "ended" else "in-progress"
-        stereo_recording_url = (
-            raw_log_get("artifact").get("stereoRecordingUrl")
-            if raw_log_get("artifact")
-            else None
+        recording_url = (
+            sa.get("recording_url")
+            or sa.get("conversation.recording.mono.combined")
+            or (raw_log.get("artifact") or {}).get("recording", {}).get("mono", {}).get("combinedUrl")
+            or raw_log.get("recordingUrl")
         )
+        stereo_recording_url = (
+            sa.get("stereo_recording_url")
+            or sa.get("conversation.recording.stereo")
+            or (raw_log.get("artifact") or {}).get("recording", {}).get("stereoUrl")
+            or (raw_log.get("artifact") or {}).get("stereoRecordingUrl")
+        )
+
+        recording_available = bool(recording_url)
         summary = raw_log_get("summary")
         ended_reason = raw_log_get("endedReason")
-        recording_url = raw_log_get("recordingUrl")
-        recording_available = bool(recording_url)
         messages = raw_log_get("messages") or []
         transcript_available = len(messages) > 0
         cost = raw_log_get("cost")
         assistant_id = raw_log_get("assistantId")
         duration_seconds = None
-        analysis_data = raw_log_get("analysis")
+        analysis_data = raw_log_get("analysis") or None
 
         # Cost breakdown (STT/LLM/TTS)
         raw_cost_breakdown = raw_log_get("costBreakdown") or {}
@@ -819,9 +831,24 @@ class ObservabilityService:
                 "call_metadata": sim_meta,
             }
 
-        if provider == ProviderChoices.VAPI:
-            processed = ObservabilityService._process_vapi_logs(raw_log)
-        elif provider == ProviderChoices.RETELL:
+        # The `provider` hot column can carry the LLM provider (e.g. 'openai')
+        # for a voice span whose assistant runs an OpenAI model — the collector
+        # ranks gen_ai.provider.name above gen_ai.system. Resolve the real voice
+        # provider: prefer gen_ai.system, then default to vapi (the dominant
+        # provider) rather than 400 the whole voice list on an unrecognized label.
+        voice_providers = {
+            ProviderChoices.VAPI,
+            ProviderChoices.RETELL,
+            ProviderChoices.ELEVEN_LABS,
+            ProviderChoices.BLAND,
+            ProviderChoices.TWILIO,
+        }
+        if provider not in voice_providers:
+            provider = (span_attributes or {}).get("gen_ai.system") or provider
+        if provider not in voice_providers:
+            provider = ProviderChoices.VAPI
+
+        if provider == ProviderChoices.RETELL:
             processed = ObservabilityService._process_retell_logs(raw_log)
         elif provider == ProviderChoices.ELEVEN_LABS:
             processed = ObservabilityService._process_eleven_labs_raw(raw_log)
@@ -829,16 +856,55 @@ class ObservabilityService:
             processed = ObservabilityService._process_bland_raw(raw_log)
         elif provider == ProviderChoices.TWILIO:
             processed = ObservabilityService._process_twilio_raw(raw_log)
-        else:
-            raise ValueError(f"Invalid choice for provider: {provider}")
+        else:  # VAPI, and the default for any still-unrecognized label
+            processed = ObservabilityService._process_vapi_logs(raw_log, span_attributes)
 
         if span_attributes:
-            mono_combined = span_attributes.get("conversation.recording.mono.combined")
-            stereo = span_attributes.get("conversation.recording.stereo")
-            if mono_combined:
-                processed["recording_url"] = mono_combined
-            if stereo:
-                processed["stereo_recording_url"] = stereo
+            from tracer.utils.vapi_recording import VapiRecordingService
+
+            mono_s3 = (
+                span_attributes.get("recording_url")
+                or span_attributes.get("conversation.recording.mono.combined")
+            )
+            stereo_s3 = (
+                span_attributes.get("stereo_recording_url")
+                or span_attributes.get("conversation.recording.stereo")
+            )
+            logger.info(
+                "process_raw_logs: rehost decision",
+                provider=provider,
+                mono_s3=mono_s3,
+                mono_s3_is_fagi=(
+                    VapiRecordingService.is_fagi_s3_url(mono_s3) if mono_s3 else None
+                ),
+                processed_recording_url=processed.get("recording_url"),
+                processed_recording_url_is_fagi=(
+                    VapiRecordingService.is_fagi_s3_url(processed.get("recording_url"))
+                    if processed.get("recording_url")
+                    else None
+                ),
+                stereo_s3=stereo_s3,
+                stereo_s3_is_fagi=(
+                    VapiRecordingService.is_fagi_s3_url(stereo_s3) if stereo_s3 else None
+                ),
+                processed_stereo_url=processed.get("stereo_recording_url"),
+                processed_stereo_url_is_fagi=(
+                    VapiRecordingService.is_fagi_s3_url(processed.get("stereo_recording_url"))
+                    if processed.get("stereo_recording_url")
+                    else None
+                ),
+                fagi_buckets=list(VapiRecordingService._FAGI_S3_BUCKETS),
+            )
+            if mono_s3 and VapiRecordingService.is_fagi_s3_url(mono_s3) and not VapiRecordingService.is_fagi_s3_url(
+                processed.get("recording_url")
+            ):
+                processed["recording_url"] = mono_s3
+                logger.info("process_raw_logs: mono_s3 rehosted", mono_s3=mono_s3)
+            if stereo_s3 and VapiRecordingService.is_fagi_s3_url(stereo_s3) and not VapiRecordingService.is_fagi_s3_url(
+                processed.get("stereo_recording_url")
+            ):
+                processed["stereo_recording_url"] = stereo_s3
+                logger.info("process_raw_logs: stereo_s3 rehosted", stereo_s3=stereo_s3)
 
         return processed
 

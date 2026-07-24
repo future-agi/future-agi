@@ -7,15 +7,14 @@ STRING contains only v2 column names. End-to-end parity (same SQL, same
 rows) is enforced by the parity-shadow harness when v1 and v2 run in
 production side-by-side.
 """
+
 from __future__ import annotations
 
-import pytest
 from django.test import override_settings
 
 from tracer.services.clickhouse.v2.query_builders.span_list import (
     SpanListQueryBuilderV2,
 )
-
 
 PROJECT_ID = "11111111-1111-1111-1111-111111111111"
 EVAL_CONFIG_ID = "22222222-2222-2222-2222-222222222222"
@@ -36,9 +35,15 @@ def _make_builder(filters=None, sort_params=None, eval_config_ids=None):
 def test_build_main_query_uses_v2_columns():
     sql, params = _make_builder().build()
     # No legacy column references
-    for legacy in ("_peerdb_is_deleted", "_peerdb_version",
-                   "span_attr_str", "span_attr_num", "span_attr_bool",
-                   "span_attributes_raw", "metadata_map"):
+    for legacy in (
+        "_peerdb_is_deleted",
+        "_peerdb_version",
+        "span_attr_str",
+        "span_attr_num",
+        "span_attr_bool",
+        "span_attributes_raw",
+        "metadata_map",
+    ):
         assert legacy not in sql, f"legacy column {legacy!r} leaked into v2 SQL"
     # And the canonical replacements ARE present where v1 would have used them
     assert "is_deleted" in sql, "v2 SQL must reference the is_deleted column"
@@ -73,13 +78,15 @@ def test_filter_compiler_class_yields_v2_columns():
     # that bypasses translate()), this test catches it.
     sql, _ = _make_builder(
         filters=[
-            {"column_id": "model",
-             "filter_config": {
-                 "col_type": "SYSTEM_METRIC",
-                 "filter_type": "text",
-                 "filter_op": "equals",
-                 "filter_value": "gpt-4o-mini",
-             }}
+            {
+                "column_id": "model",
+                "filter_config": {
+                    "col_type": "SYSTEM_METRIC",
+                    "filter_type": "text",
+                    "filter_op": "equals",
+                    "filter_value": "gpt-4o-mini",
+                },
+            }
         ],
     ).build()
     # The compiled query references the model column (not via the legacy
@@ -123,7 +130,11 @@ def test_build_eval_query_routes_to_v2_table():
     sql, _ = _make_builder(eval_config_ids=[EVAL_CONFIG_ID]).build_eval_query(
         span_ids=["sp1", "sp2"]
     )
-    assert "tracer_eval_logger_v2 FINAL" in sql
+    assert "tracer_eval_logger_v2" in sql
+    # PERF: no table-level FINAL — dedup happens on the page-scoped slice via
+    # `ORDER BY _version DESC LIMIT 1 BY id` inside the subquery.
+    assert "tracer_eval_logger_v2 FINAL" not in sql
+    assert "LIMIT 1 BY id" in sql
     assert "is_deleted = 0" in sql
     assert "_peerdb_is_deleted" not in sql
     assert "deleted IS NULL" not in sql
@@ -134,10 +145,77 @@ def test_build_eval_query_keeps_legacy_table_and_predicate():
     sql, _ = _make_builder(eval_config_ids=[EVAL_CONFIG_ID]).build_eval_query(
         span_ids=["sp1", "sp2"]
     )
-    assert "tracer_eval_logger FINAL" in sql
+    assert "tracer_eval_logger" in sql
+    assert "tracer_eval_logger FINAL" not in sql
+    assert "LIMIT 1 BY id" in sql
     assert "tracer_eval_logger_v2" not in sql
-    # build_eval_query is rewrite-EXCLUDED, so it keeps BOTH delete guards: the
-    # CDC tombstone (`_peerdb_is_deleted`) plus the app `deleted` soft-delete,
-    # matching the display queries. The version-only legacy engine's FINAL does
-    # not drop tombstones, so the guard is required to hide hard-deleted rows.
-    assert "_peerdb_is_deleted = 0 AND (deleted = 0 OR deleted IS NULL)" in sql
+    assert "_peerdb_is_deleted = 0" in sql
+    assert "deleted = 0 OR deleted IS NULL" in sql
+
+
+# ── perf-fix shapes: tiebreak, progressive slices, created_at bounds ─────────
+
+
+def test_default_sort_has_id_tiebreak():
+    """P0-1: ClickHouse's parallel sort is not stable — without an `id`
+    tiebreak, equal-start_time rows permute between requests and the
+    prefix-dedup pagination (page_dedup.py) can duplicate/skip rows across
+    pages. The default ORDER BY must carry the deterministic tiebreak."""
+    sql, _ = _make_builder().build()
+    assert "ORDER BY start_time DESC, id DESC" in sql
+
+
+def test_build_with_since_adds_slice_predicate_and_keeps_window():
+    """P1-1: `build(since=…)` narrows the scan to the newest slice via an
+    ADDITIONAL predicate; the regular start_date/end_date params stay bound to
+    the full requested window so the count query still counts everything."""
+    from datetime import datetime, timedelta
+
+    builder = _make_builder()
+    since = datetime.utcnow() - timedelta(days=7)
+    sql, params = builder.build(since=since)
+    assert "start_time >= %(slice_start)s" in sql
+    assert params["slice_start"] == since
+    # full-window params untouched by the slice
+    assert params["start_date"] < since
+    # the count query built afterwards must not inherit the slice narrowing
+    count_sql, _ = builder.build_count_query()
+    assert "slice_start" not in count_sql
+
+
+def test_build_without_since_has_no_slice_predicate():
+    sql, params = _make_builder().build()
+    assert "slice_start" not in sql
+    assert "slice_start" not in params
+
+
+def test_eval_query_created_after_prunes_partitions():
+    """P0-3: the eval table is PARTITION BY toYYYYMM(created_at); the page's
+    oldest created_at (minus a 7-day margin) bounds the probe so it stops
+    touching every monthly partition. Without the arg the shape is unchanged."""
+    from datetime import datetime
+
+    builder = _make_builder(eval_config_ids=[EVAL_CONFIG_ID])
+    bound = datetime(2026, 7, 1)
+    sql, params = builder.build_eval_query(["sp1"], created_after=bound)
+    assert "created_at >= %(evals_created_after)s - INTERVAL 7 DAY" in sql
+    assert params["evals_created_after"] == bound
+
+    sql_unbounded, params_unbounded = builder.build_eval_query(["sp1"])
+    assert "evals_created_after" not in sql_unbounded
+    assert "evals_created_after" not in params_unbounded
+
+
+def test_annotation_query_created_after_prunes_partitions():
+    from datetime import datetime
+
+    builder = _make_builder()
+    builder.annotation_label_ids = ["33333333-3333-3333-3333-333333333333"]
+    bound = datetime(2026, 7, 1)
+    sql, params = builder.build_annotation_query(["sp1"], created_after=bound)
+    assert "created_at >= %(anns_created_after)s - INTERVAL 7 DAY" in sql
+    assert params["anns_created_after"] == bound
+
+    sql_unbounded, params_unbounded = builder.build_annotation_query(["sp1"])
+    assert "anns_created_after" not in sql_unbounded
+    assert "anns_created_after" not in params_unbounded

@@ -439,6 +439,10 @@ export default function AnnotateWorkspaceView() {
   // Reviewers/managers default to a comparison view. When a single annotator
   // is selected, request that annotator only so values never merge into one
   // editable form.
+  // Detail's next/prev item IDs gate the pager buttons; keep them over the same
+  // set the keyboard walks (completed items are navigable in View submissions).
+  const detailIncludeCompleted =
+    isReviewWorkspaceMode && !requiresReview ? true : includeCompletedItems;
   const {
     data: detail,
     isLoading: detailLoading,
@@ -447,7 +451,7 @@ export default function AnnotateWorkspaceView() {
     refetch: refetchAnnotateDetail,
   } = useAnnotateDetail(queueId, currentItemId, {
     annotatorId: scopedAnnotatorId,
-    includeCompleted: includeCompletedItems,
+    includeCompleted: detailIncludeCompleted,
     viewMode: isReviewWorkspaceMode ? "review" : undefined,
     reviewStatus:
       isReviewWorkspaceMode && requiresReview ? "pending_review" : undefined,
@@ -465,14 +469,14 @@ export default function AnnotateWorkspaceView() {
         itemId: currentItemId || null,
         annotatorId: scopedAnnotatorId || null,
         mode: workspaceMode,
-        includeCompleted: includeCompletedItems,
+        includeCompleted: detailIncludeCompleted,
         params: navigationModeParams,
       }),
     [
       currentItemId,
       scopedAnnotatorId,
       workspaceMode,
-      includeCompletedItems,
+      detailIncludeCompleted,
       navigationModeParams,
     ],
   );
@@ -1166,12 +1170,16 @@ export default function AnnotateWorkspaceView() {
   }, [navigate, queueId, confirmDiscardUnsaved]);
 
   const [isFetchingPrev, setIsFetchingPrev] = useState(false);
+  // Direction of the in-flight navigation, so the footer can show the spinner
+  // in place of the arrow being navigated toward while its detail loads.
+  const [navDirection, setNavDirection] = useState(null);
 
   const handlePrev = useCallback(async () => {
     if (isChangingCompletedVisibility) return;
     if (!confirmDiscardUnsaved("You have unsaved changes. Load another item?"))
       return;
     if (historyIndex > 0) {
+      setNavDirection("prev");
       dispatch({ type: "prev" });
       return;
     }
@@ -1185,6 +1193,7 @@ export default function AnnotateWorkspaceView() {
       const prevItem =
         res?.data?.data?.item || res?.data?.result?.item || res?.data?.item;
       if (prevItem?.id) {
+        setNavDirection("prev");
         dispatch({ type: "init", id: prevItem.id });
       }
     } catch (err) {
@@ -1224,11 +1233,13 @@ export default function AnnotateWorkspaceView() {
       return;
     // If there are forward items in history, navigate to them
     if (historyIndex < itemHistory.length - 1) {
+      setNavDirection("next");
       dispatch({ type: "next" });
       return;
     }
 
     if (detailNavigation.nextItemId) {
+      setNavDirection("next");
       dispatch({ type: "push", id: detailNavigation.nextItemId });
       return;
     }
@@ -1246,6 +1257,7 @@ export default function AnnotateWorkspaceView() {
       const nextItem =
         res?.data?.data?.item || res?.data?.result?.item || res?.data?.item;
       if (nextItem?.id) {
+        setNavDirection("next");
         dispatch({ type: "push", id: nextItem.id });
       }
     } catch (err) {
@@ -1301,12 +1313,34 @@ export default function AnnotateWorkspaceView() {
     isChangingCompletedVisibility,
   ]);
 
+  // Keyed on currentItemId too: navigating to a cached item never toggles
+  // detailFetching, so on that alone navDirection would stay stale.
+  useEffect(() => {
+    if (!detailFetching) setNavDirection(null);
+  }, [detailFetching, currentItemId]);
+
+  const canNavigatePrev =
+    historyIndex > 0 || Boolean(detailNavigation.prevItemId);
+  const canNavigateNext =
+    historyIndex < itemHistory.length - 1 ||
+    Boolean(detailNavigation.nextItemId);
+  const isLoadingPrevNav =
+    isFetchingPrev ||
+    isChangingCompletedVisibility ||
+    (detailFetching && navDirection === "prev");
+  const isLoadingNextNav =
+    isFetchingNext ||
+    isChangingCompletedVisibility ||
+    (detailFetching && navDirection === "next");
+
   useKeyboardShortcuts({
     onSubmit: handleKeyboardSubmit,
     onSkip: handleSkip,
     onPrev: handlePrev,
     onNext: handleNext,
     onEscape: handleBack,
+    canPrev: canNavigatePrev,
+    canNext: canNavigateNext,
   });
 
   const isInitialDetailLoading =
@@ -1782,13 +1816,10 @@ export default function AnnotateWorkspaceView() {
         total={footerProgress.total}
         onPrev={handlePrev}
         onNext={handleNext}
-        hasPrev={historyIndex > 0 || Boolean(detailNavigation.prevItemId)}
-        hasNext={
-          historyIndex < itemHistory.length - 1 ||
-          Boolean(detailNavigation.nextItemId)
-        }
-        isLoadingPrev={isFetchingPrev || isChangingCompletedVisibility}
-        isLoadingNext={isFetchingNext || isChangingCompletedVisibility}
+        hasPrev={canNavigatePrev}
+        hasNext={canNavigateNext}
+        isLoadingPrev={isLoadingPrevNav}
+        isLoadingNext={isLoadingNextNav}
       />
 
       <CollaborationDrawer

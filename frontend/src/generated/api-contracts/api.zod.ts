@@ -13143,7 +13143,8 @@ export const ModelHubAnnotationQueuesItemsAddItemsBody = zod.object({
   "exclude_ids": zod.array(zod.string().min(1)).default(modelHubAnnotationQueuesItemsAddItemsBodySelectionExcludeIdsDefault),
   "remove_simulation_calls": zod.boolean().default(modelHubAnnotationQueuesItemsAddItemsBodySelectionRemoveSimulationCallsDefault),
   "is_voice_call": zod.boolean().default(modelHubAnnotationQueuesItemsAddItemsBodySelectionIsVoiceCallDefault)
-}).optional()
+}).optional(),
+  "project_id": zod.string().uuid().optional()
 })
 
 export const modelHubAnnotationQueuesItemsAddItemsResponseStatusDefault = true;
@@ -20987,7 +20988,8 @@ export const ModelHubExperimentsV2FeedbackGetTemplateListResponse = zod.object({
   "eval_name": zod.string().min(1),
   "user_eval_name": zod.string().min(1),
   "choices": zod.array(zod.string()).optional(),
-  "multi_choice": zod.boolean().optional()
+  "multi_choice": zod.boolean().optional(),
+  "choice_scores": zod.record(zod.string(), zod.number()).optional()
 })
 })
 
@@ -21677,31 +21679,22 @@ export const ModelHubFeedbackGetTemplateQueryParams = zod.object({
   "limit": zod.number().optional().describe('Number of results to return per page.')
 })
 
-export const modelHubFeedbackGetTemplateResponseResultsItemSourceIdMax = 255;
 
 
-export const modelHubFeedbackGetTemplateResponseResultsItemRowIdMax = 255;
-
-export const modelHubFeedbackGetTemplateResponseResultsItemActionTypeMax = 255;
 
 
 
 export const ModelHubFeedbackGetTemplateResponse = zod.object({
-  "count": zod.number(),
-  "next": zod.string().url().optional(),
-  "previous": zod.string().url().optional(),
-  "results": zod.array(zod.object({
-  "id": zod.string().uuid().optional(),
-  "source_id": zod.string().min(1).max(modelHubFeedbackGetTemplateResponseResultsItemSourceIdMax),
-  "source": zod.enum(['dataset', 'prompt', 'sdk', 'trace', 'experiment', 'observe', 'eval_playground']),
-  "user_eval_metric": zod.string().uuid().optional(),
-  "value": zod.string().min(1),
-  "explanation": zod.string().optional(),
-  "row_id": zod.string().max(modelHubFeedbackGetTemplateResponseResultsItemRowIdMax).optional(),
-  "custom_eval_config_id": zod.string().uuid().optional(),
-  "feedback_improvement": zod.string().optional(),
-  "action_type": zod.string().max(modelHubFeedbackGetTemplateResponseResultsItemActionTypeMax).optional()
-}))
+  "status": zod.boolean(),
+  "result": zod.object({
+  "output_type": zod.string().min(1).optional(),
+  "eval_description": zod.string().optional(),
+  "eval_name": zod.string().min(1),
+  "user_eval_name": zod.string().min(1),
+  "choices": zod.array(zod.string()).optional(),
+  "multi_choice": zod.boolean().optional(),
+  "choice_scores": zod.record(zod.string(), zod.number()).optional()
+})
 })
 
 
@@ -21952,6 +21945,7 @@ export const ModelHubGetEvalConfigListResponse = zod.object({
   "choices": zod.object({
 
 }).passthrough().optional(),
+  "multi_choice": zod.boolean().optional(),
   "check_internet": zod.boolean().optional(),
   "kb_id": zod.object({
 
@@ -24159,6 +24153,7 @@ export const modelHubPromptHistoryExecutionsListResponseResultsItemTemplateVersi
 
 
 
+
 export const ModelHubPromptHistoryExecutionsListResponse = zod.object({
   "count": zod.number(),
   "next": zod.string().url().optional(),
@@ -24169,13 +24164,17 @@ export const ModelHubPromptHistoryExecutionsListResponse = zod.object({
   "output": zod.object({
 
 }).passthrough().optional(),
-  "prompt_config_snapshot": zod.string().optional(),
-  "template_name": zod.string().optional(),
+  "prompt_config_snapshot": zod.object({
+
+}).passthrough().optional().describe('\nGet prompt_config_snapshot with backward compatibility for modelDetail.\nIf modelDetail is missing from configuration, generate it from the model name.\n'),
+  "template_name": zod.string().min(1).optional(),
   "original_template": zod.string().uuid().optional(),
   "metadata": zod.object({
 
 }).passthrough().optional(),
-  "variable_names": zod.string().optional(),
+  "variable_names": zod.object({
+
+}).passthrough().optional(),
   "evaluation_results": zod.object({
 
 }).passthrough().optional(),
@@ -24187,7 +24186,9 @@ export const ModelHubPromptHistoryExecutionsListResponse = zod.object({
   "commit_message": zod.string().optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
   "is_draft": zod.boolean().optional(),
-  "labels": zod.string().optional(),
+  "labels": zod.object({
+
+}).passthrough().optional(),
   "placeholders": zod.object({
 
 }).passthrough().optional(),
@@ -24217,6 +24218,7 @@ export const modelHubPromptHistoryExecutionsGetExecutionDetailsResponseResultsIt
 
 
 
+
 export const ModelHubPromptHistoryExecutionsGetExecutionDetailsResponse = zod.object({
   "count": zod.number(),
   "next": zod.string().url().optional(),
@@ -24227,13 +24229,17 @@ export const ModelHubPromptHistoryExecutionsGetExecutionDetailsResponse = zod.ob
   "output": zod.object({
 
 }).passthrough().optional(),
-  "prompt_config_snapshot": zod.string().optional(),
-  "template_name": zod.string().optional(),
+  "prompt_config_snapshot": zod.object({
+
+}).passthrough().optional().describe('\nGet prompt_config_snapshot with backward compatibility for modelDetail.\nIf modelDetail is missing from configuration, generate it from the model name.\n'),
+  "template_name": zod.string().min(1).optional(),
   "original_template": zod.string().uuid().optional(),
   "metadata": zod.object({
 
 }).passthrough().optional(),
-  "variable_names": zod.string().optional(),
+  "variable_names": zod.object({
+
+}).passthrough().optional(),
   "evaluation_results": zod.object({
 
 }).passthrough().optional(),
@@ -24245,7 +24251,9 @@ export const ModelHubPromptHistoryExecutionsGetExecutionDetailsResponse = zod.ob
   "commit_message": zod.string().optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
   "is_draft": zod.boolean().optional(),
-  "labels": zod.string().optional(),
+  "labels": zod.object({
+
+}).passthrough().optional(),
   "placeholders": zod.object({
 
 }).passthrough().optional(),
@@ -24262,19 +24270,24 @@ export const modelHubPromptHistoryExecutionsReadResponseTemplateVersionMax = 50;
 
 
 
+
 export const ModelHubPromptHistoryExecutionsReadResponse = zod.object({
   "id": zod.string().uuid().optional(),
   "template_version": zod.string().min(1).max(modelHubPromptHistoryExecutionsReadResponseTemplateVersionMax),
   "output": zod.object({
 
 }).passthrough().optional(),
-  "prompt_config_snapshot": zod.string().optional(),
-  "template_name": zod.string().optional(),
+  "prompt_config_snapshot": zod.object({
+
+}).passthrough().optional().describe('\nGet prompt_config_snapshot with backward compatibility for modelDetail.\nIf modelDetail is missing from configuration, generate it from the model name.\n'),
+  "template_name": zod.string().min(1).optional(),
   "original_template": zod.string().uuid().optional(),
   "metadata": zod.object({
 
 }).passthrough().optional(),
-  "variable_names": zod.string().optional(),
+  "variable_names": zod.object({
+
+}).passthrough().optional(),
   "evaluation_results": zod.object({
 
 }).passthrough().optional(),
@@ -24286,7 +24299,9 @@ export const ModelHubPromptHistoryExecutionsReadResponse = zod.object({
   "commit_message": zod.string().optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
   "is_draft": zod.boolean().optional(),
-  "labels": zod.string().optional(),
+  "labels": zod.object({
+
+}).passthrough().optional(),
   "placeholders": zod.object({
 
 }).passthrough().optional(),
@@ -30106,7 +30121,6 @@ export const SimulateApiRunTestsListQueryParams = zod.object({
 
 
 
-
 export const simulateApiRunTestsListResponseDatasetRowIdsItemMax = 255;
 
 
@@ -30122,21 +30136,33 @@ export const simulateApiRunTestsListResponseEvalsDetailItemFiltersDefault = [];
 export const SimulateApiRunTestsListResponseItem = zod.object({
   "id": zod.string().uuid().optional(),
   "name": zod.string().min(1).optional().describe('Name of the test run'),
-  "description": zod.string().min(1).optional().describe('Description of the test run'),
+  "description": zod.string().optional(),
   "agent_definition": zod.string().uuid().optional().describe('Agent definition for this test run'),
-  "agent_version": zod.record(zod.string(), zod.string()).optional(),
-  "agent_definition_detail": zod.record(zod.string(), zod.string()).optional(),
+  "agent_version": zod.object({
+
+}).passthrough().optional(),
+  "agent_definition_detail": zod.object({
+
+}).passthrough().optional(),
   "source_type": zod.enum(['agent_definition', 'prompt']).optional().describe('Source type for the test run: agent_definition or prompt'),
   "source_type_display": zod.string().min(1).optional(),
   "prompt_template": zod.string().uuid().optional().describe('Prompt template for this test run (only for prompt source type)'),
-  "prompt_template_detail": zod.record(zod.string(), zod.string()).optional(),
+  "prompt_template_detail": zod.object({
+
+}).passthrough().optional(),
   "prompt_version": zod.string().uuid().optional().describe('Prompt version for this test run (only for prompt source type)'),
-  "prompt_version_detail": zod.record(zod.string(), zod.string()).optional(),
+  "prompt_version_detail": zod.object({
+
+}).passthrough().optional(),
   "scenarios": zod.array(zod.string().uuid().describe('Scenarios to run in this test')).optional().describe('Scenarios to run in this test'),
-  "scenarios_detail": zod.array(zod.record(zod.string(), zod.string())).optional(),
+  "scenarios_detail": zod.array(zod.object({
+
+}).passthrough()).optional(),
   "dataset_row_ids": zod.array(zod.string().min(1).max(simulateApiRunTestsListResponseDatasetRowIdsItemMax)).optional().describe('IDs of dataset rows to run evaluations on'),
   "simulator_agent": zod.string().uuid().optional().describe('Simulator agent for this test run (derived from scenarios)'),
-  "simulator_agent_detail": zod.record(zod.string(), zod.string()).optional(),
+  "simulator_agent_detail": zod.object({
+
+}).passthrough().optional(),
   "simulate_eval_configs": zod.array(zod.string().uuid()).optional(),
   "simulate_eval_configs_detail": zod.array(zod.object({
   "id": zod.string().uuid().optional(),
@@ -31010,7 +31036,6 @@ export const SimulatePromptTemplatesSimulationsListParams = zod.object({
 
 export const simulatePromptTemplatesSimulationsListResponseStatusDefault = true;
 
-
 export const simulatePromptTemplatesSimulationsListResponseResultResultsItemDatasetRowIdsItemMax = 255;
 
 
@@ -31033,21 +31058,33 @@ export const SimulatePromptTemplatesSimulationsListResponse = zod.object({
   "results": zod.array(zod.object({
   "id": zod.string().uuid().optional(),
   "name": zod.string().min(1).optional().describe('Name of the test run'),
-  "description": zod.string().min(1).optional().describe('Description of the test run'),
+  "description": zod.string().optional(),
   "agent_definition": zod.string().uuid().optional().describe('Agent definition for this test run'),
-  "agent_version": zod.record(zod.string(), zod.string()).optional(),
-  "agent_definition_detail": zod.record(zod.string(), zod.string()).optional(),
+  "agent_version": zod.object({
+
+}).passthrough().optional(),
+  "agent_definition_detail": zod.object({
+
+}).passthrough().optional(),
   "source_type": zod.enum(['agent_definition', 'prompt']).optional().describe('Source type for the test run: agent_definition or prompt'),
   "source_type_display": zod.string().min(1).optional(),
   "prompt_template": zod.string().uuid().optional().describe('Prompt template for this test run (only for prompt source type)'),
-  "prompt_template_detail": zod.record(zod.string(), zod.string()).optional(),
+  "prompt_template_detail": zod.object({
+
+}).passthrough().optional(),
   "prompt_version": zod.string().uuid().optional().describe('Prompt version for this test run (only for prompt source type)'),
-  "prompt_version_detail": zod.record(zod.string(), zod.string()).optional(),
+  "prompt_version_detail": zod.object({
+
+}).passthrough().optional(),
   "scenarios": zod.array(zod.string().uuid().describe('Scenarios to run in this test')).optional().describe('Scenarios to run in this test'),
-  "scenarios_detail": zod.array(zod.record(zod.string(), zod.string())).optional(),
+  "scenarios_detail": zod.array(zod.object({
+
+}).passthrough()).optional(),
   "dataset_row_ids": zod.array(zod.string().min(1).max(simulatePromptTemplatesSimulationsListResponseResultResultsItemDatasetRowIdsItemMax)).optional().describe('IDs of dataset rows to run evaluations on'),
   "simulator_agent": zod.string().uuid().optional().describe('Simulator agent for this test run (derived from scenarios)'),
-  "simulator_agent_detail": zod.record(zod.string(), zod.string()).optional(),
+  "simulator_agent_detail": zod.object({
+
+}).passthrough().optional(),
   "simulate_eval_configs": zod.array(zod.string().uuid()).optional(),
   "simulate_eval_configs_detail": zod.array(zod.object({
   "id": zod.string().uuid().optional(),
@@ -31181,7 +31218,6 @@ export const SimulatePromptTemplatesSimulationsReadParams = zod.object({
 
 export const simulatePromptTemplatesSimulationsReadResponseStatusDefault = true;
 
-
 export const simulatePromptTemplatesSimulationsReadResponseResultDatasetRowIdsItemMax = 255;
 
 
@@ -31199,21 +31235,33 @@ export const SimulatePromptTemplatesSimulationsReadResponse = zod.object({
   "result": zod.object({
   "id": zod.string().uuid().optional(),
   "name": zod.string().min(1).optional().describe('Name of the test run'),
-  "description": zod.string().min(1).optional().describe('Description of the test run'),
+  "description": zod.string().optional(),
   "agent_definition": zod.string().uuid().optional().describe('Agent definition for this test run'),
-  "agent_version": zod.record(zod.string(), zod.string()).optional(),
-  "agent_definition_detail": zod.record(zod.string(), zod.string()).optional(),
+  "agent_version": zod.object({
+
+}).passthrough().optional(),
+  "agent_definition_detail": zod.object({
+
+}).passthrough().optional(),
   "source_type": zod.enum(['agent_definition', 'prompt']).optional().describe('Source type for the test run: agent_definition or prompt'),
   "source_type_display": zod.string().min(1).optional(),
   "prompt_template": zod.string().uuid().optional().describe('Prompt template for this test run (only for prompt source type)'),
-  "prompt_template_detail": zod.record(zod.string(), zod.string()).optional(),
+  "prompt_template_detail": zod.object({
+
+}).passthrough().optional(),
   "prompt_version": zod.string().uuid().optional().describe('Prompt version for this test run (only for prompt source type)'),
-  "prompt_version_detail": zod.record(zod.string(), zod.string()).optional(),
+  "prompt_version_detail": zod.object({
+
+}).passthrough().optional(),
   "scenarios": zod.array(zod.string().uuid().describe('Scenarios to run in this test')).optional().describe('Scenarios to run in this test'),
-  "scenarios_detail": zod.array(zod.record(zod.string(), zod.string())).optional(),
+  "scenarios_detail": zod.array(zod.object({
+
+}).passthrough()).optional(),
   "dataset_row_ids": zod.array(zod.string().min(1).max(simulatePromptTemplatesSimulationsReadResponseResultDatasetRowIdsItemMax)).optional().describe('IDs of dataset rows to run evaluations on'),
   "simulator_agent": zod.string().uuid().optional().describe('Simulator agent for this test run (derived from scenarios)'),
-  "simulator_agent_detail": zod.record(zod.string(), zod.string()).optional(),
+  "simulator_agent_detail": zod.object({
+
+}).passthrough().optional(),
   "simulate_eval_configs": zod.array(zod.string().uuid()).optional(),
   "simulate_eval_configs_detail": zod.array(zod.object({
   "id": zod.string().uuid().optional(),
@@ -31296,7 +31344,6 @@ export const SimulatePromptTemplatesSimulationsPartialUpdateBody = zod.object({
 
 export const simulatePromptTemplatesSimulationsPartialUpdateResponseStatusDefault = true;
 
-
 export const simulatePromptTemplatesSimulationsPartialUpdateResponseResultDatasetRowIdsItemMax = 255;
 
 
@@ -31314,21 +31361,33 @@ export const SimulatePromptTemplatesSimulationsPartialUpdateResponse = zod.objec
   "result": zod.object({
   "id": zod.string().uuid().optional(),
   "name": zod.string().min(1).optional().describe('Name of the test run'),
-  "description": zod.string().min(1).optional().describe('Description of the test run'),
+  "description": zod.string().optional(),
   "agent_definition": zod.string().uuid().optional().describe('Agent definition for this test run'),
-  "agent_version": zod.record(zod.string(), zod.string()).optional(),
-  "agent_definition_detail": zod.record(zod.string(), zod.string()).optional(),
+  "agent_version": zod.object({
+
+}).passthrough().optional(),
+  "agent_definition_detail": zod.object({
+
+}).passthrough().optional(),
   "source_type": zod.enum(['agent_definition', 'prompt']).optional().describe('Source type for the test run: agent_definition or prompt'),
   "source_type_display": zod.string().min(1).optional(),
   "prompt_template": zod.string().uuid().optional().describe('Prompt template for this test run (only for prompt source type)'),
-  "prompt_template_detail": zod.record(zod.string(), zod.string()).optional(),
+  "prompt_template_detail": zod.object({
+
+}).passthrough().optional(),
   "prompt_version": zod.string().uuid().optional().describe('Prompt version for this test run (only for prompt source type)'),
-  "prompt_version_detail": zod.record(zod.string(), zod.string()).optional(),
+  "prompt_version_detail": zod.object({
+
+}).passthrough().optional(),
   "scenarios": zod.array(zod.string().uuid().describe('Scenarios to run in this test')).optional().describe('Scenarios to run in this test'),
-  "scenarios_detail": zod.array(zod.record(zod.string(), zod.string())).optional(),
+  "scenarios_detail": zod.array(zod.object({
+
+}).passthrough()).optional(),
   "dataset_row_ids": zod.array(zod.string().min(1).max(simulatePromptTemplatesSimulationsPartialUpdateResponseResultDatasetRowIdsItemMax)).optional().describe('IDs of dataset rows to run evaluations on'),
   "simulator_agent": zod.string().uuid().optional().describe('Simulator agent for this test run (derived from scenarios)'),
-  "simulator_agent_detail": zod.record(zod.string(), zod.string()).optional(),
+  "simulator_agent_detail": zod.object({
+
+}).passthrough().optional(),
   "simulate_eval_configs": zod.array(zod.string().uuid()).optional(),
   "simulate_eval_configs_detail": zod.array(zod.object({
   "id": zod.string().uuid().optional(),
@@ -31461,7 +31520,6 @@ export const SimulateRunTestsListQueryParams = zod.object({
 
 
 
-
 export const simulateRunTestsListResponseDatasetRowIdsItemMax = 255;
 
 
@@ -31477,21 +31535,33 @@ export const simulateRunTestsListResponseEvalsDetailItemFiltersDefault = [];
 export const SimulateRunTestsListResponseItem = zod.object({
   "id": zod.string().uuid().optional(),
   "name": zod.string().min(1).optional().describe('Name of the test run'),
-  "description": zod.string().min(1).optional().describe('Description of the test run'),
+  "description": zod.string().optional(),
   "agent_definition": zod.string().uuid().optional().describe('Agent definition for this test run'),
-  "agent_version": zod.record(zod.string(), zod.string()).optional(),
-  "agent_definition_detail": zod.record(zod.string(), zod.string()).optional(),
+  "agent_version": zod.object({
+
+}).passthrough().optional(),
+  "agent_definition_detail": zod.object({
+
+}).passthrough().optional(),
   "source_type": zod.enum(['agent_definition', 'prompt']).optional().describe('Source type for the test run: agent_definition or prompt'),
   "source_type_display": zod.string().min(1).optional(),
   "prompt_template": zod.string().uuid().optional().describe('Prompt template for this test run (only for prompt source type)'),
-  "prompt_template_detail": zod.record(zod.string(), zod.string()).optional(),
+  "prompt_template_detail": zod.object({
+
+}).passthrough().optional(),
   "prompt_version": zod.string().uuid().optional().describe('Prompt version for this test run (only for prompt source type)'),
-  "prompt_version_detail": zod.record(zod.string(), zod.string()).optional(),
+  "prompt_version_detail": zod.object({
+
+}).passthrough().optional(),
   "scenarios": zod.array(zod.string().uuid().describe('Scenarios to run in this test')).optional().describe('Scenarios to run in this test'),
-  "scenarios_detail": zod.array(zod.record(zod.string(), zod.string())).optional(),
+  "scenarios_detail": zod.array(zod.object({
+
+}).passthrough()).optional(),
   "dataset_row_ids": zod.array(zod.string().min(1).max(simulateRunTestsListResponseDatasetRowIdsItemMax)).optional().describe('IDs of dataset rows to run evaluations on'),
   "simulator_agent": zod.string().uuid().optional().describe('Simulator agent for this test run (derived from scenarios)'),
-  "simulator_agent_detail": zod.record(zod.string(), zod.string()).optional(),
+  "simulator_agent_detail": zod.object({
+
+}).passthrough().optional(),
   "simulate_eval_configs": zod.array(zod.string().uuid()).optional(),
   "simulate_eval_configs_detail": zod.array(zod.object({
   "id": zod.string().uuid().optional(),
@@ -31637,7 +31707,6 @@ export const SimulateRunTestsReadParams = zod.object({
 
 
 
-
 export const simulateRunTestsReadResponseDatasetRowIdsItemMax = 255;
 
 
@@ -31653,21 +31722,33 @@ export const simulateRunTestsReadResponseEvalsDetailItemFiltersDefault = [];
 export const SimulateRunTestsReadResponse = zod.object({
   "id": zod.string().uuid().optional(),
   "name": zod.string().min(1).optional().describe('Name of the test run'),
-  "description": zod.string().min(1).optional().describe('Description of the test run'),
+  "description": zod.string().optional(),
   "agent_definition": zod.string().uuid().optional().describe('Agent definition for this test run'),
-  "agent_version": zod.record(zod.string(), zod.string()).optional(),
-  "agent_definition_detail": zod.record(zod.string(), zod.string()).optional(),
+  "agent_version": zod.object({
+
+}).passthrough().optional(),
+  "agent_definition_detail": zod.object({
+
+}).passthrough().optional(),
   "source_type": zod.enum(['agent_definition', 'prompt']).optional().describe('Source type for the test run: agent_definition or prompt'),
   "source_type_display": zod.string().min(1).optional(),
   "prompt_template": zod.string().uuid().optional().describe('Prompt template for this test run (only for prompt source type)'),
-  "prompt_template_detail": zod.record(zod.string(), zod.string()).optional(),
+  "prompt_template_detail": zod.object({
+
+}).passthrough().optional(),
   "prompt_version": zod.string().uuid().optional().describe('Prompt version for this test run (only for prompt source type)'),
-  "prompt_version_detail": zod.record(zod.string(), zod.string()).optional(),
+  "prompt_version_detail": zod.object({
+
+}).passthrough().optional(),
   "scenarios": zod.array(zod.string().uuid().describe('Scenarios to run in this test')).optional().describe('Scenarios to run in this test'),
-  "scenarios_detail": zod.array(zod.record(zod.string(), zod.string())).optional(),
+  "scenarios_detail": zod.array(zod.object({
+
+}).passthrough()).optional(),
   "dataset_row_ids": zod.array(zod.string().min(1).max(simulateRunTestsReadResponseDatasetRowIdsItemMax)).optional().describe('IDs of dataset rows to run evaluations on'),
   "simulator_agent": zod.string().uuid().optional().describe('Simulator agent for this test run (derived from scenarios)'),
-  "simulator_agent_detail": zod.record(zod.string(), zod.string()).optional(),
+  "simulator_agent_detail": zod.object({
+
+}).passthrough().optional(),
   "simulate_eval_configs": zod.array(zod.string().uuid()).optional(),
   "simulate_eval_configs_detail": zod.array(zod.object({
   "id": zod.string().uuid().optional(),
@@ -31749,7 +31830,6 @@ export const SimulateRunTestsPartialUpdateBody = zod.object({
 
 
 
-
 export const simulateRunTestsPartialUpdateResponseDatasetRowIdsItemMax = 255;
 
 
@@ -31765,21 +31845,33 @@ export const simulateRunTestsPartialUpdateResponseEvalsDetailItemFiltersDefault 
 export const SimulateRunTestsPartialUpdateResponse = zod.object({
   "id": zod.string().uuid().optional(),
   "name": zod.string().min(1).optional().describe('Name of the test run'),
-  "description": zod.string().min(1).optional().describe('Description of the test run'),
+  "description": zod.string().optional(),
   "agent_definition": zod.string().uuid().optional().describe('Agent definition for this test run'),
-  "agent_version": zod.record(zod.string(), zod.string()).optional(),
-  "agent_definition_detail": zod.record(zod.string(), zod.string()).optional(),
+  "agent_version": zod.object({
+
+}).passthrough().optional(),
+  "agent_definition_detail": zod.object({
+
+}).passthrough().optional(),
   "source_type": zod.enum(['agent_definition', 'prompt']).optional().describe('Source type for the test run: agent_definition or prompt'),
   "source_type_display": zod.string().min(1).optional(),
   "prompt_template": zod.string().uuid().optional().describe('Prompt template for this test run (only for prompt source type)'),
-  "prompt_template_detail": zod.record(zod.string(), zod.string()).optional(),
+  "prompt_template_detail": zod.object({
+
+}).passthrough().optional(),
   "prompt_version": zod.string().uuid().optional().describe('Prompt version for this test run (only for prompt source type)'),
-  "prompt_version_detail": zod.record(zod.string(), zod.string()).optional(),
+  "prompt_version_detail": zod.object({
+
+}).passthrough().optional(),
   "scenarios": zod.array(zod.string().uuid().describe('Scenarios to run in this test')).optional().describe('Scenarios to run in this test'),
-  "scenarios_detail": zod.array(zod.record(zod.string(), zod.string())).optional(),
+  "scenarios_detail": zod.array(zod.object({
+
+}).passthrough()).optional(),
   "dataset_row_ids": zod.array(zod.string().min(1).max(simulateRunTestsPartialUpdateResponseDatasetRowIdsItemMax)).optional().describe('IDs of dataset rows to run evaluations on'),
   "simulator_agent": zod.string().uuid().optional().describe('Simulator agent for this test run (derived from scenarios)'),
-  "simulator_agent_detail": zod.record(zod.string(), zod.string()).optional(),
+  "simulator_agent_detail": zod.object({
+
+}).passthrough().optional(),
   "simulate_eval_configs": zod.array(zod.string().uuid()).optional(),
   "simulate_eval_configs_detail": zod.array(zod.object({
   "id": zod.string().uuid().optional(),
@@ -31938,7 +32030,6 @@ export const SimulateRunTestsComponentsPartialUpdateBody = zod.object({
 
 
 
-
 export const simulateRunTestsComponentsPartialUpdateResponseDatasetRowIdsItemMax = 255;
 
 
@@ -31954,21 +32045,33 @@ export const simulateRunTestsComponentsPartialUpdateResponseEvalsDetailItemFilte
 export const SimulateRunTestsComponentsPartialUpdateResponse = zod.object({
   "id": zod.string().uuid().optional(),
   "name": zod.string().min(1).optional().describe('Name of the test run'),
-  "description": zod.string().min(1).optional().describe('Description of the test run'),
+  "description": zod.string().optional(),
   "agent_definition": zod.string().uuid().optional().describe('Agent definition for this test run'),
-  "agent_version": zod.record(zod.string(), zod.string()).optional(),
-  "agent_definition_detail": zod.record(zod.string(), zod.string()).optional(),
+  "agent_version": zod.object({
+
+}).passthrough().optional(),
+  "agent_definition_detail": zod.object({
+
+}).passthrough().optional(),
   "source_type": zod.enum(['agent_definition', 'prompt']).optional().describe('Source type for the test run: agent_definition or prompt'),
   "source_type_display": zod.string().min(1).optional(),
   "prompt_template": zod.string().uuid().optional().describe('Prompt template for this test run (only for prompt source type)'),
-  "prompt_template_detail": zod.record(zod.string(), zod.string()).optional(),
+  "prompt_template_detail": zod.object({
+
+}).passthrough().optional(),
   "prompt_version": zod.string().uuid().optional().describe('Prompt version for this test run (only for prompt source type)'),
-  "prompt_version_detail": zod.record(zod.string(), zod.string()).optional(),
+  "prompt_version_detail": zod.object({
+
+}).passthrough().optional(),
   "scenarios": zod.array(zod.string().uuid().describe('Scenarios to run in this test')).optional().describe('Scenarios to run in this test'),
-  "scenarios_detail": zod.array(zod.record(zod.string(), zod.string())).optional(),
+  "scenarios_detail": zod.array(zod.object({
+
+}).passthrough()).optional(),
   "dataset_row_ids": zod.array(zod.string().min(1).max(simulateRunTestsComponentsPartialUpdateResponseDatasetRowIdsItemMax)).optional().describe('IDs of dataset rows to run evaluations on'),
   "simulator_agent": zod.string().uuid().optional().describe('Simulator agent for this test run (derived from scenarios)'),
-  "simulator_agent_detail": zod.record(zod.string(), zod.string()).optional(),
+  "simulator_agent_detail": zod.object({
+
+}).passthrough().optional(),
   "simulate_eval_configs": zod.array(zod.string().uuid()).optional(),
   "simulate_eval_configs_detail": zod.array(zod.object({
   "id": zod.string().uuid().optional(),
@@ -32341,7 +32444,13 @@ export const SimulateRunTestsExecutionsListParams = zod.object({
 
 
 
-export const SimulateRunTestsExecutionsListResponseItem = zod.object({
+
+
+export const SimulateRunTestsExecutionsListResponse = zod.object({
+  "count": zod.number().optional(),
+  "next": zod.string().min(1).optional(),
+  "previous": zod.string().min(1).optional(),
+  "results": zod.array(zod.object({
   "id": zod.string().min(1).optional(),
   "status": zod.string().min(1).optional(),
   "scenarios": zod.string().min(1).optional(),
@@ -32360,8 +32469,8 @@ export const SimulateRunTestsExecutionsListResponseItem = zod.object({
   "agent_type": zod.string().min(1).optional(),
   "total_number_of_fagi_agent_turns": zod.number().optional(),
   "source_type": zod.string().min(1).optional()
+})).optional()
 })
-export const SimulateRunTestsExecutionsListResponse = zod.array(SimulateRunTestsExecutionsListResponseItem)
 
 
 /**

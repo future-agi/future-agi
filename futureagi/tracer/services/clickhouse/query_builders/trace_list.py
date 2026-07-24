@@ -23,8 +23,10 @@ from tracer.services.clickhouse.query_builders.eval_status import (
 )
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 
-# TODO: switch this to "start_time" once we create an index on that column .
-TIME_FILTER_COLUMN = "created_at"  # Options: "created_at" | "start_time"
+# On the v2 schema (PARTITION BY toDate(start_time), PK on toStartOfHour(
+# start_time)) start_time prunes partitions and the PK; created_at prunes
+# nothing and scans the whole project.
+TIME_FILTER_COLUMN = "start_time"  # Options: "created_at" | "start_time"
 
 
 class TraceListQueryBuilder(BaseQueryBuilder):
@@ -108,6 +110,24 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         self.start_date: datetime | None = None
         self.end_date: datetime | None = None
 
+    def _span_time_window(
+        self, params: dict[str, Any], column: str = "start_time"
+    ) -> str:
+        """Bound a page-scoped span probe to the request window ± 1 day.
+
+        Page trace_ids come from the windowed page scan; every span of an
+        in-window trace starts within the window ± max trace duration (prod
+        max ≈ 5h « 1d). Empty when no build() ran (standalone callers).
+        """
+        if self.start_date is None:
+            return ""
+        params["start_date"] = self.start_date
+        params["end_date"] = self.end_date
+        return (
+            f"AND {column} >= %(start_date)s - INTERVAL 1 DAY\n"
+            f"          AND {column} < %(end_date)s + INTERVAL 1 DAY"
+        )
+
     # ------------------------------------------------------------------
     # Phase 1: Paginated trace list
     # ------------------------------------------------------------------
@@ -129,6 +149,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
             project_ids=self.project_ids,
+            # PERF: bound the trace-membership span subqueries the compiler
+            # emits (model/status/attr/user filters) to the query's time
+            # window — without this each filter scans the project's entire
+            # span history. Safe here: this builder always binds
+            # %(start_date)s before translate(). See filters.py.
+            span_date_scope=True,
         )
         extra_where, extra_params = fb.translate(self.filters)
         self.params.update(extra_params)
@@ -140,10 +166,15 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         if not order_clause:
             order_clause = "ORDER BY start_time DESC"
 
-        # Pagination
+        # Prefix-fetch pagination: read the sorted prefix [0, offset +
+        # 2*page_size) in ONE bounded top-K pass and let the view dedup by
+        # trace id then slice [offset, offset + page_size) — see
+        # tracer/services/clickhouse/page_dedup.py. Preserves the global
+        # dedup `LIMIT 1 BY trace_id` provided (a trace — even a multi-root
+        # one whose roots sort pages apart — can never appear on two pages)
+        # without its O(window) full sort. No SQL OFFSET; slicing in Python.
         offset = self.page_number * self.page_size
-        self.params["limit"] = self.page_size
-        self.params["offset"] = offset
+        self.params["limit"] = offset + 2 * self.page_size
 
         # Build optional filter fragment
         filter_fragment = f"AND {extra_where}" if extra_where else ""
@@ -196,39 +227,28 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         # Heavy columns are fetched in build_content_query() for just the
         # returned trace_ids — avoids OOM on large tables.
         #
-        # `created_at` is the partition/sort key (`PARTITION BY
-        # toYYYYMM(created_at)`, `ORDER BY (project_id, toDate(created_at),
-        # trace_id, id)`). Adding a **lower bound only** on `created_at`
-        # lets CH prune old partitions — without it, the existing
-        # `start_time` filter alone triggers a full project scan because
-        # `start_time` isn't indexed. `start_time` remains the semantic
-        # bound so user-visible timestamps are respected exactly.
-        #
-        # NO UPPER BOUND on `created_at`: prod data shows 0.5% of rows
-        # arrive >7 days late (SDK buffering, backfills, manual uploads);
-        # an upper bound would silently drop them. A 1-day buffer on the
-        # lower bound tolerates clock skew. This delivers 100% of the
-        # pruning benefit (upper bound tested: zero additional win since
-        # no row has `created_at` in the future).
-        #
-        # On a 3.5M-span project, 7d page-1 drops from 663ms/3.5M rows
-        # to 256ms/306K rows (~2.5x faster, 91% less I/O).
+        # PERF: no `LIMIT 1 BY trace_id`. That clause deduped multi-root /
+        # duplicate-version traces, but forced CH to read + full-sort EVERY
+        # root span in the window before applying ORDER BY … LIMIT —
+        # O(roots-in-window) memory that OOM-crashed the server at millions
+        # of traces. Without it, `ORDER BY … LIMIT n` runs as a bounded
+        # top-N (size-n heap, O(n) memory). Duplicate trace_ids on a page
+        # (multi-root traces, un-merged ReplacingMergeTree versions) are
+        # rare; the view dedups the returned page by trace_id in Python,
+        # keeping the first occurrence — the same row `LIMIT 1 BY` kept.
         query = f"""
         SELECT
             {select_clause}
         FROM {self.TABLE}
         {self.project_where()}
           AND (parent_span_id IS NULL OR parent_span_id = '')
-          AND created_at >= %(start_date)s - INTERVAL 1 DAY
           AND {TIME_FILTER_COLUMN} >= %(start_date)s
           AND {TIME_FILTER_COLUMN} < %(end_date)s
           {pv_fragment}
           {search_fragment}
           {filter_fragment}
         {order_clause}
-        LIMIT 1 BY trace_id
         LIMIT %(limit)s
-        OFFSET %(offset)s
         """
         return query, self.params
 
@@ -245,6 +265,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
             project_ids=self.project_ids,
+            # PERF: bound the trace-membership span subqueries the compiler
+            # emits (model/status/attr/user filters) to the query's time
+            # window — without this each filter scans the project's entire
+            # span history. Safe here: this builder always binds
+            # %(start_date)s before translate(). See filters.py.
+            span_date_scope=True,
         )
         extra_where, extra_params = fb.translate(self.filters)
         self.params.update(extra_params)
@@ -265,7 +291,6 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         FROM {self.TABLE}
         {self.project_where()}
           AND (parent_span_id IS NULL OR parent_span_id = '')
-          AND created_at >= %(start_date)s - INTERVAL 1 DAY
           AND {TIME_FILTER_COLUMN} >= %(start_date)s
           AND {TIME_FILTER_COLUMN} < %(end_date)s
           {pv_fragment}
@@ -289,6 +314,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             "content_trace_ids": tuple(trace_ids),
         }
 
+        span_window = self._span_time_window(params)
         query = f"""
         SELECT
             trace_id,
@@ -305,6 +331,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         WHERE {self.project_filter_sql()}
           AND is_deleted = 0
           AND (parent_span_id IS NULL OR parent_span_id = '')
+          {span_window}
         LIMIT 1 BY trace_id
         """
         return query, params
@@ -321,6 +348,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             return "", {}
 
         params = {**self.params, "attr_trace_ids": tuple(trace_ids)}
+        span_window = self._span_time_window(params)
         query = f"""
         SELECT
             trace_id,
@@ -331,6 +359,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
           AND is_deleted = 0
           AND attributes_extra != '{{}}'
           AND attributes_extra != ''
+          {span_window}
         """
         return query, params
 
@@ -345,6 +374,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
             project_ids=self.project_ids,
+            # PERF: bound the trace-membership span subqueries the compiler
+            # emits (model/status/attr/user filters) to the query's time
+            # window — without this each filter scans the project's entire
+            # span history. Safe here: this builder always binds
+            # %(start_date)s before translate(). See filters.py.
+            span_date_scope=True,
         )
         extra_where, extra_params = fb.translate(self.filters)
         # Merge params -- reuse the same start/end dates
@@ -365,17 +400,11 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             search_fragment = "AND trace_name ILIKE %(search)s"
             params["search"] = f"%{self.search}%"
 
-        # See comment in build() — lower-bound-only `created_at` filter
-        # prunes old partitions. Drops 7d count from 716ms/3.5M rows to
-        # 255ms/306K rows on a 3.5M-span project, without dropping any
-        # rows that legitimately match the user's `start_time` window.
-
         query = f"""
         SELECT uniq(trace_id) AS total
         FROM {self.TABLE}
         {self.project_where()}
           AND (parent_span_id IS NULL OR parent_span_id = '')
-          AND created_at >= %(start_date)s - INTERVAL 1 DAY
           AND {TIME_FILTER_COLUMN} >= %(start_date)s
           AND {TIME_FILTER_COLUMN} < %(end_date)s
           {pv_fragment}
@@ -517,12 +546,38 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             countIf(status = 'running') AS running_count,
             countIf(status = 'pending') AS pending_count,
             anyIf(skipped_reason, status = 'skipped') AS skipped_reason
-        FROM {self.EVAL_TABLE} FINAL
-        WHERE _peerdb_is_deleted = 0
-          AND (deleted = 0 OR deleted IS NULL)
-          AND trace_id IN %(trace_ids)s
-          AND custom_eval_config_id IN %(eval_config_ids)s
-          {created_at_fragment}
+        -- PERF: no table-level FINAL. FINAL forced a merge across the WHOLE
+        -- eval table before the WHERE was applied, so a page of ~50 trace ids
+        -- dragged a merge over tens of millions of rows — GBs of memory that
+        -- OOM-crashed the server. Instead de-dup only the page-scoped slice:
+        -- the inner scan is pruned to the page's trace ids (idx_trace_id
+        -- bloom) + config ids + the created_at partition bound, then ORDER BY
+        -- _peerdb_version DESC + LIMIT 1 BY id keeps the newest version of
+        -- each eval row — verified identical to FINAL for live rows (status
+        -- transitions collapse to the newest version). One accepted
+        -- divergence: the not-deleted WHERE runs BEFORE dedup, so an eval
+        -- whose newest un-merged version is a soft-delete marker transiently
+        -- surfaces its previous version until the next merge.
+        FROM (
+            SELECT
+                trace_id,
+                custom_eval_config_id,
+                output_float,
+                output_bool,
+                output_str,
+                output_str_list,
+                error,
+                status,
+                skipped_reason
+            FROM {self.EVAL_TABLE}
+            WHERE _peerdb_is_deleted = 0
+              AND (deleted = 0 OR deleted IS NULL)
+              AND trace_id IN %(trace_ids)s
+              AND custom_eval_config_id IN %(eval_config_ids)s
+              {created_at_fragment}
+            ORDER BY _peerdb_version DESC
+            LIMIT 1 BY id
+        )
         GROUP BY trace_id, custom_eval_config_id
         """
         return query, params
@@ -546,6 +601,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             "trace_ids": tuple(trace_ids),
             "label_ids": tuple(annotation_label_ids),
         }
+        # Bound only the spans (sp) join side; the score (s) side keeps no
+        # upper bound so annotations created after the window still resolve.
+        sp_window = self._span_time_window(params, column="sp.start_time")
 
         query = f"""
         SELECT
@@ -562,6 +620,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         LEFT JOIN {self.TABLE} AS sp
           ON sp.id = s.observation_span_id
          AND sp._peerdb_is_deleted = 0
+         {sp_window}
         WHERE s._peerdb_is_deleted = 0
           AND s.deleted = false
           AND if(
@@ -589,6 +648,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             **self.params,
             "user_trace_ids": tuple(trace_ids),
         }
+        span_window = self._span_time_window(params)
 
         query = f"""
         SELECT trace_id, user_id
@@ -602,6 +662,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
               AND _peerdb_is_deleted = 0
               AND end_user_id IS NOT NULL
               AND end_user_id != toUUID('00000000-0000-0000-0000-000000000000')
+              {span_window}
             GROUP BY trace_id
         )
         WHERE user_id != ''

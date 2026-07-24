@@ -9,6 +9,7 @@ endpoints assume CH is reachable; if it's down, the request fails loudly.
 
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
@@ -138,42 +139,40 @@ class AnalyticsQueryService:
             params["recent_days"] = int(recent_days)
             recent_filter = "AND start_time >= now() - toIntervalDay(%(recent_days)s)"
 
-        inner_order = "ORDER BY start_time DESC" if recent_days is not None else ""
         outer_select = "SELECT key, argMax(type, cnt) AS type"
         if include_counts:
             outer_select += ", sum(cnt) AS count"
-        outer_order = "ORDER BY count DESC, key" if order_by_count_desc else "ORDER BY key"
+        outer_order = (
+            "ORDER BY count DESC, key" if order_by_count_desc else "ORDER BY key"
+        )
 
         query = f"""
             {outer_select} FROM (
                 SELECT key, 'string' AS type, count() AS cnt FROM (
-                    SELECT attrs_string FROM spans
+                    SELECT attrs_string.keys AS ks FROM spans
                     WHERE project_id IN %(project_ids)s
                       AND is_deleted = 0
                       {recent_filter}
-                    {inner_order}
                     LIMIT 10000
-                ) ARRAY JOIN mapKeys(attrs_string) AS key
+                ) ARRAY JOIN ks AS key
                 GROUP BY key
                 UNION ALL
                 SELECT key, 'number' AS type, count() AS cnt FROM (
-                    SELECT attrs_number FROM spans
+                    SELECT attrs_number.keys AS ks FROM spans
                     WHERE project_id IN %(project_ids)s
                       AND is_deleted = 0
                       {recent_filter}
-                    {inner_order}
                     LIMIT 10000
-                ) ARRAY JOIN mapKeys(attrs_number) AS key
+                ) ARRAY JOIN ks AS key
                 GROUP BY key
                 UNION ALL
                 SELECT key, 'boolean' AS type, count() AS cnt FROM (
-                    SELECT attrs_bool FROM spans
+                    SELECT attrs_bool.keys AS ks FROM spans
                     WHERE project_id IN %(project_ids)s
                       AND is_deleted = 0
                       {recent_filter}
-                    {inner_order}
                     LIMIT 10000
-                ) ARRAY JOIN mapKeys(attrs_bool) AS key
+                ) ARRAY JOIN ks AS key
                 GROUP BY key
             )
             GROUP BY key
@@ -208,34 +207,99 @@ class AnalyticsQueryService:
         return self.get_span_attribute_keys_ch_for_projects([project_id])
 
     @staticmethod
-    def _eval_config_ids_query(scope_sql: str) -> str:
+    def _eval_config_ids_query(scope_sql: str, extra_where: str = "") -> str:
         """Build the shared "distinct eval-config IDs that have data" query.
 
         One body for every eval-config discovery read: the table and its
         not-deleted predicate come from ``eval_logger_source()`` (so a ``_v2``
         stack uses ``is_deleted = 0``), and callers supply only the
-        trace-scoping clause.
+        trace-scoping clause (plus an optional ``extra_where`` such as a
+        ``created_at`` window that prunes the eval table's monthly partitions).
+
+        PERF: no ``FINAL``. This read only needs the *distinct set* of config
+        ids that appear — a superseded or tombstoned row still carries the same
+        ``custom_eval_config_id``, and the not-deleted predicate already drops
+        delete markers, so collapsing ReplacingMergeTree versions adds nothing.
+        FINAL, by contrast, forced a full-table merge before the scope filter
+        and was a primary OOM/crash source on the span-list hot path.
         """
         eval_table, eval_nd = eval_logger_source()
         return (
             "SELECT DISTINCT toString(custom_eval_config_id) AS config_id "
-            f"FROM {eval_table} FINAL "
+            f"FROM {eval_table} "
             f"WHERE {eval_nd} "
+            f"{extra_where} "
             f"AND {scope_sql}"
         )
 
     def get_eval_config_ids_with_data_ch(
-        self, project_id: str, timeout_ms: int = 5000
+        self,
+        project_id: str,
+        timeout_ms: int = 5000,
+        window_days: int | None = 30,
+        candidate_config_ids: list[str] | None = None,
     ) -> list[str]:
-        """Distinct eval config IDs that have data for a project (scoped via spans)."""
+        """Distinct eval config IDs that have data for a project.
+
+        Two scoping strategies:
+
+        * FAST PATH (``candidate_config_ids`` given): the caller has already
+          resolved this project's configs from Postgres (``CustomEvalConfig`` is
+          project-scoped via its ``project`` FK), so we only need to know which
+          of them have *recent* eval rows. The scope becomes
+          ``custom_eval_config_id IN (…)`` — the LEADING column of the eval
+          table's sort key ``(custom_eval_config_id, created_at, id)`` — so CH
+          prunes straight to those configs' granules. This turns the old
+          full-table trace join (tens of seconds, ~1 GB, OOM-prone at scale)
+          into a sub-second, tens-of-MB read. This is the span-list hot path.
+
+        * TRACE-JOIN PATH (no ``candidate_config_ids``): kept for callers that
+          cannot pre-resolve the project's configs. Bounded to ``window_days``
+          (default 30) so it prunes span/eval partitions instead of scanning all
+          history, and ``max_bytes_in_set`` fails loud (catchable) rather than
+          OOM-killing the server. The previous version was unbounded + used
+          ``FINAL`` — the primary OOM source. Pass ``window_days=None`` to
+          restore the unbounded window.
+        """
+        eval_table, eval_nd = eval_logger_source()
+        params: dict[str, Any] = {}
+        window_sql = ""
+        if window_days is not None:
+            params["window_days"] = int(window_days)
+            window_sql = "AND created_at >= now() - toIntervalDay(%(window_days)s)"
+
+        if candidate_config_ids is not None:
+            if not candidate_config_ids:
+                return []
+            params["config_ids"] = tuple(candidate_config_ids)
+            query = (
+                "SELECT DISTINCT toString(custom_eval_config_id) AS config_id "
+                f"FROM {eval_table} "
+                f"WHERE {eval_nd} {window_sql} "
+                "AND custom_eval_config_id IN %(config_ids)s"
+            )
+            result = self.execute_ch_query(query, params, timeout_ms=timeout_ms)
+            return [row["config_id"] for row in result.data]
+
+        params["project_id"] = project_id
+        span_window = (
+            " AND start_time >= now() - toIntervalDay(%(window_days)s)"
+            if window_days is not None
+            else ""
+        )
         query = self._eval_config_ids_query(
             "trace_id IN ("
-            "SELECT DISTINCT trace_id FROM spans "
-            "WHERE project_id = %(project_id)s AND is_deleted = 0"
-            ")"
+            "SELECT trace_id FROM spans "
+            f"WHERE project_id = %(project_id)s AND is_deleted = 0{span_window} "
+            "GROUP BY trace_id"
+            ")",
+            extra_where=window_sql,
         )
         result = self.execute_ch_query(
-            query, {"project_id": project_id}, timeout_ms=timeout_ms
+            query,
+            params,
+            timeout_ms=timeout_ms,
+            settings={"max_bytes_in_set": 500_000_000},
         )
         return [row["config_id"] for row in result.data]
 
@@ -250,6 +314,43 @@ class AnalyticsQueryService:
             query, {"trace_ids": trace_ids}, timeout_ms=timeout_ms
         )
         return [row["config_id"] for row in result.data]
+
+    def get_span_trace_map(
+        self,
+        trace_ids: list[str],
+        project_id: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        timeout_ms: int = 10000,
+    ) -> dict[str, str]:
+        """Map span id -> trace id for spans in the given traces (CH-native).
+
+        ``project_id`` prunes the scan to the partition/PK prefix; the
+        ``start_date``/``end_date`` window (widened one day each side to cover a
+        trace's full duration) prunes partitions. Without them the query is a
+        full-table scan.
+        """
+        if not trace_ids:
+            return {}
+        params: dict[str, Any] = {"trace_ids": trace_ids}
+        where = ["trace_id IN %(trace_ids)s", "is_deleted = 0"]
+        if project_id is not None:
+            params["project_id"] = project_id
+            where.append("project_id = %(project_id)s")
+        if start_date is not None and end_date is not None:
+            params["start_date"] = start_date
+            params["end_date"] = end_date
+            where.append(
+                "start_time >= %(start_date)s - INTERVAL 1 DAY "
+                "AND start_time < %(end_date)s + INTERVAL 1 DAY"
+            )
+        result = self.execute_ch_query(
+            "SELECT toString(id) AS span_id, toString(trace_id) AS trace_id "
+            f"FROM spans WHERE {' AND '.join(where)}",
+            params,
+            timeout_ms=timeout_ms,
+        )
+        return {r["span_id"]: r["trace_id"] for r in result.data}
 
     def get_children_eval_metrics_ch(
         self, span_ids: list[str], timeout_ms: int = 5000

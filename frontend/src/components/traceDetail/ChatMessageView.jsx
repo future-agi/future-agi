@@ -1,9 +1,10 @@
 import React, { useState, useMemo } from "react";
 import PropTypes from "prop-types";
-import { Box, Collapse, IconButton, Stack, Typography } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import Markdown from "react-markdown";
+import { ToolCallCard } from "src/components/tool-call/ToolCallCard";
 
 // Role badge colors — accent colors work in both themes; bg/border use alpha for transparency
 const ROLE_STYLES = {
@@ -116,81 +117,6 @@ function normalizeMessage(msg) {
   return { role, content: [JSON.stringify(msg)] };
 }
 
-// ── Tool Call Card ──
-const ToolCallCard = ({ toolCall }) => {
-  const [open, setOpen] = useState(false);
-  const name = toolCall?.function?.name || toolCall?.name || "tool";
-  const args = toolCall?.function?.arguments || toolCall?.arguments || "";
-  const argsStr =
-    typeof args === "string" ? args : JSON.stringify(args, null, 2);
-
-  return (
-    <Box
-      sx={{
-        border: "1px solid",
-        borderColor: alpha("#EA580C", 0.2),
-        borderRadius: "4px",
-        overflow: "hidden",
-        mt: 0.5,
-      }}
-    >
-      <Box
-        data-search-skip="true"
-        onClick={() => setOpen(!open)}
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          gap: 0.5,
-          px: 1,
-          py: 0.5,
-          bgcolor: alpha("#EA580C", 0.08),
-          cursor: "pointer",
-        }}
-      >
-        <Iconify
-          icon="mdi:wrench-outline"
-          width={13}
-          sx={{ color: "#EA580C" }}
-        />
-        <Typography
-          sx={{ fontSize: 12, fontWeight: 600, color: "#EA580C", flex: 1 }}
-        >
-          {name}
-        </Typography>
-        <Iconify
-          icon={open ? "mdi:chevron-up" : "mdi:chevron-down"}
-          width={14}
-          sx={{ color: "#EA580C" }}
-        />
-      </Box>
-      <Collapse in={open}>
-        <Box
-          sx={{
-            p: 1,
-            bgcolor: alpha("#EA580C", 0.04),
-            maxHeight: 200,
-            overflow: "auto",
-          }}
-        >
-          <pre
-            style={{
-              margin: 0,
-              fontSize: 11,
-              fontFamily: "'IBM Plex Mono', monospace",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-all",
-            }}
-          >
-            {argsStr}
-          </pre>
-        </Box>
-      </Collapse>
-    </Box>
-  );
-};
-
-ToolCallCard.propTypes = { toolCall: PropTypes.object };
-
 // ── Single Message Card ──
 const MessageCard = ({ message }) => {
   const role = message.role || "user";
@@ -294,7 +220,13 @@ const MessageCard = ({ message }) => {
       {toolCalls?.length > 0 && (
         <Box sx={{ px: 1.5, pb: 1 }}>
           {toolCalls.map((tc, i) => (
-            <ToolCallCard key={tc.id || i} toolCall={tc} />
+            <ToolCallCard
+              key={tc.id || i}
+              toolCall={{
+                name: tc.function?.name || tc.name || "tool",
+                arguments: tc.function?.arguments || tc.arguments || "",
+              }}
+            />
           ))}
         </Box>
       )}

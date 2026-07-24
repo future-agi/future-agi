@@ -56,15 +56,17 @@ class TestDiscoveryQueryContract:
         assert predicate in self._discovery_query()
         assert predicate in self._render_query()
 
-    def test_registry_routes_to_pg_and_ch_sources(self):
+    def test_registry_routes_annotation_labels(self):
         from tracer.services.annotation_label_source import (
-            AnnotationLabelScoresCH,
             AnnotationLabelScoresPG,
+            AnnotationLabelScoresProjectPG,
         )
         from tracer.services.clickhouse.v2.dispatch import get_v1_class, get_v2_class
 
+        # v2 discovery now answers from the denormalized tracer_project_id in PG
+        # (the CH spans-scan class is kept only for the dashboard filter reads).
         assert get_v1_class("ANNOTATION_LABELS") is AnnotationLabelScoresPG
-        assert get_v2_class("ANNOTATION_LABELS") is AnnotationLabelScoresCH
+        assert get_v2_class("ANNOTATION_LABELS") is AnnotationLabelScoresProjectPG
 
 
 # --------------------------------------------------------------------------- #
@@ -219,3 +221,213 @@ class TestAnnotationLabelSourceBehavior:
         assert str(visible_label.id) in discovered
         assert str(ghost_label.id) not in discovered
         assert discovered == rendered
+
+
+def _make_span_score(*, label, span, organization, workspace, user, project):
+    """A span Score stamped with tracer_project_id (as the write-sites now do)."""
+    score = _make_score(
+        label=label,
+        span=span,
+        organization=organization,
+        workspace=workspace,
+        user=user,
+    )
+    score.tracer_project_id = project.id
+    score.save(update_fields=["tracer_project_id"])
+    return score
+
+
+# --------------------------------------------------------------------------- #
+# tracer_project_id_for_source: source-type gating + project_id fast path (no DB).
+# --------------------------------------------------------------------------- #
+@pytest.mark.unit
+class TestTracerProjectIdForSource:
+    def _fn(self):
+        from model_hub.utils.annotation_queue_helpers import (
+            tracer_project_id_for_source,
+        )
+
+        return tracer_project_id_for_source
+
+    def test_non_tracer_source_returns_none(self):
+        from types import SimpleNamespace
+
+        obj = SimpleNamespace(project_id=uuid.uuid4())
+        for st in ("dataset_row", "call_execution", "prototype_run"):
+            assert self._fn()(st, obj) is None
+
+    def test_tracer_source_reads_project_id_fast_path(self):
+        from types import SimpleNamespace
+
+        pid = uuid.uuid4()
+        obj = SimpleNamespace(project_id=pid)  # no .project → must not hit DB
+        for st in ("trace", "observation_span", "trace_session"):
+            assert self._fn()(st, obj) == pid
+
+    def test_falls_back_to_project_relation(self):
+        from types import SimpleNamespace
+
+        pid = uuid.uuid4()
+        obj = SimpleNamespace(project_id=None, project=SimpleNamespace(id=pid))
+        assert self._fn()("observation_span", obj) == pid
+
+    def test_no_resolvable_project_returns_none(self):
+        from types import SimpleNamespace
+
+        obj = SimpleNamespace(project_id=None, project=None)
+        assert self._fn()("trace", obj) is None
+
+
+# --------------------------------------------------------------------------- #
+# AnnotationLabelScoresProjectPG: parity, session exclusion, distinct guard.
+# --------------------------------------------------------------------------- #
+@pytest.mark.django_db
+class TestProjectPGDiscovery:
+    def test_parity_with_ch_scope(
+        self, organization, workspace, project, trace, user
+    ):
+        from tracer.services.annotation_label_source import (
+            AnnotationLabelScoresCH,
+            AnnotationLabelScoresProjectPG,
+        )
+        from tracer.tests._ch_seed import seed_ch_score, seed_ch_span
+
+        labels = []
+        for _ in range(2):
+            label = _make_label(organization, workspace, project)
+            span = _make_span(project, trace)
+            seed_ch_span(span)
+            score = _make_span_score(
+                label=label,
+                span=span,
+                organization=organization,
+                workspace=workspace,
+                user=user,
+                project=project,
+            )
+            seed_ch_score(score)
+            labels.append(str(label.id))
+
+        pg = set(AnnotationLabelScoresProjectPG().label_ids_for_project(project.id))
+        ch = set(AnnotationLabelScoresCH().label_ids_for_project(project.id))
+        assert pg == set(labels)
+        assert pg == ch  # PG source matches the CH spans-scope it replaces
+
+    def test_session_only_score_excluded(
+        self, organization, workspace, project, user
+    ):
+        from tracer.models.trace_session import TraceSession
+        from tracer.services.annotation_label_source import (
+            AnnotationLabelScoresProjectPG,
+        )
+
+        session = TraceSession.objects.create(project=project)
+        label = _make_label(organization, workspace, project)
+        # tracer_project_id populated, but no trace_id / observation_span_id.
+        Score.objects.create(
+            source_type=QueueItemSourceType.TRACE_SESSION.value,
+            trace_session=session,
+            label=label,
+            value={"rating": 4.0},
+            score_source="HUMAN",
+            annotator=user,
+            organization=organization,
+            workspace=workspace,
+            tracer_project_id=project.id,
+            deleted=False,
+        )
+
+        labels = AnnotationLabelScoresProjectPG().label_ids_for_project(project.id)
+        assert str(label.id) not in labels  # not-null trace/span predicate excludes it
+
+    def test_distinct_returns_each_label_once(
+        self, organization, workspace, project, trace, user
+    ):
+        # Guards the BaseModel-ordering-defeats-DISTINCT bug: two scores of the
+        # same label must collapse to one label id, not one row per score.
+        from tracer.services.annotation_label_source import (
+            AnnotationLabelScoresProjectPG,
+        )
+
+        label = _make_label(organization, workspace, project)
+        for _ in range(2):
+            span = _make_span(project, trace)
+            _make_span_score(
+                label=label,
+                span=span,
+                organization=organization,
+                workspace=workspace,
+                user=user,
+                project=project,
+            )
+
+        result = AnnotationLabelScoresProjectPG().label_ids_for_project(project.id)
+        assert result == [str(label.id)]
+
+
+# --------------------------------------------------------------------------- #
+# Backfill: idempotency + never overwriting an existing value.
+# --------------------------------------------------------------------------- #
+@pytest.mark.django_db
+class TestBackfillTracerProject:
+    def test_tag_is_idempotent_and_never_overwrites(
+        self, organization, workspace, project, trace, user
+    ):
+        from model_hub.management.commands.backfill_score_tracer_project import _tag
+
+        span1 = _make_span(project, trace)
+        span2 = _make_span(project, trace)
+        s1 = _make_score(
+            label=_make_label(organization, workspace, project),
+            span=span1,
+            organization=organization,
+            workspace=workspace,
+            user=user,
+        )
+        s2 = _make_score(
+            label=_make_label(organization, workspace, project),
+            span=span2,
+            organization=organization,
+            workspace=workspace,
+            user=user,
+        )
+        # s2 already carries a DIFFERENT project id — must be left untouched.
+        other = uuid.uuid4()
+        Score.no_workspace_objects.filter(pk=s2.pk).update(tracer_project_id=other)
+
+        n1 = _tag(project.id, "observation_span_id", [str(span1.id), str(span2.id)])
+        assert n1 == 1  # only the NULL row (s1)
+        s1.refresh_from_db()
+        s2.refresh_from_db()
+        assert s1.tracer_project_id == project.id
+        assert s2.tracer_project_id == other  # not overwritten
+
+        # Re-run: nothing left to stamp.
+        assert _tag(project.id, "observation_span_id", [str(span1.id), str(span2.id)]) == 0
+
+    def test_backfill_from_ch_spans_then_noop(
+        self, organization, workspace, project, trace, user
+    ):
+        from model_hub.management.commands.backfill_score_tracer_project import (
+            backfill_tracer_project_ids,
+        )
+        from tracer.tests._ch_seed import seed_ch_span
+
+        span = _make_span(project, trace)
+        seed_ch_span(span)
+        score = _make_score(
+            label=_make_label(organization, workspace, project),
+            span=span,
+            organization=organization,
+            workspace=workspace,
+            user=user,
+        )
+        assert score.tracer_project_id is None
+
+        res = backfill_tracer_project_ids()
+        score.refresh_from_db()
+        assert score.tracer_project_id == project.id
+        assert res["updated"] >= 1
+
+        # Idempotent second run.
+        assert backfill_tracer_project_ids()["updated"] == 0

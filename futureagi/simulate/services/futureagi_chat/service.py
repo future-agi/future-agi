@@ -8,6 +8,7 @@ inspectable for debugging.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 import structlog
@@ -43,6 +44,29 @@ from simulate.services.types.chat import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+@dataclass
+class SimulatorMessage:
+    """OpenAI-format chat message assembled for the simulator persona LLM.
+
+    Centralizes the role / content / tool_calls / tool_call_id shape that was
+    previously built as raw dicts inline, so the tool-call <-> tool-result
+    pairing (and the empty-content assistant turn) can't silently drift.
+    """
+
+    role: str
+    content: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
+    tool_call_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        message: dict[str, Any] = {"role": self.role, "content": self.content}
+        if self.tool_calls:
+            message["tool_calls"] = self.tool_calls
+        if self.tool_call_id is not None:
+            message["tool_call_id"] = self.tool_call_id
+        return message
 
 
 class FutureAGIChatService(ChatServiceBlueprint):
@@ -210,16 +234,7 @@ class FutureAGIChatService(ChatServiceBlueprint):
 
         messages: list[dict[str, Any]] = list(session.messages)
 
-        for msg in input.messages:
-            content = (msg.content or "").strip()
-            if not content:
-                logger.warning(
-                    "empty_message_skipped",
-                    session_id=input.session_id,
-                    role=msg.role.value,
-                )
-                continue
-            messages.append({"role": msg.role.value, "content": content})
+        messages.extend(self._to_provider_messages(input.messages))
 
         # Check turn limit
         turn_count = sum(1 for m in messages if m.get("role") == "user")
@@ -230,7 +245,9 @@ class FutureAGIChatService(ChatServiceBlueprint):
                 turn_count=turn_count,
             )
             final_content = f"Maximum conversation turns ({MAX_CONVERSATION_TURNS}) reached. Ending conversation."
-            messages.append({"role": "user", "content": final_content})
+            messages.append(
+                SimulatorMessage(role="user", content=final_content).to_dict()
+            )
             session.messages = messages
             session.has_chat_ended = True
             session.status = "ended"
@@ -263,17 +280,58 @@ class FutureAGIChatService(ChatServiceBlueprint):
             )
 
             content = response.get("content", "")
-            tool_calls = response.get("tool_calls", [])
             has_chat_ended = response.get("has_chat_ended", False)
             ended_reason = response.get("ended_reason")
             usage: LLMUsage = response.get("usage") or LLMUsage()
 
+            # An empty persona turn is never a valid customer message (an
+            # endCall with no text is fine — has_chat_ended covers it).
+            # Delivering "" sends the agent into "your message didn't come
+            # through" spirals, so retry once and otherwise fail the send
+            # loudly instead of corrupting the conversation.
+            if not content.strip() and not has_chat_ended:
+                logger.warning(
+                    "simulator_empty_response_retrying",
+                    session_id=input.session_id,
+                    model=assistant.model,
+                )
+                response = self._call_llm(
+                    messages=messages,
+                    system_prompt=assistant.system_prompt,
+                    model=assistant.model,
+                    temperature=assistant.temperature,
+                    max_tokens=assistant.max_tokens,
+                    organization_id=org_id,
+                    workspace_id=ws_id,
+                )
+                content = response.get("content", "")
+                has_chat_ended = response.get("has_chat_ended", False)
+                ended_reason = response.get("ended_reason")
+                retry_usage: LLMUsage = response.get("usage") or LLMUsage()
+                usage = LLMUsage(
+                    input_tokens=usage.input_tokens + retry_usage.input_tokens,
+                    output_tokens=usage.output_tokens + retry_usage.output_tokens,
+                    total_tokens=usage.total_tokens + retry_usage.total_tokens,
+                )
+                if not content.strip() and not has_chat_ended:
+                    logger.error(
+                        "simulator_empty_response",
+                        session_id=input.session_id,
+                        model=assistant.model,
+                    )
+                    session.status = "error"
+                    session.save(update_fields=["status"])
+                    return SendMessageResult(
+                        success=False,
+                        error="Simulator returned an empty message twice",
+                    )
+
+            # The persona's own tool call (e.g. endCall) is a control signal,
+            # captured via has_chat_ended below. It is scrubbed from the stored
+            # conversation so the agent-under-test never sees the simulator's
+            # tooling (and so the persona's own context stays text-only).
             messages.append(
-                {
-                    "role": "user",
-                    "content": content,
-                    **({"tool_calls": tool_calls} if tool_calls else {}),
-                }
+                SimulatorMessage(role="user", content=content).to_dict()
             )
 
             session.messages = messages
@@ -284,29 +342,15 @@ class FutureAGIChatService(ChatServiceBlueprint):
                 update_fields=["messages", "has_chat_ended", "status", "total_tokens"]
             )
 
-            output_tool_calls = None
-            if tool_calls:
-                output_tool_calls = [
-                    ToolCall(
-                        id=tc.get("id", str(uuid.uuid4())),
-                        type=tc.get("type", "function"),
-                        function=ToolCallFunction(
-                            name=tc.get("function", {}).get("name", ""),
-                            arguments=tc.get("function", {}).get("arguments", "{}"),
-                        ),
-                    )
-                    for tc in tool_calls
-                ]
-
             return SendMessageResult(
                 success=True,
                 input_messages=input.messages,
+                # The persona's tool_calls (endCall) are intentionally omitted:
+                # the agent-under-test only ever sees the customer's text, never
+                # the simulator's tooling. The end signal is carried by
+                # has_chat_ended / ended_reason instead.
                 output_messages=[
-                    ChatMessage(
-                        role=ChatRole.USER,
-                        content=content,
-                        tool_calls=output_tool_calls,
-                    )
+                    ChatMessage(role=ChatRole.USER, content=content)
                 ],
                 message_id=str(uuid.uuid4()),
                 has_chat_ended=has_chat_ended,
@@ -335,6 +379,44 @@ class FutureAGIChatService(ChatServiceBlueprint):
     def _call_llm(self, **kwargs) -> dict[str, Any]:
         """Call the LLM synchronously."""
         return generate_simulator_response(**kwargs)
+
+    def _to_provider_messages(
+        self,
+        input_messages: list[ChatMessage],
+    ) -> list[dict[str, Any]]:
+        """Assemble the agent-under-test's turn for the persona LLM.
+
+        The persona should experience a human-like conversation, so the agent's
+        tool machinery is scrubbed here: tool results and pure tool-call turns
+        are dropped, and only the agent's text replies are forwarded — as
+        ``assistant`` turns (the agent is the "assistant" from the customer's
+        side). This keeps the persona context to a clean user<->assistant text
+        exchange, which also makes the malformed tool-call sequence that caused
+        the send-message 500 structurally impossible.
+
+        The agent's full tool data is still persisted to ``ChatMessageModel``
+        by ``store_chat_messages`` (and read by the Tool-Call-Accuracy eval);
+        this only controls what the simulator sees.
+        """
+        provider_messages: list[dict[str, Any]] = []
+        for msg in input_messages:
+            content = (msg.content or "").strip()
+            role = msg.role.value if msg.role else "user"
+
+            # Scrub the agent's tool results outright.
+            if role == "tool":
+                continue
+
+            # Drop tool-call turns that carry no text (a pure tool call). A turn
+            # with both text and tool_calls keeps only its text; the tool_calls
+            # are never forwarded to the persona.
+            if not content:
+                continue
+
+            provider_messages.append(
+                SimulatorMessage(role="assistant", content=content).to_dict()
+            )
+        return provider_messages
 
     def _convert_to_chat_messages(
         self, messages: list[dict[str, Any]]

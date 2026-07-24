@@ -5775,16 +5775,19 @@ def _build_span_context(span) -> dict:
     if not isinstance(raw_log, dict):
         raw_log = {}
 
+    # Prefer the S3-mirrored flat alias over the raw ingest snapshot.
     base["recording_url"] = (
-        raw_log.get("recordingUrl")
-        or raw_log.get("recording_url")
-        or sa.get("recording_url")
+        sa.get("recording_url")
         or sa.get("recordingUrl")
+        or (raw_log.get("artifact") or {}).get("recording", {}).get("mono", {}).get("combinedUrl")
+        or raw_log.get("recordingUrl")
+        or raw_log.get("recording_url")
     )
     base["stereo_recording_url"] = (
-        raw_log.get("stereoRecordingUrl")
+        sa.get("stereo_recording_url")
+        or (raw_log.get("artifact") or {}).get("recording", {}).get("stereoUrl")
+        or raw_log.get("stereoRecordingUrl")
         or raw_log.get("stereo_recording_url")
-        or sa.get("stereo_recording_url")
     )
 
     # Call-level fields that are commonly referenced in voice evals.

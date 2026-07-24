@@ -272,7 +272,6 @@ export const useUpdateAnnotationQueue = () => {
       enqueueSnackbar("Queue updated successfully", { variant: "success" });
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
       queryClient.invalidateQueries({
-
         queryKey: annotationQueueKeys.detail(variables.id),
       });
     },
@@ -431,10 +430,12 @@ export const useQueueItems = (queueId, filters = {}, options = {}) => {
 export const useAddQueueItems = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ queueId, items, selection }) =>
+    mutationFn: ({ queueId, items, selection, project_id }) =>
       axios.post(
         annotationQueueEndpoints.addItems(queueId),
-        selection ? { selection } : { items },
+        selection
+          ? { selection }
+          : { items, ...(project_id ? { project_id } : {}) },
       ),
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries({

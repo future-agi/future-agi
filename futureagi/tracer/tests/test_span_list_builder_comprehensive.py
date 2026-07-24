@@ -18,6 +18,7 @@ typed maps + flatten helper):
 
 These are pure query-string / pivot-logic tests — NO ClickHouse, NO DB.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -98,13 +99,18 @@ class TestBuild:
         sql, _ = _make_builder().build()
         assert "ORDER BY start_time DESC" in sql
 
-    def test_pagination_params_and_offset(self):
+    def test_pagination_prefix_fetch_no_offset(self):
+        # PERF: no SQL OFFSET and no `LIMIT 1 BY id`. Phase 1 fetches the sorted
+        # prefix [0, offset + 2*page_size) in one bounded top-K pass; the view
+        # de-dups by id and slices the page in Python (see page_dedup.py). The old
+        # `LIMIT 1 BY id` forced an O(window) full sort that OOM-crashed CH.
         sql, params = _make_builder(page_number=2, page_size=25).build()
         assert "LIMIT %(limit)s" in sql
-        assert "OFFSET %(offset)s" in sql
-        assert params["limit"] == 25
-        assert params["offset"] == 50  # page 2 * size 25
-        assert "LIMIT 1 BY id" in sql
+        assert "OFFSET" not in sql
+        assert "LIMIT 1 BY id" not in sql
+        # limit = offset + 2*page_size = (2*25) + (2*25) = 100; no offset param.
+        assert params["limit"] == 100
+        assert "offset" not in params
 
     def test_sort_param_maps_latency_alias(self):
         sql, _ = _make_builder(
@@ -137,9 +143,7 @@ class TestBuild:
         assert "lower(model) = %(" in sql
 
     def test_project_version_fragment(self):
-        sql, params = _make_builder(
-            project_version_id="pv-1"
-        ).build()
+        sql, params = _make_builder(project_version_id="pv-1").build()
         assert "project_version_id = %(project_version_id)s" in sql
         assert params["project_version_id"] == "pv-1"
 
@@ -164,9 +168,15 @@ class TestBuild:
 # build_count_query()
 # --------------------------------------------------------------------------- #
 class TestBuildCountQuery:
-    def test_uses_uniqexact_over_spans(self):
+    def test_uses_count_not_uniqexact_over_spans(self):
+        # PERF: count() replaced uniqExact(id). uniqExact built an exact hash set
+        # of every matching id (tens of millions of strings — GBs, OOM-prone);
+        # count() reads only the filter columns at O(1) memory. A transient
+        # un-merged ReplacingMergeTree duplicate is counted once extra, which is
+        # immaterial and matches the list (which no longer dedups via LIMIT 1 BY).
         sql, _ = _make_builder().build_count_query()
-        assert "uniqExact(id) AS total" in sql
+        assert "count() AS total" in sql
+        assert "uniqExact" not in sql
         assert "FROM spans" in sql
 
     def test_same_time_window_as_build(self):
@@ -215,11 +225,28 @@ class TestBuildIdQuery:
         assert "start_time < %(end_date)s" in sql
 
     def test_project_version_fragment(self):
-        sql, params = _make_builder(
-            project_version_id="pv-3"
-        ).build_id_query()
+        sql, params = _make_builder(project_version_id="pv-3").build_id_query()
         assert "project_version_id = %(project_version_id)s" in sql
         assert params["project_version_id"] == "pv-3"
+
+    def test_limit_adds_ordered_cap(self):
+        sql, params = _make_builder().build_id_query(limit=5)
+        # Capped resolve orders newest-first and caps via a bound param, on top
+        # of the existing per-id dedup.
+        assert "ORDER BY start_time DESC, id DESC" in sql
+        assert "LIMIT 1 BY id" in sql
+        assert "LIMIT %(id_limit)s" in sql
+        assert params["id_limit"] == 5
+        # Clause order: ORDER BY, then LIMIT n BY, then the plain LIMIT.
+        assert sql.index("ORDER BY") < sql.index("LIMIT 1 BY id")
+        assert sql.index("LIMIT 1 BY id") < sql.index("LIMIT %(id_limit)s")
+
+    def test_default_limit_is_unbounded_and_unordered(self):
+        # The eval-resolver caller passes no limit — behaviour must be unchanged.
+        sql, params = _make_builder().build_id_query()
+        assert "ORDER BY" not in sql
+        assert "LIMIT %(id_limit)s" not in sql
+        assert "id_limit" not in params
 
 
 # --------------------------------------------------------------------------- #
@@ -237,15 +264,22 @@ class TestBuildContentQuery:
         assert "is_deleted = 0" in sql
         assert params["content_span_ids"] == ("s1", "s2")
 
+    def test_bounds_start_time_window(self):
+        sql, params = _make_builder().build_content_query(span_ids=["s1"])
+        assert "start_time >= %(start_date)s - INTERVAL 1 DAY" in sql
+        assert "start_time < %(end_date)s + INTERVAL 1 DAY" in sql
+        assert params["start_date"] is not None
+        assert params["end_date"] is not None
+
 
 # --------------------------------------------------------------------------- #
 # build_eval_query() — Phase 2
 # --------------------------------------------------------------------------- #
 class TestBuildEvalQuery:
     def test_empty_span_ids_returns_empty(self):
-        sql, params = _make_builder(
-            eval_config_ids=[EVAL_CONFIG_ID]
-        ).build_eval_query(span_ids=[])
+        sql, params = _make_builder(eval_config_ids=[EVAL_CONFIG_ID]).build_eval_query(
+            span_ids=[]
+        )
         assert sql == "" and params == {}
 
     def test_empty_eval_config_ids_returns_empty(self):
@@ -256,44 +290,42 @@ class TestBuildEvalQuery:
 
     def test_params_are_fresh_dict(self):
         # A fresh dict is built — only span_ids + eval_config_ids, no project_id.
-        _, params = _make_builder(
-            eval_config_ids=[EVAL_CONFIG_ID]
-        ).build_eval_query(span_ids=["s1", "s2"])
+        _, params = _make_builder(eval_config_ids=[EVAL_CONFIG_ID]).build_eval_query(
+            span_ids=["s1", "s2"]
+        )
         assert set(params.keys()) == {"span_ids", "eval_config_ids"}
         assert params["span_ids"] == ("s1", "s2")
         assert params["eval_config_ids"] == (EVAL_CONFIG_ID,)
 
     def test_groups_by_span_and_config(self):
-        sql, _ = _make_builder(
-            eval_config_ids=[EVAL_CONFIG_ID]
-        ).build_eval_query(span_ids=["s1"])
+        sql, _ = _make_builder(eval_config_ids=[EVAL_CONFIG_ID]).build_eval_query(
+            span_ids=["s1"]
+        )
         assert "GROUP BY observation_span_id, custom_eval_config_id" in sql
 
     def test_averages_only_completed_non_errored_rows(self):
-        sql, _ = _make_builder(
-            eval_config_ids=[EVAL_CONFIG_ID]
-        ).build_eval_query(span_ids=["s1"])
+        sql, _ = _make_builder(eval_config_ids=[EVAL_CONFIG_ID]).build_eval_query(
+            span_ids=["s1"]
+        )
         assert "avgIf(" in sql
         # non-terminal / skipped / errored excluded from the aggregate guard.
-        assert (
-            "status NOT IN ('pending', 'running', 'skipped', 'errored')" in sql
-        )
+        assert "status NOT IN ('pending', 'running', 'skipped', 'errored')" in sql
         # NULL-safe output_str comparison.
         assert "ifNull(output_str, '') != 'ERROR'" in sql
 
     def test_pass_rate_case_and_str_lists(self):
-        sql, _ = _make_builder(
-            eval_config_ids=[EVAL_CONFIG_ID]
-        ).build_eval_query(span_ids=["s1"])
+        sql, _ = _make_builder(eval_config_ids=[EVAL_CONFIG_ID]).build_eval_query(
+            span_ids=["s1"]
+        )
         assert "CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END" in sql
         assert "pass_rate" in sql
         assert "groupArrayIf(" in sql
         assert "str_lists" in sql
 
     def test_per_status_counts_present(self):
-        sql, _ = _make_builder(
-            eval_config_ids=[EVAL_CONFIG_ID]
-        ).build_eval_query(span_ids=["s1"])
+        sql, _ = _make_builder(eval_config_ids=[EVAL_CONFIG_ID]).build_eval_query(
+            span_ids=["s1"]
+        )
         for col in (
             "success_count",
             "error_count",
@@ -304,31 +336,40 @@ class TestBuildEvalQuery:
             assert col in sql
 
     def test_external_group_by_settings(self):
-        sql, _ = _make_builder(
-            eval_config_ids=[EVAL_CONFIG_ID]
-        ).build_eval_query(span_ids=["s1"])
+        sql, _ = _make_builder(eval_config_ids=[EVAL_CONFIG_ID]).build_eval_query(
+            span_ids=["s1"]
+        )
         assert "max_bytes_before_external_group_by = 1073741824" in sql
 
     @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger")
     def test_legacy_table_keeps_both_delete_guards(self):
         # build_eval_query is rewrite-EXCLUDED, so it keeps BOTH the CDC
         # tombstone (`_peerdb_is_deleted`) and the app `deleted` soft-delete
-        # guards, matching the display queries. The version-only legacy engine's
-        # FINAL does not drop tombstones, so a hard-deleted row would otherwise
-        # leak into eval filters. Override is required: the test stack defaults
-        # CH25_EVAL_LOGGER_TABLE to `tracer_eval_logger_v2`.
-        sql, _ = _make_builder(
-            eval_config_ids=[EVAL_CONFIG_ID]
-        ).build_eval_query(span_ids=["s1"])
-        assert "tracer_eval_logger FINAL" in sql
+        # guards, matching the display queries — a hard-deleted row must not leak
+        # into eval scores. PERF: no table-level FINAL (it merged the whole eval
+        # table before the page filter — an OOM source); the page-scoped slice is
+        # de-duped via `ORDER BY _peerdb_version DESC LIMIT 1 BY id` instead.
+        # Override is required: the test stack defaults CH25_EVAL_LOGGER_TABLE to
+        # `tracer_eval_logger_v2`.
+        sql, _ = _make_builder(eval_config_ids=[EVAL_CONFIG_ID]).build_eval_query(
+            span_ids=["s1"]
+        )
+        assert "FROM tracer_eval_logger" in sql
+        assert "tracer_eval_logger FINAL" not in sql  # no table-level FINAL
+        assert "ORDER BY _peerdb_version DESC" in sql
+        assert "LIMIT 1 BY id" in sql
         assert "_peerdb_is_deleted = 0 AND (deleted = 0 OR deleted IS NULL)" in sql
 
     @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2")
     def test_v2_table_uses_is_deleted(self):
-        sql, _ = _make_builder(
-            eval_config_ids=[EVAL_CONFIG_ID]
-        ).build_eval_query(span_ids=["s1"])
-        assert "tracer_eval_logger_v2 FINAL" in sql
+        # v2: single is_deleted marker, de-duped via the version column without
+        # FINAL (PERF: FINAL was an OOM source — see the legacy test above).
+        sql, _ = _make_builder(eval_config_ids=[EVAL_CONFIG_ID]).build_eval_query(
+            span_ids=["s1"]
+        )
+        assert "FROM tracer_eval_logger_v2" in sql
+        assert "tracer_eval_logger_v2 FINAL" not in sql  # no table-level FINAL
+        assert "LIMIT 1 BY id" in sql
         assert "is_deleted = 0" in sql
 
 
@@ -343,16 +384,21 @@ class TestBuildAnnotationQuery:
         assert sql == "" and params == {}
 
     def test_empty_label_ids_returns_empty(self):
-        sql, params = _make_builder(
-            annotation_label_ids=[]
-        ).build_annotation_query(span_ids=["s1"])
+        sql, params = _make_builder(annotation_label_ids=[]).build_annotation_query(
+            span_ids=["s1"]
+        )
         assert sql == "" and params == {}
 
     def test_reads_model_hub_score_grouped(self):
+        # PERF: no table-level FINAL (OOM source). The page-scoped slice is
+        # de-duped via `ORDER BY _peerdb_version DESC LIMIT 1 BY id`, then
+        # anyLast(value) per (span, label).
         sql, params = _make_builder(
             annotation_label_ids=[LABEL_ID]
         ).build_annotation_query(span_ids=["s1", "s2"])
-        assert "FROM model_hub_score FINAL" in sql
+        assert "FROM model_hub_score" in sql
+        assert "FINAL" not in sql
+        assert "LIMIT 1 BY id" in sql
         assert "GROUP BY observation_span_id, label_id" in sql
         assert "anyLast(value) AS value" in sql
         assert params["span_ids"] == ("s1", "s2")
@@ -360,9 +406,9 @@ class TestBuildAnnotationQuery:
 
     def test_annotation_soft_delete_uses_peerdb(self):
         # model_hub_score is still peerdb-gated (distinct from the eval fix).
-        sql, _ = _make_builder(
-            annotation_label_ids=[LABEL_ID]
-        ).build_annotation_query(span_ids=["s1"])
+        sql, _ = _make_builder(annotation_label_ids=[LABEL_ID]).build_annotation_query(
+            span_ids=["s1"]
+        )
         assert "_peerdb_is_deleted = 0" in sql
         assert "deleted = false" in sql
 
@@ -662,7 +708,11 @@ class TestPivotAnnotationResults:
     def test_thumbs_up_down_coerced_to_bool(self):
         rows = [
             {"observation_span_id": "s1", "label_id": "l1", "value": '{"value": "up"}'},
-            {"observation_span_id": "s2", "label_id": "l1", "value": '{"value": "down"}'},
+            {
+                "observation_span_id": "s2",
+                "label_id": "l1",
+                "value": '{"value": "down"}',
+            },
         ]
         out = SpanListQueryBuilder.pivot_annotation_results(
             rows, label_types={"l1": "THUMBS_UP_DOWN"}
@@ -685,7 +735,11 @@ class TestPivotAnnotationResults:
 
     def test_text_extracts_text(self):
         rows = [
-            {"observation_span_id": "s1", "label_id": "l1", "value": '{"text": "hello"}'}
+            {
+                "observation_span_id": "s1",
+                "label_id": "l1",
+                "value": '{"text": "hello"}',
+            }
         ]
         out = SpanListQueryBuilder.pivot_annotation_results(
             rows, label_types={"l1": "TEXT"}
@@ -693,16 +747,12 @@ class TestPivotAnnotationResults:
         assert out["s1"]["l1"] == "hello"
 
     def test_unknown_type_returns_raw_parsed_value(self):
-        rows = [
-            {"observation_span_id": "s1", "label_id": "l1", "value": '{"k": "v"}'}
-        ]
+        rows = [{"observation_span_id": "s1", "label_id": "l1", "value": '{"k": "v"}'}]
         out = SpanListQueryBuilder.pivot_annotation_results(rows, label_types={})
         assert out["s1"]["l1"] == {"k": "v"}
 
     def test_bad_json_value_becomes_empty_dict(self):
-        rows = [
-            {"observation_span_id": "s1", "label_id": "l1", "value": "{not json"}
-        ]
+        rows = [{"observation_span_id": "s1", "label_id": "l1", "value": "{not json"}]
         out = SpanListQueryBuilder.pivot_annotation_results(rows, label_types={})
         assert out["s1"]["l1"] == {}
 

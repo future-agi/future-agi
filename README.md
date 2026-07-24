@@ -66,7 +66,7 @@
 ## Why Future AGI?
 
 Most AI agents fail in production, and teams end up stitching together evals, observability, and guardrails that never close the loop.
-FutureAGI collapses all of it into one platform and one feedback loop. Simulate edge cases before launch, evaluate what happens in production, protect users in real time, and turn every trace into signal for the next version.
+Future AGI collapses all of it into one platform and one feedback loop. Simulate edge cases before launch, evaluate what happens in production, protect users in real time, and turn every trace into signal for the next version.
 The result: agents that don't just get monitored, they self-improve.
 
 <table>
@@ -96,7 +96,10 @@ Go-based gateway with **~9.9 ns weighted routing**, **~29 k req/s on t3.xlarge**
 
 ## 🚀 Quickstart (60 seconds)
 
-Two ways, picked by how much you want to install:
+Two ways, depending on how much you want to install:
+
+The self-host path requires Docker Desktop or Docker Engine with Docker Compose
+available before running the installer.
 
 <table width="100%">
 <tr>

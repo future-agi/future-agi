@@ -104,7 +104,7 @@ Good feature requests:
 
 1. Pick a [`good first issue`](https://github.com/future-agi/future-agi/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) (or open one)
 2. Comment that you're working on it so we don't double-up
-3. Branch from `main`: `git checkout -b fix/short-description`
+3. Branch from `dev`: `git checkout -b fix/short-description`
 4. Make your change — keep the diff small and focused
 5. Add tests (every bug fix needs a regression test)
 6. Make sure `make check-all` passes

@@ -408,15 +408,19 @@ class TestVoiceAnnotationRegressionE2E:
             project=legacy_project,
             name="Legacy null workspace trace",
         )
-        ObservationSpan.objects.create(
-            id=f"legacy_null_ws_root_{uuid.uuid4().hex[:16]}",
-            project=legacy_project,
-            trace=legacy_trace,
-            name="Legacy null workspace root",
-            observation_type="conversation",
-            start_time=timezone.now(),
-            parent_span_id=None,
-            status="ok",
+        # Trace filter-mode resolves from ClickHouse only — seed the root span to
+        # CH (built in memory, never written to the PG tracer tables).
+        seed_ch_span(
+            ObservationSpan(
+                id=f"legacy_null_ws_root_{uuid.uuid4().hex[:16]}",
+                project=legacy_project,
+                trace=legacy_trace,
+                name="Legacy null workspace root",
+                observation_type="conversation",
+                start_time=timezone.now(),
+                parent_span_id=None,
+                status="ok",
+            )
         )
         queue = _queue(
             "Default workspace null-workspace trace",
