@@ -316,6 +316,37 @@ def add_scenario_columns_task(
         close_old_connections()
 
 
+def _resolve_knowledge_base_payload(agent_definition, description):
+    """Return the SDA-shaped knowledge_base dict for an agent, or None.
+
+    Reads the agent's linked KB (if any), resolves it to a subset of
+    doc_ids via the KB indexer, and formats the result as the payload
+    the scenario generator forwards to the synthetic-data agent.
+    """
+    kb_id = getattr(agent_definition, "knowledge_base_id", None)
+    if not kb_id:
+        return None
+    try:
+        from model_hub.utils.kb_indexer import KB_TABLE_NAME, KBIndexer
+
+        doc_ids = KBIndexer().get_subset_kb_id(description or "", str(kb_id))
+        doc_ids = [str(d) for d in doc_ids] if doc_ids else []
+    except Exception as exc:
+        logger.warning(
+            "scenario_kb_resolve_failed",
+            kb_id=str(kb_id),
+            error=str(exc),
+        )
+        return None
+    if not doc_ids:
+        return None
+    return {
+        "table_name": KB_TABLE_NAME,
+        "kb_id": str(kb_id),
+        "doc_ids": doc_ids,
+    }
+
+
 def generate_scenario_rows(
     dataset_id,
     scenario_id,
@@ -350,6 +381,11 @@ def generate_scenario_rows(
             custom_instruction = metadata.get("custom_instruction", None)
         # Get agent definition for constraints
         agent_definition = scenario.agent_definition
+
+        # Resolve the agent's KB (if any) into the payload shape the generator expects.
+        knowledge_base_payload = _resolve_knowledge_base_payload(
+            agent_definition, description
+        )
 
         # Determine simulation mode
         mode = "voice" if agent_definition.agent_type == "voice" else "chat"
@@ -388,6 +424,7 @@ def generate_scenario_rows(
             no_of_rows=num_rows,
             simulation_mode=mode,
             custom_columns=custom_columns,
+            knowledge_base=knowledge_base_payload,
         )
         if custom_instruction:
             scenario_agent.custom_instruction = custom_instruction
