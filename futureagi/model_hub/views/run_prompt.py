@@ -79,6 +79,7 @@ from model_hub.services.column_service import (
 from model_hub.utils.model_provider_update import (
     one_time_model_providers_update,
 )
+from model_hub.utils.provider_key_validation import is_provider_key_valid
 from model_hub.utils.utils import (
     get_model_mode,
     remove_empty_text_from_messages,
@@ -218,6 +219,23 @@ class ApiKeyViewSet(viewsets.ModelViewSet):
             context["workspace"] = workspace
         return context
 
+    def _validate_or_400(self, provider, key):
+        """Reject ``key`` with a structured 400 if the provider rejects it.
+
+        Shared by create() and _update_provider_key() so the probe-and-reject
+        semantics (message, error code, timeout, when-to-skip) live in exactly
+        one place instead of being copy-pasted at both call sites. Returns a
+        Response to short-circuit the caller on rejection, or None to continue.
+        """
+        if not key or is_provider_key_valid(provider, key):
+            return None
+        return self._gm.bad_request(
+            {
+                "error": get_error_message("INVALID_API_KEY"),
+                "error_code": "INVALID_API_KEY",
+            }
+        )
+
     def _normalize_provider_key_payload(self, data, instance=None):
         payload = data.copy() if hasattr(data, "copy") else dict(data)
         provider = payload.get("provider") or getattr(instance, "provider", None)
@@ -272,6 +290,12 @@ class ApiKeyViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=payload)
         if serializer.is_valid():
             validated_data = serializer.validated_data
+
+            rejection = self._validate_or_400(
+                validated_data.get("provider"), validated_data.get("key")
+            )
+            if rejection is not None:
+                return rejection
 
             # First try to get existing API key
             try:
@@ -330,6 +354,12 @@ class ApiKeyViewSet(viewsets.ModelViewSet):
         payload = self._normalize_provider_key_payload(request.data, instance=instance)
         serializer = self.get_serializer(instance, data=payload, partial=partial)
         serializer.is_valid(raise_exception=True)
+
+        provider = serializer.validated_data.get("provider") or instance.provider
+        rejection = self._validate_or_400(provider, serializer.validated_data.get("key"))
+        if rejection is not None:
+            return rejection
+
         self.perform_update(serializer)
         return Response(serializer.data)
 

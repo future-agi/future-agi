@@ -17,7 +17,9 @@ import json
 import uuid
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
+from litellm.exceptions import APIError, AuthenticationError, PermissionDeniedError
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -34,6 +36,7 @@ from model_hub.models.choices import (
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.run_prompt import RunPrompter
+from model_hub.utils.provider_key_validation import is_provider_key_valid
 from tfc.middleware.workspace_context import set_workspace_context
 
 
@@ -859,6 +862,18 @@ class TestRunPromptForRowsView:
 
 @pytest.mark.django_db
 class TestProviderApiKeys:
+    @pytest.fixture(autouse=True)
+    def _stub_provider_key_probe(self):
+        # Saving a flat key now validates it by probing the provider with a live
+        # litellm call. Stub that probe so these tests never touch the network; a
+        # returned response means "the provider accepted the key". Tests that need
+        # the reject path re-patch this inside their own body.
+        with patch(
+            "model_hub.utils.provider_key_validation.litellm.completion",
+            return_value=MagicMock(),
+        ) as mock_completion:
+            yield mock_completion
+
     def test_text_provider_key_responses_are_masked_only(self, auth_client):
         raw_key = "secret-provider-key-value"
         updated_raw_key = "secret-provider-key-value-updated"
@@ -1091,6 +1106,147 @@ class TestProviderApiKeys:
         provider_key.refresh_from_db()
         assert provider_key.config_json == encrypted_config
         assert provider_key.actual_json == updated_config
+
+    def test_invalid_provider_key_is_rejected_at_save(self, auth_client):
+        # A provider that authenticates and rejects the key must fail the save
+        # with the inline "invalid key" message and persist nothing.
+        with patch(
+            "model_hub.utils.provider_key_validation.litellm.completion",
+            side_effect=AuthenticationError(
+                "invalid key",
+                llm_provider="openai",
+                model="openai/gpt-4o-mini",
+            ),
+        ):
+            response = auth_client.post(
+                API_KEYS_URL,
+                {"provider": "openai", "key": "totally-wrong-key"},
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert (
+            response.data["message"]
+            == "Invalid API key, please type in the right one."
+        )
+        assert not ApiKey.no_workspace_objects.filter(provider="openai").exists()
+
+    def test_valid_provider_key_is_saved(self, auth_client):
+        # When the provider accepts the probe, the key is stored as before.
+        response = auth_client.post(
+            API_KEYS_URL,
+            {"provider": "openai", "key": "sk-valid-key"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["result"]["provider"] == "openai"
+        assert ApiKey.no_workspace_objects.filter(provider="openai").exists()
+
+
+@pytest.mark.django_db
+class TestProviderKeyValidation:
+    """Unit tests for is_provider_key_valid — the model-provider key probe."""
+
+    def test_rejects_only_on_authentication_error(self):
+        with patch(
+            "model_hub.utils.provider_key_validation.litellm.completion",
+            side_effect=AuthenticationError(
+                "bad", llm_provider="openai", model="openai/gpt-4o-mini"
+            ),
+        ):
+            assert is_provider_key_valid("openai", "wrong-key") is False
+
+    def test_fails_open_on_non_auth_error(self):
+        # Network/timeout/rate-limit errors are inconclusive and must NOT block
+        # a legitimate save — otherwise a transient blip breaks the flow.
+        with patch(
+            "model_hub.utils.provider_key_validation.litellm.completion",
+            side_effect=RuntimeError("connection reset"),
+        ):
+            assert is_provider_key_valid("openai", "some-key") is True
+
+    def test_rejects_on_permission_denied_error(self):
+        # Some providers signal bad credentials as a 403 (PermissionDeniedError)
+        # rather than AuthenticationError's 401 — this used to fall through to
+        # the fail-open branch and silently accept a genuinely invalid key.
+        response = httpx.Response(403, request=httpx.Request("POST", "https://example.test"))
+        with patch(
+            "model_hub.utils.provider_key_validation.litellm.completion",
+            side_effect=PermissionDeniedError(
+                "forbidden",
+                llm_provider="anthropic",
+                model="anthropic/claude-haiku-4-5",
+                response=response,
+            ),
+        ):
+            assert is_provider_key_valid("anthropic", "wrong-key") is False
+
+    def test_rejects_on_generic_api_error_carrying_auth_status(self):
+        # Some litellm provider integrations wrap a 401/403 in the generic
+        # APIError (or a subclass) instead of AuthenticationError/
+        # PermissionDeniedError, but still carry the real status on
+        # `.status_code`. That must still be treated as a definitive rejection,
+        # not silently fail open.
+        exc = APIError(
+            status_code=401,
+            message="unauthorized",
+            llm_provider="openai",
+            model="openai/gpt-4o-mini",
+        )
+        with patch(
+            "model_hub.utils.provider_key_validation.litellm.completion",
+            side_effect=exc,
+        ):
+            assert is_provider_key_valid("openai", "wrong-key") is False
+
+    def test_new_probe_providers_are_actually_probed(self):
+        # Regression guard for the coverage gap Kartik flagged (#1370): the
+        # providers added to PROVIDER_PROBE_MODEL must actually route through
+        # the probe, not silently fail open because the map lookup misses.
+        for provider in ("deepseek", "openrouter", "fireworks_ai", "cerebras", "cohere_chat"):
+            with patch(
+                "model_hub.utils.provider_key_validation.litellm.completion",
+                return_value=MagicMock(),
+            ) as mock_completion:
+                assert is_provider_key_valid(provider, "some-key") is True
+            mock_completion.assert_called_once()
+
+    def test_inconclusive_probe_logs_at_warning(self):
+        # Kartik: a fail-open branch that logs at INFO is invisible if probing
+        # silently becomes a no-op (retired model, blocked egress). Must match
+        # the sibling validate_model_working's WARNING convention.
+        with patch(
+            "model_hub.utils.provider_key_validation.litellm.completion",
+            side_effect=RuntimeError("model retired"),
+        ), patch("model_hub.utils.provider_key_validation.logger") as mock_logger:
+            is_provider_key_valid("openai", "some-key")
+        mock_logger.warning.assert_called_once()
+        mock_logger.info.assert_not_called()
+
+    def test_valid_key_passes_and_probes_provider(self):
+        with patch(
+            "model_hub.utils.provider_key_validation.litellm.completion",
+            return_value=MagicMock(),
+        ) as mock_completion:
+            assert is_provider_key_valid("openai", "sk-good") is True
+        mock_completion.assert_called_once()
+
+    def test_unmapped_provider_is_not_probed(self):
+        # JSON-config providers (vertex_ai/azure/...) and anything without a
+        # probe model are skipped entirely — fail-open, no network call.
+        with patch(
+            "model_hub.utils.provider_key_validation.litellm.completion"
+        ) as mock_completion:
+            assert is_provider_key_valid("vertex_ai", "anything") is True
+        mock_completion.assert_not_called()
+
+    def test_missing_key_is_not_probed(self):
+        with patch(
+            "model_hub.utils.provider_key_validation.litellm.completion"
+        ) as mock_completion:
+            assert is_provider_key_valid("openai", "") is True
+        mock_completion.assert_not_called()
 
 
 # ==================== LitellmAPIView Tests ====================
