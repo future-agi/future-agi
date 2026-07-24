@@ -9,6 +9,7 @@ rows (``observation_span_id IS NULL``) and picks the latest run when the
 same ``(span, eval_config)`` repeats.
 """
 
+import uuid
 from datetime import timedelta
 
 import pytest  # noqa: E402
@@ -87,6 +88,23 @@ def _row(*, span, cfg, task, **kwargs):
     )
 
 
+def _span(*, project, trace):
+    """Extra span for multi-row aggregation (eval_logger_live_span_uniq blocks stacking on one span)."""
+    return ObservationSpan.objects.create(
+        id=f"span_{uuid.uuid4().hex[:16]}",
+        project=project,
+        trace=trace,
+        name="Aux Span",
+        observation_type="llm",
+        start_time=timezone.now() - timedelta(seconds=5),
+        end_time=timezone.now(),
+        input={},
+        output={},
+        model="gpt-4",
+        status="OK",
+    )
+
+
 # ── eval_aggregation ───────────────────────────────────────────────────
 
 
@@ -110,8 +128,11 @@ class TestEvalAggregation:
         )
         cfg = _config(project=project, template=tpl, name="Faithfulness")
         task = _task(project=project)
-        for v in (0.4, 0.6, 0.8):
-            _row(span=observation_span, cfg=cfg, task=task, output_float=v)
+        spans = [observation_span] + [
+            _span(project=project, trace=observation_span.trace) for _ in range(2)
+        ]
+        for span, v in zip(spans, (0.4, 0.6, 0.8)):
+            _row(span=span, cfg=cfg, task=task, output_float=v)
 
         body = self._get(auth_client, task).json()["result"]
         agg = body["eval_aggregation"]["Faithfulness"]
@@ -129,8 +150,11 @@ class TestEvalAggregation:
         )
         cfg = _config(project=project, template=tpl, name="Toxicity Check")
         task = _task(project=project)
-        for v in (True, True, True, False):
-            _row(span=observation_span, cfg=cfg, task=task, output_bool=v)
+        spans = [observation_span] + [
+            _span(project=project, trace=observation_span.trace) for _ in range(3)
+        ]
+        for span, v in zip(spans, (True, True, True, False)):
+            _row(span=span, cfg=cfg, task=task, output_bool=v)
 
         agg = self._get(auth_client, task).json()["result"]["eval_aggregation"][
             "Toxicity Check"
@@ -148,9 +172,12 @@ class TestEvalAggregation:
         )
         cfg = _config(project=project, template=tpl, name="Sentiment")
         task = _task(project=project)
+        spans = [observation_span] + [
+            _span(project=project, trace=observation_span.trace) for _ in range(3)
+        ]
         # 4 rows: A, B, AC, A → A in 3/4, B in 1/4, C in 1/4
-        for lst in (["A"], ["B"], ["A", "C"], ["A"]):
-            _row(span=observation_span, cfg=cfg, task=task, output_str_list=lst)
+        for span, lst in zip(spans, (["A"], ["B"], ["A", "C"], ["A"])):
+            _row(span=span, cfg=cfg, task=task, output_str_list=lst)
 
         agg = self._get(auth_client, task).json()["result"]["eval_aggregation"][
             "Sentiment"
@@ -212,12 +239,14 @@ class TestEvalAggregation:
         )
         cfg = _config(project=project, template=tpl, name="Faithfulness")
         task = _task(project=project)
+        span_b = _span(project=project, trace=observation_span.trace)
+        span_c = _span(project=project, trace=observation_span.trace)
         _row(span=observation_span, cfg=cfg, task=task, output_float=0.5)
-        _row(span=observation_span, cfg=cfg, task=task, output_float=0.5)
+        _row(span=span_b, cfg=cfg, task=task, output_float=0.5)
         # Adding an error row with a spurious output_float must not shift
         # the mean — the row is excluded entirely.
         _row(
-            span=observation_span,
+            span=span_c,
             cfg=cfg,
             task=task,
             error=True,
@@ -240,12 +269,12 @@ class TestEvalAggregation:
         )
         cfg = _config(project=project, template=tpl, name="Toxicity")
         task = _task(project=project)
+        span_b = _span(project=project, trace=observation_span.trace)
         _row(span=observation_span, cfg=cfg, task=task, output_bool=True)
-        _row(span=observation_span, cfg=cfg, task=task, output_bool=True)
-        # A soft-deleted False row would drop pass-rate to 66% if counted;
-        # excluding it keeps it at 100%.
+        _row(span=span_b, cfg=cfg, task=task, output_bool=True)
+        # Deleted row shares span_b; counted would drop pass-rate to 66%.
         _row(
-            span=observation_span,
+            span=span_b,
             cfg=cfg,
             task=task,
             output_bool=False,
@@ -408,6 +437,7 @@ class TestSpanAggregation:
     def test_latest_wins_when_same_span_eval_pair_has_multiple_rows(
         self, auth_client, project, organization, workspace, observation_span
     ):
+        # Re-run flow: soft-delete old, insert new (unique index blocks 2 live rows).
         tpl = _template(
             organization=organization,
             workspace=workspace,
@@ -415,14 +445,14 @@ class TestSpanAggregation:
         )
         cfg = _config(project=project, template=tpl, name="Faithfulness")
         task = _task(project=project)
-        older = _row(span=observation_span, cfg=cfg, task=task, output_float=0.1)
+        older = _row(
+            span=observation_span,
+            cfg=cfg,
+            task=task,
+            output_float=0.1,
+            deleted=True,
+        )
         newer = _row(span=observation_span, cfg=cfg, task=task, output_float=0.9)
-        # bump `older` further into the past so created_at ordering is
-        # deterministic regardless of intra-test timing.
-        from datetime import timedelta
-
-        from django.utils import timezone
-
         EvalLogger.objects.filter(id=older.id).update(
             created_at=timezone.now() - timedelta(hours=2)
         )
