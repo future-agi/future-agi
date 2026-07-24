@@ -407,6 +407,35 @@ def _export_provider_call_to_collector(span, provider: str, provider_log_id: str
         )
 
 
+def flatten_provider_call_attributes(provider_key: str, payload: dict) -> dict:
+    """Flat eval attributes for one provider call payload — the same shape the
+    ingest pipeline stores on the span.
+
+    Lets callers (e.g. the simulate call-detail drawer) render flat keys like
+    ``call.duration`` / ``conversation.transcript.*`` / cost for non-VAPI
+    providers instead of a single collapsed ``raw_log`` tree. VAPI is handled by
+    its caller directly because it needs ``include_call_logs=False`` to skip a
+    blocking log fetch. Returns ``{}`` for an unknown provider or on any
+    normalizer error, so callers can fall back to raw_log.
+    """
+    normalizers = {
+        ProviderChoices.RETELL.value: normalize_retell_data,
+        ProviderChoices.ELEVEN_LABS.value: normalize_eleven_labs_data,
+        ProviderChoices.BLAND.value: normalize_bland_data,
+        ProviderChoices.TWILIO.value: normalize_twilio_data,
+    }
+    normalize_fn = normalizers.get(provider_key)
+    if normalize_fn is None or not isinstance(payload, dict):
+        return {}
+    try:
+        return normalize_fn(payload).get("span_attributes") or {}
+    except Exception:
+        logger.exception(
+            "flatten_provider_call_attributes failed", provider=provider_key
+        )
+        return {}
+
+
 def process_and_store_logs(
     logs: list,
     provider: ObservabilityProvider,

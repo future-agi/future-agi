@@ -61,6 +61,29 @@ def test_normalize_bland_data_shape():
 
 
 @pytest.mark.unit
+def test_flatten_provider_call_attributes_bland_returns_flat_span_attributes():
+    from tracer.utils.observability_provider import flatten_provider_call_attributes
+
+    attrs = flatten_provider_call_attributes(ProviderChoices.BLAND.value, BLAND_CALL)
+    # Flat eval attributes (raw_log + conversation/call.* keys), not a bare
+    # raw_log tree — this is what feeds the simulate call-detail Attributes tab.
+    assert attrs
+    assert attrs.get("raw_log") == BLAND_CALL
+
+
+@pytest.mark.unit
+def test_flatten_provider_call_attributes_unknown_or_vapi_returns_empty():
+    from tracer.utils.observability_provider import flatten_provider_call_attributes
+
+    # VAPI is handled by its caller (needs include_call_logs=False); an
+    # unrecognized provider key yields {} so callers can fall back to raw_log.
+    assert (
+        flatten_provider_call_attributes(ProviderChoices.VAPI.value, {"id": "x"}) == {}
+    )
+    assert flatten_provider_call_attributes("nonsense", {"a": 1}) == {}
+
+
+@pytest.mark.unit
 def test_normalize_bland_call_length_is_minutes():
     out = normalize_bland_data({**BLAND_CALL, "end_at": None, "call_length": 2.5})
     assert out["span_attributes"]["call.duration"] == 150
