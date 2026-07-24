@@ -40,7 +40,7 @@ jobs:
         continue-on-error: true
         uses: slackapi/slack-github-action@b0fa283ad8fea605de13dc3f449259339835fc52 # v2.1.0
         with:
-          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook: ${{ secrets.TECH_CHANNEL_SLACK_WEBHOOK_URL }}
           webhook-type: incoming-webhook
           payload: |
             text: ":rotating_light: Release PR #${{ steps.detect.outputs.pr }} (dev → main) was *squash-merged* — release notes for the next version will be broken.\nRecovery: revert the squash commit on `main`, re-merge PR #${{ steps.detect.outputs.pr }} with a *merge commit*, and do this *before* merging the release-please PR.\nDetails: RELEASE-PROCESS-PLAN.md §5.1 · https://github.com/${{ github.repository }}/pull/${{ steps.detect.outputs.pr }}"
