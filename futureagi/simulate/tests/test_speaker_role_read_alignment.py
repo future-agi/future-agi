@@ -242,6 +242,32 @@ class TestEvalTranscriptLabels:
             == "customer"
         )
 
+    def test_bland_outbound_labels_are_direct(self):
+        # Bland is a customer-only OUTBOUND provider, so the tested agent is on
+        # `assistant` (same convention as VAPI outbound).
+        assert (
+            SpeakerRoleResolver.get_eval_role_label(
+                "assistant", provider=ProviderChoices.BLAND, is_outbound=True
+            )
+            == "agent"
+        )
+        assert (
+            SpeakerRoleResolver.get_eval_role_label(
+                "user", provider=ProviderChoices.BLAND, is_outbound=True
+            )
+            == "customer"
+        )
+
+    def test_bland_map_is_independent_of_vapi(self):
+        # Its own dict, not an alias — a future Bland payload change is edited on
+        # the Bland map without silently affecting VAPI.
+        assert (
+            SpeakerRoleResolver._BLAND_OUTBOUND is not SpeakerRoleResolver._VAPI_OUTBOUND
+        )
+        assert (
+            SpeakerRoleResolver._BLAND_INBOUND is not SpeakerRoleResolver._VAPI_INBOUND
+        )
+
     def test_system_role_is_never_conversational(self):
         """The persona system prompt must never appear in an eval input."""
         assert "system" not in SpeakerRoleResolver.get_conversational_roles()

@@ -65,12 +65,23 @@ class SpeakerRoleResolver:
     }
     _LIVEKIT_OUTBOUND: dict[str, str] = _LIVEKIT_INBOUND
 
-    # Bland's stored transcript shape matches VAPI's role convention today, so it
-    # reuses the VAPI maps — but as its own named seam, so a future Bland payload
-    # change is a one-line map edit here, not an alias hunt. Bland is a
-    # customer-only outbound provider (inbound Bland flows through VAPI).
-    _BLAND_INBOUND: dict[str, str] = _VAPI_INBOUND
-    _BLAND_OUTBOUND: dict[str, str] = _VAPI_OUTBOUND
+    # Bland is a customer-only outbound provider (inbound Bland flows through
+    # VAPI). Its own maps — same values as VAPI today, but independent so a Bland
+    # payload change is edited here directly, not through a shared alias.
+    _BLAND_INBOUND: dict[str, str] = {
+        "bot": "simulator",
+        "assistant": "simulator",
+        "agent": "simulator",
+        "user": "tested_agent",
+        "customer": "tested_agent",
+    }
+    _BLAND_OUTBOUND: dict[str, str] = {
+        "bot": "tested_agent",
+        "assistant": "tested_agent",
+        "agent": "tested_agent",
+        "user": "simulator",
+        "customer": "simulator",
+    }
 
     @staticmethod
     def detect_provider(
