@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import PropTypes from "prop-types";
 import { Box, Stack } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -11,6 +11,7 @@ import { TAG_COLORS, hashColor } from "./tagUtils";
  *   onAdd          — called with { name, color } when user presses Enter
  *   onCancel       — called when user presses Escape or input blurs empty
  *   existingNames  — array of names to prevent duplicates
+ *   suggestions    — existing project tags to suggest while typing
  *   disabled       — disables input
  *   placeholder    — placeholder text
  *   autoFocus      — auto-focus on mount
@@ -20,6 +21,7 @@ const TagInput = ({
   onAdd,
   onCancel,
   existingNames = [],
+  suggestions = [],
   disabled = false,
   placeholder = "Add tag...",
   autoFocus = true,
@@ -28,13 +30,44 @@ const TagInput = ({
   const [value, setValue] = useState("");
   const [selectedColor, setSelectedColor] = useState(null);
 
+  const normalizedExistingNames = useMemo(
+    () => new Set(existingNames.map((name) => name.trim().toLowerCase())),
+    [existingNames],
+  );
+
+  const matchingSuggestions = useMemo(() => {
+    const query = value.trim().toLowerCase();
+    if (!query) return [];
+
+    return suggestions
+      .map((suggestion) =>
+        typeof suggestion === "string"
+          ? { name: suggestion, color: hashColor(suggestion) }
+          : suggestion,
+      )
+      .filter((suggestion) => {
+        const name = suggestion?.name?.trim();
+        return (
+          name &&
+          name.toLowerCase().includes(query) &&
+          !normalizedExistingNames.has(name.toLowerCase())
+        );
+      })
+      .slice(0, 8);
+  }, [normalizedExistingNames, suggestions, value]);
+
   const previewColor =
     selectedColor || (value.trim() ? hashColor(value.trim()) : TAG_COLORS[0]);
 
   const handleSubmit = useCallback(() => {
     const name = value.trim();
     if (!name) return;
-    if (existingNames.includes(name)) {
+    if (
+      existingNames.some(
+        (existingName) =>
+          existingName.trim().toLowerCase() === name.toLowerCase(),
+      )
+    ) {
       setValue("");
       return;
     }
@@ -43,17 +76,32 @@ const TagInput = ({
     setSelectedColor(null);
   }, [value, selectedColor, existingNames, onAdd]);
 
+  const handleSelectSuggestion = useCallback(
+    (suggestion) => {
+      const name = suggestion?.name?.trim();
+      if (!name) return;
+      onAdd({ name, color: suggestion.color || hashColor(name) });
+      setValue("");
+      setSelectedColor(null);
+    },
+    [onAdd],
+  );
+
   const handleKeyDown = useCallback(
     (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
-        handleSubmit();
+        if (matchingSuggestions.length > 0) {
+          handleSelectSuggestion(matchingSuggestions[0]);
+        } else {
+          handleSubmit();
+        }
       }
       if (e.key === "Escape") {
         onCancel?.();
       }
     },
-    [handleSubmit, onCancel],
+    [handleSelectSuggestion, handleSubmit, matchingSuggestions, onCancel],
   );
 
   const handleCycleColor = () => {
@@ -135,6 +183,51 @@ const TagInput = ({
         )}
       </Box>
 
+      {matchingSuggestions.length > 0 && (
+        <Box
+          role="listbox"
+          aria-label="Existing project tags"
+          sx={{
+            maxHeight: 160,
+            overflowY: "auto",
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "4px",
+            py: 0.25,
+          }}
+        >
+          {matchingSuggestions.map((suggestion) => (
+            <Box
+              key={suggestion.name}
+              role="option"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => handleSelectSuggestion(suggestion)}
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 0.75,
+                px: 1,
+                py: 0.5,
+                cursor: "pointer",
+                fontSize,
+                "&:hover": { bgcolor: "action.hover" },
+              }}
+            >
+              <Box
+                sx={{
+                  width: dotSize,
+                  height: dotSize,
+                  borderRadius: "50%",
+                  bgcolor: suggestion.color || hashColor(suggestion.name),
+                  flexShrink: 0,
+                }}
+              />
+              <Box component="span">{suggestion.name}</Box>
+            </Box>
+          ))}
+        </Box>
+      )}
+
       {/* Color palette — shown when user is typing */}
       {value.trim() && (
         <Stack direction="row" gap="3px" sx={{ pl: 0.25 }}>
@@ -167,6 +260,15 @@ TagInput.propTypes = {
   onAdd: PropTypes.func.isRequired,
   onCancel: PropTypes.func,
   existingNames: PropTypes.arrayOf(PropTypes.string),
+  suggestions: PropTypes.arrayOf(
+    PropTypes.oneOfType([
+      PropTypes.string,
+      PropTypes.shape({
+        name: PropTypes.string.isRequired,
+        color: PropTypes.string,
+      }),
+    ]),
+  ),
   disabled: PropTypes.bool,
   placeholder: PropTypes.string,
   autoFocus: PropTypes.bool,
