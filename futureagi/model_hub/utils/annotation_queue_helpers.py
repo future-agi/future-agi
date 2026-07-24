@@ -1356,6 +1356,23 @@ def resolve_source_preview(item, *, ch_cache=None):
     return {"type": item.source_type, "error": "Could not resolve preview"}
 
 
+def _queue_item_project_source(item) -> str | None:
+    """Returns the item's project ``source``, or ``None`` for an unset/dangling soft
+    FK (never raises)."""
+    if not item.project_id:
+        return None
+    try:
+        project = item.project  # None when select_related joined a dangling FK
+    except ObjectDoesNotExist:
+        logger.debug(
+            "queue_item_project_source_dangling_fk",
+            item_id=str(item.id),
+            project_id=str(item.project_id),
+        )
+        return None
+    return project.source if project else None
+
+
 def resolve_source_content(item, *, ch_cache=None, cell_cache=None):
     """Return full renderable content for a QueueItem's source (used in annotation view).
 
@@ -1439,6 +1456,8 @@ def resolve_source_content(item, *, ch_cache=None, cell_cache=None):
             data["type"] = "trace"
             data["trace_id"] = str(item.trace_id)
             data.pop("span_id", None)
+            # The FE picks the voice call UI off project_source == "simulator".
+            data["project_source"] = _queue_item_project_source(item)
             return data
 
         elif item.source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
