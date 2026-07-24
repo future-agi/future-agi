@@ -31,7 +31,11 @@ class TestExecutionUtils:
         """Apply filters to call executions with support for new response structure"""
         # Build dynamic column maps from column_order. The simulation grid sends
         # raw scenario dataset column IDs, while older automation rules may still
-        # send scenario_<id>_dataset_<column_id>.
+        # send scenario_<id>_dataset_<column_id>. Post-reconcile the `id` field on
+        # each entry is the canonical column name (e.g. "priority"), so we index
+        # by both the canonical name AND each raw dataset column UUID so that
+        # grid-style filters (raw UUIDs) and rule-style filters (canonical name
+        # or scenario_<id>_dataset_<uuid>) all land on the same handler.
         scenario_dataset_columns = {}
         tool_eval_columns = {}
         if column_order:
@@ -41,6 +45,8 @@ class TestExecutionUtils:
                     continue
                 if col.get("type") == "scenario_dataset_column":
                     scenario_dataset_columns[str(column_id)] = col
+                    for raw_id in col.get("dataset_column_ids") or []:
+                        scenario_dataset_columns[str(raw_id)] = col
                 elif col.get("type") == "tool_evaluation":
                     tool_eval_columns[str(column_id)] = col
 

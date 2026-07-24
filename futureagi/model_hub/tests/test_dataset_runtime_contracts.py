@@ -205,25 +205,36 @@ def test_create_empty_dataset_request_rejects_unknown_model_type():
     assert "model_type" in serializer.errors
 
 
-@pytest.mark.django_db
-def test_create_empty_dataset_rejects_unknown_request_fields(auth_client):
-    response = auth_client.post(
-        "/model-hub/develops/create-empty-dataset/",
+# ────────────────────────────────────────────────────────────────────────
+# Endpoint × (canonical field, legacy camel-alias) matrix.
+#
+# All entries share the same shape assertion: POST/PUT the endpoint with a
+# valid payload + one legacy camelCase alias field → the serializer must
+# reject the alias with an "unknown field" error. The base serializer's
+# ``extra = "forbid"`` guard is a single library behaviour; testing it once
+# per endpoint (previously 9 nearly-identical tests) is what this
+# parametrization replaces.
+#
+# Each case: (id, method, url_factory, payload, legacy_alias)
+# url_factory is a callable so per-test UUIDs are fresh (evaluating
+# ``uuid.uuid4()`` at import time would produce a shared value).
+# ────────────────────────────────────────────────────────────────────────
+_REJECT_UNKNOWN_FIELD_CASES = [
+    (
+        "create_empty_dataset",
+        "post",
+        lambda: "/model-hub/develops/create-empty-dataset/",
         {
             "new_dataset_name": "Strict Contract Dataset",
             "model_type": "generative_llm",
             "newDatasetName": "legacy camel alias",
         },
-        format="json",
-    )
-
-    assert_unknown_field(response, "newDatasetName")
-
-
-@pytest.mark.django_db
-def test_add_synthetic_data_rejects_unknown_request_fields(auth_client):
-    response = auth_client.post(
-        f"/model-hub/develops/{uuid.uuid4()}/add_synthetic_data/",
+        "newDatasetName",
+    ),
+    (
+        "add_synthetic_data",
+        "post",
+        lambda: f"/model-hub/develops/{uuid.uuid4()}/add_synthetic_data/",
         {
             "num_rows": 10,
             "columns": [
@@ -244,60 +255,44 @@ def test_add_synthetic_data_rejects_unknown_request_fields(auth_client):
             "fill_existing_rows": False,
             "fillExistingRows": "legacy camel alias",
         },
-        format="json",
-    )
-
-    assert_unknown_field(response, "fillExistingRows")
-
-
-@pytest.mark.django_db
-def test_add_rows_from_existing_dataset_rejects_unknown_request_fields(auth_client):
-    response = auth_client.post(
-        f"/model-hub/develops/{uuid.uuid4()}/add_rows_from_existing_dataset/",
+        "fillExistingRows",
+    ),
+    (
+        "add_rows_from_existing_dataset",
+        "post",
+        lambda: f"/model-hub/develops/{uuid.uuid4()}/add_rows_from_existing_dataset/",
         {
             "source_dataset_id": str(uuid.uuid4()),
             "column_mapping": {str(uuid.uuid4()): str(uuid.uuid4())},
             "sourceDatasetId": "legacy camel alias",
         },
-        format="json",
-    )
-
-    assert_unknown_field(response, "sourceDatasetId")
-
-
-@pytest.mark.django_db
-def test_create_dataset_from_experiment_rejects_unknown_request_fields(auth_client):
-    response = auth_client.post(
-        f"/model-hub/develops/{uuid.uuid4()}/create-dataset/",
+        "sourceDatasetId",
+    ),
+    (
+        "create_dataset_from_experiment",
+        "post",
+        lambda: f"/model-hub/develops/{uuid.uuid4()}/create-dataset/",
         {
             "name": "From Experiment",
             "model_type": "generative_llm",
             "modelType": "legacy camel alias",
         },
-        format="json",
-    )
-
-    assert_unknown_field(response, "modelType")
-
-
-@pytest.mark.django_db
-def test_get_huggingface_config_rejects_unknown_request_fields(auth_client):
-    response = auth_client.post(
-        "/model-hub/develops/get-huggingface-dataset-config/",
+        "modelType",
+    ),
+    (
+        "get_huggingface_config",
+        "post",
+        lambda: "/model-hub/develops/get-huggingface-dataset-config/",
         {
             "dataset_path": "future-agi/example",
             "datasetPath": "legacy camel alias",
         },
-        format="json",
-    )
-
-    assert_unknown_field(response, "datasetPath")
-
-
-@pytest.mark.django_db
-def test_create_huggingface_dataset_rejects_unknown_request_fields(auth_client):
-    response = auth_client.post(
-        "/model-hub/develops/create-dataset-from-huggingface/",
+        "datasetPath",
+    ),
+    (
+        "create_huggingface_dataset",
+        "post",
+        lambda: "/model-hub/develops/create-dataset-from-huggingface/",
         {
             "name": "HF Dataset",
             "model_type": "generative_llm",
@@ -307,16 +302,12 @@ def test_create_huggingface_dataset_rejects_unknown_request_fields(auth_client):
             "huggingface_dataset_split": "train",
             "huggingfaceDatasetName": "legacy camel alias",
         },
-        format="json",
-    )
-
-    assert_unknown_field(response, "huggingfaceDatasetName")
-
-
-@pytest.mark.django_db
-def test_create_synthetic_dataset_rejects_unknown_request_fields(auth_client):
-    response = auth_client.post(
-        "/model-hub/develops/create-synthetic-dataset/",
+        "huggingfaceDatasetName",
+    ),
+    (
+        "create_synthetic_dataset",
+        "post",
+        lambda: "/model-hub/develops/create-synthetic-dataset/",
         {
             "num_rows": 10,
             "columns": [
@@ -335,16 +326,12 @@ def test_create_synthetic_dataset_rejects_unknown_request_fields(auth_client):
             },
             "numRows": 10,
         },
-        format="json",
-    )
-
-    assert_unknown_field(response, "numRows")
-
-
-@pytest.mark.django_db
-def test_update_synthetic_dataset_config_rejects_unknown_request_fields(auth_client):
-    response = auth_client.put(
-        f"/model-hub/develops/{uuid.uuid4()}/update-synthetic-config/",
+        "numRows",
+    ),
+    (
+        "update_synthetic_dataset_config",
+        "put",
+        lambda: f"/model-hub/develops/{uuid.uuid4()}/update-synthetic-config/",
         {
             "num_rows": 10,
             "columns": [
@@ -364,16 +351,12 @@ def test_update_synthetic_dataset_config_rejects_unknown_request_fields(auth_cli
             "regenerate": True,
             "numRows": 10,
         },
-        format="json",
-    )
-
-    assert_unknown_field(response, "numRows")
-
-
-@pytest.mark.django_db
-def test_add_huggingface_rows_rejects_unknown_request_fields(auth_client):
-    response = auth_client.post(
-        f"/model-hub/develops/{uuid.uuid4()}/add_rows_from_huggingface/",
+        "numRows",
+    ),
+    (
+        "add_huggingface_rows",
+        "post",
+        lambda: f"/model-hub/develops/{uuid.uuid4()}/add_rows_from_huggingface/",
         {
             "num_rows": 10,
             "huggingface_dataset_name": "future-agi/example",
@@ -381,10 +364,22 @@ def test_add_huggingface_rows_rejects_unknown_request_fields(auth_client):
             "huggingface_dataset_split": "train",
             "huggingfaceDatasetName": "legacy camel alias",
         },
-        format="json",
-    )
+        "huggingfaceDatasetName",
+    ),
+]
 
-    assert_unknown_field(response, "huggingfaceDatasetName")
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "method,url_factory,payload,legacy_alias",
+    [case[1:] for case in _REJECT_UNKNOWN_FIELD_CASES],
+    ids=[case[0] for case in _REJECT_UNKNOWN_FIELD_CASES],
+)
+def test_endpoint_rejects_unknown_request_field(
+    auth_client, method, url_factory, payload, legacy_alias
+):
+    response = getattr(auth_client, method)(url_factory(), payload, format="json")
+    assert_unknown_field(response, legacy_alias)
 
 
 @pytest.mark.django_db
