@@ -36,6 +36,8 @@ def _vapi_inbound_call(*, transcripts=None, recordings=None):
     obj.call_metadata = {"call_direction": "inbound"}
     obj.call_type = "inboundPhoneCall"
     obj.simulation_call_type = "voice"
+    obj.recording_url = None
+    obj.stereo_recording_url = None
     if transcripts is None:
         obj.transcripts = MagicMock()
         obj.transcripts.exclude.return_value = []
@@ -56,6 +58,8 @@ def _vapi_outbound_call(*, transcripts=None, recordings=None):
     obj.call_metadata = {"call_direction": "outbound"}
     obj.call_type = "outboundPhoneCall"
     obj.simulation_call_type = "voice"
+    obj.recording_url = None
+    obj.stereo_recording_url = None
     if transcripts is None:
         obj.transcripts = MagicMock()
         obj.transcripts.exclude.return_value = []
@@ -68,10 +72,15 @@ def _vapi_outbound_call(*, transcripts=None, recordings=None):
 def _livekit_inbound_call(*, recordings=None):
     """LiveKit is direction-agnostic: worker normalises at write time."""
     obj = MagicMock()
-    obj.provider_call_data = {"livekit": {"recording": recordings or {}}}
+    obj.provider_call_data = {
+        "livekit": {"room_name": "test-room"},
+        "vapi": {"recording": recordings or {}},
+    }
     obj.call_metadata = {"call_direction": "inbound"}
     obj.call_type = "inboundPhoneCall"
     obj.simulation_call_type = "voice"
+    obj.recording_url = None
+    obj.stereo_recording_url = None
     obj.transcripts = MagicMock()
     obj.transcripts.exclude.return_value = []
     return obj
@@ -270,6 +279,7 @@ class TestEvalTranscriptLabels:
 # -------------------------------------------------------------------
 
 
+@pytest.mark.requires_ee
 class TestMetricsNormalizeRoles:
     """conversation_metrics._normalize_roles_for_test_agent is the ONE
     write-time site that legitimately uses the resolver. Its purpose is

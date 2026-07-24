@@ -133,16 +133,28 @@ from tfc.constants.api_calls import APICallStatusChoices
 try:
     from ee.usage.models.usage import APICallType
 except ImportError:
-    APICallType = None
+    class APICallType:
+        class objects:
+            @classmethod
+            def get_or_create(cls, name=None, defaults=None, **kwargs):
+                from types import SimpleNamespace
+
+                return SimpleNamespace(id=f"oss-noop-{name or 'unspecified'}"), False
 try:
     from ee.usage.services.metering import check_usage
 except ImportError:
-    check_usage = None
+    def check_usage(*args, **kwargs):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(allowed=True, reason=None)
 try:
     from ee.usage.utils.usage_entries import deduct_cost_for_request, log_and_deduct_cost_for_api_request
 except ImportError:
-    deduct_cost_for_request = None
-    log_and_deduct_cost_for_api_request = None
+    def deduct_cost_for_request(*args, **kwargs):
+        return None
+
+    def log_and_deduct_cost_for_api_request(*args, **kwargs):
+        return None
 
 
 class TestExecutor:

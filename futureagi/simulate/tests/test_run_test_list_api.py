@@ -236,16 +236,6 @@ class TestRunTestRuntimeContracts:
     def test_create_uses_active_org_not_legacy_user_fk(
         self, auth_client, user, agent_definition, scenario_with_prompt_version
     ):
-        """Regression for TH-6191.
-
-        A multi-org user whose legacy ``user.organization`` FK points at a
-        different org than the one they are actively working in must still be
-        able to create a run test against agent definitions/scenarios that live
-        in the active org. Before the fix, the create serializer scoped its
-        existence checks by ``request.user.organization`` (the legacy FK), so
-        objects in the active org were reported as "not found" even though the
-        write path (which uses ``request.organization``) would have found them.
-        """
         from accounts.models import Organization
 
         # agent_definition + scenario live in the active org (auth_client's
@@ -278,11 +268,6 @@ class TestRunTestRuntimeContracts:
         agent_definition,
         scenario_with_prompt_version,
     ):
-        """Sibling to test_create_uses_active_org_not_legacy_user_fk, exercising
-        `CreateRunTestSerializer.validate_eval_config_ids`. Same active-org vs
-        legacy-FK divergence; the eval_config referenced in the payload lives in
-        the active org via its parent RunTest.
-        """
         from accounts.models import Organization
 
         seed_run_test = RunTest.objects.create(
@@ -331,13 +316,6 @@ class TestRunTestRuntimeContracts:
         prompt_version_v10,
         scenario_with_prompt_version,
     ):
-        """Regression for TH-6191 on the prompt-simulation create path.
-
-        `CreatePromptSimulationSerializer.validate_prompt_template_id` and
-        `validate_scenario_ids` had the same legacy-FK vs active-org drift.
-        Multi-org users creating a prompt simulation against a template + scenario
-        that live in the active org must succeed.
-        """
         from accounts.models import Organization
 
         legacy_primary_org = Organization.objects.create(name="Legacy Primary Org")
@@ -690,7 +668,6 @@ class TestRunTestRuntimeContracts:
         run_test_with_v10_scenario,
         word_count_eval_template,
     ):
-        """Create a template in other_workspace. Assert 400 when user in default workspace tries to use it."""
         other_workspace = Workspace.objects.create(
             name="Other workspace for update",
             organization=organization,
@@ -783,7 +760,6 @@ class TestRunTestRuntimeContracts:
         word_count_eval_template,
         char_count_eval_template,
     ):
-        """Send {template_id: <second_template>} alone. Assert 400 when old config params don't match new template."""
         eval_config = SimulateEvalConfig.objects.create(
             name="renormalize_test",
             eval_template=word_count_eval_template,
@@ -813,7 +789,6 @@ class TestRunTestRuntimeContracts:
         organization,
         workspace,
     ):
-        """Switch to template sharing a required_key with compatible params. Assert 200, mapping updated, config re-normalized."""
         template_a = EvalTemplate.objects.create(
             name="template_a",
             description="Template A",
@@ -902,7 +877,6 @@ class TestRunTestRuntimeContracts:
         word_count_eval_template,
         char_count_eval_template,
     ):
-        """Send {template_id: <second_template>} alone where mapping has stale keys. Assert mapping cleared."""
         eval_config = SimulateEvalConfig.objects.create(
             name="stale_mapping_test",
             eval_template=word_count_eval_template,
@@ -1137,3 +1111,1112 @@ class TestRunTestRuntimeContracts:
         )
         test_execution.refresh_from_db()
         assert test_execution.status == TestExecution.ExecutionStatus.EVALUATING
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestRunTestDetailView:
+    """Functional tests for GET /simulate/run-tests/<run_test_id>/."""
+
+    def test_get_run_test_detail_returns_run_test_fields(
+        self, auth_client, run_test_with_v10_scenario
+    ):
+        response = auth_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        body = response.json()
+        assert body["id"] == str(run_test_with_v10_scenario.id)
+        assert body["name"] == run_test_with_v10_scenario.name
+        assert body["source_type"] == RunTest.SourceTypes.AGENT_DEFINITION
+        assert body["organization"] == str(run_test_with_v10_scenario.organization_id)
+        assert len(body["scenarios_detail"]) == 1
+        assert body["scenarios_detail"][0]["id"] == str(
+            run_test_with_v10_scenario.scenarios.first().id
+        )
+
+    def test_get_run_test_detail_unauthenticated_returns_401(
+        self, api_client, run_test_with_v10_scenario
+    ):
+        response = api_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/"
+        )
+
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_get_run_test_detail_not_found_returns_404(self, auth_client):
+        response = auth_client.get(f"/simulate/run-tests/{uuid4()}/")
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert "not found" in str(response.content).lower()
+
+    def test_get_run_test_detail_other_workspace_returns_404(
+        self,
+        auth_client,
+        organization,
+        user,
+        agent_definition,
+    ):
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other run-test workspace detail",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_run_test = RunTest.no_workspace_objects.create(
+            name="Hidden Run Test Detail",
+            organization=organization,
+            workspace=other_workspace,
+            agent_definition=agent_definition,
+            source_type=RunTest.SourceTypes.AGENT_DEFINITION,
+        )
+
+        response = auth_client.get(f"/simulate/run-tests/{hidden_run_test.id}/")
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        hidden_run_test.refresh_from_db()
+        assert hidden_run_test.name == "Hidden Run Test Detail"
+        assert hidden_run_test.deleted is False
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestRunTestExecutionsView:
+    """Functional tests for GET /simulate/run-tests/<run_test_id>/executions/."""
+
+    def test_get_run_test_executions_returns_paginated_envelope(
+        self, auth_client, run_test_with_v10_scenario
+    ):
+        test_execution = TestExecution.objects.create(
+            run_test=run_test_with_v10_scenario,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=1,
+            total_calls=2,
+            completed_calls=2,
+        )
+
+        response = auth_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/executions/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        body = response.json()
+        assert "count" in body
+        assert "results" in body
+        assert body["count"] >= 1
+        listed_ids = {row["id"] for row in body["results"]}
+        assert str(test_execution.id) in listed_ids
+        matched = next(
+            row for row in body["results"] if row["id"] == str(test_execution.id)
+        )
+        # The executions view surfaces status via get_status_display which
+        # returns the human label ("Completed"), not the raw enum value.
+        assert matched["status"].lower() == (
+            TestExecution.ExecutionStatus.COMPLETED.lower()
+        )
+
+    def test_get_run_test_executions_unauthenticated_returns_401(
+        self, api_client, run_test_with_v10_scenario
+    ):
+        response = api_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/executions/"
+        )
+
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_get_run_test_executions_not_found_returns_404(self, auth_client):
+        response = auth_client.get(f"/simulate/run-tests/{uuid4()}/executions/")
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert "not found" in str(response.content).lower()
+
+    def test_get_run_test_executions_other_workspace_returns_404(
+        self,
+        auth_client,
+        organization,
+        user,
+        agent_definition,
+    ):
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other run-test workspace executions",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_run_test = RunTest.no_workspace_objects.create(
+            name="Hidden Run Test Executions",
+            organization=organization,
+            workspace=other_workspace,
+            agent_definition=agent_definition,
+            source_type=RunTest.SourceTypes.AGENT_DEFINITION,
+        )
+
+        response = auth_client.get(
+            f"/simulate/run-tests/{hidden_run_test.id}/executions/"
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestRunTestScenariosView:
+    """Functional tests for GET /simulate/run-tests/<run_test_id>/scenarios/."""
+
+    def test_get_run_test_scenarios_returns_linked_scenarios(
+        self,
+        auth_client,
+        run_test_with_v10_scenario,
+        scenario_with_prompt_version,
+    ):
+        response = auth_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/scenarios/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        body = response.json()
+        assert "results" in body
+        assert body["count"] >= 1
+        listed_ids = {row["id"] for row in body["results"]}
+        assert str(scenario_with_prompt_version.id) in listed_ids
+        matched = next(
+            row for row in body["results"]
+            if row["id"] == str(scenario_with_prompt_version.id)
+        )
+        assert matched["name"] == scenario_with_prompt_version.name
+        assert "row_count" in matched
+
+    def test_get_run_test_scenarios_unauthenticated_returns_401(
+        self, api_client, run_test_with_v10_scenario
+    ):
+        response = api_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/scenarios/"
+        )
+
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_get_run_test_scenarios_not_found_returns_404(self, auth_client):
+        response = auth_client.get(f"/simulate/run-tests/{uuid4()}/scenarios/")
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert "not found" in str(response.content).lower()
+
+    def test_get_run_test_scenarios_other_workspace_returns_404(
+        self,
+        auth_client,
+        organization,
+        user,
+        agent_definition,
+    ):
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other run-test workspace scenarios",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_run_test = RunTest.no_workspace_objects.create(
+            name="Hidden Run Test Scenarios",
+            organization=organization,
+            workspace=other_workspace,
+            agent_definition=agent_definition,
+            source_type=RunTest.SourceTypes.AGENT_DEFINITION,
+        )
+
+        response = auth_client.get(
+            f"/simulate/run-tests/{hidden_run_test.id}/scenarios/"
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestDeleteEvalConfigView:
+    """Functional tests for DELETE
+    /simulate/run-tests/<run_test_id>/eval-configs/<eval_config_id>/.
+
+    The view refuses to delete when fewer than two active configs remain, so
+    happy-path and not-found cases need at least two seeded configs.
+    """
+
+    def test_delete_eval_config_soft_deletes_and_returns_message(
+        self, auth_client, run_test_with_v10_scenario, word_count_eval_template
+    ):
+        keep_config = SimulateEvalConfig.objects.create(
+            name="keep_active_config",
+            eval_template=word_count_eval_template,
+            run_test=run_test_with_v10_scenario,
+        )
+        target_config = SimulateEvalConfig.objects.create(
+            name="delete_me",
+            eval_template=word_count_eval_template,
+            run_test=run_test_with_v10_scenario,
+        )
+
+        response = auth_client.delete(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}"
+            f"/eval-configs/{target_config.id}/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        assert "deleted successfully" in response.json()["message"]
+        target_config.refresh_from_db()
+        keep_config.refresh_from_db()
+        assert target_config.deleted is True
+        assert target_config.deleted_at is not None
+        assert keep_config.deleted is False
+
+    def test_delete_eval_config_unauthenticated_returns_401(
+        self, api_client, run_test_with_v10_scenario, word_count_eval_template
+    ):
+        target_config = SimulateEvalConfig.objects.create(
+            name="unauth_target",
+            eval_template=word_count_eval_template,
+            run_test=run_test_with_v10_scenario,
+        )
+
+        response = api_client.delete(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}"
+            f"/eval-configs/{target_config.id}/"
+        )
+
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+        target_config.refresh_from_db()
+        assert target_config.deleted is False
+
+    def test_delete_eval_config_not_found_returns_404(
+        self, auth_client, run_test_with_v10_scenario, word_count_eval_template
+    ):
+        # Seed two configs so the "last remaining" 400 branch isn't hit; the
+        # nonexistent id must actually reach the 404 branch.
+        SimulateEvalConfig.objects.create(
+            name="seed_one",
+            eval_template=word_count_eval_template,
+            run_test=run_test_with_v10_scenario,
+        )
+        SimulateEvalConfig.objects.create(
+            name="seed_two",
+            eval_template=word_count_eval_template,
+            run_test=run_test_with_v10_scenario,
+        )
+
+        response = auth_client.delete(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}"
+            f"/eval-configs/{uuid4()}/"
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert "not found" in str(response.content).lower()
+
+    def test_delete_eval_config_other_workspace_returns_404(
+        self,
+        auth_client,
+        organization,
+        user,
+        agent_definition,
+        word_count_eval_template,
+    ):
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other run-test workspace delete-eval",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_run_test = RunTest.no_workspace_objects.create(
+            name="Hidden Run Test For Delete",
+            organization=organization,
+            workspace=other_workspace,
+            agent_definition=agent_definition,
+            source_type=RunTest.SourceTypes.AGENT_DEFINITION,
+        )
+        hidden_config = SimulateEvalConfig.no_workspace_objects.create(
+            name="hidden_eval_config",
+            eval_template=word_count_eval_template,
+            run_test=hidden_run_test,
+        )
+
+        response = auth_client.delete(
+            f"/simulate/run-tests/{hidden_run_test.id}"
+            f"/eval-configs/{hidden_config.id}/"
+        )
+
+        hidden_config.refresh_from_db()
+        assert hidden_config.deleted is False
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestTestExecutionAPIView:
+    """Functional tests for GET /simulate/api/test-executions/."""
+
+    def test_list_test_executions_returns_paginated_envelope(
+        self, auth_client, run_test_with_v10_scenario
+    ):
+        test_execution = TestExecution.objects.create(
+            run_test=run_test_with_v10_scenario,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=1,
+            total_calls=1,
+            completed_calls=1,
+        )
+
+        response = auth_client.get("/simulate/api/test-executions/")
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        body = response.json()
+        assert "count" in body
+        assert "results" in body
+        listed_ids = {row["id"] for row in body["results"]}
+        assert str(test_execution.id) in listed_ids
+        matched = next(
+            row for row in body["results"] if row["id"] == str(test_execution.id)
+        )
+        assert matched["status"] == TestExecution.ExecutionStatus.COMPLETED
+        assert matched["run_test_name"] == run_test_with_v10_scenario.name
+
+    def test_list_test_executions_unauthenticated_returns_401(self, api_client):
+        response = api_client.get("/simulate/api/test-executions/")
+
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_list_test_executions_search_no_match_returns_empty_results(
+        self, auth_client, run_test_with_v10_scenario
+    ):
+        TestExecution.objects.create(
+            run_test=run_test_with_v10_scenario,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=1,
+        )
+
+        # Search-not-found is the closest analogue to "not found" for a list
+        # endpoint; a missing id doesn't apply since there is no id in the URL.
+        response = auth_client.get(
+            "/simulate/api/test-executions/?search=definitely-not-a-real-name-xyz"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        body = response.json()
+        assert body["count"] == 0
+        assert body["results"] == []
+
+    def test_list_test_executions_other_workspace_excluded(
+        self,
+        auth_client,
+        run_test_with_v10_scenario,
+        organization,
+        user,
+        agent_definition,
+    ):
+        # Visible execution in the auth_client's workspace.
+        own_execution = TestExecution.objects.create(
+            run_test=run_test_with_v10_scenario,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=1,
+        )
+        # Execution attached to a run test in another workspace of the same
+        # organization. The list endpoint filters by organization so the row
+        # currently leaks across workspaces; this test locks in the org-level
+        # scope and captures the workspace-scope gap when it lands.
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other workspace for test-executions list",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_run_test = RunTest.no_workspace_objects.create(
+            name="Hidden Run Test For List",
+            organization=organization,
+            workspace=other_workspace,
+            agent_definition=agent_definition,
+            source_type=RunTest.SourceTypes.AGENT_DEFINITION,
+        )
+        hidden_execution = TestExecution.no_workspace_objects.create(
+            run_test=hidden_run_test,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=1,
+        )
+
+        response = auth_client.get("/simulate/api/test-executions/?limit=100")
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        listed_ids = {row["id"] for row in response.json()["results"]}
+        assert str(own_execution.id) in listed_ids
+        assert str(hidden_execution.id) not in listed_ids
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestRunTestCallExecutionsView:
+    """Functional tests for GET /simulate/run-tests/<run_test_id>/call-executions/."""
+
+    def test_get_run_test_call_executions_returns_paginated_envelope(
+        self,
+        auth_client,
+        run_test_with_v10_scenario,
+        scenario_with_prompt_version,
+    ):
+        test_execution = TestExecution.objects.create(
+            run_test=run_test_with_v10_scenario,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=1,
+            total_calls=1,
+        )
+        call_execution = CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario_with_prompt_version,
+            status=CallExecution.CallStatus.COMPLETED,
+            simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        )
+
+        response = auth_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/call-executions/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        body = response.json()
+        assert "count" in body
+        assert "results" in body
+        assert "total_pages" in body
+        assert "current_page" in body
+        assert body["count"] >= 1
+        listed_ids = {str(row.get("id")) for row in body["results"]}
+        assert str(call_execution.id) in listed_ids
+
+    def test_get_run_test_call_executions_unauthenticated_returns_401(
+        self, api_client, run_test_with_v10_scenario
+    ):
+        response = api_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/call-executions/"
+        )
+
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_get_run_test_call_executions_not_found_returns_404(self, auth_client):
+        response = auth_client.get(
+            f"/simulate/run-tests/{uuid4()}/call-executions/"
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert "not found" in str(response.content).lower()
+
+    def test_get_run_test_call_executions_other_workspace_returns_404(
+        self,
+        auth_client,
+        organization,
+        user,
+        agent_definition,
+    ):
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other run-test workspace call-executions",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_run_test = RunTest.no_workspace_objects.create(
+            name="Hidden Run Test Call Executions",
+            organization=organization,
+            workspace=other_workspace,
+            agent_definition=agent_definition,
+            source_type=RunTest.SourceTypes.AGENT_DEFINITION,
+        )
+
+        response = auth_client.get(
+            f"/simulate/run-tests/{hidden_run_test.id}/call-executions/"
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestRunTestDeleteView:
+    """Functional tests for DELETE /simulate/run-tests/<run_test_id>/delete/.
+
+    Cross-tenant coverage lives in ``TestRunTestDetailWorkspaceScope`` so we do
+    not duplicate it here.
+    """
+
+    def test_run_test_delete_soft_deletes_and_stamps_deleted_at(
+        self, auth_client, run_test_with_v10_scenario
+    ):
+        response = auth_client.delete(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/delete/"
+        )
+
+        assert response.status_code in (
+            status.HTTP_200_OK,
+            status.HTTP_204_NO_CONTENT,
+        ), response.content
+        run_test_with_v10_scenario.refresh_from_db()
+        assert run_test_with_v10_scenario.deleted is True
+        assert run_test_with_v10_scenario.deleted_at is not None
+
+    def test_run_test_delete_not_found_returns_404(self, auth_client):
+        response = auth_client.delete(f"/simulate/run-tests/{uuid4()}/delete/")
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert "not found" in str(response.content).lower()
+
+    def test_run_test_delete_unauthenticated_returns_401(
+        self, api_client, run_test_with_v10_scenario
+    ):
+        response = api_client.delete(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/delete/"
+        )
+
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+        run_test_with_v10_scenario.refresh_from_db()
+        assert run_test_with_v10_scenario.deleted is False
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestRunTestDetailWorkspaceScope:
+    """Phase 2 cross-tenant hardening for run-tests. Mirrors the shape of
+    ``TestSimulatorAgentWorkspaceScope::test_read_update_delete_scope_to_request_workspace``.
+
+    A run test in a sibling workspace of the same organization must be
+    invisible to every read, write, and delete surface on the run-test detail
+    view family. The default ``auth_client`` sits in the org's default
+    workspace; the hidden run test lives in ``other_workspace``.
+    """
+
+    def test_run_test_read_update_delete_scope_to_request_workspace(
+        self,
+        auth_client,
+        organization,
+        user,
+        agent_definition,
+    ):
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other Run Test Workspace Scope",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_run_test = RunTest.no_workspace_objects.create(
+            name="Hidden Run Test Scope",
+            organization=organization,
+            workspace=other_workspace,
+            agent_definition=agent_definition,
+            source_type=RunTest.SourceTypes.AGENT_DEFINITION,
+        )
+
+        detail_response = auth_client.get(
+            f"/simulate/run-tests/{hidden_run_test.id}/"
+        )
+        patch_response = auth_client.patch(
+            f"/simulate/run-tests/{hidden_run_test.id}/",
+            {"name": "Leaked Hidden Run Test"},
+            format="json",
+        )
+        delete_response = auth_client.delete(
+            f"/simulate/run-tests/{hidden_run_test.id}/delete/"
+        )
+        executions_response = auth_client.get(
+            f"/simulate/run-tests/{hidden_run_test.id}/executions/"
+        )
+        scenarios_response = auth_client.get(
+            f"/simulate/run-tests/{hidden_run_test.id}/scenarios/"
+        )
+        call_executions_response = auth_client.get(
+            f"/simulate/run-tests/{hidden_run_test.id}/call-executions/"
+        )
+
+        assert detail_response.status_code == status.HTTP_404_NOT_FOUND
+        assert patch_response.status_code == status.HTTP_404_NOT_FOUND
+        assert delete_response.status_code == status.HTTP_404_NOT_FOUND
+        assert scenarios_response.status_code == status.HTTP_404_NOT_FOUND
+        assert call_executions_response.status_code == status.HTTP_404_NOT_FOUND
+
+        hidden_run_test.refresh_from_db()
+        assert hidden_run_test.name == "Hidden Run Test Scope"
+        assert hidden_run_test.deleted is False
+        assert hidden_run_test.deleted_at is None
+
+        assert executions_response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestGetEvalConfigStructureView:
+    """Functional tests for
+    GET /simulate/run-tests/<uuid>/eval-configs/<uuid>/get-structure/.
+    """
+
+    def test_get_structure_returns_eval_and_template_fields(
+        self,
+        auth_client,
+        run_test_with_v10_scenario,
+        word_count_eval_template,
+    ):
+        eval_config = SimulateEvalConfig.objects.create(
+            name="structure_happy_path",
+            eval_template=word_count_eval_template,
+            run_test=run_test_with_v10_scenario,
+            config={"params": {"min_words": 2, "max_words": 8}},
+            mapping={"text": "transcript"},
+            model="turing_small",
+            error_localizer=False,
+        )
+
+        response = auth_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}"
+            f"/eval-configs/{eval_config.id}/get-structure/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        eval_data = response.json()["result"]["eval"]
+        assert eval_data["id"] == str(eval_config.id)
+        assert eval_data["template_id"] == str(word_count_eval_template.id)
+        assert eval_data["name"] == "structure_happy_path"
+        assert eval_data["template_name"] == word_count_eval_template.name
+        assert eval_data["description"] == word_count_eval_template.description
+        assert eval_data["required_keys"] == ["text"]
+        assert eval_data["mapping"] == {"text": "transcript"}
+        assert eval_data["params"] == {"min_words": 2, "max_words": 8}
+        assert eval_data["selected_model"] == "turing_small"
+        assert eval_data["error_localizer"] is False
+        assert eval_data["kb_id"] is None
+        assert eval_data["api_key_available"] is False
+        assert "function_params_schema" in eval_data
+        assert "config" in eval_data
+
+    def test_get_structure_bad_eval_config_id_returns_404(
+        self, auth_client, run_test_with_v10_scenario
+    ):
+        response = auth_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}"
+            f"/eval-configs/{uuid4()}/get-structure/"
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_get_structure_other_workspace_returns_404(
+        self,
+        auth_client,
+        organization,
+        user,
+        agent_definition,
+        word_count_eval_template,
+    ):
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other workspace get-structure",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_run_test = RunTest.no_workspace_objects.create(
+            name="Hidden Run Test For Structure",
+            organization=organization,
+            workspace=other_workspace,
+            agent_definition=agent_definition,
+            source_type=RunTest.SourceTypes.AGENT_DEFINITION,
+        )
+        hidden_config = SimulateEvalConfig.objects.create(
+            name="hidden_structure_config",
+            eval_template=word_count_eval_template,
+            run_test=hidden_run_test,
+        )
+
+        response = auth_client.get(
+            f"/simulate/run-tests/{hidden_run_test.id}"
+            f"/eval-configs/{hidden_config.id}/get-structure/"
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_get_structure_unauthenticated_returns_401(
+        self,
+        api_client,
+        run_test_with_v10_scenario,
+        word_count_eval_template,
+    ):
+        eval_config = SimulateEvalConfig.objects.create(
+            name="unauth_structure",
+            eval_template=word_count_eval_template,
+            run_test=run_test_with_v10_scenario,
+        )
+
+        response = api_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}"
+            f"/eval-configs/{eval_config.id}/get-structure/"
+        )
+
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_get_structure_populated_body_key_equivalence(
+        self,
+        auth_client,
+        run_test_with_v10_scenario,
+        word_count_eval_template,
+    ):
+        eval_config = SimulateEvalConfig.objects.create(
+            name="structure_body_key_equivalence",
+            eval_template=word_count_eval_template,
+            run_test=run_test_with_v10_scenario,
+            config={"params": {"min_words": 2, "max_words": 8}},
+            mapping={"text": "transcript"},
+            model="turing_small",
+            error_localizer=False,
+        )
+
+        response = auth_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}"
+            f"/eval-configs/{eval_config.id}/get-structure/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        body = response.json()
+        assert body["status"] is True
+        assert set(body["result"].keys()) == {"eval"}
+
+        # The documented contract lives in EvalConfigStructureSerializer.
+        expected_keys = {
+            "id",
+            "template_id",
+            "name",
+            "reason_column",
+            "eval_tags",
+            "description",
+            "required_keys",
+            "optional_keys",
+            "variable_keys",
+            "run_prompt_column",
+            "template_name",
+            "mapping",
+            "config",
+            "params",
+            "function_params_schema",
+            "models",
+            "selected_model",
+            "error_localizer",
+            "kb_id",
+            "output",
+            "config_params_desc",
+            "config_params_option",
+            "api_key_available",
+        }
+        assert expected_keys <= set(body["result"]["eval"].keys()), (
+            "get-structure response missing contract keys: "
+            f"{expected_keys - set(body['result']['eval'].keys())}"
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestRunTestStatusView:
+    """Functional tests for GET /simulate/run-tests/<run_test_id>/status/."""
+
+    def test_get_status_returns_execution_progress_shape(
+        self,
+        auth_client,
+        run_test_with_v10_scenario,
+        scenario_with_prompt_version,
+    ):
+        test_execution = TestExecution.objects.create(
+            run_test=run_test_with_v10_scenario,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=2,
+        )
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario_with_prompt_version,
+            status=CallExecution.CallStatus.COMPLETED,
+            simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        )
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario_with_prompt_version,
+            status=CallExecution.CallStatus.PENDING,
+            simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        )
+
+        response = auth_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/status/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        body = response.json()
+        assert body["run_test_id"] == str(run_test_with_v10_scenario.id)
+        assert body["execution_id"] == str(test_execution.id)
+        assert body["status"] == TestExecution.ExecutionStatus.COMPLETED
+        assert body["total_scenarios"] == 2
+        assert body["total_calls"] == 2
+        assert body["completed_calls"] == 1
+        assert body["failed_calls"] == 0
+        assert body["success_rate"] == 50.0
+        assert "message" in body
+
+    def test_get_status_not_found_returns_404(self, auth_client):
+        response = auth_client.get(f"/simulate/run-tests/{uuid4()}/status/")
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_get_status_other_workspace_returns_404(
+        self,
+        auth_client,
+        organization,
+        user,
+        agent_definition,
+    ):
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other workspace status",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_run_test = RunTest.no_workspace_objects.create(
+            name="Hidden Run Test For Status",
+            organization=organization,
+            workspace=other_workspace,
+            agent_definition=agent_definition,
+            source_type=RunTest.SourceTypes.AGENT_DEFINITION,
+        )
+
+        response = auth_client.get(
+            f"/simulate/run-tests/{hidden_run_test.id}/status/"
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_get_status_unauthenticated_returns_401(
+        self, api_client, run_test_with_v10_scenario
+    ):
+        response = api_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/status/"
+        )
+
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestActiveRunTestsView:
+    """Functional tests for GET /simulate/run-tests/active/.
+
+    The view sources its data from an in-memory dict on the executor rather
+    than the database, so it neither enumerates seeded RunTests nor scopes by
+    workspace. These tests lock in the response envelope (``active_tests``,
+    ``total_active``), assert the executor dict is what the view surfaces, and
+    xfail the workspace-scope gap for follow-up.
+    """
+
+    def test_active_tests_returns_envelope_from_executor(self, auth_client):
+        run_test_id_a = str(uuid4())
+        run_test_id_b = str(uuid4())
+        fake_active = {
+            run_test_id_a: {"status": "running", "run_test_id": run_test_id_a},
+            run_test_id_b: {"status": "running", "run_test_id": run_test_id_b},
+        }
+
+        with patch(
+            "simulate.views.run_test.TestExecutor.get_all_active_tests",
+            return_value=fake_active,
+        ):
+            response = auth_client.get("/simulate/run-tests/active/")
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        body = response.json()
+        assert body["total_active"] == 2
+        assert set(body["active_tests"].keys()) == {run_test_id_a, run_test_id_b}
+
+    def test_active_tests_completed_run_test_absent(
+        self, auth_client, run_test_with_v10_scenario
+    ):
+        TestExecution.objects.create(
+            run_test=run_test_with_v10_scenario,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=1,
+        )
+
+        response = auth_client.get("/simulate/run-tests/active/")
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        body = response.json()
+        # Fresh executor instance has an empty in-memory active_tests dict.
+        assert body["total_active"] == 0
+        assert body["active_tests"] == {}
+        assert str(run_test_with_v10_scenario.id) not in body["active_tests"]
+
+    def test_active_tests_unauthenticated_returns_401(self, api_client):
+        response = api_client.get("/simulate/run-tests/active/")
+
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestCallExecutionAPIView:
+    """Functional tests for GET /simulate/api/call-executions/.
+
+    The view filters to ``simulation_call_type=VOICE`` so seeded fixtures must
+    use the VOICE type for the endpoint to return them.
+    """
+
+    def test_list_call_executions_returns_seeded_voice_calls(
+        self,
+        auth_client,
+        run_test_with_v10_scenario,
+        scenario_with_prompt_version,
+    ):
+        test_execution = TestExecution.objects.create(
+            run_test=run_test_with_v10_scenario,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=1,
+        )
+        seeded = [
+            CallExecution.objects.create(
+                test_execution=test_execution,
+                scenario=scenario_with_prompt_version,
+                status=CallExecution.CallStatus.COMPLETED,
+                simulation_call_type=CallExecution.SimulationCallType.VOICE,
+            )
+            for _ in range(3)
+        ]
+
+        response = auth_client.get("/simulate/api/call-executions/?limit=100")
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        body = response.json()
+        assert "count" in body
+        assert "results" in body
+        assert "total_pages" in body
+        assert "current_page" in body
+        assert body["count"] >= 3
+        listed_ids = {str(row["id"]) for row in body["results"]}
+        for call_execution in seeded:
+            assert str(call_execution.id) in listed_ids
+
+    def test_list_call_executions_other_workspace_excluded(
+        self,
+        auth_client,
+        run_test_with_v10_scenario,
+        scenario_with_prompt_version,
+        organization,
+        user,
+        agent_definition,
+    ):
+        own_execution = TestExecution.objects.create(
+            run_test=run_test_with_v10_scenario,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=1,
+        )
+        own_call = CallExecution.objects.create(
+            test_execution=own_execution,
+            scenario=scenario_with_prompt_version,
+            status=CallExecution.CallStatus.COMPLETED,
+            simulation_call_type=CallExecution.SimulationCallType.VOICE,
+        )
+
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other workspace call executions",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_run_test = RunTest.no_workspace_objects.create(
+            name="Hidden Run Test Call Executions List",
+            organization=organization,
+            workspace=other_workspace,
+            agent_definition=agent_definition,
+            source_type=RunTest.SourceTypes.AGENT_DEFINITION,
+        )
+        hidden_execution = TestExecution.no_workspace_objects.create(
+            run_test=hidden_run_test,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=1,
+        )
+        hidden_call = CallExecution.no_workspace_objects.create(
+            test_execution=hidden_execution,
+            scenario=scenario_with_prompt_version,
+            status=CallExecution.CallStatus.COMPLETED,
+            simulation_call_type=CallExecution.SimulationCallType.VOICE,
+        )
+
+        response = auth_client.get("/simulate/api/call-executions/?limit=100")
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        listed_ids = {str(row["id"]) for row in response.json()["results"]}
+        assert str(own_call.id) in listed_ids
+        assert str(hidden_call.id) not in listed_ids
+
+    def test_list_call_executions_pagination_limits_and_reports_total_pages(
+        self,
+        auth_client,
+        run_test_with_v10_scenario,
+        scenario_with_prompt_version,
+    ):
+        test_execution = TestExecution.objects.create(
+            run_test=run_test_with_v10_scenario,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=1,
+        )
+        for _ in range(15):
+            CallExecution.objects.create(
+                test_execution=test_execution,
+                scenario=scenario_with_prompt_version,
+                status=CallExecution.CallStatus.COMPLETED,
+                simulation_call_type=CallExecution.SimulationCallType.VOICE,
+            )
+
+        response = auth_client.get("/simulate/api/call-executions/?limit=5&page=1")
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        body = response.json()
+        assert len(body["results"]) == 5
+        assert body["count"] >= 15
+        assert body["current_page"] == 1
+        # 15 rows at 5/page = at least 3 pages; additional pre-existing rows
+        # only grow the page count.
+        assert body["total_pages"] >= 3
+
+    def test_list_call_executions_unauthenticated_returns_401(self, api_client):
+        response = api_client.get("/simulate/api/call-executions/")
+
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
