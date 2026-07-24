@@ -719,6 +719,22 @@ const DatasetTestMode = React.forwardRef(
         : {},
     );
 
+    // Seed the mapping from a saved version once it arrives (async load case).
+    // The useState initializer covers the synchronous case; guarded so a
+    // user's own edits are never overwritten.
+    const mappingSeededRef = useRef(
+      !!(initialMapping && Object.keys(initialMapping).length),
+    );
+    useEffect(() => {
+      if (mappingSeededRef.current) return;
+      if (initialMapping && Object.keys(initialMapping).length) {
+        mappingSeededRef.current = true;
+        setMapping((prev) =>
+          Object.keys(prev).length ? prev : { ...initialMapping },
+        );
+      }
+    }, [initialMapping]);
+
     // Search + expand
     const [tableSearch, setTableSearch] = useState("");
     const [expandedCols, setExpandedCols] = useState({});
@@ -1409,6 +1425,8 @@ const DatasetTestMode = React.forwardRef(
         get mapping() {
           return mapping;
         },
+        // Read by Save Version. Dataset mode has no tracing project.
+        getMappingState: () => ({ mapping, tracingProjectId: null }),
       }),
       [handleRunTest, selectedDatasetId, allMapped, mapping],
     );

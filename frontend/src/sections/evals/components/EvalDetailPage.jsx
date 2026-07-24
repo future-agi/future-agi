@@ -65,6 +65,11 @@ import { FAGI_MODEL_VALUES } from "./ModelSelector";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import {
+  buildVersionMappingPayload,
+  resolveVersionMapping,
+  resolveVersionTracingProjectId,
+} from "../utils/evalMappingPersistence";
 
 const extract_selected_tools = (tools) => {
   if (Array.isArray(tools)) return tools;
@@ -279,6 +284,19 @@ const EvalDetailPage = () => {
         (a.version_number ?? a.versionNumber ?? Number.MIN_SAFE_INTEGER),
     )[0];
   }, [versionsData]);
+
+  // The version whose saved mapping/tracing-project should seed the test
+  // panel: the one being viewed, or the default version when nothing is
+  // explicitly selected. Both come from the versions list, which already
+  // carries `mapping`/`tracing_project_id` per version.
+  const testMapping = useMemo(
+    () => resolveVersionMapping(viewingVersion || defaultVersion),
+    [viewingVersion, defaultVersion],
+  );
+  const testTracingProjectId = useMemo(
+    () => resolveVersionTracingProjectId(viewingVersion || defaultVersion),
+    [viewingVersion, defaultVersion],
+  );
 
   const handleVersionSelect = useCallback(
     (version) => {
@@ -834,10 +852,15 @@ const EvalDetailPage = () => {
         messages: evalType === "llm" ? messages : undefined,
         few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
       };
+      const mappingState = testPlaygroundRef.current?.getMappingState?.();
       const newVersion = await createVersion.mutateAsync({
         config_snapshot: configSnapshot,
         criteria: evalType === "code" ? code : instructions,
         model,
+        ...buildVersionMappingPayload(
+          mappingState?.mapping,
+          mappingState?.tracingProjectId,
+        ),
       });
       enqueueSnackbar(`Version V${newVersion?.version_number ?? ""} saved`, {
         variant: "success",
@@ -1004,6 +1027,12 @@ const EvalDetailPage = () => {
         });
       }
       testPlaygroundRef.current?.runTest?.(evalId);
+      // Save Version unmounts the active test-mode component (it swaps the
+      // panel to the Versions view), which drops its onTestResult callback
+      // mid-flight and would otherwise leave isTesting stuck true forever.
+      // Same fallback EvalCreatePage.jsx already uses for the same class of
+      // stuck-test state.
+      setTimeout(() => setIsTesting((v) => (v ? false : v)), 60000);
     } catch (error) {
       const message =
         error?.response?.data?.result || error?.message || "Failed to run test";
@@ -1867,9 +1896,16 @@ const EvalDetailPage = () => {
               >
                 <Box sx={{ flex: 1, overflow: "auto", minHeight: 0 }}>
                   <TestPlayground
+                    // Remount on version switch so Tracing/Dataset re-seed
+                    // their mapping + project state from the version now
+                    // being viewed — both tabs only apply initialMapping /
+                    // initialTracingProjectId once per mount.
+                    key={viewingVersion?.id ?? "live"}
                     ref={testPlaygroundRef}
                     templateId={evalId}
                     model={model}
+                    initialMapping={testMapping}
+                    initialTracingProjectId={testTracingProjectId}
                     instructions={
                       evalType === "code"
                         ? ""
