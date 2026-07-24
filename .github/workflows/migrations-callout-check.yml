@@ -1,0 +1,62 @@
+# Release notes must carry the migrations warning when the release contains
+# schema migrations (RELEASE-PROCESS-PLAN.md §5.3). Runs only on release-please
+# bot PRs; compares last release tag..HEAD for new migration files and requires
+# the callout string in the PR body. Fail-closed: missing callout blocks merge.
+name: migrations-callout
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    if: startsWith(github.head_ref, 'release-please--')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect new migration files since last release
+        id: detect
+        run: |
+          set -eu
+          # Steady state: a reachable release tag exists on main and the diff is
+          # last_tag..origin/main. A one-time seed tag (v1.22.73, on the commit
+          # the last shipped backend image was built from) must be pushed as a
+          # rollout prerequisite so this steady state holds from the first release.
+          # --exclude '*-dev*' skips pre-release/-dev tags so only stable release
+          # tags are considered.
+          last_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude='*-dev*' origin/main 2>/dev/null || echo "")
+          if [ -z "$last_tag" ]; then
+            # No release tag yet: diff from the repo root commit so every
+            # migration in main's history counts as new (diffing against
+            # origin/main itself would compare the tree to itself and find none).
+            echo "No previous release tag; diffing from the repo root commit"
+            range="$(git rev-list --max-parents=0 origin/main | tail -1)..origin/main"
+          else
+            range="$last_tag..origin/main"
+          fi
+          added=$(git diff --name-only --diff-filter=A "$range" -- 'futureagi/*/migrations/*.py' | grep -v '__init__' || true)
+          if [ -n "$added" ]; then
+            echo "has_migrations=true" >> "$GITHUB_OUTPUT"
+            printf 'New migrations:\n%s\n' "$added"
+          else
+            echo "has_migrations=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Require callout in PR body
+        if: steps.detect.outputs.has_migrations == 'true'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -eu
+          if printf '%s' "$PR_BODY" | grep -qF 'Contains database migrations'; then
+            echo "Callout present."
+          else
+            echo "::error::This release adds schema migrations but the release notes lack the '⚠️ Contains database migrations' callout. Edit the release-please PR body to add it (see RELEASE-PROCESS-PLAN.md §5.3)."
+            exit 1
+          fi
