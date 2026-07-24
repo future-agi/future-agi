@@ -23,6 +23,7 @@ var KnownProviders = map[string]ProviderPreset{
 	"replicate":   {BaseURL: "https://api.replicate.com", APIFormat: "openai"},
 	"openrouter":  {BaseURL: "https://openrouter.ai/api", APIFormat: "openai"},
 	"azure":       {APIFormat: "azure"},
+	"smallest_ai": {BaseURL: "https://api.smallest.ai/waves/v1", APIFormat: "smallestai"},
 }
 
 // applyProviderPreset fills in default BaseURL and APIFormat from known presets.

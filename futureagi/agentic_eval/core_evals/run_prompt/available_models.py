@@ -7212,6 +7212,80 @@ OSS_AVAILABLE_MODELS = [
         "applications on Databricks. Provided under Apache 2.0 license. Embeddings are not "
         "normalized by default[1][3][4][6][7].",
     },
+    # ---- Smallest AI ----
+    {
+        "model_name": "lightning_v3.1",
+        "providers": "smallest_ai",
+        "api_key_name": "SMALLEST_AI_API_KEY",
+        "mode": "tts",
+        "best_for": ["ultra-low latency speech synthesis", "real-time voice agents", "Indian language TTS"],
+        "use_case": ["voice agents", "IVR", "multilingual TTS", "conversational AI", "Indian language support"],
+        "supported_voices": [
+            "quinn", "mia", "magnus", "olivia", "daniel", "rachel", "nicole", "elizabeth",
+            "william", "erica", "chloe",
+            "neel", "maithili", "devansh", "sameera", "mihir", "aarush", "sakshi", "vivaan", "srishti",
+            "daniella", "camilla", "alba", "marcos", "david", "nerea", "miguel",
+        ],
+        "supported_languages": ["en", "hi", "ta", "es", "kn", "mr", "te", "or", "pa", "ml", "gu", "bn"],
+        "supported_formats": ["wav"],
+        "rate_limits": {"requests_per_minute": 100},
+        "latency": 100,
+    },
+    {
+        "model_name": "lightning_v3.1_pro",
+        "providers": "smallest_ai",
+        "api_key_name": "SMALLEST_AI_API_KEY",
+        "mode": "tts",
+        "best_for": ["premium voice quality", "curated voices", "British and American accents"],
+        "use_case": ["high-quality voiceovers", "brand voice", "premium conversational AI"],
+        "supported_voices": [
+            "rhea", "zariya", "kareena", "mishka", "inaaya", "saira", "meher", "aarini",
+            "aviraj", "vyom", "zoravar", "reyansh", "ahan",
+            "sophie", "ellie", "cressida", "ottilie", "elowen", "seraphina",
+            "sam", "henry", "benedict", "cormac", "rupert", "finley",
+            "kaitlyn", "savannah", "amelia", "zoe", "ruby", "leah", "jenna", "kate", "molly", "fiona",
+            "blake", "austin", "jack", "leo", "luke", "owen",
+        ],
+        "supported_languages": [
+            "en", "hi", "mr", "ta", "ml", "te", "kn", "pa", "bn", "or", "gu",
+            "ar", "zh", "id", "ja", "ko", "ms", "tr", "vi", "de", "es", "fr",
+            "it", "pt", "ru", "el", "fi", "no", "pl",
+        ],
+        "supported_formats": ["wav"],
+        "rate_limits": {"requests_per_minute": 100},
+        "latency": 100,
+    },
+    {
+        "model_name": "pulse",
+        "providers": "smallest_ai",
+        "api_key_name": "SMALLEST_AI_API_KEY",
+        "mode": "stt",
+        "best_for": ["high-accuracy transcription", "multilingual STT", "Indian language recognition"],
+        "use_case": ["transcribing meetings", "voice commands", "multilingual transcription", "Indian language STT"],
+        "supported_languages": [
+            "en", "hi", "de", "es", "ru", "it", "fr", "nl", "pt", "uk", "pl",
+            "cs", "sk", "lv", "et", "ro", "fi", "sv", "bg", "hu", "da", "lt",
+            "mt", "zh", "ja", "ko",
+            "multi-eu", "multi-asian", "multi-indic",
+        ],
+        "supported_formats": ["wav", "mp3"],
+        "rate_limits": {"requests_per_minute": 100},
+        "latency": 300,
+    },
+    {
+        "model_name": "pulse-pro",
+        "providers": "smallest_ai",
+        "api_key_name": "SMALLEST_AI_API_KEY",
+        "mode": "stt",
+        "best_for": ["high-accuracy transcription", "leaderboard-ranked English STT"],
+        "use_case": ["transcribing meetings", "voice commands", "English-only transcription"],
+        "supported_languages": ["en"],
+        "supported_formats": ["wav", "mp3"],
+        "rate_limits": {"requests_per_minute": 100},
+        "latency": 300,
+    },
+    # ---- Smallest AI end ----
+
 ]
 
 
