@@ -61,6 +61,7 @@ from ...core_evals.fi_evals.function.wrapper import (
     Regex,
     RegexPiiDetection,
     RougeScore,
+    SecretKeyDetection,
     SemanticListContains,
     SentenceCount,
     Ssim,
@@ -108,7 +109,9 @@ try:
 except ImportError:
     RankingEvaluator = _ee_stub("RankingEvaluator")
 
-from ...core_evals.fi_evals.llm.custom_prompt_evaluator.evaluator import CustomPromptEvaluator
+from ...core_evals.fi_evals.llm.custom_prompt_evaluator.evaluator import (
+    CustomPromptEvaluator,
+)
 
 try:
     from ee.evals.llm.agent_evaluator.evaluator import AgentEvaluator
@@ -202,6 +205,7 @@ __all__ = [
     "TrajectoryMatch",
     "StepCount",
     "RegexPiiDetection",
+    "SecretKeyDetection",
     "PearsonCorrelation",
     "SpearmanCorrelation",
     "R2Score",
