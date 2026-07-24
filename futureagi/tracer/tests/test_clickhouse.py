@@ -6890,15 +6890,29 @@ class TestVoiceCallListPhase1bMigration:
         )
 
     def test_phase_1b_reads_v2_spans_table(self):
-        """The Phase 1b hydration must select from v2 `spans` with FINAL."""
+        """Phase 1b must read v2 `spans` and dedupe versions WITHOUT `FINAL`.
+
+        `FROM spans` is the v2 table (not the legacy CDC mirror). Dedup is
+        done via `ORDER BY _version DESC LIMIT 1 BY id`, not `FINAL`: `FINAL`
+        disables the `idx_id` skip index and full-scans the table (~194M rows)
+        to fetch one page. The version-pick is the equivalent dedup contract.
+        """
         import re
 
         src = self._voice_list_source()
-        # `FROM spans FINAL` collapses ReplacingMergeTree duplicates — the
-        # v2 dedup contract. FINAL alone (without `spans`) is too permissive.
+        # Reads the v2 `spans` table (not `tracer_observation_span`).
         assert re.search(
-            r"FROM\s+spans\s+FINAL", src
-        ), "_list_voice_calls_clickhouse must hydrate from v2 `spans FINAL`."
+            r"FROM\s+spans\b", src
+        ), "_list_voice_calls_clickhouse must hydrate from the v2 `spans` table."
+        # No `FINAL` in the hot Phase 1b query — it defeats the skip index.
+        assert "FROM spans FINAL" not in src, (
+            "Phase 1b must not use `FINAL` — it disables the idx_id skip index "
+            "and full-scans `spans`. Dedupe via `ORDER BY _version DESC LIMIT 1 BY id`."
+        )
+        # ReplacingMergeTree dedup via keyset version-pick.
+        assert "ORDER BY _version DESC" in src and "LIMIT 1 BY id" in src, (
+            "Phase 1b must dedupe versions via `ORDER BY _version DESC LIMIT 1 BY id`."
+        )
         assert "is_deleted = 0" in src
 
     def test_phase_1b_selects_typed_map_columns_for_reconstruction(self):
@@ -6929,6 +6943,29 @@ class TestVoiceCallListPhase1bMigration:
         assert 'arow.get("attrs_bool")' in src
         # Bool values get cast to Python bool (CH UInt8 → 0/1 otherwise).
         assert "bool(v)" in src
+
+    def test_phase_1b_scopes_by_project_and_drops_call_logs(self):
+        """Phase 1b must scope by `project_id` and drop `call_logs` at read.
+
+        `project_id` in the WHERE lets the primary key prune the page's parts
+        (paired with the no-FINAL dedup). `call_logs` (avg ~900 KiB/row) is
+        detail-only bloat the FE never reads — dropped via `mapFilter` so it's
+        never fetched. `raw_log` is kept: process_raw_logs still needs it.
+        """
+        src = self._voice_list_source()
+        assert "project_id = %(project_id)s" in src, (
+            "Phase 1b must scope by project_id so the primary key can prune."
+        )
+        assert "mapFilter" in src and "call_logs" in src, (
+            "Phase 1b must exclude `call_logs` from attrs_string at read time."
+        )
+
+    def test_voice_call_list_strips_heavy_payload_keys(self):
+        """`call_logs`/`raw_log` are detail-only — never in list rows."""
+        from tracer.views.trace import TraceView
+
+        assert "call_logs" in TraceView._VOICE_CALL_HEAVY_KEYS
+        assert "raw_log" in TraceView._VOICE_CALL_HEAVY_KEYS
 
 
 @pytest.mark.unit
