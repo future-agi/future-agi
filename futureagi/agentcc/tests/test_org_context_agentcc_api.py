@@ -74,6 +74,7 @@ class TestAgentccRequestOrganizationContext:
         assert session.organization_id == org_b.id
         assert session.organization_id != user.organization_id
 
+    @pytest.mark.requires_ee
     def test_webhook_create_uses_active_request_organization(
         self, user, secondary_org_context, secondary_org_client
     ):
@@ -242,6 +243,7 @@ class TestAgentccRequestOrganizationContext:
         assert policy.deleted is True
         assert policy.deleted_at is not None
 
+    @pytest.mark.requires_ee
     def test_email_alert_create_uses_active_request_organization(
         self, user, secondary_org_context, secondary_org_client
     ):
@@ -264,6 +266,7 @@ class TestAgentccRequestOrganizationContext:
         assert alert.organization_id == org_b.id
         assert alert.organization_id != user.organization_id
 
+    @pytest.mark.requires_ee
     def test_email_alert_update_preserves_existing_secret_when_omitted(
         self, user, secondary_org_context, secondary_org_client, settings
     ):
