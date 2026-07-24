@@ -135,7 +135,6 @@ class _FakeHttpResponse:
     async def aiter_bytes(self, chunk_size=None):
         yield self.content
 
-
 class _FakeAsyncClient:
     def __init__(self, response, follow_redirects=True, timeout=None):
         self._response = response
@@ -152,7 +151,6 @@ class _FakeAsyncClient:
     def stream(self, method, url, headers=None):
         return self._response
 
-
 class _FakeSyncClient:
     def __init__(self, response, follow_redirects=True, timeout=None):
         self._response = response
@@ -168,7 +166,6 @@ class _FakeSyncClient:
 
     def stream(self, method, url, headers=None):
         return self._response
-
 
 class TestDownloadArtifactAsync:
     @pytest.mark.asyncio
@@ -236,7 +233,6 @@ class TestDownloadArtifactAsync:
                     "cid", "mono-recording", "key"
                 )
 
-
 class TestDownloadArtifactSync:
     def test_returns_bytes_on_200(self):
         response = _FakeHttpResponse(200, content=b"mp3-bytes")
@@ -260,7 +256,6 @@ class TestDownloadArtifactSync:
         with patch("tracer.utils.vapi_recording.httpx.Client", return_value=_FakeSyncClient(response)):
             with pytest.raises(ValueError, match="maximum size"):
                 VapiRecordingService.download_artifact_sync("cid", "mono-recording", "key")
-
 
 class TestParseCallLogContent:
     def _gzip(self, lines):
@@ -427,7 +422,6 @@ class TestFetchAndParseCallLogs:
 
         assert signed_url not in str(events)
 
-
 class TestMirrorS3UrlToConsumerFields:
     """DB-mirror side-effects are patched away; behaviour tested is the returned attrs dict."""
 
@@ -539,7 +533,6 @@ class TestMirrorS3UrlToConsumerFields:
         assert second.recording_url.endswith("mono.mp3")
         first.save.assert_called_once_with(update_fields=["recording_url"])
         second.save.assert_called_once_with(update_fields=["recording_url"])
-
 
 class TestNormaliseCallLogEntry:
     """Only verify shape stability — the exact fields depend on Vapi's payload."""

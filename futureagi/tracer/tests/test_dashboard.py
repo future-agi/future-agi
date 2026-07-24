@@ -1052,7 +1052,9 @@ class TestDashboardQueryBuilder:
         windowed query prunes old partitions instead of scanning all history."""
         builder = DashboardQueryBuilder(sample_query_config)
         sql, _, _ = builder.build_all_queries()[0]
+        # partition-prune bound on the partition key is present
         assert "created_at >= %(start_date)s - INTERVAL 1 DAY" in sql
+        # and the precise event-time window is still enforced (correctness)
         assert "start_time >= %(start_date)s" in sql
         assert "start_time < %(end_date)s" in sql
 
@@ -1087,6 +1089,7 @@ class TestDashboardQueryBuilder:
         sql, _, _ = builder.build_all_queries()[0]
         assert "created_at >= %(start_date)s - INTERVAL 1 DAY" in sql
         assert "start_time >= %(start_date)s" in sql
+        # the breakdown is still applied (real call path intact)
         assert "breakdown_value" in sql
 
     def test_all_system_metrics(self):

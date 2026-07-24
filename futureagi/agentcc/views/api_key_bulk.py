@@ -1,4 +1,6 @@
 import structlog
+from django.db.models import Q
+from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.renderers import JSONRenderer
 from rest_framework.views import APIView
@@ -37,10 +39,13 @@ class APIKeyBulkView(APIView):
     )
     def get(self, request):
         try:
+            # Don't ship already-expired keys, even to gateways that predate
+            # real-time expiry enforcement.
+            now = timezone.now()
             keys = AgentccAPIKey.no_workspace_objects.filter(
                 status=AgentccAPIKey.ACTIVE,
                 deleted=False,
-            )
+            ).filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
 
             result = []
             for key in keys:
@@ -57,10 +62,11 @@ class APIKeyBulkView(APIView):
                         "models": key.allowed_models or [],
                         "providers": key.allowed_providers or [],
                         "metadata": metadata,
+                        "expires_at": key.expires_at,
                     }
                 )
 
             return self._gm.success_response(result)
         except Exception as e:
             logger.exception("api_key_bulk_error", error=str(e))
-            return self._gm.bad_request(str(e))
+            return self._gm.internal_server_error_response("Internal server error")

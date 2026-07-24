@@ -258,6 +258,11 @@ class TestResolveApiKeyForVersion:
         assert resolve_api_key_for_version(agent_version) == "sk-legacy-fallback-key"
 
 
+# ============================================================================
+# Tests for resolve_stored_api_key()
+# ============================================================================
+
+
 class TestResolveStoredApiKey:
     def test_returns_none_for_none_org(self):
         assert resolve_stored_api_key(organization=None) is None

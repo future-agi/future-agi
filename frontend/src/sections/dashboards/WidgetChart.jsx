@@ -10,6 +10,7 @@ import {
   DEFAULT_DECIMALS,
   escapeHtml,
   formatValueWithConfig,
+  fromAxisConfigPayload,
   getAutoDecimals,
   getSeriesAverage,
   getSuggestedUnitConfig,
@@ -98,7 +99,9 @@ export default function WidgetChart({ widget, globalDateRange }) {
   }, [rawQueryConfig, globalDateRange]);
   const chartConfig = widget.chart_config || {};
   const chartType = chartConfig.chart_type || "line";
-  const axisConfig = chartConfig.axis_config || null;
+  const axisConfig = chartConfig.axis_config
+    ? fromAxisConfigPayload(chartConfig.axis_config)
+    : null;
 
   const apexType = getApexType(chartType);
   const isStacked = chartType.startsWith("stacked_");

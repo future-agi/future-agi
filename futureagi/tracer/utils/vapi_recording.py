@@ -75,7 +75,6 @@ class VapiRecordingService:
         ).split(",")
         if b.strip()
     )
-
     @classmethod
     def build_artifact_url(cls, call_id: str, artifact_type: VapiArtifactType) -> str:
         """Build the authenticated endpoint URL for a call artifact."""
@@ -168,7 +167,6 @@ class VapiRecordingService:
                 agent_definition_id=str(agent_definition_id),
             )
             return None
-
     @classmethod
     def _get_vapi_provider_for_project(cls, project_id: Any):
         from tracer.models.observability_provider import (
@@ -537,6 +535,7 @@ class VapiRecordingService:
                 logger.warning(
                     "vapi_call_logs_tier2_failed",
                     call_id=call_id,
+                    legacy_url=legacy_url,
                     exc_info=True,
                 )
         return None

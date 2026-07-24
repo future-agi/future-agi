@@ -99,16 +99,16 @@ export function useNavData() {
         //   });
         // },
       },
-      {
-        title: "Prototype",
-        path: paths.dashboard.prototype,
-        icon: ICONS.prototype,
-        eventTrigger: () => {
-          trackEvent(Events.navigationPrototypeClicked, {
-            [PropertyName.click]: true,
-          });
-        },
-      },
+      // {
+      //   title: "Prototype",
+      //   path: paths.dashboard.prototype,
+      //   icon: ICONS.prototype,
+      //   eventTrigger: () => {
+      //     trackEvent(Events.navigationPrototypeClicked, {
+      //       [PropertyName.click]: true,
+      //     });
+      //   },
+      // },
       {
         title: "Knowledge base",
         path: paths.dashboard.knowledge_base,
@@ -175,16 +175,16 @@ export function useNavData() {
             path: paths.dashboard.annotations.queues,
             icon: ICONS.annotate,
           },
-          {
-            title: "Alerts",
-            path: paths.dashboard.alerts,
-            icon: ICONS.alerts,
-            eventTrigger: () => {
-              trackEvent(Events.navigationAlertTabClicked, {
-                [PropertyName.click]: true,
-              });
-            },
-          },
+          // {
+          //   title: "Alerts",
+          //   path: paths.dashboard.alerts,
+          //   icon: ICONS.alerts,
+          //   eventTrigger: () => {
+          //     trackEvent(Events.navigationAlertTabClicked, {
+          //       [PropertyName.click]: true,
+          //     });
+          //   },
+          // },
           {
             title: "Dashboards",
             path: paths.dashboard.dashboards.root,

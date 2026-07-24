@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"encoding/json"
 	"math"
 	"strings"
 	"sync"
@@ -426,6 +427,137 @@ func TestExpiresAt_FromConfig(t *testing.T) {
 	expected, _ := time.Parse(time.RFC3339, expiresStr)
 	if !k.ExpiresAt.Equal(expected) {
 		t.Errorf("expected ExpiresAt %v, got %v", expected, *k.ExpiresAt)
+	}
+}
+
+// ---------- Synced-key expiry (control-plane path) ----------
+
+func syncKeyStore() *KeyStore {
+	return NewKeyStore(authCfg())
+}
+
+// Decoding the wire payload is where the original bug lived (the field was
+// dropped); DRF emits RFC3339 with offset + fractional seconds.
+func TestSyncedKey_DecodesExpiresAt(t *testing.T) {
+	const payload = `{
+		"id": "ck_1",
+		"name": "contractor",
+		"key_hash": "abc123",
+		"expires_at": "2030-06-15T12:30:45.123456Z"
+	}`
+
+	var sk SyncedKey
+	if err := json.Unmarshal([]byte(payload), &sk); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if sk.ExpiresAt == nil {
+		t.Fatal("expected ExpiresAt to decode from the wire, got nil")
+	}
+	want, _ := time.Parse(time.RFC3339, "2030-06-15T12:30:45.123456Z")
+	if !sk.ExpiresAt.Equal(want) {
+		t.Errorf("expected ExpiresAt %v, got %v", want, *sk.ExpiresAt)
+	}
+
+	// Null expiry must decode to nil (never-expiring keys).
+	var nullSk SyncedKey
+	if err := json.Unmarshal([]byte(`{"key_hash":"h","expires_at":null}`), &nullSk); err != nil {
+		t.Fatalf("unmarshal null failed: %v", err)
+	}
+	if nullSk.ExpiresAt != nil {
+		t.Errorf("expected nil ExpiresAt for null wire value, got %v", *nullSk.ExpiresAt)
+	}
+}
+
+// Real wire payload with a past expiry, decoded then synced, must be rejected.
+func TestSyncedExpiredKey_DecodeToReject(t *testing.T) {
+	const rawKey = "sk-agentcc-synced-expired"
+	payload := `{"id":"ck_exp","name":"c","key_hash":"` + HashKey(rawKey) +
+		`","expires_at":"2000-01-01T00:00:00Z"}`
+
+	var sk SyncedKey
+	if err := json.Unmarshal([]byte(payload), &sk); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	ks := syncKeyStore()
+	ks.SyncFromHashes([]SyncedKey{sk})
+
+	if got := ks.Authenticate(rawKey); got != nil {
+		t.Fatal("expected expired synced key (decoded from wire) to be rejected")
+	}
+}
+
+func TestSyncFromHashes_ExpiredKeyRejected(t *testing.T) {
+	const rawKey = "sk-agentcc-synced-expired-2"
+	past := time.Now().Add(-1 * time.Hour)
+
+	ks := syncKeyStore()
+	ks.SyncFromHashes([]SyncedKey{{
+		ID:        "ck_expired",
+		Name:      "contractor",
+		KeyHash:   HashKey(rawKey),
+		ExpiresAt: &past,
+	}})
+
+	if k := ks.Get("ck_expired"); k == nil || k.ExpiresAt == nil {
+		t.Fatal("expected synced key to carry ExpiresAt")
+	}
+	if got := ks.Authenticate(rawKey); got != nil {
+		t.Fatal("expected expired synced key to be rejected")
+	}
+}
+
+func TestSyncFromHashes_FutureExpiryAccepted(t *testing.T) {
+	const rawKey = "sk-agentcc-synced-future"
+	future := time.Now().Add(1 * time.Hour)
+
+	ks := syncKeyStore()
+	ks.SyncFromHashes([]SyncedKey{{
+		ID:        "ck_future",
+		Name:      "valid",
+		KeyHash:   HashKey(rawKey),
+		ExpiresAt: &future,
+	}})
+
+	if got := ks.Authenticate(rawKey); got == nil {
+		t.Fatal("expected synced key with future expiry to authenticate")
+	}
+}
+
+func TestSyncFromHashes_NilExpiryNeverExpires(t *testing.T) {
+	const rawKey = "sk-agentcc-synced-noexpiry"
+
+	ks := syncKeyStore()
+	ks.SyncFromHashes([]SyncedKey{{
+		ID:      "ck_noexpiry",
+		Name:    "perpetual",
+		KeyHash: HashKey(rawKey),
+		// ExpiresAt nil — must remain non-expiring.
+	}})
+
+	k := ks.Get("ck_noexpiry")
+	if k == nil || k.ExpiresAt != nil {
+		t.Fatal("expected nil ExpiresAt on synced key")
+	}
+	if got := ks.Authenticate(rawKey); got == nil {
+		t.Fatal("expected non-expiring synced key to authenticate")
+	}
+}
+
+func TestLoadFromHashes_PropagatesExpiry(t *testing.T) {
+	const rawKey = "sk-agentcc-loaded-expired"
+	past := time.Now().Add(-1 * time.Hour)
+
+	ks := syncKeyStore()
+	ks.LoadFromHashes([]SyncedKey{{
+		ID:        "ck_loaded",
+		Name:      "loaded",
+		KeyHash:   HashKey(rawKey),
+		ExpiresAt: &past,
+	}})
+
+	if got := ks.Authenticate(rawKey); got != nil {
+		t.Fatal("expected expired key loaded via LoadFromHashes to be rejected")
 	}
 }
 

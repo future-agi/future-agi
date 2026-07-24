@@ -880,14 +880,15 @@ const TracingTestMode = React.forwardRef(
       });
     }, [variables, fieldNames]);
 
-    // Mapping is always required; a sample row only when not using data injection.
+    // With data injection the trace/session context supplies the values, so
+    // mapping is optional; otherwise require all variables mapped + a sample row.
     useEffect(() => {
       if (!onReadyChange) return;
       const allMapped =
         variables.length === 0 ||
         variables.every((v) => mapping[v] && String(mapping[v]).length > 0);
       const hasRow = !!currentRow;
-      const ready = hasDataInjection ? allMapped : allMapped && hasRow;
+      const ready = hasDataInjection || (allMapped && hasRow);
       onReadyChange(ready, mapping);
     }, [variables, mapping, currentRow, hasDataInjection, onReadyChange]);
 

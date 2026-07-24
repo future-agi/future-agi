@@ -1,5 +1,49 @@
 export const DEFAULT_DECIMALS = 2;
 
+const toAxisPayload = ({ prefixSuffix, outOfBounds, ...axis } = {}) => ({
+  ...axis,
+  ...(prefixSuffix !== undefined && { prefix_suffix: prefixSuffix }),
+  ...(outOfBounds !== undefined && { out_of_bounds: outOfBounds }),
+});
+
+const fromAxisPayload = ({ prefix_suffix, out_of_bounds, ...axis } = {}) => ({
+  ...axis,
+  ...(prefix_suffix !== undefined && { prefixSuffix: prefix_suffix }),
+  ...(out_of_bounds !== undefined && { outOfBounds: out_of_bounds }),
+});
+
+export const toAxisConfigPayload = ({
+  leftY,
+  rightY,
+  xAxis,
+  seriesAxis,
+  ...config
+} = {}) => ({
+  ...config,
+  ...(leftY !== undefined && { left_y: toAxisPayload(leftY) }),
+  ...(rightY !== undefined && { right_y: toAxisPayload(rightY) }),
+  ...(xAxis !== undefined && { x_axis: xAxis }),
+  ...(seriesAxis !== undefined && { series_axis: seriesAxis }),
+});
+
+export const fromAxisConfigPayload = ({
+  left_y,
+  leftY,
+  right_y,
+  rightY,
+  x_axis,
+  xAxis,
+  series_axis,
+  seriesAxis,
+  ...config
+} = {}) => ({
+  ...config,
+  leftY: fromAxisPayload(left_y ?? leftY),
+  rightY: fromAxisPayload(right_y ?? rightY),
+  xAxis: x_axis ?? xAxis ?? {},
+  seriesAxis: series_axis ?? seriesAxis ?? {},
+});
+
 export const escapeHtml = (str) => {
   if (typeof str !== "string") return str;
   return str
