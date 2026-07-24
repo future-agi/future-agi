@@ -95,6 +95,7 @@ x-backend-env: &backend-env
   DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-}
   SERVER_EMAIL: ${SERVER_EMAIL:-}
   CODE_EXECUTOR_URL: http://code-executor:8060
+  CODE_EXECUTOR_INTERNAL_API_KEY: ${CODE_EXECUTOR_INTERNAL_API_KEY:-}
   SERVING_URL: http://serving:8080
 
   # Database — point Django's pgbouncer-aware config at postgres directly.
@@ -281,7 +282,10 @@ services:
   code-executor:
     image: futureagi/code-executor:${CODE_EXECUTOR_VERSION:-latest}
     ports:
-      - "${CODE_EXECUTOR_PORT:-8060}:8060"
+      # Bind to loopback — only the host (backend/worker) should reach the executor.
+      - "127.0.0.1:${CODE_EXECUTOR_PORT:-8060}:8060"
+    environment:
+      CODE_EXECUTOR_INTERNAL_API_KEY: ${CODE_EXECUTOR_INTERNAL_API_KEY:-}
     privileged: true
     deploy:
       resources:

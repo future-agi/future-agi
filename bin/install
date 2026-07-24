@@ -291,6 +291,7 @@ rotate_placeholder PG_PASSWORD
 rotate_placeholder MINIO_ROOT_PASSWORD
 rotate_placeholder AGENTCC_INTERNAL_API_KEY
 rotate_placeholder AGENTCC_ADMIN_TOKEN
+rotate_placeholder CODE_EXECUTOR_INTERNAL_API_KEY
 
 # S3_SECRET_KEY must match MINIO_ROOT_PASSWORD (S3 client speaks to MinIO).
 if (( ROTATE_OK == 1 )) && grep -Eq "^S3_SECRET_KEY=CHANGEME-" .env; then
