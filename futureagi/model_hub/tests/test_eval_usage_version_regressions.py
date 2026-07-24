@@ -12,6 +12,8 @@ import uuid
 
 import pytest
 
+pytest.importorskip("ee.usage.models.usage")
+
 
 def _load_migration():
     """Import the migration module (numeric prefix requires importlib)."""

@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip("ee.usage.services.config")
+
 # Break the tracer.utils.eval ↔ model_hub.tasks import cycle for test-time
 # imports — see test_eval_task_runtime.py for the rationale.
 import model_hub.tasks  # noqa: F401

@@ -6,6 +6,9 @@ runtime response validation never fires unexpectedly.
 import uuid
 
 import pytest
+
+pytest.importorskip("ee.usage.models.usage")
+
 from accounts.models.workspace import Workspace
 from ee.usage.models.usage import APICallLog, APICallStatusChoices
 from model_hub.models.choices import OwnerChoices, SourceChoices

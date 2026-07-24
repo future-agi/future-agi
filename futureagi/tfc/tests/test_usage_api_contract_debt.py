@@ -4,6 +4,11 @@ from pathlib import Path
 import pytest
 from rest_framework import status
 
+# Every test here hits a ``/usage/*`` route or the usage swagger contract,
+# both of which are only wired when ``has_ee("ee.usage")`` — skip the whole
+# file in OSS mode where those routes don't exist and would 404.
+pytest.importorskip("ee.usage.models.usage")
+
 
 def _repo_root():
     return Path(__file__).resolve().parents[3]
