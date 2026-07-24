@@ -216,7 +216,7 @@ export const formatValueWithConfig = (
 // Stable identity for a chart series: metric id + aggregation + raw bucket
 // name. Survives metric renames and series reordering, unlike the display label.
 export const makeSeriesKey = (metric, bucketName) =>
-  `${metric.id}|${metric.aggregation}|${bucketName}`;
+  `${metric?.id ?? ""}|${metric?.aggregation ?? ""}|${bucketName ?? ""}`;
 
 // Resolve a saved key list to the current series' indices. null => all visible.
 export const resolveVisibleSeries = (savedKeys, series) => {
