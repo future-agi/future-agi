@@ -40,7 +40,7 @@ const getSessionGridThemeParams = (theme) => ({
   rowHoverColor: "rgba(120,87,252,0.04)",
 });
 
-const DATASET_ROWS_LIMIT = 30;
+const DATASET_ROWS_LIMIT = 25;
 
 const LoadingHeader = () => {
   return <Skeleton variant="text" width={100} height={20} />;
@@ -480,7 +480,7 @@ const SessionGrid = React.forwardRef(
                 pagination={false}
                 cacheBlockSize={DATASET_ROWS_LIMIT}
                 maxBlocksInCache={5}
-                rowBuffer={10}
+                rowBuffer={5}
                 suppressServerSideFullWidthLoadingRow={true}
                 serverSideInitialRowCount={DATASET_ROWS_LIMIT}
                 defaultColDef={defaultColDef}
