@@ -952,48 +952,11 @@ def test_add_huggingface_rows_sets_columns_and_appends_after_max_order(
     assert queued_row_orders == {11, 12}
 
 
-@pytest.mark.django_db
-def test_create_synthetic_dataset_sets_workspace_and_does_not_charge_invalid_request(
-    auth_client, workspace, monkeypatch
-):
-    _allow_synthetic_entitlement(monkeypatch)
-    usage_calls = _patch_usage(
-        monkeypatch,
-        "model_hub.views.datasets.create.synthetic",
-    )
-    queued_tasks = []
-    monkeypatch.setattr(
-        "model_hub.views.datasets.create.synthetic.create_synthetic_dataset.delay",
-        lambda *args, **kwargs: queued_tasks.append((args, kwargs)),
-    )
-
-    invalid_response = auth_client.post(
-        "/model-hub/develops/create-synthetic-dataset/",
-        _synthetic_create_payload("Invalid Synthetic Dataset", num_rows=9),
-        format="json",
-    )
-
-    assert invalid_response.status_code == status.HTTP_400_BAD_REQUEST
-    assert usage_calls == []
-    assert queued_tasks == []
-
-    response = auth_client.post(
-        "/model-hub/develops/create-synthetic-dataset/",
-        _synthetic_create_payload("Workspace Synthetic Dataset"),
-        format="json",
-    )
-
-    assert response.status_code == status.HTTP_200_OK
-    dataset_id = response.json()["result"]["data"]["id"]
-    dataset = Dataset.no_workspace_objects.get(id=dataset_id)
-    assert dataset.workspace_id == workspace.id
-    assert dataset.synthetic_dataset_config["dataset"]["name"] == dataset.name
-    assert Row.no_workspace_objects.filter(dataset=dataset, deleted=False).count() == 10
-    assert (
-        Column.no_workspace_objects.filter(dataset=dataset, deleted=False).count() == 1
-    )
-    assert len(usage_calls) == 2
-    assert queued_tasks
+# NOTE: ``test_create_synthetic_dataset_sets_workspace_and_does_not_charge
+# _invalid_request`` was moved to
+# ``ee/agenthub/synthetic_data_agent/tests/test_synthetic_dataset_creation.py``
+# because it exercises the EE-only ``SyntheticDataAgent`` end-to-end. See
+# the ee-repo companion PR under TH-7128.
 
 
 @pytest.mark.django_db

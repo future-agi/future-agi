@@ -195,87 +195,57 @@ class DynamicColumnsBaseTestCase(APITestCase):
 class TestExtractJsonColumnView(DynamicColumnsBaseTestCase):
     """Tests for ExtractJsonColumnView."""
 
-    def test_extract_json_missing_column_id(self):
-        """Test that missing column_id returns bad request."""
-        dataset, _, _ = self.create_test_dataset()
-        url = reverse("extract_json_column", kwargs={"dataset_id": str(dataset.id)})
+    def test_extract_json_bad_payload_variants(self):
+        """All bad-payload paths for extract_json_column return 400.
 
-        response = self.client.post(
-            url,
-            data={"json_key": "name", "new_column_name": "Extracted Name"},
-            format="json",
-        )
-
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-
-    def test_extract_json_missing_json_key(self):
-        """Test that missing json_key returns bad request."""
+        Uses ``subTest`` so each variant is reported independently on failure
+        while sharing the dataset/columns setup once.
+        """
         dataset, columns, _ = self.create_test_dataset()
         url = reverse("extract_json_column", kwargs={"dataset_id": str(dataset.id)})
+        column_id = str(columns[0].id)
+        existing_name = columns[0].name
 
-        response = self.client.post(
-            url,
-            data={
-                "column_id": str(columns[0].id),
-                "new_column_name": "Extracted Name",
-            },
-            format="json",
-        )
-
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-
-    def test_extract_json_column_name_exists(self):
-        """Test that duplicate column name returns bad request."""
-        dataset, columns, _ = self.create_test_dataset()
-        url = reverse("extract_json_column", kwargs={"dataset_id": str(dataset.id)})
-
-        response = self.client.post(
-            url,
-            data={
-                "column_id": str(columns[0].id),
-                "json_key": "name",
-                "new_column_name": columns[0].name,  # Same name as existing column
-            },
-            format="json",
-        )
-
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-
-    def test_extract_json_invalid_concurrency(self):
-        """Test that invalid concurrency value returns bad request."""
-        dataset, columns, _ = self.create_test_dataset()
-        url = reverse("extract_json_column", kwargs={"dataset_id": str(dataset.id)})
-
-        response = self.client.post(
-            url,
-            data={
-                "column_id": str(columns[0].id),
-                "json_key": "name",
-                "new_column_name": "Extracted Name",
-                "concurrency": -1,
-            },
-            format="json",
-        )
-
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-
-    def test_extract_json_invalid_concurrency_string(self):
-        """Test that non-integer concurrency returns bad request."""
-        dataset, columns, _ = self.create_test_dataset()
-        url = reverse("extract_json_column", kwargs={"dataset_id": str(dataset.id)})
-
-        response = self.client.post(
-            url,
-            data={
-                "column_id": str(columns[0].id),
-                "json_key": "name",
-                "new_column_name": "Extracted Name",
-                "concurrency": "invalid",
-            },
-            format="json",
-        )
-
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        variants = [
+            (
+                "missing_column_id",
+                {"json_key": "name", "new_column_name": "Extracted Name"},
+            ),
+            (
+                "missing_json_key",
+                {"column_id": column_id, "new_column_name": "Extracted Name"},
+            ),
+            (
+                "column_name_exists",
+                {
+                    "column_id": column_id,
+                    "json_key": "name",
+                    "new_column_name": existing_name,
+                },
+            ),
+            (
+                "invalid_concurrency_negative",
+                {
+                    "column_id": column_id,
+                    "json_key": "name",
+                    "new_column_name": "Extracted Name",
+                    "concurrency": -1,
+                },
+            ),
+            (
+                "invalid_concurrency_string",
+                {
+                    "column_id": column_id,
+                    "json_key": "name",
+                    "new_column_name": "Extracted Name",
+                    "concurrency": "invalid",
+                },
+            ),
+        ]
+        for name, payload in variants:
+            with self.subTest(variant=name):
+                response = self.client.post(url, data=payload, format="json")
+                assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     @patch("model_hub.views.dynamic_columns.extract_json_async.delay")
     def test_extract_json_success(self, mock_task):
@@ -699,78 +669,31 @@ def main(**kwargs):
 class TestExecutePythonCodeViewSecurity(DynamicColumnsBaseTestCase):
     """Security tests for ExecutePythonCodeView."""
 
-    def test_dangerous_import_os(self):
-        """Test that import os is blocked."""
+    def test_dangerous_constructs_blocked(self):
+        """Dangerous Python constructs (imports, eval, exec, open) must be blocked.
+
+        Uses ``subTest`` so each construct is reported independently on failure
+        while sharing the (expensive) dataset setup once.
+        """
         view = ExecutePythonCodeView()
-        dataset, _, rows = self.create_test_dataset()
+        _, _, rows = self.create_test_dataset()
 
-        result, error_info = view._execute_python_code(
-            rows[0], "import os\ndef main(**kwargs): return os.getcwd()"
-        )
-
-        assert "Dangerous pattern" in result
-        assert error_info is not None
-
-    def test_dangerous_import_sys(self):
-        """Test that import sys is blocked."""
-        view = ExecutePythonCodeView()
-        dataset, _, rows = self.create_test_dataset()
-
-        result, error_info = view._execute_python_code(
-            rows[0], "import sys\ndef main(**kwargs): return sys.path"
-        )
-
-        assert "Dangerous pattern" in result
-        assert error_info is not None
-
-    def test_dangerous_import_subprocess(self):
-        """Test that import subprocess is blocked."""
-        view = ExecutePythonCodeView()
-        dataset, _, rows = self.create_test_dataset()
-
-        result, error_info = view._execute_python_code(
-            rows[0],
-            "import subprocess\ndef main(**kwargs): return subprocess.run(['ls'])",
-        )
-
-        assert "Dangerous pattern" in result
-        assert error_info is not None
-
-    def test_dangerous_eval_call(self):
-        """Test that eval() is blocked."""
-        view = ExecutePythonCodeView()
-        dataset, _, rows = self.create_test_dataset()
-
-        result, error_info = view._execute_python_code(
-            rows[0], "def main(**kwargs): return eval('1+1')"
-        )
-
-        assert "Dangerous pattern" in result
-        assert error_info is not None
-
-    def test_dangerous_exec_call(self):
-        """Test that exec() is blocked."""
-        view = ExecutePythonCodeView()
-        dataset, _, rows = self.create_test_dataset()
-
-        result, error_info = view._execute_python_code(
-            rows[0], "def main(**kwargs): exec('x=1'); return x"
-        )
-
-        assert "Dangerous pattern" in result
-        assert error_info is not None
-
-    def test_dangerous_open_call(self):
-        """Test that open() is blocked."""
-        view = ExecutePythonCodeView()
-        dataset, _, rows = self.create_test_dataset()
-
-        result, error_info = view._execute_python_code(
-            rows[0], "def main(**kwargs): return open('/etc/passwd').read()"
-        )
-
-        assert "Dangerous pattern" in result
-        assert error_info is not None
+        dangerous = [
+            ("import_os", "import os\ndef main(**kwargs): return os.getcwd()"),
+            ("import_sys", "import sys\ndef main(**kwargs): return sys.path"),
+            (
+                "import_subprocess",
+                "import subprocess\ndef main(**kwargs): return subprocess.run(['ls'])",
+            ),
+            ("eval_call", "def main(**kwargs): return eval('1+1')"),
+            ("exec_call", "def main(**kwargs): exec('x=1'); return x"),
+            ("open_call", "def main(**kwargs): return open('/etc/passwd').read()"),
+        ]
+        for name, code in dangerous:
+            with self.subTest(construct=name):
+                result, error_info = view._execute_python_code(rows[0], code)
+                assert "Dangerous pattern" in result
+                assert error_info is not None
 
     @pytest.mark.skip(reason="API deprecated for security reasons")
     def test_safe_code_with_os_in_string(self):

@@ -23,78 +23,88 @@ from model_hub.services.dataset_validators import (
 class TestValidateAndConvertCellValue:
     """Tests for validate_and_convert_cell_value()."""
 
-    def test_empty_string_returns_none(self):
-        result, error = validate_and_convert_cell_value("", "text")
-        assert result is None
-        assert error is None
+    # ──────────────────────────────────────────────────────────────────
+    # Cases where result == expected exactly (or is None) and error is
+    # either None or contains a specific substring.
+    #
+    #   (value, cell_type, expected_result, expected_error_substring)
+    #
+    # expected_error_substring None → assert error is None
+    # ──────────────────────────────────────────────────────────────────
+    @pytest.mark.parametrize(
+        "value,cell_type,expected_result,expected_error_substring",
+        [
+            # Empty / None passthrough
+            ("",   "text", None, None),
+            ("   ","text", None, None),
+            (None, "text", None, None),
+            # Text
+            ("hello world", "text", "hello world", None),
+            ("x" * MAX_CELL_VALUE_LENGTH, "text", "x" * MAX_CELL_VALUE_LENGTH, None),
+            ("x" * (MAX_CELL_VALUE_LENGTH + 1), "text", None, "maximum length"),
+            # Boolean
+            ("true",  "boolean", "true",  None),
+            ("false", "boolean", "false", None),
+            ("maybe", "boolean", None, "Invalid boolean"),
+            # Integer
+            ("42",           "integer", "42", None),
+            ("42.7",         "integer", "42", None),
+            ("not_a_number", "integer", None, "Invalid integer"),
+            # Float
+            ("3.14", "float", "3.14", None),
+            ("abc",  "float", None, "Invalid float"),
+            # Datetime — invalid path only; valid variant kept separate below
+            # because the return format is not a byte-for-byte string.
+            ("not-a-date", "datetime", None, "Invalid datetime"),
+            # Array
+            ("[1, 2, 3]",   "array", "[1, 2, 3]", None),
+            ("not an array","array", None, "not valid JSON array"),
+            # Repair variant kept separate below — asserts a repaired result.
+            # JSON invalid path
+            ("not json", "json", None, "not valid JSON"),
+            # Media types are read-only from the dashboard
+            ("some_url", "image",    None, "Cannot update"),
+            ("some_url", "audio",    None, "Cannot update"),
+            ("some_url", "document", None, "Cannot update"),
+            # Unknown type falls through
+            ("some value", "unknown_type", "some value", None),
+        ],
+        ids=[
+            "empty_string_returns_none",
+            "whitespace_only_returns_none",
+            "none_value_returns_none",
+            "text_type_passthrough",
+            "max_length_at_boundary",
+            "max_length_exceeded",
+            "boolean_true",
+            "boolean_false",
+            "boolean_invalid",
+            "integer_valid",
+            "integer_from_float",
+            "integer_invalid",
+            "float_valid",
+            "float_invalid",
+            "datetime_invalid",
+            "array_valid",
+            "array_invalid_string",
+            "json_invalid_string",
+            "image_type_blocked",
+            "audio_type_blocked",
+            "document_type_blocked",
+            "unknown_type_passthrough",
+        ],
+    )
+    def test_validate_and_convert(
+        self, value, cell_type, expected_result, expected_error_substring
+    ):
+        result, error = validate_and_convert_cell_value(value, cell_type)
+        assert result == expected_result
+        if expected_error_substring is None:
+            assert error is None
+        else:
+            assert expected_error_substring in (error or "")
 
-    def test_whitespace_only_returns_none(self):
-        result, error = validate_and_convert_cell_value("   ", "text")
-        assert result is None
-        assert error is None
-
-    def test_none_value_returns_none(self):
-        result, error = validate_and_convert_cell_value(None, "text")
-        assert result is None
-        assert error is None
-
-    def test_text_type_passthrough(self):
-        result, error = validate_and_convert_cell_value("hello world", "text")
-        assert result == "hello world"
-        assert error is None
-
-    def test_max_length_exceeded(self):
-        long_value = "x" * (MAX_CELL_VALUE_LENGTH + 1)
-        result, error = validate_and_convert_cell_value(long_value, "text")
-        assert result is None
-        assert "maximum length" in error
-
-    def test_max_length_at_boundary(self):
-        value = "x" * MAX_CELL_VALUE_LENGTH
-        result, error = validate_and_convert_cell_value(value, "text")
-        assert result == value
-        assert error is None
-
-    def test_boolean_true(self):
-        result, error = validate_and_convert_cell_value("true", "boolean")
-        assert result == "true"
-        assert error is None
-
-    def test_boolean_false(self):
-        result, error = validate_and_convert_cell_value("false", "boolean")
-        assert result == "false"
-        assert error is None
-
-    def test_boolean_invalid(self):
-        result, error = validate_and_convert_cell_value("maybe", "boolean")
-        assert result is None
-        assert "Invalid boolean" in error
-
-    def test_integer_valid(self):
-        result, error = validate_and_convert_cell_value("42", "integer")
-        assert result == "42"
-        assert error is None
-
-    def test_integer_from_float(self):
-        result, error = validate_and_convert_cell_value("42.7", "integer")
-        assert result == "42"
-        assert error is None
-
-    def test_integer_invalid(self):
-        result, error = validate_and_convert_cell_value("not_a_number", "integer")
-        assert result is None
-        assert "Invalid integer" in error
-
-    def test_float_valid(self):
-        result, error = validate_and_convert_cell_value("3.14", "float")
-        assert result == "3.14"
-        assert error is None
-
-    def test_float_invalid(self):
-        result, error = validate_and_convert_cell_value("abc", "float")
-        assert result is None
-        assert "Invalid float" in error
-
+    # ─── Tests kept separate because result isn't a fixed string ────────
     def test_datetime_valid_iso(self):
         result, error = validate_and_convert_cell_value(
             "2024-01-15 10:30:00", "datetime"
@@ -102,61 +112,30 @@ class TestValidateAndConvertCellValue:
         assert error is None
         assert result is not None
 
-    def test_datetime_invalid(self):
-        result, error = validate_and_convert_cell_value("not-a-date", "datetime")
-        assert result is None
-        assert "Invalid datetime" in error
-
-    def test_array_valid(self):
-        result, error = validate_and_convert_cell_value("[1, 2, 3]", "array")
-        assert error is None
-        assert result == "[1, 2, 3]"
-
-    def test_array_invalid_string(self):
-        result, error = validate_and_convert_cell_value("not an array", "array")
-        assert result is None
-        assert "not valid JSON array" in error
-
-    def test_array_invalid_json(self):
-        result, error = validate_and_convert_cell_value("[1, 2,", "array")
-        assert error is None
-        assert result == "[1, 2]"
-
     def test_json_valid(self):
         result, error = validate_and_convert_cell_value('{"key": "value"}', "json")
         assert error is None
         assert '"key"' in result
 
-    def test_json_invalid_string(self):
-        result, error = validate_and_convert_cell_value("not json", "json")
-        assert result is None
-        assert "not valid JSON" in error
+    def test_array_invalid_json(self):
+        # `parse_json_safely` invokes `json_repair` on structurally-broken
+        # arrays like `"[1, 2,"` and returns the repaired list.
+        result, error = validate_and_convert_cell_value("[1, 2,", "array")
+        assert error is None
+        assert result == "[1, 2]"
 
     def test_json_malformed_repaired(self):
+        # `json_repair` also fixes malformed JSON objects missing a value
+        # after the key.
         result, error = validate_and_convert_cell_value('{"key":', "json")
         assert error is None
         assert '"key"' in result
 
-    def test_image_type_blocked(self):
-        result, error = validate_and_convert_cell_value("some_url", "image")
-        assert result is None
-        assert "Cannot update" in error
+    def test_image_type_blocked_mentions_dashboard(self):
+        # image case gets an extra substring check the shared harness above
+        # doesn't cover.
+        _, error = validate_and_convert_cell_value("some_url", "image")
         assert "dashboard UI" in error
-
-    def test_audio_type_blocked(self):
-        result, error = validate_and_convert_cell_value("some_url", "audio")
-        assert result is None
-        assert "Cannot update" in error
-
-    def test_document_type_blocked(self):
-        result, error = validate_and_convert_cell_value("some_url", "document")
-        assert result is None
-        assert "Cannot update" in error
-
-    def test_unknown_type_passthrough(self):
-        result, error = validate_and_convert_cell_value("some value", "unknown_type")
-        assert result == "some value"
-        assert error is None
 
 
 class TestValidateColumnIsEditable:
@@ -186,52 +165,46 @@ class TestValidateColumnIsEditable:
 class TestValidateNumRows:
     """Tests for validate_num_rows()."""
 
-    def test_valid_num_rows(self):
-        result, error = validate_num_rows(5)
-        assert result == 5
-        assert error is None
-
-    def test_min_boundary(self):
-        result, error = validate_num_rows(1)
-        assert result == 1
-        assert error is None
-
-    def test_zero_invalid(self):
-        result, error = validate_num_rows(0)
-        assert result is None
-        assert "at least 1" in error
-
-    def test_negative_invalid(self):
-        result, error = validate_num_rows(-5)
-        assert result is None
-        assert "at least 1" in error
-
-    def test_exceeds_max(self):
-        result, error = validate_num_rows(MAX_EMPTY_ROWS_PER_REQUEST + 1)
-        assert result is None
-        assert "cannot exceed" in error
-
-    def test_max_boundary(self):
-        result, error = validate_num_rows(
-            MAX_EMPTY_ROWS_PER_REQUEST, max_allowed=MAX_EMPTY_ROWS_PER_REQUEST
-        )
-        assert result == MAX_EMPTY_ROWS_PER_REQUEST
-        assert error is None
-
-    def test_string_input(self):
-        result, error = validate_num_rows("10")
-        assert result == 10
-        assert error is None
-
-    def test_invalid_string(self):
-        result, error = validate_num_rows("abc")
-        assert result is None
-        assert "valid integer" in error
-
-    def test_custom_max(self):
-        result, error = validate_num_rows(15, max_allowed=10)
-        assert result is None
-        assert "cannot exceed 10" in error
+    @pytest.mark.parametrize(
+        "value,max_allowed,expected_result,expected_error_substring",
+        [
+            (5, None, 5, None),
+            (1, None, 1, None),
+            (0, None, None, "at least 1"),
+            (-5, None, None, "at least 1"),
+            (MAX_EMPTY_ROWS_PER_REQUEST + 1, None, None, "cannot exceed"),
+            (
+                MAX_EMPTY_ROWS_PER_REQUEST,
+                MAX_EMPTY_ROWS_PER_REQUEST,
+                MAX_EMPTY_ROWS_PER_REQUEST,
+                None,
+            ),
+            ("10", None, 10, None),
+            ("abc", None, None, "valid integer"),
+            (15, 10, None, "cannot exceed 10"),
+        ],
+        ids=[
+            "valid_num_rows",
+            "min_boundary",
+            "zero_invalid",
+            "negative_invalid",
+            "exceeds_max",
+            "max_boundary",
+            "string_input",
+            "invalid_string",
+            "custom_max",
+        ],
+    )
+    def test_validate_num_rows(
+        self, value, max_allowed, expected_result, expected_error_substring
+    ):
+        kwargs = {"max_allowed": max_allowed} if max_allowed is not None else {}
+        result, error = validate_num_rows(value, **kwargs)
+        assert result == expected_result
+        if expected_error_substring is None:
+            assert error is None
+        else:
+            assert expected_error_substring in error
 
 
 class TestValidateRowIdsOrSelectAll:

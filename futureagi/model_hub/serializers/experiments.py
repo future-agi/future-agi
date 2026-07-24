@@ -16,6 +16,11 @@ from model_hub.models.experiments import (
     ExperimentPromptConfig,
     ExperimentsTable,
 )
+from model_hub.utils.workspace_scope import (
+    scoped_column_queryset,
+    scoped_dataset_queryset,
+    scoped_user_eval_metric_queryset,
+)
 from tfc.middleware.workspace_context import get_current_organization
 
 
@@ -40,6 +45,18 @@ class ExperimentsTableSerializer(serializers.ModelSerializer):
             "column_id",
         ]
         read_only_fields = ["id", "status"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request") if self.context else None
+        self.fields["dataset_id"].queryset = scoped_dataset_queryset(request)
+        self.fields["column_id"].queryset = scoped_column_queryset(request)
+        # `user_eval_template_ids` is many=True — the per-pk lookup runs on
+        # the child_relation, so scope both to keep workspace isolation
+        # honest (see develop_optimisation.py for the same pattern).
+        scoped_metrics = scoped_user_eval_metric_queryset(request)
+        self.fields["user_eval_template_ids"].queryset = scoped_metrics
+        self.fields["user_eval_template_ids"].child_relation.queryset = scoped_metrics
 
     def validate_prompt_config(self, value):
         # Add any specific validation for prompt_config if needed

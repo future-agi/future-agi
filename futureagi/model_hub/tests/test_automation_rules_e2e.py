@@ -159,7 +159,8 @@ def _allow_automation_rule_entitlements_if_available():
         entitlements_available = (
             importlib.util.find_spec("ee.usage.services.entitlements") is not None
         )
-    except ModuleNotFoundError:
+    except (ModuleNotFoundError, ValueError):
+        # ValueError: OSS stub has __spec__=None; see test_annotation_advanced_api.py.
         entitlements_available = False
 
     if entitlements_available:
