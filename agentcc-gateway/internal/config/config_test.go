@@ -73,6 +73,26 @@ func TestValidate(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "mirror rule unknown target provider",
+			modify: func(c *Config) {
+				c.Providers["p1"] = ProviderConfig{BaseURL: "http://localhost", APIFormat: "openai"}
+				c.Routing.Mirror.Rules = []MirrorRule{
+					{SourceModel: "gpt-4o", TargetProvider: "nonexistent", SampleRate: 1.0},
+				}
+			},
+			wantErr: true,
+		},
+		{
+			name: "mirror rule valid target provider",
+			modify: func(c *Config) {
+				c.Providers["p1"] = ProviderConfig{BaseURL: "http://localhost", APIFormat: "openai"}
+				c.Routing.Mirror.Rules = []MirrorRule{
+					{SourceModel: "gpt-4o", TargetProvider: "p1", SampleRate: 1.0},
+				}
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
