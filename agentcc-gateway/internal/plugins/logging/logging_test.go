@@ -141,6 +141,38 @@ func TestPlugin_ProcessRequest_Noop(t *testing.T) {
 	}
 }
 
+func TestProcessResponse_RedactionMetadataStaysWithRecord(t *testing.T) {
+	emitter := &TraceEmitter{ch: make(chan TraceRecord, 1)}
+	p := &Plugin{
+		cfg: config.RequestLoggingConfig{
+			Enabled:       true,
+			IncludeBodies: true,
+		},
+		emitter:  emitter,
+		redactor: privacy.New(privacy.ModeFull, nil),
+	}
+
+	rc := newRC()
+	rc.Request = &models.ChatCompletionRequest{
+		Messages: []models.Message{
+			{Role: "user", Content: json.RawMessage(`"secret"`)},
+		},
+	}
+
+	result := p.ProcessResponse(context.Background(), rc)
+	if result.Action != pipeline.Continue {
+		t.Fatalf("ProcessResponse Action = %v, want Continue", result.Action)
+	}
+
+	record := <-emitter.ch
+	if got := record.Metadata["privacy_redacted"]; got != "true" {
+		t.Errorf("record privacy_redacted = %q, want %q", got, "true")
+	}
+	if _, ok := rc.Metadata["privacy_redacted"]; ok {
+		t.Error("ProcessResponse mutated shared request metadata")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Record construction
 // ---------------------------------------------------------------------------
