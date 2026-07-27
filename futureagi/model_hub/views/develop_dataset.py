@@ -15503,6 +15503,7 @@ class GetKnowledgeBaseDetailsView(APIView):
                 }
 
                 if sort_config:
+                    sort_data = data
                     for sort_item in sort_config:
                         try:
                             column_id = sort_item.get("column_id")
@@ -15690,6 +15691,7 @@ class ExistingKnowledgeBaseView(APIView):
             }
 
             if sort_config:
+                sort_data = data
                 for sort_item in sort_config:
                     try:
                         column_id = sort_item.get("column_id")

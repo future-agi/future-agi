@@ -57954,7 +57954,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "organization": {
           "title": "Organization",
           "type": "string",
-          "format": "uuid"
+          "format": "uuid",
+          "readOnly": true
         },
         "created_at": {
           "title": "Created at",

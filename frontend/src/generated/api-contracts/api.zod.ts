@@ -22405,8 +22405,7 @@ export const modelHubKbCreateBodyChunkSizeMax = 2147483647;
 export const ModelHubKbCreateBody = zod.object({
   "name": zod.string().min(1).max(modelHubKbCreateBodyNameMax),
   "embedding_model": zod.enum(['BAAI/bge-small-en-v1.5']).optional(),
-  "chunk_size": zod.number().min(modelHubKbCreateBodyChunkSizeMin).max(modelHubKbCreateBodyChunkSizeMax),
-  "organization": zod.string().uuid().optional()
+  "chunk_size": zod.number().min(modelHubKbCreateBodyChunkSizeMin).max(modelHubKbCreateBodyChunkSizeMax)
 })
 
 

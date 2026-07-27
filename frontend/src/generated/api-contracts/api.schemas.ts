@@ -11785,7 +11785,7 @@ export interface KnowledgeBaseCreateApi {
      * @maximum 2147483647
      */
   chunk_size: number;
-  organization?: string;
+  readonly organization?: string;
   readonly created_at?: string;
   readonly updated_at?: string;
 }
