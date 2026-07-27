@@ -79,8 +79,18 @@ def seeded_keys(db, user, organization):
 
 @pytest.fixture
 def other_org_user(db):
-    """Create a user in a different organization for IDOR tests."""
+    """A full **owner** of a different organization, for IDOR tests.
+
+    The role must be ``OrganizationRoles.OWNER`` ("Owner") and backed by an
+    active OrganizationMembership. With a lowercase "owner" and no membership,
+    ``delete_secret_key`` rejects on its owner-role gate *before* reaching the
+    org-scoped query — so the cross-org tests would pass even with the tenant
+    filter removed, proving nothing.
+    """
     from accounts.models import Organization, User
+    from accounts.models.organization_membership import OrganizationMembership
+    from tfc.constants.levels import Level
+    from tfc.constants.roles import OrganizationRoles
 
     other_org = Organization.objects.create(
         name="Other Test Org",
@@ -90,7 +100,16 @@ def other_org_user(db):
         password="testpassword123",
         name="Other Org User",
         organization=other_org,
-        organization_role="owner",
+        organization_role=OrganizationRoles.OWNER,
+    )
+    OrganizationMembership.no_workspace_objects.get_or_create(
+        user=other_user,
+        organization=other_org,
+        defaults={
+            "role": OrganizationRoles.OWNER,
+            "level": Level.OWNER,
+            "is_active": True,
+        },
     )
     return other_user
 
@@ -665,23 +684,34 @@ class TestEnableDisableKeyStates:
 class TestDeleteKeyPermissions:
     """Tests for delete key permissions (owner-only)."""
 
-    def test_delete_key_as_member_fails(self, member_client, auth_client):
-        """Member (non-owner) cannot delete keys."""
-        # First create a key as owner
+    def test_delete_key_as_member_fails(self, mocker, member_client, auth_client):
+        """Member (non-owner) cannot delete keys — and the key survives.
+
+        The status code alone would pass even if the view rejected the caller
+        *after* soft-deleting the row, so assert the row and the revocation
+        side effect too.
+        """
+        from accounts.models.user import OrgApiKey
+
         create_response = auth_client.post(
             "/accounts/key/generate_secret_key/",
             {"key_name": "Key To Delete By Member"},
             format="json",
         )
         key_id = create_response.json().get("result", {}).get("key_id")
+        revoke = mocker.patch("accounts.views.keys._publish_key_revocation")
 
-        # Try to delete as member
         response = member_client.delete(
             "/accounts/key/delete_secret_key/",
             {"key_id": str(key_id)},
             format="json",
         )
+
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        revoke.assert_not_called()
+        key = OrgApiKey.all_objects.get(id=key_id)
+        assert key.deleted is False
+        assert key.deleted_at is None
 
     def test_delete_key_missing_key_id(self, auth_client):
         """Delete key without key_id fails."""
@@ -701,38 +731,71 @@ class TestCrossOrganizationSecurity:
     def test_cannot_enable_other_org_key(
         self, other_org_client, auth_client, created_key
     ):
-        """Cannot enable key from another organization."""
+        """Cannot enable another org's key — and the key stays disabled.
+
+        The key is disabled by its owner first so the assertion has something
+        to prove: if the tenant filter regressed, ``enabled`` would flip to True.
+        """
+        from accounts.models.user import OrgApiKey
+
+        disabled = auth_client.post(
+            "/accounts/key/disable_key/", {"key_id": str(created_key)}, format="json"
+        )
+        assert disabled.status_code == status.HTTP_200_OK
+        assert OrgApiKey.all_objects.get(id=created_key).enabled is False
+
         response = other_org_client.post(
             "/accounts/key/enable_key/",
             {"key_id": str(created_key)},
             format="json",
         )
-        # Should fail - key doesn't exist for this org
+
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert OrgApiKey.all_objects.get(id=created_key).enabled is False
 
     def test_cannot_disable_other_org_key(
         self, other_org_client, auth_client, created_key
     ):
-        """Cannot disable key from another organization."""
+        """Cannot disable another org's key — and the key stays enabled."""
+        from accounts.models.user import OrgApiKey
+
+        assert OrgApiKey.all_objects.get(id=created_key).enabled is True
+
         response = other_org_client.post(
             "/accounts/key/disable_key/",
             {"key_id": str(created_key)},
             format="json",
         )
-        # Should fail - key doesn't exist for this org
+
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert OrgApiKey.all_objects.get(id=created_key).enabled is True
 
     def test_cannot_delete_other_org_key(
-        self, other_org_client, auth_client, created_key
+        self, mocker, other_org_client, auth_client, created_key
     ):
-        """Cannot delete key from another organization."""
+        """Cannot delete another org's key — the row survives and no revocation fires.
+
+        ``delete_secret_key`` soft-deletes and then publishes a revocation for
+        the key material. A tenant-filter regression would leak both.
+        """
+        from accounts.models.user import OrgApiKey
+
+        revoke = mocker.patch("accounts.views.keys._publish_key_revocation")
+
         response = other_org_client.delete(
             "/accounts/key/delete_secret_key/",
             {"key_id": str(created_key)},
             format="json",
         )
-        # Should fail - key doesn't exist for this org
+
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        # The tenant filter must be what rejects this, not the owner-role gate
+        # that runs before it — otherwise the test proves nothing about IDOR.
+        assert "No keys are associated" in response.json()["detail"]
+        revoke.assert_not_called()
+        key = OrgApiKey.all_objects.get(id=created_key)
+        assert key.deleted is False
+        assert key.deleted_at is None
 
     def test_get_secret_keys_only_returns_own_org_keys(
         self, other_org_client, auth_client, created_key
