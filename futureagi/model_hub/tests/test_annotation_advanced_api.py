@@ -54,7 +54,8 @@ def allow_advanced_api_entitlements():
             entitlements_available = (
                 importlib.util.find_spec("ee.usage.services.entitlements") is not None
             )
-        except ModuleNotFoundError:
+        except (ModuleNotFoundError, ValueError):
+            # ValueError: OSS stub in root conftest has __spec__=None; matches tfc/ee_loader.py::has_ee.
             entitlements_available = False
         if entitlements_available:
             stack.enter_context(

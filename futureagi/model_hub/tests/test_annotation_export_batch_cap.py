@@ -9,6 +9,8 @@ and resolving the whole queue synchronously.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
+from unittest import mock
 
 import pytest
 from django.db import connection
@@ -38,7 +40,8 @@ from model_hub.utils.annotation_queue_helpers import (
     dataset_cells_by_row,
     resolve_source_content,
 )
-from tracer.models.project import Project
+from tracer.models.project import Project, ProjectSourceChoices
+from tracer.services.clickhouse.v2.span_reader import CHSpan
 
 EXPORT_URL = "/model-hub/annotation-queues/{queue_id}/export/"
 
@@ -265,3 +268,153 @@ def test_resolve_source_content_uses_cell_cache_then_falls_back(
         "col_1": "r0c1",
         "col_2": "r0c2",
     }
+
+
+def _make_root_chspan(*, project_id, trace_id):
+    """A parentless voice (conversation) root CHSpan for a collector trace."""
+    return CHSpan(
+        id=f"ch-span-{uuid.uuid4().hex[:12]}",
+        project_id=str(project_id),
+        trace_id=str(trace_id),
+        parent_span_id="",
+        name="voice call root",
+        observation_type="conversation",
+        operation_name="voice_call",
+        start_time=datetime(2025, 5, 1, 10, 0, 0, tzinfo=UTC),
+        end_time=datetime(2025, 5, 1, 10, 0, 2, tzinfo=UTC),
+        latency_ms=2000,
+        model=None,
+        provider="vapi",
+        prompt_tokens=0,
+        completion_tokens=0,
+        total_tokens=0,
+        cost=0.0,
+        status="OK",
+        status_message="",
+        org_id=None,
+        project_version_id=None,
+        end_user_id=None,
+        trace_session_id=None,
+        prompt_version_id=None,
+        prompt_label_id=None,
+        custom_eval_config_id=None,
+        input='{"messages": []}',
+        output='{"role": "assistant", "content": "hi"}',
+        tags="[]",
+        span_events="[]",
+        metadata="{}",
+        resource_attrs="{}",
+        attributes_extra="{}",
+        attrs_string={},
+        attrs_number={},
+        attrs_bool={},
+    )
+
+
+class _TraceRootsReaderCM:
+    """Stub ``get_reader()`` returning one parentless root per requested trace."""
+
+    def __init__(self, roots_by_tid):
+        self._roots = roots_by_tid
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def roots_by_trace_ids(
+        self, trace_ids, *, include_heavy=False, project_id=None, org_id=None
+    ):
+        return [self._roots[str(t)] for t in trace_ids if str(t) in self._roots]
+
+
+def _build_trace_queue(*, organization, workspace, user, n_items):
+    """Seed a queue of ``n_items`` voice trace items in a simulator-source (voice)
+    project. Returns the queue and a ``{trace_id: root CHSpan}`` map for the CH
+    reader stub."""
+    project = Project.objects.create(
+        name=f"export voice project {uuid.uuid4().hex[:8]}",
+        organization=organization,
+        workspace=workspace,
+        model_type="GenerativeLLM",
+        trace_type="observe",
+        source=ProjectSourceChoices.SIMULATOR.value,
+    )
+    label = AnnotationsLabels.objects.create(
+        name=f"export label {uuid.uuid4().hex[:8]}",
+        type="star",
+        settings={"no_of_stars": 5},
+        organization=organization,
+        workspace=workspace,
+    )
+    queue = AnnotationQueue.objects.create(
+        name=f"export voice queue {uuid.uuid4().hex[:8]}",
+        status=AnnotationQueueStatusChoices.ACTIVE.value,
+        organization=organization,
+        workspace=workspace,
+        project=project,
+        created_by=user,
+    )
+    AnnotationQueueLabel.objects.create(queue=queue, label=label, order=0)
+    AnnotationQueueAnnotator.objects.update_or_create(
+        queue=queue,
+        user=user,
+        deleted=False,
+        defaults={
+            "role": AnnotatorRole.MANAGER.value,
+            "roles": FULL_ACCESS_QUEUE_ROLES,
+        },
+    )
+    roots = {}
+    for order in range(n_items):
+        trace_id = str(uuid.uuid4())
+        roots[trace_id] = _make_root_chspan(project_id=project.id, trace_id=trace_id)
+        QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.TRACE.value,
+            trace_id=trace_id,
+            organization=organization,
+            workspace=workspace,
+            project=project,
+            status=QueueItemStatus.PENDING.value,
+            order=order,
+        )
+    return {"queue": queue, "roots": roots}
+
+
+def _project_point_reads(captured):
+    """Per-item point reads of the project table — the N+1 the export must avoid. A
+    ``select_related('project')`` keeps project in the items query's JOIN; without
+    it Django emits one ``FROM "tracer_project"`` point read per item."""
+    return [q for q in captured.captured_queries if 'FROM "tracer_project"' in q["sql"]]
+
+
+@pytest.mark.django_db
+def test_export_trace_items_no_project_n_plus_one(
+    auth_client, organization, workspace, user
+):
+    """Sync export of voice trace items resolves ``project_source`` off the
+    ``select_related('project')`` the items query already joins — never a per-item
+    project read. FAILS if any export queryset drops ``select_related('project')``
+    (the N+1 the helper-level guard can't see)."""
+    seed = _build_trace_queue(
+        organization=organization, workspace=workspace, user=user, n_items=5
+    )
+    reader = _TraceRootsReaderCM(seed["roots"])
+    with mock.patch(
+        "tracer.services.clickhouse.v2.get_reader", return_value=reader
+    ), CaptureQueriesContext(connection) as cap:
+        resp = auth_client.get(
+            EXPORT_URL.format(queue_id=seed["queue"].id) + "?export_format=json"
+        )
+
+    assert resp.status_code == status.HTTP_200_OK, resp.data
+    result = _unwrap(resp.data)
+    assert len(result) == 5
+    # The voice signal made it into the export column for every item ...
+    assert all(row["source"].get("project_source") == "simulator" for row in result)
+    # ... resolved with no per-item project read (would be 5+ if select_related is
+    # dropped from the export queryset).
+    point_reads = _project_point_reads(cap)
+    assert len(point_reads) <= 1, [q["sql"] for q in point_reads]

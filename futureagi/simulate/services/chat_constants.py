@@ -21,7 +21,7 @@ CHAT_SIMULATION_PROVIDER = os.getenv("CHAT_SIMULATION_PROVIDER", "futureagi")
 # Future AGI Chat Configuration (sourced from ModelConfigs.CHAT_SIMULATOR)
 # =============================================================================
 
-_chat_sim_config = ModelConfigs.CLAUDE_4_5_SONNET_BEDROCK_ARN
+_chat_sim_config = ModelConfigs.VERTEX_GEMINI_2_5_PRO
 
 FUTUREAGI_CHAT_MODEL = _chat_sim_config.model_name
 FUTUREAGI_CHAT_TEMPERATURE = _chat_sim_config.temperature

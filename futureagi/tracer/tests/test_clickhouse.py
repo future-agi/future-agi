@@ -6873,14 +6873,13 @@ class TestVoiceCallListPhase1bMigration:
             "_list_voice_calls_clickhouse references the legacy CDC mirror; "
             "the Phase 1b query must read from the v2 `spans` table."
         )
-        # Narrow the `_peerdb_is_deleted` ban to the Phase 1b block, found
-        # by anchoring on the unique `attributes_extra AS span_attributes`
-        # projection and slicing forward to the next `analytics.execute_ch_query`
-        # call. Anything inside that slice belongs to the Phase 1b query.
-        anchor = "attributes_extra AS span_attributes"
+        # Narrow the `_peerdb_is_deleted` ban to the Phase 1b block, found by
+        # anchoring on the unique `AS span_attributes` projection and slicing
+        # forward. Anything inside that slice belongs to the Phase 1b query.
+        anchor = "AS span_attributes"
         assert anchor in src, (
-            "Phase 1b query no longer projects `attributes_extra AS "
-            "span_attributes`; this regression test needs a new anchor."
+            "Phase 1b query no longer projects `span_attributes`; "
+            "this regression test needs a new anchor."
         )
         start = src.index(anchor)
         phase_1b_block = src[start : start + 600]
@@ -6890,16 +6889,38 @@ class TestVoiceCallListPhase1bMigration:
         )
 
     def test_phase_1b_reads_v2_spans_table(self):
-        """The Phase 1b hydration must select from v2 `spans` with FINAL."""
+        """Phase 1b must read v2 `spans` FINAL with the skip-index setting.
+
+        `FROM spans FINAL` dedupes ReplacingMergeTree versions; bare `FINAL`
+        disables the `idx_id` skip index and full-scans the table (~194M rows),
+        so it MUST be paired with `use_skip_indexes_if_final = 1` (the
+        CHSpanReader idiom) to prune the scan.
+        """
         import re
 
         src = self._voice_list_source()
-        # `FROM spans FINAL` collapses ReplacingMergeTree duplicates — the
-        # v2 dedup contract. FINAL alone (without `spans`) is too permissive.
+        # Reads the v2 `spans FINAL` (not the legacy `tracer_observation_span`).
         assert re.search(
             r"FROM\s+spans\s+FINAL", src
         ), "_list_voice_calls_clickhouse must hydrate from v2 `spans FINAL`."
-        assert "is_deleted = 0" in src
+        # FINAL without the setting full-scans; the setting re-enables idx_id.
+        assert "use_skip_indexes_if_final = 1" in src, (
+            "Phase 1b `FINAL` must set `use_skip_indexes_if_final = 1`, else it "
+            "disables the idx_id skip index and full-scans `spans`."
+        )
+        # The Phase-1b block must NOT carry `is_deleted = 0`: with the skip-index
+        # setting it prunes tombstone granules before the FINAL merge and
+        # resurrects deleted spans (the two-arg ReplacingMergeTree engine already
+        # drops tombstones under FINAL). See `_FINAL_SKIP_INDEX_SETTINGS`. Slice
+        # the block so the page/count queries — which legitimately keep
+        # `is_deleted = 0` — don't trip this.
+        start = src.index("AS span_attributes")
+        phase_1b_block = src[start : start + 400]
+        assert "is_deleted = 0" not in phase_1b_block, (
+            "Phase 1b must NOT pair `is_deleted = 0` with "
+            "`use_skip_indexes_if_final = 1` — resurrection bug "
+            "(see _FINAL_SKIP_INDEX_SETTINGS)."
+        )
 
     def test_phase_1b_selects_typed_map_columns_for_reconstruction(self):
         """The Phase 1b query must SELECT the typed Maps + attributes_extra.
@@ -6910,10 +6931,13 @@ class TestVoiceCallListPhase1bMigration:
         `span_attributes` because nothing fell into the overflow tier.
         """
         src = self._voice_list_source()
-        assert "attributes_extra AS span_attributes" in src
-        assert "attrs_string" in src
-        assert "attrs_number" in src
-        assert "attrs_bool" in src
+        # Pin fragments unique to the SQL SELECT (not the docstring/comment or the
+        # Python fallback `arow.get("attrs_string")`), so dropping a Map from the
+        # query actually fails this test.
+        assert "AS span_attributes" in src  # attributes_extra rebuild alias
+        assert "AS attrs_string" in src  # mapFilter alias
+        assert "attrs_number, attrs_bool" in src  # SELECT column-list tail
+        assert "attributes_extra" in src  # the rebuild reads the overflow column
 
     def test_phase_1b_python_fallback_merges_typed_maps(self):
         """Python-side: when `attributes_extra` is empty, fall back to Maps.
@@ -6929,6 +6953,37 @@ class TestVoiceCallListPhase1bMigration:
         assert 'arow.get("attrs_bool")' in src
         # Bool values get cast to Python bool (CH UInt8 → 0/1 otherwise).
         assert "bool(v)" in src
+
+    def test_phase_1b_scopes_by_project_and_drops_call_logs(self):
+        """Phase 1b must scope by `project_id` and drop `call_logs` from BOTH cols.
+
+        `project_id` in the WHERE lets the primary key prune the page's parts.
+        `call_logs` (avg ~900 KiB/row) is detail-only bloat the FE never reads,
+        and it lands in `attrs_string` (collector) OR `attributes_extra`
+        (backfill) — so it's stripped from both at read: `mapFilter` on the Map
+        and a `JSONExtractKeysAndValuesRaw` rebuild on the JSON overflow.
+        `raw_log` is kept: process_raw_logs still needs it.
+        """
+        src = self._voice_list_source()
+        assert "project_id = %(project_id)s" in src, (
+            "Phase 1b must scope by project_id so the primary key can prune."
+        )
+        # attrs_string Map strip.
+        assert "mapFilter" in src and "call_logs" in src, (
+            "Phase 1b must exclude `call_logs` from attrs_string at read time."
+        )
+        # attributes_extra JSON-overflow strip (backfill cohort).
+        assert "JSONExtractKeysAndValuesRaw" in src, (
+            "Phase 1b must also strip `call_logs` from attributes_extra so the "
+            "backfill cohort doesn't ship the blob CH->backend."
+        )
+
+    def test_voice_call_list_strips_heavy_payload_keys(self):
+        """`call_logs`/`raw_log` are detail-only — never in list rows."""
+        from tracer.views.trace import TraceView
+
+        assert "call_logs" in TraceView._VOICE_CALL_HEAVY_KEYS
+        assert "raw_log" in TraceView._VOICE_CALL_HEAVY_KEYS
 
 
 @pytest.mark.unit

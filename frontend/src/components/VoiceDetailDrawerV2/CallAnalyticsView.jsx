@@ -12,6 +12,7 @@ import {
 import Iconify from "src/components/iconify";
 import { fmtMs } from "src/utils/utils";
 import { computeCallMetrics, enrichTurns } from "./transcriptUtils";
+import { fmtWpm } from "./formatters";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Formatting helpers
@@ -119,11 +120,6 @@ KpiCell.propTypes = {
   value: PropTypes.node.isRequired,
   hint: PropTypes.string,
   tone: PropTypes.oneOf(["default", "success", "warn", "danger"]),
-};
-
-const fmtWpm = (n) => {
-  if (n == null || !Number.isFinite(n)) return "—";
-  return String(n);
 };
 
 const KpiStrip = ({ metrics, apiMetrics }) => {

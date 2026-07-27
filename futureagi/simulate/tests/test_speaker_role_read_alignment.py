@@ -120,6 +120,24 @@ class TestGetRecordingsSwap:
         assert rec["assistant"] == "https://cdn/tested_agent.mp3"
         assert rec["customer"] == "https://cdn/simulator.mp3"
 
+    def test_vapi_normalized_recordings_are_available_to_eval_preview(self):
+        obj = _vapi_outbound_call()
+        obj.recording_url = None
+        obj.stereo_recording_url = None
+        obj.provider_call_data["vapi"]["recording"] = {
+            "combined": "https://s3/combined.mp3",
+            "customer": "https://s3/customer.mp3",
+            "assistant": "https://s3/assistant.mp3",
+            "stereo": "https://s3/stereo.mp3",
+        }
+
+        assert self._get_recordings(obj) == {
+            "combined": "https://s3/combined.mp3",
+            "stereo": "https://s3/stereo.mp3",
+            "customer": "https://s3/customer.mp3",
+            "assistant": "https://s3/assistant.mp3",
+        }
+
     def test_livekit_passthrough(self):
         obj = _livekit_inbound_call(
             recordings={
@@ -240,6 +258,32 @@ class TestEvalTranscriptLabels:
                 "user", provider=ProviderChoices.VAPI, is_outbound=True
             )
             == "customer"
+        )
+
+    def test_bland_outbound_labels_are_direct(self):
+        # Bland is a customer-only OUTBOUND provider, so the tested agent is on
+        # `assistant` (same convention as VAPI outbound).
+        assert (
+            SpeakerRoleResolver.get_eval_role_label(
+                "assistant", provider=ProviderChoices.BLAND, is_outbound=True
+            )
+            == "agent"
+        )
+        assert (
+            SpeakerRoleResolver.get_eval_role_label(
+                "user", provider=ProviderChoices.BLAND, is_outbound=True
+            )
+            == "customer"
+        )
+
+    def test_bland_map_is_independent_of_vapi(self):
+        # Its own dict, not an alias — a future Bland payload change is edited on
+        # the Bland map without silently affecting VAPI.
+        assert (
+            SpeakerRoleResolver._BLAND_OUTBOUND is not SpeakerRoleResolver._VAPI_OUTBOUND
+        )
+        assert (
+            SpeakerRoleResolver._BLAND_INBOUND is not SpeakerRoleResolver._VAPI_INBOUND
         )
 
     def test_system_role_is_never_conversational(self):

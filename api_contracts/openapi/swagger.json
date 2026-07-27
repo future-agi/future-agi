@@ -111006,12 +111006,13 @@
                 },
                 "provider": {
                     "title": "Provider",
-                    "description": "Voice provider. One of: vapi, retell, eleven_labs, others.",
+                    "description": "Voice provider. One of: vapi, retell, eleven_labs, bland, others.",
                     "type": "string",
                     "enum": [
                         "vapi",
                         "retell",
                         "eleven_labs",
+                        "bland",
                         "others"
                     ],
                     "default": "vapi"
@@ -122939,7 +122940,8 @@
                     "type": "string",
                     "enum": [
                         "vapi",
-                        "retell"
+                        "retell",
+                        "bland"
                     ]
                 },
                 "api_key": {
@@ -122983,7 +122985,8 @@
                     "type": "string",
                     "enum": [
                         "vapi",
-                        "retell"
+                        "retell",
+                        "bland"
                     ]
                 },
                 "assistant_id": {

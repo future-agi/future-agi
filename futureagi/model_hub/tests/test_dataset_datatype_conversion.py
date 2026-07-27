@@ -104,159 +104,87 @@ class TestDatatypeConverter(APITestCase):
 
     # ============= BOOLEAN CONVERSION TESTS =============
 
-    def test_convert_to_boolean_true_values(self):
-        """Test boolean conversion for true values"""
+    def test_convert_to_boolean(self):
+        """Boolean conversion — matrix over all input variants."""
         converter = DatatypeConverter(DataTypeChoices.BOOLEAN.value)
-        true_values = [
-            "true",
-            "True",
-            "TRUE",
-            "1",
-            "yes",
-            "Yes",
-            "YES",
-            "passed",
-            "Passed",
-        ]
-
-        for value in true_values:
-            cell = self._create_cell(value)
-            result = converter._convert_single_cell(cell)
-
-            assert result.success is True, f"Failed for value: {value}"
-            assert result.new_value == BooleanChoices.TRUE.value
-            assert result.status == CellStatus.PASS.value
-
-    def test_convert_to_boolean_false_values(self):
-        """Test boolean conversion for false values"""
-        converter = DatatypeConverter(DataTypeChoices.BOOLEAN.value)
-        false_values = [
-            "false",
-            "False",
-            "FALSE",
-            "0",
-            "no",
-            "No",
-            "NO",
-            "failed",
-            "Failed",
-        ]
-
-        for value in false_values:
-            cell = self._create_cell(value)
-            result = converter._convert_single_cell(cell)
-
-            assert result.success is True, f"Failed for value: {value}"
-            assert result.new_value == BooleanChoices.FALSE.value
-            assert result.status == CellStatus.PASS.value
-
-    def test_convert_to_boolean_defaults_to_false(self):
-        """Test boolean conversion defaults to false for non-matching values"""
-        converter = DatatypeConverter(DataTypeChoices.BOOLEAN.value)
-        cell = self._create_cell("random value")
-
-        result = converter._convert_single_cell(cell)
-
-        assert result.success is True
-        assert result.new_value == BooleanChoices.FALSE.value
-        assert "Defaulted to false" in result.value_infos.get("note", "")
-
-    def test_convert_to_boolean_empty_value(self):
-        """Test boolean conversion handles empty values"""
-        converter = DatatypeConverter(DataTypeChoices.BOOLEAN.value)
-        cell = self._create_cell("")
-
-        result = converter._convert_single_cell(cell)
-
-        assert result.success is True
-        assert result.new_value == BooleanChoices.FALSE.value
+        cases = (
+            [(v, BooleanChoices.TRUE.value, False) for v in
+             ("true", "True", "TRUE", "1", "yes", "Yes", "YES", "passed", "Passed")]
+            + [(v, BooleanChoices.FALSE.value, False) for v in
+               ("false", "False", "FALSE", "0", "no", "No", "NO", "failed", "Failed")]
+            + [
+                ("random value", BooleanChoices.FALSE.value, True),  # defaults, asserts note
+                ("", BooleanChoices.FALSE.value, False),  # empty
+            ]
+        )
+        for value, expected, check_default_note in cases:
+            with self.subTest(value=value):
+                cell = self._create_cell(value)
+                result = converter._convert_single_cell(cell)
+                assert result.success is True, f"Failed for value: {value}"
+                assert result.new_value == expected
+                assert result.status == CellStatus.PASS.value
+                if check_default_note:
+                    assert "Defaulted to false" in result.value_infos.get("note", "")
 
     # ============= INTEGER CONVERSION TESTS =============
 
-    def test_convert_to_integer_valid_integers(self):
-        """Test integer conversion with valid integer values"""
+    def test_convert_to_integer(self):
+        """Integer conversion — valid, invalid, empty inputs."""
         converter = DatatypeConverter(DataTypeChoices.INTEGER.value)
-        test_cases = [
-            ("42", "42"),
-            ("0", "0"),
-            ("-100", "-100"),
-            ("42.7", "42"),  # Should truncate decimals
-            ("  123  ", "123"),  # Should handle whitespace
+        # (input, expected_success, expected_value_or_error_substring)
+        cases = [
+            ("42", True, "42"),
+            ("0", True, "0"),
+            ("-100", True, "-100"),
+            ("42.7", True, "42"),        # truncates decimals
+            ("  123  ", True, "123"),    # strips whitespace
+            ("abc", False, "Cannot convert"),
+            ("12.34.56", False, "Cannot convert"),
+            ("hello", False, "Cannot convert"),
+            ("12a", False, "Cannot convert"),
+            ("", False, "Empty value"),
         ]
-
-        for input_val, expected in test_cases:
-            cell = self._create_cell(input_val)
-            result = converter._convert_single_cell(cell)
-
-            assert result.success is True, f"Failed for value: {input_val}"
-            assert result.new_value == expected
-            assert result.status == CellStatus.PASS.value
-
-    def test_convert_to_integer_invalid_values(self):
-        """Test integer conversion fails for invalid values"""
-        converter = DatatypeConverter(DataTypeChoices.INTEGER.value)
-        invalid_values = ["abc", "12.34.56", "hello", "12a"]
-
-        for value in invalid_values:
-            cell = self._create_cell(value)
-            result = converter._convert_single_cell(cell)
-
-            assert result.success is False, f"Should fail for value: {value}"
-            assert result.status == CellStatus.ERROR.value
-            assert "Cannot convert" in result.error_message
-
-    def test_convert_to_integer_empty_value(self):
-        """Test integer conversion fails for empty values"""
-        converter = DatatypeConverter(DataTypeChoices.INTEGER.value)
-        cell = self._create_cell("")
-
-        result = converter._convert_single_cell(cell)
-
-        assert result.success is False
-        assert "Empty value" in result.error_message
+        for value, expected_success, expected in cases:
+            with self.subTest(value=value):
+                cell = self._create_cell(value)
+                result = converter._convert_single_cell(cell)
+                assert result.success is expected_success, f"Wrong success for: {value}"
+                if expected_success:
+                    assert result.new_value == expected
+                    assert result.status == CellStatus.PASS.value
+                else:
+                    assert result.status == CellStatus.ERROR.value
+                    assert expected in result.error_message
 
     # ============= FLOAT CONVERSION TESTS =============
 
-    def test_convert_to_float_valid_floats(self):
-        """Test float conversion with valid float values"""
+    def test_convert_to_float(self):
+        """Float conversion — valid, invalid, empty inputs."""
         converter = DatatypeConverter(DataTypeChoices.FLOAT.value)
-        test_cases = [
-            ("42.5", "42.5"),
-            ("0.123", "0.123"),
-            ("-100.99", "-100.99"),
-            ("42", "42"),
-            ("  3.14  ", "3.14"),
+        cases = [
+            ("42.5", True, "42.5"),
+            ("0.123", True, "0.123"),
+            ("-100.99", True, "-100.99"),
+            ("42", True, "42"),
+            ("  3.14  ", True, "3.14"),
+            ("abc", False, None),
+            ("12.34.56", False, None),
+            ("hello", False, None),
+            ("", False, "Empty value"),
         ]
-
-        for input_val, expected in test_cases:
-            cell = self._create_cell(input_val)
-            result = converter._convert_single_cell(cell)
-
-            assert result.success is True, f"Failed for value: {input_val}"
-            assert result.new_value == expected
-            assert result.status == CellStatus.PASS.value
-
-    def test_convert_to_float_invalid_values(self):
-        """Test float conversion fails for invalid values"""
-        converter = DatatypeConverter(DataTypeChoices.FLOAT.value)
-        invalid_values = ["abc", "12.34.56", "hello"]
-
-        for value in invalid_values:
-            cell = self._create_cell(value)
-            result = converter._convert_single_cell(cell)
-
-            assert result.success is False, f"Should fail for value: {value}"
-            assert result.status == CellStatus.ERROR.value
-
-    def test_convert_to_float_empty_value(self):
-        """Test float conversion fails for empty values"""
-        converter = DatatypeConverter(DataTypeChoices.FLOAT.value)
-        cell = self._create_cell("")
-
-        result = converter._convert_single_cell(cell)
-
-        assert result.success is False
-        assert "Empty value" in result.error_message
+        for value, expected_success, expected in cases:
+            with self.subTest(value=value):
+                cell = self._create_cell(value)
+                result = converter._convert_single_cell(cell)
+                assert result.success is expected_success, f"Wrong success for: {value}"
+                if expected_success:
+                    assert result.new_value == expected
+                    assert result.status == CellStatus.PASS.value
+                else:
+                    assert result.status == CellStatus.ERROR.value
+                    if expected is not None:
+                        assert expected in result.error_message
 
     # ============= DATETIME CONVERSION TESTS =============
 
@@ -314,126 +242,68 @@ class TestDatatypeConverter(APITestCase):
 
     # ============= ARRAY CONVERSION TESTS =============
 
-    def test_convert_to_array_valid_json_array(self):
-        """Test array conversion with valid JSON array"""
+    def test_convert_to_array(self):
+        """Array conversion — valid, invalid, empty, non-array inputs."""
         converter = DatatypeConverter(DataTypeChoices.ARRAY.value)
-        cell = self._create_cell("[1, 2, 3]")
-
-        result = converter._convert_single_cell(cell)
-
-        assert result.success is True
-        assert json.loads(result.new_value) == [1, 2, 3]
-
-    def test_convert_to_array_not_an_array(self):
-        """Test array conversion fails when value is not an array"""
-        converter = DatatypeConverter(DataTypeChoices.ARRAY.value)
-        cell = self._create_cell('{"key": "value"}')
-
-        result = converter._convert_single_cell(cell)
-
-        assert result.success is False
-        assert "does not look like an array" in result.error_message
-
-    def test_convert_to_array_invalid_json(self):
-        """Test array conversion fails for invalid JSON"""
-        converter = DatatypeConverter(DataTypeChoices.ARRAY.value)
-        cell = self._create_cell("[1, 2, invalid]")
-
-        result = converter._convert_single_cell(cell)
-
-        assert result.success is False
-        assert "Invalid array format" in result.error_message
-
-    def test_convert_to_array_empty_value(self):
-        """Test array conversion converts empty values to empty array"""
-        converter = DatatypeConverter(DataTypeChoices.ARRAY.value)
-        cell = self._create_cell("")
-
-        result = converter._convert_single_cell(cell)
-
-        # Empty values are converted to empty array "[]"
-        assert result.success is True
-        assert result.new_value == "[]"
-        assert result.status == CellStatus.PASS.value
-
-    def test_convert_to_array_not_starting_with_bracket(self):
-        """Test array conversion fails when value doesn't start with ["""
-        converter = DatatypeConverter(DataTypeChoices.ARRAY.value)
-        cell = self._create_cell("not an array")
-
-        result = converter._convert_single_cell(cell)
-
-        assert result.success is False
-        assert "does not look like an array" in result.error_message
+        # (input, expected_success, expected_value_or_error_substring, extra_check)
+        # extra_check: "json_equals" → json.loads(new_value) == expected
+        cases = [
+            ("[1, 2, 3]", True, [1, 2, 3], "json_equals"),
+            ('{"key": "value"}', False, "does not look like an array", None),
+            ("[1, 2, invalid]", False, "Invalid array format", None),
+            ("", True, "[]", "eq"),
+            ("not an array", False, "does not look like an array", None),
+        ]
+        for value, expected_success, expected, mode in cases:
+            with self.subTest(value=value):
+                cell = self._create_cell(value)
+                result = converter._convert_single_cell(cell)
+                assert result.success is expected_success, f"Wrong success for: {value}"
+                if expected_success:
+                    if mode == "json_equals":
+                        assert json.loads(result.new_value) == expected
+                    else:
+                        assert result.new_value == expected
+                        assert result.status == CellStatus.PASS.value
+                else:
+                    assert expected in result.error_message
 
     # ============= JSON CONVERSION TESTS =============
 
-    def test_convert_to_json_valid_json_object(self):
-        """Test JSON conversion with valid JSON object"""
+    def test_convert_to_json(self):
+        """JSON conversion — valid object/array/python-dict, empty, non-JSON."""
         converter = DatatypeConverter(DataTypeChoices.JSON.value)
-        cell = self._create_cell('{"key": "value"}')
+        # (input, expected_success, expected_value, mode)
+        cases = [
+            ('{"key": "value"}',       True,  {"key": "value"}, "json_equals"),
+            ("[1, 2, 3]",              True,  [1, 2, 3],         "json_equals"),
+            ("{'key': 'value'}",       True,  {"key": "value"}, "json_equals"),
+            ("",                       True,  "{}",              "eq"),
+        ]
+        for value, expected_success, expected, mode in cases:
+            with self.subTest(value=value):
+                cell = self._create_cell(value)
+                result = converter._convert_single_cell(cell)
+                assert result.success is expected_success, f"Wrong success for: {value}"
+                if mode == "json_equals":
+                    assert json.loads(result.new_value) == expected
+                else:
+                    assert result.new_value == expected
+                # All successful JSON conversions must land in PASS state — the
+                # original per-value tests asserted this for the array case, and
+                # the invariant applies to every successful path.
+                assert result.status == CellStatus.PASS.value
 
-        result = converter._convert_single_cell(cell)
-
-        assert result.success is True
-        assert json.loads(result.new_value) == {"key": "value"}
-
-    def test_convert_to_json_array_accepted(self):
-        """Test JSON conversion accepts arrays as valid JSON"""
-        converter = DatatypeConverter(DataTypeChoices.JSON.value)
-        cell = self._create_cell("[1, 2, 3]")
-
-        result = converter._convert_single_cell(cell)
-
-        # Arrays are now accepted as valid JSON
-        assert result.success is True
-        assert json.loads(result.new_value) == [1, 2, 3]
-        assert result.status == CellStatus.PASS.value
-
-    def test_convert_to_json_python_dict(self):
-        """Test JSON conversion with Python dict syntax"""
-        converter = DatatypeConverter(DataTypeChoices.JSON.value)
-        cell = self._create_cell("{'key': 'value'}")
-
-        result = converter._convert_single_cell(cell)
-
-        assert result.success is True
-        assert json.loads(result.new_value) == {"key": "value"}
-
-    def test_convert_to_json_invalid_format(self):
-        """Test JSON conversion behavior for non-JSON text.
-
-        Note: The converter uses json_repair which is intentionally lenient
-        and may repair invalid input. This test verifies that behavior.
-        """
-        converter = DatatypeConverter(DataTypeChoices.JSON.value)
-        cell = self._create_cell("not json at all")
-
-        result = converter._convert_single_cell(cell)
-
-        # json_repair is lenient and may convert plain text to empty string
-        # This is expected behavior - the converter tries to be helpful
-        # If it succeeds, verify the result is valid JSON
-        if result.success:
-            import json
-
-            # Should be parseable as JSON
-            json.loads(result.new_value)
-        else:
-            # If it fails, verify error message
-            assert "Cannot parse as valid JSON" in result.error_message
-
-    def test_convert_to_json_empty_value(self):
-        """Test JSON conversion converts empty values to empty object"""
-        converter = DatatypeConverter(DataTypeChoices.JSON.value)
-        cell = self._create_cell("")
-
-        result = converter._convert_single_cell(cell)
-
-        # Empty values are converted to empty object "{}"
-        assert result.success is True
-        assert result.new_value == "{}"
-        assert result.status == CellStatus.PASS.value
+        # Non-JSON text: json_repair is intentionally lenient. If it
+        # succeeds, the result must still be valid JSON; if it fails, the
+        # error message must be the standard one.
+        with self.subTest(value="not json at all"):
+            cell = self._create_cell("not json at all")
+            result = converter._convert_single_cell(cell)
+            if result.success:
+                json.loads(result.new_value)  # must parse
+            else:
+                assert "Cannot parse as valid JSON" in result.error_message
 
     # ============= IMAGE/AUDIO/DOCUMENT CONVERSION TESTS =============
 

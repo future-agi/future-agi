@@ -60,7 +60,7 @@ from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
 from model_hub.utils import annotation_queue_helpers as helpers
 from tracer.models.observation_span import ObservationSpan
-from tracer.models.project import Project
+from tracer.models.project import Project, ProjectSourceChoices
 from tracer.services.clickhouse.v2.span_reader import CHSpan
 
 CH_READER_PATH = "tracer.services.clickhouse.v2.get_reader"
@@ -1197,3 +1197,108 @@ def test_for_items_read_count_is_bounded_by_projects_not_items():
     assert {pid for _tids, pid in reader.roots_calls} == {proj_a, proj_b}
     assert all(pid is not None for _tids, pid in reader.roots_calls)
     assert all(cache.trace_root(it.trace_id) is not None for it in items)
+
+
+# ─────────────────── trace content: project_source (TH-7077) ──────────────────
+
+
+@pytest.mark.django_db
+def test_trace_content_includes_project_source(organization, workspace, user):
+    """A trace item in a voice (simulator-source) project carries ``project_source``
+    so the FE renders the voice call UI instead of the raw trace tree. FAILS on
+    revert — the CH-native cutover dropped this key and regressed voice calls."""
+    project = _make_project(organization=organization, workspace=workspace)
+    project.source = ProjectSourceChoices.SIMULATOR.value
+    project.save(update_fields=["source"])
+    trace_id = str(uuid.uuid4())
+    span = _make_chspan(project_id=project.id, trace_id=trace_id, parent_span_id="")
+    queue = _queue(
+        organization=organization, workspace=workspace, user=user, project=project
+    )
+    item = QueueItem.objects.create(
+        queue=queue,
+        source_type=QueueItemSourceType.TRACE.value,
+        trace_id=trace_id,
+        project=project,
+        organization=organization,
+        workspace=workspace,
+        status=QueueItemStatus.PENDING.value,
+    )
+
+    with mock.patch(CH_READER_PATH, return_value=_ReaderCM(span)):
+        content = helpers.resolve_source_content(item)
+
+    assert content["type"] == "trace"
+    assert content["project_source"] == ProjectSourceChoices.SIMULATOR.value
+
+
+@pytest.mark.django_db
+def test_trace_content_project_source_none_when_project_unset(
+    organization, workspace, user
+):
+    """A trace item with no denormalized project (NULL soft FK — e.g. a pre-backfill
+    row or a CH-outage add) degrades to ``project_source=None``. The lookup must
+    never raise: ``resolve_source_content`` wraps every branch in one try/except, so
+    a throw would collapse the whole item to the error sentinel."""
+    project = _make_project(organization=organization, workspace=workspace)
+    trace_id = str(uuid.uuid4())
+    span = _make_chspan(project_id=project.id, trace_id=trace_id, parent_span_id="")
+    queue = _queue(
+        organization=organization, workspace=workspace, user=user, project=project
+    )
+    item = QueueItem.objects.create(
+        queue=queue,
+        source_type=QueueItemSourceType.TRACE.value,
+        trace_id=trace_id,
+        project=None,
+        organization=organization,
+        workspace=workspace,
+        status=QueueItemStatus.PENDING.value,
+    )
+
+    with mock.patch(CH_READER_PATH, return_value=_ReaderCM(span)):
+        content = helpers.resolve_source_content(item)
+
+    assert content["type"] == "trace"
+    assert content["project_source"] is None
+
+
+@pytest.mark.django_db
+def test_project_source_uses_preloaded_relation_no_n_plus_1(
+    organization, workspace, user
+):
+    """``project_source`` reads the ``select_related('project')`` the batched
+    export/list loops already fetch — resolving many items must issue ZERO extra
+    ``tracer_project`` queries. FAILS on revert if the helper re-queries Project per
+    item (the N+1 the export path must never regress)."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    project = _make_project(organization=organization, workspace=workspace)
+    project.source = ProjectSourceChoices.SIMULATOR.value
+    project.save(update_fields=["source"])
+    queue = _queue(
+        organization=organization, workspace=workspace, user=user, project=project
+    )
+    for _ in range(5):
+        QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.TRACE.value,
+            trace_id=str(uuid.uuid4()),
+            project=project,
+            organization=organization,
+            workspace=workspace,
+            status=QueueItemStatus.PENDING.value,
+        )
+
+    # Mirror the export/list queryset: project is select_related, so the source
+    # read is a join hit already materialized, not a per-item query.
+    items = list(
+        QueueItem.objects.filter(queue=queue, deleted=False).select_related("project")
+    )
+    with CaptureQueriesContext(connection) as ctx:
+        sources = [helpers._queue_item_project_source(it) for it in items]
+
+    assert sources == [ProjectSourceChoices.SIMULATOR.value] * 5
+    project_queries = [q for q in ctx.captured_queries if "tracer_project" in q["sql"]]
+    assert not project_queries, f"N+1: {len(project_queries)} per-item project queries"

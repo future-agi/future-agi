@@ -33,6 +33,7 @@ from simulate.services.types.chat import (
     CreateAssistantResult,
     CreateSessionResult,
     GetSessionResult,
+    LLMUsage,
     SendMessageResult,
 )
 from simulate.tasks.chat_sim import (
@@ -1705,3 +1706,117 @@ class TestStoreChatMessagesWithCostDeduction:
 
         # Assert - cost deduction was NOT called
         mock_deduct_cost.assert_not_called()
+
+
+# ============================================================================
+# API-level tests: empty-persona-response gate through send_message_to_chat
+# (the orchestration the ChatSendMessageView calls) with the real
+# FutureAGIChatService engine and a mocked simulator LLM.
+# ============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestSendMessageToChatEmptyGate:
+    """When the simulator persona returns an empty message twice, the send must
+    surface as a failed call execution rather than delivering "" to the agent.
+    """
+
+    @pytest.fixture
+    def wired_call_execution(self, ongoing_call_execution, organization, workspace):
+        """An ongoing chat call wired to a real FutureAGI chat session."""
+        from simulate.models.chat_simulator import (
+            ChatSimulatorAssistant,
+            ChatSimulatorSession,
+        )
+
+        assistant = ChatSimulatorAssistant.objects.create(
+            name="Persona",
+            system_prompt="You are a customer contacting support.",
+            model="gpt-4o",
+            temperature=0.9,
+            max_tokens=800,
+            organization=organization,
+            workspace=workspace,
+        )
+        session = ChatSimulatorSession.objects.create(
+            assistant=assistant,
+            messages=[{"role": "user", "content": "Hi, I need help."}],
+            call_execution=ongoing_call_execution,
+            organization=organization,
+            workspace=workspace,
+        )
+        ongoing_call_execution.call_metadata["chat_session_id"] = str(session.id)
+        ongoing_call_execution.save(update_fields=["call_metadata"])
+        return ongoing_call_execution
+
+    def test_empty_twice_marks_call_execution_failed(
+        self, wired_call_execution, organization, workspace
+    ):
+        from simulate.services.futureagi_chat.service import FutureAGIChatService
+
+        empty = {
+            "content": "  ",
+            "has_chat_ended": False,
+            "ended_reason": None,
+            "usage": LLMUsage(),
+        }
+
+        with patch.object(
+            FutureAGIChatService, "_call_llm", side_effect=[empty, empty]
+        ):
+            with pytest.raises(Exception) as exc_info:
+                send_message_to_chat(
+                    wired_call_execution,
+                    organization,
+                    workspace,
+                    [ChatMessage(role=ChatRole.USER, content="Let me look that up.")],
+                    store_sync=True,
+                )
+
+        assert "Simulator returned an empty message twice" in str(exc_info.value)
+
+        wired_call_execution.refresh_from_db()
+        assert wired_call_execution.status == CallExecution.CallStatus.FAILED
+        assert (
+            "Simulator returned an empty message twice"
+            in wired_call_execution.ended_reason
+        )
+
+    @patch("simulate.tasks.chat_sim.store_chat_messages.apply_async")
+    def test_empty_then_nonempty_recovers(
+        self, mock_store_task, wired_call_execution, organization, workspace
+    ):
+        from simulate.services.futureagi_chat.service import FutureAGIChatService
+
+        responses = [
+            {
+                "content": "",
+                "has_chat_ended": False,
+                "ended_reason": None,
+                "usage": LLMUsage(),
+            },
+            {
+                "content": "Okay, my id is CI-789.",
+                "has_chat_ended": False,
+                "ended_reason": None,
+                "usage": LLMUsage(input_tokens=4, output_tokens=6, total_tokens=10),
+            },
+        ]
+
+        with patch.object(
+            FutureAGIChatService, "_call_llm", side_effect=responses
+        ):
+            result = send_message_to_chat(
+                wired_call_execution,
+                organization,
+                workspace,
+                [ChatMessage(role=ChatRole.USER, content="Let me look that up.")],
+            )
+
+        assert result["chat_ended"] is False
+        assert result["output_message"][0].content == "Okay, my id is CI-789."
+        mock_store_task.assert_called_once()
+
+        wired_call_execution.refresh_from_db()
+        assert wired_call_execution.status == CallExecution.CallStatus.ONGOING

@@ -113,6 +113,7 @@ except ImportError:
 from simulate.temporal.activities.xl import (
     PATH_MISSING,
     TRANSCRIPT_DOT_ALIASES,
+    assert_recording_slot_available,
     build_simulation_context_map,
     stringify_leaf,
     walk_subject_path,
@@ -4618,13 +4619,6 @@ class TestExecutor:
                     transcript_data["voice_recording"] = s3_url
                     recording_object["combined"] = s3_url
 
-                if recording_object:
-                    call_execution.provider_call_data.get(
-                        self.system_voice_provider.value
-                    )["recording"] = recording_object
-                    fields_to_update.append("provider_call_data")
-                    needs_save = True
-
             # Save the call_execution if any URLs were converted
             if needs_save:
                 call_execution.save(update_fields=fields_to_update)
@@ -4858,6 +4852,14 @@ class TestExecutor:
                         ] = StatusType.FAILED.value
                         call_execution.save(update_fields=["eval_outputs"])
                         raise ValueError(error_message)
+
+            # A recording variable that resolved empty (e.g. stereo on a
+            # combined-only provider) fails here with an actionable message
+            # instead of an opaque "No input received" from the eval engine.
+            for map_key, map_value in mapping.items():
+                assert_recording_slot_available(
+                    map_key, map_value, updated_mapping.get(map_key), transcript_data
+                )
 
             # Prepare config
             config = eval_config.config.copy() if eval_config.config else {}

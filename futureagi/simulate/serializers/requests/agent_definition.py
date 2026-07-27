@@ -440,8 +440,9 @@ class FetchAssistantRequestSerializer(serializers.Serializer):
             ProviderChoices.VAPI,
             ProviderChoices.RETELL,
             ProviderChoices.ELEVEN_LABS,
+            ProviderChoices.BLAND,
             ProviderChoices.OTHERS,
         ],
         default=ProviderChoices.VAPI,
-        help_text="Voice provider. One of: vapi, retell, eleven_labs, others.",
+        help_text="Voice provider. One of: vapi, retell, eleven_labs, bland, others.",
     )

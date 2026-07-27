@@ -43,7 +43,7 @@ import { useShallowToggleAnnotationsStore } from "../../agents/store";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
-const ROWS_LIMIT = 100;
+const ROWS_LIMIT = 25;
 
 const getSpanListColumnDefs = (col) => {
   const colId = col?.id;
@@ -659,7 +659,7 @@ const SpanGrid = React.forwardRef(
           pagination={false}
           cacheBlockSize={ROWS_LIMIT}
           maxBlocksInCache={undefined}
-          rowBuffer={10}
+          rowBuffer={5}
           rowModelType="serverSide"
           tooltipShowDelay={0}
           tooltipHideDelay={2000}

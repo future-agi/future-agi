@@ -10,7 +10,7 @@ These tests verify the complete flow including:
 - Temporal activity execution
 - Database row and cell creation
 
-Run with: pytest model_hub/tests/test_huggingface_api.py -v
+Run with: pytest model_hub/tests/test_dataset_huggingface_api.py -v
 """
 
 from unittest.mock import MagicMock, patch

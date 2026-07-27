@@ -4,11 +4,59 @@ Provides common fixtures for all test modules.
 """
 
 import sys
+import types
 from pathlib import Path
 
 _project_root = Path(__file__).parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
+
+
+def _install_ee_usage_stubs_if_missing() -> None:
+    """Stub ``ee.usage.*`` patch targets in OSS builds; ``__spec__`` stays None so ``has_ee``/``is_oss`` don't flip — callers must catch ``ValueError`` alongside ``ModuleNotFoundError`` when using ``find_spec``."""
+    if (_project_root / "ee").is_dir():
+        return
+
+    def _make(name: str) -> types.ModuleType:
+        mod = types.ModuleType(name)
+        mod.__path__ = []
+        sys.modules[name] = mod
+        if "." in name:
+            parent_name, child_name = name.rsplit(".", 1)
+            parent = sys.modules.get(parent_name)
+            if parent is not None:
+                setattr(parent, child_name, mod)
+        return mod
+
+    _make("ee")
+    _make("ee.usage")
+    _make("ee.usage.services")
+
+    entitlements = _make("ee.usage.services.entitlements")
+
+    class Entitlements:
+        @staticmethod
+        def check_feature(*args, **kwargs):
+            return types.SimpleNamespace(allowed=True, reason="")
+
+        @staticmethod
+        def can_create(*args, **kwargs):
+            return types.SimpleNamespace(allowed=True, reason="")
+
+    entitlements.Entitlements = Entitlements
+
+    metering = _make("ee.usage.services.metering")
+
+    def check_usage(*args, **kwargs):
+        return {"allowed": True}
+
+    metering.check_usage = check_usage
+
+    emitter = _make("ee.usage.services.emitter")
+    emitter.emit = lambda *args, **kwargs: None
+
+
+_install_ee_usage_stubs_if_missing()
 
 
 def pytest_configure(config):

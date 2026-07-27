@@ -104,6 +104,23 @@ def _resolve_pinned_ip(host: str) -> str:
     return resolved_ips[0]
 
 
+def assert_url_host_public(url: str) -> None:
+    """Raise SsrfBlocked unless `url`'s host resolves entirely to public IPs.
+
+    A pre-flight guard for streaming/async callers that do their own fetch and
+    only need the reject, not safe_fetch's buffered body. Because the fetch
+    re-resolves at connect time this keeps a small DNS-rebinding TOCTOU gap that
+    safe_fetch closes — acceptable when the URL is provider-returned over
+    authenticated TLS (e.g. a recording URL inside a provider's API response).
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise SsrfBlocked(f"Unsupported URL scheme: '{parsed.scheme}'.")
+    if not parsed.hostname:
+        raise SsrfBlocked("Invalid URL: missing host.")
+    _resolve_pinned_ip(parsed.hostname)  # resolves + rejects every A/AAAA record
+
+
 def _open_pinned_pool(scheme, pinned_ip, host, port, timeout):
     if scheme == "https":
         return urllib3.HTTPSConnectionPool(

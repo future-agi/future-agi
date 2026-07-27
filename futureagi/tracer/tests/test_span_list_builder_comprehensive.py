@@ -264,6 +264,13 @@ class TestBuildContentQuery:
         assert "is_deleted = 0" in sql
         assert params["content_span_ids"] == ("s1", "s2")
 
+    def test_bounds_start_time_window(self):
+        sql, params = _make_builder().build_content_query(span_ids=["s1"])
+        assert "start_time >= %(start_date)s - INTERVAL 1 DAY" in sql
+        assert "start_time < %(end_date)s + INTERVAL 1 DAY" in sql
+        assert params["start_date"] is not None
+        assert params["end_date"] is not None
+
 
 # --------------------------------------------------------------------------- #
 # build_eval_query() — Phase 2

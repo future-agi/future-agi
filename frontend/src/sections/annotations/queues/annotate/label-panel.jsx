@@ -28,6 +28,7 @@ import { alpha } from "@mui/material/styles";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import CellMarkdown from "src/sections/common/CellMarkdown";
+import { isLabelValueEmpty } from "src/sections/annotations/queues/utils/label-value";
 import { fDateTime, fToNowStrict } from "src/utils/format-time";
 import LabelInput from "./label-input";
 import AnnotationHistory from "./annotation-history";
@@ -511,19 +512,9 @@ const LabelPanel = forwardRef(function LabelPanel(
     const currentValues = valuesRef.current;
 
     // Every label must be annotated before submitting
-    const missingLabels = labels.filter((ql) => {
-      const labelId = ql.label_id;
-      const v = currentValues[labelId];
-      if (v === null || v === undefined) return true;
-      if (ql.type === "star" && !v.rating) return true;
-      if (ql.type === "categorical" && (!v.selected || v.selected.length === 0))
-        return true;
-      if (ql.type === "text" && !v.text?.trim()) return true;
-      if (ql.type === "thumbs_up_down" && !v.value) return true;
-      if (ql.type === "numeric" && (v.value === null || v.value === undefined))
-        return true;
-      return false;
-    });
+    const missingLabels = labels.filter((ql) =>
+      isLabelValueEmpty(ql.type, currentValues[ql.label_id]),
+    );
 
     if (missingLabels.length > 0) {
       const names = missingLabels.map((l) => l.name).join(", ");
@@ -565,9 +556,9 @@ const LabelPanel = forwardRef(function LabelPanel(
 
   useImperativeHandle(ref, () => ({ submit: handleSubmit }), [handleSubmit]);
 
-  const hasValues = Object.values(displayValues).some(
-    (v) => v !== null && v !== undefined && v !== "",
-  );
+  const allAnswered =
+    labels.length > 0 &&
+    labels.every((l) => !isLabelValueEmpty(l.type, displayValues[l.label_id]));
 
   // Keyboard navigation for labels (Tab/Shift+Tab + number keys + ? for help)
   useEffect(() => {
@@ -1259,7 +1250,7 @@ const LabelPanel = forwardRef(function LabelPanel(
                   },
                 }}
                 onClick={handleSubmit}
-                disabled={isPending || !hasValues}
+                disabled={isPending || !allAnswered}
                 startIcon={
                   isPending ? (
                     <CircularProgress size={16} color="inherit" />

@@ -14939,7 +14939,7 @@ export interface AgentDefinitionApi {
 }
 
 /**
- * Voice provider. One of: vapi, retell, eleven_labs, others.
+ * Voice provider. One of: vapi, retell, eleven_labs, bland, others.
  */
 export type FetchAssistantRequestApiProvider = typeof FetchAssistantRequestApiProvider[keyof typeof FetchAssistantRequestApiProvider];
 
@@ -14948,6 +14948,7 @@ export const FetchAssistantRequestApiProvider = {
   vapi: 'vapi',
   retell: 'retell',
   eleven_labs: 'eleven_labs',
+  bland: 'bland',
   others: 'others',
 } as const;
 
@@ -14957,7 +14958,7 @@ export interface FetchAssistantRequestApi {
   /** @minLength 1 */
   api_key: string;
   agent_id?: string;
-  /** Voice provider. One of: vapi, retell, eleven_labs, others. */
+  /** Voice provider. One of: vapi, retell, eleven_labs, bland, others. */
   provider?: FetchAssistantRequestApiProvider;
 }
 
@@ -19808,6 +19809,7 @@ export type VerifyApiKeyRequestApiProvider = typeof VerifyApiKeyRequestApiProvid
 export const VerifyApiKeyRequestApiProvider = {
   vapi: 'vapi',
   retell: 'retell',
+  bland: 'bland',
 } as const;
 
 export interface VerifyApiKeyRequestApi {
@@ -19828,6 +19830,7 @@ export type VerifyAssistantIdRequestApiProvider = typeof VerifyAssistantIdReques
 export const VerifyAssistantIdRequestApiProvider = {
   vapi: 'vapi',
   retell: 'retell',
+  bland: 'bland',
 } as const;
 
 export interface VerifyAssistantIdRequestApi {
