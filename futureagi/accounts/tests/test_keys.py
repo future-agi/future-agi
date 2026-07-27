@@ -4,14 +4,38 @@ API Keys Tests
 Tests for API key management endpoints.
 """
 
+import uuid
+from datetime import timedelta
+
 import pytest
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
+
+SECRET_KEYS_URL = "/accounts/key/get_secret_keys/"
+
+# Names of the rows created by the ``seeded_keys`` fixture, in ascending
+# alphabetical order. Assertions filter the response down to these so an
+# unrelated system key in the same org cannot change the expected sequence.
+SEEDED_NAMES = ["alpha-key", "mike-key", "zulu-key"]
 
 
 def _assert_unknown_field(response, field_name):
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     assert field_name in response.json()["details"]
+
+
+def _rows(response):
+    return response.json()["result"]["table"]
+
+
+def _metadata(response):
+    return response.json()["result"]["metadata"]
+
+
+def _seeded_order(response):
+    """Key names from the response, restricted to the seeded fixture rows."""
+    return [row["key_name"] for row in _rows(response) if row["key_name"] in SEEDED_NAMES]
 
 
 @pytest.fixture
@@ -23,6 +47,34 @@ def created_key(auth_client):
         format="json",
     )
     return response.json().get("result", {}).get("key_id")
+
+
+@pytest.fixture
+def seeded_keys(db, user, organization):
+    """Three ``user``-type keys with deterministic names and created_at order.
+
+    ``created_at`` is back-dated with an explicit UPDATE so ordering assertions
+    do not depend on insert timing. Returned oldest-first, which is also
+    ascending alphabetical, so name-sort and date-sort expectations differ.
+    """
+    from accounts.models.user import OrgApiKey
+
+    base = timezone.now() - timedelta(days=3)
+    keys = []
+    for index, name in enumerate(SEEDED_NAMES):
+        key = OrgApiKey.objects.create(
+            name=name,
+            api_key=f"api-{name}-{uuid.uuid4().hex[:8]}",
+            secret_key=f"secret-{name}-{uuid.uuid4().hex[:8]}",
+            organization=organization,
+            type="user",
+            user=user,
+        )
+        OrgApiKey.objects.filter(id=key.id).update(
+            created_at=base + timedelta(days=index)
+        )
+        keys.append(key)
+    return keys
 
 
 @pytest.fixture
@@ -279,32 +331,78 @@ class TestSecretKeyCustomActionsAPI:
 class TestGetSecretKeysPagination:
     """Tests for pagination in get_secret_keys endpoint."""
 
-    def test_get_secret_keys_returns_metadata(self, auth_client):
-        """Response includes pagination metadata."""
-        response = auth_client.get("/accounts/key/get_secret_keys/")
-        assert response.status_code == status.HTTP_200_OK
-        data = response.json()
-        assert "result" in data
-        result = data["result"]
-        assert "metadata" in result
-        assert "table" in result
-        metadata = result["metadata"]
-        assert "total_rows" in metadata
-        assert "total_pages" in metadata
-        assert "page_number" in metadata
-        assert "page_size" in metadata
+    def test_get_secret_keys_returns_metadata(self, auth_client, seeded_keys):
+        """Metadata reports the real row count and the defaults actually used."""
+        response = auth_client.get(SECRET_KEYS_URL)
 
-    def test_get_secret_keys_custom_page_size(self, auth_client):
-        """Can specify custom page size."""
-        response = auth_client.get("/accounts/key/get_secret_keys/?page_size=5")
         assert response.status_code == status.HTTP_200_OK
+        metadata = _metadata(response)
+        assert metadata["total_rows"] == len(_rows(response))
+        assert metadata["total_rows"] >= len(seeded_keys)
+        assert metadata["page_number"] == 0
+        assert metadata["page_size"] == 20
+        assert metadata["total_pages"] == 1
 
-    def test_get_secret_keys_page_navigation(self, auth_client):
-        """Can navigate to specific page."""
-        response = auth_client.get(
-            "/accounts/key/get_secret_keys/?page_number=0&page_size=10"
-        )
+    def test_get_secret_keys_custom_page_size(self, auth_client, seeded_keys):
+        """page_size is honoured, not just accepted."""
+        response = auth_client.get(f"{SECRET_KEYS_URL}?page_size=2")
+
         assert response.status_code == status.HTTP_200_OK
+        assert len(_rows(response)) == 2
+        assert _metadata(response)["page_size"] == 2
+
+    def test_get_secret_keys_page_navigation(self, auth_client, seeded_keys):
+        """Consecutive pages return disjoint rows that together cover the set."""
+        first = auth_client.get(f"{SECRET_KEYS_URL}?page_number=0&page_size=2")
+        second = auth_client.get(f"{SECRET_KEYS_URL}?page_number=1&page_size=2")
+
+        assert first.status_code == status.HTTP_200_OK
+        assert second.status_code == status.HTTP_200_OK
+        first_ids = {row["id"] for row in _rows(first)}
+        second_ids = {row["id"] for row in _rows(second)}
+        assert first_ids and second_ids
+        assert first_ids.isdisjoint(second_ids)
+        assert {str(key.id) for key in seeded_keys} <= (first_ids | second_ids)
+
+    def test_total_pages_uses_ceiling_not_floor(self, auth_client, seeded_keys):
+        """3 rows at page_size=2 is 2 pages, not 1."""
+        response = auth_client.get(f"{SECRET_KEYS_URL}?page_size=2")
+
+        metadata = _metadata(response)
+        assert metadata["total_rows"] == 3
+        assert metadata["total_pages"] == 2
+
+    def test_current_page_index_is_honoured_like_page_number(
+        self, auth_client, seeded_keys
+    ):
+        """The frontend sends current_page_index; the view accepts both spellings."""
+        via_alias = auth_client.get(f"{SECRET_KEYS_URL}?current_page_index=1&page_size=2")
+        via_legacy = auth_client.get(f"{SECRET_KEYS_URL}?page_number=1&page_size=2")
+
+        assert via_alias.status_code == status.HTTP_200_OK
+        assert _metadata(via_alias)["page_number"] == 1
+        assert _rows(via_alias) == _rows(via_legacy)
+
+    def test_empty_result_returns_zeroed_metadata(self, auth_client):
+        """The short-circuit branch still reports the requested page settings."""
+        response = auth_client.get(f"{SECRET_KEYS_URL}?search=no-such-key-name-12345")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert _rows(response) == []
+        metadata = _metadata(response)
+        assert metadata["total_rows"] == 0
+        assert metadata["total_pages"] == 0
+
+    @pytest.mark.parametrize(
+        "query",
+        ["page_size=abc", "current_page_index=abc", "page_number=abc"],
+        ids=["bad-page-size", "bad-current-page-index", "bad-page-number"],
+    )
+    def test_non_integer_pagination_is_rejected(self, auth_client, query):
+        """int() on a non-numeric param must surface as 400, not a 500."""
+        response = auth_client.get(f"{SECRET_KEYS_URL}?{query}")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
 
 
 @pytest.mark.integration
@@ -312,19 +410,32 @@ class TestGetSecretKeysPagination:
 class TestGetSecretKeysSearch:
     """Tests for search in get_secret_keys endpoint."""
 
-    def test_search_by_key_name(self, auth_client, created_key):
-        """Can search keys by name."""
-        response = auth_client.get("/accounts/key/get_secret_keys/?search=Fixture")
+    def test_search_returns_only_matching_keys(self, auth_client, seeded_keys):
+        """Search narrows the set — the match is present and the others are gone."""
+        response = auth_client.get(f"{SECRET_KEYS_URL}?search=alpha")
+
         assert response.status_code == status.HTTP_200_OK
+        names = [row["key_name"] for row in _rows(response)]
+        assert names == ["alpha-key"]
+        assert _metadata(response)["total_rows"] == 1
+
+    def test_search_is_case_insensitive(self, auth_client, seeded_keys):
+        """The view filters with name__icontains."""
+        response = auth_client.get(f"{SECRET_KEYS_URL}?search=ALPHA")
+
+        assert [row["key_name"] for row in _rows(response)] == ["alpha-key"]
+
+    def test_search_matches_substring_not_just_prefix(self, auth_client, seeded_keys):
+        response = auth_client.get(f"{SECRET_KEYS_URL}?search=-key")
+
+        assert sorted(_seeded_order(response)) == SEEDED_NAMES
 
     def test_search_no_results(self, auth_client):
         """Search with no matches returns empty table."""
-        response = auth_client.get(
-            "/accounts/key/get_secret_keys/?search=NonExistentKeyName12345"
-        )
+        response = auth_client.get(f"{SECRET_KEYS_URL}?search=NonExistentKeyName12345")
+
         assert response.status_code == status.HTTP_200_OK
-        result = response.json().get("result", {})
-        assert result.get("table") == [] or len(result.get("table", [])) == 0
+        assert _rows(response) == []
 
 
 @pytest.mark.integration
@@ -332,40 +443,135 @@ class TestGetSecretKeysSearch:
 class TestGetSecretKeysSorting:
     """Tests for sorting in get_secret_keys endpoint."""
 
-    def test_sort_by_key_name_asc(self, auth_client):
-        """Can sort keys by name ascending."""
-        response = auth_client.get(
-            "/accounts/key/get_secret_keys/?sort_field=keyName&sort_order=asc"
-        )
-        assert response.status_code == status.HTTP_200_OK
+    def test_sort_by_key_name_asc(self, auth_client, seeded_keys):
+        """Ascending name order is actually applied."""
+        response = auth_client.get(f"{SECRET_KEYS_URL}?sort_field=keyName&sort_order=asc")
 
-    def test_sort_by_key_name_desc(self, auth_client):
-        """Can sort keys by name descending."""
-        response = auth_client.get(
-            "/accounts/key/get_secret_keys/?sort_field=keyName&sort_order=desc"
-        )
         assert response.status_code == status.HTTP_200_OK
+        assert _seeded_order(response) == SEEDED_NAMES
 
-    def test_sort_by_created_at(self, auth_client):
-        """Can sort keys by creation date."""
+    def test_sort_by_key_name_desc(self, auth_client, seeded_keys):
+        """Descending name order is the reverse of ascending, not the same list."""
         response = auth_client.get(
-            "/accounts/key/get_secret_keys/?sort_field=createdAt&sort_order=desc"
+            f"{SECRET_KEYS_URL}?sort_field=keyName&sort_order=desc"
         )
-        assert response.status_code == status.HTTP_200_OK
 
-    def test_sort_by_created_by(self, auth_client):
-        """Can sort keys by creator name."""
-        response = auth_client.get(
-            "/accounts/key/get_secret_keys/?sort_field=createdBy&sort_order=asc"
-        )
         assert response.status_code == status.HTTP_200_OK
+        assert _seeded_order(response) == list(reversed(SEEDED_NAMES))
 
-    def test_invalid_sort_field_uses_default(self, auth_client):
-        """Invalid sort field falls back to default (created_at)."""
+    def test_sort_by_created_at_desc_returns_newest_first(
+        self, auth_client, seeded_keys
+    ):
+        """The fixture back-dates created_at, so newest-first is reverse-alphabetical."""
         response = auth_client.get(
-            "/accounts/key/get_secret_keys/?sort_field=invalidField&sort_order=desc"
+            f"{SECRET_KEYS_URL}?sort_field=createdAt&sort_order=desc"
         )
+
+        assert _seeded_order(response) == list(reversed(SEEDED_NAMES))
+
+    def test_sort_by_created_at_asc_returns_oldest_first(
+        self, auth_client, seeded_keys
+    ):
+        response = auth_client.get(
+            f"{SECRET_KEYS_URL}?sort_field=createdAt&sort_order=asc"
+        )
+
+        assert _seeded_order(response) == SEEDED_NAMES
+
+    def test_snake_case_sort_alias_matches_camel_case(self, auth_client, seeded_keys):
+        """SORT_FIELD_MAP accepts both spellings for the same column."""
+        camel = auth_client.get(f"{SECRET_KEYS_URL}?sort_field=keyName&sort_order=asc")
+        snake = auth_client.get(f"{SECRET_KEYS_URL}?sort_field=key_name&sort_order=asc")
+
+        assert _seeded_order(camel) == _seeded_order(snake) == SEEDED_NAMES
+
+    def test_sort_by_created_by(self, auth_client, seeded_keys):
+        """Sorting on the related user's name resolves without an N+1 blowup."""
+        response = auth_client.get(
+            f"{SECRET_KEYS_URL}?sort_field=createdBy&sort_order=asc"
+        )
+
         assert response.status_code == status.HTTP_200_OK
+        assert sorted(_seeded_order(response)) == SEEDED_NAMES
+
+    @pytest.mark.parametrize("sort_field", ["enabled", "type"])
+    def test_sort_by_mapped_boolean_and_choice_columns(
+        self, auth_client, seeded_keys, sort_field
+    ):
+        """Both are in SORT_FIELD_MAP but were previously unexercised."""
+        response = auth_client.get(
+            f"{SECRET_KEYS_URL}?sort_field={sort_field}&sort_order=asc"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert sorted(_seeded_order(response)) == SEEDED_NAMES
+
+    def test_invalid_sort_field_falls_back_to_created_at_desc(
+        self, auth_client, seeded_keys
+    ):
+        """An unmapped sort_field must behave exactly like the default ordering."""
+        fallback = auth_client.get(
+            f"{SECRET_KEYS_URL}?sort_field=invalidField&sort_order=desc"
+        )
+        default = auth_client.get(
+            f"{SECRET_KEYS_URL}?sort_field=createdAt&sort_order=desc"
+        )
+
+        assert fallback.status_code == status.HTTP_200_OK
+        assert _seeded_order(fallback) == _seeded_order(default)
+        assert _seeded_order(fallback) == list(reversed(SEEDED_NAMES))
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestGetSecretKeysRowContent:
+    """Row-level branches of the get_secret_keys projection."""
+
+    def test_soft_deleted_keys_are_excluded(self, auth_client, seeded_keys):
+        """The queryset filters deleted=False."""
+        removed = seeded_keys[0]
+        removed.deleted = True
+        removed.save(update_fields=["deleted"])
+
+        response = auth_client.get(SECRET_KEYS_URL)
+
+        assert removed.name not in _seeded_order(response)
+        assert sorted(_seeded_order(response)) == SEEDED_NAMES[1:]
+
+    def test_created_by_is_null_when_key_has_no_user(
+        self, auth_client, organization, seeded_keys
+    ):
+        """`key.user.name if key.user else None` — the else branch."""
+        from accounts.models.user import OrgApiKey
+
+        orphan = OrgApiKey.objects.create(
+            name="orphan-key",
+            api_key=f"api-orphan-{uuid.uuid4().hex[:8]}",
+            secret_key=f"secret-orphan-{uuid.uuid4().hex[:8]}",
+            organization=organization,
+            type="user",
+            user=None,
+        )
+
+        response = auth_client.get(f"{SECRET_KEYS_URL}?search=orphan")
+
+        rows = _rows(response)
+        assert [row["id"] for row in rows] == [str(orphan.id)]
+        assert rows[0]["created_by"] is None
+
+    def test_row_exposes_expected_fields_only(self, auth_client, seeded_keys):
+        response = auth_client.get(f"{SECRET_KEYS_URL}?search=alpha")
+
+        assert set(_rows(response)[0]) == {
+            "id",
+            "key_name",
+            "api_key",
+            "secret_key",
+            "created_by",
+            "created_at",
+            "enabled",
+            "type",
+        }
 
 
 @pytest.mark.integration
