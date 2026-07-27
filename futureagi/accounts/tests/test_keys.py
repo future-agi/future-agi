@@ -211,6 +211,28 @@ class TestSecretKeyCustomActionsAPI:
             status.HTTP_403_FORBIDDEN,
         ]
 
+    @pytest.mark.parametrize(
+        "method,path",
+        [
+            ("post", "/accounts/key/enable_key/"),
+            ("post", "/accounts/key/disable_key/"),
+            ("delete", "/accounts/key/delete_secret_key/"),
+        ],
+        ids=["enable", "disable", "delete"],
+    )
+    def test_mutating_key_routes_reject_anonymous(self, api_client, method, path):
+        """The three mutating actions had no anonymous-rejection test at all."""
+        import uuid as _uuid
+
+        response = getattr(api_client, method)(
+            path, {"key_id": str(_uuid.uuid4())}, format="json"
+        )
+
+        assert response.status_code in [
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        ]
+
     def test_generate_secret_key_rejects_unknown_request_fields(self, auth_client):
         """Key generation accepts only the documented snake_case body."""
         response = auth_client.post(
@@ -619,14 +641,21 @@ class TestGenerateSecretKeyValidation:
         assert "masked_api_key" in result
         assert "masked_secret_key" in result
 
-    def test_generate_key_duplicate_name(self, auth_client, created_key):
-        """Cannot create key with duplicate name."""
+    def test_generate_key_duplicate_name(self, auth_client, organization, created_key):
+        """Duplicate name is rejected and no second row is created."""
+        from accounts.models.user import OrgApiKey
+
         response = auth_client.post(
             "/accounts/key/generate_secret_key/",
             {"key_name": "Fixture Test Key"},  # Same name as created_key fixture
             format="json",
         )
+
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        surviving = OrgApiKey.all_objects.filter(
+            name="Fixture Test Key", organization=organization, deleted=False
+        )
+        assert [str(key.id) for key in surviving] == [str(created_key)]
 
 
 @pytest.mark.integration
@@ -635,30 +664,40 @@ class TestEnableDisableKeyStates:
     """Tests for enable/disable key state transitions."""
 
     def test_enable_already_enabled_key(self, auth_client, created_key):
-        """Enabling an already enabled key fails."""
+        """Enabling an already enabled key fails and leaves it enabled."""
+        from accounts.models.user import OrgApiKey
+
+        assert OrgApiKey.all_objects.get(id=created_key).enabled is True
+
         response = auth_client.post(
             "/accounts/key/enable_key/",
             {"key_id": str(created_key)},
             format="json",
         )
-        # Key is enabled by default, so this should fail
+
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert OrgApiKey.all_objects.get(id=created_key).enabled is True
 
     def test_disable_already_disabled_key(self, auth_client, created_key):
-        """Disabling an already disabled key fails."""
-        # First disable the key
-        auth_client.post(
+        """Disabling twice fails the second time and leaves it disabled."""
+        from accounts.models.user import OrgApiKey
+
+        first = auth_client.post(
             "/accounts/key/disable_key/",
             {"key_id": str(created_key)},
             format="json",
         )
-        # Try to disable again
+        assert first.status_code == status.HTTP_200_OK
+        assert OrgApiKey.all_objects.get(id=created_key).enabled is False
+
         response = auth_client.post(
             "/accounts/key/disable_key/",
             {"key_id": str(created_key)},
             format="json",
         )
+
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert OrgApiKey.all_objects.get(id=created_key).enabled is False
 
     def test_enable_key_missing_key_id(self, auth_client):
         """Enable key without key_id fails."""
