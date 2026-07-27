@@ -720,6 +720,40 @@ class LegacyKnowledgeBaseFilesRequestSerializer(serializers.Serializer):
     page_size = serializers.IntegerField(required=False, default=10)
 
 
+class LegacyKnowledgeBaseBulkDeleteRequestSerializer(serializers.Serializer):
+    """Body of ``DELETE /model-hub/knowledge-base/``.
+
+    Documentation-only: the view reads ``request.data`` directly and the
+    decorator is wired with ``strict_request_validation=False``, so this
+    declares the contract without changing which payloads are accepted.
+    """
+
+    kb_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, default=list
+    )
+
+
+class LegacyKnowledgeBaseFileDeleteRequestSerializer(serializers.Serializer):
+    """Body of ``DELETE /model-hub/knowledge-base/files/``.
+
+    Every field is optional because the endpoint accepts three shapes: explicit
+    ``file_ids``, explicit ``file_names``, or ``delete_all`` with optional
+    ``excluded_file_ids``. Documentation-only, as above.
+    """
+
+    kb_id = serializers.UUIDField(required=False, allow_null=True)
+    delete_all = serializers.BooleanField(required=False, default=False)
+    file_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, default=list
+    )
+    excluded_file_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, default=list
+    )
+    file_names = serializers.ListField(
+        child=serializers.CharField(), required=False, default=list
+    )
+
+
 class LegacyKnowledgeBaseSortQueryParamField(serializers.Field):
     def to_internal_value(self, data):
         if data in (None, ""):

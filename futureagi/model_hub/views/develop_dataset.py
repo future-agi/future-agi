@@ -165,7 +165,9 @@ from model_hub.serializers.contracts import (
     HuggingFaceDatasetDetailResponseSerializer,
     HuggingFaceDatasetListRequestSerializer,
     HuggingFaceDatasetListResponseSerializer,
+    LegacyKnowledgeBaseBulkDeleteRequestSerializer,
     LegacyKnowledgeBaseCreateResponseSerializer,
+    LegacyKnowledgeBaseFileDeleteRequestSerializer,
     LegacyKnowledgeBaseFilesRequestSerializer,
     LegacyKnowledgeBaseFilesResponseSerializer,
     LegacyKnowledgeBaseListResponseSerializer,
@@ -178,6 +180,7 @@ from model_hub.serializers.contracts import (
     MergeDatasetRequestSerializer,
     ModelHubEmptyRequestSerializer,
     ModelHubEvalConfigResponseSerializer,
+    ModelHubStringResultResponseSerializer,
     PreviewRunEvalRequestSerializer,
     SingleRowEvaluationRequestSerializer,
     SingleRowEvaluationResponseSerializer,
@@ -15377,6 +15380,14 @@ class CreateKnowledgeBaseView(APIView):
             )
 
     # Delete knowledge base
+    @validated_request(
+        request_serializer=LegacyKnowledgeBaseBulkDeleteRequestSerializer,
+        responses={
+            200: ModelHubStringResultResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        strict_request_validation=False,
+    )
     def delete(self, request, *args, **kwargs):
         try:
             kb_ids = request.data.get("kb_ids", [])
@@ -15796,6 +15807,14 @@ class ExistingKnowledgeBaseView(APIView):
             )
 
     # Delete files from kb
+    @validated_request(
+        request_serializer=LegacyKnowledgeBaseFileDeleteRequestSerializer,
+        responses={
+            200: ModelHubStringResultResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        strict_request_validation=False,
+    )
     def delete(self, request, *args, **kwargs):
         try:
             org = getattr(request, "organization", None) or request.user.organization

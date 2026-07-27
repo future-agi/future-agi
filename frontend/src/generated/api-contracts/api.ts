@@ -571,7 +571,9 @@ import type {
   LegacyEvalTemplateUpdateResponseApi,
   LegacyEvalTemplatesRequestApi,
   LegacyEvalTemplatesResponseApi,
+  LegacyKnowledgeBaseBulkDeleteRequestApi,
   LegacyKnowledgeBaseCreateResponseApi,
+  LegacyKnowledgeBaseFileDeleteRequestApi,
   LegacyKnowledgeBaseFilesRequestApi,
   LegacyKnowledgeBaseFilesResponseApi,
   LegacyKnowledgeBaseListResponseApi,
@@ -40995,20 +40997,45 @@ export const modelHubKnowledgeBasePartialUpdate = async (legacyKnowledgeBaseMuta
 
 
 
-export type modelHubKnowledgeBaseDeleteResponse204 = {
-  data: void
-  status: 204
+export type modelHubKnowledgeBaseDeleteResponse200 = {
+  data: ModelHubStringResultResponseApi
+  status: 200
+}
+
+export type modelHubKnowledgeBaseDeleteResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubKnowledgeBaseDeleteResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubKnowledgeBaseDeleteResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubKnowledgeBaseDeleteResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubKnowledgeBaseDeleteResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubKnowledgeBaseDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 204>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
 }
 
-export type modelHubKnowledgeBaseDeleteResponseSuccess = (modelHubKnowledgeBaseDeleteResponse204) & {
+export type modelHubKnowledgeBaseDeleteResponseSuccess = (modelHubKnowledgeBaseDeleteResponse200) & {
   headers: Headers;
 };
-export type modelHubKnowledgeBaseDeleteResponseError = (modelHubKnowledgeBaseDeleteResponseDefault) & {
+export type modelHubKnowledgeBaseDeleteResponseError = (modelHubKnowledgeBaseDeleteResponse400 | modelHubKnowledgeBaseDeleteResponse403 | modelHubKnowledgeBaseDeleteResponse404 | modelHubKnowledgeBaseDeleteResponse409 | modelHubKnowledgeBaseDeleteResponse500 | modelHubKnowledgeBaseDeleteResponseDefault) & {
   headers: Headers;
 };
 
@@ -41022,14 +41049,15 @@ export const getModelHubKnowledgeBaseDeleteUrl = () => {
   return `/model-hub/knowledge-base/`
 }
 
-export const modelHubKnowledgeBaseDelete = async ( options?: RequestInit): Promise<modelHubKnowledgeBaseDeleteResponse> => {
+export const modelHubKnowledgeBaseDelete = async (legacyKnowledgeBaseBulkDeleteRequestApi: LegacyKnowledgeBaseBulkDeleteRequestApi, options?: RequestInit): Promise<modelHubKnowledgeBaseDeleteResponse> => {
 
   return apiMutator<modelHubKnowledgeBaseDeleteResponse>(getModelHubKnowledgeBaseDeleteUrl(),
   {
     ...options,
-    method: 'DELETE'
-
-
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      legacyKnowledgeBaseBulkDeleteRequestApi,)
   }
 );}
 
@@ -41101,20 +41129,45 @@ export const modelHubKnowledgeBaseFilesCreate = async (legacyKnowledgeBaseFilesR
 
 
 
-export type modelHubKnowledgeBaseFilesDeleteResponse204 = {
-  data: void
-  status: 204
+export type modelHubKnowledgeBaseFilesDeleteResponse200 = {
+  data: ModelHubStringResultResponseApi
+  status: 200
+}
+
+export type modelHubKnowledgeBaseFilesDeleteResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubKnowledgeBaseFilesDeleteResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubKnowledgeBaseFilesDeleteResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubKnowledgeBaseFilesDeleteResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubKnowledgeBaseFilesDeleteResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubKnowledgeBaseFilesDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 204>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
 }
 
-export type modelHubKnowledgeBaseFilesDeleteResponseSuccess = (modelHubKnowledgeBaseFilesDeleteResponse204) & {
+export type modelHubKnowledgeBaseFilesDeleteResponseSuccess = (modelHubKnowledgeBaseFilesDeleteResponse200) & {
   headers: Headers;
 };
-export type modelHubKnowledgeBaseFilesDeleteResponseError = (modelHubKnowledgeBaseFilesDeleteResponseDefault) & {
+export type modelHubKnowledgeBaseFilesDeleteResponseError = (modelHubKnowledgeBaseFilesDeleteResponse400 | modelHubKnowledgeBaseFilesDeleteResponse403 | modelHubKnowledgeBaseFilesDeleteResponse404 | modelHubKnowledgeBaseFilesDeleteResponse409 | modelHubKnowledgeBaseFilesDeleteResponse500 | modelHubKnowledgeBaseFilesDeleteResponseDefault) & {
   headers: Headers;
 };
 
@@ -41128,14 +41181,15 @@ export const getModelHubKnowledgeBaseFilesDeleteUrl = () => {
   return `/model-hub/knowledge-base/files/`
 }
 
-export const modelHubKnowledgeBaseFilesDelete = async ( options?: RequestInit): Promise<modelHubKnowledgeBaseFilesDeleteResponse> => {
+export const modelHubKnowledgeBaseFilesDelete = async (legacyKnowledgeBaseFileDeleteRequestApi: LegacyKnowledgeBaseFileDeleteRequestApi, options?: RequestInit): Promise<modelHubKnowledgeBaseFilesDeleteResponse> => {
 
   return apiMutator<modelHubKnowledgeBaseFilesDeleteResponse>(getModelHubKnowledgeBaseFilesDeleteUrl(),
   {
     ...options,
-    method: 'DELETE'
-
-
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      legacyKnowledgeBaseFileDeleteRequestApi,)
   }
 );}
 
