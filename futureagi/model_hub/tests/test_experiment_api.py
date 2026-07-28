@@ -161,6 +161,21 @@ def eval_template(db, organization, workspace):
 
 
 @pytest.fixture
+def user_eval_template(db, organization, workspace):
+    from model_hub.models.choices import OwnerChoices
+
+    return EvalTemplate.objects.create(
+        name="test-user-eval-template",
+        organization=organization,
+        workspace=workspace,
+        owner=OwnerChoices.USER.value,
+        criteria="Evaluate the following: {{output}}",
+        model="gpt-4",
+        config={},
+    )
+
+
+@pytest.fixture
 def composite_eval_template(db, organization, workspace):
     child_output = EvalTemplate.objects.create(
         name="experiment-composite-child-output",
@@ -1590,6 +1605,331 @@ class TestExperimentInlineEvalMetrics:
             "output": "output_column",
             "expected": "expected_column",
         }
+
+
+@pytest.mark.django_db
+class TestExperimentEvalVersionPinning:
+    """Covers pinned_version_id handling for experiment eval create/update
+    (TH-6979): baseline re-pointing, dedup on the picked version, and
+    change-detection for a version-only switch."""
+
+    def test_apply_entry_pinned_version_baseline_sets_metric_pin(
+        self, organization, workspace, user, dataset, user_eval_template
+    ):
+        from model_hub.views.experiments import _apply_entry_pinned_version_baseline
+        from model_hub.models.evals_metric import EvalTemplateVersion, UserEvalMetric
+
+        metric = UserEvalMetric.objects.create(
+            name="pin-baseline",
+            organization=organization,
+            workspace=workspace,
+            dataset=dataset,
+            template=user_eval_template,
+            config={},
+            user=user,
+        )
+        version = EvalTemplateVersion.objects.create_version(
+            eval_template=user_eval_template,
+            config_snapshot={"model": "gpt-4"},
+            criteria="c",
+            model="gpt-4",
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+
+        _apply_entry_pinned_version_baseline(
+            {"pinned_version_id": str(version.id)}, metric
+        )
+
+        assert metric.pinned_version_id == version.id
+
+    def test_apply_entry_pinned_version_baseline_noop_without_pin(
+        self, organization, workspace, user, dataset, user_eval_template
+    ):
+        from model_hub.views.experiments import _apply_entry_pinned_version_baseline
+        from model_hub.models.evals_metric import UserEvalMetric
+
+        metric = UserEvalMetric.objects.create(
+            name="pin-baseline-noop",
+            organization=organization,
+            workspace=workspace,
+            dataset=dataset,
+            template=user_eval_template,
+            config={},
+            user=user,
+        )
+
+        _apply_entry_pinned_version_baseline({}, metric)
+
+        assert metric.pinned_version_id is None
+
+    def test_apply_entry_pinned_version_baseline_rejects_foreign_template(
+        self, organization, workspace, user, dataset, user_eval_template, eval_template
+    ):
+        from model_hub.views.experiments import _apply_entry_pinned_version_baseline
+        from model_hub.models.evals_metric import EvalTemplateVersion, UserEvalMetric
+
+        metric = UserEvalMetric.objects.create(
+            name="pin-baseline-foreign",
+            organization=organization,
+            workspace=workspace,
+            dataset=dataset,
+            template=user_eval_template,
+            config={},
+            user=user,
+        )
+        # Version belongs to a different template entirely.
+        foreign_version = EvalTemplateVersion.objects.create_version(
+            eval_template=eval_template,
+            config_snapshot={},
+            criteria="c",
+            model="gpt-4",
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+
+        with pytest.raises(ValueError, match="not found for template"):
+            _apply_entry_pinned_version_baseline(
+                {"pinned_version_id": str(foreign_version.id)}, metric
+            )
+
+    def test_pin_experiment_metric_version_dedups_against_picked_version(
+        self, organization, workspace, user, dataset, user_eval_template
+    ):
+        """Regression test for the bug where picking an older version and
+        re-saving created a brand-new version instead of reusing it — caused
+        by passing the wizard's flat config shape straight into
+        maybe_pin_new_version instead of re-nesting it as {mapping, config}.
+        """
+        from model_hub.views.experiments import (
+            _apply_entry_pinned_version_baseline,
+            _pin_experiment_metric_version,
+        )
+        from model_hub.models.evals_metric import EvalTemplateVersion, UserEvalMetric
+
+        metric = UserEvalMetric.objects.create(
+            name="pin-dedup",
+            organization=organization,
+            workspace=workspace,
+            dataset=dataset,
+            template=user_eval_template,
+            config={"mapping": {"output": "col-1"}, "rule_prompt": "v1 prompt"},
+            model="gpt-4",
+            user=user,
+        )
+        # Create v1 the same way the wizard's flat config produces it, so its
+        # config_snapshot matches what re-selecting v1 would build.
+        entry_v1 = {
+            "config": {
+                "mapping": {"output": "col-1"},
+                "rule_prompt": "v1 prompt",
+            },
+            "model": "gpt-4",
+        }
+        _pin_experiment_metric_version(metric, entry_v1, user, organization, workspace)
+        v1 = metric.pinned_version
+        assert v1 is not None
+        version_count_after_v1 = EvalTemplateVersion.objects.filter(
+            eval_template=user_eval_template
+        ).count()
+
+        # Simulate the user picking v1 back as the baseline and resaving with
+        # the exact same config (as the wizard would send on an unmodified
+        # version pick) — should dedup, not create v2.
+        entry_repick_v1 = {
+            "pinned_version_id": str(v1.id),
+            "config": {
+                "mapping": {"output": "col-1"},
+                "rule_prompt": "v1 prompt",
+            },
+            "model": "gpt-4",
+        }
+        _apply_entry_pinned_version_baseline(entry_repick_v1, metric)
+        _pin_experiment_metric_version(
+            metric, entry_repick_v1, user, organization, workspace
+        )
+
+        assert metric.pinned_version_id == v1.id
+        assert (
+            EvalTemplateVersion.objects.filter(
+                eval_template=user_eval_template
+            ).count()
+            == version_count_after_v1
+        ), "Re-picking v1 with its own config must not create a new version"
+
+    def test_pin_experiment_metric_version_creates_new_version_on_config_change(
+        self, organization, workspace, user, dataset, user_eval_template
+    ):
+        from model_hub.views.experiments import _pin_experiment_metric_version
+        from model_hub.models.evals_metric import EvalTemplateVersion, UserEvalMetric
+
+        metric = UserEvalMetric.objects.create(
+            name="pin-config-change",
+            organization=organization,
+            workspace=workspace,
+            dataset=dataset,
+            template=user_eval_template,
+            config={"mapping": {"output": "col-1"}, "rule_prompt": "v1 prompt"},
+            model="gpt-4",
+            user=user,
+        )
+        entry_v1 = {
+            "config": {"mapping": {"output": "col-1"}, "rule_prompt": "v1 prompt"},
+            "model": "gpt-4",
+        }
+        _pin_experiment_metric_version(metric, entry_v1, user, organization, workspace)
+        v1_id = metric.pinned_version_id
+
+        entry_v2 = {
+            "config": {"mapping": {"output": "col-1"}, "rule_prompt": "v2 prompt"},
+            "model": "gpt-4",
+        }
+        _pin_experiment_metric_version(metric, entry_v2, user, organization, workspace)
+
+        assert metric.pinned_version_id != v1_id
+        assert (
+            EvalTemplateVersion.objects.filter(
+                eval_template=user_eval_template
+            ).count()
+            == 2
+        )
+
+    def test_has_eval_changed_detects_version_only_switch(
+        self, organization, workspace, user, dataset, user_eval_template
+    ):
+        from model_hub.views.experiments import _has_eval_changed
+        from model_hub.models.evals_metric import EvalTemplateVersion, UserEvalMetric
+
+        version = EvalTemplateVersion.objects.create_version(
+            eval_template=user_eval_template,
+            config_snapshot={"model": "gpt-4"},
+            criteria="c",
+            model="gpt-4",
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        metric = UserEvalMetric.objects.create(
+            name="version-only-switch",
+            organization=organization,
+            workspace=workspace,
+            dataset=dataset,
+            template=user_eval_template,
+            config={"mapping": {"output": "col-1"}},
+            model="gpt-4",
+            user=user,
+        )
+
+        entry = {
+            "name": metric.name,
+            "template_id": user_eval_template.id,
+            "model": metric.model,
+            "config": {"mapping": {"output": "col-1"}},
+            "pinned_version_id": str(version.id),
+        }
+
+        assert _has_eval_changed(metric, entry, {"output": "col-1"}) is True
+
+    def test_has_eval_changed_false_when_pin_matches_current(
+        self, organization, workspace, user, dataset, user_eval_template
+    ):
+        from model_hub.views.experiments import _has_eval_changed
+        from model_hub.models.evals_metric import EvalTemplateVersion, UserEvalMetric
+
+        version = EvalTemplateVersion.objects.create_version(
+            eval_template=user_eval_template,
+            config_snapshot={"model": "gpt-4"},
+            criteria="c",
+            model="gpt-4",
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        metric = UserEvalMetric.objects.create(
+            name="version-unchanged",
+            organization=organization,
+            workspace=workspace,
+            dataset=dataset,
+            template=user_eval_template,
+            config={"mapping": {"output": "col-1"}},
+            model="gpt-4",
+            pinned_version=version,
+            user=user,
+        )
+
+        entry = {
+            "name": metric.name,
+            "template_id": user_eval_template.id,
+            "model": metric.model,
+            "config": {"mapping": {"output": "col-1"}},
+            "pinned_version_id": str(version.id),
+        }
+
+        assert _has_eval_changed(metric, entry, {"output": "col-1"}) is False
+
+    def test_diff_and_update_evals_repicking_older_version_does_not_create_duplicate(
+        self, experiment, dataset, organization, user, workspace, user_eval_template
+    ):
+        """End-to-end regression: through _diff_and_update_evals (the code
+        path _has_eval_changed/_pin_experiment_metric_version feed into),
+        re-selecting an older pinned version with its own config must dedup
+        instead of minting a new version."""
+        from model_hub.views.experiments import (
+            _create_eval_metrics_inline,
+            _diff_and_update_evals,
+        )
+        from model_hub.models.evals_metric import EvalTemplateVersion, UserEvalMetric
+
+        entry_v1 = {
+            "name": "e2e-repick",
+            "template_id": user_eval_template.id,
+            "config": {"mapping": {"output": "output_column"}, "rule_prompt": "p1"},
+            "model": "gpt-4",
+        }
+        metrics = _create_eval_metrics_inline(
+            eval_entries=[entry_v1],
+            experiment=experiment,
+            snapshot_dataset=dataset,
+            organization=organization,
+            user=user,
+            workspace=workspace,
+        )
+        metric = metrics[0]
+        experiment.user_eval_template_ids.add(metric)
+        v1_id = metric.pinned_version_id
+        assert v1_id is not None
+        version_count_after_v1 = EvalTemplateVersion.objects.filter(
+            eval_template=user_eval_template
+        ).count()
+
+        # Simulate editing to a different config (v2), then re-picking v1 in
+        # the same update payload — final pin should be v1, no new version.
+        entry_update = {
+            "id": str(metric.id),
+            "name": "e2e-repick",
+            "template_id": user_eval_template.id,
+            "config": {"mapping": {"output": "output_column"}, "rule_prompt": "p1"},
+            "model": "gpt-4",
+            "pinned_version_id": str(v1_id),
+        }
+        _diff_and_update_evals(
+            experiment=experiment,
+            new_eval_entries=[entry_update],
+            organization=organization,
+            user=user,
+            workspace=workspace,
+        )
+
+        metric.refresh_from_db()
+        assert metric.pinned_version_id == v1_id
+        assert (
+            EvalTemplateVersion.objects.filter(
+                eval_template=user_eval_template
+            ).count()
+            == version_count_after_v1
+        )
 
 
 @pytest.mark.django_db
