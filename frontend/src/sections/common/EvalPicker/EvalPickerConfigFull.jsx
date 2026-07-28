@@ -1035,10 +1035,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         data_injection: dataInjection,
         error_localizer_enabled: errorLocalizerEnabled,
         composite_weight_overrides: compositeChildWeights,
-        // True when the user edited config fields after loading/selecting a
-        // version (as opposed to just picking an existing version from the
-        // dropdown with no other changes). Consumers use this to decide
-        // whether a new eval version needs to be created.
+        // True if config fields were edited, vs. just a version pick.
         isDirty,
       });
       return;
@@ -1079,7 +1076,6 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       knowledge_bases: knowledgeBaseIds,
       data_injection: dataInjection,
       error_localizer_enabled: errorLocalizerEnabled,
-      // See composite branch above for what this signals to consumers.
       isDirty,
     });
   }, [

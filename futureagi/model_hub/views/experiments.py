@@ -4525,9 +4525,7 @@ def _with_default_reason_column(config):
 
 
 def _apply_entry_pinned_version_baseline(entry, metric):
-    """If the entry carries an explicit pinned_version_id, use it as the
-    dedup baseline before maybe_pin_new_version runs. Mirrors the same
-    re-baseline branch in EditAndRunUserEvalView.post (dataset side)."""
+    """Re-baseline metric.pinned_version from entry's explicit pinned_version_id, if any."""
     from model_hub.models.evals_metric import EvalTemplateVersion
 
     ver_id = entry.get("pinned_version_id")
@@ -4542,18 +4540,7 @@ def _apply_entry_pinned_version_baseline(entry, metric):
 
 
 def _pin_experiment_metric_version(metric, entry, user, organization, workspace):
-    """Create + pin a new EvalTemplateVersion if the entry's config differs
-    from the current pinned baseline (dedup happens inside the service).
-
-    `entry["config"]` here is the FLAT shape the experiment wizard sends
-    (template fields + mapping all at the top level — see
-    EvaluationStepExperimentCreation.jsx's `fullConfig`). maybe_pin_new_version
-    expects the nested `{mapping, config: {...}, run_config: {...}}` shape
-    (same as EditAndRunUserEvalView / EvaluationDrawer), so re-nest it here
-    rather than passing the flat dict straight through — otherwise
-    `inner_config` resolves empty and the snapshot silently falls back to
-    just the template's current live config, breaking dedup.
-    """
+    """Create/dedup-pin an EvalTemplateVersion, re-nesting the wizard's flat config first."""
     from model_hub.services.eval_version_pinning import maybe_pin_new_version
 
     flat_config = entry.get("config") or {}

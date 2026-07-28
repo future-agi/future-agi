@@ -410,9 +410,7 @@ class EvalMetricEntrySerializer(serializers.Serializer):
     composite_weight_overrides = serializers.JSONField(
         required=False, allow_null=True, default=None
     )
-    # User's picked eval version (from the EvalPicker version dropdown or a
-    # freshly-created version from a mid-flow config edit). Becomes the
-    # dedup baseline for maybe_pin_new_version so the pick survives save.
+    # Dedup baseline for maybe_pin_new_version.
     pinned_version_id = serializers.UUIDField(
         required=False, allow_null=True, default=None
     )

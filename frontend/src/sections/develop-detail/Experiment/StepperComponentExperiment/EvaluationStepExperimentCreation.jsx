@@ -87,15 +87,7 @@ const EvaluationStepExperimentCreation = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userEvalList, replaceEvals]);
-  // Only an eval that already has a real backend UserEvalMetric id (i.e. it
-  // was persisted on a previous save of this experiment) can be pinned to a
-  // new version via the scoped edit-eval endpoint. Brand new evals added
-  // mid-session don't exist on the server yet — they stay fully local and
-  // get created (with any picked pinned_version_id) at Run Experiment.
-  // Experiment evals live on the experiment's snapshot dataset (not the
-  // original dataset the experiment was created from) — the scoped
-  // edit-eval endpoint's dataset_id path param must match that to find
-  // the UserEvalMetric row.
+  // Inline pin requires a persisted experiment + its snapshot dataset id.
   const canPinInline =
     isEditingExperiment && Boolean(experimentId) && Boolean(snapshotDatasetId);
   const queryClient = useQueryClient();
@@ -153,9 +145,7 @@ const EvaluationStepExperimentCreation = ({
         evalConfig.evalTemplate?.requiredKeys ||
         templateConfig.requiredKeys ||
         [],
-      // The version the user picked from the dropdown (or, for a dirty
-      // edit, whatever version was pinned before this save — gets
-      // overwritten below once the scoped save resolves).
+      // Version picked from the dropdown; overwritten below once a dirty save resolves.
       pinnedVersionId: evalConfig.versionId ?? null,
       ...(isComposite && evalConfig.compositeWeightOverrides
         ? { compositeWeightOverrides: evalConfig.compositeWeightOverrides }
@@ -179,10 +169,7 @@ const EvaluationStepExperimentCreation = ({
         const userEvalId = editingEval.userEvalId;
         const hasBackendMetric = userEvalId && isUUID(userEvalId);
 
-        // Only a real, dirty config edit needs a new version created right
-        // now. A plain version-dropdown pick (isDirty === false) or an
-        // eval that doesn't exist on the server yet just stays local —
-        // it's picked up by the full save on "Run Experiment".
+        // Only a dirty config edit needs a version created now; a plain version pick stays local.
         if (canPinInline && hasBackendMetric && evalConfig.isDirty) {
           const runConfig = {};
           if (!isComposite) {
@@ -252,10 +239,6 @@ const EvaluationStepExperimentCreation = ({
                     pinnedVersionId: resolvedPinnedVersionId,
                   });
                 }
-                // The scoped save may have created a new version directly on
-                // the backend (bypassing useCreateEvalVersion's own cache
-                // invalidation) — refresh so the dropdown shows it next time
-                // this eval is reopened for editing.
                 queryClient.invalidateQueries({
                   queryKey: ["evals", "versions", evalConfig.templateId],
                 });
@@ -292,8 +275,6 @@ const EvaluationStepExperimentCreation = ({
       evalItem.id;
     setEditingEval({
       id: tplId,
-      // During creation the eval only has a local field id; during editing
-      // it may carry a backend-assigned id (actualEvalCreatedId).
       userEvalId:
         evalItem.actualEvalCreatedId || evalItem.evalId || evalItem.id,
       name: evalItem.name || evalItem.evalTemplateName,
@@ -304,9 +285,7 @@ const EvaluationStepExperimentCreation = ({
       compositeWeightOverrides:
         evalItem.compositeWeightOverrides ||
         evalItem.composite_weight_overrides,
-      // Lets EvalPickerConfigFull preselect whatever version is currently
-      // pinned for this eval (either from the backend, or from a version
-      // picked/created earlier in this same editing session).
+      // Seeds the picker's preselected version.
       pinned_version_id:
         evalItem.pinnedVersionId || evalItem.pinned_version_id || null,
     });
