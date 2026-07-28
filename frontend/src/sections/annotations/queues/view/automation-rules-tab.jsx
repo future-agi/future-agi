@@ -333,6 +333,7 @@ export default function AutomationRulesTab({ queueId, queue }) {
           defaultColDef={defaultColDef}
           context={gridContext}
           rowHeight={52}
+          getRowHeight={() => 52}
           headerHeight={42}
           pagination={false}
           animateRows={false}
