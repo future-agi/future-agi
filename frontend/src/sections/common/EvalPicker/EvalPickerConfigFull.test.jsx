@@ -293,4 +293,38 @@ describe("EvalPickerConfigFull — judge model params (#1764)", () => {
     clickAdd();
     expect(onSave.mock.calls[0][0].model_params).toEqual({ temperature: 0 });
   });
+
+  it("hydrates model_params from the drawer edit shape (filtered run_config + flattened config)", () => {
+    // EvaluationDrawer.openEditForSavedEval hands the picker:
+    //  - evalData.run_config: the backend's build_run_config_view — a
+    //    FILTERED defaults view that strips unknown keys like model_params;
+    //  - evalData.config: required_keys + the RAW config.run_config blob
+    //    spread flat (this is where model_params actually survives).
+    const onSave = vi.fn();
+    renderConfigFull({
+      onSave,
+      evalData: {
+        id: "tpl-1",
+        templateId: "tpl-1",
+        name: "toxicity",
+        run_config: { agent_mode: "agent", pass_threshold: 0.5 },
+        config: {
+          required_keys: [],
+          agent_mode: "agent",
+          model_params: { temperature: 0, top_p: 0.9 },
+        },
+      },
+    });
+
+    expect(capturedProps.llm.modelParams).toEqual({
+      temperature: 0,
+      top_p: 0.9,
+    });
+
+    clickAdd();
+    expect(onSave.mock.calls[0][0].model_params).toEqual({
+      temperature: 0,
+      top_p: 0.9,
+    });
+  });
 });

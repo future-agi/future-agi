@@ -547,9 +547,16 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           evalData?.multi_choice ??
           evalData?.multiChoice,
         params: rawRunConfig.params ?? evalData?.params,
+        // rawRunConfig can be the backend's filtered run_config view
+        // (build_run_config_view), which strips keys it doesn't know —
+        // model_params included. The drawer's edit flow spreads the RAW
+        // config.run_config blob flat into evalData.config, so fall through
+        // to it the same way `messages` does below.
         model_params:
           rawRunConfig.model_params ??
           rawRunConfig.modelParams ??
+          evalData?.config?.model_params ??
+          evalData?.config?.modelParams ??
           evalData?.model_params ??
           evalData?.modelParams,
         // Multi-turn LLM evals store the full message chain on the template
