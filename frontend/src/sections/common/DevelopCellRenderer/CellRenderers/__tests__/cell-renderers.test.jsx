@@ -1,5 +1,6 @@
 /* eslint-disable react/prop-types */
 import React from "react";
+import { format } from "date-fns";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "src/utils/test-utils";
 import DatetimeCellRenderer from "../DatetimeCellRenderer";
@@ -36,6 +37,31 @@ describe("DatetimeCellRenderer", () => {
     render(<DatetimeCellRenderer value="not-a-date" {...rendererProps} />);
 
     expect(screen.getByText("Invalid Date")).toBeInTheDocument();
+  });
+
+  it("renders date-only values without inventing a midnight time", () => {
+    render(<DatetimeCellRenderer value="2026-01-29" {...rendererProps} />);
+
+    expect(screen.getByText("29/01/2026")).toBeInTheDocument();
+    expect(screen.queryByText(/00:00/)).not.toBeInTheDocument();
+  });
+
+  it("preserves an explicit time component", () => {
+    const value = "2026-01-29T14:30:00Z";
+    render(<DatetimeCellRenderer value={value} {...rendererProps} />);
+
+    expect(
+      screen.getByText(format(new Date(value), "dd/MM/yyyy HH:mm")),
+    ).toBeInTheDocument();
+  });
+
+  it("preserves an explicitly supplied midnight", () => {
+    const value = "2026-01-29T00:00:00Z";
+    render(<DatetimeCellRenderer value={value} {...rendererProps} />);
+
+    expect(
+      screen.getByText(format(new Date(value), "dd/MM/yyyy HH:mm")),
+    ).toBeInTheDocument();
   });
 });
 

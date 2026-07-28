@@ -1,6 +1,6 @@
 import React from "react";
 import { Box } from "@mui/material";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import CustomTooltip from "src/components/tooltip";
 import RenderMeta from "../RenderMeta";
 import GenerateDiffText from "../../GenerateDiffText";
@@ -15,7 +15,12 @@ const DatetimeCellRenderer = ({
 }) => {
   const isValueArray = Array.isArray(value);
   const isBlankValue = value === null || value === undefined || value === "";
-  const isValidDate = !isBlankValue && !isNaN(new Date(value).getTime());
+  const hasTimeComponent =
+    typeof value === "string" && /(?:T|\s)\d{1,2}:\d{2}/.test(value);
+  const isIsoDateOnly =
+    typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const parsedDate = isIsoDateOnly ? parseISO(value) : new Date(value);
+  const isValidDate = !isBlankValue && !isNaN(parsedDate.getTime());
 
   return (
     <CustomTooltip
@@ -31,7 +36,10 @@ const DatetimeCellRenderer = ({
         {isValueArray ? (
           <GenerateDiffText cellText={value} />
         ) : isValidDate ? (
-          format(new Date(value), "dd/MM/yyyy HH:mm")
+          format(
+            parsedDate,
+            hasTimeComponent ? "dd/MM/yyyy HH:mm" : "dd/MM/yyyy",
+          )
         ) : isBlankValue ? (
           ""
         ) : (
