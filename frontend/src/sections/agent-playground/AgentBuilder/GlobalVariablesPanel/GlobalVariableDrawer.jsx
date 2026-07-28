@@ -9,7 +9,7 @@ import {
   CircularProgress,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useForm, FormProvider } from "react-hook-form";
 import { useParams, useSearchParams } from "react-router-dom";
@@ -19,7 +19,7 @@ import { useGlobalVariablesDrawerStoreShallow, VIEW } from "../../store";
 import UploadedJSON from "./UploadedJSON";
 import HeaderActions from "./HeaderActions";
 import SvgColor from "src/components/svg-color";
-// import ImportDatasetDrawer from "src/components/VariableDrawer/ImportDataset/ImportDatasetDrawer";
+import ImportDatasetDrawer from "src/components/VariableDrawer/ImportDataset/ImportDatasetDrawer";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import { useGetGraphDataset } from "../../../../api/agent-playground/agent-playground";
 import EmptyVariable from "src/components/VariableDrawer/EmptyVariable";
@@ -148,8 +148,8 @@ export default function GlobalVariableDrawer({ open, onClose }) {
     currentView,
     setCurrentView,
     setGlobalVariables,
-    // importDatasetDrawerOpen,
-    // setImportDatasetDrawerOpen,
+    importDatasetDrawerOpen,
+    setImportDatasetDrawerOpen,
     setPendingRun,
   } = useGlobalVariablesDrawerStoreShallow((state) => ({
     setUploadedJson: state.setUploadedJson,
@@ -158,8 +158,8 @@ export default function GlobalVariableDrawer({ open, onClose }) {
     currentView: state.currentView,
     setCurrentView: state.setCurrentView,
     setGlobalVariables: state.setGlobalVariables,
-    // importDatasetDrawerOpen: state.importDatasetDrawerOpen,
-    // setImportDatasetDrawerOpen: state.setImportDatasetDrawerOpen,
+    importDatasetDrawerOpen: state.importDatasetDrawerOpen,
+    setImportDatasetDrawerOpen: state.setImportDatasetDrawerOpen,
     setPendingRun: state.setPendingRun,
   }));
 
@@ -192,7 +192,8 @@ export default function GlobalVariableDrawer({ open, onClose }) {
   const {
     watch,
     reset,
-    // setValue,
+    setValue,
+    getValues,
     formState: { isDirty },
   } = methods;
 
@@ -209,19 +210,22 @@ export default function GlobalVariableDrawer({ open, onClose }) {
 
   // Handler called when ImportDatasetDrawer applies data
   // Using getValues instead of watch() to avoid new object reference on every render
-  // const handleSetVariableData = useCallback(
-  //   (variableData) => {
-  //     // importedData is an object like { variableName: [values...] }
-  //     // We take the first value from each array for the form
-  //     const currentValues = getValues();
-  //     Object.entries(variableData).forEach(([key, values]) => {
-  //       if (key in currentValues && Array.isArray(values) && values.length > 0) {
-  //         setValue(key, values[0], { shouldDirty: true });
-  //       }
-  //     });
-  //   },
-  //   [getValues, setValue],
-  // );
+  const handleSetVariableData = useCallback(
+    (variableData) => {
+      const currentValues = getValues();
+      Object.entries(variableData).forEach(([key, values]) => {
+        const fieldName = escapeModelKey(key);
+        if (
+          fieldName in currentValues &&
+          Array.isArray(values) &&
+          values.length > 0
+        ) {
+          setValue(fieldName, values[0] ?? "", { shouldDirty: true });
+        }
+      });
+    },
+    [getValues, setValue],
+  );
 
   // Derive view from uploadedJson (store takes priority)
   const activeView = uploadedJson ? VIEW.UPLOADED_JSON : currentView;
@@ -249,7 +253,7 @@ export default function GlobalVariableDrawer({ open, onClose }) {
   };
 
   const confirmClose = () => {
-    setCurrentView(VIEW.ACTIONS);
+    setCurrentView(VIEW.MANUAL_FORM);
     setShowUploadJsonDialog(false);
     setShowConfirmDialog(false);
     setPendingRun(false);
@@ -275,13 +279,13 @@ export default function GlobalVariableDrawer({ open, onClose }) {
     uploadMutation.mutate(file);
   };
 
-  // const handleOpenImportDatasetDrawer = () => {
-  //   setImportDatasetDrawerOpen(true);
-  // };
+  const handleOpenImportDatasetDrawer = () => {
+    setImportDatasetDrawerOpen(true);
+  };
 
-  // const handleCloseImportDatasetDrawer = () => {
-  //   setImportDatasetDrawerOpen(false);
-  // };
+  const handleCloseImportDatasetDrawer = () => {
+    setImportDatasetDrawerOpen(false);
+  };
 
   const renderContent = () => {
     if (datasetData?.columns?.length === 0) {
@@ -383,12 +387,11 @@ export default function GlobalVariableDrawer({ open, onClose }) {
       }}
     >
       <Header
-        // showHeaderActions={activeView !== VIEW.ACTIONS}
-        showHeaderActions={false}
+        showHeaderActions={activeView === VIEW.MANUAL_FORM}
         onClose={handleClose}
         handleUploadJson={handleUploadJson}
         currentView={currentView}
-        // onOpenImportDatasetDrawer={handleOpenImportDatasetDrawer}
+        onOpenImportDatasetDrawer={handleOpenImportDatasetDrawer}
         disabled={variableKeys.length === 0}
       />
       <Divider sx={{ my: 1.5 }} />
@@ -419,13 +422,12 @@ export default function GlobalVariableDrawer({ open, onClose }) {
         }
       />
 
-      {/* Import Dataset Drawer */}
-      {/* <ImportDatasetDrawer
+      <ImportDatasetDrawer
         open={importDatasetDrawerOpen}
         onClose={handleCloseImportDatasetDrawer}
         variables={variableKeys}
         setVariableData={handleSetVariableData}
-      /> */}
+      />
 
       {/* Confirm Dialog for unsaved changes */}
       <ConfirmDialog
