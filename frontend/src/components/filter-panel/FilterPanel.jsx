@@ -620,6 +620,7 @@ const QueryInput = forwardRef(function QueryInput(
   const [rangeTo, setRangeTo] = useState("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [focused, setFocused] = useState(false);
+  const [logicOperator, setLogicOperator] = useState("AND");
   const inputRef = useRef(null);
   const initialTokensKey = useMemo(
     () => JSON.stringify(initialTokens || []),
@@ -641,6 +642,10 @@ const QueryInput = forwardRef(function QueryInput(
     setRangeFrom("");
     setRangeTo("");
   }, [initialTokensKey]);
+
+  useEffect(() => {
+    if (tokens.length < 2) setLogicOperator("AND");
+  }, [tokens.length]);
 
   const phase = !partialField ? "field" : !partialOp ? "operator" : "value";
 
@@ -994,7 +999,8 @@ const QueryInput = forwardRef(function QueryInput(
 
   // Shared chip/prefix render — used by both the Autocomplete renderInput
   // startAdornment and the range-phase Box below.
-  const tokenChips = tokens.map((token, idx) => (
+  const tokenChips = tokens.flatMap((token, idx) => {
+    const chip = (
     <Chip
       key={idx}
       label={`${fieldMap[token.field]?.label || token.field} ${opDefFor(token.field, token.operator)?.label || token.operator} ${Array.isArray(token.value) ? token.value.join(" – ") : token.value}`}
@@ -1021,7 +1027,36 @@ const QueryInput = forwardRef(function QueryInput(
         },
       }}
     />
-  ));
+    );
+    if (idx === 0) return [chip];
+    return [
+      <Box
+        key={`operator-${idx}`}
+        component="button"
+        type="button"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={(event) => {
+          event.stopPropagation();
+          setLogicOperator((operator) => (operator === "AND" ? "OR" : "AND"));
+        }}
+        sx={{
+          border: 0,
+          borderRadius: 0.5,
+          bgcolor: "action.hover",
+          color: "text.secondary",
+          cursor: "pointer",
+          fontSize: 10,
+          fontWeight: 700,
+          px: 0.5,
+          py: 0.25,
+          "&:hover": { bgcolor: "action.selected", color: "text.primary" },
+        }}
+      >
+        {logicOperator}
+      </Box>,
+      chip,
+    ];
+  });
 
   const prefixChips = inlinePrefix.map((p, i) => (
     <Box
