@@ -157,8 +157,12 @@ const VoiceRightPanel = ({
       avgAgentLatencyMs: data?.avg_agent_latency_ms ?? data?.avg_agent_latency,
       userWpm: data?.user_wpm,
       botWpm: data?.bot_wpm,
-      userInterruptionCount: data?.user_interruption_count,
-      aiInterruptionCount: data?.ai_interruption_count,
+      ...(data?.simulation_call_type === "text"
+        ? {}
+        : {
+            userInterruptionCount: data?.user_interruption_count,
+            aiInterruptionCount: data?.ai_interruption_count,
+          }),
     };
 
     if (isSimulate) {
