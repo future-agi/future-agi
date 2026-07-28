@@ -676,16 +676,23 @@ def calculate_eval_average(eval_template, api_logs):
                         continue
 
                 elif output_type in ["choices", "reason"]:
-                    if choices_map and not eval_template.multi_choice:
-                        match choices_map.get(output.get("output")[0]):
-                            case "pass":
-                                success_count += 1
-                                valid_logs += 1
-                            case "neutral":
-                                success_count += 0.5
-                                valid_logs += 1
-                            case _:
-                                valid_logs += 1
+                    selected_choices = output.get("output")
+                    if not isinstance(selected_choices, list):
+                        selected_choices = [selected_choices]
+
+                    if choices_map:
+                        if not eval_template.multi_choice:
+                            selected_choices = selected_choices[:1]
+
+                        weights = [
+                            {"pass": 1, "neutral": 0.5}.get(
+                                choices_map.get(choice), 0
+                            )
+                            for choice in selected_choices
+                        ]
+                        if weights:
+                            success_count += sum(weights) / len(weights)
+                        valid_logs += 1
                     else:
                         success_count += 1
                         valid_logs += 1
