@@ -201,7 +201,7 @@ def _generate_chat_initial_message(
             guidance_lines=len(guidance.split("\n")) if guidance else 0,
             hint_present=bool(hint),
         )
-        model_cfg = ModelConfigs.CLAUDE_4_5_SONNET_BEDROCK_ARN
+        model_cfg = ModelConfigs.VERTEX_GEMINI_2_5_PRO
         llm = LLM(
             model_name=model_cfg.model_name,
             temperature=0.7,  # Higher for more natural variation
