@@ -1664,7 +1664,7 @@ class TestEditAndRunUserEvalView:
     ):
         """Test successfully editing and running a user evaluation."""
         payload = {
-            "name": "Updated Eval",
+            "name": "updated-eval",
             "output_column_id": str(output_column.id),
             "config": {
                 "model": "gpt-4",
@@ -1682,6 +1682,8 @@ class TestEditAndRunUserEvalView:
             )
 
         assert response.status_code == status.HTTP_200_OK
+        user_eval_metric.refresh_from_db()
+        assert user_eval_metric.name == "updated-eval"
 
     def test_edit_and_run_user_eval_without_name(
         self, auth_client, dataset, user_eval_metric, output_column
