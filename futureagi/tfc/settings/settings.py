@@ -561,6 +561,7 @@ LLM_KEYS = {
 
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 CARTESIA_API_KEY = os.getenv("CARTESIA_API_KEY", "")
+SMALLEST_AI_API_KEY = os.getenv("SMALLEST_AI_API_KEY", "")
 
 AWS = {
     "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID"),

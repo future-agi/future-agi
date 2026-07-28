@@ -40346,5 +40346,41 @@
     "output_cost_per_token_priority": 5.4e-06,
     "cache_read_input_token_cost_priority": 9e-08,
     "supports_service_tier": true
+  },
+  "smallest_ai/lightning_v3.1": {
+    "litellm_provider": "smallest_ai",
+    "mode": "audio_speech",
+    "output_cost_per_second": 0.0015,
+    "supported_endpoints": [
+      "/v1/audio/speech"
+    ],
+    "source": "https://smallest.ai/pricing (approximate, ~$0.09/min blended rate; not broken out per model - verify before relying on for billing)"
+  },
+  "smallest_ai/lightning_v3.1_pro": {
+    "litellm_provider": "smallest_ai",
+    "mode": "audio_speech",
+    "output_cost_per_second": 0.0015,
+    "supported_endpoints": [
+      "/v1/audio/speech"
+    ],
+    "source": "https://smallest.ai/pricing (approximate, ~$0.09/min blended rate; not broken out per model - verify before relying on for billing)"
+  },
+  "smallest_ai/pulse": {
+    "litellm_provider": "smallest_ai",
+    "mode": "audio_transcription",
+    "input_cost_per_second": 0.00015,
+    "supported_endpoints": [
+      "/v1/audio/transcriptions"
+    ],
+    "source": "https://smallest.ai/pricing (approximate, ~$0.009/min blended rate; not broken out per model - verify before relying on for billing)"
+  },
+  "smallest_ai/pulse-pro": {
+    "litellm_provider": "smallest_ai",
+    "mode": "audio_transcription",
+    "input_cost_per_second": 0.00015,
+    "supported_endpoints": [
+      "/v1/audio/transcriptions"
+    ],
+    "source": "https://smallest.ai/pricing (approximate, ~$0.009/min blended rate; not broken out per model - verify before relying on for billing)"
   }
 }
