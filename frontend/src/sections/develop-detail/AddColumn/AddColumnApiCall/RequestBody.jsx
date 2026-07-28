@@ -33,6 +33,7 @@ const RequestBody = ({
   sx = {},
 }) => {
   const theme = useTheme();
+  const { backgroundColor, ...textareaSx } = sx;
   const [showDropdown, setShowDropdown] = useState(false);
   const [dropdownPosition, setDropdownPosition] = useState({ x: 0, y: 0 });
   const inputRef = useRef(null);
@@ -342,7 +343,7 @@ const RequestBody = ({
       <div
         style={{
           position: "relative",
-          backgroundColor: theme.palette.background.default,
+          backgroundColor: backgroundColor || theme.palette.background.default,
           borderRadius: "8px",
         }}
       >
@@ -398,7 +399,7 @@ const RequestBody = ({
             backgroundColor: "transparent",
             position: "relative",
             verticalAlign: "top",
-            ...sx,
+            ...textareaSx,
           }}
           onKeyDown={onKeyDown}
         />
