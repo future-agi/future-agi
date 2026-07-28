@@ -18,8 +18,17 @@ def paginate_queryset(queryset: QuerySet, request: Request) -> tuple[list, dict]
         request: DRF request whose ``query_params`` supply ``page_number``
             (default 1) and ``page_size`` (default 10).
     """
-    page_number = int(request.query_params.get("page_number", 1))
-    page_size = int(request.query_params.get("page_size", DEFAULT_PAGE_SIZE))
+    try:
+        page_number = int(request.query_params.get("page_number", 1))
+    except (TypeError, ValueError):
+        page_number = 1
+
+    try:
+        page_size = int(request.query_params.get("page_size", DEFAULT_PAGE_SIZE))
+    except (TypeError, ValueError):
+        page_size = DEFAULT_PAGE_SIZE
+    if page_size <= 0:
+        page_size = DEFAULT_PAGE_SIZE
 
     paginator = Paginator(queryset, page_size)
     page = paginator.get_page(page_number)
