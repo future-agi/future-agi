@@ -2439,7 +2439,30 @@ class TestExecutionDetailView(APIView):
                 or str(col.get("id")) in eval_configs_map
             ]
             response_data["error_messages"] = error_messages
-            response_data["status"] = test_execution.status
+            call_status_order = [
+                CallExecution.CallStatus.PENDING,
+                CallExecution.CallStatus.REGISTERED,
+                CallExecution.CallStatus.ONGOING,
+                CallExecution.CallStatus.ANALYZING,
+                CallExecution.CallStatus.COMPLETED,
+                CallExecution.CallStatus.FAILED,
+                CallExecution.CallStatus.CANCELLED,
+            ]
+            call_statuses = list(
+                test_execution.calls.values_list("status", flat=True)
+            )
+            if call_statuses:
+                status_rank = {
+                    status: rank for rank, status in enumerate(call_status_order)
+                }
+                response_data["status"] = min(
+                    call_statuses,
+                    key=lambda call_status: status_rank.get(
+                        call_status, len(call_status_order)
+                    ),
+                )
+            else:
+                response_data["status"] = test_execution.status
             response_data["provider"] = (
                 test_execution.agent_definition.provider
                 if test_execution.agent_definition
