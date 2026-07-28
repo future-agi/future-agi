@@ -20,17 +20,17 @@ const HuggingFaceDetailDrawer = ({
 }) => {
   useEffect(() => {
     if (!show) return;
-    if (show && showNameField && huggingFaceDetail?.name) {
-      const defaultValues = { name: huggingFaceDetail.name };
-      if (subsetOptions?.length > 0) {
-        defaultValues.huggingface_dataset_config = subsetOptions[0].value;
-      }
-      if (splitOptions?.length > 0) {
-        defaultValues.huggingface_dataset_split = splitOptions[0].value;
-      }
-      defaultValues.num_rows = 1;
-      reset(defaultValues);
+    const defaultValues = { num_rows: 1 };
+    if (showNameField && huggingFaceDetail?.name) {
+      defaultValues.name = huggingFaceDetail.name;
     }
+    if (subsetOptions?.length > 0) {
+      defaultValues.huggingface_dataset_config = subsetOptions[0].value;
+    }
+    if (splitOptions?.length > 0) {
+      defaultValues.huggingface_dataset_split = splitOptions[0].value;
+    }
+    reset(defaultValues);
   }, [
     show,
     showNameField,
