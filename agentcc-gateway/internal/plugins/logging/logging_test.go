@@ -647,6 +647,15 @@ func TestProcessResponse_EmitsRecord(t *testing.T) {
 	}
 }
 
+func TestMarkPrivacyRedactedAnnotatesRecordOnly(t *testing.T) {
+	record := TraceRecord{}
+	markPrivacyRedacted(&record)
+
+	if got := record.Metadata["privacy_redacted"]; got != "true" {
+		t.Fatalf("privacy_redacted = %q, want %q", got, "true")
+	}
+}
+
 func TestProcessResponse_Disabled(t *testing.T) {
 	handler, cleanup := installCapturingLogger()
 	defer cleanup()

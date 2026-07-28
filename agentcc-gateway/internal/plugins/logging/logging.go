@@ -86,10 +86,10 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	// Apply redaction: org redactor (with org patterns) takes priority over global.
 	if orgRedactor != nil && orgRedactor.ShouldRedact() && record.RequestBody != nil {
 		record = redactRecord(record, orgRedactor, mode)
-		rc.SetMetadata("privacy_redacted", "true")
+		markPrivacyRedacted(&record)
 	} else if p.redactor != nil && p.redactor.ShouldRedact() && record.RequestBody != nil {
 		record = redactRecord(record, p.redactor, mode)
-		rc.SetMetadata("privacy_redacted", "true")
+		markPrivacyRedacted(&record)
 	}
 
 	p.emitter.Emit(record)
@@ -99,6 +99,15 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	}
 
 	return pipeline.ResultContinue()
+}
+
+// markPrivacyRedacted annotates the emitted snapshot without mutating the
+// request context shared with parallel post-response plugins.
+func markPrivacyRedacted(record *TraceRecord) {
+	if record.Metadata == nil {
+		record.Metadata = make(map[string]string)
+	}
+	record.Metadata["privacy_redacted"] = "true"
 }
 
 // getOrgRedactor returns a per-org privacy redactor if the org has privacy config.
