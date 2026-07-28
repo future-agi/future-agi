@@ -1,12 +1,12 @@
 import React from "react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render } from "src/utils/test-utils";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, act } from "src/utils/test-utils";
 
 import EvalPickerProvider from "./context/EvalPickerProvider";
 import EvalPickerConfigFull from "./EvalPickerConfigFull";
 
 const { capturedProps } = vi.hoisted(() => ({
-  capturedProps: { tracing: null },
+  capturedProps: { tracing: null, llm: null },
 }));
 
 vi.mock("src/sections/evals/components/TracingTestMode", () => {
@@ -52,7 +52,10 @@ vi.mock("src/sections/evals/components/InstructionEditor", () => ({
 }));
 
 vi.mock("src/sections/evals/components/LLMPromptEditor", () => ({
-  default: () => <div />,
+  default: (props) => {
+    capturedProps.llm = props;
+    return <div data-testid="llm-prompt-editor" />;
+  },
 }));
 
 vi.mock("src/sections/evals/components/CodeEvalEditor", () => ({
@@ -142,7 +145,7 @@ const TIME_WINDOW = {
   endDate: "2026-05-18T18:29:59.000Z",
 };
 
-const renderConfigFull = ({ sourceTimeWindow } = {}) =>
+const renderConfigFull = ({ sourceTimeWindow, evalData, onSave } = {}) =>
   render(
     <EvalPickerProvider
       source="task"
@@ -155,9 +158,11 @@ const renderConfigFull = ({ sourceTimeWindow } = {}) =>
       sourceTimeWindow={sourceTimeWindow}
     >
       <EvalPickerConfigFull
-        evalData={{ id: "tpl-1", templateId: "tpl-1", name: "toxicity" }}
+        evalData={
+          evalData ?? { id: "tpl-1", templateId: "tpl-1", name: "toxicity" }
+        }
         onBack={() => {}}
-        onSave={() => {}}
+        onSave={onSave ?? (() => {})}
         isSaving={false}
       />
     </EvalPickerProvider>,
@@ -196,5 +201,96 @@ describe("EvalPickerConfigFull — task preview time window", () => {
         (f) => f.column_id === "created_at",
       ),
     ).toBe(false);
+  });
+});
+
+describe("EvalPickerConfigFull — judge model params (#1764)", () => {
+  beforeEach(() => {
+    capturedProps.tracing = null;
+    capturedProps.llm = null;
+    // Give the llm eval real prompt content + a variable so the
+    // Add Evaluation button's content gates pass.
+    stableEvalDetail.data.config = {
+      messages: [{ role: "system", content: "Judge {{input}} for toxicity" }],
+    };
+  });
+
+  afterEach(() => {
+    stableEvalDetail.data.config = {};
+  });
+
+  const clickAdd = () => {
+    // Source readiness is reported by the (mocked) test-mode panel.
+    act(() => {
+      capturedProps.tracing.onReadyChange(true, { input: "col-1" });
+    });
+    fireEvent.click(screen.getByRole("button", { name: /add evaluation/i }));
+  };
+
+  it("omits model_params from the save payload when never touched", () => {
+    const onSave = vi.fn();
+    renderConfigFull({ onSave });
+
+    clickAdd();
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0][0]).not.toHaveProperty("model_params");
+  });
+
+  it("carries applied model params into the save payload, preserving zero", () => {
+    const onSave = vi.fn();
+    renderConfigFull({ onSave });
+
+    expect(capturedProps.llm).not.toBeNull();
+    act(() => {
+      capturedProps.llm.onModelParamsChange({
+        temperature: 0,
+        max_tokens: 256,
+      });
+    });
+
+    clickAdd();
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0][0].model_params).toEqual({
+      temperature: 0,
+      max_tokens: 256,
+    });
+  });
+
+  it("clears model_params from the payload when the override is removed", () => {
+    const onSave = vi.fn();
+    renderConfigFull({ onSave });
+
+    act(() => {
+      capturedProps.llm.onModelParamsChange({ temperature: 0.2 });
+    });
+    act(() => {
+      capturedProps.llm.onModelParamsChange(null);
+    });
+
+    clickAdd();
+
+    expect(onSave.mock.calls[0][0]).not.toHaveProperty("model_params");
+  });
+
+  it("hydrates saved run_config.model_params in edit mode and re-emits on save", () => {
+    const onSave = vi.fn();
+    renderConfigFull({
+      onSave,
+      evalData: {
+        id: "tpl-1",
+        templateId: "tpl-1",
+        name: "toxicity",
+        run_config: { model_params: { temperature: 0 } },
+      },
+    });
+
+    // The editor receives the saved values (falsy zero included) …
+    expect(capturedProps.llm.modelParams).toEqual({ temperature: 0 });
+
+    // … and an untouched save round-trips them.
+    clickAdd();
+    expect(onSave.mock.calls[0][0].model_params).toEqual({ temperature: 0 });
   });
 });

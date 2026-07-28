@@ -15,6 +15,7 @@ import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 import { ShowComponent } from "src/components/show";
 import axios, { endpoints } from "src/utils/axios";
+import EvalModelParams from "./EvalModelParams";
 import MessageEditor from "./MessageEditor";
 
 const TEMPLATE_FORMATS = [
@@ -51,6 +52,8 @@ const LLMPromptEditor = ({
   modelSelectorDisabled,
   model,
   onModelChange,
+  modelParams,
+  onModelParamsChange,
 }) => {
   const [aiOpen, setAiOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
@@ -426,6 +429,16 @@ const LLMPromptEditor = ({
         aiBar={aiOpen ? aiBar : null}
         onFalconClick={() => setAiOpen(true)}
         aiOpen={aiOpen}
+        modelParamsSlot={
+          onModelParamsChange ? (
+            <EvalModelParams
+              model={model}
+              value={modelParams}
+              onChange={onModelParamsChange}
+              disabled={modelSelectorDisabled ?? disabled}
+            />
+          ) : null
+        }
       />
     </Box>
   );
@@ -438,6 +451,8 @@ LLMPromptEditor.propTypes = {
   onTemplateFormatChange: PropTypes.func,
   model: PropTypes.string,
   onModelChange: PropTypes.func,
+  modelParams: PropTypes.object,
+  onModelParamsChange: PropTypes.func,
   disabled: PropTypes.bool,
   modelSelectorDisabled: PropTypes.bool,
 };
