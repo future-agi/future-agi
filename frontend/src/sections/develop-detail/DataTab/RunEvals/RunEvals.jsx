@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { DialogContent, Skeleton, Stack, useTheme } from "@mui/material";
 import axios, { endpoints } from "src/utils/axios";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -51,8 +51,6 @@ const RunEvals = ({ gridRef, setIsData }) => {
         data?.result?.columnConfig ?? data?.result?.column_config ?? [];
       const runnableColumnData = columnConfig.filter((item) =>
         isRunnableColumn(item),
-      const runPromptData = data?.result?.column_config?.filter(
-        (item) => item?.origin_type === "run_prompt",
       );
       setMainData(runnableColumnData);
     },
@@ -70,11 +68,13 @@ const RunEvals = ({ gridRef, setIsData }) => {
     };
   }, []);
 
-  const rowData = useMemo(() => {
+  useEffect(() => {
     if (!mainData) {
       runPrompts();
     }
+  }, [mainData, runPrompts]);
 
+  const rowData = useMemo(() => {
     if (datasetUserEvalList && mainData) {
       const mergedData = [...datasetUserEvalList, ...mainData];
 
@@ -85,10 +85,6 @@ const RunEvals = ({ gridRef, setIsData }) => {
             ? item?.sourceId ?? item?.source_id
             : item?.id,
         originType: isRunnableColumn(item) ? getOriginType(item) : "eval",
-        content: item?.name || item?.eval_template_name,
-        field: item?.origin_type === "run_prompt" ? item.source_id : item.id,
-        originType:
-          item?.origin_type === "run_prompt" ? item.origin_type : "eval",
       }));
     }
     return [];
