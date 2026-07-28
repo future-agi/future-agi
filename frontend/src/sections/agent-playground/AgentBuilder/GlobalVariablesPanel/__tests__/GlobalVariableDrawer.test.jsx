@@ -36,8 +36,36 @@ vi.mock("../UploadedJSON", () => ({
 }));
 
 vi.mock("../HeaderActions", () => ({
-  default: () => <div data-testid="header-actions" />,
+  default: ({ onOpenImportDatasetDrawer }) => (
+    <button
+      data-testid="open-import-dataset"
+      onClick={onOpenImportDatasetDrawer}
+    >
+      Import
+    </button>
+  ),
 }));
+
+vi.mock(
+  "src/components/VariableDrawer/ImportDataset/ImportDatasetDrawer",
+  () => ({
+    default: ({ open, setVariableData }) =>
+      open ? (
+        <button
+          data-testid="apply-import-dataset"
+          onClick={() =>
+            setVariableData({
+              city: ["Osaka"],
+              "user.email": ["osaka@example.com"],
+              ignored: [],
+            })
+          }
+        >
+          Apply
+        </button>
+      ) : null,
+  }),
+);
 
 vi.mock("src/components/svg-color", () => ({
   default: (props) => <span data-testid="svg-icon" {...props} />,
@@ -217,6 +245,36 @@ describe("GlobalVariableDrawer", () => {
     it("shows confirm dialog when form is dirty (tested via MUI Drawer onClose)", () => {
       // This is hard to trigger directly since isDirty comes from react-hook-form.
       // We test the confirmClose path instead since handleClose depends on form isDirty.
+    });
+  });
+
+  it("applies imported values to escaped fields and ignores empty mappings", async () => {
+    mockDatasetData = {
+      columns: [
+        { id: "col-1", name: "city" },
+        { id: "col-2", name: "user.email" },
+        { id: "col-3", name: "ignored" },
+      ],
+      rows: [{ cells: [] }],
+    };
+
+    renderDrawer();
+    await waitFor(() => {
+      expect(screen.getByTestId("open-import-dataset")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("open-import-dataset"));
+    fireEvent.click(screen.getByTestId("apply-import-dataset"));
+
+    await waitFor(() => {
+      const formValues = JSON.parse(
+        screen.getByTestId("manual-form").textContent,
+      );
+      expect(formValues).toMatchObject({
+        city: "Osaka",
+        user__DOT__email: "osaka@example.com",
+        ignored: "",
+      });
     });
   });
 
