@@ -2,6 +2,7 @@ import json
 
 import pytest
 from rest_framework import status
+from unittest.mock import patch
 
 from model_hub.models.choices import DataTypeChoices, SourceChoices
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
@@ -229,6 +230,57 @@ def test_update_cell_value_api_accepts_canonical_payload(
     assert response.status_code == status.HTTP_200_OK
     cell.refresh_from_db()
     assert cell.value == "Gamma"
+
+
+def test_update_audio_cell_persists_duration_for_filters(
+    auth_client, organization, workspace
+):
+    dataset = Dataset.objects.create(
+        name="Audio filter dataset",
+        organization=organization,
+        workspace=workspace,
+    )
+    audio_col = Column.objects.create(
+        name="recording",
+        data_type=DataTypeChoices.AUDIO.value,
+        dataset=dataset,
+        source=SourceChoices.OTHERS.value,
+    )
+    row = Row.objects.create(dataset=dataset, order=1)
+    cell = Cell.objects.create(
+        dataset=dataset,
+        row=row,
+        column=audio_col,
+        value="https://example.com/old.mp3",
+        column_metadata={"existing": "keep"},
+    )
+
+    with patch(
+        "model_hub.views.develop_dataset.upload_audio_to_s3_duration",
+        return_value=("https://example.com/new.mp3", 12.04),
+    ):
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/update_cell_value/",
+            {
+                "row_id": str(row.id),
+                "column_id": str(audio_col.id),
+                "new_value": "data:audio/mpeg;base64,ZmFrZQ==",
+            },
+            format="json",
+        )
+
+    assert response.status_code == status.HTTP_200_OK
+    cell.refresh_from_db()
+    assert cell.value == "https://example.com/new.mp3"
+    assert cell.column_metadata == {
+        "existing": "keep",
+        "audio_duration_seconds": 12.04,
+    }
+    assert _apply(
+        dataset,
+        [_filter(audio_col.id, "number", "greater_than", 1)],
+        [audio_col],
+    ) == [row]
 
 
 def test_dataset_row_data_api_rejects_legacy_filter_shape(
