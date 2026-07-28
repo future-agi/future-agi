@@ -1,3 +1,4 @@
+/* eslint-disable react/prop-types */
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useForm } from "react-hook-form";
