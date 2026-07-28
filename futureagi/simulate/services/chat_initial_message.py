@@ -157,11 +157,12 @@ def _generate_chat_initial_message(
     situation: str,
     agent_name: str | None,
     initial_message_hint: str | None = None,
-) -> tuple[str | None, float | None]:
+) -> tuple[str | None, dict | None]:
     """
     Generate a realistic first customer message for chat using an LLM.
-    Returns (text, cost_usd) or (None, None) on failure so callers can fall
-    back to the default initial message; cost_usd is `LLM.cost['total_cost']`.
+    Returns (text, usage) or (None, None) on failure so callers can fall
+    back to the default initial message; `usage` carries `LLM.token_usage`
+    (`prompt_tokens` + `completion_tokens`) for billing rollup.
     """
     if not situation:
         return None, None
@@ -220,8 +221,12 @@ def _generate_chat_initial_message(
             logger.exception("chat_initial_message_llm_failed", error=text)
             return None, None
 
-        cost_usd = float((getattr(llm, "cost", None) or {}).get("total_cost") or 0.0)
-        return (text or None, cost_usd if text else None)
+        usage_src = getattr(llm, "token_usage", None) or {}
+        usage = {
+            "input_tokens": int(usage_src.get("prompt_tokens") or 0),
+            "output_tokens": int(usage_src.get("completion_tokens") or 0),
+        }
+        return (text or None, usage if text else None)
     except Exception as e:
         logger.exception("chat_initial_message_generation_failed", error=str(e))
         return None, None
@@ -229,7 +234,7 @@ def _generate_chat_initial_message(
 
 def get_chat_initial_message(
     call_execution: CallExecution,
-) -> tuple[str, str, float | None]:
+) -> tuple[str, str, dict | None]:
     """
     Resolve the initial customer message for a chat simulation.
 
@@ -239,12 +244,14 @@ def get_chat_initial_message(
     3) Hardcoded "Hi!"
 
     Returns:
-        (initial_message, source, cost_usd) where source is one of:
+        (initial_message, source, usage) where source is one of:
         - "llm_generated"
         - "provided_initial_message"
         - "default_hi"
-        cost_usd is the LLM invocation's `LLM.cost['total_cost']` for the
-        "llm_generated" source and None otherwise.
+        usage carries the LLM's `{input_tokens, output_tokens}` for the
+        "llm_generated" source (rolled into the per-call TEXT_CALL emit
+        so the persona-first-line spend joins the same `text_sim_tokens`
+        counter as every subsequent turn) and None otherwise.
     """
     call_metadata = call_execution.call_metadata or {}
     provided_initial_message = call_metadata.get("initial_message")
@@ -260,14 +267,14 @@ def get_chat_initial_message(
         else None
     )
 
-    generated, cost_usd = _generate_chat_initial_message(
+    generated, usage = _generate_chat_initial_message(
         persona=persona,
         situation=situation,
         agent_name=agent_name,
         initial_message_hint=provided_initial_message,
     )
     if generated:
-        return generated, "llm_generated", cost_usd
+        return generated, "llm_generated", usage
 
     if provided_initial_message and str(provided_initial_message).strip():
         return str(provided_initial_message).strip(), "provided_initial_message", None

@@ -162,7 +162,7 @@ def initiate_chat(
                 )
 
         # Resolve the simulated customer's first message (LLM → provided initial_message → default).
-        initial_message, initial_message_source, initial_llm_cost_usd = (
+        initial_message, initial_message_source, initial_llm_usage = (
             get_chat_initial_message(call_execution)
         )
 
@@ -264,32 +264,35 @@ def initiate_chat(
             tokens=initial_tokens,
         )
 
-        if initial_llm_cost_usd and initial_llm_cost_usd > 0:
-            try:
-                from ee.usage.schemas.event_types import BillingEventType
-                from ee.usage.schemas.events import UsageEvent
-                from ee.usage.services.config import BillingConfig
-                from ee.usage.services.emitter import emit
+        if initial_llm_usage:
+            input_tokens = int(initial_llm_usage.get("input_tokens") or 0)
+            output_tokens = int(initial_llm_usage.get("output_tokens") or 0)
+            total_tokens = input_tokens + output_tokens
+            if total_tokens > 0:
+                try:
+                    from ee.usage.schemas.event_types import BillingEventType
+                    from ee.usage.schemas.events import UsageEvent
+                    from ee.usage.services.emitter import emit
 
-                credits = BillingConfig.get().calculate_ai_credits(initial_llm_cost_usd)
-                emit(
-                    UsageEvent(
-                        org_id=str(organization.id),
-                        event_type=BillingEventType.TEXT_CALL,
-                        amount=credits,
-                        properties={
-                            "source": "simulate_chat_initial_message",
-                            "source_id": str(call_execution.id),
-                            "raw_cost_usd": str(initial_llm_cost_usd),
-                            "pricing_source": "llm.cost.total_cost",
-                        },
+                    emit(
+                        UsageEvent(
+                            org_id=str(organization.id),
+                            event_type=BillingEventType.TEXT_CALL,
+                            amount=total_tokens,
+                            properties={
+                                "source": "simulate_chat_initial_message",
+                                "source_id": str(call_execution.id),
+                                "input_tokens": input_tokens,
+                                "output_tokens": output_tokens,
+                                "total_tokens": total_tokens,
+                            },
+                        )
                     )
-                )
-            except Exception:
-                logger.exception(
-                    "chat_initial_message_bill_failed",
-                    call_execution_id=str(call_execution.id),
-                )
+                except Exception:
+                    logger.exception(
+                        "chat_initial_message_bill_failed",
+                        call_execution_id=str(call_execution.id),
+                    )
 
         ##check if test execution is pending
         if (
