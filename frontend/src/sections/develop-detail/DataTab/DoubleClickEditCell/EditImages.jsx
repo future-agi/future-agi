@@ -385,6 +385,9 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
                   <Typography variant="body2" color="text.secondary">
                     Click or drag images here to upload
                   </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Supported formats: JPEG, PNG, WebP, BMP, TIFF
+                  </Typography>
                 </Box>
               </Box>
             </Box>
