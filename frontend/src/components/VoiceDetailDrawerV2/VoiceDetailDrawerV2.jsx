@@ -355,7 +355,7 @@ const VoiceDetailDrawerV2 = ({
                 }
           }
           onDownload={handleDownload}
-          onShare={() => setShareDialogOpen(true)}
+          onShare={data?.trace_id ? () => setShareDialogOpen(true) : undefined}
         />
       )}
 
@@ -509,18 +509,17 @@ const VoiceDetailDrawerV2 = ({
         )}
       </Box>
 
-      {/* Share dialog — voice calls share via trace_id, same backend as
-          the trace drawer. The fallback URL points at the voice full-page
-          route so authenticated recipients land directly on the voice UI. */}
-      {(data?.trace_id || data?.id) && (
+      {/* Share links resolve trace resources, so simulate-only call executions
+          without a linked trace must not offer a broken share action. */}
+      {data?.trace_id && (
         <ShareDialog
           open={shareDialogOpen}
           onClose={() => setShareDialogOpen(false)}
           resourceType="trace"
-          resourceId={data?.trace_id || data?.id}
+          resourceId={data.trace_id}
           fallbackShareUrl={
-            projectId && (data?.trace_id || data?.id)
-              ? `${window.location.origin}/dashboard/observe/${projectId}/voice/${data?.trace_id || data?.id}`
+            projectId
+              ? `${window.location.origin}/dashboard/observe/${projectId}/voice/${data.trace_id}`
               : undefined
           }
         />
