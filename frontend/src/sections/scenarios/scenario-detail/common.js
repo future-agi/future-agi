@@ -55,8 +55,13 @@ export const addColumnSchema = z.object({
       z.object({
         name: z
           .string()
+          .trim()
           .min(1, "Column name is required")
-          .max(50, "Column name must be less than 50 characters"),
+          .max(50, "Column name must be less than 50 characters")
+          .regex(
+            /^[a-z0-9_-]+$/,
+            "Only lowercase letters, numbers, underscores, and hyphens are allowed (no spaces)",
+          ),
 
         type: z.enum(
           ["text", "boolean", "integer", "float", "json", "array", "datetime"],

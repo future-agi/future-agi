@@ -228,6 +228,13 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [staticColumnType, setStaticColumnType] = useState("");
   const [columnName, setColumnName] = useState("");
+  const columnNameError = !columnName.trim()
+    ? "Column name is required"
+    : columnName.length > 50
+      ? "Column name must be less than 50 characters"
+      : !/^[a-z0-9_-]+$/.test(columnName)
+        ? "Only lowercase letters, numbers, underscores, and hyphens are allowed (no spaces)"
+        : "";
   const { openAddColumnDrawer, setOpenAddColumnDrawer } =
     useAddColumnDrawerStore();
   const onClose = () => {
@@ -373,6 +380,8 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
               placeholder="Enter column name"
               value={columnName}
               required
+              error={Boolean(columnNameError && columnName)}
+              helperText={columnName ? columnNameError : undefined}
               onChange={(e) => setColumnName(e.target.value)}
             />
             <Box
@@ -415,7 +424,7 @@ const AddColumnDrawer = ({ hideScenarioFeatures = false }) => {
                       .replace(/\s+/g, ""),
                   });
                 }}
-                disabled={!columnName}
+                disabled={!columnName.trim() || Boolean(columnNameError)}
                 loading={isLoading}
               >
                 Add Column
