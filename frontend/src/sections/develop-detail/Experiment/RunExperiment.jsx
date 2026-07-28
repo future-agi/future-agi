@@ -82,6 +82,7 @@ const RunExperimentForm = ({
   selectedExperiment,
   setError,
   trigger,
+  snapshotDatasetId,
 }) => {
   const formState = useFormState({
     control,
@@ -439,6 +440,8 @@ const RunExperimentForm = ({
               control={control}
               errors={errors}
               isEditingExperiment={Boolean(selectedExperiment)}
+              experimentId={selectedExperiment}
+              snapshotDatasetId={snapshotDatasetId}
             />
           </ShowComponent>
 
@@ -537,6 +540,7 @@ RunExperimentForm.propTypes = {
   setError: PropTypes.func,
   selectedExperiment: PropTypes.string,
   trigger: PropTypes.func,
+  snapshotDatasetId: PropTypes.string,
 };
 
 const RunExperiment = ({
@@ -772,6 +776,7 @@ const RunExperiment = ({
               trigger={trigger}
               selectedExperiment={selectedExperiment}
               onSubmitSuccess={handleSubmitSuccess}
+              snapshotDatasetId={experimentData?.snapshot_dataset_id}
             />
           )
         ) : null}

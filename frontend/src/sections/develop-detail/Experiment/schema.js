@@ -462,6 +462,17 @@ export const getNewExperimentValidationSchema = (
         model: evalItem.model,
         error_localizer: evalItem.errorLocalizer ?? evalItem.error_localizer,
         kb_id: evalItem.kbId || evalItem.kb_id || null,
+        // Carries either the version the user picked from the dropdown, or
+        // the version created by the scoped mid-flow edit call — becomes
+        // the dedup baseline for maybe_pin_new_version on save.
+        pinned_version_id:
+          evalItem.pinnedVersionId ?? evalItem.pinned_version_id ?? null,
+        ...((evalItem.compositeWeightOverrides ||
+          evalItem.composite_weight_overrides) && {
+          composite_weight_overrides:
+            evalItem.compositeWeightOverrides ??
+            evalItem.composite_weight_overrides,
+        }),
       })),
     }));
 

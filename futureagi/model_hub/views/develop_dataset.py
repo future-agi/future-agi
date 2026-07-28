@@ -214,6 +214,7 @@ from model_hub.serializers.develop_dataset_contracts import (
     DevelopDatasetMessageResponseSerializer,
     DuplicateDatasetResponseSerializer,
     DuplicateRowsResponseSerializer,
+    EditAndRunUserEvalResponseSerializer,
     EvalFunctionListResponseSerializer,
     EvalListResponseSerializer,
     EvalPreviewResponseSerializer,
@@ -7876,7 +7877,7 @@ class EditAndRunUserEvalView(APIView):
     @validated_request(
         request_serializer=UserEvalUpdateRequestSerializer,
         responses={
-            200: DevelopDatasetMessageResponseSerializer,
+            200: EditAndRunUserEvalResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
     )
@@ -8210,7 +8211,15 @@ class EditAndRunUserEvalView(APIView):
 
                 eval_metric.save()
                 return self._gm.success_response(
-                    "Column evaluation updated and queued for processing"
+                    {
+                        "message": "Column evaluation updated and queued for processing",
+                        "id": str(eval_metric.id),
+                        "pinned_version_id": (
+                            str(eval_metric.pinned_version_id)
+                            if eval_metric.pinned_version_id
+                            else None
+                        ),
+                    }
                 )
 
         except Http404:

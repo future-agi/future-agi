@@ -14,10 +14,11 @@ import PropTypes from "prop-types";
 import SvgColor from "src/components/svg-color";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import { useFieldArray, useWatch } from "react-hook-form";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import { useSearchParams } from "react-router-dom";
 import axios, { endpoints } from "src/utils/axios";
+import { enqueueSnackbar } from "src/components/snackbar";
 import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
 import { getVersionedEvalName } from "src/components/run-tests/common";
 import { ShowComponent } from "src/components/show";
@@ -28,6 +29,8 @@ const EvaluationStepExperimentCreation = ({
   allColumns,
   errors,
   isEditingExperiment = false,
+  experimentId = null,
+  snapshotDatasetId = null,
 }) => {
   const selectedColumn = useWatch({ control, name: "columnId" });
   const { dataset: datasetParam } = useParams();
@@ -84,6 +87,35 @@ const EvaluationStepExperimentCreation = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userEvalList, replaceEvals]);
+  // Only an eval that already has a real backend UserEvalMetric id (i.e. it
+  // was persisted on a previous save of this experiment) can be pinned to a
+  // new version via the scoped edit-eval endpoint. Brand new evals added
+  // mid-session don't exist on the server yet — they stay fully local and
+  // get created (with any picked pinned_version_id) at Run Experiment.
+  // Experiment evals live on the experiment's snapshot dataset (not the
+  // original dataset the experiment was created from) — the scoped
+  // edit-eval endpoint's dataset_id path param must match that to find
+  // the UserEvalMetric row.
+  const canPinInline =
+    isEditingExperiment && Boolean(experimentId) && Boolean(snapshotDatasetId);
+  const queryClient = useQueryClient();
+
+  const { mutate: pinEvalVersionInline } = useMutation({
+    mutationFn: ({ userEvalId, payload }) =>
+      axios.post(
+        endpoints.develop.eval.editEval(snapshotDatasetId, userEvalId),
+        payload,
+      ),
+    onError: (error) => {
+      enqueueSnackbar(
+        error?.response?.data?.result ||
+          error?.message ||
+          "Failed to save the new evaluation version",
+        { variant: "error" },
+      );
+    },
+  });
+
   const handleAddEvaluation = (evalConfig) => {
     // Build mapping: DatasetTestMode returns { variable: "column_name" }.
     // The backend expects { variable: "column_uuid" }.
@@ -106,6 +138,7 @@ const EvaluationStepExperimentCreation = ({
       ...templateConfig,
       mapping: translatedMapping,
     };
+    const isComposite = evalConfig.templateType === "composite";
 
     const evalEntry = {
       evalId: evalConfig.templateId,
@@ -120,8 +153,11 @@ const EvaluationStepExperimentCreation = ({
         evalConfig.evalTemplate?.requiredKeys ||
         templateConfig.requiredKeys ||
         [],
-      ...(evalConfig.templateType === "composite" &&
-      evalConfig.compositeWeightOverrides
+      // The version the user picked from the dropdown (or, for a dirty
+      // edit, whatever version was pinned before this save — gets
+      // overwritten below once the scoped save resolves).
+      pinnedVersionId: evalConfig.versionId ?? null,
+      ...(isComposite && evalConfig.compositeWeightOverrides
         ? { compositeWeightOverrides: evalConfig.compositeWeightOverrides }
         : {}),
     };
@@ -133,11 +169,100 @@ const EvaluationStepExperimentCreation = ({
         return fid === editingEval.userEvalId;
       });
       if (idx !== -1) {
-        update(idx, {
+        const merged = {
           ...evalFields[idx],
           ...evalEntry,
           name: evalConfig.name,
-        });
+        };
+        update(idx, merged);
+
+        const userEvalId = editingEval.userEvalId;
+        const hasBackendMetric = userEvalId && isUUID(userEvalId);
+
+        // Only a real, dirty config edit needs a new version created right
+        // now. A plain version-dropdown pick (isDirty === false) or an
+        // eval that doesn't exist on the server yet just stays local —
+        // it's picked up by the full save on "Run Experiment".
+        if (canPinInline && hasBackendMetric && evalConfig.isDirty) {
+          const runConfig = {};
+          if (!isComposite) {
+            if (evalConfig.model) runConfig.model = evalConfig.model;
+            if (evalConfig.agent_mode) runConfig.agent_mode = evalConfig.agent_mode;
+            if (evalConfig.check_internet !== undefined)
+              runConfig.check_internet = !!evalConfig.check_internet;
+            if (evalConfig.summary) runConfig.summary = evalConfig.summary;
+            if (evalConfig.knowledge_bases)
+              runConfig.knowledge_bases = evalConfig.knowledge_bases;
+            if (evalConfig.tools) runConfig.tools = evalConfig.tools;
+            if (evalConfig.pass_threshold !== undefined)
+              runConfig.pass_threshold = evalConfig.pass_threshold;
+            if (
+              evalConfig.choice_scores &&
+              Object.keys(evalConfig.choice_scores).length
+            )
+              runConfig.choice_scores = evalConfig.choice_scores;
+            if (evalConfig.multi_choice !== undefined)
+              runConfig.multi_choice = !!evalConfig.multi_choice;
+          }
+          if (evalConfig.data_injection)
+            runConfig.data_injection = evalConfig.data_injection;
+          if (evalConfig.error_localizer_enabled !== undefined)
+            runConfig.error_localizer_enabled = !!evalConfig.error_localizer_enabled;
+          const evalParams =
+            evalConfig.params && typeof evalConfig.params === "object"
+              ? evalConfig.params
+              : {};
+
+          pinEvalVersionInline(
+            {
+              userEvalId,
+              payload: {
+                name: evalConfig.name,
+                template_id: evalConfig.templateId,
+                model: isComposite ? undefined : evalConfig.model,
+                run: false,
+                experiment_id: experimentId,
+                error_localizer: runConfig.error_localizer_enabled ?? false,
+                pinned_version_id: evalConfig.versionId || undefined,
+                config: {
+                  mapping: translatedMapping,
+                  config: isComposite ? {} : templateConfig,
+                  ...(Object.keys(evalParams).length
+                    ? { params: evalParams }
+                    : {}),
+                  ...(Object.keys(runConfig).length
+                    ? { run_config: runConfig }
+                    : {}),
+                },
+                ...(isComposite && evalConfig.compositeWeightOverrides
+                  ? {
+                      composite_weight_overrides:
+                        evalConfig.compositeWeightOverrides,
+                    }
+                  : {}),
+              },
+            },
+            {
+              onSuccess: (resp) => {
+                const resolvedPinnedVersionId =
+                  resp?.data?.result?.pinned_version_id;
+                if (resolvedPinnedVersionId) {
+                  update(idx, {
+                    ...merged,
+                    pinnedVersionId: resolvedPinnedVersionId,
+                  });
+                }
+                // The scoped save may have created a new version directly on
+                // the backend (bypassing useCreateEvalVersion's own cache
+                // invalidation) — refresh so the dropdown shows it next time
+                // this eval is reopened for editing.
+                queryClient.invalidateQueries({
+                  queryKey: ["evals", "versions", evalConfig.templateId],
+                });
+              },
+            },
+          );
+        }
       }
     } else {
       // Add mode: append with versioned name to avoid duplicates.
@@ -179,6 +304,11 @@ const EvaluationStepExperimentCreation = ({
       compositeWeightOverrides:
         evalItem.compositeWeightOverrides ||
         evalItem.composite_weight_overrides,
+      // Lets EvalPickerConfigFull preselect whatever version is currently
+      // pinned for this eval (either from the backend, or from a version
+      // picked/created earlier in this same editing session).
+      pinned_version_id:
+        evalItem.pinnedVersionId || evalItem.pinned_version_id || null,
     });
     setOpenEvaluationDialog(true);
   };
@@ -479,4 +609,6 @@ EvaluationStepExperimentCreation.propTypes = {
   allColumns: PropTypes.array,
   errors: PropTypes.object,
   isEditingExperiment: PropTypes.bool,
+  experimentId: PropTypes.string,
+  snapshotDatasetId: PropTypes.string,
 };

@@ -4524,6 +4524,60 @@ def _with_default_reason_column(config):
     return config
 
 
+def _apply_entry_pinned_version_baseline(entry, metric):
+    """If the entry carries an explicit pinned_version_id, use it as the
+    dedup baseline before maybe_pin_new_version runs. Mirrors the same
+    re-baseline branch in EditAndRunUserEvalView.post (dataset side)."""
+    from model_hub.models.evals_metric import EvalTemplateVersion
+
+    ver_id = entry.get("pinned_version_id")
+    if not ver_id:
+        return
+    ver = EvalTemplateVersion.objects.filter(
+        id=ver_id, eval_template=metric.template
+    ).first()
+    if not ver:
+        raise ValueError(f"Selected eval version {ver_id} not found for template")
+    metric.pinned_version = ver
+
+
+def _pin_experiment_metric_version(metric, entry, user, organization, workspace):
+    """Create + pin a new EvalTemplateVersion if the entry's config differs
+    from the current pinned baseline (dedup happens inside the service).
+
+    `entry["config"]` here is the FLAT shape the experiment wizard sends
+    (template fields + mapping all at the top level — see
+    EvaluationStepExperimentCreation.jsx's `fullConfig`). maybe_pin_new_version
+    expects the nested `{mapping, config: {...}, run_config: {...}}` shape
+    (same as EditAndRunUserEvalView / EvaluationDrawer), so re-nest it here
+    rather than passing the flat dict straight through — otherwise
+    `inner_config` resolves empty and the snapshot silently falls back to
+    just the template's current live config, breaking dedup.
+    """
+    from model_hub.services.eval_version_pinning import maybe_pin_new_version
+
+    flat_config = entry.get("config") or {}
+    mapping = flat_config.get("mapping") or {}
+    inner_config = {k: v for k, v in flat_config.items() if k != "mapping"}
+
+    maybe_pin_new_version(
+        metric,
+        {
+            "config": {
+                "mapping": mapping,
+                "config": inner_config,
+            },
+            "model": entry.get("model") or metric.model or "",
+            "composite_weight_overrides": entry.get("composite_weight_overrides"),
+        },
+        user=user,
+        organization=organization,
+        workspace=workspace,
+    )
+    if metric.pinned_version_id:
+        metric.save(update_fields=["pinned_version"])
+
+
 def _create_eval_metrics_inline(
     eval_entries,
     experiment,
@@ -4584,6 +4638,8 @@ def _create_eval_metrics_inline(
             # for single-template metrics. See Phase 7 wiring plan.
             composite_weight_overrides=entry.get("composite_weight_overrides"),
         )
+        _apply_entry_pinned_version_baseline(entry, metric)
+        _pin_experiment_metric_version(metric, entry, user, organization, workspace)
         created.append(metric)
     return created
 
@@ -5102,6 +5158,9 @@ def _has_eval_changed(metric, entry, translated_mapping):
         return True
     if metric.name != entry.get("name", ""):
         return True
+    entry_pin = entry.get("pinned_version_id")
+    if entry_pin and str(entry_pin) != str(metric.pinned_version_id or ""):
+        return True
     return False
 
 
@@ -5153,6 +5212,10 @@ def _diff_and_update_evals(
                 metric.error_localizer = entry.get("error_localizer", False)
                 metric.kb_id = entry.get("kb_id")
                 metric.save()
+                _apply_entry_pinned_version_baseline(entry, metric)
+                _pin_experiment_metric_version(
+                    metric, entry, user, organization, workspace
+                )
                 rerun_ids.append(entry_id)
         else:
             # NEW metric — create and pre-create eval columns

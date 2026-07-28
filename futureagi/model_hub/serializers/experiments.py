@@ -410,6 +410,12 @@ class EvalMetricEntrySerializer(serializers.Serializer):
     composite_weight_overrides = serializers.JSONField(
         required=False, allow_null=True, default=None
     )
+    # User's picked eval version (from the EvalPicker version dropdown or a
+    # freshly-created version from a mid-flow config edit). Becomes the
+    # dedup baseline for maybe_pin_new_version so the pick survives save.
+    pinned_version_id = serializers.UUIDField(
+        required=False, allow_null=True, default=None
+    )
 
 
 class _ExtraFieldsMixin:
@@ -875,6 +881,9 @@ class ExperimentDetailV2Serializer(serializers.ModelSerializer):
                 "model": m.model,
                 "error_localizer": m.error_localizer,
                 "kb_id": str(m.kb_id) if m.kb_id else None,
+                "pinned_version_id": (
+                    str(m.pinned_version_id) if m.pinned_version_id else None
+                ),
             }
             for m in metrics
         ]
