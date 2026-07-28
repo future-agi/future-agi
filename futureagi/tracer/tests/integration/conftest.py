@@ -3,7 +3,7 @@
 These do not leak into the parent ``tracer/tests/`` namespace — only tests
 collected from ``futureagi/tracer/tests/integration/`` resolve these fixtures.
 """
-import os
+
 import uuid
 
 import pytest
@@ -11,11 +11,12 @@ from django.conf import settings
 from django.test import override_settings
 
 _CH_TABLES_TO_TRUNCATE = [
-    "tracer_observation_span",
-    "tracer_trace",
-    "trace_session",
+    "spans",
+    "traces",
+    "trace_sessions",
     "tracer_eval_logger",
-    "spans",  # MV target; truncate to keep cross-test isolation
+    "tracer_eval_logger_v2",
+    "model_hub_score",
 ]
 
 
@@ -68,7 +69,7 @@ def ch_client():
     try:
         native = Client(
             host=ch.get("CH_HOST", "localhost"),
-            port=int(os.environ.get("CH_PORT", ch.get("CH_PORT", "19000"))),
+            port=int(ch.get("CH_PORT", "19000")),
             user=ch.get("CH_USERNAME", "default"),
             password=ch.get("CH_PASSWORD", ""),
         )
@@ -90,7 +91,7 @@ def ch_schema(ch_client):
         ch_client.command(f"USE {db}")
     except Exception:
         pass
-    for name, ddl in get_all_schema_ddl():
+    for _name, ddl in get_all_schema_ddl():
         rewritten = ddl.replace("futureagi.", f"{db}.")
         try:
             ch_client.command(rewritten)
@@ -98,6 +99,49 @@ def ch_schema(ch_client):
             # idempotent — table/view already exists from a previous session,
             # or DDL refers to dependencies that don't materialize here.
             pass
+    # The eval filter subqueries hardcode ``tracer_eval_logger`` with the v2
+    # column shape (``is_deleted``), but the legacy DDL above and the django
+    # boot hook create that name CDC-shaped. Reshape it to a structural clone
+    # of ``tracer_eval_logger_v2`` (applied by the root conftest's v2 schema
+    # pass) so the whole suite reads v2-shaped eval rows. The rollup MVs
+    # attached to the old name expect CDC columns and would fail every
+    # insert — drop them (the list endpoints under test never read them).
+    for mv in ("eval_metrics_hourly_mv", "eval_per_config_mv"):
+        ch_client.command(f"DROP VIEW IF EXISTS {db}.{mv}")
+    # Work-item columns the eval score phase reads — POST_DDL_ALTERS adds them
+    # to the legacy table only; no v2 schema file adds them to _v2 yet.
+    for col_ddl in (
+        "status LowCardinality(String) DEFAULT 'completed'",
+        "config_hash Nullable(String)",
+        "skipped_reason Nullable(String)",
+        "attempts Int32 DEFAULT 0",
+    ):
+        ch_client.command(
+            f"ALTER TABLE {db}.tracer_eval_logger_v2 ADD COLUMN IF NOT EXISTS {col_ddl}"
+        )
+    ch_client.command(f"DROP TABLE IF EXISTS {db}.tracer_eval_logger")
+    # Coverage boundary: this rebuilds tracer_eval_logger as a v2 clone with CDC
+    # columns bolted on (below) — a hybrid shape that exists NOWHERE in prod. The
+    # matrix therefore validates filter SEMANTICS but cannot catch prod-shape
+    # missing-column failures (the exact bug class this PR's eval-filter fix
+    # addresses).
+    ch_client.command(
+        f"CREATE TABLE {db}.tracer_eval_logger AS {db}.tracer_eval_logger_v2"
+    )
+    # ``tracer_eval_logger`` serves two readers with different shapes: the eval
+    # *filter* subqueries use the v2 shape (``is_deleted``, above), but the
+    # traces/voice eval-metrics *enrichment* (avg_score/pass_rate) reads it as
+    # the PeerDB CDC mirror it is in prod — ``WHERE _peerdb_is_deleted = 0 AND
+    # (deleted = 0 OR deleted IS NULL)`` (see query_builders/eval_metrics.py,
+    # schema.py:CDC_EVAL_LOGGER). Add those CDC columns (defaulting to
+    # not-deleted) so both readers resolve against the seeded rows.
+    for col_ddl in (
+        "_peerdb_is_deleted UInt8 DEFAULT 0",
+        "deleted UInt8 DEFAULT 0",
+    ):
+        ch_client.command(
+            f"ALTER TABLE {db}.tracer_eval_logger ADD COLUMN IF NOT EXISTS {col_ddl}"
+        )
     return ch_client
 
 
@@ -131,11 +175,6 @@ def ch_routes_on():
     """
     routes = {
         **settings.CLICKHOUSE,
-        "CH_HOST": os.environ.get("CH_HOST", "localhost"),
-        "CH_PORT": os.environ.get("CH_PORT", "19000"),
-        "CH_USERNAME": os.environ.get("CH_USERNAME", "default"),
-        "CH_PASSWORD": os.environ.get("CH_PASSWORD", ""),
-        "CH_DATABASE": os.environ.get("CH_DATABASE", "test_tfc"),
         "CH_ENABLED": True,
         "CH_ROUTE_SPAN_LIST": "clickhouse",
         "CH_ROUTE_TRACE_LIST": "clickhouse",
@@ -144,12 +183,33 @@ def ch_routes_on():
         "CH_ROUTE_VOICE_CALL_LIST": "clickhouse",
         "CH_SHADOW_MODE": False,
     }
+    # Pin the v1↔v2 dispatch to the v2 builders — the suite tests the v2 read
+    # path only, and tfc.settings.test's CLICKHOUSE_V2 carries no routing keys
+    # (which get_routing_mode resolves as v1-only). V2_ONLY (not V2_PRIMARY)
+    # so no v1 shadow query runs — the shadow hits the v2-shaped eval table
+    # with v1 CDC columns (_peerdb_is_deleted) and doubles CH load.
+    # Pin ONLY the four list builders to v2. The EVAL_METRICS enrichment
+    # (avg_score/pass_rate) is v1-coupled even in the v2 trace/voice builders:
+    # it queries the v1-shaped `tracer_eval_logger` (`_peerdb_is_deleted`), which
+    # carries the v2 shape in the test CH → Code 47. Routing EVAL_METRICS to v2
+    # makes eval-config discovery succeed, which then *triggers* that broken
+    # enrichment on every traces/voice request (breaking non-eval cases too).
+    # Leaving it unrouted keeps the enrichment dormant unless an eval filter
+    # forces discovery.
+    # NOTE: the endpoint xfail (test_list_endpoints_filter_count) triggers ONLY
+    # on ``case.contract_gap``, and no eval/has_eval traces/voice case currently
+    # carries one — so any v1/v2-coupling breakage on those cases would surface
+    # as a hard failure, not an xfail. Not covered as xfail today.
+    routes_v2 = {
+        **getattr(settings, "CLICKHOUSE_V2", {}),
+        "QUERY_TYPES_V2_ONLY": "SPAN_LIST,TRACE_LIST,SESSION_LIST,VOICE_CALL_LIST",
+    }
     from tracer.services.clickhouse import client as ch_client_module
 
     prior_client = ch_client_module._clickhouse_client
     ch_client_module._clickhouse_client = None
     try:
-        with override_settings(CLICKHOUSE=routes):
+        with override_settings(CLICKHOUSE=routes, CLICKHOUSE_V2=routes_v2):
             yield
     finally:
         # Drop any test-scoped client so the next test reads fresh settings.
@@ -196,9 +256,7 @@ def integration_setup(django_db_setup, django_db_blocker, ch_schema):
 
     with django_db_blocker.unblock():
         clear_workspace_context()
-        org = Organization.objects.create(
-            name=f"int_test_org_{uuid.uuid4().hex[:8]}"
-        )
+        org = Organization.objects.create(name=f"int_test_org_{uuid.uuid4().hex[:8]}")
         set_workspace_context(organization=org)
         user = User.objects.create_user(
             email=f"integration-{uuid.uuid4().hex[:8]}@futureagi.com",
@@ -262,6 +320,11 @@ def integration_setup(django_db_setup, django_db_blocker, ch_schema):
         eval_config_id=writer.eval_config_id,
         annotation_label_id=writer.annotation_label_id,
         choice_eval_config_id=writer.choice_eval_config_id,
+        pf_eval_config_id=writer.pf_eval_config_id,
+        text_label_id=writer.text_label_id,
+        thumbs_label_id=writer.thumbs_label_id,
+        categorical_label_id=writer.categorical_label_id,
+        annotator_user_id=writer.annotator_user_id,
         counts=counts,
     )
     yield snapshot
@@ -274,6 +337,7 @@ def integration_setup(django_db_setup, django_db_blocker, ch_schema):
 
 
 # Per-test wrappers — each requests ``db`` so per-test writes roll back.
+
 
 @pytest.fixture
 def organization(integration_setup, db):
@@ -313,7 +377,9 @@ def seeded_corpus(integration_setup, db):
 
 
 @pytest.fixture(scope="session")
-def voice_integration_setup(django_db_setup, django_db_blocker, ch_schema, integration_setup):
+def voice_integration_setup(
+    django_db_setup, django_db_blocker, ch_schema, integration_setup
+):
     """Session-scoped voice-only project + corpus for voiceCalls cases."""
     from types import SimpleNamespace
 
@@ -347,6 +413,11 @@ def voice_integration_setup(django_db_setup, django_db_blocker, ch_schema, integ
         eval_config_id=writer.eval_config_id,
         annotation_label_id=writer.annotation_label_id,
         choice_eval_config_id=writer.choice_eval_config_id,
+        pf_eval_config_id=writer.pf_eval_config_id,
+        text_label_id=writer.text_label_id,
+        thumbs_label_id=writer.thumbs_label_id,
+        categorical_label_id=writer.categorical_label_id,
+        annotator_user_id=writer.annotator_user_id,
         counts=counts,
     )
     yield snapshot

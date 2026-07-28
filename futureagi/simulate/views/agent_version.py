@@ -21,17 +21,40 @@ from simulate.serializers.response.agent_version import (
     AgentVersionResponseSerializer,
     AgentVersionRestoreResponseSerializer,
 )
+from simulate.serializers.response.run_test_evals import (
+    EvalErrorResponseSerializer,
+    EvalSummaryResponseSerializer,
+)
 from simulate.serializers.test_execution import CallExecutionSerializer
+from simulate.services.agent_definition import (
+    is_masked,
+    resolve_api_key_for_version,
+    sync_provider_credentials,
+)
+from simulate.services.types.agent_definition import ProviderCredentialsInput
 from simulate.utils.eval_summary import (
     _build_template_statistics,
     _calculate_final_template_summaries,
     _get_completed_call_executions_for_agent_version,
     _get_eval_config_for_agent_version,
 )
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
+from tfc.utils.api_serializers import (
+    ApiErrorWithDetailsResponseSerializer,
+    EmptyRequestSerializer,
+)
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.utils.observability_provider import create_observability_provider
+
+
+def _error_response(message, status_code):
+    return Response(
+        build_error_envelope(message, status_code=status_code),
+        status=status_code,
+    )
 
 
 class AgentVersionListView(APIView):
@@ -42,7 +65,11 @@ class AgentVersionListView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: AgentVersionListResponseSerializer(many=True)},
+        responses={
+            200: AgentVersionListResponseSerializer(many=True),
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     def get(self, request, agent_id, *args, **kwargs):
         """
@@ -65,16 +92,15 @@ class AgentVersionListView(APIView):
             return paginator.get_paginated_response(serializer.data)
 
         except AgentDefinition.DoesNotExist:
-            return Response(
-                {"error": "Agent definition not found"},
-                status=status.HTTP_404_NOT_FOUND,
+            return _error_response(
+                "Agent definition not found", status.HTTP_404_NOT_FOUND
             )
         except NotFound:
             raise
         except Exception as e:
-            return Response(
-                {"error": f"Failed to retrieve agent versions: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _error_response(
+                f"Failed to retrieve agent versions: {str(e)}",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 
@@ -85,9 +111,15 @@ class CreateAgentVersionView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=AgentVersionCreateRequestSerializer,
-        responses={201: AgentVersionCreateResponseSerializer},
+    @validated_request(
+        request_serializer=AgentVersionCreateRequestSerializer,
+        responses={
+            201: AgentVersionCreateResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
+        reject_unknown_fields=True,
     )
     def post(self, request, agent_id, *args, **kwargs):
         """
@@ -100,20 +132,14 @@ class CreateAgentVersionView(APIView):
                 or request.user.organization,
             )
 
-            # Validate request through request serializer
-            req_serializer = AgentVersionCreateRequestSerializer(data=request.data)
-            if not req_serializer.is_valid():
-                return Response(
-                    {
-                        "error": "Invalid data for agent update",
-                        "details": req_serializer.errors,
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            validated = req_serializer.validated_data
+            validated = request.validated_data
             commit_message = validated.get("commit_message", "")
             observability_enabled = validated.get("observability_enabled", False)
+
+            incoming_api_key = validated.get("api_key")
+            preserve_existing_api_key = incoming_api_key is not None and is_masked(
+                incoming_api_key
+            )
 
             # Update agent definition fields directly from validated data
             update_fields = [
@@ -133,38 +159,11 @@ class CreateAgentVersionView(APIView):
             ]
             changed = False
             for field in update_fields:
+                if field == "api_key" and preserve_existing_api_key:
+                    continue
                 if field in validated:
                     setattr(agent, field, validated[field])
                     changed = True
-
-            # LiveKit fields are NOT model columns on AgentDefinition; they
-            # live on the related ProviderCredentials row. Route them
-            # through the same sync helper used by AgentDefinitionSerializer
-            # so changes (e.g. max_concurrency) are persisted before the
-            # version snapshot is taken below.
-            from simulate.serializers.agent_definition import (
-                AgentDefinitionSerializer,
-                ProviderCredentialsInput,
-            )
-
-            creds_input = ProviderCredentialsInput(
-                provider=validated.get("provider") or agent.provider or "",
-                api_key=validated.get("api_key"),
-                assistant_id=validated.get("assistant_id"),
-                livekit_url=validated.get("livekit_url"),
-                livekit_api_key=validated.get("livekit_api_key"),
-                livekit_api_secret=validated.get("livekit_api_secret"),
-                livekit_agent_name=validated.get("livekit_agent_name"),
-                livekit_config_json=validated.get("livekit_config_json"),
-                livekit_max_concurrency=validated.get("livekit_max_concurrency"),
-            )
-            AgentDefinitionSerializer._sync_provider_credentials(agent, creds_input)
-            # Drop the cached `credentials` related-object so the snapshot
-            # builder in create_version() reads the freshly-saved row.
-            try:
-                del agent.credentials
-            except AttributeError:
-                pass
 
             if "knowledge_base" in validated:
                 kb_id = validated["knowledge_base"]
@@ -178,14 +177,15 @@ class CreateAgentVersionView(APIView):
                         id=kb_id, organization=organization
                     ).exists():
                         return Response(
-                            {
-                                "error": "Invalid data for agent update",
-                                "details": {
+                            build_error_envelope(
+                                "Invalid data for agent update",
+                                status_code=status.HTTP_400_BAD_REQUEST,
+                                details={
                                     "knowledge_base": [
                                         "Knowledge base not found in your organization."
                                     ]
                                 },
-                            },
+                            ),
                             status=status.HTTP_400_BAD_REQUEST,
                         )
                 agent.knowledge_base_id = kb_id
@@ -216,11 +216,42 @@ class CreateAgentVersionView(APIView):
                     agent.observability_provider = provider
                     agent.save()
 
+            # Resolve the API key *before* creating the new version so we
+            # read from the active version rather than the brand-new one.
+            if preserve_existing_api_key:
+                active_version = agent.active_version or agent.latest_version
+                existing_api_key = (
+                    resolve_api_key_for_version(active_version) if active_version else None
+                )
+            else:
+                existing_api_key = None
+
             version = agent.create_version(
                 description=agent.description,
                 commit_message=commit_message,
                 status=AgentVersion.StatusChoices.ACTIVE,
             )
+            version.activate()
+
+            creds_input = ProviderCredentialsInput(
+                provider=validated.get("provider") or agent.provider or "",
+                api_key=existing_api_key if preserve_existing_api_key else validated.get("api_key"),
+                assistant_id=validated.get("assistant_id"),
+                livekit_url=validated.get("livekit_url"),
+                livekit_api_key=validated.get("livekit_api_key"),
+                livekit_api_secret=validated.get("livekit_api_secret"),
+                livekit_agent_name=validated.get("livekit_agent_name"),
+                livekit_config_json=validated.get("livekit_config_json"),
+                livekit_max_concurrency=validated.get("livekit_max_concurrency"),
+                provider_was_provided="provider" in request.data,
+            )
+            sync_provider_credentials(version, creds_input)
+
+            # Re-snapshot now that ProviderCredentials exist (LiveKit fields)
+            version.configuration_snapshot = version.create_snapshot(
+                commit_message=version.commit_message or ""
+            )
+            version.save(update_fields=["configuration_snapshot"])
 
             response_data = {
                 "message": "Agent version created successfully",
@@ -229,14 +260,13 @@ class CreateAgentVersionView(APIView):
             return Response(response_data, status=status.HTTP_201_CREATED)
 
         except AgentDefinition.DoesNotExist:
-            return Response(
-                {"error": "Agent definition not found"},
-                status=status.HTTP_404_NOT_FOUND,
+            return _error_response(
+                "Agent definition not found", status.HTTP_404_NOT_FOUND
             )
         except Exception as e:
-            return Response(
-                {"error": f"Failed to create agent version: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _error_response(
+                f"Failed to create agent version: {str(e)}",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 
@@ -248,7 +278,11 @@ class AgentVersionDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: AgentVersionResponseSerializer},
+        responses={
+            200: AgentVersionResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     def get(self, request, agent_id, version_id, *args, **kwargs):
         """
@@ -268,18 +302,15 @@ class AgentVersionDetailView(APIView):
             return Response(serializer.data, status=status.HTTP_200_OK)
 
         except AgentDefinition.DoesNotExist:
-            return Response(
-                {"error": "Agent definition not found"},
-                status=status.HTTP_404_NOT_FOUND,
+            return _error_response(
+                "Agent definition not found", status.HTTP_404_NOT_FOUND
             )
         except AgentVersion.DoesNotExist:
-            return Response(
-                {"error": "Agent version not found"}, status=status.HTTP_404_NOT_FOUND
-            )
+            return _error_response("Agent version not found", status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            return Response(
-                {"error": f"Failed to retrieve agent version: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _error_response(
+                f"Failed to retrieve agent version: {str(e)}",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 
@@ -290,8 +321,14 @@ class ActivateAgentVersionView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        responses={200: AgentVersionActivateResponseSerializer},
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={
+            200: AgentVersionActivateResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
+        reject_unknown_fields=True,
     )
     def post(self, request, agent_id, version_id, *args, **kwargs):
         """
@@ -315,18 +352,15 @@ class ActivateAgentVersionView(APIView):
             return Response(response_data, status=status.HTTP_200_OK)
 
         except AgentDefinition.DoesNotExist:
-            return Response(
-                {"error": "Agent definition not found"},
-                status=status.HTTP_404_NOT_FOUND,
+            return _error_response(
+                "Agent definition not found", status.HTTP_404_NOT_FOUND
             )
         except AgentVersion.DoesNotExist:
-            return Response(
-                {"error": "Agent version not found"}, status=status.HTTP_404_NOT_FOUND
-            )
+            return _error_response("Agent version not found", status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            return Response(
-                {"error": f"Failed to activate agent version: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _error_response(
+                f"Failed to activate agent version: {str(e)}",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 
@@ -338,7 +372,12 @@ class DeleteAgentVersionView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: AgentVersionDeleteResponseSerializer},
+        responses={
+            200: AgentVersionDeleteResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     def delete(self, request, agent_id, version_id, *args, **kwargs):
         """
@@ -360,11 +399,9 @@ class DeleteAgentVersionView(APIView):
                 ).exclude(id=version_id)
 
                 if not active_versions.exists():
-                    return Response(
-                        {
-                            "error": "Cannot delete the only active version. Please activate another version first."
-                        },
-                        status=status.HTTP_400_BAD_REQUEST,
+                    return _error_response(
+                        "Cannot delete the only active version. Please activate another version first.",
+                        status.HTTP_400_BAD_REQUEST,
                     )
 
             version.delete()
@@ -376,18 +413,15 @@ class DeleteAgentVersionView(APIView):
             )
 
         except AgentDefinition.DoesNotExist:
-            return Response(
-                {"error": "Agent definition not found"},
-                status=status.HTTP_404_NOT_FOUND,
+            return _error_response(
+                "Agent definition not found", status.HTTP_404_NOT_FOUND
             )
         except AgentVersion.DoesNotExist:
-            return Response(
-                {"error": "Agent version not found"}, status=status.HTTP_404_NOT_FOUND
-            )
+            return _error_response("Agent version not found", status.HTTP_404_NOT_FOUND)
         except Exception as e:
-            return Response(
-                {"error": f"Failed to delete agent version: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _error_response(
+                f"Failed to delete agent version: {str(e)}",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 
@@ -398,8 +432,15 @@ class RestoreAgentVersionView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        responses={200: AgentVersionRestoreResponseSerializer},
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={
+            200: AgentVersionRestoreResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
+        reject_unknown_fields=True,
     )
     def post(self, request, agent_id, version_id, *args, **kwargs):
         """
@@ -425,20 +466,17 @@ class RestoreAgentVersionView(APIView):
             return Response(response_data, status=status.HTTP_200_OK)
 
         except AgentDefinition.DoesNotExist:
-            return Response(
-                {"error": "Agent definition not found"},
-                status=status.HTTP_404_NOT_FOUND,
+            return _error_response(
+                "Agent definition not found", status.HTTP_404_NOT_FOUND
             )
         except AgentVersion.DoesNotExist:
-            return Response(
-                {"error": "Agent version not found"}, status=status.HTTP_404_NOT_FOUND
-            )
+            return _error_response("Agent version not found", status.HTTP_404_NOT_FOUND)
         except ValueError as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return _error_response(str(e), status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            return Response(
-                {"error": f"Failed to restore agent version: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _error_response(
+                f"Failed to restore agent version: {str(e)}",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 
@@ -451,7 +489,11 @@ class AgentVersionEvalSummaryView(APIView):
     _gm = GeneralMethods()
 
     @swagger_auto_schema(
-        responses={200: "Evaluation summary for the agent version"},
+        responses={
+            200: EvalSummaryResponseSerializer,
+            404: EvalErrorResponseSerializer,
+            500: EvalErrorResponseSerializer,
+        },
     )
     def get(self, request, agent_id, version_id, *args, **kwargs):
         """
@@ -469,7 +511,7 @@ class AgentVersionEvalSummaryView(APIView):
             eval_configs = _get_eval_config_for_agent_version(version)
 
             if not eval_configs:
-                return Response([], status=status.HTTP_200_OK)
+                return self._gm.success_response([])
 
             call_executions = _get_completed_call_executions_for_agent_version(version)
             template_stats = _build_template_statistics(eval_configs, call_executions)
@@ -492,7 +534,11 @@ class AgentVersionCallExecutionView(APIView):
     _gm = GeneralMethods()
 
     @swagger_auto_schema(
-        responses={200: CallExecutionSerializer(many=True)},
+        responses={
+            200: CallExecutionSerializer(many=True),
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     def get(self, request, agent_id, version_id, *args, **kwargs):
         """

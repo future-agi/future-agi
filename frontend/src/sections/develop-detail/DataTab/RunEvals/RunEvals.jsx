@@ -51,6 +51,8 @@ const RunEvals = ({ gridRef, setIsData }) => {
         data?.result?.columnConfig ?? data?.result?.column_config ?? [];
       const runnableColumnData = columnConfig.filter((item) =>
         isRunnableColumn(item),
+      const runPromptData = data?.result?.column_config?.filter(
+        (item) => item?.origin_type === "run_prompt",
       );
       setMainData(runnableColumnData);
     },
@@ -83,6 +85,10 @@ const RunEvals = ({ gridRef, setIsData }) => {
             ? item?.sourceId ?? item?.source_id
             : item?.id,
         originType: isRunnableColumn(item) ? getOriginType(item) : "eval",
+        content: item?.name || item?.eval_template_name,
+        field: item?.origin_type === "run_prompt" ? item.source_id : item.id,
+        originType:
+          item?.origin_type === "run_prompt" ? item.origin_type : "eval",
       }));
     }
     return [];

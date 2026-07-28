@@ -525,8 +525,7 @@ const CompositeDetailPanel = ({
                     </Typography>
                     {paramEntries.map(([key, schema]) => {
                       const isNumeric =
-                        schema?.type === "integer" ||
-                        schema?.type === "number";
+                        schema?.type === "integer" || schema?.type === "number";
                       const value = childParams[key];
                       return (
                         <TextField
@@ -581,13 +580,9 @@ const CompositeDetailPanel = ({
           onClose={() => setPickerOpen(false)}
           onEvalAdded={handleEvalAdded}
           existingEvals={childrenList.map((c) => ({ id: c.child_id }))}
-          // Always step into the EvalPickerConfigFull screen — users
-          // need the version selector, scoring settings and (when a
-          // dataset is bound) the variable-mapping editor before the
-          // child is committed to the composite. The previous
-          // skipConfig=true bypassed all of that and added the child
-          // straight to the list with template defaults.
-          skipConfig={false}
+          // Add children directly with template defaults; mapping is
+          // resolved at composite level.
+          skipConfig
           source={pickerSource || (pickerSourceId ? "dataset" : "composite")}
           sourceId={pickerSourceId || ""}
           sourceRowType={pickerSourceRowType}

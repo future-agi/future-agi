@@ -32,6 +32,7 @@ from django.utils import timezone
 from temporalio import activity
 
 from simulate.models.test_execution import CallExecution
+from simulate.services.agent_definition import resolve_api_key_for_version
 from simulate.temporal.types.activities import (
     RunSimulateEvaluationsInput,
     RunSimulateEvaluationsOutput,
@@ -39,6 +40,7 @@ from simulate.temporal.types.activities import (
     RunToolCallEvaluationOutput,
 )
 from simulate.utils.eval_summary import derive_kpi_output_type
+from tfc.utils.case import to_camel_case, to_snake_case
 
 logger = structlog.get_logger(__name__)
 
@@ -199,7 +201,6 @@ def _build_transcript_data(call_execution):
     Assembles transcript text from CallTranscript (VOICE) or ChatMessageModel (TEXT)
     records, and reads recording URLs from call_execution fields.
     """
-    from simulate.models import CallTranscript, ChatMessageModel
 
     transcript_data = {
         "transcript": "",
@@ -271,34 +272,27 @@ def _build_transcript_data(call_execution):
                             elif chat_message.role == "assistant":
                                 assistant_chat_transcript_text.append(message)
             else:
-                try:
-                    from ee.voice.utils.transcript_roles import SpeakerRoleResolver
-                except ImportError:
-                    SpeakerRoleResolver = None
-                    logger.warning(
-                        "speaker_role_resolver_unavailable_for_xl_transcript",
-                        call_execution_id=str(call_execution.id),
-                    )
-                else:
-                    provider = SpeakerRoleResolver.detect_provider(
-                        call_execution.provider_call_data
-                    )
-                    call_dir = (call_execution.call_metadata or {}).get(
-                        "call_direction", ""
-                    )
-                    is_outbound = str(call_dir).strip().lower() == "outbound"
+                from simulate.utils.speaker_roles import SpeakerRoleResolver
 
+                provider = SpeakerRoleResolver.detect_provider(
+                    call_execution.provider_call_data
+                )
+                call_dir = (call_execution.call_metadata or {}).get(
+                    "call_direction", ""
+                )
+                is_outbound = str(call_dir).strip().lower() == "outbound"
+                conversational_roles = SpeakerRoleResolver.get_conversational_roles()
                 for transcript in transcripts:
-                    if transcript.content.strip():
-                        if SpeakerRoleResolver is None:
-                            eval_role = transcript.speaker_role
-                        else:
-                            eval_role = SpeakerRoleResolver.get_eval_role_label(
-                                transcript.speaker_role,
-                                provider=provider,
-                                is_outbound=is_outbound,
-                            )
-                        transcript_text.append(f"{eval_role}: {transcript.content}")
+                    if not transcript.content.strip():
+                        continue
+                    if transcript.speaker_role not in conversational_roles:
+                        continue
+                    eval_role = SpeakerRoleResolver.get_eval_role_label(
+                        transcript.speaker_role,
+                        provider=provider,
+                        is_outbound=is_outbound,
+                    )
+                    transcript_text.append(f"{eval_role}: {transcript.content}")
 
             transcript_data["transcript"] = "\n".join(transcript_text)
             transcript_data["user_chat_transcript"] = "\n".join(
@@ -323,7 +317,8 @@ def _build_transcript_data(call_execution):
                 if not isinstance(provider_data, dict):
                     continue
 
-                # Pre-stored S3 recording URLs
+                # Only consume normalized URLs. Raw artifact URLs may point to
+                # provider storage and must not leak into eval inputs.
                 recording = provider_data.get("recording", {})
                 if isinstance(recording, dict):
                     if (
@@ -381,10 +376,10 @@ CONTEXT_MAP_DOT_ALIASES = {
     "prompt_template": "prompt.name",
     "prompt_template_name": "prompt.name",
     "prompt_template_description": "prompt.description",
-    "scenario_info_name": "scenario.name",
-    "scenario_info_description": "scenario.description",
-    "scenario_info_type": "scenario.type",
-    "scenario_info_source": "scenario.source",
+    "scenario_info_name": "scenario.info.name",
+    "scenario_info_description": "scenario.info.description",
+    "scenario_info_type": "scenario.info.type",
+    "scenario_info_source": "scenario.info.source",
     "call_summary": "call.summary",
     "ended_reason": "call.ended_reason",
     "duration_seconds": "call.duration_seconds",
@@ -393,14 +388,111 @@ CONTEXT_MAP_DOT_ALIASES = {
     "overall_score": "call.overall_score",
     "recording_url": "call.recording_url",
     "stereo_recording_url": "call.stereo_recording_url",
+    "response_time": "call.response_time",
+    "response_time_ms": "call.response_time_ms",
+    "avg_agent_latency": "call.avg_agent_latency",
+    "avg_agent_latency_ms": "call.avg_agent_latency_ms",
+    "avg_latency_ms": "call.avg_latency_ms",
+    "avg_stop_time_after_interruption": "call.avg_stop_time_after_interruption",
+    "avg_stop_time_after_interruption_ms": "call.avg_stop_time_after_interruption_ms",
+    "user_interruption_count": "call.user_interruption_count",
+    "user_interruption_rate": "call.user_interruption_rate",
+    "user_wpm": "call.user_wpm",
+    "bot_wpm": "call.bot_wpm",
+    "talk_ratio": "call.talk_ratio",
+    "ai_interruption_count": "call.ai_interruption_count",
+    "ai_interruption_rate": "call.ai_interruption_rate",
+    "total_tokens": "call.total_tokens",
+    "input_tokens": "call.input_tokens",
+    "output_tokens": "call.output_tokens",
+    "turn_count": "call.turn_count",
+    "agent_talk_percentage": "call.agent_talk_percentage",
+    "csat_score": "call.csat_score",
+    "cost_cents": "call.cost_cents",
+    "customer_cost_cents": "call.customer_cost_cents",
+    "provider": "call.provider",
 }
+
+
+# Local sibling of `tracer.utils.eval._walk_raw_log`; adds attribute access.
+PATH_MISSING = object()
+_STEP_MISS = object()
+
+
+def stringify_leaf(v):
+    return "" if v is None else str(v)
+
+
+# Blocked at both attribute and dict-key layers to keep secret-shaped values out of eval prompts.
+_BLOCKED_ATTRS = frozenset({
+    "api_key", "api_secret", "secret", "secret_key", "password",
+    "token", "access_token", "refresh_token", "access_key", "private_key",
+    "credentials", "credentials_legacy",
+})
+
+
+def _step_segment(current, part):
+    """One hop through `current`: dict key / list index / attribute, with snake<->camel coercion."""
+    if current is None:
+        return _STEP_MISS
+    candidates = (part, to_snake_case(part), to_camel_case(part))
+    if any(c in _BLOCKED_ATTRS for c in candidates):
+        return _STEP_MISS
+    if isinstance(current, dict):
+        for candidate in candidates:
+            if candidate in current:
+                return current[candidate]
+        return _STEP_MISS
+    if isinstance(current, list):
+        try:
+            return current[int(part)]
+        except (ValueError, IndexError):
+            return _STEP_MISS
+    # Reject dunder / private attrs and callables to block escapes to module globals.
+    if part.startswith("_"):
+        return _STEP_MISS
+    for candidate in candidates:
+        if hasattr(current, candidate):
+            value = getattr(current, candidate)
+            if callable(value):
+                return _STEP_MISS
+            return value
+    return _STEP_MISS
+
+
+_MAX_PATH_SEGMENTS = 32  # cap traversal depth to bound FK descriptor chains
+
+
+def walk_subject_path(subjects, path):
+    """Resolve a dotted path against any registered subject root at any depth."""
+    if not isinstance(path, str) or not path:
+        return PATH_MISSING
+    if path.count(".") + 1 > _MAX_PATH_SEGMENTS:
+        return PATH_MISSING
+    head, _, rest = path.partition(".")
+    if head in subjects:
+        current = subjects[head]
+    else:
+        current = _STEP_MISS
+        for root in subjects.values():
+            stepped = _step_segment(root, head)
+            if stepped is not _STEP_MISS:
+                current = stepped
+                break
+        if current is _STEP_MISS:
+            return PATH_MISSING
+    if not rest:
+        return current
+    for part in rest.split("."):
+        current = _step_segment(current, part)
+        if current is _STEP_MISS:
+            return None
+    return current
 
 
 # Runtime keys built by `_build_transcript_data` (not on the CallExecution
 # model). Mapping translates the dot-form a new frontend config emits into
-# the transcript_data key the resolver already knows how to look up. The
-# original underscore keys remain handled by the dedicated branches in
-# `_run_single_evaluation` for full backcompat.
+# the transcript_data key the resolver already knows how to look up.
 TRANSCRIPT_DOT_ALIASES = {
     "call.transcript": "transcript",
     "call.voice_recording": "voice_recording",
@@ -415,7 +507,7 @@ TRANSCRIPT_DOT_ALIASES = {
 }
 
 
-def _build_simulation_context_map(call_execution, agent_version):
+def build_simulation_context_map(call_execution, agent_version):
     """
     Build a flat {key: string} map of simulation context that eval configs
     can bind variables to. The key set is the contract with the frontend
@@ -427,6 +519,9 @@ def _build_simulation_context_map(call_execution, agent_version):
     Each logical field is exposed under BOTH its legacy underscore key
     (`agent_name`) and its dot-hierarchy key (`agent.name`) so pre-migration
     saved eval configs and new dot-notation configs both resolve.
+
+    Also returns a `subjects` dispatch table for the walker; both come from
+    the same FK-chain walk.
     """
     test_execution = call_execution.test_execution
     run_test = test_execution.run_test
@@ -448,18 +543,68 @@ def _build_simulation_context_map(call_execution, agent_version):
     # flattened keys below (simulation_*, agent_*, persona_*, prompt_*)
     # match the explicit flattening block in the frontend, not the raw
     # serializer field names.
+    conv_metrics = call_execution.conversation_metrics_data or {}
+    # Cross-modality fallbacks: voice fields live on model, chat in conv_metrics.
+    _cm_lat = conv_metrics.get("avg_latency_ms")
+    _cm_atp = conv_metrics.get("agent_talk_percentage")
+    _cm_csat = conv_metrics.get("csat_score")
+    _tr = call_execution.talk_ratio
+    _rtm = call_execution.response_time_ms
+    _aal = call_execution.avg_agent_latency_ms
+    rtm = _rtm if _rtm is not None else _cm_lat
+    agent_latency_ms = _aal if _aal is not None else _cm_lat
+    avg_latency_ms = _cm_lat if _cm_lat is not None else agent_latency_ms
+    talk_ratio = _tr if _tr is not None else (_cm_atp / 100.0 if _cm_atp is not None else None)
+    agent_talk_percentage = _cm_atp if _cm_atp is not None else (_tr * 100.0 if _tr is not None else None)
+    csat_score = _cm_csat if _cm_csat is not None else call_execution.overall_score
+    response_time_seconds = rtm / 1000.0 if rtm is not None else None
+    from simulate.serializers.test_execution import CallExecutionDetailSerializer
+
+    _detail_serializer = CallExecutionDetailSerializer()
+    provider_name = _detail_serializer.get_provider(call_execution)
+
     ctx = {
         "simulation_name": _s(run_test.name),
         "simulation_type": _s(run_test.source_type),
         "call_summary": _s(call_execution.call_summary),
         "ended_reason": _s(call_execution.ended_reason),
         "duration_seconds": _s(call_execution.duration_seconds),
+        "duration": _s(_detail_serializer.get_duration(call_execution)),
+        "call_type": _s(_detail_serializer.get_call_type(call_execution)),
+        "audio_url": _s(call_execution.recording_url),
         "status": _s(call_execution.status),
         "simulation_call_type": _s(call_execution.simulation_call_type),
         "phone_number": _s(call_execution.phone_number),
         "overall_score": _s(call_execution.overall_score),
         "recording_url": _s(call_execution.recording_url),
         "stereo_recording_url": _s(call_execution.stereo_recording_url),
+        "response_time": _s(response_time_seconds),
+        "response_time_ms": _s(rtm),
+        "avg_agent_latency": _s(agent_latency_ms),
+        "avg_agent_latency_ms": _s(agent_latency_ms),
+        "avg_latency_ms": _s(avg_latency_ms),
+        "avg_stop_time_after_interruption": _s(
+            call_execution.avg_stop_time_after_interruption_ms
+        ),
+        "avg_stop_time_after_interruption_ms": _s(
+            call_execution.avg_stop_time_after_interruption_ms
+        ),
+        "user_interruption_count": _s(call_execution.user_interruption_count),
+        "user_interruption_rate": _s(call_execution.user_interruption_rate),
+        "user_wpm": _s(call_execution.user_wpm),
+        "bot_wpm": _s(call_execution.bot_wpm),
+        "talk_ratio": _s(talk_ratio),
+        "ai_interruption_count": _s(call_execution.ai_interruption_count),
+        "ai_interruption_rate": _s(call_execution.ai_interruption_rate),
+        "total_tokens": _s(conv_metrics.get("total_tokens")),
+        "input_tokens": _s(conv_metrics.get("input_tokens")),
+        "output_tokens": _s(conv_metrics.get("output_tokens")),
+        "turn_count": _s(conv_metrics.get("turn_count")),
+        "agent_talk_percentage": _s(agent_talk_percentage),
+        "csat_score": _s(csat_score),
+        "cost_cents": _s(call_execution.cost_cents),
+        "customer_cost_cents": _s(call_execution.customer_cost_cents),
+        "provider": _s(provider_name),
     }
 
     if agent_def:
@@ -514,14 +659,34 @@ def _build_simulation_context_map(call_execution, agent_version):
         ctx["scenario_info_type"] = _s(scenario.scenario_type)
         ctx["scenario_info_source"] = _s(scenario.source)
 
-    # Expose every entry under its dot-hierarchy alias too. This lets the
-    # new frontend dropdowns persist `agent.name` style mapping values
-    # while pre-migration configs with `agent_name` keep resolving.
+    ctx["simulator_agent_name"] = _s(simulator_agent.name) if simulator_agent else ""
+    ctx["agent_definition_used_name"] = _s(agent_def.agent_name) if agent_def else ""
+    ctx["scenario"] = _s(scenario.name) if scenario else ""
+
     for underscore_key, dot_key in CONTEXT_MAP_DOT_ALIASES.items():
         if underscore_key in ctx:
             ctx[dot_key] = ctx[underscore_key]
 
-    return ctx
+    try:
+        scenario_columns_subject = _detail_serializer.get_scenario_columns(call_execution) or {}
+        scenario_graph_subject = _detail_serializer.get_scenario_graph(call_execution) or {}
+    except Exception:
+        logger.warning("eval_ctx.subject_build_failed", call_execution_id=str(call_execution.id), exc_info=True)
+        scenario_columns_subject = scenario_graph_subject = {}
+
+    # Walker dispatch roots; order is load-bearing (`call` first for bare heads).
+    subjects = {
+        "call": call_execution,
+        "agent": agent_def,
+        "agent_version": agent_version,
+        "persona": simulator_agent,
+        "prompt": prompt_template,
+        "scenario": scenario,
+        "scenario_columns": scenario_columns_subject,
+        "scenario_graph": scenario_graph_subject,
+        "simulation": run_test,
+    }
+    return ctx, subjects
 
 
 def _run_single_evaluation(eval_config, call_execution, transcript_data):
@@ -534,7 +699,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
     from model_hub.models.develop_dataset import Cell, Column
     from model_hub.tasks.user_evaluation import trigger_error_localization_for_simulate
     from model_hub.views.utils.evals import run_eval_func
-    from simulate.models import Scenarios, SimulateEvalConfig
+    from simulate.models import Scenarios
     from tfc.utils.error_codes import get_specific_error_message
 
     try:
@@ -583,7 +748,9 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
         # persona, prompt, and call metadata — not just transcripts and
         # scenario columns. The keys here MUST stay in sync with what the
         # frontend flattens; when adding a new key, add it in both places.
-        context_map = _build_simulation_context_map(call_execution, agent_version)
+        context_map, subjects = build_simulation_context_map(
+            call_execution, agent_version
+        )
 
         # Collect column IDs that need cell lookups vs mismatch lookups
         cell_column_ids = []
@@ -592,12 +759,13 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             if not value or value == "" or value in known_keys:
                 continue
             if value in TRANSCRIPT_DOT_ALIASES:
-                # Dot-form alias for transcript_data / snapshot keys.
                 continue
             if value in context_map:
                 continue
             if value in scenario_column_order_set:
                 cell_column_ids.append(value)
+            elif walk_subject_path(subjects, value) is not PATH_MISSING:
+                continue
             else:
                 mismatch_column_ids.append(value)
 
@@ -684,6 +852,8 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                     updated_mapping[key] = ""
                     continue
                 updated_mapping[key] = cells_by_column.get(value, "")
+            elif (walked := walk_subject_path(subjects, value)) is not PATH_MISSING:
+                updated_mapping[key] = stringify_leaf(walked)
             else:
                 # Check if it's a valid column from a different scenario (mismatch)
                 column_obj = columns_by_id.get(value)
@@ -800,27 +970,22 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             }
             call_execution.save(update_fields=["eval_outputs"])
 
-            # Trigger error localization if enabled
-            if eval_config.error_localizer and eval_output is not None:
-                try:
-                    eval_failed = False
-                    if isinstance(eval_output, bool):
-                        eval_failed = not eval_output
-                    elif isinstance(eval_output, int | float):
-                        eval_failed = eval_output < 0.8
-                    else:
-                        eval_failed = True
+            from model_hub.services.error_localizer_service import (
+                error_localizer_enabled,
+            )
 
-                    if eval_failed:
-                        trigger_error_localization_for_simulate(
-                            eval_template=eval_template,
-                            call_execution=call_execution,
-                            eval_config=eval_config,
-                            value=eval_output,
-                            mapping=updated_mapping,
-                            eval_explanation=eval_reason,
-                            log_id=None,
-                        )
+            el_enabled = error_localizer_enabled(eval_config)
+            if el_enabled and eval_output is not None:
+                try:
+                    trigger_error_localization_for_simulate(
+                        eval_template=eval_template,
+                        call_execution=call_execution,
+                        eval_config=eval_config,
+                        value=eval_output,
+                        mapping=updated_mapping,
+                        eval_explanation=eval_reason,
+                        log_id=None,
+                    )
                 except Exception as e:
                     logger.error(
                         f"Error triggering error localization for evaluation {eval_config.id}: {str(e)}"
@@ -1255,9 +1420,9 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
     from model_hub.models.choices import EvalOutputType
     from sdk.utils.helpers import _get_api_call_type
     from simulate.models import AgentDefinition
+    from tfc.constants.api_calls import APICallStatusChoices
     from tfc.utils.error_codes import get_specific_error_message
     from tracer.models.observability_provider import ProviderChoices
-    from tfc.constants.api_calls import APICallStatusChoices
     try:
         from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
     except ImportError:
@@ -1321,11 +1486,7 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                     logger.warning("Could not import ee.agenthub.tool_eval_agent.adapters", exc_info=True)
                 return
 
-            customer_api_key = (
-                snapshot.get("api_key")
-                if snapshot and snapshot.get("api_key")
-                else None
-            )
+            customer_api_key = resolve_api_key_for_version(agent_version)
             customer_assistant_id = (
                 snapshot.get("assistant_id")
                 if snapshot and snapshot.get("assistant_id")
@@ -1573,7 +1734,8 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                     try:
                         from ee.usage.utils.event_properties import llm_usage_properties
                     except ImportError:
-                        llm_usage_properties = lambda obj: {}
+                        def llm_usage_properties(obj):
+                            return {}
 
                     actual_cost = 0
                     if hasattr(agent, "llm") and agent.llm:

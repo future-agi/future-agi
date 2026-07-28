@@ -1,10 +1,9 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import structlog
-from django.db.models import F, OuterRef, QuerySet, Subquery
-from django.db.models.functions import Coalesce
+from django.db.models import QuerySet
 
 from model_hub.models.choices import StatusType
 from simulate.models import AgentDefinition
@@ -17,7 +16,6 @@ from simulate.utils.session_comparison import (
     parse_voice_span_transcripts,
 )
 from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
-from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.replay_session import ReplaySession
 from tracer.models.trace import Trace
@@ -102,11 +100,14 @@ def get_system_prompt(
     return prompt
 
 
-def _get_agent_definition_from_replay_sessions(
+def _resolve_agent_definition_for_project(
     project: Project,
 ) -> Optional[AgentDefinition]:
     """
-    Get agent definition from existing replay sessions for this project.
+    Get agent definition from existing replay sessions or observability provider for this project.
+
+    First checks if an agent definition was linked by a prior replay session.
+    Falls back to the agent definition linked via the project's observability provider.
 
     Args:
         project: The Project instance
@@ -127,7 +128,20 @@ def _get_agent_definition_from_replay_sessions(
 
     if replay_session:
         return replay_session.agent_definition
-    return None
+
+    # Fallback: check if an agent definition exists via the project's observability provider
+    agent_def_from_provider = (
+        AgentDefinition.objects.filter(
+            observability_provider__project=project,
+            observability_provider__deleted=False,
+            observability_provider__project__deleted=False,
+            deleted=False,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+
+    return agent_def_from_provider
 
 
 def _get_next_replay_scenario_version(
@@ -177,7 +191,7 @@ def get_agent_suggestions(
     date_suffix = now.strftime("%d_%m_%y")
     agent_name = f"{project.name}_replay_agent_{date_suffix}"
 
-    agent_def = _get_agent_definition_from_replay_sessions(project)
+    agent_def = _resolve_agent_definition_for_project(project)
     version_num = _get_next_replay_scenario_version(project, agent_def)
     scenario_name = f"{project.name}_replay_{date_suffix}_v{version_num}"
 
@@ -300,7 +314,7 @@ def get_or_create_agent_definition(
     """
     is_voice = original_voice_config and agent_type == AgentTypeChoices.VOICE
 
-    existing = _get_agent_definition_from_replay_sessions(project)
+    existing = _resolve_agent_definition_for_project(project)
     if existing:
         _update_agent_definition(
             agent_def=existing,
@@ -479,6 +493,49 @@ def _get_transcripts_from_trace_query(trace_query: QuerySet) -> dict[str, list[d
     }
 
 
+def _chspan_to_legacy_dict(span) -> dict:
+    """Reconstruct the legacy ``{trace_id, span_attributes, eval_attributes}``
+    dict shape from a ``CHSpan`` so existing ``merge_span_attrs`` callers
+    keep working.
+
+    ``span_attributes`` is the merge of the typed maps (attrs_string /
+    attrs_number / attrs_bool) plus the overflow JSON ``attributes_extra``
+    minus the four PG JSONField columns the adapter round-trips into the
+    overflow (model_parameters / input_images / eval_input / eval_attributes
+    — see ``tracer/services/clickhouse/v2/adapter.py:330``). Those four are
+    pulled back out into their original positions.
+    """
+    from tracer.services.clickhouse.v2.span_reader import CHSpanReader
+
+    extra = CHSpanReader.attributes_extra_as_dict(span)
+    # Defensive: attributes_extra_as_dict can yield a non-dict if the
+    # underlying CH column is a raw String (schema 013) rather than typed
+    # JSON. Treat anything that's not a dict as no overflow data.
+    if not isinstance(extra, dict):
+        extra = {}
+
+    attrs: dict = {}
+    attrs.update(span.attrs_string or {})
+    attrs.update(span.attrs_number or {})
+    attrs.update(span.attrs_bool or {})
+
+    _ROUND_TRIP_COLS = (
+        "model_parameters",
+        "input_images",
+        "eval_input",
+        "eval_attributes",
+    )
+    for k, v in extra.items():
+        if k not in _ROUND_TRIP_COLS:
+            attrs[k] = v
+
+    return {
+        "trace_id": span.trace_id,
+        "span_attributes": attrs,
+        "eval_attributes": extra.get("eval_attributes") or {},
+    }
+
+
 def _get_transcripts_from_session_query(trace_query: QuerySet) -> dict[str, list[dict]]:
     """
     Get transcripts from a session-filtered trace queryset, ordered by root span start time.
@@ -486,24 +543,67 @@ def _get_transcripts_from_session_query(trace_query: QuerySet) -> dict[str, list
     Returns:
         Dictionary with session IDs as keys and transcript lists as values.
     """
-    root_span_start_time = Subquery(
-        ObservationSpan.objects.filter(
-            trace_id=OuterRef("id"),
-            parent_span_id__isnull=True,
-        ).values("start_time")[:1]
+    # Replaces the prior cross-store Subquery+OuterRef pattern with a
+    # 2-step PG-then-CH join, unlocked by wave-3 reader extension
+    # ``CHSpanReader.per_trace_root_span_start_times`` (commit 93c5c415f).
+    #
+    # Original PG path was:
+    #     trace_query.annotate(
+    #         span_start_time=Coalesce(
+    #             Subquery(ObservationSpan.objects.filter(
+    #                 trace_id=OuterRef("id"), parent_span_id__isnull=True
+    #             ).values("start_time")[:1]),
+    #             F("created_at"),
+    #         )
+    #     ).order_by("span_start_time").values(...)
+    #
+    # Step 1 — pull the trace rows from PG (Trace itself stays in PG, so
+    # this is a single PG read on the existing queryset). We include
+    # ``created_at`` so we can preserve the Coalesce fallback for traces
+    # whose root span hasn't landed in CH yet (or never existed).
+    traces = list(
+        trace_query.values("id", "session_id", "input", "output", "created_at")
     )
+
+    # Step 2 — bulk root-span start_time lookup in one CH query. Returns
+    # {trace_id: start_time or None} — empty dict iff trace_ids is empty
+    # (per-trace None when the trace has no CH root span yet).
+    from tracer.services.clickhouse.v2 import get_reader
+
+    trace_ids = [str(t["id"]) for t in traces]
+    if trace_ids:
+        with get_reader() as reader:
+            root_starts = reader.per_trace_root_span_start_times(trace_ids)
+    else:
+        root_starts = {}
+
+    # Step 3 — Python-side sort by Coalesce(root_start, created_at).
+    # Matches the prior PG ORDER BY exactly: the Subquery's first row
+    # (LIMIT 1 with no explicit ORDER BY) is implementation-defined in
+    # PG; the CH reader picks min(start_time) for ties, which is the
+    # only deterministic choice. For traces where CH has no root span,
+    # we fall back to ``created_at`` — same Coalesce semantic as before.
+    #
+    # Tz normalization: PG datetimes are tz-aware (USE_TZ=True) but the
+    # CH driver returns DateTime64 as naive UTC. Mixing the two
+    # raises ``TypeError: can't compare offset-naive and offset-aware``
+    # when the trace list is a mix of CH-present and CH-missing rows.
+    # Normalize both sides to tz-aware UTC before sorting.
+    def _as_aware_utc(d):
+        if d is None:
+            return None
+        return d if d.tzinfo is not None else d.replace(tzinfo=timezone.utc)
+
+    def _sort_key(t):
+        rs = root_starts.get(str(t["id"]))
+        ts = rs if rs is not None else t["created_at"]
+        return _as_aware_utc(ts)
+
+    traces.sort(key=_sort_key)
 
     # The has-key check used to run as a Django Exists() subquery against
     # ``span_attributes`` (PG JSONB). Now sourced from ClickHouse — see
     # migration 0074 / span_attribute_lookups.
-    traces = list(
-        trace_query.annotate(
-            span_start_time=Coalesce(root_span_start_time, F("created_at")),
-        )
-        .order_by("span_start_time")
-        .values("id", "session_id", "input", "output")
-    )
-
     simulator_trace_ids = trace_ids_with_simulator_call_execution_id(
         str(t["id"]) for t in traces
     )
@@ -533,31 +633,39 @@ def _is_voice_trace_query(trace_query: QuerySet) -> bool:
     NOTE: Only samples the first 10 traces for performance. In mixed
     voice/text projects this may not be fully representative.
     """
-    trace_ids = trace_query.values_list("id", flat=True)[:10]
-    return ObservationSpan.objects.filter(
-        trace_id__in=trace_ids,
-        observation_type="conversation",
-    ).exists()
+    from tracer.services.clickhouse.v2 import get_reader
+
+    trace_ids = list(trace_query.values_list("id", flat=True)[:10])
+    if not trace_ids:
+        return False
+
+    # Single bulk read across all sampled trace_ids, then short-circuit on
+    # the first conversation-typed span. CH-side observation_type filtering
+    # is not exposed on the reader yet (D-027 review queue), so we filter
+    # in Python — sampled set is bounded at 10 traces.
+    with get_reader() as reader:
+        spans = reader.list_by_trace_ids([str(t) for t in trace_ids])
+    return any(s.observation_type == "conversation" for s in spans)
 
 
 def _get_first_voice_span_raw_log(trace_query: QuerySet) -> dict | None:
     """Fetch the raw_log from the first conversation span in the trace query."""
+    from tracer.services.clickhouse.v2 import get_reader
+
     trace_id = trace_query.values_list("id", flat=True).first()
     if not trace_id:
         return None
 
-    span = (
-        ObservationSpan.objects.filter(
-            trace_id=trace_id,
-            observation_type="conversation",
-        )
-        .values("span_attributes", "eval_attributes")
-        .first()
+    with get_reader() as reader:
+        spans = reader.list_by_trace(str(trace_id))
+
+    conversation_span = next(
+        (s for s in spans if s.observation_type == "conversation"), None
     )
-    if not span:
+    if conversation_span is None:
         return None
 
-    attrs = merge_span_attrs(span)
+    attrs = merge_span_attrs(_chspan_to_legacy_dict(conversation_span))
     raw_log = attrs.get("raw_log")
     return raw_log if isinstance(raw_log, dict) else None
 
@@ -667,16 +775,27 @@ def _extract_voice_trace_system_prompt(
 
 def _load_voice_conversation_spans(trace_query: QuerySet) -> list[dict]:
     """
-    Load conversation-type spans for all traces in the query (single DB hit).
-    Returns a list of dicts with trace_id, span_attributes, and eval_attributes.
+    Load conversation-type spans for all traces in the query.
+    Returns a list of dicts shaped like ``{trace_id, span_attributes, eval_attributes}``
+    so downstream ``merge_span_attrs`` / attribute lookups keep working.
+
+    Backing store is now ClickHouse (CHSpanReader). One bulk query across
+    all trace_ids; observation_type filter applied in Python.
     """
+    from tracer.services.clickhouse.v2 import get_reader
+
     trace_ids = list(trace_query.values_list("id", flat=True))
-    return list(
-        ObservationSpan.objects.filter(
-            trace_id__in=trace_ids,
-            observation_type="conversation",
-        ).values("trace_id", "span_attributes", "eval_attributes")
-    )
+    if not trace_ids:
+        return []
+
+    with get_reader() as reader:
+        spans = reader.list_by_trace_ids([str(t) for t in trace_ids])
+
+    return [
+        _chspan_to_legacy_dict(s)
+        for s in spans
+        if s.observation_type == "conversation"
+    ]
 
 
 def _extract_recording_urls_from_spans(spans: list[dict]) -> dict[str, str]:

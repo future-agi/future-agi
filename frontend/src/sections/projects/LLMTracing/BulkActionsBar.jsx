@@ -8,6 +8,7 @@ import {
   Menu,
   MenuItem,
   Stack,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -95,25 +96,42 @@ const BulkActionsBar = ({
           paper: { sx: { minWidth: 220, mt: 0.5 } },
         }}
       >
-        {visibleActions.map((action) => (
-          <MenuItem
-            key={action.id}
-            onClick={() => {
-              setMenuOpen(false);
-              onAction(action.id, { currentTarget: anchorRef.current });
-            }}
-            dense
-          >
-            <ListItemIcon>
-              <Iconify icon={action.icon} width={18} />
-            </ListItemIcon>
-            <ListItemText
-              primaryTypographyProps={{ variant: "body2", fontSize: 13 }}
+        {visibleActions.map((action) => {
+          const disabled = Boolean(action.disabled);
+          const item = (
+            <MenuItem
+              key={action.id}
+              disabled={disabled}
+              onClick={() => {
+                if (disabled) return;
+                setMenuOpen(false);
+                onAction(action.id, { currentTarget: anchorRef.current });
+              }}
+              dense
             >
-              {action.label}
-            </ListItemText>
-          </MenuItem>
-        ))}
+              <ListItemIcon>
+                <Iconify icon={action.icon} width={18} />
+              </ListItemIcon>
+              <ListItemText
+                primaryTypographyProps={{ variant: "body2", fontSize: 13 }}
+              >
+                {action.label}
+              </ListItemText>
+            </MenuItem>
+          );
+
+          if (!disabled || !action.disabledReason) return item;
+
+          return (
+            <Tooltip
+              key={action.id}
+              title={action.disabledReason}
+              placement="left"
+            >
+              <span>{item}</span>
+            </Tooltip>
+          );
+        })}
       </Menu>
 
       <IconButton

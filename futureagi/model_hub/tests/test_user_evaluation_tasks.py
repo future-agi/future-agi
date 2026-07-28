@@ -4,9 +4,12 @@ Tests for user_evaluation task functions in model_hub/tasks/user_evaluation.py.
 Run with: pytest model_hub/tests/test_user_evaluation_tasks.py -v
 """
 
+import uuid
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
+
+from ee.evals.localizer.error_localizer import LocalizerResult
 
 
 @pytest.fixture(autouse=True)
@@ -332,7 +335,10 @@ class TestProcessEvaluationSingleTask:
         from model_hub.tasks.user_evaluation import process_evaluation_single_task
 
         mock_eval = MagicMock()
-        mock_user_eval.objects.get.return_value = mock_eval
+        # The task fetches with select_related for version stamping.
+        mock_user_eval.objects.select_related.return_value.get.return_value = (
+            mock_eval
+        )
 
         process_evaluation_single_task({"type": "single", "eval_id": "eval-123"})
 
@@ -348,7 +354,9 @@ class TestProcessEvaluationSingleTask:
         from model_hub.tasks.user_evaluation import process_evaluation_single_task
 
         mock_eval = MagicMock()
-        mock_user_eval.objects.get.return_value = mock_eval
+        mock_user_eval.objects.select_related.return_value.get.return_value = (
+            mock_eval
+        )
 
         process_evaluation_single_task({"type": "experiment", "eval_id": "eval-123"})
 
@@ -365,7 +373,9 @@ class TestProcessEvaluationSingleTask:
 
         mock_eval = MagicMock()
         mock_eval.source_id = "optim-123"
-        mock_user_eval.objects.get.return_value = mock_eval
+        mock_user_eval.objects.select_related.return_value.get.return_value = (
+            mock_eval
+        )
 
         mock_optimizer = MagicMock()
         mock_optimizer_class.return_value = mock_optimizer
@@ -471,11 +481,16 @@ class TestProcessSingleErrorLocalization:
         mock_task.eval_template.name = "Test Eval"
         mock_task.eval_template.choices = []
         mock_task.eval_template.description = "Test description"
+        mock_task.eval_template.eval_type = "llm"
+        mock_task.eval_template.template_type = "single"
+        mock_task.eval_template.output_type_normalized = "pass_fail"
+        mock_task.eval_template.pass_threshold = 0.5
+        mock_task.eval_template.choice_scores = None
         mock_task.input_data = {}
         mock_task.input_keys = []
         mock_task.input_types = {}
-        mock_task.eval_result = "pass"
-        mock_task.eval_explanation = "Test passed"
+        mock_task.eval_result = "Failed"
+        mock_task.eval_explanation = "Test failed"
         mock_task.rule_prompt = "Test rule"
         mock_error_task.objects.get.return_value = mock_task
 
@@ -484,9 +499,9 @@ class TestProcessSingleErrorLocalization:
         mock_log_cost.return_value = mock_api_log
 
         mock_localizer_instance = MagicMock()
-        mock_localizer_instance.localize_errors.return_value = (
-            "error_analysis",
-            "selected_key",
+        mock_localizer_instance.localize_errors.return_value = LocalizerResult(
+            analysis="error_analysis",
+            selected_key="selected_key",
         )
         mock_localizer.return_value = mock_localizer_instance
 
@@ -513,6 +528,12 @@ class TestProcessSingleErrorLocalization:
         mock_task.status = ErrorLocalizerStatus.RUNNING
         mock_task.workspace = MagicMock()
         mock_task.organization = MagicMock()
+        mock_task.eval_template.eval_type = "llm"
+        mock_task.eval_template.template_type = "single"
+        mock_task.eval_template.output_type_normalized = "pass_fail"
+        mock_task.eval_template.pass_threshold = 0.5
+        mock_task.eval_template.choice_scores = None
+        mock_task.eval_result = "Failed"
         mock_error_task.objects.get.return_value = mock_task
         mock_check_usage.return_value = MagicMock(allowed=True)
 
@@ -645,3 +666,952 @@ class TestTemporalActivityTimeouts:
         from model_hub.tasks.user_evaluation import process_eval_batch_async_task
 
         assert callable(process_eval_batch_async_task)
+
+
+@pytest.mark.django_db
+class TestErrorLocalizerGateE2E:
+
+    @staticmethod
+    def _make_template(
+        organization,
+        workspace,
+        *,
+        eval_type="llm",
+        template_type="single",
+        output_type_normalized="pass_fail",
+        pass_threshold=0.5,
+        choice_scores=None,
+    ):
+        from model_hub.models.choices import OwnerChoices
+        from model_hub.models.evals_metric import EvalTemplate
+
+        return EvalTemplate.objects.create(
+            name=f"gate-template-{uuid.uuid4().hex[:6]}",
+            description="EL gate test template",
+            owner=OwnerChoices.USER.value,
+            organization=organization,
+            workspace=workspace,
+            eval_type=eval_type,
+            template_type=template_type,
+            output_type_normalized=output_type_normalized,
+            pass_threshold=pass_threshold,
+            choice_scores=choice_scores or {},
+            config={"rule_prompt": "is the answer correct?"},
+            choices=[],
+            model="turing_large",
+        )
+
+    @staticmethod
+    def _make_task(
+        organization, workspace, template, *, eval_result, metadata=None, source=None
+    ):
+        from model_hub.models.error_localizer_model import (
+            ErrorLocalizerSource,
+            ErrorLocalizerStatus,
+            ErrorLocalizerTask,
+        )
+
+        return ErrorLocalizerTask.objects.create(
+            eval_template=template,
+            source=source or ErrorLocalizerSource.DATASET,
+            source_id=uuid.uuid4(),
+            input_data={"q": "hi"},
+            input_keys=["q"],
+            input_types={"q": "text"},
+            eval_result=eval_result,
+            eval_explanation="",
+            rule_prompt="is the answer correct?",
+            organization=organization,
+            workspace=workspace,
+            status=ErrorLocalizerStatus.PENDING,
+            metadata=metadata if metadata is not None else {},
+        )
+
+    @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    def test_code_eval_template_skips_at_gate(self, _mock_close, organization, workspace):
+        from model_hub.models.error_localizer_model import ErrorLocalizerStatus
+        from model_hub.tasks.user_evaluation import process_single_error_localization
+
+        template = self._make_template(
+            organization, workspace, eval_type="code"
+        )
+        task = self._make_task(
+            organization, workspace, template, eval_result="Failed"
+        )
+
+        process_single_error_localization._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status == ErrorLocalizerStatus.SKIPPED
+        assert "code-type" in task.error_message
+
+    @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    def test_composite_template_skips_at_gate(self, _mock_close, organization, workspace):
+        from model_hub.models.error_localizer_model import ErrorLocalizerStatus
+        from model_hub.tasks.user_evaluation import process_single_error_localization
+
+        template = self._make_template(
+            organization, workspace, template_type="composite"
+        )
+        task = self._make_task(
+            organization, workspace, template, eval_result="Failed"
+        )
+
+        process_single_error_localization._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status == ErrorLocalizerStatus.SKIPPED
+        assert "composite" in task.error_message
+
+    @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    def test_pass_fail_passed_skips_at_gate(self, _mock_close, organization, workspace):
+        from model_hub.models.error_localizer_model import ErrorLocalizerStatus
+        from model_hub.tasks.user_evaluation import process_single_error_localization
+
+        template = self._make_template(
+            organization, workspace, output_type_normalized="pass_fail"
+        )
+        task = self._make_task(
+            organization, workspace, template, eval_result="Passed"
+        )
+
+        process_single_error_localization._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status == ErrorLocalizerStatus.SKIPPED
+        assert "passed" in task.error_message.lower()
+
+    @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    def test_percentage_above_threshold_skips_at_gate(self, _mock_close, organization, workspace):
+        from model_hub.models.error_localizer_model import ErrorLocalizerStatus
+        from model_hub.tasks.user_evaluation import process_single_error_localization
+
+        template = self._make_template(
+            organization,
+            workspace,
+            output_type_normalized="percentage",
+            pass_threshold=0.5,
+        )
+        task = self._make_task(
+            organization, workspace, template, eval_result=0.8
+        )
+
+        process_single_error_localization._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status == ErrorLocalizerStatus.SKIPPED
+        assert "passed" in task.error_message.lower()
+
+    @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    def test_deterministic_unmapped_choice_skips_at_gate(self, _mock_close, organization, workspace):
+        from model_hub.models.error_localizer_model import ErrorLocalizerStatus
+        from model_hub.tasks.user_evaluation import process_single_error_localization
+
+        template = self._make_template(
+            organization,
+            workspace,
+            output_type_normalized="deterministic",
+            pass_threshold=0.5,
+            choice_scores={"high": 1.0, "low": 0.0},
+        )
+        task = self._make_task(
+            organization, workspace, template, eval_result="high"
+        )
+
+        process_single_error_localization._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status == ErrorLocalizerStatus.SKIPPED
+
+    @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
+    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    def test_failing_eval_passes_gate_and_runs_localizer(
+        self, mock_log_cost, mock_localizer, _mock_close, organization, workspace
+    ):
+        from model_hub.models.error_localizer_model import (
+            ErrorLocalizerSource,
+            ErrorLocalizerStatus,
+            ErrorLocalizerTask,
+        )
+        from model_hub.tasks.user_evaluation import process_single_error_localization
+        from tfc.constants.api_calls import APICallStatusChoices
+
+        template = self._make_template(
+            organization, workspace, output_type_normalized="pass_fail"
+        )
+        task = ErrorLocalizerTask.objects.create(
+            eval_template=template,
+            source=ErrorLocalizerSource.STANDALONE,
+            source_id=uuid.uuid4(),
+            input_data={"q": "hi"},
+            input_keys=["q"],
+            input_types={"q": "text"},
+            eval_result="Failed",
+            rule_prompt="is the answer correct?",
+            organization=organization,
+            workspace=workspace,
+            status=ErrorLocalizerStatus.PENDING,
+        )
+
+        mock_api_log = MagicMock()
+        mock_api_log.status = APICallStatusChoices.PROCESSING.value
+        mock_log_cost.return_value = mock_api_log
+
+        mock_localizer.return_value.localize_errors.return_value = LocalizerResult(
+            analysis={"summary": "missing context"}, selected_key="q",
+        )
+
+        process_single_error_localization._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status == ErrorLocalizerStatus.COMPLETED
+        assert task.error_analysis == {"summary": "missing context"}
+        assert task.selected_input_key == "q"
+        mock_localizer.return_value.localize_errors.assert_called_once()
+
+    @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
+    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    def test_empty_segments_completes_with_friendly_message(
+        self, mock_log_cost, mock_localizer, _mock_close, organization, workspace
+    ):
+        from model_hub.models.error_localizer_model import (
+            ErrorLocalizerSource,
+            ErrorLocalizerStatus,
+            ErrorLocalizerTask,
+        )
+        from model_hub.tasks.user_evaluation import process_single_error_localization
+        from tfc.constants.api_calls import APICallStatusChoices
+
+        template = self._make_template(
+            organization, workspace, output_type_normalized="pass_fail"
+        )
+        task = ErrorLocalizerTask.objects.create(
+            eval_template=template,
+            source=ErrorLocalizerSource.STANDALONE,
+            source_id=uuid.uuid4(),
+            input_data={"q": "hi"},
+            input_keys=["q"],
+            input_types={"q": "text"},
+            eval_result="Failed",
+            rule_prompt="r",
+            organization=organization,
+            workspace=workspace,
+            status=ErrorLocalizerStatus.PENDING,
+        )
+
+        mock_api_log = MagicMock()
+        mock_api_log.status = APICallStatusChoices.PROCESSING.value
+        mock_log_cost.return_value = mock_api_log
+        mock_localizer.return_value.localize_errors.return_value = LocalizerResult(
+            analysis={"input_1": []}, selected_key="q",
+        )
+
+        process_single_error_localization._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status == ErrorLocalizerStatus.COMPLETED
+        assert task.error_analysis == {"input_1": []}
+        assert "could be pinned" in (task.error_message or "").lower()
+
+    def test_has_localized_segments_helper(self):
+        from model_hub.tasks.user_evaluation import _has_localized_segments
+
+        assert _has_localized_segments({}) is False
+        assert _has_localized_segments(None) is False
+        assert _has_localized_segments({"input_1": []}) is False
+        assert _has_localized_segments({"input_1": [{"rank": "1"}]}) is True
+        assert _has_localized_segments({"input_1": [], "input_2": [{"x": 1}]}) is True
+        assert _has_localized_segments([]) is False
+        assert _has_localized_segments([{"x": 1}]) is True
+
+    def test_tracer_trigger_reads_either_el_flag(self):
+        """Tracer trigger honours both the column flag and the JSONB
+        config.error_localizer_enabled, so either source enables EL."""
+        from types import SimpleNamespace
+
+        def el_enabled(cfg):
+            return bool(
+                cfg.error_localizer
+                or (cfg.config or {}).get("error_localizer_enabled")
+            )
+
+        assert el_enabled(SimpleNamespace(error_localizer=False, config={})) is False
+        assert el_enabled(SimpleNamespace(error_localizer=False, config=None)) is False
+        assert el_enabled(SimpleNamespace(error_localizer=True, config={})) is True
+        assert (
+            el_enabled(
+                SimpleNamespace(error_localizer=False, config={"error_localizer_enabled": True})
+            )
+            is True
+        )
+        assert (
+            el_enabled(
+                SimpleNamespace(error_localizer=True, config={"error_localizer_enabled": True})
+            )
+            is True
+        )
+
+    def test_simulate_trigger_source_id_unique_per_eval(self):
+        """source_id derives distinct uuids per (call_execution, eval_config), so
+        multiple simulate evals on the same call coexist under the unique constraint."""
+        import uuid as _uuid
+
+        call_execution_id = _uuid.uuid4()
+        eval_config_a = _uuid.uuid4()
+        eval_config_b = _uuid.uuid4()
+        sid_a = _uuid.uuid5(
+            _uuid.NAMESPACE_OID, f"simulate:{call_execution_id}:{eval_config_a}"
+        )
+        sid_b = _uuid.uuid5(
+            _uuid.NAMESPACE_OID, f"simulate:{call_execution_id}:{eval_config_b}"
+        )
+        assert sid_a != sid_b, (
+            "uuid5 with (call_execution_id, eval_config_id) must yield distinct ids"
+        )
+
+    def test_validator_accepts_zero_and_false_eval_results(self):
+        from model_hub.models.error_localizer_model import ErrorLocalizerStatus
+        from model_hub.tasks.user_evaluation import _validate_error_localizer_fields
+
+        for falsy_but_valid in (0, 0.0, False, ""):
+            status, msg = _validate_error_localizer_fields(
+                rule_prompt="x", input_data={"q": "y"}, eval_result=falsy_but_valid,
+            )
+            assert status == ErrorLocalizerStatus.PENDING, (
+                f"eval_result={falsy_but_valid!r} should pass validation"
+            )
+            assert msg == ""
+
+        status, msg = _validate_error_localizer_fields(
+            rule_prompt="x", input_data={"q": "y"}, eval_result=None,
+        )
+        assert status == ErrorLocalizerStatus.FAILED
+        assert "eval_result" in msg
+
+    @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
+    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    def test_agent_type_failing_eval_passes_gate(
+        self, mock_log_cost, mock_localizer, _mock_close, organization, workspace
+    ):
+        from model_hub.models.error_localizer_model import (
+            ErrorLocalizerSource,
+            ErrorLocalizerStatus,
+            ErrorLocalizerTask,
+        )
+        from model_hub.tasks.user_evaluation import process_single_error_localization
+        from tfc.constants.api_calls import APICallStatusChoices
+
+        template = self._make_template(
+            organization, workspace, eval_type="agent",
+            output_type_normalized="pass_fail",
+        )
+        task = ErrorLocalizerTask.objects.create(
+            eval_template=template,
+            source=ErrorLocalizerSource.STANDALONE,
+            source_id=uuid.uuid4(),
+            input_data={"q": "hi"},
+            input_keys=["q"],
+            input_types={"q": "text"},
+            eval_result="Failed",
+            rule_prompt="r",
+            organization=organization,
+            workspace=workspace,
+            status=ErrorLocalizerStatus.PENDING,
+        )
+
+        mock_api_log = MagicMock()
+        mock_api_log.status = APICallStatusChoices.PROCESSING.value
+        mock_log_cost.return_value = mock_api_log
+        mock_localizer.return_value.localize_errors.return_value = LocalizerResult(
+            analysis={"k": "v"}, selected_key="q",
+        )
+
+        process_single_error_localization._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status == ErrorLocalizerStatus.COMPLETED
+
+    @pytest.mark.parametrize(
+        "eval_result,output_type,choice_scores,expected_skip",
+        [
+            ({"score": 0.9, "choice": "Good"}, "deterministic", {"Good": 1.0, "Bad": 0.0}, True),
+            ({"score": 0.2, "choice": "Bad"}, "deterministic", {"Good": 1.0, "Bad": 0.0}, False),
+            ({"score": 0.0, "choice": "Unknown"}, "deterministic", {"Good": 1.0}, False),
+            ({"score": 0.85, "choices": ["Good", "Fair"]}, "deterministic", {"Good": 1.0, "Fair": 0.5, "Bad": 0.0}, True),
+            ({"failure": False}, "pass_fail", {}, True),
+            ({"failure": True}, "pass_fail", {}, False),
+        ],
+    )
+    @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
+    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    def test_dict_shaped_eval_results_normalize_correctly(
+        self,
+        mock_log_cost,
+        mock_localizer,
+        _mock_close,
+        eval_result,
+        output_type,
+        choice_scores,
+        expected_skip,
+        organization,
+        workspace,
+    ):
+        from model_hub.models.error_localizer_model import (
+            ErrorLocalizerSource,
+            ErrorLocalizerStatus,
+            ErrorLocalizerTask,
+        )
+        from model_hub.tasks.user_evaluation import process_single_error_localization
+        from tfc.constants.api_calls import APICallStatusChoices
+
+        template = self._make_template(
+            organization, workspace,
+            output_type_normalized=output_type,
+            pass_threshold=0.5,
+            choice_scores=choice_scores,
+        )
+        task = ErrorLocalizerTask.objects.create(
+            eval_template=template,
+            source=ErrorLocalizerSource.STANDALONE,
+            source_id=uuid.uuid4(),
+            input_data={"q": "hi"},
+            input_keys=["q"],
+            input_types={"q": "text"},
+            eval_result=eval_result,
+            rule_prompt="r",
+            organization=organization,
+            workspace=workspace,
+            status=ErrorLocalizerStatus.PENDING,
+        )
+
+        mock_api_log = MagicMock()
+        mock_api_log.status = APICallStatusChoices.PROCESSING.value
+        mock_log_cost.return_value = mock_api_log
+        mock_localizer.return_value.localize_errors.return_value = LocalizerResult(
+            analysis={"k": "v"}, selected_key="q",
+        )
+
+        process_single_error_localization._original_func(str(task.id))
+
+        task.refresh_from_db()
+        if expected_skip:
+            assert task.status == ErrorLocalizerStatus.SKIPPED
+        else:
+            assert task.status == ErrorLocalizerStatus.COMPLETED
+
+    @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    def test_llm_type_passing_eval_skips_at_gate(
+        self, _mock_close, organization, workspace
+    ):
+        from model_hub.models.error_localizer_model import ErrorLocalizerStatus
+        from model_hub.tasks.user_evaluation import process_single_error_localization
+
+        template = self._make_template(
+            organization, workspace, eval_type="llm",
+            output_type_normalized="percentage", pass_threshold=0.5,
+        )
+        task = self._make_task(
+            organization, workspace, template, eval_result=0.9
+        )
+        process_single_error_localization._original_func(str(task.id))
+        task.refresh_from_db()
+        assert task.status == ErrorLocalizerStatus.SKIPPED
+
+    @pytest.mark.parametrize(
+        "selected_key,input_types,expected_type",
+        [
+            ("doc", {"q": "text", "doc": "pdf"}, "pdf"),
+            ("doc", {"q": "text", "doc": "file"}, "file"),
+            ("imgs", {"q": "text", "imgs": "images"}, "images"),
+        ],
+    )
+    @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
+    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    def test_el_post_selection_skip_when_selected_type_unsupported(
+        self,
+        mock_log_cost,
+        mock_localizer,
+        _mock_close,
+        selected_key,
+        input_types,
+        expected_type,
+        organization,
+        workspace,
+    ):
+        from model_hub.models.error_localizer_model import (
+            ErrorLocalizerSource,
+            ErrorLocalizerStatus,
+            ErrorLocalizerTask,
+        )
+        from model_hub.tasks.user_evaluation import process_single_error_localization
+        from tfc.constants.api_calls import APICallStatusChoices
+
+        template = self._make_template(
+            organization, workspace, output_type_normalized="pass_fail"
+        )
+        task = ErrorLocalizerTask.objects.create(
+            eval_template=template,
+            source=ErrorLocalizerSource.STANDALONE,
+            source_id=uuid.uuid4(),
+            input_data={k: "x" for k in input_types},
+            input_keys=list(input_types.keys()),
+            input_types=input_types,
+            eval_result="Failed",
+            rule_prompt="r",
+            organization=organization,
+            workspace=workspace,
+            status=ErrorLocalizerStatus.PENDING,
+        )
+
+        mock_api_log = MagicMock()
+        mock_api_log.status = APICallStatusChoices.PROCESSING.value
+        mock_log_cost.return_value = mock_api_log
+
+        mock_localizer.return_value.localize_errors.return_value = LocalizerResult(
+            analysis={},
+            selected_key=selected_key,
+            skip_reason=(
+                f"The input '{selected_key}' is of type '{expected_type}', "
+                f"which is not supported by error localization."
+            ),
+        )
+
+        process_single_error_localization._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status == ErrorLocalizerStatus.SKIPPED
+        assert selected_key in task.error_message
+        assert expected_type in task.error_message
+
+    @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
+    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    def test_mixed_inputs_el_picks_supported_post_selection_completes(
+        self, mock_log_cost, mock_localizer, _mock_close, organization, workspace
+    ):
+        from model_hub.models.error_localizer_model import (
+            ErrorLocalizerSource,
+            ErrorLocalizerStatus,
+            ErrorLocalizerTask,
+        )
+        from model_hub.tasks.user_evaluation import process_single_error_localization
+        from tfc.constants.api_calls import APICallStatusChoices
+
+        template = self._make_template(
+            organization, workspace, output_type_normalized="pass_fail"
+        )
+        task = ErrorLocalizerTask.objects.create(
+            eval_template=template,
+            source=ErrorLocalizerSource.STANDALONE,
+            source_id=uuid.uuid4(),
+            input_data={"q": "hi", "doc": "https://example.com/x.pdf"},
+            input_keys=["q", "doc"],
+            input_types={"q": "text", "doc": "pdf"},
+            eval_result="Failed",
+            rule_prompt="r",
+            organization=organization,
+            workspace=workspace,
+            status=ErrorLocalizerStatus.PENDING,
+        )
+
+        mock_api_log = MagicMock()
+        mock_api_log.status = APICallStatusChoices.PROCESSING.value
+        mock_log_cost.return_value = mock_api_log
+
+        mock_localizer.return_value.localize_errors.return_value = LocalizerResult(
+            analysis={"summary": "ok"},
+            selected_key="q",  # EL picked the text column
+        )
+
+        process_single_error_localization._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status == ErrorLocalizerStatus.COMPLETED
+        assert task.selected_input_key == "q"
+
+    @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    def test_missing_template_skips_at_gate(self, _mock_close, organization, workspace):
+        from model_hub.models.error_localizer_model import (
+            ErrorLocalizerSource,
+            ErrorLocalizerStatus,
+            ErrorLocalizerTask,
+        )
+        from model_hub.tasks.user_evaluation import process_single_error_localization
+
+        task = ErrorLocalizerTask.objects.create(
+            eval_template=None,
+            source=ErrorLocalizerSource.DATASET,
+            source_id=uuid.uuid4(),
+            input_data={"q": "hi"},
+            input_keys=["q"],
+            input_types={"q": "text"},
+            eval_result="Failed",
+            rule_prompt="r",
+            organization=organization,
+            workspace=workspace,
+            status=ErrorLocalizerStatus.PENDING,
+        )
+
+        process_single_error_localization._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status == ErrorLocalizerStatus.SKIPPED
+        assert "template" in task.error_message
+
+    @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
+    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    def test_metadata_override_flips_gate_from_skip_to_run(
+        self, mock_log_cost, mock_localizer, _mock_close, organization, workspace
+    ):
+        """0.6 vs template=0.5 would skip; metadata override 0.8 forces run."""
+        from model_hub.models.error_localizer_model import (
+            ErrorLocalizerSource,
+            ErrorLocalizerStatus,
+        )
+        from model_hub.tasks.user_evaluation import process_single_error_localization
+        from tfc.constants.api_calls import APICallStatusChoices
+
+        template = self._make_template(
+            organization,
+            workspace,
+            output_type_normalized="percentage",
+            pass_threshold=0.5,
+        )
+        task = self._make_task(
+            organization,
+            workspace,
+            template,
+            eval_result=0.6,
+            metadata={"pass_threshold": 0.8},
+            source=ErrorLocalizerSource.STANDALONE,
+        )
+
+        mock_api_log = MagicMock()
+        mock_api_log.status = APICallStatusChoices.PROCESSING.value
+        mock_log_cost.return_value = mock_api_log
+        mock_localizer.return_value.localize_errors.return_value = LocalizerResult(
+            analysis={"summary": "over-threshold-fail"}, selected_key="q",
+        )
+
+        process_single_error_localization._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status == ErrorLocalizerStatus.COMPLETED
+        mock_localizer.return_value.localize_errors.assert_called_once()
+
+    @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    def test_metadata_override_flips_gate_from_run_to_skip(
+        self, _mock_close, organization, workspace
+    ):
+        """0.4 vs template=0.5 would run; metadata override 0.3 forces skip."""
+        from model_hub.models.error_localizer_model import ErrorLocalizerStatus
+        from model_hub.tasks.user_evaluation import process_single_error_localization
+
+        template = self._make_template(
+            organization,
+            workspace,
+            output_type_normalized="percentage",
+            pass_threshold=0.5,
+        )
+        task = self._make_task(
+            organization,
+            workspace,
+            template,
+            eval_result=0.4,
+            metadata={"pass_threshold": 0.3},
+        )
+
+        process_single_error_localization._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status == ErrorLocalizerStatus.SKIPPED
+        assert "passed" in task.error_message.lower()
+        assert "0.30" in task.error_message
+
+    @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    def test_metadata_threshold_zero_is_honoured_not_falsy_fallback(
+        self, _mock_close, organization, workspace
+    ):
+        """0.1 vs metadata=0 must skip; a truthy check would incorrectly fall back to template 0.5 and run."""
+        from model_hub.models.error_localizer_model import ErrorLocalizerStatus
+        from model_hub.tasks.user_evaluation import process_single_error_localization
+
+        template = self._make_template(
+            organization,
+            workspace,
+            output_type_normalized="percentage",
+            pass_threshold=0.5,
+        )
+        task = self._make_task(
+            organization,
+            workspace,
+            template,
+            eval_result=0.1,
+            metadata={"pass_threshold": 0},
+        )
+
+        process_single_error_localization._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status == ErrorLocalizerStatus.SKIPPED
+        assert "0.00" in task.error_message
+
+    @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
+    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    def test_missing_metadata_key_falls_back_to_template_threshold(
+        self, mock_log_cost, mock_localizer, _mock_close, organization, workspace
+    ):
+        """No pass_threshold in metadata; worker must fall back to template 0.5 and run 0.4 as failed."""
+        from model_hub.models.error_localizer_model import (
+            ErrorLocalizerSource,
+            ErrorLocalizerStatus,
+        )
+        from model_hub.tasks.user_evaluation import process_single_error_localization
+        from tfc.constants.api_calls import APICallStatusChoices
+
+        template = self._make_template(
+            organization,
+            workspace,
+            output_type_normalized="percentage",
+            pass_threshold=0.5,
+        )
+        task = self._make_task(
+            organization,
+            workspace,
+            template,
+            eval_result=0.4,
+            metadata={"log_id": "some-log"},
+            source=ErrorLocalizerSource.STANDALONE,
+        )
+
+        mock_api_log = MagicMock()
+        mock_api_log.status = APICallStatusChoices.PROCESSING.value
+        mock_log_cost.return_value = mock_api_log
+        mock_localizer.return_value.localize_errors.return_value = LocalizerResult(
+            analysis={"summary": "under-template-fail"}, selected_key="q",
+        )
+
+        process_single_error_localization._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status == ErrorLocalizerStatus.COMPLETED
+        mock_localizer.return_value.localize_errors.assert_called_once()
+
+    @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
+    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    def test_explicit_null_metadata_falls_back_to_template_threshold(
+        self, mock_log_cost, mock_localizer, _mock_close, organization, workspace
+    ):
+        """metadata={'pass_threshold': None} must resolve to template default, not raise or short-circuit."""
+        from model_hub.models.error_localizer_model import (
+            ErrorLocalizerSource,
+            ErrorLocalizerStatus,
+        )
+        from model_hub.tasks.user_evaluation import process_single_error_localization
+        from tfc.constants.api_calls import APICallStatusChoices
+
+        template = self._make_template(
+            organization,
+            workspace,
+            output_type_normalized="percentage",
+            pass_threshold=0.5,
+        )
+        task = self._make_task(
+            organization,
+            workspace,
+            template,
+            eval_result=0.4,
+            metadata={"pass_threshold": None},
+            source=ErrorLocalizerSource.STANDALONE,
+        )
+
+        mock_api_log = MagicMock()
+        mock_api_log.status = APICallStatusChoices.PROCESSING.value
+        mock_log_cost.return_value = mock_api_log
+        mock_localizer.return_value.localize_errors.return_value = LocalizerResult(
+            analysis={"summary": "null-override-fallback"}, selected_key="q",
+        )
+
+        process_single_error_localization._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status == ErrorLocalizerStatus.COMPLETED
+        mock_localizer.return_value.localize_errors.assert_called_once()
+
+
+class TestTriggerMetadataSnapshot:
+    """Every EL trigger must snapshot resolve_pass_threshold onto task.metadata.
+
+    The worker reads task.metadata['pass_threshold'] as runtime_threshold; a
+    rename or drop here silently reverts EL to the template default.
+    """
+
+    _SENTINEL = 0.777
+
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizerTask")
+    @patch("model_hub.tasks.user_evaluation.resolve_pass_threshold")
+    def test_standalone_writes_pass_threshold(self, mock_resolve, mock_task):
+        from model_hub.tasks.user_evaluation import (
+            trigger_error_localization_for_standalone,
+        )
+
+        mock_resolve.return_value = self._SENTINEL
+        evaluation = MagicMock()
+        evaluation.eval_template.config = {"rule_prompt": "r"}
+        evaluation.input_data = {"q": "hi"}
+        evaluation.data = "Failed"
+        evaluation.reason = ""
+
+        trigger_error_localization_for_standalone(evaluation)
+
+        mock_resolve.assert_called_once_with(
+            evaluation.eval_template, evaluation.eval_config
+        )
+        create_kwargs = mock_task.objects.create.call_args.kwargs
+        assert create_kwargs["metadata"]["pass_threshold"] == self._SENTINEL
+
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizerTask")
+    @patch("model_hub.tasks.user_evaluation.resolve_pass_threshold")
+    def test_playground_writes_pass_threshold_on_create(
+        self, mock_resolve, mock_task
+    ):
+        from model_hub.models.error_localizer_model import ErrorLocalizerTask
+        from model_hub.tasks.user_evaluation import (
+            trigger_error_localization_for_playground,
+        )
+
+        mock_resolve.return_value = self._SENTINEL
+        mock_task.DoesNotExist = ErrorLocalizerTask.DoesNotExist
+        mock_task.objects.get.side_effect = ErrorLocalizerTask.DoesNotExist
+        eval_template = MagicMock()
+        eval_template.config = {"rule_prompt": "r"}
+        log = MagicMock()
+        eval_config = {"run_config": {"pass_threshold": 0.9}}
+
+        trigger_error_localization_for_playground(
+            eval_template=eval_template,
+            log=log,
+            value="Failed",
+            mapping={"q": "hi"},
+            eval_explanation="",
+            eval_config=eval_config,
+        )
+
+        mock_resolve.assert_called_once_with(eval_template, eval_config)
+        construct_kwargs = mock_task.call_args.kwargs
+        assert construct_kwargs["metadata"]["pass_threshold"] == self._SENTINEL
+
+    @patch("model_hub.tasks.user_evaluation.Workspace")
+    @patch("model_hub.tasks.user_evaluation.Cell")
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizerTask")
+    @patch("model_hub.tasks.user_evaluation.resolve_pass_threshold")
+    def test_column_writes_pass_threshold_on_create(
+        self, mock_resolve, mock_task, mock_cell, _mock_workspace
+    ):
+        from model_hub.tasks.user_evaluation import (
+            trigger_error_localization_for_column,
+        )
+
+        mock_resolve.return_value = self._SENTINEL
+        mock_task.objects.filter.return_value.exists.return_value = False
+        cell = MagicMock()
+        mock_cell.objects.select_related.return_value.get.return_value = cell
+        eval_template = MagicMock()
+        eval_template.name = "some-template"
+        # `config` is the per-evaluator prepared dict (holds template-stamped
+        # pass_threshold); `eval_config` is the caller's runtime config where
+        # the run_config override lives. The resolver must read the latter.
+        config = {"rule_prompt": "r", "pass_threshold": 0.5}
+        eval_config = {"run_config": {"pass_threshold": 0.9}}
+
+        trigger_error_localization_for_column(
+            eval_template=eval_template,
+            config=config,
+            required_field=["required_keys"],
+            mapping=[["q"], "hi"],
+            eval_result="Failed",
+            response={"reason": ""},
+            cell=cell,
+            log_id="log-1",
+            eval_config=eval_config,
+        )
+
+        mock_resolve.assert_called_once_with(eval_template, eval_config)
+        construct_kwargs = mock_task.call_args.kwargs
+        assert construct_kwargs["metadata"]["pass_threshold"] == self._SENTINEL
+
+    @patch("model_hub.tasks.user_evaluation.Workspace")
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizerTask")
+    @patch("model_hub.tasks.user_evaluation.resolve_pass_threshold")
+    def test_span_writes_pass_threshold_on_create(
+        self, mock_resolve, mock_task, _mock_workspace
+    ):
+        from model_hub.models.error_localizer_model import ErrorLocalizerTask
+        from model_hub.tasks.user_evaluation import (
+            trigger_error_localization_for_span,
+        )
+
+        mock_resolve.return_value = self._SENTINEL
+        mock_task.objects.filter.return_value.exists.return_value = False
+        eval_template = MagicMock()
+        eval_template.config = {"rule_prompt": "r"}
+        eval_logger = MagicMock()
+        eval_config = {"run_config": {"pass_threshold": 0.9}}
+
+        trigger_error_localization_for_span(
+            eval_template=eval_template,
+            eval_logger=eval_logger,
+            value="Failed",
+            mapping={"q": "hi"},
+            eval_explanation="",
+            log_id="log-1",
+            eval_config=eval_config,
+        )
+
+        mock_resolve.assert_called_once_with(eval_template, eval_config)
+        construct_kwargs = mock_task.call_args.kwargs
+        assert construct_kwargs["metadata"]["pass_threshold"] == self._SENTINEL
+
+    @patch("model_hub.tasks.user_evaluation.Workspace")
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizerTask")
+    @patch("model_hub.tasks.user_evaluation.resolve_pass_threshold")
+    def test_simulate_writes_pass_threshold(
+        self, mock_resolve, mock_task, _mock_workspace
+    ):
+        from model_hub.tasks.user_evaluation import (
+            trigger_error_localization_for_simulate,
+        )
+
+        mock_resolve.return_value = self._SENTINEL
+        mock_task.no_workspace_objects.update_or_create.return_value = (
+            MagicMock(),
+            True,
+        )
+        eval_template = MagicMock()
+        eval_template.config = {"rule_prompt": "r"}
+        call_execution = MagicMock()
+        eval_config = MagicMock()
+        eval_config.id = uuid.uuid4()
+        eval_config.config = {"run_config": {"pass_threshold": 0.9}}
+
+        trigger_error_localization_for_simulate(
+            eval_template=eval_template,
+            call_execution=call_execution,
+            eval_config=eval_config,
+            value="Failed",
+            mapping={"q": "hi"},
+            eval_explanation="",
+            log_id="log-1",
+        )
+
+        mock_resolve.assert_called_once_with(eval_template, eval_config.config)
+        update_kwargs = mock_task.no_workspace_objects.update_or_create.call_args.kwargs
+        assert update_kwargs["defaults"]["metadata"]["pass_threshold"] == self._SENTINEL

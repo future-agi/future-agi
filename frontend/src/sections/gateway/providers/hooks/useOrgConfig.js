@@ -38,7 +38,9 @@ export function useCreateOrgConfig() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["agentcc-org-config"] });
-      queryClient.invalidateQueries({ queryKey: ["agentcc-org-config-history"] });
+      queryClient.invalidateQueries({
+        queryKey: ["agentcc-org-config-history"],
+      });
       enqueueSnackbar("Config saved and activated", { variant: "success" });
     },
     onError: (err) => {
@@ -61,7 +63,9 @@ export function useActivateOrgConfig() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["agentcc-org-config"] });
-      queryClient.invalidateQueries({ queryKey: ["agentcc-org-config-history"] });
+      queryClient.invalidateQueries({
+        queryKey: ["agentcc-org-config-history"],
+      });
       enqueueSnackbar("Rolled back to selected version", {
         variant: "success",
       });

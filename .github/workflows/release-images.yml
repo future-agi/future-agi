@@ -1,0 +1,182 @@
+# Tag-triggered release: builds all six platform images at the pushed vX.Y.Z
+# tag, then fans out (ee overlay dispatch, deployment values-bump PR, docs
+# changelog dispatch). Pre-release tags (-suffix) never reach this workflow
+# (release-please only cuts bare vX.Y.Z; the guard job double-checks).
+name: release-images
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-images-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        run: |
+          set -eu
+          v="${GITHUB_REF_NAME}"
+          if ! printf '%s' "$v" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::'$v' is not a stable platform version tag"
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: guard
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: frontend,        image: futureagi/frontend,        context: ./frontend,                dockerfile: ./frontend/Dockerfile,                    free-disk: true,  platforms: 'linux/amd64,linux/arm64' }
+          - { name: backend,         image: futureagi/future-agi,      context: ./futureagi,               dockerfile: ./futureagi/Dockerfile.oss,               free-disk: false, platforms: linux/amd64 }
+          - { name: agentcc-gateway, image: futureagi/agentcc-gateway, context: ./agentcc-gateway,         dockerfile: ./agentcc-gateway/Dockerfile,             free-disk: false, platforms: 'linux/amd64,linux/arm64' }
+          - { name: serving,         image: futureagi/serving,         context: ./futureagi/model_serving, dockerfile: ./futureagi/model_serving/Dockerfile.oss, free-disk: false, platforms: 'linux/amd64,linux/arm64' }
+          - { name: code-executor,   image: futureagi/code-executor,   context: ./futureagi/code-executor, dockerfile: ./futureagi/code-executor/Dockerfile,     free-disk: false, platforms: 'linux/amd64,linux/arm64' }
+          - { name: fi-collector,    image: futureagi/fi-collector,    context: ./fi-collector,            dockerfile: ./fi-collector/Dockerfile,                free-disk: false, platforms: 'linux/amd64,linux/arm64' }
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image: ${{ matrix.image }}
+      context: ${{ matrix.context }}
+      dockerfile: ${{ matrix.dockerfile }}
+      version: ${{ needs.guard.outputs.version }}
+      ref: ${{ github.ref }}
+      platforms: ${{ matrix.platforms }}
+      push-latest: true
+      free-disk: ${{ matrix.free-disk }}
+      cache-scope: ${{ matrix.name }}
+    secrets:
+      dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+      dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  dispatch-ee:
+    needs: [guard, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: future-agi
+          repositories: ee
+      - name: Dispatch platform-release to ee
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          set -eu
+          body_b64=$(GH_TOKEN='${{ secrets.GITHUB_TOKEN }}' gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${VERSION}" --jq '.body' | base64 | tr -d '\n')
+          gh api -X POST repos/future-agi/ee/dispatches \
+            -f event_type=platform-release \
+            -F 'client_payload[version]'="${VERSION}" \
+            -F 'client_payload[release_url]'="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION}" \
+            -F 'client_payload[release_body_b64]'="${body_b64}"
+
+  dispatch-docs:
+    needs: [guard, build]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: future-agi
+          repositories: docs
+      - name: Dispatch platform-release to docs
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          set -eu
+          body_b64=$(GH_TOKEN='${{ secrets.GITHUB_TOKEN }}' gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${VERSION}" --jq '.body' | base64 | tr -d '\n')
+          gh api -X POST repos/future-agi/docs/dispatches \
+            -f event_type=platform-release \
+            -F 'client_payload[version]'="${VERSION}" \
+            -F 'client_payload[release_url]'="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION}" \
+            -F 'client_payload[release_body_b64]'="${body_b64}"
+
+  bump-deployment:
+    needs: [guard, dispatch-ee]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.guard.outputs.version }}
+      # yq paths of every platform-image tag per values file. If a path list
+      # drifts from the values files, the sanity check below fails the job
+      # rather than silently bumping a subset.
+      COMMON_PATHS: >-
+        .backend.image.tag .core_backend_beat.image.tag .core_backend_worker.image.tag
+        .temporal_worker_default.image.tag .temporal_worker_tasks_s.image.tag
+        .temporal_worker_tasks_l.image.tag .temporal_worker_tasks_xl.image.tag
+        .temporal_worker_trace.image.tag .temporal_worker_agent_compass.image.tag
+        .agentcc_gateway.image.tag .codeExecutor.image.tag
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: future-agi
+          repositories: deployment
+      - name: Checkout deployment repo
+        uses: actions/checkout@v4
+        with:
+          repository: future-agi/deployment
+          token: ${{ steps.app-token.outputs.token }}
+          ref: main
+      - name: Install yq
+        run: sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64 && sudo chmod +x /usr/local/bin/yq
+      - name: Bump platform tags
+        run: |
+          set -eu
+          bump() { # file, paths...
+            f="$1"; shift
+            for p in "$@"; do
+              if [ "$(yq "$p" "$f")" = "null" ]; then
+                echo "::error::$p missing in $f — path list is stale, refusing partial bump"
+                exit 1
+              fi
+              yq -i "$p = \"${VERSION}\"" "$f"
+            done
+          }
+          # $COMMON_PATHS is intentionally unquoted: it must word-split into
+          # one argument per yq path handed to bump().
+          # shellcheck disable=SC2086
+          bump us/aws/deployment/values.yaml  $COMMON_PATHS
+          # shellcheck disable=SC2086
+          bump eu/gcp/deployment/values.yaml  $COMMON_PATHS
+          # shellcheck disable=SC2086
+          bump us/gcp/deployment/values.yaml  $COMMON_PATHS .fiCollector.image.tag
+      - name: Open bump PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -eu
+          branch="chore/bump-platform-${VERSION}"
+          git config user.name "futureagi-release-bot"
+          git config user.email "release-bot@futureagi.com"
+          # Idempotent: a re-run reuses the existing branch instead of failing.
+          git switch -c "$branch" 2>/dev/null || git switch "$branch"
+          git add -A
+          git diff --cached --quiet && { echo "values already at ${VERSION}; nothing to do"; exit 0; }
+          git commit -m "chore(release): bump platform images to ${VERSION}"
+          # --force-with-lease -u covers both the new-branch and existing-branch cases.
+          git push --force-with-lease -u origin "$branch"
+          if [ -z "$(gh pr list --repo future-agi/deployment --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            gh pr create --repo future-agi/deployment --base main --head "$branch" \
+              --title "chore(release): bump platform to ${VERSION}" \
+              --body "Automated bump for [${VERSION}](https://github.com/future-agi/future-agi/releases/tag/${VERSION}). Review release notes (check for the migrations callout) before deploying per the deployment guide."
+          else
+            echo "bump PR already open"
+          fi

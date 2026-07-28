@@ -35,8 +35,7 @@ export function useDeploymentMode() {
 export function usePostLoginPath() {
   const { isOSS } = useDeploymentMode();
 
-
- const returnTo = localStorage.getItem("redirectUrl");
+  const returnTo = localStorage.getItem("redirectUrl");
   if (returnTo) return returnTo;
   return isOSS ? paths.dashboard.develop : paths.dashboard.falconAI;
 }

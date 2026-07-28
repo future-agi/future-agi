@@ -28,6 +28,9 @@ export default function AddFolder({ open, onClose }) {
       queryClient.invalidateQueries({
         queryKey: ["prompt-folders"],
       });
+      queryClient.invalidateQueries({
+        queryKey: ["folder-items", "all"],
+      });
       if (data.data?.result?.id) {
         navigate(`/dashboard/workbench/${data.data?.result?.id}`);
       }

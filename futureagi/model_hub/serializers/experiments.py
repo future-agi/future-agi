@@ -1,5 +1,10 @@
 # serializers.py
 from rest_framework import serializers
+from tfc.utils.serializer_fields import (
+    JsonValueField,
+    StringOrArrayField,
+    StringOrObjectField,
+)
 
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
 from model_hub.models.choices import ProviderLogoUrls
@@ -11,7 +16,6 @@ from model_hub.models.experiments import (
     ExperimentPromptConfig,
     ExperimentsTable,
 )
-from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 from tfc.middleware.workspace_context import get_current_organization
 
 
@@ -81,11 +85,9 @@ class ExperimentsTableSerializer(serializers.ModelSerializer):
                     )
 
                     model = next(
-                        (
-                            model
-                            for model in model_manager.models
-                            if _model_name.lower() == model["model_name"].lower()
-                        )
+                        model
+                        for model in model_manager.models
+                        if _model_name.lower() == model["model_name"].lower()
                     )
 
                     provider = model.get("providers")
@@ -107,10 +109,22 @@ class ExperimentsTableSerializer(serializers.ModelSerializer):
             elif isinstance(prompt_config, dict):
                 _augment_config(prompt_config)
         except Exception:
-            # Serialization enrichment should never break the response
+            # Serialization enrichment should never break the response.
             pass
 
         return data
+
+
+class ExperimentsTableUpdateSerializer(ExperimentsTableSerializer):
+    experiment_id = serializers.UUIDField()
+    re_run = serializers.BooleanField(required=False, default=False)
+
+    class Meta(ExperimentsTableSerializer.Meta):
+        fields = [
+            "experiment_id",
+            "re_run",
+            *ExperimentsTableSerializer.Meta.fields,
+        ]
 
 
 class ExperimentsTableGetSerializer(serializers.ModelSerializer):
@@ -315,21 +329,26 @@ class ExperimentRerunCellsSerializer(serializers.Serializer):
     source_ids = serializers.ListField(
         child=serializers.UUIDField(),
         required=False,
-        default=[],
+        default=list,
     )
     cells = RerunCellEntrySerializer(
         many=True,
         required=False,
-        default=[],
+        default=list,
     )
     user_eval_metric_ids = serializers.ListField(
         child=serializers.UUIDField(),
         required=False,
-        default=[],
+        default=list,
     )
     failed_only = serializers.BooleanField(
         required=False,
         default=False,
+    )
+    max_concurrent_rows = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        default=10,
     )
 
     def validate(self, attrs):
@@ -376,6 +395,101 @@ class EvalMetricEntrySerializer(serializers.Serializer):
     )
 
 
+class _ExtraFieldsMixin:
+    """Pass unknown keys through both directions unchanged.
+
+    Provides the typed-keys-plus-escape-hatch pattern:
+
+    * ``to_internal_value`` (request input) — declared fields are validated;
+      any additional provider-specific key is accepted as-is.
+    * ``to_representation`` (response output) — declared fields render
+      normally; any additional key present on a source dict is copied
+      straight through. Without this, serializers that promise
+      ``additionalProperties: True`` (e.g. ``EvalUsageTableRowSerializer``'s
+      dynamic ``input_var_<name>`` cells) would silently drop those keys at
+      ``.data`` time.
+    """
+
+    def to_internal_value(self, data):
+        validated = super().to_internal_value(data)
+        for key, value in data.items():
+            if key not in self.fields:
+                validated[key] = value
+        return validated
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        # `instance` can be a dict (views build responses as raw dicts) or a
+        # model instance. Only dicts carry surprise keys — model instances
+        # already went through ORM field mapping.
+        if isinstance(instance, dict):
+            for key, value in instance.items():
+                if key not in self.fields:
+                    rep[key] = value
+        return rep
+
+
+class MessageItemSerializer(_ExtraFieldsMixin, serializers.Serializer):
+    """A single prompt message: role + content (string or content-parts array)."""
+
+    role = serializers.CharField()
+    # content is either a plain text string or an array of content-part objects
+    # (OpenAI multi-part format). StringOrArrayField emits x-string-or-array
+    # so orval generates z.union([z.string(), z.array(z.unknown())]) — the
+    # correct union type instead of narrowing to object.
+    content = StringOrArrayField()
+    name = serializers.CharField(required=False)
+    tool_calls = JsonValueField(required=False)
+    tool_call_id = serializers.CharField(required=False)
+    # Client-side id (getRandomId) used as React key on messages list.
+    # Declared explicitly so DRF passes it through to_internal_value instead
+    # of stripping it, which would cause duplicate keys on reload.
+    id = serializers.CharField(required=False)
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": True}
+
+
+class PromptModelParamsSerializer(_ExtraFieldsMixin, serializers.Serializer):
+    """Known LLM sampling parameters for a prompt config entry.
+
+    Sampling-level params only (temperature, max_tokens, etc.).
+    Call-level config (tools, tool_choice) lives in PromptConfigurationSerializer.
+    Typed keys are validated; any additional provider-specific key is accepted
+    via _ExtraFieldsMixin.  additionalProperties:true in the swagger schema
+    triggers .passthrough() in the generated zod (via post-processing in
+    generate-openapi-client.mjs) so unknown provider keys are not stripped.
+    """
+
+    temperature = serializers.FloatField(required=False)
+    max_tokens = serializers.IntegerField(required=False)
+    top_p = serializers.FloatField(required=False)
+    frequency_penalty = serializers.FloatField(required=False)
+    presence_penalty = serializers.FloatField(required=False)
+    response_format = StringOrObjectField(required=False)
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": True}
+
+
+class PromptConfigurationSerializer(_ExtraFieldsMixin, serializers.Serializer):
+    """Additional configuration for a prompt config entry.
+
+    Typed keys are validated; any additional key is accepted via _ExtraFieldsMixin.
+    """
+
+    tool_choice = serializers.CharField(required=False, allow_blank=True)
+    template_format = serializers.CharField(required=False, allow_blank=True)
+    tools = serializers.ListField(child=JsonValueField(), required=False)
+    output_format = serializers.CharField(required=False, allow_blank=True)
+    model_type = serializers.CharField(required=False, allow_blank=True)
+    model_detail = JsonValueField(required=False)
+    voice_id = serializers.CharField(required=False, allow_blank=True)
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": True}
+
+
 class PromptConfigEntrySerializer(serializers.Serializer):
     """
     Validates a single entry in the prompt_config array.
@@ -395,15 +509,16 @@ class PromptConfigEntrySerializer(serializers.Serializer):
     agent_id = serializers.UUIDField(required=False, allow_null=True)
     agent_version = serializers.UUIDField(required=False, allow_null=True)
 
-    # Model config (prompt entries only — single string or ModelSpec dict)
-    model = serializers.JSONField(required=False, default=None)
-    model_params = serializers.DictField(required=False, default=dict)
-    configuration = serializers.DictField(required=False, default=dict)
+    # Model config (prompt entries only — plain model name string or ModelSpec dict)
+    model = StringOrObjectField(required=False, default=None)
+    # Typed known keys + escape hatch for provider-specific extras
+    model_params = PromptModelParamsSerializer(required=False, default=dict)
+    configuration = PromptConfigurationSerializer(required=False, default=dict)
     output_format = serializers.CharField(required=False, default="string")
 
     # Inline messages (tts/stt/image experiments)
     messages = serializers.ListField(
-        child=serializers.DictField(),
+        child=MessageItemSerializer(),
         required=False,
     )
 

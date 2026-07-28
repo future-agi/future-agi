@@ -15,8 +15,9 @@ Endpoints covered:
 """
 
 import json
+import time
 import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 from django.urls import reverse
@@ -26,8 +27,9 @@ from rest_framework.test import APIClient, APITestCase
 from accounts.models.organization import Organization
 from accounts.models.user import User
 from accounts.models.workspace import Workspace
-from model_hub.models.api_key import ApiKey, SecretModel
+from model_hub.models.api_key import SecretModel
 from model_hub.models.choices import (
+    CellStatus,
     DatasetSourceChoices,
     DataTypeChoices,
     ModelTypes,
@@ -37,15 +39,9 @@ from model_hub.models.choices import (
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.views.dynamic_columns import (
     AddApiColumnView,
-    AddVectorDBColumnView,
-    ClassifyColumnView,
-    ConditionalColumnView,
     ExecutePythonCodeView,
     ExtractEntitiesView,
     ExtractJsonColumnView,
-    GetOperationConfigView,
-    PreviewDatasetOperationView,
-    RerunOperationView,
 )
 from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import set_workspace_context
@@ -318,6 +314,7 @@ class TestExtractJsonColumnView(DynamicColumnsBaseTestCase):
         )
 
         assert response.status_code == status.HTTP_200_OK
+        assert "new_column_id" in response.json()["result"]
         mock_task.assert_called_once()
 
 
@@ -490,7 +487,67 @@ class TestExtractEntitiesView(DynamicColumnsBaseTestCase):
         )
 
         assert response.status_code == status.HTTP_200_OK
+        assert "new_column_id" in response.json()["result"]
+        assert response.json()["result"]["new_column_name"] == "Person Names"
         mock_task.assert_called_once()
+
+    def test_extract_entities_populates_cell_from_array_response(self):
+        """A JSON-array LLM response yields a populated cell value, not None.
+
+        Drives ExtractEntitiesView._extract_entities through the real
+        ResponseFormatter (the live extract_async path). Red before the fix:
+        the formatter returned the raw JSON string, so the isinstance(list)
+        check failed and _extract_entities returned None -> every generated
+        cell was empty.
+        """
+        from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
+        from agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.response_formatter import (  # noqa: E501
+            ResponseFormatter,
+        )
+
+        _, columns, rows = self.create_test_dataset(num_columns=1, num_rows=1)
+        # _extract_entities runs per-thread in production and calls
+        # close_old_connections(); preload the relation chain so no lazy query
+        # fires after the connection is recycled.
+        cell = Cell.objects.select_related(
+            "column__dataset__organization", "column__dataset__workspace"
+        ).get(row=rows[0], column=columns[0])
+
+        def run_real_formatter(run_prompt_self, *args, **kwargs):
+            # The model emits a JSON array as text; let the REAL formatter parse
+            # it exactly as the LLM handler does on the live path.
+            mock_resp = Mock()
+            mock_resp.choices = [Mock()]
+            mock_resp.choices[0].message = Mock()
+            mock_resp.choices[0].message.content = '["Paris", "France"]'
+            mock_resp.choices[0].message.tool_calls = None
+            mock_resp.usage = Mock(
+                prompt_tokens=1, completion_tokens=1, total_tokens=2
+            )
+            mock_resp.model = "gpt-4o"
+            return ResponseFormatter.format_llm_response(
+                response=mock_resp,
+                model=run_prompt_self.model,
+                start_time=time.time(),
+                output_format=run_prompt_self.output_format,
+            )
+
+        # _extract_entities calls close_old_connections() for per-thread
+        # connection hygiene; in this single-thread test that would recycle the
+        # shared test connection, so neutralize it (not what we're asserting).
+        with (
+            patch.object(RunPrompt, "litellm_response", run_real_formatter),
+            patch("model_hub.views.dynamic_columns.close_old_connections"),
+        ):
+            value, value_infos = ExtractEntitiesView()._extract_entities(
+                cell=cell,
+                instruction="Extract the cities and countries",
+                model="gpt-4o",
+            )
+
+        assert value == json.dumps(["Paris", "France"])
+        assert value is not None
+        assert not (value_infos and "reason" in value_infos)
 
 
 # =============================================================================
@@ -911,19 +968,150 @@ class TestRerunOperationView(DynamicColumnsBaseTestCase):
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_rerun_invalid_operation_type(self):
-        """Test that invalid operation_type returns bad request."""
-        dataset, columns, _ = self.create_test_dataset()
-        columns[0].metadata = {"key": "value"}
-        columns[0].save()
+    def test_rerun_invalid_operation_type_does_not_mutate_column_or_cells(self):
+        """Test invalid operation_type rejects before rerun state mutation."""
+        _, columns, _ = self.create_test_dataset()
+        column = columns[0]
+        column.metadata = {"key": "value"}
+        column.status = StatusType.COMPLETED.value
+        column.save(update_fields=["metadata", "status"])
+        Cell.objects.filter(column=column).update(
+            value="original",
+            value_infos={"reason": "kept"},
+            status=CellStatus.PASS.value,
+        )
 
-        url = reverse("rerun-operation", kwargs={"column_id": str(columns[0].id)})
+        url = reverse("rerun-operation", kwargs={"column_id": str(column.id)})
 
         response = self.client.post(
             url, data={"operation_type": "invalid_type", "config": {}}, format="json"
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        column.refresh_from_db()
+        assert column.status == StatusType.COMPLETED.value
+        assert list(
+            Cell.objects.filter(column=column).order_by("row__order").values_list(
+                "value", "value_infos", "status"
+            )
+        ) == [
+            ("original", {"reason": "kept"}, CellStatus.PASS.value),
+            ("original", {"reason": "kept"}, CellStatus.PASS.value),
+            ("original", {"reason": "kept"}, CellStatus.PASS.value),
+        ]
+
+    def test_rerun_invalid_override_does_not_mutate_metadata_or_cells(self):
+        """Test invalid override config rejects before any rerun state mutation."""
+        _, columns, _ = self.create_test_dataset()
+        column = columns[0]
+        original_metadata = {
+            "column_id": str(columns[1].id),
+            "json_key": "name",
+            "concurrency": 5,
+        }
+        column.metadata = original_metadata
+        column.status = StatusType.COMPLETED.value
+        column.save(update_fields=["metadata", "status"])
+        Cell.objects.filter(column=column).update(
+            value="original",
+            value_infos={"reason": "kept"},
+            status=CellStatus.PASS.value,
+        )
+
+        url = reverse("rerun-operation", kwargs={"column_id": str(column.id)})
+
+        response = self.client.post(
+            url,
+            data={
+                "operation_type": "extract_json",
+                "config": {"json_key": ""},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        column.refresh_from_db()
+        assert column.metadata == original_metadata
+        assert column.status == StatusType.COMPLETED.value
+        assert list(
+            Cell.objects.filter(column=column).order_by("row__order").values_list(
+                "value", "value_infos", "status"
+            )
+        ) == [
+            ("original", {"reason": "kept"}, CellStatus.PASS.value),
+            ("original", {"reason": "kept"}, CellStatus.PASS.value),
+            ("original", {"reason": "kept"}, CellStatus.PASS.value),
+        ]
+
+    @patch("model_hub.views.dynamic_columns.classify_column_async.delay")
+    def test_rerun_uses_stored_metadata_when_config_is_omitted(self, mock_task):
+        """Test rerun uses stored operation config when no override is sent."""
+        dataset, columns, _ = self.create_test_dataset()
+        column = columns[0]
+        labels = ["positive", "negative"]
+        column.metadata = {
+            "labels": labels,
+            "language_model_id": "gpt-4o",
+            "column_id": str(columns[1].id),
+            "concurrency": 7,
+        }
+        column.status = StatusType.COMPLETED.value
+        column.save(update_fields=["metadata", "status"])
+
+        url = reverse("rerun-operation", kwargs={"column_id": str(column.id)})
+
+        response = self.client.post(
+            url, data={"operation_type": "classify"}, format="json"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_task.assert_called_once_with(
+            str(columns[1].id),
+            labels,
+            "gpt-4o",
+            7,
+            dataset.id,
+            str(column.id),
+            True,
+        )
+
+    @patch("model_hub.views.dynamic_columns.add_api_column_async.delay")
+    def test_rerun_api_call_uses_flat_stored_metadata(self, mock_task):
+        """Test API-call rerun accepts metadata shape created by add-api-column."""
+        dataset, columns, _ = self.create_test_dataset()
+        column = columns[0]
+        column.metadata = {
+            "url": "https://example.com/data",
+            "method": "GET",
+            "output_type": "string",
+            "params": {"q": "status"},
+            "headers": {},
+            "body": {},
+            "concurrency": 3,
+        }
+        column.save(update_fields=["metadata"])
+
+        url = reverse("rerun-operation", kwargs={"column_id": str(column.id)})
+
+        response = self.client.post(
+            url, data={"operation_type": "api_call"}, format="json"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_task.assert_called_once_with(
+            {
+                "url": "https://example.com/data",
+                "method": "GET",
+                "output_type": "string",
+                "params": {"q": "status"},
+                "headers": {},
+                "body": {},
+            },
+            dataset.id,
+            3,
+            str(column.id),
+            True,
+        )
 
     @patch("model_hub.views.dynamic_columns.classify_column_async.delay")
     def test_rerun_classification_success(self, mock_task):

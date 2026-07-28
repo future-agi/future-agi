@@ -130,6 +130,7 @@ const FilterChips = ({
           >
             <Chip
               size="small"
+              data-filter-chip-column={chip.column_id}
               onDelete={() => onRemoveFilter(chip._idx)}
               onClick={
                 onChipClick
@@ -267,6 +268,7 @@ const FilterChips = ({
       >
         <Button
           size="small"
+          data-filter-chips-action="clear"
           onClick={onClearAll}
           sx={{
             textTransform: "none",

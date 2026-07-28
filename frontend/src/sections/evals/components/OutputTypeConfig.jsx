@@ -117,8 +117,8 @@ const OutputTypeConfig = ({
           </Box>
         )}
         <CustomTooltip
-        size="small"
-        type="black"
+          size="small"
+          type="black"
           show={radioDisabled}
           title="Output type is fixed for this evaluation and can't be changed."
           arrow
@@ -294,7 +294,6 @@ const OutputTypeConfig = ({
                 size="small"
                 valueLabelDisplay="auto"
                 valueLabelFormat={(v) => `${Math.round(v)}%`}
-                disabled={disabled}
               />
               <Typography variant="caption">100%</Typography>
             </Box>
@@ -471,7 +470,7 @@ const OutputTypeConfig = ({
                   Allow multiple choices (LLM can select more than one)
                 </Typography>
               }
-              sx={{ mt: 0.5, px:0.25 }}
+              sx={{ mt: 0.5, px: 0.25 }}
             />
           </Box>
         </Box>

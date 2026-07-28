@@ -111,10 +111,12 @@ export default function useAddNodeOptimistic() {
         },
       })
         .then((apiResult) => {
-          if (edgeId && apiResult?.nodeConnection?.id) {
+          const nodeConnection =
+            apiResult?.nodeConnection || apiResult?.node_connection;
+          if (edgeId && nodeConnection?.id) {
             useAgentPlaygroundStore
               .getState()
-              .updateEdgeId(edgeId, apiResult.nodeConnection.id);
+              .updateEdgeId(edgeId, nodeConnection.id);
           }
           // Open drawer only after node exists on backend
           const addedNode = useAgentPlaygroundStore

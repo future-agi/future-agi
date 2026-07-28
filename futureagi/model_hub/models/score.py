@@ -3,6 +3,7 @@ import uuid
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
+from django.utils import timezone
 
 from accounts.models.organization import Organization
 from accounts.models.user import User
@@ -36,12 +37,20 @@ class Score(BaseModel):
         max_length=30,
         choices=QueueItemSourceType.get_choices(),
     )
+    # CH scale migration (SCALE_ARCHITECTURE.md §5/§9a): Trace, ObservationSpan
+    # and TraceSession move to ClickHouse, so their DB FK constraints are
+    # dropped here via db_constraint=False — this is the reversible EXPAND step.
+    # The column + ORM accessor are kept (no code breaks; joins still resolve
+    # while the PG tables exist), but the constraint no longer pins the PG
+    # table or rejects a CH-resident / TTL'd reference. CONTRACT (later) swaps
+    # these to plain id fields once reads are migrated off the joins.
     trace = models.ForeignKey(
         "tracer.Trace",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="scores",
+        db_constraint=False,
     )
     observation_span = models.ForeignKey(
         "tracer.ObservationSpan",
@@ -49,6 +58,7 @@ class Score(BaseModel):
         null=True,
         blank=True,
         related_name="scores",
+        db_constraint=False,
     )
     trace_session = models.ForeignKey(
         "tracer.TraceSession",
@@ -56,6 +66,7 @@ class Score(BaseModel):
         null=True,
         blank=True,
         related_name="scores",
+        db_constraint=False,
     )
     call_execution = models.ForeignKey(
         "simulate.CallExecution",
@@ -86,6 +97,7 @@ class Score(BaseModel):
         related_name="scores",
     )
     value = models.JSONField()
+    value_history = models.JSONField(default=list, blank=True)
 
     # ── Who scored it ────────────────────────────────────────────────────
     annotator = models.ForeignKey(
@@ -124,6 +136,7 @@ class Score(BaseModel):
         blank=True,
         related_name="scores",
     )
+    tracer_project_id = models.UUIDField(null=True, blank=True)
     workspace = models.ForeignKey(
         Workspace,
         on_delete=models.CASCADE,
@@ -142,40 +155,55 @@ class Score(BaseModel):
             models.Index(fields=["dataset_row", "label"]),
             models.Index(fields=["prototype_run", "label"]),
             models.Index(fields=["queue_item"]),
+            models.Index(
+                fields=["tracer_project_id", "label"],
+                name="idx_score_tracer_project_label",
+            ),
         ]
         constraints = [
-            # One score per (source, label, annotator)
+            # One score per (source, label, annotator, queue_item). Including
+            # queue_item lets the same annotator score the same label on the
+            # same source independently per queue — required because a trace
+            # can belong to multiple annotation queues with overlapping labels
+            # and each queue is its own review context.
             models.UniqueConstraint(
-                fields=["trace", "label", "annotator"],
+                fields=["trace", "label", "annotator", "queue_item"],
                 condition=Q(deleted=False, trace__isnull=False),
                 name="unique_score_trace_label_annotator",
             ),
             models.UniqueConstraint(
-                fields=["observation_span", "label", "annotator"],
+                fields=["observation_span", "label", "annotator", "queue_item"],
                 condition=Q(deleted=False, observation_span__isnull=False),
                 name="unique_score_span_label_annotator",
             ),
             models.UniqueConstraint(
-                fields=["trace_session", "label", "annotator"],
+                fields=["trace_session", "label", "annotator", "queue_item"],
                 condition=Q(deleted=False, trace_session__isnull=False),
                 name="unique_score_session_label_annotator",
             ),
             models.UniqueConstraint(
-                fields=["call_execution", "label", "annotator"],
+                fields=["call_execution", "label", "annotator", "queue_item"],
                 condition=Q(deleted=False, call_execution__isnull=False),
                 name="unique_score_call_label_annotator",
             ),
             models.UniqueConstraint(
-                fields=["prototype_run", "label", "annotator"],
+                fields=["prototype_run", "label", "annotator", "queue_item"],
                 condition=Q(deleted=False, prototype_run__isnull=False),
                 name="unique_score_run_label_annotator",
             ),
             models.UniqueConstraint(
-                fields=["dataset_row", "label", "annotator"],
+                fields=["dataset_row", "label", "annotator", "queue_item"],
                 condition=Q(deleted=False, dataset_row__isnull=False),
                 name="unique_score_row_label_annotator",
             ),
-            # Duplicate constraints for NULL annotator (PostgreSQL NULL != NULL)
+            # Duplicate constraints for NULL annotator (PostgreSQL NULL != NULL).
+            # Kept at the pre-revamp (source, label) grain rather than adding
+            # ``queue_item`` here: null-annotator rows are programmatic/auto
+            # scores, ``queue_item`` itself can be NULL for them, and NULL ≠
+            # NULL in Postgres uniqueness — so a (source, label, queue_item)
+            # constraint would silently allow duplicate auto-scores. Keep
+            # the strict (source, label) uniqueness for programmatic scores
+            # and accept that they aren't per-queue.
             models.UniqueConstraint(
                 fields=["trace", "label"],
                 condition=Q(
@@ -231,6 +259,38 @@ class Score(BaseModel):
                 name="unique_score_row_label_null_annotator",
             ),
         ]
+
+    def save(self, *args, **kwargs):
+        update_fields = kwargs.get("update_fields")
+        should_track_value_change = update_fields is None or "value" in update_fields
+
+        if self.pk and not self._state.adding and should_track_value_change:
+            try:
+                previous = self.__class__.no_workspace_objects.only(
+                    "value",
+                    "value_history",
+                    "created_at",
+                    "updated_at",
+                ).get(pk=self.pk)
+            except self.__class__.DoesNotExist:
+                previous = None
+
+            if previous is not None and previous.value != self.value:
+                history = list(previous.value_history or [])
+                previous_at = (
+                    previous.updated_at or previous.created_at or timezone.now()
+                )
+                history.append(
+                    {
+                        "value": previous.value,
+                        "at": previous_at.isoformat(),
+                    }
+                )
+                self.value_history = history
+                if update_fields is not None:
+                    kwargs["update_fields"] = set(update_fields) | {"value_history"}
+
+        super().save(*args, **kwargs)
 
     def clean(self):
         super().clean()

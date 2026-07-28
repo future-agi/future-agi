@@ -65,13 +65,27 @@ x-backend-env: &backend-env
   # with ${VAR:?error} guards so prod refuses to boot on the dev values.
   SECRET_KEY: ${SECRET_KEY:-local-dev-only-not-for-production-replace-me}
   ENV_TYPE: ${ENV_TYPE:-development}
+  EE_LICENSE_KEY: ${EE_LICENSE_KEY:-test-license-key}
   DJANGO_SETTINGS_MODULE: tfc.settings.settings
   FAST_STARTUP: ${FAST_STARTUP:-false}
   OTEL_ENABLED: ${OTEL_ENABLED:-false}
+  INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+  FUTURE_AGI_VERSION: ${FUTURE_AGI_VERSION:-unknown}
+  FUTURE_AGI_DEPLOYMENT_TYPE: ${FUTURE_AGI_DEPLOYMENT_TYPE:-docker}
+  FUTURE_AGI_TELEMETRY_DISABLED: ${FUTURE_AGI_TELEMETRY_DISABLED:-false}
+  FUTURE_AGI_TELEMETRY_JITTER_SECONDS: ${FUTURE_AGI_TELEMETRY_JITTER_SECONDS:-1800}
+  FUTURE_AGI_TELEMETRY_BUFFER_DIR: ${FUTURE_AGI_TELEMETRY_BUFFER_DIR:-/tmp/futureagi-deployment-telemetry}
+  # The next three are forwarded so staging/test installs can redirect the
+  # sender at an alternate receiver and tune cadence/timeout without rebuilding
+  # the image. Defaults match the sender so leaving them unset is identical to
+  # the documented production behaviour.
+  FUTURE_AGI_TELEMETRY_URL: ${FUTURE_AGI_TELEMETRY_URL:-https://api.futureagi.com}
+  FUTURE_AGI_TELEMETRY_INTERVAL_HOURS: ${FUTURE_AGI_TELEMETRY_INTERVAL_HOURS:-6}
+  FUTURE_AGI_TELEMETRY_TIMEOUT_SECONDS: ${FUTURE_AGI_TELEMETRY_TIMEOUT_SECONDS:-5}
 
   # LLM gateway + code sandbox + embedding service
-  AGENTCC_INTERNAL_URL: http://agentcc-gateway:8090
-  AGENTCC_GATEWAY_INTERNAL_URL: http://agentcc-gateway:8090
+  AGENTCC_INTERNAL_URL: http://agentcc-gateway:8080
+  AGENTCC_GATEWAY_INTERNAL_URL: http://agentcc-gateway:8080
   AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
   AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}
   RECAPTCHA_ENABLED: ${RECAPTCHA_ENABLED:-false}
@@ -101,7 +115,18 @@ x-backend-env: &backend-env
   CH_USER: default
   CH_PASSWORD: ""
   CH_DATABASE: default
+  # CH25 schema/read path. Keep this aligned with FI_CH_DATABASE so the
+  # backend and fi-collector read/write the same ClickHouse database.
+  CH25_DATABASE: ${CH25_DATABASE:-${CH_DATABASE:-default}}
   CH_USE_REPLICATED_ENGINES: ${CH_USE_REPLICATED_ENGINES:-false}
+
+  # CH25 cutover (dev/local default). When True the boot-time schema
+  # apply skips the legacy CDC chain (tracer_observation_span, spans_mv,
+  # span_metrics_hourly, span_metrics_hourly_mv) and drops them if they
+  # exist — fi-collector becomes the sole writer for `spans`. Prod keeps
+  # this False until the cutover playbook in docs/CH25_MIGRATION.md is
+  # complete.
+  CH25_DROP_LEGACY_CDC_CHAIN: ${CH25_DROP_LEGACY_CDC_CHAIN:-true}
 
   # Redis
   REDIS_HOST: redis
@@ -143,7 +168,6 @@ x-backend-env: &backend-env
   # Future AGI Cloud API (optional)
   FUTURE_AGI_CLOUD_API_KEY: ${FUTURE_AGI_CLOUD_API_KEY:-}
   FUTURE_AGI_CLOUD_API_URL: ${FUTURE_AGI_CLOUD_API_URL:-https://api.futureagi.com}
-
 
 services:
   # ==========================================================================
@@ -189,6 +213,10 @@ services:
       temporal:
         condition: service_healthy
       agentcc-gateway:
+        condition: service_started
+      # OTLP ingest path. service_started (not _healthy) — fi-collector
+      # starts fast and we don't want a slow boot to block backend.
+      fi-collector:
         condition: service_started
     restart: unless-stopped
 
@@ -284,28 +312,86 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-futureagi} -d ${PG_DB:-futureagi}"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${PG_USER:-futureagi} -d ${PG_DB:-futureagi}",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24.10.2.80
+    # CH 25.3 is the floor for the v2 spans schema (typed-JSON columns
+    # in 002_spans_v2.sql require it). The boot hook in
+    # model_hub/apps.py auto-migrates a v1 `spans` table (from an older
+    # CH 24.x volume) to v2 the first time it boots — so an existing
+    # volume does not strictly require `docker compose down -v`.
+    image: clickhouse/clickhouse-server:25.3-alpine
+    environment:
+      # The 25.3-alpine image ships a default-user.xml that restricts
+      # the `default` user to 127.0.0.1 / ::1 only. Backend connects
+      # from the docker bridge network and gets AUTHENTICATION_FAILED.
+      # SKIP_USER_SETUP keeps the upstream default-user config (no IP
+      # allowlist) — what every other service expects from local-dev CH.
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
+      CLICKHOUSE_DB: ${CH_DATABASE:-default}
     ports:
       - "127.0.0.1:${CH_HTTP_PORT:-8123}:8123"
       - "127.0.0.1:${CH_PORT:-9000}:9000"
     volumes:
       - clickhouse-data:/var/lib/clickhouse
+      # `tiered` storage policy required by the v2 spans schema
+      # (002_spans_v2.sql). Same XML used by the CI test rig at
+      # futureagi/.ci/. Without it apply_schema fails with
+      # `Unknown storage policy 'tiered'`.
+      - ./futureagi/.ci/clickhouse-storage-policy.xml:/etc/clickhouse-server/config.d/storage-policy.xml:ro
     ulimits:
       nofile:
         soft: 262144
         hard: 262144
     healthcheck:
-      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      # IPv4 literal — `localhost` resolves IPv6 first, and CH on
+      # IPv6-less hosts (Colima) only binds IPv4. Same trap as
+      # https://github.com/ClickHouse/ClickHouse/issues/55232.
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8123/ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+
+  # ==========================================================================
+  # fi-collector — OTLP gRPC receiver that writes spans directly to CH 25.3
+  # via the typed-JSON v2 schema. Replaces the PG → PeerDB CDC ingest path
+  # for spans. Default-enabled for docker compose + local dev; in prod
+  # you can deploy it as its own cluster for scale without changing the
+  # backend. See docs/CH25_MIGRATION.md.
+  # ==========================================================================
+  fi-collector:
+    build:
+      context: ./fi-collector
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:${FI_COLLECTOR_OTLP_PORT:-4317}:4317"
+      - "127.0.0.1:${FI_COLLECTOR_OTLP_HTTP_PORT:-4318}:4318"
+      - "127.0.0.1:${FI_COLLECTOR_ADMIN_PORT:-9464}:9464"
+    environment:
+      # Point at the same ClickHouse the backend uses (HTTP port 8123).
+      FI_CH_URL: http://clickhouse:8123
+      FI_CH_DATABASE: ${FI_CH_DATABASE:-${CH25_DATABASE:-${CH_DATABASE:-default}}}
+      FI_GRPC_ADDR: ":4317"
+      # OTLP/HTTP receiver — needed by browser SDKs + lightweight clients.
+      # `FI_HTTP_ADDR=disable` turns the listener off if you front the
+      # collector with an external HTTP gateway that strips OTLP at the edge.
+      FI_HTTP_ADDR: ":4318"
+      FI_ADMIN_ADDR: ":9464"
+      FI_DEAD_LETTER_FILE: /var/lib/fi-collector/dead_letter.jsonl
+    volumes:
+      - fi-collector-data:/var/lib/fi-collector
+    depends_on:
+      clickhouse:
+        condition: service_healthy
     restart: unless-stopped
 
   redis:
@@ -565,7 +651,6 @@ services:
       clickhouse:
         condition: service_healthy
 
-
 volumes:
   postgres-data:
   clickhouse-data:
@@ -574,8 +659,10 @@ volumes:
   minio-data:
   peerdb-catalog-data:
   peerdb-minio-data:
-
-
+  # fi-collector dead-letter queue: spans the collector couldn't write
+  # to CH (typically transient CH unavailability). Persist across
+  # restarts so they can be replayed when CH comes back.
+  fi-collector-data:
 # Compose auto-names the default network ${PROJECT_NAME}_default
 # (i.e. `futureagi_default`). Don't pin a custom name — it collides
 # with networks left over from older project-name configurations.

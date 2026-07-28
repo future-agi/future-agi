@@ -7,14 +7,37 @@ Endpoints:
 3. GET /api/traces/span-attribute-detail/<key>/ - Full detail for a specific attribute key
 """
 
+from dataclasses import asdict
+
 import structlog
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
+from tfc.utils.general_methods import GeneralMethods
+from tracer.serializers.span_attributes import (
+    SpanAttributeDetailQuerySerializer,
+    SpanAttributeDetailResponseSerializer,
+    SpanAttributeKeysResponseSerializer,
+    SpanAttributeProjectQuerySerializer,
+    SpanAttributeValuesQuerySerializer,
+    SpanAttributeValuesResponseSerializer,
+)
 from tracer.services.clickhouse.client import ClickHouseClient, is_clickhouse_enabled
+from tracer.services.clickhouse.span_attribute_lookups import (
+    list_attribute_keys_for_project,
+)
 
 logger = structlog.get_logger(__name__)
+
+ERROR_RESPONSES = {
+    400: ApiTextErrorResponseSerializer,
+    404: ApiTextErrorResponseSerializer,
+    500: ApiTextErrorResponseSerializer,
+    503: ApiTextErrorResponseSerializer,
+}
 
 
 class SpanAttributeKeysView(APIView):
@@ -28,78 +51,31 @@ class SpanAttributeKeysView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
 
+    @validated_request(
+        query_serializer=SpanAttributeProjectQuerySerializer,
+        responses={200: SpanAttributeKeysResponseSerializer, **ERROR_RESPONSES},
+    )
     def get(self, request, *args, **kwargs):
         if not is_clickhouse_enabled():
-            return Response(
-                {"error": "ClickHouse is not enabled"},
-                status=503,
-            )
+            return self._gm.custom_error_response(503, "ClickHouse is not enabled")
 
-        project_id = request.query_params.get("project_id")
-        if not project_id:
-            return Response(
-                {"error": "project_id query parameter is required"},
-                status=400,
-            )
-
-        query = """
-            SELECT key, 'string' AS type, count() AS cnt
-            FROM (
-                SELECT arrayJoin(mapKeys(span_attr_str)) AS key
-                FROM spans
-                WHERE project_id = %(project_id)s
-            )
-            GROUP BY key
-
-            UNION ALL
-
-            SELECT key, 'number' AS type, count() AS cnt
-            FROM (
-                SELECT arrayJoin(mapKeys(span_attr_num)) AS key
-                FROM spans
-                WHERE project_id = %(project_id)s
-            )
-            GROUP BY key
-
-            UNION ALL
-
-            SELECT key, 'boolean' AS type, count() AS cnt
-            FROM (
-                SELECT arrayJoin(mapKeys(span_attr_bool)) AS key
-                FROM spans
-                WHERE project_id = %(project_id)s
-            )
-            GROUP BY key
-
-            ORDER BY cnt DESC
-        """
-        params = {"project_id": project_id}
+        project_id = str(request.validated_query_data["project_id"])
 
         try:
-            client = ClickHouseClient()
-            rows, column_types, query_time_ms = client.execute_read(query, params)
-
-            result = [{"key": row[0], "type": row[1], "count": row[2]} for row in rows]
-
-            logger.info(
-                "span_attribute_keys_fetched",
-                project_id=project_id,
-                key_count=len(result),
-                query_time_ms=query_time_ms,
+            keys = list_attribute_keys_for_project(project_id)
+            return Response(
+                {"result": [asdict(k) for k in keys]}, status=200
             )
-
-            return Response({"result": result}, status=200)
-
         except Exception as e:
             logger.error(
                 "span_attribute_keys_failed",
                 project_id=project_id,
                 error=str(e),
             )
-            return Response(
-                {"error": "Failed to fetch span attribute keys", "detail": str(e)},
-                status=500,
+            return self._gm.internal_server_error_response(
+                "Failed to fetch span attribute keys"
             )
 
 
@@ -114,33 +90,21 @@ class SpanAttributeValuesView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
 
+    @validated_request(
+        query_serializer=SpanAttributeValuesQuerySerializer,
+        responses={200: SpanAttributeValuesResponseSerializer, **ERROR_RESPONSES},
+    )
     def get(self, request, *args, **kwargs):
         if not is_clickhouse_enabled():
-            return Response(
-                {"error": "ClickHouse is not enabled"},
-                status=503,
-            )
+            return self._gm.custom_error_response(503, "ClickHouse is not enabled")
 
-        project_id = request.query_params.get("project_id")
-        if not project_id:
-            return Response(
-                {"error": "project_id query parameter is required"},
-                status=400,
-            )
-
-        key = request.query_params.get("key")
-        if not key:
-            return Response(
-                {"error": "key query parameter is required"},
-                status=400,
-            )
-
-        q = request.query_params.get("q")
-        try:
-            limit = int(request.query_params.get("limit", 50))
-        except (TypeError, ValueError):
-            limit = 50
+        query_params = request.validated_query_data
+        project_id = str(query_params["project_id"])
+        key = query_params["key"]
+        q = query_params.get("q")
+        limit = query_params.get("limit", 50)
 
         params = {
             "project_id": project_id,
@@ -150,12 +114,12 @@ class SpanAttributeValuesView(APIView):
 
         if q:
             query = """
-                SELECT span_attr_str[%(key)s] AS value, count() AS cnt
+                SELECT attrs_string[%(key)s] AS value, count() AS cnt
                 FROM spans
                 WHERE project_id = %(project_id)s
-                  AND mapContains(span_attr_str, %(key)s)
-                  AND span_attr_str[%(key)s] != ''
-                  AND span_attr_str[%(key)s] LIKE %(q_pattern)s
+                  AND mapContains(attrs_string, %(key)s)
+                  AND attrs_string[%(key)s] != ''
+                  AND attrs_string[%(key)s] LIKE %(q_pattern)s
                 GROUP BY value
                 ORDER BY cnt DESC
                 LIMIT %(limit)s
@@ -163,11 +127,11 @@ class SpanAttributeValuesView(APIView):
             params["q_pattern"] = f"%{q}%"
         else:
             query = """
-                SELECT span_attr_str[%(key)s] AS value, count() AS cnt
+                SELECT attrs_string[%(key)s] AS value, count() AS cnt
                 FROM spans
                 WHERE project_id = %(project_id)s
-                  AND mapContains(span_attr_str, %(key)s)
-                  AND span_attr_str[%(key)s] != ''
+                  AND mapContains(attrs_string, %(key)s)
+                  AND attrs_string[%(key)s] != ''
                 GROUP BY value
                 ORDER BY cnt DESC
                 LIMIT %(limit)s
@@ -196,9 +160,8 @@ class SpanAttributeValuesView(APIView):
                 key=key,
                 error=str(e),
             )
-            return Response(
-                {"error": "Failed to fetch span attribute values", "detail": str(e)},
-                status=500,
+            return self._gm.internal_server_error_response(
+                "Failed to fetch span attribute values"
             )
 
 
@@ -216,27 +179,19 @@ class SpanAttributeDetailView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
 
+    @validated_request(
+        query_serializer=SpanAttributeDetailQuerySerializer,
+        responses={200: SpanAttributeDetailResponseSerializer, **ERROR_RESPONSES},
+    )
     def get(self, request, *args, **kwargs):
         if not is_clickhouse_enabled():
-            return Response(
-                {"error": "ClickHouse is not enabled"},
-                status=503,
-            )
+            return self._gm.custom_error_response(503, "ClickHouse is not enabled")
 
-        project_id = request.query_params.get("project_id")
-        if not project_id:
-            return Response(
-                {"error": "project_id query parameter is required"},
-                status=400,
-            )
-
-        key = request.query_params.get("key")
-        if not key:
-            return Response(
-                {"error": "key query parameter is required"},
-                status=400,
-            )
+        query_params = request.validated_query_data
+        project_id = str(query_params["project_id"])
+        key = query_params["key"]
 
         params = {"project_id": project_id, "key": key}
 
@@ -251,10 +206,7 @@ class SpanAttributeDetailView(APIView):
             elif attr_type == "boolean":
                 return self._boolean_detail(client, params)
             else:
-                return Response(
-                    {"error": f"Attribute key '{key}' not found in project"},
-                    status=404,
-                )
+                return self._gm.not_found(f"Attribute key '{key}' not found in project")
 
         except Exception as e:
             logger.error(
@@ -263,18 +215,17 @@ class SpanAttributeDetailView(APIView):
                 key=key,
                 error=str(e),
             )
-            return Response(
-                {"error": "Failed to fetch span attribute detail", "detail": str(e)},
-                status=500,
+            return self._gm.internal_server_error_response(
+                "Failed to fetch span attribute detail"
             )
 
     def _detect_type(self, client: ClickHouseClient, params: dict) -> str | None:
         """Determine which attribute map contains the given key."""
         type_query = """
             SELECT
-                countIf(mapContains(span_attr_str, %(key)s))  AS str_cnt,
-                countIf(mapContains(span_attr_num, %(key)s))  AS num_cnt,
-                countIf(mapContains(span_attr_bool, %(key)s)) AS bool_cnt
+                countIf(mapContains(attrs_string, %(key)s))  AS str_cnt,
+                countIf(mapContains(attrs_number, %(key)s))  AS num_cnt,
+                countIf(mapContains(attrs_bool, %(key)s)) AS bool_cnt
             FROM spans
             WHERE project_id = %(project_id)s
         """
@@ -298,12 +249,12 @@ class SpanAttributeDetailView(APIView):
         """Return top values with percentages for a string attribute."""
         query = """
             SELECT
-                span_attr_str[%(key)s] AS value,
+                attrs_string[%(key)s] AS value,
                 count() AS cnt
             FROM spans
             WHERE project_id = %(project_id)s
-              AND mapContains(span_attr_str, %(key)s)
-              AND span_attr_str[%(key)s] != ''
+              AND mapContains(attrs_string, %(key)s)
+              AND attrs_string[%(key)s] != ''
             GROUP BY value
             ORDER BY cnt DESC
             LIMIT 100
@@ -347,22 +298,19 @@ class SpanAttributeDetailView(APIView):
         query = """
             SELECT
                 count()                                          AS cnt,
-                min(span_attr_num[%(key)s])                      AS min_val,
-                max(span_attr_num[%(key)s])                      AS max_val,
-                avg(span_attr_num[%(key)s])                      AS avg_val,
-                quantile(0.50)(span_attr_num[%(key)s])           AS p50,
-                quantile(0.95)(span_attr_num[%(key)s])           AS p95
+                min(attrs_number[%(key)s])                      AS min_val,
+                max(attrs_number[%(key)s])                      AS max_val,
+                avg(attrs_number[%(key)s])                      AS avg_val,
+                quantile(0.50)(attrs_number[%(key)s])           AS p50,
+                quantile(0.95)(attrs_number[%(key)s])           AS p95
             FROM spans
             WHERE project_id = %(project_id)s
-              AND mapContains(span_attr_num, %(key)s)
+              AND mapContains(attrs_number, %(key)s)
         """
         rows, _, query_time_ms = client.execute_read(query, params)
 
         if not rows:
-            return Response(
-                {"error": "No data found for this attribute"},
-                status=404,
-            )
+            return self._gm.not_found("No data found for this attribute")
 
         row = rows[0]
 
@@ -392,11 +340,11 @@ class SpanAttributeDetailView(APIView):
         """Return true/false distribution for a boolean attribute."""
         query = """
             SELECT
-                span_attr_bool[%(key)s] AS value,
+                attrs_bool[%(key)s] AS value,
                 count() AS cnt
             FROM spans
             WHERE project_id = %(project_id)s
-              AND mapContains(span_attr_bool, %(key)s)
+              AND mapContains(attrs_bool, %(key)s)
             GROUP BY value
             ORDER BY cnt DESC
         """

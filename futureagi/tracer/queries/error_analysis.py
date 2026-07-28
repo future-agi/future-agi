@@ -8,14 +8,13 @@ from typing import Any
 import structlog
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Avg, Count, Max, Min, Q, QuerySet
+from django.db.models import Count, Max, Min, Q, QuerySet
 from django.db.models.functions import TruncDate, TruncHour
 from django.utils import timezone
 
 logger = structlog.get_logger(__name__)
 from accounts.models.workspace import Workspace
 from model_hub.models.score import Score
-from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project, ProjectSourceChoices
 from tracer.models.trace import Trace, TraceErrorAnalysisStatus
 from tracer.models.trace_error_analysis import (
@@ -31,6 +30,8 @@ from tracer.models.trace_error_analysis_task import (
     TraceErrorAnalysisTask,
     TraceErrorTaskStatus,
 )
+from tracer.services.clickhouse.v2 import get_reader
+from tracer.services.clickhouse.v2.span_reader import CHSpan
 from tracer.utils.sql_queries import SQL_query_handler
 
 
@@ -38,7 +39,19 @@ class TraceErrorAnalysisDB:
     def __init__(self):
         pass
 
-    def fetch_children_span_ids(self, root_span: ObservationSpan):
+    def fetch_children_span_ids(self, root_span):
+        """Recursive children-id walk via raw SQL on the PG table.
+
+        Kept untouched: the SQL helper queries tracer_observation_span
+        directly (not via Django ORM), so it sits outside the
+        ObservationSpan.objects.* migration scope. The dual-write keeps
+        this PG-side data alive for now; the helper itself can be
+        migrated when the PG `tracer_observation_span` table is finally
+        dropped (post-cutover).
+
+        ``root_span`` accepts either a Django ObservationSpan or a CHSpan;
+        both expose a stable string `id`, which is all this method reads.
+        """
         try:
             rows = SQL_query_handler.fetch_children_ids_query(str(root_span.id))
             result_ids = [str(row[0]) for row in rows]
@@ -47,21 +60,26 @@ class TraceErrorAnalysisDB:
             logger.exception(f"Error in fetching children span ids: {str(e)}")
             return []
 
-    def get_all_spans(self, trace_id) -> list[ObservationSpan]:
-        # Get all root spans for the trace
-        root_spans = ObservationSpan.objects.filter(
-            trace_id=trace_id, parent_span_id__isnull=True
-        )
-        all_spans = []
-        for root in root_spans:
-            all_spans.append(root)
-            # Recursively get all children
-            child_ids = self.fetch_children_span_ids(root)
-            if child_ids:
-                children = ObservationSpan.objects.filter(id__in=child_ids)
-                all_spans.extend(children)
-        # Sort by start_time or created_at
-        return sorted(all_spans, key=lambda s: s.start_time or s.created_at)
+    def get_all_spans(self, trace_id) -> list[CHSpan]:
+        """Return every span in a trace, ordered by start_time.
+
+        Was: filter parent_span_id__isnull=True roots, then recursively
+        walk children via raw SQL (`fetch_children_ids_query`), then
+        union + sort by start_time-or-created_at.
+
+        CH simplification: `list_by_trace` already returns every span
+        for the trace (including roots, children, grandchildren) ordered
+        by (start_time, id). The recursive walk is therefore redundant
+        — CH stores the full flat span set per trace, and `is_deleted=0`
+        filtering matches the legacy `.filter()` default (soft-delete
+        semantics live in the writer / merge layer).
+
+        Return type changed from `list[ObservationSpan]` (no callers
+        depend on the ORM model type — this method is currently unused
+        outside the class).
+        """
+        with get_reader() as reader:
+            return reader.list_by_trace(str(trace_id))
 
     def get_or_create_error_pattern(
         self,
@@ -204,40 +222,65 @@ class TraceErrorAnalysisDB:
             logger.exception(f"Error in get_error_annotations_for_trace: {str(e)}")
             return Score.objects.none()
 
-    def get_error_spans_for_trace(self, trace: Any) -> QuerySet:
+    def get_error_spans_for_trace(self, trace: Any) -> list[CHSpan]:
+        """Spans on a trace with status="ERROR" (case-insensitive).
+
+        Was: ObservationSpan.objects.filter(trace=trace, status="ERROR").
+        Returns a list of CHSpan (was QuerySet). Currently unused
+        outside the class so the return-type change is safe.
+
+        CH path: load every span for the trace (bounded set), then
+        Python-filter on status — same idiom as analyze_errors.py
+        (commit ab19e7ee9) where the reference batch standardized
+        case-insensitive Python comparison for status fields.
+        """
         try:
-            return ObservationSpan.objects.filter(trace=trace, status="ERROR")
+            trace_id = str(getattr(trace, "id", trace))
+            with get_reader() as reader:
+                spans = reader.list_by_trace(trace_id)
+            return [s for s in spans if (s.status or "").upper() == "ERROR"]
         except Exception as e:
             logger.exception(f"Error in get_error_spans_for_trace: {str(e)}")
-            return ObservationSpan.objects.none()
+            return []
 
-    def get_tool_usage_patterns(self, project_id, cutoff_date) -> QuerySet:
-        try:
-            return (
-                ObservationSpan.objects.filter(
-                    trace__project_id=project_id,
-                    trace__created_at__gte=cutoff_date,
-                    observation_type="tool",
-                )
-                .values("name")
-                .annotate(
-                    usage_count=Count("id"),
-                    error_count=Count("id", filter=Q(status="ERROR")),
-                    avg_latency=Avg("latency_ms"),
-                )
-                .order_by("-usage_count")
-            )
-        except Exception as e:
-            logger.exception(f"Error in get_tool_usage_patterns: {str(e)}")
-            return (
-                ObservationSpan.objects.none()
-                .values("name")
-                .annotate(
-                    usage_count=Count("id"),
-                    error_count=Count("id", filter=Q(status="ERROR")),
-                    avg_latency=Avg("latency_ms"),
-                )
-                .order_by("-usage_count")
+    def get_tool_usage_patterns(self, project_id, cutoff_date) -> list[dict]:
+        """Tool spans per project with per-name aggregates.
+
+        Was: ObservationSpan.filter(trace__project_id=, trace__created_at__gte=,
+                                    observation_type="tool")
+               .values("name").annotate(usage_count=Count("id"),
+                                        error_count=Count(filter=Q(status=ERROR)),
+                                        avg_latency=Avg("latency_ms"))
+               .order_by("-usage_count")
+
+        CH path: ``CHSpanReader.per_project_group_by_name`` pushes the
+        Count/Count(filter)/Avg shape into CH directly. Returns rows with
+        ``{name, usage_count, error_count, avg_latency, total_cost}``.
+
+        Semantic note: the original used ``trace__created_at__gte`` (the
+        parent Trace's PG ingest timestamp). The CH path filters on
+        ``start_time >= since`` (the span's start timestamp). The two are
+        usually within ingest-pipeline ms of each other, but they are not
+        identical. Acceptable for the recent-window usage pattern this
+        method serves; flagged for callers who need exact PG parity.
+
+        ``limit=10000`` keeps parity with the prior unbounded Django path:
+        the reader's default cap of 50 would silently truncate tail
+        patterns for projects with many tool names. 10k is a safety
+        ceiling — projects with that many distinct tool names need a
+        product-level rethink anyway.
+
+        Consumer (``ee/agenthub/traceerroragent/memory.py:72``) wraps the
+        return in ``list(tool_patterns)`` and assigns directly to the
+        ``tool_patterns`` key of the rollup dict, so list[dict] is the
+        expected shape.
+        """
+        with get_reader() as reader:
+            return reader.per_project_group_by_name(
+                project_id=str(project_id),
+                observation_type="tool",
+                since=cutoff_date,
+                limit=10000,
             )
 
     def get_error_category_aggregates(self, project_id, cutoff_date) -> QuerySet:
@@ -484,38 +527,68 @@ class TraceErrorAnalysisDB:
             logger.exception(f"Error in list_unresolved_error_patterns: {str(e)}")
             return ErrorPattern.objects.none()
 
-    def get_retrieval_patterns(self, project_id) -> QuerySet:
-        try:
-            return (
-                ObservationSpan.objects.filter(
-                    trace__project_id=project_id,
-                    observation_type="retriever",
-                )
-                .values("name")
-                .annotate(
-                    usage_count=Count("id"),
-                    avg_latency=Avg("latency_ms"),
-                )
-                .order_by("-usage_count")
-            )
-        except Exception as e:
-            logger.exception(f"Error in get_retrieval_patterns: {str(e)}")
-            return ObservationSpan.objects.none().values("name")
+    def get_retrieval_patterns(self, project_id) -> list[dict]:
+        """Retriever spans per project with per-name aggregates.
 
-    def get_chunk_usage_patterns(self, project_id) -> QuerySet:
-        try:
-            return (
-                ObservationSpan.objects.filter(
-                    trace__project_id=project_id,
-                    metadata__chunks__isnull=False,
-                )
-                .values("name")
-                .annotate(usage_count=Count("id"))
-                .order_by("-usage_count")
+        Was: ObservationSpan.filter(trace__project_id=,
+                                    observation_type="retriever")
+               .values("name").annotate(usage_count=Count("id"),
+                                        avg_latency=Avg("latency_ms"))
+               .order_by("-usage_count")
+
+        CH path: ``CHSpanReader.per_project_group_by_name`` returns the
+        same group-by-name aggregate shape. No time filter — the original
+        Django query was unbounded, so we pass ``since=None``.
+
+        ``limit=10000`` keeps parity with the prior unbounded Django path
+        (reader default is 50 which would silently truncate tail
+        patterns). See ``get_tool_usage_patterns`` for the rationale.
+
+        Consumer (``ee/agenthub/traceerroragent/memory.py:373``) wraps the
+        return in ``list(retrieval_spans)`` and exposes it under the
+        ``retrieval_patterns`` key. Returned dicts include
+        ``error_count`` and ``total_cost`` (extra keys from the reader)
+        which the consumer ignores; harmless additions.
+        """
+        with get_reader() as reader:
+            return reader.per_project_group_by_name(
+                project_id=str(project_id),
+                observation_type="retriever",
+                limit=10000,
             )
-        except Exception as e:
-            logger.exception(f"Error in get_chunk_usage_patterns: {str(e)}")
-            return ObservationSpan.objects.none().values("name")
+
+    def get_chunk_usage_patterns(self, project_id) -> list[dict]:
+        """CH25-DEFERRED — needs a typed-JSON path predicate (NOT unlocked by wave-3).
+
+        Pattern: ObservationSpan.filter(trace__project_id=,
+                                        metadata__chunks__isnull=False)
+                   .values("name").annotate(usage_count=Count("id"))
+                   .order_by("-usage_count")
+
+        Why wave-3 ``per_project_group_by_name`` does NOT unlock this:
+          • The blocker is the JSON-path filter
+            ``metadata__chunks__isnull=False``, not the aggregate shape.
+          • ``per_project_group_by_name`` accepts ``observation_type`` /
+            ``status_filter`` only; there is still no reader API for a
+            metadata-key existence predicate.
+
+        Defer until either:
+          (a) the reader gains a ``metadata_has_key(...)`` /
+              ``metadata_path_exists(...)`` filter (the right place for
+              typed-JSON path predicates — companion to wave-3
+              ``per_project_group_by_name``), OR
+          (b) the chunk-usage feature is rebuilt against a dedicated
+              metric or rollup view.
+
+        Currently no production callers — raising NotImplementedError so
+        a future caller surfaces the gap rather than silently scanning
+        the project's full span set in Python.
+        """
+        raise NotImplementedError(
+            "get_chunk_usage_patterns: pending CHSpanReader JSON-path filter "
+            "(metadata.chunks IS NOT NULL). Wave-3 per_project_group_by_name "
+            "does NOT unlock this — see method docstring."
+        )
 
     def save_memory_data(
         self,
@@ -1035,15 +1108,33 @@ class TraceErrorAnalysisDB:
         Get or create a TraceErrorAnalysisTask for a project
         """
         try:
-            task, created = TraceErrorAnalysisTask.objects.get_or_create(
-                project=project,
-                deleted=False,
-                defaults={
-                    "sampling_rate": default_sampling_rate,  # Default 10%
-                    "status": TraceErrorTaskStatus.WAITING,
-                },
+            task = TraceErrorAnalysisTask.all_objects.filter(project=project).first()
+            if task:
+                if task.deleted:
+                    task.deleted = False
+                    task.deleted_at = None
+                    task.sampling_rate = default_sampling_rate
+                    task.status = TraceErrorTaskStatus.WAITING
+                    task.save(
+                        update_fields=[
+                            "deleted",
+                            "deleted_at",
+                            "sampling_rate",
+                            "status",
+                            "updated_at",
+                        ]
+                    )
+                    return task, True
+                return task, False
+
+            return (
+                TraceErrorAnalysisTask.objects.create(
+                    project=project,
+                    sampling_rate=default_sampling_rate,
+                    status=TraceErrorTaskStatus.WAITING,
+                ),
+                True,
             )
-            return task, created
         except Exception as e:
             logger.exception(f"Error in get_or_create_task_for_project: {str(e)}")
             return None, False

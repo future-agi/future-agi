@@ -5,17 +5,23 @@ Replaces ``get_all_system_metrics()`` and ``get_system_metric_data()`` from
 ``tracer.utils.graphs_optimized`` with ClickHouse-native queries.
 
 Strategy:
-- Unfiltered dashboard queries read from the ``span_metrics_hourly``
-  pre-aggregated table using ``sumMerge`` / ``quantilesMerge`` combinators.
-- When attribute filters are present, falls back to scanning the
-  denormalized ``spans`` table.
+- Unfiltered dashboard queries read from the ``spans_hourly_rollup``
+  pre-aggregated AggregatingMergeTree (v2 schema 010) using ``countMerge`` /
+  ``sumMerge`` / ``quantilesTDigestMerge`` combinators. The rollup is fed
+  directly from the v2 typed-JSON ``spans`` table via an incremental MV.
+- When attribute filters are present, falls back to scanning the v2
+  ``spans`` table directly.
+
+CH25 close-out (2026-05-28): cut over from the legacy ``span_metrics_hourly``
+(fed by ``spans_mv`` ← ``tracer_observation_span`` CDC mirror) to
+``spans_hourly_rollup``. Removes the last dashboard read-path dependency on
+the legacy CDC-based aggregate.
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
-from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 
 
 class TimeSeriesQueryBuilder(BaseQueryBuilder):
@@ -42,35 +48,46 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
     """
 
     # Pre-aggregated table (AggregatingMergeTree)
-    AGG_TABLE = "span_metrics_hourly"
+    # CH25 close-out (2026-05-28): switched from the legacy
+    # `span_metrics_hourly` (fed by `spans_mv` ← `tracer_observation_span` CDC
+    # mirror) to the v2 `spans_hourly_rollup` (fed directly from the v2 typed-
+    # JSON `spans` table — no CDC). The v2 rollup uses AggregateFunction
+    # columns + `*Merge()` combinators (real AggregatingMergeTree pattern)
+    # whereas the legacy table stored already-summed Int64s.
+    AGG_TABLE = "spans_hourly_rollup"
     # Denormalized raw table (for filtered queries)
     RAW_TABLE = "spans"
 
     def __init__(
         self,
         project_id: str,
-        filters: Optional[List[Dict]] = None,
+        filters: list[dict] | None = None,
         interval: str = "hour",
-        system_metric_filters: Optional[Dict[str, Any]] = None,
+        system_metric_filters: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id, **kwargs)
         self.filters = filters or []
         self.interval = interval
         self.system_metric_filters = system_metric_filters or {}
-        self.start_date: Optional[datetime] = None
-        self.end_date: Optional[datetime] = None
+        self.start_date: datetime | None = None
+        self.end_date: datetime | None = None
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def build(self) -> Tuple[str, Dict[str, Any]]:
+    def build(self) -> tuple[str, dict[str, Any]]:
         """Build the time-series query.
 
         Returns:
             A ``(query_string, params)`` tuple.
         """
+        # Lazy import: a module-level import would form a v1↔v2 circular import.
+        from tracer.services.clickhouse.v2.query_builders.filters import (
+            ClickHouseFilterBuilderV2 as ClickHouseFilterBuilder,
+        )
+
         self.start_date, self.end_date = self.parse_time_range(self.filters)
         self.params["start_date"] = self.start_date
         self.params["end_date"] = self.end_date
@@ -88,9 +105,9 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
 
     def format_result(
         self,
-        rows: List[Tuple],
-        columns: List[str],
-    ) -> Dict[str, List[Dict[str, Any]]]:
+        rows: list[tuple],
+        columns: list[str],
+    ) -> dict[str, list[dict[str, Any]]]:
         """Post-process raw ClickHouse rows into the standard response dict.
 
         Expected columns from the query:
@@ -106,10 +123,10 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         assert self.start_date is not None and self.end_date is not None
 
         # Build per-metric data lists
-        latency_data: List[Dict[str, Any]] = []
-        tokens_data: List[Dict[str, Any]] = []
-        cost_data: List[Dict[str, Any]] = []
-        traffic_data: List[Dict[str, Any]] = []
+        latency_data: list[dict[str, Any]] = []
+        tokens_data: list[dict[str, Any]] = []
+        cost_data: list[dict[str, Any]] = []
+        traffic_data: list[dict[str, Any]] = []
 
         for row in rows:
             # Support both dict rows (from execute_ch_query) and tuple rows
@@ -249,26 +266,33 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
     # Private query builders
     # ------------------------------------------------------------------
 
-    def _build_agg_query(self) -> Tuple[str, Dict[str, Any]]:
-        """Build a query against the pre-aggregated ``span_metrics_hourly`` table.
+    def _build_agg_query(self) -> tuple[str, dict[str, Any]]:
+        """Build a query against the pre-aggregated ``spans_hourly_rollup`` table.
 
-        Uses ``sumMerge`` / ``quantilesMerge`` aggregate combinators
-        to reconstruct metrics from the ``AggregatingMergeTree`` state.
+        Uses ``*Merge()`` aggregate combinators (``countMerge``,
+        ``sumMerge``, ``quantilesTDigestMerge``) to reconstruct metrics
+        from the ``AggregatingMergeTree`` state columns. See
+        ``tracer/services/clickhouse/v2/schema/010_hourly_downsample.sql``
+        for the rollup table definition.
         """
         bucket_fn = self.time_bucket_expr(self.interval)
 
+        # quantilesTDigestMerge returns a Tuple; index [1] is the 0.5 (median).
+        # The v2 rollup stores 3 quantiles (0.5, 0.95, 0.99) vs the legacy 4
+        # (0.5, 0.9, 0.95, 0.99) — we still surface the median as avg_latency
+        # to preserve the dashboard contract.
         query = f"""
         SELECT
             {bucket_fn}(hour) AS time_bucket,
-            (quantilesMerge(0.5, 0.90, 0.95, 0.99)(latency_quantile))[1]
+            (quantilesTDigestMerge(0.5, 0.95, 0.99)(latency_q))[1]
                 AS avg_latency,
-            sum(total_tokens) AS total_tokens,
-            sum(total_cost) / greatest(sum(span_count), 1)
+            sumMerge(total_tokens_sum) AS total_tokens,
+            sumMerge(cost_sum) / greatest(countMerge(n), 1)
                 AS avg_cost,
-            sum(span_count) AS traffic_count,
-            sum(total_prompt_tokens) AS prompt_tokens,
-            sum(total_completion_tokens) AS completion_tokens,
-            sum(error_count) * 100.0 / greatest(sum(span_count), 1)
+            countMerge(n) AS traffic_count,
+            sumMerge(prompt_tokens_sum) AS prompt_tokens,
+            sumMerge(completion_tokens_sum) AS completion_tokens,
+            countMerge(error_count) * 100.0 / greatest(countMerge(n), 1)
                 AS error_rate
         FROM {self.AGG_TABLE}
         WHERE project_id = %(project_id)s
@@ -279,7 +303,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         """
         return query, self.params
 
-    def _build_raw_query(self, extra_where: str) -> Tuple[str, Dict[str, Any]]:
+    def _build_raw_query(self, extra_where: str) -> tuple[str, dict[str, Any]]:
         """Build a query against the raw ``spans`` table with filters applied."""
         bucket_fn = self.time_bucket_expr(self.interval)
 

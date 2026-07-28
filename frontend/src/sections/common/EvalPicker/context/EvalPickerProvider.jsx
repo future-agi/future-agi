@@ -39,6 +39,7 @@ const EvalPickerProvider = ({
   keepOpenAfterSave = false,
   sourceFilters = null,
   onFiltersChange = null,
+  sourceTimeWindow = null,
 }) => {
   const [step, setStep] = useState(initialEval ? "config" : "list");
   const [selectedEval, setSelectedEvalState] = useState(
@@ -99,6 +100,7 @@ const EvalPickerProvider = ({
         keepOpenAfterSave,
         sourceFilters,
         onFiltersChange,
+        sourceTimeWindow,
         filterForm,
       }}
     >
@@ -125,6 +127,10 @@ EvalPickerProvider.propTypes = {
   keepOpenAfterSave: PropTypes.bool,
   sourceFilters: PropTypes.array,
   onFiltersChange: PropTypes.func,
+  sourceTimeWindow: PropTypes.shape({
+    startDate: PropTypes.oneOfType([PropTypes.string, PropTypes.object]),
+    endDate: PropTypes.oneOfType([PropTypes.string, PropTypes.object]),
+  }),
 };
 
 export default EvalPickerProvider;

@@ -1,0 +1,319 @@
+name: API Contracts
+
+on:
+  pull_request:
+    branches: [main, develop, dev]
+    paths:
+      - "api_contracts/**"
+      - "frontend/src/api/contracts/**"
+      - "frontend/src/generated/api-contracts/**"
+      - "frontend/src/api/annotation-queues/**"
+      - "frontend/src/api/scores/**"
+      - "frontend/src/utils/axios.js"
+      - "frontend/src/sections/annotations/**"
+      - "frontend/src/sections/projects/**"
+      - "frontend/scripts/generate-filter-contract.mjs"
+      - "frontend/scripts/generate-api-surface-contract.mjs"
+      - "frontend/scripts/generate-openapi-client.mjs"
+      - "frontend/scripts/generate-openapi-contract.mjs"
+      - "frontend/scripts/generate-management-api-contract-debt.mjs"
+      - "frontend/scripts/generate-runtime-management-api-contract-debt.mjs"
+      - "frontend/scripts/check-management-api-contract-coverage.mjs"
+      - "frontend/scripts/check-runtime-management-api-contract-coverage.mjs"
+      - "frontend/scripts/check-api-endpoint-registry-contract.mjs"
+      - "frontend/scripts/check-api-surface-usage.mjs"
+      - "futureagi/model_hub/serializers/annotation_queues.py"
+      - "futureagi/model_hub/serializers/scores.py"
+      - "futureagi/model_hub/views/annotation_queues.py"
+      - "futureagi/model_hub/views/ai_filter.py"
+      - "futureagi/model_hub/views/scores.py"
+      - "futureagi/tfc/utils/api_contracts.py"
+      - "futureagi/tfc/utils/general_methods.py"
+      - "futureagi/model_hub/utils/annotation_queue_helpers.py"
+      - "futureagi/tracer/serializers/**"
+      - "futureagi/tracer/services/clickhouse/query_builders/**"
+      - "futureagi/tracer/utils/filter_operators.py"
+      - "futureagi/tracer/utils/filters.py"
+      - "futureagi/tracer/utils/helper.py"
+      - "futureagi/tracer/views/**"
+      - ".github/workflows/api-contracts.yml"
+  push:
+    branches: [main, develop, dev]
+    paths:
+      - "api_contracts/**"
+      - "frontend/src/api/contracts/**"
+      - "frontend/src/generated/api-contracts/**"
+      - "frontend/src/api/annotation-queues/**"
+      - "frontend/src/api/scores/**"
+      - "frontend/src/utils/axios.js"
+      - "frontend/src/sections/annotations/**"
+      - "frontend/src/sections/projects/**"
+      - "frontend/scripts/generate-filter-contract.mjs"
+      - "frontend/scripts/generate-api-surface-contract.mjs"
+      - "frontend/scripts/generate-openapi-client.mjs"
+      - "frontend/scripts/generate-openapi-contract.mjs"
+      - "frontend/scripts/generate-management-api-contract-debt.mjs"
+      - "frontend/scripts/generate-runtime-management-api-contract-debt.mjs"
+      - "frontend/scripts/check-management-api-contract-coverage.mjs"
+      - "frontend/scripts/check-runtime-management-api-contract-coverage.mjs"
+      - "frontend/scripts/check-api-endpoint-registry-contract.mjs"
+      - "frontend/scripts/check-api-surface-usage.mjs"
+      - "futureagi/model_hub/serializers/annotation_queues.py"
+      - "futureagi/model_hub/serializers/scores.py"
+      - "futureagi/model_hub/views/annotation_queues.py"
+      - "futureagi/model_hub/views/ai_filter.py"
+      - "futureagi/model_hub/views/scores.py"
+      - "futureagi/tfc/utils/api_contracts.py"
+      - "futureagi/tfc/utils/general_methods.py"
+      - "futureagi/model_hub/utils/annotation_queue_helpers.py"
+      - "futureagi/tracer/serializers/**"
+      - "futureagi/tracer/services/clickhouse/query_builders/**"
+      - "futureagi/tracer/utils/filter_operators.py"
+      - "futureagi/tracer/utils/filters.py"
+      - "futureagi/tracer/utils/helper.py"
+      - "futureagi/tracer/views/**"
+      - ".github/workflows/api-contracts.yml"
+  workflow_dispatch:
+
+jobs:
+  frontend-contracts:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
+      EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require private EE checkout token
+        working-directory: .
+        run: |
+          if [ -z "${EE_REPO_READ_TOKEN}" ]; then
+            echo "::error::EE_REPO_READ_TOKEN is required for frontend contract CI because the runtime Management API contract debt report includes Enterprise routes."
+            exit 1
+          fi
+
+      - name: Checkout EE package
+        uses: actions/checkout@v4
+        with:
+          repository: future-agi/ee
+          path: futureagi/ee
+          token: ${{ env.EE_REPO_READ_TOKEN }}
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: Use matching EE branch when available
+        working-directory: futureagi/ee
+        run: |
+          if git ls-remote --exit-code --heads origin "${EE_REPO_BRANCH}" >/dev/null 2>&1; then
+            git fetch --depth=1 origin "${EE_REPO_BRANCH}"
+            git checkout --detach FETCH_HEAD
+            echo "Using EE branch ${EE_REPO_BRANCH}"
+          else
+            echo "::notice::No EE branch named ${EE_REPO_BRANCH}; using the EE repository default branch."
+          fi
+
+      - name: Drop EE checkout credentials
+        working-directory: futureagi/ee
+        run: git config --unset-all http.https://github.com/.extraheader || true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+          cache: "yarn"
+          cache-dependency-path: frontend/yarn.lock
+
+      - name: Install frontend dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Check generated filter contract
+        run: yarn contracts:check
+
+      - name: Run annotation/filter contract tests
+        run: >
+          yarn test:run
+          src/api/contracts/__tests__/openapi-contract.test.js
+          src/api/contracts/__tests__/filter-contract.test.js
+          src/api/contracts/__tests__/api-surface.test.js
+          src/utils/__tests__/axios.test.js
+          src/api/annotation-queues/__tests__/annotation-queues.test.js
+          src/api/scores/__tests__/scores.test.js
+          src/sections/projects/LLMTracing/__tests__/TraceFilterPanel.test.jsx
+
+  backend-contracts:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 16379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: futureagi
+    env:
+      PG_HOST: localhost
+      PG_PORT: 5432
+      PG_DB: postgres
+      PG_TEST_DB: test_tfc_test
+      PG_USER: postgres
+      PG_PASSWORD: postgres
+      CH_HOST: localhost
+      CH_PORT: 19000
+      CH_DATABASE: test_tfc
+      CH25_HOST: localhost
+      CH25_HTTP_PORT: 18123
+      CH25_TCP_PORT: 19000
+      CH25_DATABASE: test_tfc
+      CH_USE_REPLICATED_ENGINES: "false"
+      CH25_DROP_LEGACY_CDC_CHAIN: "true"
+      REDIS_URL: redis://localhost:6379/0
+      REDIS_LOCK_URL: redis://localhost:6379/2
+      TESTING: "false"
+      EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
+      EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start ClickHouse test service
+        run: |
+          docker run -d \
+            --name futureagi-api-contracts-clickhouse \
+            --ulimit nofile=262144:262144 \
+            -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
+            -e CLICKHOUSE_SKIP_USER_SETUP=1 \
+            -e CLICKHOUSE_DB=test_tfc \
+            -p 18123:8123 \
+            -p 19000:9000 \
+            -v "$PWD/.ci/clickhouse-test-config.xml:/etc/clickhouse-server/config.d/test-overrides.xml:ro" \
+            -v "$PWD/.ci/clickhouse-storage-policy.xml:/etc/clickhouse-server/config.d/001_storage_policy.xml:ro" \
+            clickhouse/clickhouse-server:25.3-alpine
+
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:18123/ping >/dev/null; then
+              echo "ClickHouse is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          docker logs futureagi-api-contracts-clickhouse
+          echo "::error::ClickHouse did not become ready on localhost:18123"
+          exit 1
+
+      - name: Require private EE checkout token
+        working-directory: .
+        run: |
+          if [ -z "${EE_REPO_READ_TOKEN}" ]; then
+            echo "::error::EE_REPO_READ_TOKEN is required for backend contract CI because the generated Management API contract includes Enterprise routes."
+            exit 1
+          fi
+
+      - name: Checkout EE package
+        uses: actions/checkout@v4
+        with:
+          repository: future-agi/ee
+          path: futureagi/ee
+          token: ${{ env.EE_REPO_READ_TOKEN }}
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: Use matching EE branch when available
+        working-directory: futureagi/ee
+        run: |
+          if git ls-remote --exit-code --heads origin "${EE_REPO_BRANCH}" >/dev/null 2>&1; then
+            git fetch --depth=1 origin "${EE_REPO_BRANCH}"
+            git checkout --detach FETCH_HEAD
+            echo "Using EE branch ${EE_REPO_BRANCH}"
+          else
+            echo "::notice::No EE branch named ${EE_REPO_BRANCH}; using the EE repository default branch."
+          fi
+
+      - name: Drop EE checkout credentials
+        working-directory: futureagi/ee
+        run: git config --unset-all http.https://github.com/.extraheader || true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install backend dependencies
+        run: uv sync --frozen
+
+      - name: Apply ClickHouse test schema
+        run: >
+          uv run python -m tracer.services.clickhouse.v2.apply_schema
+          --schema-dir tracer/services/clickhouse/v2/schema
+          --ch-host localhost
+          --ch-http-port 18123
+          --ch-user default
+          --ch-database test_tfc
+
+      - name: Check generated Swagger schema
+        working-directory: .
+        run: |
+          if ! ./scripts/generate-openapi-schema.sh > /tmp/openapi-generation.log 2>&1; then
+            echo "::error::OpenAPI generation failed with EE checked out. Logs are suppressed here to avoid printing private EE source context; run locally with futureagi/ee present for details."
+            exit 1
+          fi
+          git diff --exit-code api_contracts/openapi/swagger.json
+
+      - name: Run annotation/filter contract tests
+        env:
+          TESTING: "true"
+        run: >
+          uv run pytest -q --tb=line
+          tracer/tests/test_filter_contract.py
+          tracer/tests/test_filter_api_contract.py
+          tracer/tests/test_validate_filters_helper.py
+          tracer/tests/test_filter_engine_parity.py
+          model_hub/tests/test_annotation_api_contract.py
+          model_hub/tests/test_annotation_workflow_api.py
+          tfc/tests/test_falcon_api_contract_debt.py
+          tfc/tests/test_usage_api_contract_debt.py
+          ee/usage/tests/test_events_schema.py
+          ee/usage/tests/test_billing_api.py
+          tfc/tests/test_api_contracts.py
+          tfc/tests/test_accounts_api_contract_debt.py
+          tfc/tests/test_core_api_contract_debt.py
+          tfc/tests/test_model_hub_api_contract_debt.py
+          agent_playground/tests/test_api_contract_debt.py
+          agentcc/tests/test_api_contract_debt.py
+          mcp_server/tests/test_api_contract_debt.py
+          saml2_auth/tests/test_api_contract_debt.py
+          sdk/tests/test_api_contract_debt.py
+          simulate/tests/test_agent_version_api_contract.py
+          simulate/tests/test_call_transcript_api_contract.py
+          simulate/tests/test_chat_simulation_api_contract.py
+          simulate/tests/test_livekit_api_contract.py
+          simulate/tests/test_persona_api_contract.py
+          simulate/tests/test_simulate_api_contract_debt.py
+          simulate/tests/test_simulator_agent_api_contract.py
+          simulate/tests/test_test_execution_api_contract.py
+          tracer/tests/test_tracer_feed_api_contract.py

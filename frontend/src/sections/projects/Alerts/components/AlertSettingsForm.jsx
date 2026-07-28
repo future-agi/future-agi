@@ -40,6 +40,7 @@ import PropTypes from "prop-types";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useAlertStore } from "../store/useAlertStore";
 import { useAlertSheetView } from "../store/useAlertSheetView";
+import { useOrganization } from "src/contexts/OrganizationContext";
 
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
@@ -52,7 +53,7 @@ export default function AlertSettingsForm({
   onPayloadChange,
 }) {
   const {
-    selectedProject: observeId,
+    selectedProject,
     alertType,
     handleChangeAlertType,
     handleCloseCreateAlert,
@@ -65,6 +66,8 @@ export default function AlertSettingsForm({
   } = useAlertStore();
 
   const { alertRuleDetails, refreshGrid: refreshIssues } = useAlertSheetView();
+  const { currentOrganizationId } = useOrganization();
+  const observeId = selectedProject || alertRuleDetails?.project || null;
 
   const {
     control,
@@ -364,6 +367,7 @@ export default function AlertSettingsForm({
       name: data?.name,
       metric_type: data?.metric_type,
       project: observeId,
+      ...(currentOrganizationId && { organization: currentOrganizationId }),
       alert_frequency: data?.alert_frequency,
       filters: {
         ...(observation_type.length > 0 && { observation_type }),
@@ -441,13 +445,7 @@ export default function AlertSettingsForm({
           Create alert to get notification
         </Typography>
       </Stack>
-      <form
-        noValidate
-        onSubmit={(e) => {
-          e.preventDefault();
-          handleSubmit(handleCreateAlert)();
-        }}
-      >
+      <form noValidate onSubmit={handleSubmit(handleCreateAlert)}>
         <Box
           sx={{
             mt: 3,
@@ -464,6 +462,7 @@ export default function AlertSettingsForm({
             label="Name"
             size="small"
             fullWidth
+            inputProps={{ "data-alert-field": "name" }}
           />
           <CardWrapper order={0} title="Define Metrics & Interval">
             <Box
@@ -481,6 +480,7 @@ export default function AlertSettingsForm({
                 label="Metric"
                 size="small"
                 fullWidth
+                inputProps={{ "data-alert-field": "metric-type" }}
                 onChange={(e) => {
                   handleChangeAlertType(e?.target?.value);
                 }}
@@ -532,6 +532,7 @@ export default function AlertSettingsForm({
                 size="small"
                 options={intervalOptions}
                 fullWidth
+                inputProps={{ "data-alert-field": "interval" }}
                 // sx={{
                 //   flex: 1,
                 //   maxWidth: { sm: "300px", md: "400px", lg: "600px" },
@@ -722,6 +723,9 @@ export default function AlertSettingsForm({
                         label="Threshold"
                         size="small"
                         options={thresholdOptions}
+                        inputProps={{
+                          "data-alert-field": "critical-threshold-operator",
+                        }}
                         sx={{
                           flex: 1,
                           maxWidth: "400px",
@@ -747,6 +751,9 @@ export default function AlertSettingsForm({
                         size="small"
                         fullWidth
                         fieldType="number"
+                        inputProps={{
+                          "data-alert-field": "critical-threshold-value",
+                        }}
                         sx={{
                           maxWidth: "400px",
                         }}
@@ -829,6 +836,9 @@ export default function AlertSettingsForm({
                         size="small"
                         options={thresholdOptions}
                         showClear={false}
+                        inputProps={{
+                          "data-alert-field": "warning-threshold-operator",
+                        }}
                         sx={{
                           flex: 1,
                           maxWidth: "400px",
@@ -854,6 +864,9 @@ export default function AlertSettingsForm({
                         size="small"
                         fullWidth
                         fieldType="number"
+                        inputProps={{
+                          "data-alert-field": "warning-threshold-value",
+                        }}
                         sx={{
                           maxWidth: "400px",
                         }}
@@ -1086,6 +1099,13 @@ export default function AlertSettingsForm({
               loading={isCreating || isUpdating}
               disabled={isCreating || isUpdating}
               type="submit"
+              data-alert-form-submit={
+                openSheetView
+                  ? duplicateAlertName
+                    ? "duplicate"
+                    : "update"
+                  : "create"
+              }
               sx={{
                 minWidth: "191px",
               }}

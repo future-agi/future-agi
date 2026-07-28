@@ -1556,17 +1556,18 @@ class TestBuildTranscriptData:
         from simulate.models import CallTranscript
         from simulate.temporal.activities.xl import _build_transcript_data
 
-        # Create transcript records
+        # VAPI inbound (the resolver's default) maps "user" to tested_agent
+        # and "assistant" to simulator; seed accordingly.
         CallTranscript.objects.create(
             call_execution=call_execution,
-            speaker_role="agent",
+            speaker_role=CallTranscript.SpeakerRole.USER,
             content="Hello, how can I help?",
             start_time_ms=0,
             end_time_ms=2000,
         )
         CallTranscript.objects.create(
             call_execution=call_execution,
-            speaker_role="user",
+            speaker_role=CallTranscript.SpeakerRole.ASSISTANT,
             content="I need help with my order.",
             start_time_ms=2000,
             end_time_ms=5000,
@@ -1574,16 +1575,8 @@ class TestBuildTranscriptData:
 
         result = _build_transcript_data(call_execution)
 
-        try:
-            import ee.voice.utils.transcript_roles  # noqa: F401
-        except ImportError:
-            user_label = "user"
-        else:
-            # EE SpeakerRoleResolver normalizes "user" to the evaluation label.
-            user_label = "customer"
-
         assert "agent: Hello, how can I help?" in result["transcript"]
-        assert f"{user_label}: I need help with my order." in result["transcript"]
+        assert "customer: I need help with my order." in result["transcript"]
 
     @pytest.mark.django_db(transaction=True)
     def test_build_transcript_data_no_transcripts(self, call_execution):

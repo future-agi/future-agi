@@ -1193,7 +1193,7 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 	// Try primary model first.
 	// Non-internal keys must not resolve to global (FutureAGI-credentialed) providers —
 	// they should only use org-configured providers (resolved above) or be rejected.
-	if rc.Metadata["key_type"] != "internal" {
+	if h.keyStore != nil && rc.Metadata["key_type"] != "internal" {
 		return nil, fmt.Errorf("model %q is not available for this API key: configure provider access via the control plane", model)
 	}
 

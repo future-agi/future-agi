@@ -104,6 +104,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
 
   const labelIds = watch("label_ids");
   const annotators = watch("annotators");
+  const autoAssign = watch("autoAssign");
   const annotatorCount = annotators.filter(isQueueAnnotatorRole).length;
   const hasInitializedRef = useRef(false);
 
@@ -290,6 +291,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
               <Stack spacing={2.5}>
                 <LabelPicker
                   selectedIds={labelIds}
+                  lockLastSelected
                   onChange={(ids) =>
                     setValue("label_ids", ids, { shouldDirty: true })
                   }
@@ -303,6 +305,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
                     setValue("annotators", a, { shouldDirty: true })
                   }
                   creatorId={creatorId}
+                  highlightAutoAssigned={autoAssign}
                   isManager
                 />
               </Stack>

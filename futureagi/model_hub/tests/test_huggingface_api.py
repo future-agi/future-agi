@@ -13,7 +13,6 @@ These tests verify the complete flow including:
 Run with: pytest model_hub/tests/test_huggingface_api.py -v
 """
 
-import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -26,6 +25,82 @@ from model_hub.models.choices import (
     SourceChoices,
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+
+
+class TestHuggingFaceLookupResponseContracts:
+    @patch("model_hub.views.develop_dataset.requests.get")
+    def test_dataset_list_returns_typed_result(self, mock_get, auth_client):
+        mock_response = MagicMock()
+        mock_response.status_code = status.HTTP_200_OK
+        mock_response.json.return_value = {
+            "numTotalItems": 1,
+            "datasets": [
+                {
+                    "id": "futureagi/example",
+                    "name": "futureagi/example",
+                    "downloads": 42,
+                    "likes": 7,
+                    "author": "futureagi",
+                }
+            ],
+        }
+        mock_get.return_value = mock_response
+
+        response = auth_client.post(
+            "/model-hub/datasets/huggingface/list/",
+            {"search_query": "futureagi", "filter_params": {}},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["message"] == "Datasets retrieved successfully"
+        assert result["total_datasets"] == 1
+        assert result["datasets"] == [
+            {
+                "id": "futureagi/example",
+                "name": "futureagi/example",
+                "downloads": 42,
+                "likes": 7,
+                "author": "futureagi",
+            }
+        ]
+
+    @patch("model_hub.views.develop_dataset.requests.get")
+    def test_dataset_detail_returns_typed_result(self, mock_get, auth_client):
+        mock_response = MagicMock()
+        mock_response.status_code = status.HTTP_200_OK
+        mock_response.json.return_value = [
+            {
+                "id": "futureagi/example",
+                "name": "futureagi/example",
+                "description": "Example dataset",
+                "downloads": 42,
+                "likes": 7,
+                "tags": ["text"],
+                "author": "futureagi",
+            }
+        ]
+        mock_get.return_value = mock_response
+
+        response = auth_client.post(
+            "/model-hub/datasets/huggingface/detail/",
+            {"dataset_id": "futureagi/example"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["message"] == "Dataset details retrieved successfully"
+        assert result["dataset"] == {
+            "id": "futureagi/example",
+            "name": "futureagi/example",
+            "description": "Example dataset",
+            "downloads": 42,
+            "likes": 7,
+            "tags": ["text"],
+            "author": "futureagi",
+        }
 
 
 class TestProcessHuggingFaceColumnsJsonSerialization:
@@ -305,3 +380,58 @@ class TestCreateDatasetFromHuggingFaceE2E:
             print(f"Response: {response.status_code} - {response.json()}")
             # Skip assertion if there are other validation errors
             pytest.skip(f"API returned {response.status_code}: {response.json()}")
+
+
+class TestHuggingFaceListFeatureCompat:
+    """
+    Streaming ingestion (process_huggingface_dataset -> load_hf_dataset_with_retries
+    -> datasets.load_dataset) parses the dataset's feature metadata before yielding
+    rows. The Hub now emits the `List` feature type (datasets 4.0) that the pinned
+    datasets 3.6.0 cannot resolve, which crashed the load for datasets such as
+    rajpurkar/squad and left every cell empty. Importing model_hub.utils.utils must
+    register `List` so the real parse path succeeds.
+    """
+
+    # The `answers` feature of rajpurkar/squad, exactly as the Hub emits it.
+    SQUAD_ANSWERS_SCHEMA = {
+        "answers": {
+            "text": {
+                "feature": {"dtype": "string", "_type": "Value"},
+                "_type": "List",
+            },
+            "answer_start": {
+                "feature": {"dtype": "int32", "_type": "Value"},
+                "_type": "List",
+            },
+        }
+    }
+
+    def test_list_feature_type_parses_on_real_load_path(self):
+        """
+        RED without the fix: datasets.Features.from_dict — the function
+        load_dataset() calls to parse feature metadata — raises
+        "Feature type 'List' not found". GREEN once model_hub.utils.utils
+        aliases `List` to LargeList at import.
+        """
+        import model_hub.utils.utils  # noqa: F401  (import installs the List alias)
+        from datasets import Features
+
+        features = Features.from_dict(self.SQUAD_ANSWERS_SCHEMA)
+
+        assert "answers" in features
+        rebuilt = features.to_dict()["answers"]
+        list_like = {"List", "LargeList", "Sequence"}
+        assert rebuilt["text"]["_type"] in list_like
+        assert rebuilt["answer_start"]["_type"] in list_like
+
+    def test_top_level_list_feature_parses(self):
+        """A plain List-of-scalars column (the other Hub shape) also parses."""
+        import model_hub.utils.utils  # noqa: F401
+        from datasets import Features
+
+        features = Features.from_dict(
+            {"tags": {"feature": {"dtype": "string", "_type": "Value"}, "_type": "List"}}
+        )
+
+        assert "tags" in features
+        assert features.to_dict()["tags"]["_type"] in {"List", "LargeList", "Sequence"}

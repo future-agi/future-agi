@@ -139,7 +139,10 @@ export const DynamicColumns = [
 export const replaceColumnIdWithName = (text, allColumns) => {
   let updatedText = text;
   allColumns.forEach(({ headerName, field }) => {
-    const pattern = new RegExp(`{{\\s*${field}((?:\\.[^}\\s]+|\\[\\d+\\])*)\\s*}}`, "g");
+    const pattern = new RegExp(
+      `{{\\s*${field}((?:\\.[^}\\s]+|\\[\\d+\\])*)\\s*}}`,
+      "g",
+    );
     updatedText = updatedText.replace(pattern, `{{${headerName}$1}}`);
   });
 
@@ -150,7 +153,10 @@ export const replaceColumnNameWithId = (text, allColumns) => {
   let newText = text;
   allColumns.forEach(({ headerName, field }) => {
     // Note: column names containing dots are not supported (dot is treated as a path separator)
-    const pattern = new RegExp(`{{${headerName}((?:\\.[^}\\s]+|\\[\\d+\\])*)}}`, "g");
+    const pattern = new RegExp(
+      `{{${headerName}((?:\\.[^}\\s]+|\\[\\d+\\])*)}}`,
+      "g",
+    );
     if (newText && newText.length) {
       newText = newText.replace(pattern, `{{${field}$1}}`);
     }
@@ -174,18 +180,20 @@ export const transformDynamicColumnConfig = (type, config, allColumns) => {
           params: Object.entries(config?.params || {}).map(([key, value]) => ({
             id: getRandomId(),
             name: key,
-            value: value.type === "Variable"
-              ? replaceColumnIdWithName(value.value, allColumns)
-              : value.value,
+            value:
+              value.type === "Variable"
+                ? replaceColumnIdWithName(value.value, allColumns)
+                : value.value,
             type: value.type,
           })),
           headers: Object.entries(config?.headers || {}).map(
             ([key, value]) => ({
               id: getRandomId(),
               name: key,
-              value: value.type === "Variable"
-                ? replaceColumnIdWithName(value.value, allColumns)
-                : value.value,
+              value:
+                value.type === "Variable"
+                  ? replaceColumnIdWithName(value.value, allColumns)
+                  : value.value,
               type: value.type,
             }),
           ),

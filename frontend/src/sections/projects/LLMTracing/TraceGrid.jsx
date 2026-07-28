@@ -22,31 +22,24 @@ import {
   getTraceListColumnDefs,
   FILTER_FOR_HAS_EVAL,
   generateAnnotationColumnsForTracing,
+  normalizeConfigKeys,
+  toBackendFilters,
 } from "./common";
+import { RENDERER_CONFIG } from "./Renderers/common";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
 import { statusBar } from "src/components/run-insights/traces-tab/common";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import LLMTracingTraceDetailDrawer from "./LLMTracingTraceDetailDrawer";
 import { useLLMTracingStoreShallow, useTraceGridStore } from "./states";
 import { APP_CONSTANTS } from "src/utils/constants";
 import { useReplaySessionsStoreShallow } from "../SessionsView/ReplaySessions/store";
 import { REPLAY_MODULES } from "../SessionsView/ReplaySessions/configurations";
 import { useShallowToggleAnnotationsStore } from "../../agents/store";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 const ROWS_LIMIT = 100;
 const EMPTY_EXTRA_FILTERS = [];
-
-// Normalize config object keys from snake_case to camelCase while preserving id values as snake_case
-const normalizeConfigKeys = (config) =>
-  config?.map((obj) => {
-    const result = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = value;
-    }
-    return result;
-  });
 
 const TraceGrid = React.forwardRef(
   (
@@ -109,6 +102,35 @@ const TraceGrid = React.forwardRef(
     const refreshGrid = useCallback(() => {
       gridRef?.current?.api?.refreshServerSide({ purge: true });
     }, [gridRef]);
+    const filterRequestKey = useMemo(
+      () =>
+        JSON.stringify({
+          filters,
+          extraFilters: extraFilters || EMPTY_EXTRA_FILTERS,
+          metricFilters: metricFilters || [],
+          hasEvalFilter,
+          dateInterval,
+          projectId,
+          enabled,
+        }),
+      [
+        filters,
+        extraFilters,
+        metricFilters,
+        hasEvalFilter,
+        dateInterval,
+        projectId,
+        enabled,
+      ],
+    );
+    const previousFilterRequestKeyRef = useRef(filterRequestKey);
+
+    useEffect(() => {
+      if (previousFilterRequestKeyRef.current === filterRequestKey) return;
+      previousFilterRequestKeyRef.current = filterRequestKey;
+      prefetchCache.current.clear();
+      refreshGrid();
+    }, [filterRequestKey, refreshGrid]);
 
     // Listen for refresh events from the header reload button
     useEffect(() => {
@@ -168,6 +190,18 @@ const TraceGrid = React.forwardRef(
       [setFilterOpen, setExtraFilters],
     );
 
+    const { role } = useAuthContext();
+    // Viewers can browse traces but not edit tags — gate the cell affordance.
+    const canEditTags = Boolean(
+      RolePermission.OBSERVABILITY[PERMISSIONS.CREATE_EDIT_PROJECT]?.[role],
+    );
+    // Tells cell renderers (e.g. TagsCell) they are on the trace grid (so tag
+    // edits target the trace, not its root span) and whether the role may edit.
+    const gridContext = useMemo(
+      () => ({ entityType: "trace", canEditTags }),
+      [canEditTags],
+    );
+
     const dataSource = useMemo(
       () => {
         prefetchCache.current.clear();
@@ -193,11 +227,9 @@ const TraceGrid = React.forwardRef(
                 page_number: page,
                 page_size: ROWS_LIMIT,
                 filters: JSON.stringify(
-                  canonicalizeApiFilterColumnIds([
-                    ...objectCamelToSnake([
-                      ...filters,
-                      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-                    ]),
+                  toBackendFilters([
+                    ...filters,
+                    ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
                     ...(extraFilters || EMPTY_EXTRA_FILTERS),
                     ...(metricFilters || []),
                   ]),
@@ -447,6 +479,8 @@ const TraceGrid = React.forwardRef(
           return;
         }
         if (event?.column?.colId === "status") return;
+        if (RENDERER_CONFIG.tagColumns.includes(event?.column?.getColId()))
+          return;
         if (
           event.column.getColId() === APP_CONSTANTS.AG_GRID_SELECTION_COLUMN
         ) {
@@ -522,17 +556,16 @@ const TraceGrid = React.forwardRef(
           rowHeight={userTraceRowHeightMapping[cellHeight]?.height ?? 40}
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
+          context={gridContext}
           tooltipShowDelay={0}
           tooltipHideDelay={2000}
           tooltipInteraction={true}
-          rowSelection={{ mode: "multiRow" }}
+          rowSelection={{ mode: "multiRow", enableClickSelection: false }}
           pagination={false}
           cacheBlockSize={ROWS_LIMIT}
           maxBlocksInCache={undefined}
           rowBuffer={10}
           suppressServerSideFullWidthLoadingRow={true}
-          serverSideInitialRowCount={ROWS_LIMIT}
-          suppressRowClickSelection={true}
           rowModelType="serverSide"
           serverSideDatasource={dataSource}
           noRowsOverlayComponent={() =>
@@ -599,7 +632,7 @@ TraceGrid.propTypes = {
   columns: PropTypes.array,
   setColumns: PropTypes.func,
   setFilters: PropTypes.func,
-  setFilterOpen: PropTypes.bool,
+  setFilterOpen: PropTypes.func,
   setLoading: PropTypes.func,
   compareType: PropTypes.string,
   projectId: PropTypes.string,

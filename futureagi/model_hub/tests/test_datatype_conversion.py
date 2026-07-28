@@ -483,6 +483,72 @@ class TestDatatypeConverter(APITestCase):
         assert result.success is True
         assert result.new_value is None
 
+    @patch("model_hub.views.develop_dataset.upload_image_to_s3")
+    @patch("model_hub.views.develop_dataset.validate_file_url")
+    def test_convert_to_image_skips_reupload_for_own_customer_bucket(
+        self, mock_validate, mock_upload
+    ):
+        """A `fi-customer-data*` URL wrapped in a single-element JSON array
+        must be linked, not re-downloaded/re-uploaded.
+        """
+        mock_validate.return_value = None
+        converter = DatatypeConverter(
+            DataTypeChoices.IMAGE.value, dataset_id=str(self.dataset.id)
+        )
+        own_url = "https://fi-customer-data-dev.s3.amazonaws.com/images/uuid/uuid"
+        cell = self._create_cell(json.dumps([own_url]))
+
+        result = converter._convert_single_cell(cell)
+
+        assert result.success is True
+        assert result.new_value == own_url
+        mock_upload.assert_not_called()
+
+    @patch("model_hub.views.develop_dataset.upload_image_to_s3")
+    @patch("model_hub.views.develop_dataset.validate_file_url")
+    def test_convert_to_image_skips_reupload_for_own_content_dev_bucket(
+        self, mock_validate, mock_upload
+    ):
+        """TH-5648 root cause #2: exported CSVs carry `fi-content-dev` URLs
+        (not just `fi-customer-data`) — those must also be linked, not
+        re-uploaded. This bucket was missed in earlier revisions of the fix.
+        """
+        mock_validate.return_value = None
+        converter = DatatypeConverter(
+            DataTypeChoices.IMAGE.value, dataset_id=str(self.dataset.id)
+        )
+        own_url = (
+            "https://fi-content-dev.s3.ap-south-1.amazonaws.com/images/uuid/uuid"
+        )
+        cell = self._create_cell(json.dumps([own_url]))
+
+        result = converter._convert_single_cell(cell)
+
+        assert result.success is True
+        assert result.new_value == own_url
+        mock_upload.assert_not_called()
+
+    @patch("model_hub.views.develop_dataset.upload_image_to_s3")
+    @patch("model_hub.views.develop_dataset.validate_file_url")
+    def test_convert_to_image_reuploads_third_party_url_in_json_array(
+        self, mock_validate, mock_upload
+    ):
+        """A third-party URL wrapped in the same single-element JSON array
+        shape must still be downloaded and re-uploaded to our own bucket.
+        """
+        mock_validate.return_value = None
+        mock_upload.return_value = "https://s3.bucket/image.jpg"
+        converter = DatatypeConverter(
+            DataTypeChoices.IMAGE.value, dataset_id=str(self.dataset.id)
+        )
+        cell = self._create_cell(json.dumps(["https://example.com/image.jpg"]))
+
+        result = converter._convert_single_cell(cell)
+
+        assert result.success is True
+        assert result.new_value == "https://s3.bucket/image.jpg"
+        mock_upload.assert_called_once()
+
     # ============= STRICT MODE TESTS =============
 
     def test_strict_mode_all_succeed(self):
@@ -697,8 +763,10 @@ class TestDatatypeConverter(APITestCase):
     # ============= IMAGES CONVERSION TESTS =============
 
     @patch("model_hub.views.develop_dataset.upload_image_to_s3")
-    def test_convert_to_images_success(self, mock_upload):
+    @patch("model_hub.views.develop_dataset.validate_file_url")
+    def test_convert_to_images_success(self, mock_validate, mock_upload):
         """Test IMAGES conversion uploads multiple images to S3"""
+        mock_validate.return_value = None
         mock_upload.side_effect = [
             "https://s3.bucket/image1.jpg",
             "https://s3.bucket/image2.png",
@@ -722,8 +790,10 @@ class TestDatatypeConverter(APITestCase):
         assert "https://s3.bucket/image2.png" in uploaded_urls
 
     @patch("model_hub.views.develop_dataset.upload_image_to_s3")
-    def test_convert_to_images_partial_failure(self, mock_upload):
+    @patch("model_hub.views.develop_dataset.validate_file_url")
+    def test_convert_to_images_partial_failure(self, mock_validate, mock_upload):
         """Test IMAGES conversion handles partial upload failures gracefully"""
+        mock_validate.return_value = None
         # First upload succeeds, second fails
         mock_upload.side_effect = [
             "https://s3.bucket/image1.jpg",
@@ -744,8 +814,10 @@ class TestDatatypeConverter(APITestCase):
         assert result.success is False
 
     @patch("model_hub.views.develop_dataset.upload_image_to_s3")
-    def test_convert_to_images_all_fail(self, mock_upload):
+    @patch("model_hub.views.develop_dataset.validate_file_url")
+    def test_convert_to_images_all_fail(self, mock_validate, mock_upload):
         """Test IMAGES conversion fails when all uploads fail"""
+        mock_validate.return_value = None
         mock_upload.side_effect = Exception("Upload failed")
         converter = DatatypeConverter(
             DataTypeChoices.IMAGES.value, dataset_id=str(self.dataset.id)
@@ -772,8 +844,10 @@ class TestDatatypeConverter(APITestCase):
         assert result.new_value is None
 
     @patch("model_hub.views.develop_dataset.upload_image_to_s3")
-    def test_convert_to_images_three_images(self, mock_upload):
+    @patch("model_hub.views.develop_dataset.validate_file_url")
+    def test_convert_to_images_three_images(self, mock_validate, mock_upload):
         """Test IMAGES conversion with three images"""
+        mock_validate.return_value = None
         mock_upload.side_effect = [
             "https://s3.bucket/img1.jpg",
             "https://s3.bucket/img2.png",
@@ -794,8 +868,10 @@ class TestDatatypeConverter(APITestCase):
         assert len(uploaded_urls) == 3
 
     @patch("model_hub.views.develop_dataset.upload_image_to_s3")
-    def test_convert_to_images_single_url_becomes_array(self, mock_upload):
+    @patch("model_hub.views.develop_dataset.validate_file_url")
+    def test_convert_to_images_single_url_becomes_array(self, mock_validate, mock_upload):
         """Test IMAGES conversion converts single URL to array"""
+        mock_validate.return_value = None
         mock_upload.return_value = "https://s3.bucket/image1.jpg"
         converter = DatatypeConverter(
             DataTypeChoices.IMAGES.value, dataset_id=str(self.dataset.id)
@@ -809,3 +885,60 @@ class TestDatatypeConverter(APITestCase):
         uploaded_urls = json.loads(result.new_value)
         assert isinstance(uploaded_urls, list)
         assert len(uploaded_urls) == 1
+
+    @patch("model_hub.views.develop_dataset.upload_image_to_s3")
+    @patch("model_hub.views.develop_dataset.validate_file_url")
+    def test_convert_to_images_validates_every_url_in_array(
+        self, mock_validate, mock_upload
+    ):
+        """TH-5648 follow-up: the array/"Images" path used to skip
+        validate_file_url entirely, unlike the single-"Image" path -- making
+        it an easy SSRF bypass (just wrap the target URL in a JSON array).
+        Every element must now be validated before upload.
+        """
+        mock_validate.return_value = None
+        mock_upload.side_effect = [
+            "https://s3.bucket/image1.jpg",
+            "https://s3.bucket/image2.png",
+        ]
+        converter = DatatypeConverter(
+            DataTypeChoices.IMAGES.value, dataset_id=str(self.dataset.id)
+        )
+        cell = self._create_cell(
+            '["https://example.com/image1.jpg", "https://example.com/image2.png"]'
+        )
+
+        result = converter._convert_single_cell(cell)
+
+        assert result.success is True
+        assert mock_validate.call_count == 2
+        validated_urls = {call.args[0] for call in mock_validate.call_args_list}
+        assert validated_urls == {
+            "https://example.com/image1.jpg",
+            "https://example.com/image2.png",
+        }
+
+    @patch("model_hub.views.develop_dataset.upload_image_to_s3")
+    @patch("model_hub.views.develop_dataset.validate_file_url")
+    def test_convert_to_images_rejects_ssrf_target_in_array(
+        self, mock_validate, mock_upload
+    ):
+        """A malicious URL (e.g. the cloud metadata endpoint) hidden inside
+        the array must be rejected, and no upload/fetch may be attempted for
+        it or anything after it.
+        """
+        mock_validate.side_effect = ValueError(
+            "Image URL resolves to a disallowed private/internal address"
+        )
+        converter = DatatypeConverter(
+            DataTypeChoices.IMAGES.value, dataset_id=str(self.dataset.id)
+        )
+        cell = self._create_cell(
+            '["http://169.254.169.254/latest/meta-data/", '
+            '"https://example.com/image2.png"]'
+        )
+
+        result = converter._convert_single_cell(cell)
+
+        assert result.success is False
+        mock_upload.assert_not_called()

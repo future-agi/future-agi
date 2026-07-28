@@ -1,6 +1,5 @@
 import json
 import re
-import uuid
 from datetime import datetime
 
 import structlog
@@ -16,8 +15,8 @@ from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 from retell import Retell
 
-logger = structlog.get_logger(__name__)
 from simulate.models import AgentDefinition, AgentVersion
+from simulate.serializers.agent_definition import AgentDefinitionSerializer
 from simulate.serializers.requests.agent_definition import (
     AgentDefinitionBulkDeleteRequestSerializer,
     AgentDefinitionCreateRequestSerializer,
@@ -37,6 +36,13 @@ from simulate.serializers.response.agent_definition import (
 from simulate.serializers.response.agent_version import (
     AgentVersionListResponseSerializer,
 )
+from simulate.services.agent_definition import (
+    is_masked,
+    resolve_api_key_for_version,
+    resolve_stored_api_key,
+    sync_provider_credentials,
+)
+from simulate.services.types.agent_definition import ProviderCredentialsInput
 from tfc.ee_stub import _ee_stub
 
 try:
@@ -44,6 +50,8 @@ try:
 except ImportError:
     VapiService = _ee_stub("VapiService")
 from tfc.ee_gating import FeatureUnavailable
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import ApiErrorWithDetailsResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -53,6 +61,19 @@ from tracer.models.replay_session import ReplaySession
 from tracer.utils.observability_provider import create_observability_provider
 from tracer.utils.otel import ResourceLimitError
 from tracer.utils.replay_session import link_agent_to_replay_session
+
+logger = structlog.get_logger(__name__)
+
+
+def soft_delete_agent_definition_and_versions(agent):
+    deleted_at = timezone.now()
+    AgentVersion.objects.filter(agent_definition=agent).update(
+        deleted=True,
+        deleted_at=deleted_at,
+    )
+    agent.deleted = True
+    agent.deleted_at = deleted_at
+    agent.save(update_fields=["deleted", "deleted_at", "updated_at"])
 
 
 class AgentDefinitionView(APIView):
@@ -64,9 +85,16 @@ class AgentDefinitionView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
+    @validated_request(
         query_serializer=AgentDefinitionFilterSerializer,
-        responses={200: AgentDefinitionListResponseSerializer(many=True)},
+        responses={
+            200: AgentDefinitionListResponseSerializer(many=True),
+            400: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
+        reject_unknown_fields=True,
+        framework_query_params=("page", "limit"),
     )
     def get(self, request, *args, **kwargs):
         """
@@ -78,19 +106,9 @@ class AgentDefinitionView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return self._gm.not_found("Organization not found for the user.")
 
-            # Validate query parameters through serializer
-            filter_serializer = AgentDefinitionFilterSerializer(
-                data=request.query_params
-            )
-            if not filter_serializer.is_valid():
-                return self._gm.bad_request(filter_serializer.errors)
-
-            validated = filter_serializer.validated_data
+            validated = request.validated_query_data
             search_query = validated.get("search", "").strip()
             agent_type = validated.get("agent_type", None)
             required_agent_id = validated.get("agent_definition_id", None)
@@ -160,25 +178,25 @@ class AgentDefinitionView(APIView):
         except NotFound:
             raise
         except Exception as e:
-            return Response(
-                {"error": f"Failed to retrieve agent definitions: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self._gm.internal_server_error_response(
+                f"Failed to retrieve agent definitions: {str(e)}"
             )
 
-    @swagger_auto_schema(
-        request_body=AgentDefinitionBulkDeleteRequestSerializer,
-        responses={200: AgentDefinitionBulkDeleteResponseSerializer},
+    @validated_request(
+        request_serializer=AgentDefinitionBulkDeleteRequestSerializer,
+        responses={
+            200: AgentDefinitionBulkDeleteResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
+        reject_unknown_fields=True,
     )
     def delete(self, request):
         """
         Bulk soft-delete agent definitions.
         """
         try:
-            serializer = AgentDefinitionBulkDeleteRequestSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            agent_ids = serializer.validated_data["agent_ids"]
+            agent_ids = request.validated_data["agent_ids"]
 
             with transaction.atomic():
                 updated_agents = AgentDefinition.objects.filter(
@@ -203,9 +221,8 @@ class AgentDefinitionView(APIView):
                 status=status.HTTP_200_OK,
             )
         except Exception as e:
-            return Response(
-                {"error": f"Failed to delete agents: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self._gm.internal_server_error_response(
+                f"Failed to delete agents: {str(e)}"
             )
 
 
@@ -217,24 +234,22 @@ class CreateAgentDefinitionView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=AgentDefinitionCreateRequestSerializer,
-        responses={201: AgentDefinitionCreateResponseSerializer},
+    @validated_request(
+        request_serializer=AgentDefinitionCreateRequestSerializer,
+        responses={
+            201: AgentDefinitionCreateResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         """
         Create a new agent definition with its first version.
         """
         try:
-            # Validate request through serializer
-            req_serializer = AgentDefinitionCreateRequestSerializer(data=request.data)
-            if not req_serializer.is_valid():
-                return Response(
-                    {"error": "Invalid data", "details": req_serializer.errors},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            validated = req_serializer.validated_data
+            validated = request.validated_data
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
@@ -294,12 +309,15 @@ class CreateAgentDefinitionView(APIView):
                 observability_provider=observability_provider,
             )
 
-            # Route livekit/provider credentials to ProviderCredentials table.
-            from simulate.serializers.agent_definition import (
-                AgentDefinitionSerializer,
-                ProviderCredentialsInput,
+            # Create the first version first so ProviderCredentials can link to it.
+            version = agent.create_version(
+                description=description,
+                commit_message=commit_message,
+                status=AgentVersion.StatusChoices.ACTIVE,
             )
 
+            # Route livekit/provider credentials to ProviderCredentials table,
+            # now linked to the version instead of the agent definition.
             creds_input = ProviderCredentialsInput(
                 provider=provider or "",
                 api_key=api_key,
@@ -310,15 +328,15 @@ class CreateAgentDefinitionView(APIView):
                 livekit_agent_name=validated.get("livekit_agent_name"),
                 livekit_config_json=validated.get("livekit_config_json"),
                 livekit_max_concurrency=validated.get("livekit_max_concurrency"),
+                provider_was_provided="provider" in request.data,
             )
-            AgentDefinitionSerializer._sync_provider_credentials(agent, creds_input)
+            sync_provider_credentials(version, creds_input)
 
-            # Create the first version
-            agent.create_version(
-                description=description,
-                commit_message=commit_message,
-                status=AgentVersion.StatusChoices.ACTIVE,
+            # Re-snapshot now that ProviderCredentials exist (LiveKit fields)
+            version.configuration_snapshot = version.create_snapshot(
+                commit_message=version.commit_message or ""
             )
+            version.save(update_fields=["configuration_snapshot"])
 
             if replay_session_id:
                 link_agent_to_replay_session(
@@ -335,12 +353,11 @@ class CreateAgentDefinitionView(APIView):
 
         except ReplaySession.DoesNotExist:
             return self._gm.not_found(get_error_message("REPLAY_SESSION_NOT_FOUND"))
-        except ResourceLimitError as e:
+        except ResourceLimitError:
             return self._gm.bad_request("PROJECT CREATION LIMIT REACHED")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to create agent definition: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self._gm.internal_server_error_response(
+                f"Failed to create agent definition: {str(e)}"
             )
 
 
@@ -350,16 +367,21 @@ class AgentDefinitionDetailView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
 
     @swagger_auto_schema(
-        responses={200: AgentDefinitionResponseSerializer},
+        responses={
+            200: AgentDefinitionResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     def get(self, request, agent_id, *args, **kwargs):
         """
         Get details of a specific agent definition with version information.
         """
         try:
-            agent = AgentDefinition.objects.select_related("credentials").get(
+            agent = AgentDefinition.objects.get(
                 id=agent_id,
                 organization=getattr(request, "organization", None)
                 or request.user.organization,
@@ -391,31 +413,102 @@ class AgentDefinitionDetailView(APIView):
             )
 
         except AgentDefinition.DoesNotExist:
-            return Response(
-                {"error": "Agent definition not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return self._gm.not_found("Agent definition not found")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to retrieve agent definition: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self._gm.internal_server_error_response(
+                f"Failed to retrieve agent definition: {str(e)}"
             )
 
 
 class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
-    permissions = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
     serializer_class = AgentDefinitionResponseSerializer
 
+    def get_serializer_class(self):
+        if getattr(self, "action", None) in {"create", "update", "partial_update"}:
+            return AgentDefinitionSerializer
+        return AgentDefinitionResponseSerializer
+
     def get_queryset(self):
-        # select_related("credentials") avoids N+1 when
-        # AgentDefinitionSerializer.to_representation reads
-        # instance.credentials (OneToOne reverse accessor).
-        return super().get_queryset().select_related("credentials")
+        return super().get_queryset()
 
     @swagger_auto_schema(
-        request_body=FetchAssistantRequestSerializer,
-        responses={200: FetchAssistantResponseSerializer},
+        responses={
+            400: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
+    @swagger_auto_schema(
+        responses={
+            400: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
+    def create(self, request, *args, **kwargs):
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        serializer.save(
+            organization=getattr(self.request, "organization", None)
+            or self.request.user.organization,
+            workspace=getattr(self.request, "workspace", None)
+            or getattr(self.request.user, "workspace", None),
+        )
+
+    @swagger_auto_schema(
+        responses={
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
+    def retrieve(self, request, *args, **kwargs):
+        return super().retrieve(request, *args, **kwargs)
+
+    @swagger_auto_schema(
+        responses={
+            400: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
+    def update(self, request, *args, **kwargs):
+        return super().update(request, *args, **kwargs)
+
+    @swagger_auto_schema(
+        responses={
+            400: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
+    def partial_update(self, request, *args, **kwargs):
+        return super().partial_update(request, *args, **kwargs)
+
+    @swagger_auto_schema(
+        responses={
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
+    def destroy(self, request, *args, **kwargs):
+        return super().destroy(request, *args, **kwargs)
+
+    def perform_destroy(self, instance):
+        soft_delete_agent_definition_and_versions(instance)
+
+    @validated_request(
+        request_serializer=FetchAssistantRequestSerializer,
+        responses={
+            200: FetchAssistantResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            403: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
+        reject_unknown_fields=True,
     )
     @action(detail=False, methods=["post"])
     def fetch_assistant_from_provider(self, request):
@@ -425,9 +518,7 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
         """
 
         try:
-            serializer = FetchAssistantRequestSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            validated = serializer.validated_data
+            validated = request.validated_data
 
             api_key = validated["api_key"]
             provider = validated["provider"]
@@ -435,10 +526,25 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
             prompt = ""
             name = ""
 
+            if is_masked(api_key):
+                api_key = resolve_stored_api_key(
+                    organization=getattr(request, "organization", None)
+                    or request.user.organization,
+                    workspace=getattr(request, "workspace", None),
+                    agent_id=validated.get("agent_id"),
+                    assistant_id=assistant_id,
+                    masked_value=api_key,
+                )
+                if not api_key:
+                    msg = "Cannot sync with a masked API key. Please paste the actual key."
+                    return self._gm.bad_request(msg)
+
             if provider == ProviderChoices.VAPI:
                 from tfc.ee_gating import EEFeature, check_ee_feature
 
-                org = getattr(request, "organization", None) or request.user.organization
+                org = (
+                    getattr(request, "organization", None) or request.user.organization
+                )
                 check_ee_feature(
                     EEFeature.VOICE_SIM,
                     org_id=str(org.id) if org else None,
@@ -474,7 +580,6 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
 
             response_data = {
                 "assistant_id": assistant_id,
-                "api_key": api_key,
                 "name": name,
                 "prompt": prompt,
                 "provider": provider,
@@ -498,36 +603,39 @@ class EditAgentDefinitionView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=AgentDefinitionEditRequestSerializer,
-        responses={200: AgentDefinitionEditResponseSerializer},
+    @validated_request(
+        request_serializer=AgentDefinitionEditRequestSerializer,
+        responses={
+            200: AgentDefinitionEditResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
+        reject_unknown_fields=True,
     )
     def put(self, request, agent_id, *args, **kwargs):
         """
         Update an existing agent definition.
         """
         try:
-            agent = AgentDefinition.objects.select_related("credentials").get(
+            agent = AgentDefinition.objects.get(
                 id=agent_id,
                 organization=getattr(request, "organization", None)
                 or request.user.organization,
                 deleted=False,
             )
 
-            # Validate request through request serializer
-            req_serializer = AgentDefinitionEditRequestSerializer(data=request.data)
-            if not req_serializer.is_valid():
-                return Response(
-                    {"error": "Invalid data", "details": req_serializer.errors},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
             # Update agent fields directly from validated data. NOTE:
             # ``livekit_*`` fields are NOT model columns on AgentDefinition;
             # they live on the related ProviderCredentials row and are
             # routed below via ``_sync_provider_credentials``.
-            validated = req_serializer.validated_data
+            validated = request.validated_data
+            incoming_api_key = validated.get("api_key")
+            preserve_existing_api_key = incoming_api_key is not None and is_masked(
+                incoming_api_key
+            )
             update_fields = [
                 "agent_name",
                 "agent_type",
@@ -546,6 +654,8 @@ class EditAgentDefinitionView(APIView):
                 "websocket_headers",
             ]
             for field in update_fields:
+                if field == "api_key" and preserve_existing_api_key:
+                    continue
                 if field in validated:
                     setattr(agent, field, validated[field])
             if "knowledge_base" in validated:
@@ -555,14 +665,20 @@ class EditAgentDefinitionView(APIView):
             # Route livekit_* fields to ProviderCredentials so they
             # actually persist (setattr on the model is a no-op for these
             # since they aren't real columns).
-            from simulate.serializers.agent_definition import (
-                AgentDefinitionSerializer,
-                ProviderCredentialsInput,
-            )
+            if preserve_existing_api_key:
+                version = agent.active_version or agent.latest_version
+                existing_api_key = (
+                    resolve_api_key_for_version(version) if version else None
+                )
+            else:
+                existing_api_key = None
+            version = agent.active_version or agent.latest_version
 
             creds_input = ProviderCredentialsInput(
                 provider=validated.get("provider") or agent.provider or "",
-                api_key=validated.get("api_key"),
+                api_key=existing_api_key
+                if preserve_existing_api_key
+                else validated.get("api_key"),
                 assistant_id=validated.get("assistant_id"),
                 livekit_url=validated.get("livekit_url"),
                 livekit_api_key=validated.get("livekit_api_key"),
@@ -570,12 +686,10 @@ class EditAgentDefinitionView(APIView):
                 livekit_agent_name=validated.get("livekit_agent_name"),
                 livekit_config_json=validated.get("livekit_config_json"),
                 livekit_max_concurrency=validated.get("livekit_max_concurrency"),
+                provider_was_provided="provider" in request.data,
             )
-            AgentDefinitionSerializer._sync_provider_credentials(agent, creds_input)
-            try:
-                del agent.credentials
-            except AttributeError:
-                pass
+            if version:
+                sync_provider_credentials(version, creds_input)
             updated_agent = agent
 
             response_data = {
@@ -585,14 +699,10 @@ class EditAgentDefinitionView(APIView):
             return Response(response_data, status=status.HTTP_200_OK)
 
         except AgentDefinition.DoesNotExist:
-            return Response(
-                {"error": "Agent definition not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return self._gm.not_found("Agent definition not found")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to update agent definition: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self._gm.internal_server_error_response(
+                f"Failed to update agent definition: {str(e)}"
             )
 
 
@@ -602,9 +712,14 @@ class DeleteAgentDefinitionView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
 
     @swagger_auto_schema(
-        responses={200: AgentDefinitionDeleteResponseSerializer},
+        responses={
+            200: AgentDefinitionDeleteResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     def delete(self, request, agent_id, *args, **kwargs):
         """
@@ -618,7 +733,7 @@ class DeleteAgentDefinitionView(APIView):
                 deleted=False,
             )
 
-            agent.delete()
+            soft_delete_agent_definition_and_versions(agent)
 
             response_data = {"message": "Agent definition deleted successfully"}
             return Response(
@@ -627,12 +742,8 @@ class DeleteAgentDefinitionView(APIView):
             )
 
         except AgentDefinition.DoesNotExist:
-            return Response(
-                {"error": "Agent definition not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return self._gm.not_found("Agent definition not found")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to delete agent definition: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self._gm.internal_server_error_response(
+                f"Failed to delete agent definition: {str(e)}"
             )

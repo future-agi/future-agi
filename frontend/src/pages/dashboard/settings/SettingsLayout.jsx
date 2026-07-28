@@ -54,7 +54,7 @@ TabErrorBoundary.propTypes = {
 const SettingsLayout = React.memo(() => {
   const theme = useTheme();
   const { user } = useAuthContext();
-  const userOrgRole = user?.organization_role ?? user?.organizationRole;
+  const userOrgRole = user?.organization_role;
   const isOwner = userOrgRole === "Owner";
   const isAdmin = userOrgRole === "Admin";
   const isOwnerOrAdmin = isOwner || isAdmin;

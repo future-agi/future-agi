@@ -12,10 +12,8 @@ Tests cover:
 """
 
 import uuid
-from unittest.mock import patch
 
 import pytest
-from django.conf import settings as django_settings
 from rest_framework import status
 
 from model_hub.models.annotation_queues import (
@@ -61,6 +59,9 @@ def observe_project(db, organization, workspace):
 def trace(db, observe_project):
     from tracer.models.trace import Trace
 
+    # CH-native note: a trace resolves from its CH root span, so tests that annotate
+    # a *bare* trace seed one (via ``observation_span`` or ``seed_ch_span``); this
+    # fixture stays PG-only so it never adds a competing root to another test's span.
     return Trace.objects.create(
         project=observe_project,
         name="Test Trace",
@@ -72,11 +73,15 @@ def trace(db, observe_project):
 @pytest.fixture
 def trace_session(db, observe_project):
     from tracer.models.trace_session import TraceSession
+    from tracer.tests._ch_seed import seed_ch_trace_sessions
 
-    return TraceSession.objects.create(
+    session = TraceSession.objects.create(
         project=observe_project,
         name="Test Session",
     )
+    # CH-native: session resolution reads the CH ``trace_sessions`` table.
+    seed_ch_trace_sessions([session])
+    return session
 
 
 @pytest.fixture
@@ -86,9 +91,10 @@ def observation_span(db, observe_project, trace):
     from django.utils import timezone
 
     from tracer.models.observation_span import ObservationSpan
+    from tracer.tests._ch_seed import seed_ch_span
 
     span_id = f"span_{uuid.uuid4().hex[:16]}"
-    return ObservationSpan.objects.create(
+    span = ObservationSpan.objects.create(
         id=span_id,
         project=observe_project,
         trace=trace,
@@ -106,6 +112,32 @@ def observation_span(db, observe_project, trace):
         latency_ms=500,
         status="OK",
     )
+    # CH-native: annotation resolves the span from ClickHouse — seed it there.
+    seed_ch_span(span)
+    return span
+
+
+def _seed_ch_trace_root(trace):
+    """Seed a CH root span so a *bare* trace resolves under CH-native annotation
+    (trace resolution reads the trace's root span from CH, not the PG row)."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from tracer.models.observation_span import ObservationSpan
+    from tracer.tests._ch_seed import seed_ch_span
+
+    span = ObservationSpan.objects.create(
+        id=f"chroot_{uuid.uuid4().hex[:16]}",
+        project=trace.project,
+        trace=trace,
+        name="trace root",
+        observation_type="agent",
+        start_time=timezone.now() - timedelta(seconds=1),
+        end_time=timezone.now(),
+        status="OK",
+    )
+    seed_ch_span(span)
 
 
 @pytest.fixture
@@ -179,6 +211,36 @@ def numeric_label(db, organization, workspace, observe_project):
     )
 
 
+def create_same_org_other_workspace_trace(user):
+    from accounts.models.workspace import Workspace
+    from model_hub.models.ai_model import AIModel
+    from tracer.models.project import Project
+    from tracer.models.trace import Trace
+
+    hidden_workspace = Workspace.objects.create(
+        name="Hidden Score Workspace",
+        organization=user.organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    hidden_project = Project.objects.create(
+        name="Hidden Score Project",
+        organization=user.organization,
+        workspace=hidden_workspace,
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+        trace_type="observe",
+        user=user,
+    )
+    hidden_trace = Trace.objects.create(
+        project=hidden_project,
+        name="Hidden Score Trace",
+        input={"prompt": "hidden"},
+        output={"response": "hidden"},
+    )
+    return hidden_workspace, hidden_project, hidden_trace
+
+
 # ---------------------------------------------------------------------------
 # 1 – Score CRUD
 # ---------------------------------------------------------------------------
@@ -186,7 +248,6 @@ def numeric_label(db, organization, workspace, observe_project):
 
 @pytest.mark.django_db
 class TestCreateScore:
-
     def test_create_score_on_observation_span(
         self, auth_client, observation_span, star_label
     ):
@@ -205,6 +266,7 @@ class TestCreateScore:
 
     def test_create_score_on_trace(self, auth_client, trace, thumbs_label):
         """Create a score on a trace."""
+        _seed_ch_trace_root(trace)
         payload = {
             "source_type": "trace",
             "source_id": str(trace.id),
@@ -259,6 +321,19 @@ class TestCreateScore:
         resp = auth_client.post(SCORE_URL, payload, format="json")
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_create_rejects_legacy_label_alias(
+        self, auth_client, observation_span, star_label
+    ):
+        payload = {
+            "source_type": "observation_span",
+            "source_id": observation_span.id,
+            "labelId": str(star_label.id),
+            "value": {"rating": 3},
+        }
+        resp = auth_client.post(SCORE_URL, payload, format="json")
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "labelId" in str(resp.data)
+
     def test_source_not_found(self, auth_client, star_label):
         """Non-existent source returns 404."""
         payload = {
@@ -281,10 +356,37 @@ class TestCreateScore:
         resp = auth_client.post(SCORE_URL, payload, format="json")
         assert resp.status_code == status.HTTP_404_NOT_FOUND
 
+    def test_create_rejects_same_org_other_workspace_trace(
+        self, auth_client, user, star_label
+    ):
+        """Known trace ids from another same-org workspace cannot be scored."""
+        _, hidden_project, hidden_trace = create_same_org_other_workspace_trace(user)
+
+        resp = auth_client.post(
+            SCORE_URL,
+            {
+                "source_type": "trace",
+                "source_id": str(hidden_trace.id),
+                "label_id": str(star_label.id),
+                "value": {"rating": 4},
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.data
+        assert not Score.no_workspace_objects.filter(
+            trace=hidden_trace,
+            deleted=False,
+        ).exists()
+        assert not AnnotationQueue.no_workspace_objects.filter(
+            project=hidden_project,
+            is_default=True,
+            deleted=False,
+        ).exists()
+
 
 @pytest.mark.django_db
 class TestBulkCreateScores:
-
     def test_bulk_create(self, auth_client, observation_span, star_label, thumbs_label):
         """Bulk create multiple scores on one source."""
         payload = {
@@ -319,6 +421,20 @@ class TestBulkCreateScores:
         assert len(result["scores"]) == 1
         assert len(result["errors"]) == 1
 
+    def test_bulk_create_rejects_legacy_nested_label_alias(
+        self, auth_client, observation_span, star_label
+    ):
+        payload = {
+            "source_type": "observation_span",
+            "source_id": observation_span.id,
+            "scores": [
+                {"labelId": str(star_label.id), "value": {"rating": 4}},
+            ],
+        }
+        resp = auth_client.post(f"{SCORE_URL}bulk/", payload, format="json")
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "labelId" in str(resp.data)
+
     def test_trace_bulk_create_can_save_notes_on_root_span(
         self, auth_client, trace, observation_span, thumbs_label, user
     ):
@@ -343,10 +459,13 @@ class TestBulkCreateScores:
             annotator=user,
             deleted=False,
         ).exists()
-        assert SpanNotes.objects.get(
-            span=observation_span,
-            created_by_user=user,
-        ).notes == "whole call note"
+        assert (
+            SpanNotes.objects.get(
+                span=observation_span,
+                created_by_user=user,
+            ).notes
+            == "whole call note"
+        )
 
         clear_resp = auth_client.post(
             f"{SCORE_URL}bulk/",
@@ -360,7 +479,7 @@ class TestBulkCreateScores:
             created_by_user=user,
         ).exists()
 
-    def test_for_source_prefills_span_notes_for_trace_queue_item(
+    def test_for_source_does_not_prefill_orphan_span_notes(
         self,
         auth_client,
         observe_project,
@@ -370,7 +489,12 @@ class TestBulkCreateScores:
         user,
         workspace,
     ):
-        """Reopening trace call annotation should prefill notes from root span."""
+        """A pre-existing SpanNote on the root span must NOT prefill a
+        fresh queue's editable ``existing_notes`` box. The SpanNote
+        belongs to a different (or no) queue context — bleeding it into
+        every queue containing the same span is the leak the per-queue
+        scoping work removes. The note is still surfaced as read-only
+        context in the ``span_notes`` list."""
         import json
 
         from tracer.models.span_notes import SpanNotes
@@ -417,7 +541,16 @@ class TestBulkCreateScores:
         result = resp.data["result"]
         assert len(result) == 1
         assert result[0]["item"]["source_id"] == str(trace.id)
-        assert result[0]["existing_notes"] == "whole call note"
+        # Editable existing_notes is empty for this queue — the SpanNote
+        # was not written via this queue's flow.
+        assert result[0]["existing_notes"] == ""
+        # The requester's own SpanNote is filtered out of the read-only
+        # span_notes list to avoid the "you see your note but can't edit
+        # it" UX trap — they'd only see this if a *different* user had
+        # written a SpanNote on the same span.
+        assert not any(
+            note.get("notes") == "whole call note" for note in result[0]["span_notes"]
+        )
         assert result[0]["span_notes_source_id"] == observation_span.id
 
     def test_queue_annotate_detail_prefills_and_saves_item_notes(
@@ -432,6 +565,11 @@ class TestBulkCreateScores:
     ):
         """Queue workspace whole-item notes use the trace root span."""
         from tracer.models.span_notes import SpanNotes
+        from tracer.tests._ch_seed import seed_ch_span
+
+        # The annotate-detail endpoint reads the root span from CH
+        # to resolve span_notes_source_id for trace-source items.
+        seed_ch_span(observation_span)
 
         queue = AnnotationQueue.objects.create(
             name="Trace workspace queue",
@@ -462,7 +600,17 @@ class TestBulkCreateScores:
 
         assert detail_resp.status_code == status.HTTP_200_OK, detail_resp.data
         detail = detail_resp.data["result"]
-        assert detail["existing_notes"] == "existing whole item note"
+        # Editable existing_notes is strictly per-queue: pre-existing
+        # SpanNote does not prefill this queue's notes box anymore.
+        # The requester's own SpanNote is also filtered from the read-only
+        # span_notes list (would otherwise be a "see-but-can't-edit"
+        # UX trap). It would appear there only if a *different* user
+        # had created the SpanNote on the same span.
+        assert detail["existing_notes"] == ""
+        assert not any(
+            note.get("notes") == "existing whole item note"
+            for note in detail.get("span_notes", [])
+        )
         assert detail["span_notes_source_id"] == observation_span.id
 
         submit_resp = auth_client.post(
@@ -480,10 +628,13 @@ class TestBulkCreateScores:
         )
 
         assert submit_resp.status_code == status.HTTP_200_OK, submit_resp.data
-        assert SpanNotes.objects.get(
-            span=observation_span,
-            created_by_user=user,
-        ).notes == "updated whole item note"
+        assert (
+            SpanNotes.objects.get(
+                span=observation_span,
+                created_by_user=user,
+            ).notes
+            == "updated whole item note"
+        )
 
     def test_for_source_scores_include_queue_target(
         self,
@@ -540,7 +691,6 @@ class TestBulkCreateScores:
 
 @pytest.mark.django_db
 class TestListScores:
-
     def test_list_scores_empty(self, auth_client):
         """Empty list returns 200."""
         resp = auth_client.get(SCORE_URL)
@@ -569,10 +719,139 @@ class TestListScores:
         )
         assert resp.status_code == status.HTTP_200_OK
 
+    def test_list_scores_rejects_legacy_source_alias(
+        self, auth_client, observation_span
+    ):
+        resp = auth_client.get(
+            SCORE_URL,
+            {
+                "sourceType": "observation_span",
+                "source_id": observation_span.id,
+            },
+        )
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "sourceType" in str(resp.data)
+
+
+@pytest.mark.django_db
+class TestGeneratedScoreRoutes:
+    def test_detail_put_patch_and_list_round_trip(
+        self, auth_client, observation_span, star_label
+    ):
+        created_resp = auth_client.post(
+            SCORE_URL,
+            {
+                "source_type": "observation_span",
+                "source_id": observation_span.id,
+                "label_id": str(star_label.id),
+                "value": {"rating": 3},
+                "notes": "initial note",
+            },
+            format="json",
+        )
+        assert created_resp.status_code == status.HTTP_200_OK, created_resp.data
+        score_id = created_resp.data["result"]["id"]
+
+        detail_resp = auth_client.get(f"{SCORE_URL}{score_id}/")
+        assert detail_resp.status_code == status.HTTP_200_OK, detail_resp.data
+        assert detail_resp.data["id"] == score_id
+        assert detail_resp.data["source_type"] == "observation_span"
+
+        list_resp = auth_client.get(
+            SCORE_URL,
+            {
+                "source_type": "observation_span",
+                "source_id": observation_span.id,
+                "label_id": str(star_label.id),
+            },
+        )
+        assert list_resp.status_code == status.HTTP_200_OK, list_resp.data
+        assert any(row["id"] == score_id for row in list_resp.data["results"])
+
+        put_resp = auth_client.put(
+            f"{SCORE_URL}{score_id}/",
+            {
+                "value": {"rating": 4},
+                "notes": "put note",
+                "score_source": "human",
+            },
+            format="json",
+        )
+        assert put_resp.status_code == status.HTTP_200_OK, put_resp.data
+        assert put_resp.data["value"] == {"rating": 4}
+        assert put_resp.data["notes"] == "put note"
+        assert put_resp.data["source_type"] == "observation_span"
+
+        patch_resp = auth_client.patch(
+            f"{SCORE_URL}{score_id}/",
+            {"notes": "patched note"},
+            format="json",
+        )
+        assert patch_resp.status_code == status.HTTP_200_OK, patch_resp.data
+        assert patch_resp.data["value"] == {"rating": 4}
+        assert patch_resp.data["notes"] == "patched note"
+
+    def test_put_requires_value_and_patch_rejects_source_changes(
+        self, auth_client, observation_span, star_label
+    ):
+        created_resp = auth_client.post(
+            SCORE_URL,
+            {
+                "source_type": "observation_span",
+                "source_id": observation_span.id,
+                "label_id": str(star_label.id),
+                "value": {"rating": 3},
+            },
+            format="json",
+        )
+        score_id = created_resp.data["result"]["id"]
+
+        put_resp = auth_client.put(
+            f"{SCORE_URL}{score_id}/",
+            {"notes": "missing value"},
+            format="json",
+        )
+        assert put_resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "value" in str(put_resp.data)
+
+        patch_resp = auth_client.patch(
+            f"{SCORE_URL}{score_id}/",
+            {"source_type": "trace"},
+            format="json",
+        )
+        assert patch_resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "source_type" in str(patch_resp.data)
+
+    def test_same_org_other_workspace_score_detail_and_update_are_hidden(
+        self, auth_client, user, star_label
+    ):
+        hidden_workspace, _, hidden_trace = create_same_org_other_workspace_trace(user)
+        hidden_score = Score.no_workspace_objects.create(
+            source_type="trace",
+            trace=hidden_trace,
+            label=star_label,
+            value={"rating": 2},
+            annotator=user,
+            organization=user.organization,
+            workspace=hidden_workspace,
+        )
+
+        detail_resp = auth_client.get(f"{SCORE_URL}{hidden_score.id}/")
+        assert detail_resp.status_code == status.HTTP_404_NOT_FOUND
+
+        patch_resp = auth_client.patch(
+            f"{SCORE_URL}{hidden_score.id}/",
+            {"notes": "blocked"},
+            format="json",
+        )
+        assert patch_resp.status_code == status.HTTP_404_NOT_FOUND
+
+        hidden_score.refresh_from_db()
+        assert hidden_score.notes in (None, "")
+
 
 @pytest.mark.django_db
 class TestForSourceEndpoint:
-
     def test_for_source(self, auth_client, observation_span, star_label, thumbs_label):
         """Get all scores for a specific source."""
         for label, val in [
@@ -605,10 +884,72 @@ class TestForSourceEndpoint:
         resp = auth_client.get(f"{SCORE_URL}for-source/")
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_for_source_rejects_legacy_source_alias(
+        self, auth_client, observation_span
+    ):
+        resp = auth_client.get(
+            f"{SCORE_URL}for-source/",
+            {
+                "sourceType": "observation_span",
+                "sourceId": observation_span.id,
+            },
+        )
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "sourceType" in str(resp.data)
+        assert "sourceId" in str(resp.data)
+
+    def test_span_scope_uses_lean_projection(
+        self, mocker, auth_client, observe_project, observation_span, star_label
+    ):
+        """The span-note org-scope check must read only project_id/trace_id via
+        ``scope_by_ids`` — reading the full span row (``reader.get``) OOMs the
+        shared ClickHouse cluster on fat voice spans (code 241). Guard that the
+        wide read is never used, and scores still return.
+        """
+        from unittest.mock import MagicMock
+
+        from tracer.services.clickhouse.v2.span_reader import SpanScope
+
+        auth_client.post(
+            SCORE_URL,
+            {
+                "source_type": "observation_span",
+                "source_id": observation_span.id,
+                "label_id": str(star_label.id),
+                "value": {"rating": 4},
+            },
+            format="json",
+        )
+
+        fake_reader = MagicMock()
+        fake_reader.__enter__.return_value = fake_reader
+        fake_reader.__exit__.return_value = False
+        fake_reader.scope_by_ids.return_value = {
+            observation_span.id: SpanScope(
+                project_id=str(observe_project.id), trace_id=None
+            )
+        }
+        fake_reader.get.side_effect = AssertionError(
+            "scores for-source must not read full span rows (OOMs shared ClickHouse)"
+        )
+        mocker.patch(
+            "tracer.services.clickhouse.v2.get_reader", return_value=fake_reader
+        )
+
+        resp = auth_client.get(
+            f"{SCORE_URL}for-source/",
+            {
+                "source_type": "observation_span",
+                "source_id": observation_span.id,
+            },
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        fake_reader.scope_by_ids.assert_called_once()
+        assert len(resp.data["result"]) == 1
+
 
 @pytest.mark.django_db
 class TestDeleteScore:
-
     def test_soft_delete(self, auth_client, observation_span, star_label):
         """Soft-delete a score."""
         resp = auth_client.post(
@@ -638,7 +979,6 @@ class TestDeleteScore:
 
 @pytest.mark.django_db
 class TestObservationSpanAnnotationCreatesScore:
-
     def test_add_annotation_creates_score(
         self, auth_client, observation_span, star_label
     ):
@@ -670,7 +1010,6 @@ class TestObservationSpanAnnotationCreatesScore:
 
 @pytest.mark.django_db
 class TestAutoCompleteQueueItems:
-
     @pytest.fixture
     def queue_setup(
         self,
@@ -716,19 +1055,27 @@ class TestAutoCompleteQueueItems:
         thumbs_label,
         queue_setup,
     ):
-        """Queue item auto-completes when all required labels are scored.
+        """Queue item auto-completes when all required labels are scored
+        *in that queue's context*.
 
-        Auto-complete now runs in ``transaction.on_commit`` (so a side-effect
-        failure can't poison the Score write transaction). Pytest's default
-        ``django_db`` mark wraps the test in a transaction that rolls back,
-        so on_commit hooks never fire. Wrap calls in
-        ``captureOnCommitCallbacks(execute=True)`` to force them to run.
+        Scores are now per-queue: the caller must pass ``queue_item_id``
+        (or score via the queue's submit endpoint) so the Score lands in
+        the right queue. An "inline" /scores/ POST without queue_item_id
+        attributes the score to the source's default queue, which leaves
+        a non-default test queue's item pending — that's the intended
+        per-queue isolation, exercised by ``test_no_auto_complete_partial_scoring``.
+
+        Auto-complete still runs in ``transaction.on_commit`` (so a
+        side-effect failure can't poison the Score write transaction).
+        Pytest's default ``django_db`` mark wraps the test in a
+        transaction that rolls back, so on_commit hooks never fire. Wrap
+        calls in ``captureOnCommitCallbacks(execute=True)`` to force them.
         """
         from django.test import TestCase
 
         queue, item = queue_setup
 
-        # Score first label
+        # Score first label (attribute to the test queue's item explicitly).
         with TestCase.captureOnCommitCallbacks(execute=True):
             auth_client.post(
                 SCORE_URL,
@@ -737,13 +1084,14 @@ class TestAutoCompleteQueueItems:
                     "source_id": observation_span.id,
                     "label_id": str(star_label.id),
                     "value": {"rating": 4},
+                    "queue_item_id": str(item.id),
                 },
                 format="json",
             )
         item.refresh_from_db()
         assert item.status != QueueItemStatus.COMPLETED.value
 
-        # Score second required label → should auto-complete
+        # Score second required label in the same queue → should auto-complete.
         with TestCase.captureOnCommitCallbacks(execute=True):
             auth_client.post(
                 SCORE_URL,
@@ -752,6 +1100,7 @@ class TestAutoCompleteQueueItems:
                     "source_id": observation_span.id,
                     "label_id": str(thumbs_label.id),
                     "value": {"value": "up"},
+                    "queue_item_id": str(item.id),
                 },
                 format="json",
             )
@@ -789,7 +1138,6 @@ class TestAutoCompleteQueueItems:
 
 @pytest.mark.django_db
 class TestSessionScores:
-
     @pytest.fixture
     def session_with_span(self, db, observe_project, trace_session):
         from datetime import timedelta
@@ -807,7 +1155,7 @@ class TestSessionScores:
             output={"response": "hey"},
         )
         span_id = f"session_span_{uuid.uuid4().hex[:10]}"
-        ObservationSpan.objects.create(
+        span = ObservationSpan.objects.create(
             id=span_id,
             project=observe_project,
             trace=t,
@@ -824,7 +1172,7 @@ class TestSessionScores:
             prompt_tokens=10,
             completion_tokens=5,
         )
-        return t
+        return span
 
     def test_session_list_includes_score_columns(
         self,
@@ -835,6 +1183,12 @@ class TestSessionScores:
         session_with_span,
     ):
         """Session list API returns annotation metric columns in config."""
+        from tracer.tests._ch_seed import seed_ch_span
+
+        # list_sessions reads session aggregation data from CH — seed the
+        # span so the session appears in results and triggers config building.
+        seed_ch_span(session_with_span)
+
         # Create a score on the session
         auth_client.post(
             SCORE_URL,
@@ -874,7 +1228,6 @@ class TestSessionScores:
 
 @pytest.mark.django_db
 class TestBackfillCommand:
-
     def test_backfill_trace_annotations(
         self,
         db,
@@ -1101,3 +1454,197 @@ class TestAnnotationTypeRoundtrip:
         )
         score = Score.objects.get(label=text_label, deleted=False)
         assert score.value == {"text": "This response is very helpful"}
+
+
+@pytest.mark.django_db
+class TestScoreOnCollectorOnlySpan:
+    """Annotating a collector-only span (no PG row) resolves via CH fallback, not 404."""
+
+    def _fake_reader(self, monkeypatch, ch_span_id, project, organization, trace):
+        from types import SimpleNamespace
+
+        fake = SimpleNamespace(
+            id=ch_span_id,
+            pk=ch_span_id,
+            project_id=str(project.id),
+            org_id=str(organization.id),
+            trace_id=str(trace.id),
+        )
+
+        class _R:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def get(self, sid):
+                return fake if str(sid) == ch_span_id else None
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: _R())
+
+    def _fake_reader_with_org(self, monkeypatch, ch_span_id, project, org_id, trace):
+        """Like _fake_reader but with explicit org_id to exercise the org-scope gate."""
+        from types import SimpleNamespace
+
+        fake = SimpleNamespace(
+            id=ch_span_id,
+            pk=ch_span_id,
+            project_id=str(project.id),
+            org_id=org_id,
+            trace_id=str(trace.id),
+        )
+
+        class _R:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def get(self, sid):
+                return fake if str(sid) == ch_span_id else None
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: _R())
+
+    def test_ch_only_span_denied_cross_org(
+        self,
+        auth_client,
+        trace,
+        organization,
+        star_label,
+        monkeypatch,
+    ):
+        """A CH span whose PROJECT belongs to another org must 404. The project is
+        the tenant boundary (``_tenant_scoped_project``) — a span is cross-org iff
+        its project is, so seed the span under a foreign-org project."""
+        from accounts.models.organization import Organization
+        from model_hub.models.ai_model import AIModel
+        from tracer.models.project import Project
+
+        foreign_org = Organization.objects.create(name=f"Foreign {uuid.uuid4().hex[:8]}")
+        foreign_project = Project.objects.create(
+            name="Foreign project",
+            organization=foreign_org,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        ch_span_id = "ch_" + uuid.uuid4().hex[:16]
+        self._fake_reader_with_org(
+            monkeypatch, ch_span_id, foreign_project, str(foreign_org.id), trace
+        )
+        payload = {
+            "source_type": "observation_span",
+            "source_id": ch_span_id,
+            "label_id": str(star_label.id),
+            "value": {"rating": 4},
+        }
+        resp = auth_client.post(SCORE_URL, payload, format="json")
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.content
+        assert not Score.objects.filter(observation_span_id=ch_span_id).exists()
+
+    def test_create_score_on_ch_only_span(
+        self, auth_client, observe_project, trace, organization, star_label, monkeypatch
+    ):
+        ch_span_id = "ch_" + uuid.uuid4().hex[:16]
+        self._fake_reader(monkeypatch, ch_span_id, observe_project, organization, trace)
+        payload = {
+            "source_type": "observation_span",
+            "source_id": ch_span_id,
+            "label_id": str(star_label.id),
+            "value": {"rating": 4},
+        }
+        resp = auth_client.post(SCORE_URL, payload, format="json")
+        assert resp.status_code == status.HTTP_200_OK, resp.content  # NOT 404
+        s = Score.objects.get(observation_span_id=ch_span_id, deleted=False)
+        assert s.source_type == "observation_span"
+        # denormalized trace locator stamped so it rolls up to the trace
+        assert str(s.trace_id) == str(trace.id)
+
+    def test_bulk_score_and_spannote_on_ch_only_span(
+        self, auth_client, observe_project, trace, organization, star_label, monkeypatch
+    ):
+        from tracer.models.span_notes import SpanNotes
+
+        ch_span_id = "ch_" + uuid.uuid4().hex[:16]
+        self._fake_reader(monkeypatch, ch_span_id, observe_project, organization, trace)
+        payload = {
+            "source_type": "observation_span",
+            "source_id": ch_span_id,
+            "span_notes": "looks correct",
+            "scores": [{"label_id": str(star_label.id), "value": {"rating": 5}}],
+        }
+        resp = auth_client.post(SCORE_URL + "bulk/", payload, format="json")
+        assert resp.status_code == status.HTTP_200_OK, resp.content  # NOT 404/500
+        assert Score.objects.filter(
+            observation_span_id=ch_span_id, deleted=False
+        ).exists()
+        # SpanNotes written by id (the FK rejects a CHSpan OBJECT) on the CH span id
+        assert SpanNotes.objects.filter(span_id=ch_span_id).exists()
+
+
+@pytest.mark.django_db
+class TestScoreOnCollectorOnlyTrace:
+    """Annotating a collector-only trace (no PG row) resolves via CH, not 404.
+
+    TH-6647: the Observe grid stores a source_type=trace item; scoring it must
+    CH-resolve the trace (via its root span) and attribute the score to a queue.
+    """
+
+    def _fake_trace_reader(self, monkeypatch, trace_id, project):
+        from types import SimpleNamespace
+
+        root_span = SimpleNamespace(
+            id="ch_" + uuid.uuid4().hex[:16],
+            project_id=str(project.id),
+            trace_id=str(trace_id),
+            parent_span_id="",  # root span
+            observation_type="agent",
+            status="OK",  # terminal → not "in progress"
+        )
+
+        class _R:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *exc):
+                return False
+
+            def list_by_trace(self_inner, tid, *, project_id=None):
+                return [root_span] if str(tid) == str(trace_id) else []
+
+            def roots_by_trace_ids(
+                self_inner, tids, *, include_heavy=False, project_id=None, org_id=None
+            ):
+                return [root_span] if str(trace_id) in {str(t) for t in tids} else []
+
+            def close(self_inner):
+                pass
+
+        monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: _R())
+
+    def test_create_score_on_ch_only_trace(
+        self, auth_client, observe_project, organization, star_label, monkeypatch
+    ):
+        """A collector trace scores end-to-end (200, not the TH-6647 404). Uses the
+        default-queue path, so it also exercises the CH `_resolve_default_queue_scope`
+        project fallback."""
+        trace_id = str(uuid.uuid4())  # collector trace: NO PG row
+        self._fake_trace_reader(monkeypatch, trace_id, observe_project)
+        payload = {
+            "source_type": "trace",
+            "source_id": trace_id,
+            "label_id": str(star_label.id),
+            "value": {"rating": 4},
+        }
+        resp = auth_client.post(SCORE_URL, payload, format="json")
+        assert resp.status_code == status.HTTP_200_OK, resp.content  # NOT 404
+        s = Score.objects.get(trace_id=trace_id, deleted=False)
+        assert s.source_type == "trace"
+        assert s.queue_item_id is not None  # attributed to a queue
