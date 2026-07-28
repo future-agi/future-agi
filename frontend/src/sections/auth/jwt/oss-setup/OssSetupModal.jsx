@@ -103,12 +103,13 @@ export default function OssSetupModal({
             <StepLabel>1. Open a Django shell:</StepLabel>
             <CommandBlock command={RESET_SHELL_CMD} />
 
-            <StepLabel>2. Generate a reset link:</StepLabel>
+            <StepLabel>2. Generate a sign-in link:</StepLabel>
             <CommandBlock command={RESET_PYTHON_SNIPPET} />
 
             <Typography variant="s1" color="text.secondary">
-              Open the printed link to set a new password (valid ~2 days), then
-              log in.
+              This prints a link that signs the user in. Treat it like a
+              password, share it privately, and open it promptly to set a new
+              password.
             </Typography>
           </Stack>
         )}

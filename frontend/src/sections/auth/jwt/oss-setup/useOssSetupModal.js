@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { useBoolean } from "src/hooks/use-boolean";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
@@ -6,22 +6,23 @@ import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { OSS_SETUP_SEEN_KEY, OSS_SETUP_TABS } from "./constants";
 
 export function useOssSetupModal({ enabled = true, autoOpenTab = null } = {}) {
-  const { isOSS, isLoading } = useDeploymentMode();
+  const { isOSS, isLoading, isSuccess } = useDeploymentMode();
   const open = useBoolean(false);
+  const openModal = open.onTrue;
   const [activeTab, setActiveTab] = useState(OSS_SETUP_TABS.CREATE);
 
-  const openCreate = () => {
+  const openCreate = useCallback(() => {
     setActiveTab(OSS_SETUP_TABS.CREATE);
-    open.onTrue();
-  };
+    openModal();
+  }, [openModal]);
 
-  const openReset = () => {
+  const openReset = useCallback(() => {
     setActiveTab(OSS_SETUP_TABS.RESET);
-    open.onTrue();
-  };
+    openModal();
+  }, [openModal]);
 
   useEffect(() => {
-    if (!enabled || isLoading || !isOSS) return;
+    if (!enabled || isLoading || !isSuccess || !isOSS) return;
 
     const hint = Object.values(OSS_SETUP_TABS).includes(autoOpenTab)
       ? autoOpenTab
@@ -45,12 +46,20 @@ export function useOssSetupModal({ enabled = true, autoOpenTab = null } = {}) {
 
     if (hint === OSS_SETUP_TABS.RESET) openReset();
     else openCreate();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, isLoading, isOSS, autoOpenTab]);
+  }, [
+    enabled,
+    isLoading,
+    isSuccess,
+    isOSS,
+    autoOpenTab,
+    openCreate,
+    openReset,
+  ]);
 
   return {
     isOSS,
     isLoading,
+    isSuccess,
     open: open.value,
     activeTab,
     setActiveTab,
