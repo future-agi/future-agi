@@ -174,6 +174,8 @@ function InlineTraceView({ traceId, spanId }) {
   const queryClient = useQueryClient();
   const { data, isLoading } = useGetTraceDetail(traceId);
   const projectId = data?.trace?.project;
+  const sessionId = data?.trace?.session;
+  const [showSession, setShowSession] = useState(false);
 
   // Saved views — includes both traces-type custom views and imagine tabs.
   const { data: savedViewsData } = useGetSavedViews(projectId);
@@ -353,17 +355,42 @@ function InlineTraceView({ traceId, spanId }) {
       {/* Tabs toolbar — includes the "+ Imagine" button so users can pivot
           to an Imagine view from the annotate workspace. Saved views
           themselves stay read-only (no rename/edit here). */}
-      <DrawerToolbar
-        tabs={drawerTabs}
-        activeTabId={activeDrawerTab}
-        onTabChange={handleTabChange}
-        onCloseTab={handleCloseTab}
-        onCreateImagineTab={handleCreateImagineTab}
-        onDisplayOpen={(el) => setDisplayAnchorEl(el)}
-        readOnly
-        readOnlyTabTooltip={READ_ONLY_TAB_TOOLTIP}
-        hideFilter
-      />
+      <Stack direction="row" alignItems="center" spacing={1}>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <DrawerToolbar
+            tabs={drawerTabs}
+            activeTabId={activeDrawerTab}
+            onTabChange={handleTabChange}
+            onCloseTab={handleCloseTab}
+            onCreateImagineTab={handleCreateImagineTab}
+            onDisplayOpen={(el) => setDisplayAnchorEl(el)}
+            readOnly
+            readOnlyTabTooltip={READ_ONLY_TAB_TOOLTIP}
+            hideFilter
+          />
+        </Box>
+        {sessionId && !showSession && (
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => setShowSession(true)}
+          >
+            View session
+          </Button>
+        )}
+        {showSession && (
+          <Button size="small" onClick={() => setShowSession(false)}>
+            Back to trace
+          </Button>
+        )}
+      </Stack>
+
+      {showSession ? (
+        <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden", p: 1 }}>
+          <SessionContent content={{ session_id: sessionId }} />
+        </Box>
+      ) : (
+        <>
 
       {/* Display options popover */}
       <TraceDisplayPanel
@@ -520,6 +547,9 @@ function InlineTraceView({ traceId, spanId }) {
           </>
         )}
       </Box>
+
+        </>
+        )}
 
       <ConfirmDialog
         open={Boolean(deleteTabId)}
