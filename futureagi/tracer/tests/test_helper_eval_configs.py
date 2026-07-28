@@ -1,9 +1,10 @@
 """Tests for get_project_eval_configs — PG-native eval-config discovery."""
 import pytest
 
+from model_hub.models.choices import DataTypeChoices
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project
-from tracer.utils.helper import get_project_eval_configs
+from tracer.utils.helper import determine_value_type, get_project_eval_configs
 
 
 @pytest.mark.django_db
@@ -38,3 +39,12 @@ def test_excludes_other_projects_and_empty_case(project, eval_template):
 
     assert configs == []
     assert ids == []
+
+
+def test_determine_value_type_classifies_audio_data_urls():
+    assert (
+        determine_value_type("data:audio/wav;base64,AAAA")
+        == DataTypeChoices.AUDIO.value
+    )
+    assert determine_value_type("data:image/png;base64,AAAA") == DataTypeChoices.IMAGE.value
+    assert determine_value_type("plain text") == DataTypeChoices.TEXT.value
