@@ -1,10 +1,12 @@
 import React, { useState, useCallback } from "react";
 import PropTypes from "prop-types";
+import { useParams } from "react-router";
 import { Box, Popover, Stack, Typography } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 import { enqueueSnackbar } from "notistack";
+import { useDashboardFilterValues } from "src/hooks/useDashboards";
 import { normalizeTags } from "./tagUtils";
 import TagChip from "./TagChip";
 import TagInput from "./TagInput";
@@ -19,8 +21,18 @@ const AddTagsPopover = ({
   currentTags = [],
   onSuccess,
 }) => {
+  const { observeId } = useParams();
+  const projectId = observeId;
   const items = Array.isArray(bulkItems) ? bulkItems : [];
   const isBulk = items.length > 1;
+
+  const { data: projectTagNames = [] } = useDashboardFilterValues({
+    metricName: "tag",
+    metricType: "system_metric",
+    projectIds: projectId ? [projectId] : [],
+    source: "traces",
+    enabled: open && Boolean(projectId),
+  });
 
   const [tags, setTags] = useState(() =>
     isBulk ? [] : normalizeTags(currentTags),
@@ -144,6 +156,7 @@ const AddTagsPopover = ({
       <TagInput
         onAdd={handleAdd}
         existingNames={tags.map((t) => t.name)}
+        suggestions={projectTagNames}
         disabled={isPending}
       />
 

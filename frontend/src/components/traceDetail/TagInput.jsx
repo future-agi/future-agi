@@ -11,6 +11,7 @@ import { TAG_COLORS, hashColor } from "./tagUtils";
  *   onAdd          — called with { name, color } when user presses Enter
  *   onCancel       — called when user presses Escape or input blurs empty
  *   existingNames  — array of names to prevent duplicates
+ *   suggestions    — existing project tag names to offer while typing
  *   disabled       — disables input
  *   placeholder    — placeholder text
  *   autoFocus      — auto-focus on mount
@@ -20,6 +21,7 @@ const TagInput = ({
   onAdd,
   onCancel,
   existingNames = [],
+  suggestions = [],
   disabled = false,
   placeholder = "Add tag...",
   autoFocus = true,
@@ -30,6 +32,12 @@ const TagInput = ({
 
   const previewColor =
     selectedColor || (value.trim() ? hashColor(value.trim()) : TAG_COLORS[0]);
+  const matchingSuggestions = suggestions.filter(
+    (name) =>
+      name &&
+      !existingNames.includes(name) &&
+      name.toLowerCase().includes(value.trim().toLowerCase()),
+  );
 
   const handleSubmit = useCallback(() => {
     const name = value.trim();
@@ -135,6 +143,45 @@ const TagInput = ({
         )}
       </Box>
 
+      {value.trim() && matchingSuggestions.length > 0 && (
+        <Stack
+          sx={{
+            maxHeight: 140,
+            overflowY: "auto",
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "4px",
+          }}
+        >
+          {matchingSuggestions.map((name) => (
+            <Box
+              key={name}
+              component="button"
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                onAdd({ name, color: hashColor(name) });
+                setValue("");
+                setSelectedColor(null);
+              }}
+              sx={{
+                border: 0,
+                bgcolor: "transparent",
+                color: "text.primary",
+                cursor: "pointer",
+                fontSize,
+                textAlign: "left",
+                px: 1,
+                py: 0.5,
+                "&:hover": { bgcolor: "action.hover" },
+              }}
+            >
+              {name}
+            </Box>
+          ))}
+        </Stack>
+      )}
+
       {/* Color palette — shown when user is typing */}
       {value.trim() && (
         <Stack direction="row" gap="3px" sx={{ pl: 0.25 }}>
@@ -167,6 +214,7 @@ TagInput.propTypes = {
   onAdd: PropTypes.func.isRequired,
   onCancel: PropTypes.func,
   existingNames: PropTypes.arrayOf(PropTypes.string),
+  suggestions: PropTypes.arrayOf(PropTypes.string),
   disabled: PropTypes.bool,
   placeholder: PropTypes.string,
   autoFocus: PropTypes.bool,
