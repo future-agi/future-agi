@@ -231,6 +231,141 @@ def test_update_cell_value_api_accepts_canonical_payload(
     assert cell.value == "Gamma"
 
 
+@pytest.fixture
+def audio_dataset_seed(organization, workspace):
+    dataset = Dataset.objects.create(
+        name="Audio duration dataset",
+        organization=organization,
+        workspace=workspace,
+    )
+    audio_col = Column.objects.create(
+        name="recording",
+        data_type=DataTypeChoices.AUDIO.value,
+        dataset=dataset,
+        source=SourceChoices.OTHERS.value,
+    )
+    row = Row.objects.create(dataset=dataset, order=1)
+    cell = Cell.objects.create(
+        dataset=dataset,
+        row=row,
+        column=audio_col,
+        value=None,
+        column_metadata=None,
+    )
+    return dataset, row, audio_col, cell
+
+
+def test_update_audio_cell_persists_duration_for_numeric_filters(
+    auth_client, audio_dataset_seed, monkeypatch
+):
+    dataset, row, audio_col, cell = audio_dataset_seed
+    upload_calls = []
+
+    def fake_upload(_value, **kwargs):
+        upload_calls.append(kwargs)
+        return "https://storage.example/audio/recording.mp3", 12.04
+
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.upload_audio_to_s3_duration",
+        fake_upload,
+    )
+    response = auth_client.post(
+        f"/model-hub/develops/{dataset.id}/update_cell_value/",
+        {
+            "row_id": str(row.id),
+            "column_id": str(audio_col.id),
+            "new_value": "data:audio/mpeg;base64,AAAA",
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    cell.refresh_from_db()
+    assert cell.column_metadata == {"audio_duration_seconds": 12.04}
+    assert upload_calls[0]["duration_seconds"] is None
+
+    assert _apply(
+        dataset,
+        [_filter(audio_col.id, "number", "greater_than", 1)],
+        [audio_col],
+    ) == [row]
+    assert _apply(
+        dataset,
+        [_filter(audio_col.id, "number", "less_than", 5)],
+        [audio_col],
+    ) == []
+    assert _apply(
+        dataset,
+        [_filter(audio_col.id, "number", "between", [10, 15])],
+        [audio_col],
+    ) == [row]
+
+
+def test_update_audio_cell_replaces_and_clears_duration_metadata(
+    auth_client, audio_dataset_seed, monkeypatch
+):
+    dataset, row, audio_col, cell = audio_dataset_seed
+    old_url = "https://storage.example/audio/old.mp3"
+    cell.value = old_url
+    cell.column_metadata = {"audio_duration_seconds": 12.04, "source": "upload"}
+    cell.save()
+    upload_calls = []
+
+    def fake_upload(_value, **kwargs):
+        upload_calls.append(kwargs)
+        return "https://storage.example/audio/new.mp3", 7.5
+
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.upload_audio_to_s3_duration",
+        fake_upload,
+    )
+    response = auth_client.post(
+        f"/model-hub/develops/{dataset.id}/update_cell_value/",
+        {
+            "row_id": str(row.id),
+            "column_id": str(audio_col.id),
+            "new_value": "data:audio/mpeg;base64,BBBB",
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    cell.refresh_from_db()
+    assert cell.column_metadata == {
+        "audio_duration_seconds": 7.5,
+        "source": "upload",
+    }
+    assert upload_calls[0]["duration_seconds"] is None
+
+    response = auth_client.post(
+        f"/model-hub/develops/{dataset.id}/update_cell_value/",
+        {
+            "row_id": str(row.id),
+            "column_id": str(audio_col.id),
+            "new_value": cell.value,
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert upload_calls[1]["duration_seconds"] == 7.5
+
+    response = auth_client.post(
+        f"/model-hub/develops/{dataset.id}/update_cell_value/",
+        {
+            "row_id": str(row.id),
+            "column_id": str(audio_col.id),
+            "new_value": "",
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    cell.refresh_from_db()
+    assert cell.value is None
+    assert cell.column_metadata == {"source": "upload"}
+
+
 def test_dataset_row_data_api_rejects_legacy_filter_shape(
     auth_client, dataset_filter_seed
 ):
