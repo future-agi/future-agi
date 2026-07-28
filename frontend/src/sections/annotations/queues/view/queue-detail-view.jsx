@@ -823,6 +823,41 @@ export default function QueueDetailView() {
       >
         <DialogTitle>Assign Selected Items</DialogTitle>
         <DialogContent>
+          {queueAnnotators.length > 1 && (
+            <Stack direction="row" spacing={1} sx={{ mt: 1, mb: 0.5 }}>
+              <Button
+                size="small"
+                disabled={isAssigningItems}
+                onClick={() => {
+                  const allSelected = queueAnnotators.every((annotator) =>
+                    bulkAssignUserIds.has(String(annotator.user_id)),
+                  );
+                  setBulkAssignUserIds(
+                    allSelected
+                      ? new Set()
+                      : new Set(
+                          queueAnnotators.map((annotator) =>
+                            String(annotator.user_id),
+                          ),
+                        ),
+                  );
+                }}
+              >
+                {queueAnnotators.every((annotator) =>
+                  bulkAssignUserIds.has(String(annotator.user_id)),
+                )
+                  ? "Deselect All"
+                  : "Select All"}
+              </Button>
+              <Button
+                size="small"
+                disabled={isAssigningItems}
+                onClick={() => setBulkAssignUserIds(new Set())}
+              >
+                Select None
+              </Button>
+            </Stack>
+          )}
           <Stack spacing={0.5} sx={{ mt: 1 }}>
             {queueAnnotators.map((annotator) => {
               const uid = String(annotator.user_id);
