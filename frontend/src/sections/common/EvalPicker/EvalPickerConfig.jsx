@@ -122,7 +122,14 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
   // Extract required variables from eval template
   const variables = useMemo(() => {
     const keys = normalizedEvalData?.requiredKeys || [];
-    return [...new Set(keys)];
+    const instructions =
+      normalizedEvalData?.instructions ||
+      normalizedEvalData?.config?.rule_prompt ||
+      "";
+    const liveKeys = (instructions.match(/\{\{\s*([^{}]+?)\s*\}\}/g) || [])
+      .map((match) => match.replace(/\{\{|\}\}/g, "").trim())
+      .filter(Boolean);
+    return [...new Set([...keys, ...liveKeys])];
   }, [normalizedEvalData]);
 
   // Column options for mapping dropdowns
