@@ -688,6 +688,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   });
   const [openCustomColumn, setOpenCustomColumn] = useState(false);
   const [extraFilters, setExtraFiltersRaw] = useState([]);
+  const [traceSearch, setTraceSearch] = useState("");
   const [compareExtraFilters, setCompareExtraFiltersRaw] = useState([]);
   const [filterChipsSaved, setFilterChipsSaved] = useState(false);
   // Track which graph the filter panel targets in compare mode: "primary" | "compare"
@@ -2411,7 +2412,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
             colId: c.id,
             hide: c.isVisible === false,
           }))
-        : activeGridApi?.getColumnState?.() ?? undefined;
+        : (activeGridApi?.getColumnState?.() ?? undefined);
     // Dedup colIds before persisting — the store-derived save path bypasses
     // AG Grid's own colId uniqueness.
     const seenColIds = new Set();
@@ -3144,6 +3145,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       {/* Active filter chips — in compare mode, only show Clear/Save at top (chips are inline on each graph) */}
       {!filterChipsSaved && !showCompare && (
         <FilterChips
+          searchTerm={traceSearch}
           extraFilters={extraFilters.map((f) => ({
             ...f,
             display_name:
@@ -3159,9 +3161,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
             setExternalFilterAnchor(null);
             setExtraFilters((prev) => prev.filter((_, i) => i !== idx));
           }}
+          onRemoveSearch={() => setTraceSearch("")}
           onClearAll={() => {
             setExternalFilterAnchor(null);
             setExtraFilters([]);
+            setTraceSearch("");
             try {
               localStorage.removeItem(filtersStorageKey);
             } catch {
@@ -3665,6 +3669,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 setIsPrimaryFilterOpen(!isPrimaryFilterOpen);
               }}
               onApplyExtraFilters={setExtraFilters}
+              searchTerm={traceSearch}
+              onSearch={setTraceSearch}
               onClearExtraFilters={clearPrimaryExtraFilters}
               graphFilters={selectPanelGraphFilters(
                 filterTarget,
@@ -3794,8 +3800,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               selectedCount={
                 projectSource === PROJECT_SOURCE.SIMULATOR
                   ? simCallFilterSelectionMode
-                    ? simCallMeta.totalMatching ??
-                      simCallMeta.totalPages * simCallMeta.pageLimit
+                    ? (simCallMeta.totalMatching ??
+                      simCallMeta.totalPages * simCallMeta.pageLimit)
                     : selectedCallIds?.length || 0
                   : selectedTab === "trace"
                     ? allTracesSelected
@@ -4580,6 +4586,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               >
                 <Suspense fallback={<ComponentLoader />}>
                   <TraceGrid
+                    search={traceSearch}
                     columns={columns["primary-trace"]}
                     setColumns={(columns) =>
                       setSpecificColumns("primary-trace", columns)
@@ -4620,6 +4627,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               >
                 <Suspense fallback={<ComponentLoader />}>
                   <TraceGrid
+                    search={traceSearch}
                     columns={columns["compare-trace"]}
                     setColumns={(columns) =>
                       setSpecificColumns("compare-trace", columns)

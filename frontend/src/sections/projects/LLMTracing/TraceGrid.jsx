@@ -60,6 +60,7 @@ const TraceGrid = React.forwardRef(
       canonicalOrderRef,
       enabled = true,
       showErrors = false,
+      search = "",
     },
     gridRef,
   ) => {
@@ -109,6 +110,7 @@ const TraceGrid = React.forwardRef(
           extraFilters: extraFilters || EMPTY_EXTRA_FILTERS,
           metricFilters: metricFilters || [],
           hasEvalFilter,
+          search,
           dateInterval,
           projectId,
           enabled,
@@ -118,6 +120,7 @@ const TraceGrid = React.forwardRef(
         extraFilters,
         metricFilters,
         hasEvalFilter,
+        search,
         dateInterval,
         projectId,
         enabled,
@@ -235,6 +238,7 @@ const TraceGrid = React.forwardRef(
                   ]),
                 ),
                 ...(dateInterval && { interval: dateInterval }),
+                ...(search ? { search } : {}),
               });
 
               // Use prefetched data if available, otherwise fetch
@@ -641,6 +645,7 @@ TraceGrid.propTypes = {
   metricFilters: PropTypes.array,
   enabled: PropTypes.bool,
   showErrors: PropTypes.bool,
+  search: PropTypes.string,
 };
 
 export default TraceGrid;

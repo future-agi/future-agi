@@ -185,10 +185,11 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             pv_fragment = "AND project_version_id = %(project_version_id)s"
             self.params["project_version_id"] = self.project_version_id
 
-        # Search filter on trace_name
+        # Free-text search spans the fields shown in the trace table. Keep the
+        # predicate in the root query so pagination and totals stay aligned.
         search_fragment = ""
         if self.search:
-            search_fragment = "AND trace_name ILIKE %(search)s"
+            search_fragment = "AND (trace_name ILIKE %(search)s OR input ILIKE %(search)s OR output ILIKE %(search)s)"
             self.params["search"] = f"%{self.search}%"
 
         # Configurable columns — only SELECT requested columns.
@@ -283,7 +284,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
         search_fragment = ""
         if self.search:
-            search_fragment = "AND trace_name ILIKE %(search)s"
+            search_fragment = "AND (trace_name ILIKE %(search)s OR input ILIKE %(search)s OR output ILIKE %(search)s)"
             self.params["search"] = f"%{self.search}%"
 
         query = f"""
@@ -397,7 +398,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         # Search filter (reuse from build())
         search_fragment = ""
         if self.search:
-            search_fragment = "AND trace_name ILIKE %(search)s"
+            search_fragment = "AND (trace_name ILIKE %(search)s OR input ILIKE %(search)s OR output ILIKE %(search)s)"
             params["search"] = f"%{self.search}%"
 
         query = f"""

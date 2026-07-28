@@ -166,6 +166,7 @@ class TraceObserveListQuerySerializer(StrictInputSerializer):
         required=False, default=30, min_value=1, max_value=500
     )
     interval = serializers.CharField(required=False, allow_blank=True)
+    search = serializers.CharField(required=False, allow_blank=True)
 
 
 class TraceObserveListMetadataSerializer(serializers.Serializer):

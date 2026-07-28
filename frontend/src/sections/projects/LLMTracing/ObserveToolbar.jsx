@@ -1,7 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import PropTypes from "prop-types";
-import { Badge, Button, MenuItem, Popover, Stack } from "@mui/material";
+import {
+  Badge,
+  Button,
+  MenuItem,
+  Popover,
+  Stack,
+  TextField,
+} from "@mui/material";
 import { startOfToday, startOfTomorrow, startOfYesterday, sub } from "date-fns";
 import Iconify from "src/components/iconify";
 import DisplayPanel from "./DisplayPanel";
@@ -36,6 +43,8 @@ const ObserveToolbar = ({
   dateFilter,
   setDateFilter,
   // Filter
+  searchTerm = "",
+  onSearch,
   hasActiveFilter,
   canSaveView,
   onSaveView,
@@ -111,11 +120,14 @@ const ObserveToolbar = ({
   const [panelFilters, setPanelFilters] = useState(null); // stores raw panel-format filters
   const [dateAnchor, setDateAnchor] = useState(null);
   const [customDateOpen, setCustomDateOpen] = useState(false);
+  const [searchInput, setSearchInput] = useState(searchTerm);
   const dateButtonRef = useRef(null);
   const setFilterButtonNode = useCallback((node) => {
     filterButtonRef.current = node;
     setFilterButtonEl(node);
   }, []);
+
+  useEffect(() => setSearchInput(searchTerm), [searchTerm]);
 
   const handleDateOptionChange = (option) => {
     setDateAnchor(null);
@@ -310,6 +322,22 @@ const ObserveToolbar = ({
 
   const toolbarContent = (
     <Stack direction="row" alignItems="center" gap={1}>
+      {!isCompareActive && mode === "traces" && (
+        <TextField
+          size="small"
+          value={searchInput}
+          onChange={(event) => setSearchInput(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") onSearch?.(searchInput.trim());
+          }}
+          placeholder="Search traces"
+          inputProps={{ "aria-label": "Search traces" }}
+          sx={{
+            width: 190,
+            "& .MuiInputBase-root": { height: 26, fontSize: 13 },
+          }}
+        />
+      )}
       {/* Date picker — hidden in compare mode (each graph has its own) */}
       {dateLabel && !isCompareActive && (
         <>
@@ -599,6 +627,8 @@ ObserveToolbar.propTypes = {
   excludeSimulationCalls: PropTypes.bool,
   onToggleSimulationCalls: PropTypes.func,
   onApplyExtraFilters: PropTypes.func,
+  searchTerm: PropTypes.string,
+  onSearch: PropTypes.func,
   onClearExtraFilters: PropTypes.func,
   onClearCompareExtraFilters: PropTypes.func,
   filterFields: PropTypes.array,

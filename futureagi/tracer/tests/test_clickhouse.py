@@ -2585,6 +2585,23 @@ class TestTraceListQueryBuilder:
         assert "uniq(trace_id)" in query
         assert "parent_span_id IS NULL" in query
 
+    def test_free_text_search_matches_name_and_content(self):
+        """Search must cover the trace name plus root input/output fields."""
+        from tracer.services.clickhouse.query_builders import TraceListQueryBuilder
+
+        builder = TraceListQueryBuilder(
+            project_id="test-project-id", search="timeout", page_size=10
+        )
+        query, params = builder.build()
+        assert "trace_name ILIKE %(search)s" in query
+        assert "input ILIKE %(search)s" in query
+        assert "output ILIKE %(search)s" in query
+        assert params["search"] == "%timeout%"
+
+        count_query, count_params = builder.build_count_query()
+        assert "input ILIKE %(search)s" in count_query
+        assert count_params["search"] == "%timeout%"
+
     def test_build_eval_query(self):
         """Phase-2 eval query should query tracer_eval_logger grouped by config."""
         from tracer.services.clickhouse.query_builders import TraceListQueryBuilder
