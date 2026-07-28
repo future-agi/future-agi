@@ -162,8 +162,10 @@ def initiate_chat(
                 )
 
         # Resolve the simulated customer's first message (LLM → provided initial_message → default).
-        initial_message, initial_message_source = get_chat_initial_message(
-            call_execution
+        # usage_metrics carries the LLM invocation's actual prompt/completion tokens so we can
+        # roll them into the billed total_tokens; it is None when the source is not LLM-generated.
+        initial_message, initial_message_source, initial_llm_usage = (
+            get_chat_initial_message(call_execution)
         )
 
         # Create assistant using ChatServiceManager
@@ -225,14 +227,23 @@ def initiate_chat(
 
         message = ChatMessage(role=ChatRole.USER, content=initial_message)
 
-        # Calculate tokens for the initial message
+        # Calculate tokens for the initial message.
+        # Prefer the LLM invocation's actual prompt+completion token counts (so the
+        # persona-first-line LLM call is fully billed). Fall back to a heuristic
+        # estimate on the text when the message did not come from an LLM call
+        # (provided_initial_message / default_hi paths) or the LLM did not return
+        # usage.
         initial_msg_text = (
             initial_message
             if isinstance(initial_message, str)
             else str(initial_message)
         )
         initial_tokens = 0
-        if initial_msg_text:
+        if initial_llm_usage:
+            initial_tokens = int(initial_llm_usage.get("input_tokens") or 0) + int(
+                initial_llm_usage.get("output_tokens") or 0
+            )
+        elif initial_msg_text:
             try:
                 from ee.agenthub.traceerroragent.token_utils import (
                     estimate_tokens_text,
