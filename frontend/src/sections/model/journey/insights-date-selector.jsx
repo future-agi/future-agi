@@ -20,6 +20,7 @@ export function getDateRange(range) {
       break;
     case "yesterday":
       fromDate.setDate(toDate.getDate() - 1);
+      toDate.setDate(toDate.getDate() - 1);
       break;
     case "7d":
       fromDate.setDate(toDate.getDate() - 6); // Subtract 6 days (7 days including today)
