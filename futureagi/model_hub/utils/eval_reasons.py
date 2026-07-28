@@ -15,6 +15,11 @@ except ImportError:
 from model_hub.models.choices import EvalExplanationSummaryStatus, SourceChoices
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.evals_metric import UserEvalMetric
+
+
+def eval_name_from_reason_column(column_name: str) -> str:
+    """Remove only the reason suffix from a generated reason-column name."""
+    return column_name.removesuffix("-reason")
 from tfc.temporal import temporal_activity
 
 logger = structlog.get_logger(__name__)
@@ -59,7 +64,7 @@ def get_eval_reasons(
 
     # Process reason columns
     for column in reason_columns:
-        eval_name = column.name.split("-reason")[0]
+        eval_name = eval_name_from_reason_column(column.name)
         # Extract user_eval_metric_id from source_id (format: "prefix-sourceid-id")
         user_eval_metric_id = None
         if column.source_id and "-sourceid-" in str(column.source_id):

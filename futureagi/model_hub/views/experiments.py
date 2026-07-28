@@ -40,6 +40,7 @@ from model_hub.models.experiments import (
     ExperimentsTable,
 )
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+from model_hub.utils.eval_reasons import eval_name_from_reason_column
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     DatasetRowDiffRequestSerializer,
@@ -1147,7 +1148,7 @@ class DatasetExperimentsView(APIView):
                             "name": (
                                 column.name
                                 if "-reason" not in column.name
-                                else column.name.split("-reason")[0]
+                                else eval_name_from_reason_column(column.name)
                             ),
                             "data_type": (
                                 column.data_type
