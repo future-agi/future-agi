@@ -22,28 +22,30 @@ def sos_admin():
     return admin.site._registry[SOSLoginProxy]
 
 
+def _make_user(organization, label, **flags):
+    return User.objects.create(
+        email=f"{label}-{uuid.uuid4().hex[:8]}@futureagi.com",
+        name=label.title(),
+        organization=organization,
+        is_active=True,
+        **flags,
+    )
+
+
+@pytest.fixture
+def sos_operator(db, organization):
+    """Staff, not superuser — staff status is the SOS grant."""
+    return _make_user(organization, "operator", is_staff=True, is_superuser=False)
+
+
 @pytest.fixture
 def superuser(db, organization):
-    return User.objects.create(
-        email=f"root-{uuid.uuid4().hex[:8]}@futureagi.com",
-        name="Root",
-        organization=organization,
-        is_active=True,
-        is_staff=True,
-        is_superuser=True,
-    )
+    return _make_user(organization, "root", is_staff=True, is_superuser=True)
 
 
 @pytest.fixture
-def staff_user(db, organization):
-    return User.objects.create(
-        email=f"staff-{uuid.uuid4().hex[:8]}@futureagi.com",
-        name="Staff",
-        organization=organization,
-        is_active=True,
-        is_staff=True,
-        is_superuser=False,
-    )
+def non_staff_user(db, organization):
+    return _make_user(organization, "customer", is_staff=False, is_superuser=False)
 
 
 def _request(rf_method, url, user, data=None):
@@ -56,76 +58,106 @@ def _request(rf_method, url, user, data=None):
 
 @pytest.mark.django_db
 class TestSOSLoginAdminAccess:
-    def test_changelist_rejects_non_superuser_staff(self, sos_admin, staff_user):
-        request = _request(RequestFactory().get, CHANGELIST_URL, staff_user)
+    def test_staff_may_open_the_page(self, sos_admin, sos_operator):
+        request = _request(RequestFactory().get, CHANGELIST_URL, sos_operator)
+        assert sos_admin.sos_login_view(request).status_code == 200
+
+    def test_superuser_may_open_the_page(self, sos_admin, superuser):
+        request = _request(RequestFactory().get, CHANGELIST_URL, superuser)
+        assert sos_admin.sos_login_view(request).status_code == 200
+
+    def test_non_staff_is_rejected(self, sos_admin, non_staff_user):
+        request = _request(RequestFactory().get, CHANGELIST_URL, non_staff_user)
         with pytest.raises(PermissionDenied):
             sos_admin.sos_login_view(request)
 
-    def test_module_hidden_from_non_superuser_staff(self, sos_admin, staff_user):
-        request = _request(RequestFactory().get, CHANGELIST_URL, staff_user)
+    def test_inactive_staff_is_rejected(self, sos_admin, sos_operator):
+        sos_operator.is_active = False
+        request = _request(RequestFactory().get, CHANGELIST_URL, sos_operator)
+
         assert sos_admin.has_module_permission(request) is False
-        assert sos_admin.has_view_permission(request) is False
+        with pytest.raises(PermissionDenied):
+            sos_admin.sos_login_view(request)
 
-    def test_module_visible_to_superuser(self, sos_admin, superuser):
-        request = _request(RequestFactory().get, CHANGELIST_URL, superuser)
-        assert sos_admin.has_module_permission(request) is True
+    def test_module_visible_to_staff_hidden_from_others(
+        self, sos_admin, sos_operator, non_staff_user
+    ):
+        allowed = _request(RequestFactory().get, CHANGELIST_URL, sos_operator)
+        denied = _request(RequestFactory().get, CHANGELIST_URL, non_staff_user)
 
-    def test_add_change_and_delete_are_never_allowed(self, sos_admin, superuser):
-        request = _request(RequestFactory().get, CHANGELIST_URL, superuser)
+        assert sos_admin.has_module_permission(allowed) is True
+        assert sos_admin.has_view_permission(allowed) is True
+        assert sos_admin.has_module_permission(denied) is False
+        assert sos_admin.has_view_permission(denied) is False
+
+    def test_add_change_and_delete_are_never_allowed(self, sos_admin, sos_operator):
+        request = _request(RequestFactory().get, CHANGELIST_URL, sos_operator)
         assert sos_admin.has_add_permission(request) is False
         assert sos_admin.has_change_permission(request) is False
         assert sos_admin.has_delete_permission(request) is False
 
-    def test_superuser_row_stays_reachable_on_the_admin_index(
-        self, sos_admin, superuser
-    ):
-        request = _request(RequestFactory().get, CHANGELIST_URL, superuser)
-        perms = sos_admin.get_model_perms(request)
-        assert True in perms.values()
-        assert perms["view"] is True
-
-    def test_login_endpoint_rejects_get(self, sos_admin, superuser):
-        request = _request(RequestFactory().get, LOGIN_URL, superuser)
+    def test_login_endpoint_rejects_get(self, sos_admin, sos_operator):
+        request = _request(RequestFactory().get, LOGIN_URL, sos_operator)
         assert sos_admin.start_sos_session_view(request).status_code == 405
 
-    def test_login_endpoint_rejects_non_superuser_staff(
-        self, sos_admin, staff_user, user
-    ):
+    def test_login_endpoint_rejects_non_staff(self, sos_admin, non_staff_user, user):
         request = _request(
-            RequestFactory().post, LOGIN_URL, staff_user, {"user_id": str(user.id)}
+            RequestFactory().post, LOGIN_URL, non_staff_user, {"user_id": str(user.id)}
         )
-        before = AuthToken.objects.filter(user=user).count()
 
         response = sos_admin.start_sos_session_view(request)
 
         assert response.status_code == 302
-        assert AuthToken.objects.filter(user=user).count() == before
+        assert AuthToken.objects.filter(user=user).count() == 0
+
+
+@pytest.mark.django_db
+class TestSOSAdminIndexIsolation:
+    """Non-superusers see the SOS entry and nothing else on the admin index."""
+
+    def _models_for(self, account):
+        request = _request(RequestFactory().get, "/admin/", account)
+        return [
+            model["object_name"]
+            for app in admin.site.get_app_list(request)
+            for model in app["models"]
+        ]
+
+    def test_staff_sees_only_the_sos_entry(self, sos_operator):
+        assert self._models_for(sos_operator) == ["SOSLoginProxy"]
+
+    def test_superuser_sees_the_full_admin(self, superuser):
+        models = self._models_for(superuser)
+        assert "SOSLoginProxy" in models
+        assert len(models) > 1
 
 
 @pytest.mark.django_db
 class TestSOSLoginAdminSearch:
-    def test_no_query_lists_nobody(self, sos_admin, superuser, user):
-        request = _request(RequestFactory().get, CHANGELIST_URL, superuser)
+    def test_no_query_lists_nobody(self, sos_admin, sos_operator, user):
+        request = _request(RequestFactory().get, CHANGELIST_URL, sos_operator)
         context = sos_admin.sos_login_view(request).context_data
         assert context["users"] == []
         assert context["total_count"] == 0
 
     def test_search_matches_email_name_and_organization(
-        self, sos_admin, superuser, user
+        self, sos_admin, sos_operator, user
     ):
         rf = RequestFactory()
 
         by_email = sos_admin.sos_login_view(
-            _request(rf.get, f"{CHANGELIST_URL}?q={user.email}", superuser)
+            _request(rf.get, f"{CHANGELIST_URL}?q={user.email}", sos_operator)
         ).context_data
         assert user in by_email["users"]
 
         by_org = sos_admin.sos_login_view(
-            _request(rf.get, f"{CHANGELIST_URL}?q={user.organization.name}", superuser)
+            _request(
+                rf.get, f"{CHANGELIST_URL}?q={user.organization.name}", sos_operator
+            )
         ).context_data
         assert user in by_org["users"]
 
-    def test_inactive_users_are_excluded(self, sos_admin, superuser, organization):
+    def test_inactive_users_are_excluded(self, sos_admin, sos_operator, organization):
         inactive = User.objects.create(
             email=f"gone-{uuid.uuid4().hex[:8]}@futureagi.com",
             name="Gone",
@@ -133,12 +165,12 @@ class TestSOSLoginAdminSearch:
             is_active=False,
         )
         request = _request(
-            RequestFactory().get, f"{CHANGELIST_URL}?q={inactive.email}", superuser
+            RequestFactory().get, f"{CHANGELIST_URL}?q={inactive.email}", sos_operator
         )
         assert sos_admin.sos_login_view(request).context_data["users"] == []
 
     def test_results_are_capped_and_truncation_is_reported(
-        self, sos_admin, superuser, organization, monkeypatch
+        self, sos_admin, sos_operator, organization, monkeypatch
     ):
         monkeypatch.setattr(type(sos_admin), "RESULT_LIMIT", 2)
         for i in range(4):
@@ -149,7 +181,9 @@ class TestSOSLoginAdminSearch:
                 is_active=True,
             )
 
-        request = _request(RequestFactory().get, f"{CHANGELIST_URL}?q=Bulk", superuser)
+        request = _request(
+            RequestFactory().get, f"{CHANGELIST_URL}?q=Bulk", sos_operator
+        )
         context = sos_admin.sos_login_view(request).context_data
 
         assert len(context["users"]) == 2
@@ -160,11 +194,11 @@ class TestSOSLoginAdminSearch:
 @pytest.mark.django_db
 class TestSOSLoginAdminSession:
     def test_starts_session_and_redirects_to_frontend_sos_route(
-        self, sos_admin, superuser, user, settings
+        self, sos_admin, sos_operator, user, settings
     ):
         settings.APP_URL = "app.futureagi.com"
         request = _request(
-            RequestFactory().post, LOGIN_URL, superuser, {"user_id": str(user.id)}
+            RequestFactory().post, LOGIN_URL, sos_operator, {"user_id": str(user.id)}
         )
 
         response = sos_admin.start_sos_session_view(request)
@@ -176,11 +210,11 @@ class TestSOSLoginAdminSession:
         assert "refresh=" in response["Location"]
 
     def test_mints_one_access_and_one_refresh_token_for_the_target(
-        self, sos_admin, superuser, user, settings
+        self, sos_admin, sos_operator, user, settings
     ):
         settings.APP_URL = "app.futureagi.com"
         request = _request(
-            RequestFactory().post, LOGIN_URL, superuser, {"user_id": str(user.id)}
+            RequestFactory().post, LOGIN_URL, sos_operator, {"user_id": str(user.id)}
         )
 
         sos_admin.start_sos_session_view(request)
@@ -197,17 +231,17 @@ class TestSOSLoginAdminSession:
             ).count()
             == 1
         )
-        assert AuthToken.objects.filter(user=superuser).count() == 0
+        assert AuthToken.objects.filter(user=sos_operator).count() == 0
 
     def test_does_not_revoke_the_targets_existing_session(
-        self, sos_admin, superuser, user, settings
+        self, sos_admin, sos_operator, user, settings
     ):
         settings.APP_URL = "app.futureagi.com"
         existing = AuthToken.objects.create(
             user=user, auth_type=AuthTokenType.REFRESH.value, is_active=True
         )
         request = _request(
-            RequestFactory().post, LOGIN_URL, superuser, {"user_id": str(user.id)}
+            RequestFactory().post, LOGIN_URL, sos_operator, {"user_id": str(user.id)}
         )
 
         sos_admin.start_sos_session_view(request)
@@ -216,11 +250,14 @@ class TestSOSLoginAdminSession:
         assert existing.is_active is True
 
     def test_unknown_user_redirects_without_minting_tokens(
-        self, sos_admin, superuser, settings
+        self, sos_admin, sos_operator, settings
     ):
         settings.APP_URL = "app.futureagi.com"
         request = _request(
-            RequestFactory().post, LOGIN_URL, superuser, {"user_id": str(uuid.uuid4())}
+            RequestFactory().post,
+            LOGIN_URL,
+            sos_operator,
+            {"user_id": str(uuid.uuid4())},
         )
 
         response = sos_admin.start_sos_session_view(request)
@@ -229,10 +266,10 @@ class TestSOSLoginAdminSession:
         assert response["Location"] == "../"
         assert AuthToken.objects.count() == 0
 
-    def test_malformed_user_id_is_handled(self, sos_admin, superuser, settings):
+    def test_malformed_user_id_is_handled(self, sos_admin, sos_operator, settings):
         settings.APP_URL = "app.futureagi.com"
         request = _request(
-            RequestFactory().post, LOGIN_URL, superuser, {"user_id": "not-a-uuid"}
+            RequestFactory().post, LOGIN_URL, sos_operator, {"user_id": "not-a-uuid"}
         )
 
         response = sos_admin.start_sos_session_view(request)
@@ -241,7 +278,7 @@ class TestSOSLoginAdminSession:
         assert AuthToken.objects.count() == 0
 
     def test_inactive_target_cannot_be_impersonated(
-        self, sos_admin, superuser, organization, settings
+        self, sos_admin, sos_operator, organization, settings
     ):
         settings.APP_URL = "app.futureagi.com"
         inactive = User.objects.create(
@@ -251,7 +288,10 @@ class TestSOSLoginAdminSession:
             is_active=False,
         )
         request = _request(
-            RequestFactory().post, LOGIN_URL, superuser, {"user_id": str(inactive.id)}
+            RequestFactory().post,
+            LOGIN_URL,
+            sos_operator,
+            {"user_id": str(inactive.id)},
         )
 
         response = sos_admin.start_sos_session_view(request)
@@ -260,11 +300,11 @@ class TestSOSLoginAdminSession:
         assert AuthToken.objects.filter(user=inactive).count() == 0
 
     def test_missing_app_url_aborts_before_minting_tokens(
-        self, sos_admin, superuser, user, settings
+        self, sos_admin, sos_operator, user, settings
     ):
         settings.APP_URL = None
         request = _request(
-            RequestFactory().post, LOGIN_URL, superuser, {"user_id": str(user.id)}
+            RequestFactory().post, LOGIN_URL, sos_operator, {"user_id": str(user.id)}
         )
 
         response = sos_admin.start_sos_session_view(request)
@@ -274,7 +314,7 @@ class TestSOSLoginAdminSession:
         assert AuthToken.objects.filter(user=user).count() == 0
 
     def test_cross_organization_target_is_reachable(
-        self, sos_admin, superuser, settings
+        self, sos_admin, sos_operator, settings
     ):
         settings.APP_URL = "app.futureagi.com"
         other_org = Organization.objects.create(name=f"Other {uuid.uuid4().hex[:6]}")
@@ -285,7 +325,7 @@ class TestSOSLoginAdminSession:
             is_active=True,
         )
         request = _request(
-            RequestFactory().post, LOGIN_URL, superuser, {"user_id": str(target.id)}
+            RequestFactory().post, LOGIN_URL, sos_operator, {"user_id": str(target.id)}
         )
 
         response = sos_admin.start_sos_session_view(request)
@@ -298,11 +338,14 @@ class TestSOSLoginAdminSession:
 @pytest.mark.django_db
 class TestSOSCopyLink:
     def test_returns_the_same_handoff_url_as_the_redirect_flow(
-        self, sos_admin, superuser, user, settings
+        self, sos_admin, sos_operator, user, settings
     ):
         settings.APP_URL = "app.futureagi.com"
         request = _request(
-            RequestFactory().post, COPY_LINK_URL, superuser, {"user_id": str(user.id)}
+            RequestFactory().post,
+            COPY_LINK_URL,
+            sos_operator,
+            {"user_id": str(user.id)},
         )
 
         response = sos_admin.copy_sos_link_view(request)
@@ -314,11 +357,14 @@ class TestSOSCopyLink:
         assert "refresh=" in url
 
     def test_mints_a_token_pair_for_the_target(
-        self, sos_admin, superuser, user, settings
+        self, sos_admin, sos_operator, user, settings
     ):
         settings.APP_URL = "app.futureagi.com"
         request = _request(
-            RequestFactory().post, COPY_LINK_URL, superuser, {"user_id": str(user.id)}
+            RequestFactory().post,
+            COPY_LINK_URL,
+            sos_operator,
+            {"user_id": str(user.id)},
         )
 
         sos_admin.copy_sos_link_view(request)
@@ -336,15 +382,18 @@ class TestSOSCopyLink:
             == 1
         )
 
-    def test_rejects_get(self, sos_admin, superuser):
-        request = _request(RequestFactory().get, COPY_LINK_URL, superuser)
+    def test_rejects_get(self, sos_admin, sos_operator):
+        request = _request(RequestFactory().get, COPY_LINK_URL, sos_operator)
 
         assert sos_admin.copy_sos_link_view(request).status_code == 405
 
-    def test_rejects_non_superuser_staff(self, sos_admin, staff_user, user, settings):
+    def test_rejects_non_staff(self, sos_admin, non_staff_user, user, settings):
         settings.APP_URL = "app.futureagi.com"
         request = _request(
-            RequestFactory().post, COPY_LINK_URL, staff_user, {"user_id": str(user.id)}
+            RequestFactory().post,
+            COPY_LINK_URL,
+            non_staff_user,
+            {"user_id": str(user.id)},
         )
 
         response = sos_admin.copy_sos_link_view(request)
@@ -353,13 +402,13 @@ class TestSOSCopyLink:
         assert AuthToken.objects.count() == 0
 
     def test_unknown_user_returns_400_without_minting_tokens(
-        self, sos_admin, superuser, settings
+        self, sos_admin, sos_operator, settings
     ):
         settings.APP_URL = "app.futureagi.com"
         request = _request(
             RequestFactory().post,
             COPY_LINK_URL,
-            superuser,
+            sos_operator,
             {"user_id": str(uuid.uuid4())},
         )
 
@@ -370,11 +419,14 @@ class TestSOSCopyLink:
         assert AuthToken.objects.count() == 0
 
     def test_missing_app_url_returns_400_before_minting_tokens(
-        self, sos_admin, superuser, user, settings
+        self, sos_admin, sos_operator, user, settings
     ):
         settings.APP_URL = None
         request = _request(
-            RequestFactory().post, COPY_LINK_URL, superuser, {"user_id": str(user.id)}
+            RequestFactory().post,
+            COPY_LINK_URL,
+            sos_operator,
+            {"user_id": str(user.id)},
         )
 
         response = sos_admin.copy_sos_link_view(request)
@@ -383,14 +435,17 @@ class TestSOSCopyLink:
         assert AuthToken.objects.filter(user=user).count() == 0
 
     def test_does_not_revoke_the_targets_existing_session(
-        self, sos_admin, superuser, user, settings
+        self, sos_admin, sos_operator, user, settings
     ):
         settings.APP_URL = "app.futureagi.com"
         existing = AuthToken.objects.create(
             user=user, auth_type=AuthTokenType.REFRESH.value, is_active=True
         )
         request = _request(
-            RequestFactory().post, COPY_LINK_URL, superuser, {"user_id": str(user.id)}
+            RequestFactory().post,
+            COPY_LINK_URL,
+            sos_operator,
+            {"user_id": str(user.id)},
         )
 
         sos_admin.copy_sos_link_view(request)

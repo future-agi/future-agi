@@ -42,7 +42,7 @@
           <td>{{ user.organization.name|default:"—" }}</td>
           <td>{{ user.organization_role|default:"—" }}</td>
           <td class="sos-actions">
-            <form method="post" action="login/" target="_blank"
+            <form method="post" action="{% url 'admin:accounts_sosloginproxy_login' %}" target="_blank"
                   onsubmit="return confirm('Start an SOS session as {{ user.email|escapejs }}?')">
               {% csrf_token %}
               <input type="hidden" name="user_id" value="{{ user.id }}">
@@ -94,6 +94,7 @@
 <script>
 (function () {
   var csrfToken = "{{ csrf_token }}";
+  var copyLinkUrl = "{% url 'admin:accounts_sosloginproxy_copy_link' %}";
 
   function writeClipboard(text) {
     if (navigator.clipboard && window.isSecureContext) {
@@ -130,7 +131,7 @@
         }, 2000);
       };
 
-      fetch("copy-link/", {
+      fetch(copyLinkUrl, {
         method: "POST",
         credentials: "same-origin",
         headers: {
