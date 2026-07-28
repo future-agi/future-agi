@@ -37,6 +37,31 @@ describe("DatetimeCellRenderer", () => {
 
     expect(screen.getByText("Invalid Date")).toBeInTheDocument();
   });
+
+  it("does not invent a time for date-only values", () => {
+    render(<DatetimeCellRenderer value="2026-01-29" {...rendererProps} />);
+
+    expect(screen.getByText("29/01/2026")).toBeInTheDocument();
+    expect(screen.queryByText(/00:00/)).not.toBeInTheDocument();
+  });
+
+  it("preserves an explicit time, including midnight", () => {
+    const { rerender } = render(
+      <DatetimeCellRenderer
+        value="2026-01-29T14:30:00Z"
+        {...rendererProps}
+      />,
+    );
+    expect(screen.getByText(/29\/01\/2026 \d{2}:\d{2}/)).toBeInTheDocument();
+
+    rerender(
+      <DatetimeCellRenderer
+        value="2026-01-29T00:00:00Z"
+        {...rendererProps}
+      />,
+    );
+    expect(screen.getByText(/29\/01\/2026 \d{2}:\d{2}/)).toBeInTheDocument();
+  });
 });
 
 describe("JsonCellRenderer", () => {

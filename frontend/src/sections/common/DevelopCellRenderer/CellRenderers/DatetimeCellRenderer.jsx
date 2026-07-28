@@ -16,6 +16,8 @@ const DatetimeCellRenderer = ({
   const isValueArray = Array.isArray(value);
   const isBlankValue = value === null || value === undefined || value === "";
   const isValidDate = !isBlankValue && !isNaN(new Date(value).getTime());
+  const hasTimeComponent =
+    typeof value === "string" && /\d{1,2}:\d{2}/.test(value);
 
   return (
     <CustomTooltip
@@ -31,7 +33,7 @@ const DatetimeCellRenderer = ({
         {isValueArray ? (
           <GenerateDiffText cellText={value} />
         ) : isValidDate ? (
-          format(new Date(value), "dd/MM/yyyy HH:mm")
+          format(new Date(value), hasTimeComponent ? "dd/MM/yyyy HH:mm" : "dd/MM/yyyy")
         ) : isBlankValue ? (
           ""
         ) : (
