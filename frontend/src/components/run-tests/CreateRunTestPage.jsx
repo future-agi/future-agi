@@ -223,6 +223,12 @@ const CreateRunTestPage = ({ open, onClose }) => {
     pageSize: 10,
   });
 
+  useEffect(() => {
+    setScenariosPagination((current) =>
+      current.page === 1 ? current : { ...current, page: 1 },
+    );
+  }, [debouncedSearch]);
+
   // Fetch scenarios with pagination
   const {
     data: scenariosData,
