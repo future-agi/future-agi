@@ -162,9 +162,7 @@ def initiate_chat(
                 )
 
         # Resolve the simulated customer's first message (LLM → provided initial_message → default).
-        # usage_metrics carries the LLM invocation's actual prompt/completion tokens so we can
-        # roll them into the billed total_tokens; it is None when the source is not LLM-generated.
-        initial_message, initial_message_source, initial_llm_usage = (
+        initial_message, initial_message_source, initial_llm_cost_usd = (
             get_chat_initial_message(call_execution)
         )
 
@@ -227,23 +225,14 @@ def initiate_chat(
 
         message = ChatMessage(role=ChatRole.USER, content=initial_message)
 
-        # Calculate tokens for the initial message.
-        # Prefer the LLM invocation's actual prompt+completion token counts (so the
-        # persona-first-line LLM call is fully billed). Fall back to a heuristic
-        # estimate on the text when the message did not come from an LLM call
-        # (provided_initial_message / default_hi paths) or the LLM did not return
-        # usage.
+        # Calculate tokens for the initial message
         initial_msg_text = (
             initial_message
             if isinstance(initial_message, str)
             else str(initial_message)
         )
         initial_tokens = 0
-        if initial_llm_usage:
-            initial_tokens = int(initial_llm_usage.get("input_tokens") or 0) + int(
-                initial_llm_usage.get("output_tokens") or 0
-            )
-        elif initial_msg_text:
+        if initial_msg_text:
             try:
                 from ee.agenthub.traceerroragent.token_utils import (
                     estimate_tokens_text,
@@ -274,6 +263,33 @@ def initiate_chat(
             workspace=workspace,
             tokens=initial_tokens,
         )
+
+        if initial_llm_cost_usd and initial_llm_cost_usd > 0:
+            try:
+                from ee.usage.schemas.event_types import BillingEventType
+                from ee.usage.schemas.events import UsageEvent
+                from ee.usage.services.config import BillingConfig
+                from ee.usage.services.emitter import emit
+
+                credits = BillingConfig.get().calculate_ai_credits(initial_llm_cost_usd)
+                emit(
+                    UsageEvent(
+                        org_id=str(organization.id),
+                        event_type=BillingEventType.TEXT_CALL,
+                        amount=credits,
+                        properties={
+                            "source": "simulate_chat_initial_message",
+                            "source_id": str(call_execution.id),
+                            "raw_cost_usd": str(initial_llm_cost_usd),
+                            "pricing_source": "llm.cost.total_cost",
+                        },
+                    )
+                )
+            except Exception:
+                logger.exception(
+                    "chat_initial_message_bill_failed",
+                    call_execution_id=str(call_execution.id),
+                )
 
         ##check if test execution is pending
         if (
