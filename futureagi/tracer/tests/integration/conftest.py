@@ -17,6 +17,7 @@ _CH_TABLES_TO_TRUNCATE = [
     "tracer_eval_logger",
     "tracer_eval_logger_v2",
     "model_hub_score",
+    "usage_apicalllog",
 ]
 
 

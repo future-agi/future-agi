@@ -19,55 +19,11 @@ import {
   seriesHasDataPoints,
 } from "./widgetUtils";
 import { toTimeRangePayload } from "./dashboardDateRange";
+import { buildSeriesColorMap, getSeriesColor } from "./seriesColors";
 
 const CHART_HEIGHT_FALLBACK = 280;
 const NO_DATA_FOR_RANGE_MESSAGE =
   "No data available for this time period. Try a broader range.";
-const COLORS = [
-  "#7B56DB", // purple (primary)
-  "#1ABCFE", // cyan
-  "#FF6B6B", // coral red
-  "#2ECB71", // emerald green
-  "#F7B731", // amber
-  "#E84393", // magenta pink
-  "#0984E3", // ocean blue
-  "#FD7E14", // tangerine orange
-  "#00CEC9", // teal
-  "#A29BFE", // lavender
-];
-
-const hashSeriesName = (name) => {
-  const s = String(name || "");
-  let h = 0;
-  for (let i = 0; i < s.length; i += 1) {
-    h = (h * 31 + s.charCodeAt(i)) | 0;
-  }
-  return Math.abs(h);
-};
-// Name-hash gives cross-reload stability, but a bare hash % palette collides ~50%
-// at 4 series. Walk each name once and, on a taken slot, advance to the next
-// free one — distinct up to palette size, stable for the common non-colliding case.
-const buildSeriesColorMap = (names) => {
-  const map = {};
-  const used = new Set();
-  (names || []).forEach((name) => {
-    const start = hashSeriesName(name) % COLORS.length;
-    let picked = start;
-    for (let i = 0; i < COLORS.length; i += 1) {
-      const candidate = (start + i) % COLORS.length;
-      if (!used.has(candidate)) {
-        picked = candidate;
-        break;
-      }
-    }
-    used.add(picked);
-    map[name] = COLORS[picked];
-  });
-  return map;
-};
-const getSeriesColorFromMap = (map, name) =>
-  (map && map[name]) || COLORS[hashSeriesName(name) % COLORS.length];
-
 function getApexType(chartType) {
   const map = {
     line: "line",
@@ -202,7 +158,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
     () => buildSeriesColorMap(series.map((s) => s.name)),
     [series],
   );
-  const colorFor = (name) => getSeriesColorFromMap(seriesColorMap, name);
+  const colorFor = (name) => getSeriesColor(seriesColorMap, name);
 
   const outOfRangeWarning = useMemo(
     () => getYAxisRangeWarning(chartSeries, axisConfig),
@@ -657,7 +613,10 @@ export default function WidgetChart({ widget, globalDateRange }) {
         }}
       >
         {pieLegendNames.length > 1 && (
-          <ChartLegend items={pieLegendNames} colors={COLORS} />
+          <ChartLegend
+            items={pieLegendNames}
+            colors={pieLegendNames.map(colorFor)}
+          />
         )}
         <Box
           ref={(el) => {
@@ -1276,7 +1235,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
       {legendNames.length > 1 && (
         <ChartLegend
           items={legendNames}
-          colors={COLORS}
+          colors={legendNames.map(colorFor)}
           onHoverSeries={handleLegendHover}
           onLeaveSeries={handleLegendLeave}
         />

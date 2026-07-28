@@ -15,8 +15,9 @@ Supports four metric types:
 
 import logging
 import re
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from tracer.services.clickhouse.query_builders.expressions import (
     annotation_numeric_value_expr,
@@ -42,6 +43,10 @@ def _sanitize_attr_key(key: str) -> str:
 def _snap_to_hour(dt: datetime) -> datetime:
     """Truncate a datetime to the hour (ClickHouse ``toStartOfHour``)."""
     return dt.replace(minute=0, second=0, microsecond=0)
+
+
+def _bucket_expr(bucket_fn: str, column: str) -> str:
+    return f"{bucket_fn}({column}, %(timezone)s)"
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +208,61 @@ def _eval_source_bucket_expr(exclude: str) -> str:
     return "".join(parts)
 
 
+def _filter_predicate(
+    expression: str,
+    operator: str,
+    value: Any,
+    param_prefix: str,
+    params: dict[str, Any],
+) -> str | None:
+    if operator == "is_set":
+        return f"({expression} IS NOT NULL AND toString({expression}) != '')"
+    if operator == "is_not_set":
+        return f"({expression} IS NULL OR toString({expression}) = '')"
+    if operator in ("between", "not_between"):
+        if not isinstance(value, list) or len(value) != 2:
+            return None
+        params[f"{param_prefix}_lo"] = _coerce_filter_value(value[0], "equal_to")
+        params[f"{param_prefix}_hi"] = _coerce_filter_value(value[1], "equal_to")
+        negation = "NOT " if operator == "not_between" else ""
+        return (
+            f"{expression} {negation}BETWEEN %({param_prefix}_lo)s "
+            f"AND %({param_prefix}_hi)s"
+        )
+    symbol = _get_operator_symbol(operator)
+    if not symbol or value in (None, "", []):
+        return None
+    params[f"{param_prefix}_val"] = _coerce_filter_value(value, operator)
+    return f"{expression} {symbol} %({param_prefix}_val)s"
+
+
+def _annotation_entity_key(alias: str) -> str:
+    return (
+        "multiIf("
+        f"{alias}.observation_span_id IS NOT NULL AND {alias}.observation_span_id != '', "
+        f"concat('s:', {alias}.observation_span_id), "
+        f"{alias}.trace_id IS NOT NULL, concat('t:', toString({alias}.trace_id)), "
+        f"{alias}.trace_session_id IS NOT NULL, "
+        f"concat('ss:', toString({alias}.trace_session_id)), "
+        f"{alias}.project_id IS NOT NULL, concat('p:', toString({alias}.project_id)), "
+        f"concat('id:', toString({alias}.id)))"
+    )
+
+
+def _annotation_value_expr(alias: str, output_type: str) -> str:
+    normalized = output_type.lower()
+    if normalized in ("categorical", "choice", "str_list"):
+        return f"arrayJoin(JSONExtract({alias}.value, 'selected', 'Array(String)'))"
+    if normalized in ("thumbs_up_down", "boolean", "bool"):
+        return f"JSONExtractString({alias}.value, 'value')"
+    if normalized in ("text", "string"):
+        return (
+            f"coalesce(nullIf(JSONExtractString({alias}.value, 'text'), ''), "
+            f"JSONExtractString({alias}.value, 'value'))"
+        )
+    return annotation_numeric_value_expr(alias=alias, nullable=True)
+
+
 def rescale_rate_to_percent(agg_expr: str, aggregation: str) -> str:
     """Wrap *agg_expr* in ``(... ) * 100`` for averaging aggregations.
 
@@ -359,7 +419,15 @@ class DashboardQueryBuilder:
         self.project_ids = query_config.get("project_ids", [])
         self.organization_id = query_config.get("organization_id", "")
         self.workspace_id = query_config.get("workspace_id", "")
+        self.all_workspace_projects = query_config.get("all_workspace_projects", False)
         self.granularity = query_config.get("granularity", "day")
+        timezone_name = query_config.get("timezone") or "UTC"
+        try:
+            self.timezone = ZoneInfo(timezone_name)
+            self.timezone_name = timezone_name
+        except (ValueError, ZoneInfoNotFoundError):
+            self.timezone = UTC
+            self.timezone_name = "UTC"
         self.metrics = query_config.get("metrics", [])
         self.global_filters = query_config.get("filters", [])
         self.breakdowns = query_config.get("breakdowns", [])
@@ -375,7 +443,7 @@ class DashboardQueryBuilder:
         custom_start = tr.get("custom_start")
         custom_end = tr.get("custom_end")
 
-        now = datetime.now(UTC)
+        now = datetime.now(self.timezone)
 
         if custom_start and custom_end:
             return _parse_dt(custom_start), _parse_dt(custom_end)
@@ -418,6 +486,7 @@ class DashboardQueryBuilder:
             "project_ids": self.project_ids,
             "start_date": start_date,
             "end_date": end_date,
+            "timezone": self.timezone_name,
         }
 
         if metric_type == "system_metric":
@@ -481,6 +550,26 @@ class DashboardQueryBuilder:
         if self._query_references_id(metric_name, per_metric_filters):
             return _resolved_spans_source(None if alias == "spans" else alias)
         return "spans" if alias == "spans" else f"spans AS {alias}"
+
+    def _trace_spans_source(
+        self, metric_name: str | None, per_metric_filters: list[dict], alias: str
+    ) -> str:
+        source = self._spans_source(metric_name, per_metric_filters, "trace_spans")
+        predicates = ["(parent_span_id IS NULL OR parent_span_id = '')"]
+        if metric_name == "latency":
+            predicates.extend(
+                [
+                    "project_id IN %(project_ids)s",
+                    "start_time >= %(start_date)s",
+                    "start_time < %(end_date)s",
+                    "created_at >= %(start_date)s - INTERVAL 1 DAY",
+                ]
+            )
+        return (
+            f"(SELECT * FROM {source} WHERE {' AND '.join(predicates)} "
+            "ORDER BY _peerdb_version DESC LIMIT 1 BY trace_id) "
+            f"AS {alias}"
+        )
 
     # ------------------------------------------------------------------
     # System metric
@@ -553,7 +642,7 @@ class DashboardQueryBuilder:
             params["start_date"] = _snap_to_hour(params["start_date"])
             params["end_date"] = _snap_to_hour(params["end_date"])
             rollup_query = (
-                f"SELECT {bucket_fn}(hour) AS time_bucket,\n"
+                f"SELECT {_bucket_expr(bucket_fn, 'hour')} AS time_bucket,\n"
                 "       attr_value AS breakdown_value,\n"
                 "       sumMerge(latency_sum) / countMerge(n) AS value\n"
                 "FROM dashboard_attr_rollup\n"
@@ -590,7 +679,7 @@ class DashboardQueryBuilder:
         if metric_name in _RATE_INDICATOR_METRICS:
             agg_expr = rescale_rate_to_percent(agg_expr, aggregation)
 
-        select_parts = [f"{bucket_fn}(start_time) AS time_bucket"]
+        select_parts = [f"{_bucket_expr(bucket_fn, 'start_time')} AS time_bucket"]
         group_parts = ["time_bucket"]
         order_parts = ["time_bucket"]
 
@@ -599,8 +688,6 @@ class DashboardQueryBuilder:
         where_clauses, params = self._build_where_clauses(
             "spans", "start_time", per_metric_filters, params
         )
-        if metric_name == "latency":
-            where_clauses.append("(parent_span_id IS NULL OR parent_span_id = '')")
 
         # Subquery filters from global + per-metric for non-system metrics
         subquery_clauses = self._build_subquery_filters(
@@ -612,8 +699,16 @@ class DashboardQueryBuilder:
         if subquery_clauses[0]:
             all_where += subquery_clauses[0]
 
-        spans_flat = self._spans_source(metric_name, per_metric_filters, "spans")
-        spans_joined = self._spans_source(metric_name, per_metric_filters, "s")
+        if metric_name == "latency":
+            spans_flat = self._trace_spans_source(
+                metric_name, per_metric_filters, "spans"
+            )
+            spans_joined = self._trace_spans_source(
+                metric_name, per_metric_filters, "s"
+            )
+        else:
+            spans_flat = self._spans_source(metric_name, per_metric_filters, "spans")
+            spans_joined = self._spans_source(metric_name, per_metric_filters, "s")
 
         bd_infos = self._resolve_all_breakdowns(params)
         has_annotation_bd = any(b["type"] == "annotation" for b in bd_infos)
@@ -639,7 +734,7 @@ class DashboardQueryBuilder:
                 where_str = " AND ".join(_prefix_spans_columns(c) for c in all_where)
                 join_str = "\n".join(join_clauses)
                 query = (
-                    f"SELECT {bucket_fn}(s.start_time) AS time_bucket,\n"
+                    f"SELECT {_bucket_expr(bucket_fn, 's.start_time')} AS time_bucket,\n"
                     f"       {bd_select},\n"
                     f"       {agg_with_alias} AS value\n"
                     f"FROM {spans_joined}\n"
@@ -650,7 +745,7 @@ class DashboardQueryBuilder:
                 )
             else:
                 select_parts_with_bd = [
-                    f"{bucket_fn}(start_time) AS time_bucket",
+                    f"{_bucket_expr(bucket_fn, 'start_time')} AS time_bucket",
                     bd_select,
                     f"{agg_expr} AS value",
                 ]
@@ -745,7 +840,10 @@ class DashboardQueryBuilder:
                 )
             agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
 
-        select_parts = [f"{bucket_fn}(e.created_at) AS time_bucket"]
+        eval_time_expr = "if(e.eval_trace_id = '', e.created_at, s.start_time)"
+        select_parts = [
+            f"{_bucket_expr(bucket_fn, eval_time_expr)} AS time_bucket"
+        ]
         group_parts = ["time_bucket"]
         order_parts = ["time_bucket"]
         select_parts.append(f"{agg_expr} AS value")
@@ -761,8 +859,8 @@ class DashboardQueryBuilder:
             "e._peerdb_is_deleted = 0",
             "e.status = 'success'",
             "e.source_id = %(eval_template_id)s",
-            "e.created_at >= %(start_date)s",
-            "e.created_at < %(end_date)s",
+            f"{eval_time_expr} >= %(start_date)s",
+            f"{eval_time_expr} < %(end_date)s",
         ]
 
         # Keep one latest trace-eval attempt; dataset/playground rows pass through.
@@ -782,13 +880,12 @@ class DashboardQueryBuilder:
             f"WHERE {_dedup_scope_d} "
             "AND d._peerdb_is_deleted = 0 AND d.status = 'success' "
             "AND d.source_id = %(eval_template_id)s "
-            "AND d.created_at >= %(start_date)s AND d.created_at < %(end_date)s "
             "AND d.eval_trace_id != '' "
             "GROUP BY d.eval_trace_id))"
         )
 
         joins = []
-        need_spans_join = False
+        need_spans_join = True
         need_eval_join = {}
 
         _trace_id_expr = "e.eval_trace_id"
@@ -970,10 +1067,9 @@ class DashboardQueryBuilder:
                 params[val_key] = _coerce_filter_value(val, op)
 
         if need_spans_join:
-            spans_joined = self._spans_source(None, per_metric_filters, "s")
+            spans_joined = self._trace_spans_source(None, per_metric_filters, "s")
             joins.append(
                 f"LEFT JOIN {spans_joined} ON s.trace_id = {_trace_id_expr} "
-                f"AND s.parent_span_id = '' "
                 f"AND s._peerdb_is_deleted = 0"
             )
 
@@ -1043,14 +1139,11 @@ class DashboardQueryBuilder:
         if output_type in ("categorical", "choice"):
             # Categorical: count rows (each row = one annotation)
             agg_expr = "count()"
-        elif output_type == "thumbs_up_down":
-            # Stored as {"value": "up"|"down"} — percentage of "up".
-            # countIf already skips NULL/missing rows, but we still want
-            # the denominator to exclude rows where the key is absent.
+        elif output_type in ("thumbs_up_down", "boolean", "bool"):
             col_expr = "JSONExtract(a.value, 'value', 'Nullable(String)')"
             agg_expr = (
-                f"countIf({col_expr} = 'up') * 100.0 / "
-                f"greatest(countIf({col_expr} IS NOT NULL), 1)"
+                f"countIf(lower({col_expr}) IN ('up', 'thumbs_up', 'true', '1')) "
+                f"* 100.0 / greatest(countIf({col_expr} IS NOT NULL), 1)"
             )
         elif output_type == "text":
             # Text: just count annotations
@@ -1061,9 +1154,46 @@ class DashboardQueryBuilder:
             col_expr = annotation_numeric_value_expr(alias="a", nullable=True)
             agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
 
-        select_parts = [f"{bucket_fn}(a.created_at) AS time_bucket"]
+        select_parts = [f"{_bucket_expr(bucket_fn, 'a.created_at')} AS time_bucket"]
         group_parts = ["time_bucket"]
         order_parts = ["time_bucket"]
+        joins: list[str] = []
+
+        trace_breakdowns = [
+            breakdown
+            for breakdown in self.breakdowns
+            if breakdown.get("source", "traces") in ("traces", "both", "all", "")
+        ]
+        if trace_breakdowns:
+            breakdown = trace_breakdowns[0]
+            if breakdown.get("type") == "annotation_metric":
+                breakdown_label_id = breakdown.get("label_id") or breakdown.get(
+                    "name", ""
+                )
+                breakdown_output_type = (
+                    breakdown.get("output_type")
+                    or breakdown.get("outputType")
+                    or output_type
+                )
+                if str(breakdown_label_id) == str(label_id):
+                    breakdown_expr = _annotation_value_expr("a", breakdown_output_type)
+                else:
+                    params["annotation_breakdown_label_id"] = breakdown_label_id
+                    annotation_key = _annotation_entity_key("a")
+                    breakdown_key = _annotation_entity_key("ab")
+                    joins.append(
+                        "LEFT JOIN model_hub_score AS ab FINAL "
+                        f"ON {breakdown_key} = {annotation_key} "
+                        "AND ab.label_id = toUUID(%(annotation_breakdown_label_id)s) "
+                        "AND ab._peerdb_is_deleted = 0 AND ab.deleted = 0"
+                    )
+                    breakdown_expr = _annotation_value_expr(
+                        "ab", breakdown_output_type
+                    )
+                select_parts.append(f"{breakdown_expr} AS breakdown_value")
+                group_parts.append("breakdown_value")
+                order_parts.append("breakdown_value")
+
         select_parts.append(f"{agg_expr} AS value")
 
         # model_hub_score has no project_id of its own that maps to
@@ -1071,11 +1201,25 @@ class DashboardQueryBuilder:
         # scores and via the spans table for span-attached scores.
         # Other source types (call_execution, dataset_row, …) are out of
         # scope for trace dashboards.
+        workspace_scope = ""
+        if self.all_workspace_projects and self.workspace_id:
+            params["annotation_workspace_id"] = self.workspace_id
+            workspace_scope = (
+                "(a.workspace_id = toUUID(%(annotation_workspace_id)s)) OR "
+            )
+
         where_parts = [
             (
                 "("
+                + workspace_scope
+                + "(a.project_id IS NOT NULL AND a.project_id IN %(project_ids)s)"
+                " OR "
                 "(a.trace_id IS NOT NULL "
                 "AND dictGet('trace_dict', 'project_id', a.trace_id) "
+                "IN %(project_ids)s)"
+                " OR "
+                "(a.trace_session_id IS NOT NULL "
+                "AND dictGet('trace_session_dict', 'project_id', a.trace_session_id) "
                 "IN %(project_ids)s)"
                 " OR "
                 "(a.observation_span_id IS NOT NULL "
@@ -1083,19 +1227,62 @@ class DashboardQueryBuilder:
                 "AND a.observation_span_id IN ("
                 "SELECT id FROM spans "
                 "WHERE project_id IN %(project_ids)s "
-                "AND is_deleted = 0))"
+                "AND _peerdb_is_deleted = 0))"
                 ")"
             ),
-            "a.is_deleted = 0",
+            "a._peerdb_is_deleted = 0",
             "a.deleted = 0",
             "a.created_at >= %(start_date)s",
             "a.created_at < %(end_date)s",
             "a.label_id = toUUID(%(annotation_label_id)s)",
         ]
 
+        annotation_filter_idx = 0
+        for filter_item in self.global_filters + per_metric_filters:
+            if (
+                filter_item.get("metric_type") != "annotation_metric"
+                or filter_item.get("source", "traces")
+                not in ("traces", "both", "all", "")
+            ):
+                continue
+            operator = filter_item.get("operator", "")
+            value = filter_item.get("value")
+            filter_label_id = filter_item.get("label_id") or filter_item.get(
+                "metric_name", ""
+            )
+            filter_output_type = (
+                filter_item.get("output_type")
+                or filter_item.get("outputType")
+                or output_type
+            )
+            param_prefix = f"annotation_filter_{annotation_filter_idx}"
+            label_key = f"{param_prefix}_label"
+            filter_expr = _annotation_value_expr("a", filter_output_type)
+            direct_predicate = _filter_predicate(
+                filter_expr, operator, value, param_prefix, params
+            )
+            if not direct_predicate:
+                continue
+            if str(filter_label_id) == str(label_id):
+                where_parts.append(direct_predicate)
+            else:
+                params[label_key] = filter_label_id
+                outer_key = _annotation_entity_key("a")
+                nested_expr = _annotation_value_expr("af", filter_output_type)
+                nested_key = _annotation_entity_key("af")
+                nested_predicate = direct_predicate.replace(filter_expr, nested_expr)
+                where_parts.append(
+                    f"{outer_key} IN (SELECT {nested_key} FROM model_hub_score AS af FINAL "
+                    f"WHERE af.label_id = toUUID(%({label_key})s) "
+                    "AND af._peerdb_is_deleted = 0 AND af.deleted = 0 "
+                    f"AND {nested_predicate})"
+                )
+            annotation_filter_idx += 1
+
         query = (
             f"SELECT {', '.join(select_parts)}\n"
             f"FROM model_hub_score AS a FINAL\n"
+            f"{' '.join(joins)}\n"
             f"WHERE {' AND '.join(where_parts)}\n"
             f"GROUP BY {', '.join(group_parts)}\n"
             f"ORDER BY {', '.join(order_parts)}"
@@ -1130,7 +1317,7 @@ class DashboardQueryBuilder:
 
         agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
 
-        select_parts = [f"{bucket_fn}(start_time) AS time_bucket"]
+        select_parts = [f"{_bucket_expr(bucket_fn, 'start_time')} AS time_bucket"]
         group_parts = ["time_bucket"]
         order_parts = ["time_bucket"]
 
@@ -1220,7 +1407,9 @@ class DashboardQueryBuilder:
             Response dict with ``metrics``, ``time_range``, and ``granularity``.
         """
         start_date, end_date = self.parse_time_range()
-        all_buckets = _generate_time_buckets(start_date, end_date, self.granularity)
+        all_buckets = _generate_time_buckets(
+            start_date, end_date, self.granularity, self.timezone
+        )
         formatted_metrics = []
 
         # Check if any breakdown is by project (needs UUID→name resolution)
@@ -1256,9 +1445,11 @@ class DashboardQueryBuilder:
                     # CH may return date or naive datetime; convert to
                     # timezone-aware datetime so keys match _generate_time_buckets
                     if isinstance(ts, date) and not isinstance(ts, datetime):
-                        ts = datetime(ts.year, ts.month, ts.day, tzinfo=UTC)
+                        ts = datetime(ts.year, ts.month, ts.day, tzinfo=self.timezone)
                     elif hasattr(ts, "tzinfo") and ts.tzinfo is None:
-                        ts = ts.replace(tzinfo=UTC)
+                        ts = ts.replace(tzinfo=self.timezone)
+                    else:
+                        ts = ts.astimezone(self.timezone)
                     ts = ts.isoformat()
                 val = row.get("value")
                 if isinstance(val, float):
@@ -1665,15 +1856,11 @@ class DashboardQueryBuilder:
         idx = 0
 
         for f in filters:
+            if f.get("source", "traces") not in ("traces", "both", "all", ""):
+                continue
             f_type = f.get("metric_type", "")
             op = f.get("operator", "")
             val = f.get("value")
-            op_symbol = _get_operator_symbol(op)
-            if not op_symbol:
-                continue
-
-            val_key = f"{prefix}{idx}_val"
-
             if f_type == "eval_metric":
                 eval_id_key = f"{prefix}eval_id_{idx}"
                 eval_template_id = f.get("metric_name", "")
@@ -1692,6 +1879,13 @@ class DashboardQueryBuilder:
                 else:
                     eval_col = "eval_score"
 
+                filter_params: dict[str, Any] = {}
+                eval_predicate = _filter_predicate(
+                    eval_col, op, val, f"{prefix}{idx}", filter_params
+                )
+                if not eval_predicate:
+                    continue
+
                 scope_key = f"{prefix}scope_id_{idx}"
                 if self.workspace_id:
                     _sub_scope = f"AND workspace_id = toUUID(%({scope_key})s)"
@@ -1706,42 +1900,50 @@ class DashboardQueryBuilder:
                     f"WHERE source_id = %({eval_id_key})s "
                     f"{_sub_scope} "
                     f"AND status = 'success' "
-                    f"AND {eval_col} {op_symbol} %({val_key})s "
+                    f"AND {eval_predicate} "
                     f"AND _peerdb_is_deleted = 0"
                     f")"
                 )
                 clauses.append(subquery)
                 extra_params[eval_id_key] = eval_template_id
                 extra_params[scope_key] = _sub_scope_val
-                extra_params[val_key] = _coerce_filter_value(val, op)
+                extra_params.update(filter_params)
                 idx += 1
 
             elif f_type == "annotation_metric":
                 label_id_key = f"{prefix}label_id_{idx}"
-                label_id = f.get("metric_name", "")
+                label_id = f.get("label_id") or f.get("metric_name", "")
                 ann_org_key = f"{prefix}ann_org_id_{idx}"
 
-                # Use the nullable extractor so JSON payloads missing
-                # the numeric key compare as NULL (and are excluded by
-                # the filter) instead of evaluating as 0.
-                num_expr = annotation_numeric_value_expr(
-                    alias="model_hub_score", nullable=True
+                output_type = (
+                    f.get("output_type") or f.get("outputType") or "numeric"
+                )
+                annotation_expr = _annotation_value_expr("mhs", output_type)
+                filter_params = {}
+                value_predicate = _filter_predicate(
+                    annotation_expr, op, val, f"{prefix}{idx}", filter_params
+                )
+                if not value_predicate:
+                    continue
+                annotation_predicate = (
+                    f"mhs.label_id = toUUID(%({label_id_key})s) "
+                    f"AND mhs.organization_id = toUUID(%({ann_org_key})s) "
+                    f"AND {value_predicate} "
+                    "AND mhs._peerdb_is_deleted = 0 AND mhs.deleted = 0"
                 )
                 subquery = (
-                    f"trace_id IN ("
-                    f"SELECT toString(trace_id) FROM model_hub_score FINAL "
-                    f"WHERE label_id = toUUID(%({label_id_key})s) "
-                    f"AND organization_id = toUUID(%({ann_org_key})s) "
-                    f"AND {num_expr} IS NOT NULL "
-                    f"AND {num_expr} {op_symbol} %({val_key})s "
-                    f"AND _peerdb_is_deleted = 0 "
-                    f"AND deleted = 0"
-                    f")"
+                    "(trace_id IN ("
+                    "SELECT toString(mhs.trace_id) FROM model_hub_score AS mhs FINAL "
+                    f"WHERE mhs.trace_id IS NOT NULL AND {annotation_predicate}"
+                    ") OR id IN ("
+                    "SELECT mhs.observation_span_id FROM model_hub_score AS mhs FINAL "
+                    f"WHERE mhs.observation_span_id != '' AND {annotation_predicate}"
+                    "))"
                 )
                 clauses.append(subquery)
                 extra_params[label_id_key] = label_id
                 extra_params[ann_org_key] = self.organization_id
-                extra_params[val_key] = _coerce_filter_value(val, op)
+                extra_params.update(filter_params)
                 idx += 1
 
         return clauses, extra_params
@@ -1766,7 +1968,10 @@ _OPERATOR_SYMBOLS: dict[str, str] = {
 
 
 def _generate_time_buckets(
-    start: datetime, end: datetime, granularity: str
+    start: datetime,
+    end: datetime,
+    granularity: str,
+    timezone_info: tzinfo = UTC,
 ) -> list[str]:
     """Generate all time bucket ISO strings between *start* and *end*.
 
@@ -1774,6 +1979,8 @@ def _generate_time_buckets(
     includes every expected bucket — even those with no data (filled with null).
     """
     buckets: list[str] = []
+    start = start.astimezone(timezone_info)
+    end = end.astimezone(timezone_info)
     if granularity == "minute":
         cur = start.replace(second=0, microsecond=0)
         delta = timedelta(minutes=1)

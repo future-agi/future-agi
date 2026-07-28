@@ -1,3 +1,5 @@
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from rest_framework import serializers
 
 from accounts.serializers.user import UserSerializer
@@ -294,6 +296,7 @@ class DashboardQuerySerializer(StrictInputSerializer):
     granularity = serializers.ChoiceField(
         choices=DASHBOARD_GRANULARITIES, required=False, default="day"
     )
+    timezone = serializers.CharField(required=False, default="UTC")
     metrics = DashboardMetricSerializer(many=True)
     filters = filter_list_field(required=False, default=list)
     breakdowns = DashboardBreakdownSerializer(
@@ -302,6 +305,13 @@ class DashboardQuerySerializer(StrictInputSerializer):
 
     class Meta:
         swagger_schema_fields = {"additionalProperties": False}
+
+    def validate_timezone(self, value):
+        try:
+            ZoneInfo(value)
+        except (ValueError, ZoneInfoNotFoundError) as exc:
+            raise serializers.ValidationError("Unknown IANA timezone.") from exc
+        return value
 
     def validate_metrics(self, value):
         if not value:

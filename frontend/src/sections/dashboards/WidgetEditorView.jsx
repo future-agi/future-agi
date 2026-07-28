@@ -92,6 +92,7 @@ import {
   PERCENTILE_OPTIONS,
   DATE_PRESETS,
 } from "./constants";
+import { buildSeriesColorMap, getSeriesColor } from "./seriesColors";
 
 const escapeCsvField = (field) => {
   const str = String(field ?? "");
@@ -334,49 +335,6 @@ const METRIC_TYPE_ICONS = {
   custom_attribute: "mdi:tune-variant",
   custom_column: "mdi:table-column",
 };
-
-const SERIES_COLORS = [
-  "#7B56DB", // purple (primary)
-  "#1ABCFE", // cyan
-  "#FF6B6B", // coral red
-  "#2ECB71", // emerald green
-  "#F7B731", // amber
-  "#E84393", // magenta pink
-  "#0984E3", // ocean blue
-  "#FD7E14", // tangerine orange
-  "#00CEC9", // teal
-  "#A29BFE", // lavender
-];
-
-const hashSeriesName = (name) => {
-  const s = String(name || "");
-  let h = 0;
-  for (let i = 0; i < s.length; i += 1) {
-    h = (h * 31 + s.charCodeAt(i)) | 0;
-  }
-  return Math.abs(h);
-};
-const buildSeriesColorMap = (names) => {
-  const map = {};
-  const used = new Set();
-  (names || []).forEach((name) => {
-    const start = hashSeriesName(name) % SERIES_COLORS.length;
-    let picked = start;
-    for (let i = 0; i < SERIES_COLORS.length; i += 1) {
-      const candidate = (start + i) % SERIES_COLORS.length;
-      if (!used.has(candidate)) {
-        picked = candidate;
-        break;
-      }
-    }
-    used.add(picked);
-    map[name] = SERIES_COLORS[picked];
-  });
-  return map;
-};
-const getSeriesColor = (name, map) =>
-  (map && map[name]) ||
-  SERIES_COLORS[hashSeriesName(name) % SERIES_COLORS.length];
 
 const LETTER_LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
@@ -1395,9 +1353,13 @@ export default function WidgetEditorView() {
           const restoredFilters = (m.filters || []).map((f) =>
             restoreFilterPayload(f, source),
           );
+          const metricId =
+            frontendType === "annotation"
+              ? m.labelId || m.label_id || m.id || m.name
+              : m.name || m.id;
           return {
             ...m,
-            id: m.name || m.id,
+            id: metricId,
             name: m.displayName || m.display_name || m.name || m.id,
             type: frontendType,
             source,
@@ -1433,7 +1395,10 @@ export default function WidgetEditorView() {
         };
         const savedBreakdowns = (qc.breakdowns || []).map((b) => ({
           ...b,
-          id: b.id || b.name,
+          id:
+            b.type === "annotation_metric" || b.type === "annotationMetric"
+              ? b.labelId || b.label_id || b.id || b.name
+              : b.id || b.name,
           name: b.displayName || b.display_name || b.name || b.id,
           type: bdTypeMap[b.type] || b.type || "system",
           source:
@@ -1774,6 +1739,7 @@ export default function WidgetEditorView() {
       project_ids: [],
       time_range: timeRange,
       granularity,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
       metrics: metrics.map((m, i) => buildMetricPayload(m, i)),
       filters: filters
         .filter(
@@ -2239,7 +2205,7 @@ export default function WidgetEditorView() {
     [previewSeries],
   );
   const chartColors = useMemo(
-    () => chartSeries.map((s) => getSeriesColor(s.name, seriesColorMap)),
+    () => chartSeries.map((s) => getSeriesColor(seriesColorMap, s.name)),
     [chartSeries, seriesColorMap],
   );
 
@@ -3424,7 +3390,7 @@ export default function WidgetEditorView() {
                         sx={{ px: 2, pt: 2, pb: 1 }}
                       >
                         {chartSeries.map((s, i) => {
-                          const color = getSeriesColor(s.name, seriesColorMap);
+                          const color = getSeriesColor(seriesColorMap, s.name);
                           return (
                             <Stack
                               key={i}
@@ -3508,8 +3474,8 @@ export default function WidgetEditorView() {
                             {barData.rows.map((row, i) => {
                               const val = row.numericValue;
                               const color = getSeriesColor(
-                                row.name || row.label,
                                 seriesColorMap,
+                                row.name || row.label,
                               );
                               const pct =
                                 maxVal > 0 ? (Math.abs(val) / maxVal) * 100 : 0;
@@ -3688,8 +3654,8 @@ export default function WidgetEditorView() {
                                 visibleSeries === null ||
                                 visibleSeries?.has(si);
                               const color = getSeriesColor(
-                                s.name,
                                 seriesColorMap,
+                                s.name,
                               );
                               return (
                                 <Box
@@ -3869,8 +3835,8 @@ export default function WidgetEditorView() {
                                             height: 8,
                                             borderRadius: "2px",
                                             bgcolor: getSeriesColor(
-                                              s.name,
                                               seriesColorMap,
+                                              s.name,
                                             ),
                                             display: "inline-block",
                                           }}
@@ -4464,8 +4430,8 @@ export default function WidgetEditorView() {
                               visibleSeries === null || visibleSeries.has(si);
                             const avg = getSeriesAverage(s.data);
                             const color = getSeriesColor(
-                              s.name,
                               seriesColorMap,
+                              s.name,
                             );
                             return (
                               <tr
@@ -6079,8 +6045,8 @@ export default function WidgetEditorView() {
                       </Typography>
                       {previewSeries.map((s, si) => {
                         const seriesColor = getSeriesColor(
-                          s.name,
                           seriesColorMap,
+                          s.name,
                         );
                         return (
                           <Stack
