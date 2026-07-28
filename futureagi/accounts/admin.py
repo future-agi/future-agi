@@ -1,6 +1,12 @@
-from django.contrib import admin
+from urllib.parse import urlencode
+
+import structlog
+from django.conf import settings
+from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin
-from django.http import HttpResponseRedirect
+from django.core.exceptions import PermissionDenied, ValidationError
+from django.db.models import Q
+from django.http import HttpResponseNotAllowed, HttpResponseRedirect, JsonResponse
 from django.template.response import TemplateResponse
 from django.urls import path
 from django.utils.html import format_html, format_html_join
@@ -8,12 +14,16 @@ from django.utils.html import format_html, format_html_join
 from accounts.models.auth_token import AuthToken
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from accounts.services.token_service import issue_sos_tokens
+from tfc.settings.settings import ssl
 
 from .models import (
     Organization,
     OrgApiKey,
     User,
 )
+
+logger = structlog.get_logger(__name__)
 
 
 @admin.register(Organization)
@@ -473,3 +483,163 @@ class BlockedKeyProxy(User):
 
 
 admin.site.register(BlockedKeyProxy, BlockedKeysAdmin)
+
+
+class SOSLoginAdmin(admin.ModelAdmin):
+    """Custom admin view to start an SOS (support impersonation) session.
+
+    Search for an active user and mint them a token pair, then hand off to the
+    frontend's /sos route which stores the tokens and flips on SOS Mode. Same
+    effect as the Appsmith-facing SOSLoginView, but gated on a superuser's own
+    admin session instead of the shared API_KEY, so the operator is identifiable
+    and the handoff is audit-logged.
+    """
+
+    RESULT_LIMIT = 50
+
+    def get_urls(self):
+        return [
+            path(
+                "",
+                self.admin_site.admin_view(self.sos_login_view),
+                name="accounts_sosloginproxy_changelist",
+            ),
+            path(
+                "login/",
+                self.admin_site.admin_view(self.start_sos_session_view),
+                name="accounts_sosloginproxy_login",
+            ),
+            path(
+                "copy-link/",
+                self.admin_site.admin_view(self.copy_sos_link_view),
+                name="accounts_sosloginproxy_copy_link",
+            ),
+        ]
+
+    def sos_login_view(self, request):
+        if not request.user.is_superuser:
+            raise PermissionDenied("SOS login requires superuser access.")
+
+        query = request.GET.get("q", "").strip()
+        users, total_count = [], 0
+
+        if query:
+            matches = (
+                User.objects.filter(is_active=True)
+                .filter(
+                    Q(email__icontains=query)
+                    | Q(name__icontains=query)
+                    | Q(organization__name__icontains=query)
+                )
+                .select_related("organization")
+                .order_by("email")
+            )
+            total_count = matches.count()
+            users = list(matches[: self.RESULT_LIMIT])
+
+        context = {
+            **self.admin_site.each_context(request),
+            "title": "SOS Login (impersonate user)",
+            "query": query,
+            "users": users,
+            "total_count": total_count,
+            "limit": self.RESULT_LIMIT,
+            "truncated": total_count > self.RESULT_LIMIT,
+            "opts": type(
+                "Opts", (), {"app_label": "accounts", "model_name": "sos_login"}
+            )(),
+        }
+        return TemplateResponse(request, "admin/sos_login.html", context)
+
+    def _build_sos_url(self, request, user_id, source):
+        """Mint an SOS token pair and return (url, error_message).
+
+        Exactly one of the two is non-None. Callers decide how to surface the
+        error — a redirect with a message for the browser flow, JSON for the
+        copy-link flow.
+        """
+        try:
+            target = User.objects.select_related("organization").get(
+                id=user_id, is_active=True
+            )
+        except (User.DoesNotExist, ValidationError, ValueError):
+            return None, "Active user not found."
+
+        if not settings.APP_URL:
+            return None, "APP_URL is not configured — cannot build the SOS handoff URL."
+
+        tokens = issue_sos_tokens(target)
+
+        logger.warning(
+            "sos_login_started",
+            operator_id=str(request.user.id),
+            operator_email=request.user.email,
+            target_user_id=str(target.id),
+            target_email=target.email,
+            target_organization=getattr(target.organization, "name", None),
+            source=source,
+        )
+
+        params = urlencode({"access": tokens["access"], "refresh": tokens["refresh"]})
+        return f"{ssl}{settings.APP_URL}/sos?{params}", None
+
+    def start_sos_session_view(self, request):
+        if request.method != "POST":
+            return HttpResponseNotAllowed(["POST"])
+
+        if not request.user.is_superuser:
+            self.message_user(
+                request, "SOS login requires superuser access.", messages.ERROR
+            )
+            return HttpResponseRedirect("../")
+
+        url, error = self._build_sos_url(
+            request, request.POST.get("user_id", ""), "django_admin"
+        )
+        if error:
+            self.message_user(request, error, messages.ERROR)
+            return HttpResponseRedirect("../")
+
+        return HttpResponseRedirect(url)
+
+    def copy_sos_link_view(self, request):
+        if request.method != "POST":
+            return HttpResponseNotAllowed(["POST"])
+
+        if not request.user.is_superuser:
+            return JsonResponse(
+                {"error": "SOS login requires superuser access."}, status=403
+            )
+
+        url, error = self._build_sos_url(
+            request, request.POST.get("user_id", ""), "django_admin_copy_link"
+        )
+        if error:
+            return JsonResponse({"error": error}, status=400)
+
+        return JsonResponse({"url": url})
+
+    def has_module_permission(self, request):
+        return request.user.is_superuser
+
+    def has_view_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class SOSLoginProxy(User):
+    class Meta:
+        proxy = True
+        verbose_name = "SOS Login"
+        verbose_name_plural = "SOS Login (impersonate user)"
+
+
+admin.site.register(SOSLoginProxy, SOSLoginAdmin)
