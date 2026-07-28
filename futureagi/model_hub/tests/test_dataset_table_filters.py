@@ -1,4 +1,5 @@
 import json
+from unittest.mock import patch
 
 import pytest
 from rest_framework import status
@@ -229,6 +230,85 @@ def test_update_cell_value_api_accepts_canonical_payload(
     assert response.status_code == status.HTTP_200_OK
     cell.refresh_from_db()
     assert cell.value == "Gamma"
+
+
+@pytest.fixture
+def audio_filter_seed(organization, workspace):
+    dataset = Dataset.objects.create(
+        name="Audio filter dataset",
+        organization=organization,
+        workspace=workspace,
+    )
+    audio_col = Column.objects.create(
+        name="recording",
+        data_type=DataTypeChoices.AUDIO.value,
+        dataset=dataset,
+        source=SourceChoices.OTHERS.value,
+    )
+    row = Row.objects.create(dataset=dataset, order=1)
+    cell = Cell.objects.create(dataset=dataset, row=row, column=audio_col)
+    return dataset, row, audio_col, cell
+
+
+def test_update_audio_cell_persists_duration_for_numeric_filters(
+    auth_client, audio_filter_seed
+):
+    dataset, row, audio_col, cell = audio_filter_seed
+
+    with patch(
+        "model_hub.views.develop_dataset.upload_audio_to_s3_duration",
+        return_value=("https://cdn.example.test/audio.mp3", 12.04),
+    ):
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/update_cell_value/",
+            {
+                "row_id": str(row.id),
+                "column_id": str(audio_col.id),
+                "new_value": "data:audio/mpeg;base64,ZmFrZQ==",
+            },
+            format="json",
+        )
+
+    assert response.status_code == status.HTTP_200_OK
+    cell.refresh_from_db()
+    assert cell.column_metadata == {"audio_duration_seconds": 12.04}
+    assert _apply(
+        dataset,
+        [_filter(audio_col.id, "number", "greater_than", 1)],
+        [audio_col],
+    ) == [row]
+    assert _apply(
+        dataset,
+        [_filter(audio_col.id, "number", "less_than", 5)],
+        [audio_col],
+    ) == []
+
+
+def test_clearing_audio_cell_removes_duration_but_preserves_other_metadata(
+    auth_client, audio_filter_seed
+):
+    dataset, row, audio_col, cell = audio_filter_seed
+    cell.value = "https://cdn.example.test/audio.mp3"
+    cell.column_metadata = {
+        "audio_duration_seconds": 12.04,
+        "source": "manual-edit",
+    }
+    cell.save(update_fields=["value", "column_metadata"])
+
+    response = auth_client.post(
+        f"/model-hub/develops/{dataset.id}/update_cell_value/",
+        {
+            "row_id": str(row.id),
+            "column_id": str(audio_col.id),
+            "new_value": "",
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    cell.refresh_from_db()
+    assert cell.value is None
+    assert cell.column_metadata == {"source": "manual-edit"}
 
 
 def test_dataset_row_data_api_rejects_legacy_filter_shape(
