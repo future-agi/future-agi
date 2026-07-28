@@ -12,6 +12,7 @@ const OptionSelectors = ({
   options,
   multiple = true,
   showClearButton = false,
+  error,
 }) => {
   const { control } = useFormContext();
   const { append, remove, fields } = useFieldArray({
@@ -107,6 +108,11 @@ const OptionSelectors = ({
           );
         })}
       </Box>
+      {error && (
+        <Typography color="error" typography="s1">
+          {error}
+        </Typography>
+      )}
     </Box>
   );
 };
@@ -118,6 +124,7 @@ OptionSelectors.propTypes = {
   options: PropTypes.array.isRequired,
   multiple: PropTypes.bool,
   showClearButton: PropTypes.bool,
+  error: PropTypes.string,
 };
 
 export default OptionSelectors;

@@ -23,7 +23,10 @@ const PersonaBehavioralSetting = ({
   showClearButton = false,
   type = AGENT_TYPES.VOICE,
 }) => {
-  const { control } = useFormContext();
+  const {
+    control,
+    formState: { errors },
+  } = useFormContext();
   return (
     <Box>
       <CustomPersonaAccordion disableGutters defaultExpanded>
@@ -43,6 +46,7 @@ const PersonaBehavioralSetting = ({
               options={PersonalityOptions}
               multiple={multiple}
               showClearButton={showClearButton}
+              error={errors.personality?.message}
             />
             <FormSearchSelectFieldControl
               control={control}

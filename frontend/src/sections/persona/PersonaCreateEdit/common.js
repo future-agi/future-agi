@@ -431,6 +431,29 @@ export const PersonCreateValidationSchema = z
       ...PersonCreateBaseValidationSchema.shape,
     }),
   ])
+  .superRefine((data, ctx) => {
+    if (!data.personality?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["personality"],
+        message: "Personality is required",
+      });
+    }
+    if (!data.communicationStyle?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["communicationStyle"],
+        message: "Communication style is required",
+      });
+    }
+    if (data.simulationType === "voice" && !data.accent?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["accent"],
+        message: "Accent is required for voice personas",
+      });
+    }
+  })
   .transform((data) => {
     return {
       ...data,

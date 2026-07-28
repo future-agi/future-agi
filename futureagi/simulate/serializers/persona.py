@@ -96,7 +96,22 @@ class PersonaSerializer(serializers.ModelSerializer):
         """Custom validation"""
         # Note: organization and workspace are not in the serializer fields
         # They are handled automatically in the view layer from user context
-        # No validation needed here since they're set internally
+        errors = {}
+        for field, message in (
+            ("personality", "At least one personality trait is required."),
+            ("communication_style", "At least one communication style is required."),
+        ):
+            if field in attrs and not attrs[field]:
+                errors[field] = message
+        if "accent" in attrs:
+            simulation_type = attrs.get(
+                "simulation_type",
+                getattr(self.instance, "simulation_type", "voice"),
+            )
+            if simulation_type == "voice" and not attrs["accent"]:
+                errors["accent"] = "An accent is required for voice personas."
+        if errors:
+            raise serializers.ValidationError(errors)
         return attrs
 
     def get_simulation_type(self, obj):
@@ -551,6 +566,19 @@ class PersonaCreateSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         """Cross-field validation"""
+        errors = {}
+        for field, message in (
+            ("personality", "At least one personality trait is required."),
+            ("communication_style", "At least one communication style is required."),
+        ):
+            if not attrs.get(field):
+                errors[field] = message
+        simulation_type = attrs.get("simulation_type") or "voice"
+        if simulation_type == "voice" and not attrs.get("accent"):
+            errors["accent"] = "An accent is required for voice personas."
+        if errors:
+            raise serializers.ValidationError(errors)
+
         # If multilingual is True, languages must be non-empty
         multilingual = attrs.get("multilingual", False)
         languages = attrs.get("languages", [])
