@@ -52,7 +52,7 @@ export default function JwtLoginView() {
   const postLoginPath = usePostLoginPath();
   const router = useRouter();
   const [errorMsg, setErrorMsg] = useState("");
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const returnTo = searchParams.get("returnTo");
   // Persist returnTo on a login action so it survives flows that drop the
   // URL param (OAuth round-trip, login → setup-org).
@@ -71,8 +71,25 @@ export default function JwtLoginView() {
     enabled: !token,
     autoOpenTab: searchParams.get("ossSetup"),
   });
-  const showOssUi = ossSetup.isOSS && !ossSetup.isLoading;
-  const showSocial = !ossSetup.isOSS && !ossSetup.isLoading;
+  // Only apply OSS treatment on a confirmed "oss" response; a failed
+  // deployment-info read falls back to the full login (social/SSO shown).
+  const confirmedOSS = ossSetup.isSuccess && ossSetup.isOSS;
+  const showOssUi = confirmedOSS;
+  const showSocial = !confirmedOSS;
+
+  // The hint has done its job once the modal opens on the right tab; strip it
+  // so a reload doesn't reopen the modal.
+  useEffect(() => {
+    if (searchParams.get("ossSetup")) {
+      setSearchParams(
+        (prev) => {
+          prev.delete("ossSetup");
+          return prev;
+        },
+        { replace: true },
+      );
+    }
+  }, [searchParams, setSearchParams]);
 
   const [inviteFailed, setInviteFailed] = useState(false);
 

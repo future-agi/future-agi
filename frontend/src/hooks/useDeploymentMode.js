@@ -13,7 +13,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { paths } from "src/routes/paths";
 
 export function useDeploymentMode() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isSuccess } = useQuery({
     queryKey: ["deployment-info"],
     queryFn: () => axios.get(endpoints.settings.v2.deploymentInfo),
     select: (res) => res.data?.result?.mode || "oss",
@@ -29,6 +29,7 @@ export function useDeploymentMode() {
     isOSS: mode === "oss",
     isEE: mode === "ee",
     isLoading,
+    isSuccess,
   };
 }
 
