@@ -155,6 +155,22 @@ class TestOTLPTraceEndpointProtobuf:
         assert response["Content-Type"] == "application/x-protobuf"
 
     @patch("tracer.views.otlp.bulk_create_observation_span_task")
+    def test_post_traces_without_ee_rate_limiter(self, mock_task, auth_client):
+        """OSS images without the enterprise limiter still accept OTLP data."""
+        mock_task.apply_async.return_value = None
+
+        request = create_test_otlp_request()
+        with patch("ee.usage.services.rate_limiter.RateLimiter", None):
+            response = auth_client.post(
+                "/tracer/v1/traces",
+                data=request.SerializeToString(),
+                content_type="application/x-protobuf",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert mock_task.apply_async.called
+
+    @patch("tracer.views.otlp.bulk_create_observation_span_task")
     def test_post_traces_empty_body(self, mock_task, auth_client):
         """Empty request body returns error."""
         response = auth_client.post(
