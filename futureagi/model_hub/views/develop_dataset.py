@@ -7873,6 +7873,53 @@ class EditAndRunUserEvalView(APIView):
             return value.strip().lower() not in {"false", "0", "no", ""}
         return bool(value)
 
+    @staticmethod
+    def _rename_eval_columns(eval_metric, old_name, new_name, experiment_id):
+        """Carry an eval rename over to the grid columns that snapshot its name.
+
+        Both the eval column and its reason column store the eval name as it was
+        when they were created, so they have to be updated alongside the rename.
+        Reason columns are named `{eval}-reason` for datasets and
+        `{eval}-{column}-reason` for experiments, hence the prefix swap.
+        """
+        eval_column_source = (
+            SourceChoices.EXPERIMENT_EVALUATION.value
+            if experiment_id
+            else SourceChoices.EVALUATION.value
+        )
+        if experiment_id:
+            eval_columns = Column.objects.filter(
+                source__in=[
+                    eval_column_source,
+                    SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
+                ],
+                source_id__endswith=f"-sourceid-{eval_metric.id}",
+                dataset=eval_metric.dataset,
+                deleted=False,
+            )
+        else:
+            eval_columns = Column.objects.filter(
+                source=eval_column_source,
+                source_id=str(eval_metric.id),
+                dataset=eval_metric.dataset,
+                deleted=False,
+            )
+        eval_columns.filter(name=old_name).update(name=new_name)
+
+        reason_columns = Column.objects.filter(
+            source=SourceChoices.EVALUATION_REASON.value,
+            source_id__endswith=f"-sourceid-{eval_metric.id}",
+            dataset=eval_metric.dataset,
+            deleted=False,
+        )
+        prefix = f"{old_name}-"
+        for reason_column in reason_columns:
+            if not reason_column.name.startswith(prefix):
+                continue
+            suffix = reason_column.name.removeprefix(prefix)
+            reason_column.name = f"{new_name}-{suffix}"
+            reason_column.save(update_fields=["name"])
+
     @validated_request(
         request_serializer=UserEvalUpdateRequestSerializer,
         responses={
@@ -8053,6 +8100,40 @@ class EditAndRunUserEvalView(APIView):
                     organization=getattr(request, "organization", None) or request.user.organization,
                     workspace=getattr(request, "workspace", None),
                 )
+
+                # Rename the eval instance. Skipped on the save_as_template
+                # branch, where `name` names the new EvalTemplate instead.
+                # Applied before the reason-column reconciliation below so the
+                # get_or_create there matches the renamed column instead of
+                # creating a duplicate under the new name.
+                requested_name = request_data.get("name")
+                if not save_as_template and requested_name:
+                    from model_hub.utils.eval_validators import validate_eval_name
+
+                    try:
+                        new_name = validate_eval_name(requested_name)
+                    except ValueError as e:
+                        return self._gm.bad_request(str(e))
+
+                    if new_name != eval_metric.name:
+                        if (
+                            UserEvalMetric.objects.filter(
+                                name=new_name,
+                                organization=eval_metric.organization,
+                                dataset_id=eval_metric.dataset_id,
+                                deleted=False,
+                            )
+                            .exclude(id=eval_metric.id)
+                            .exists()
+                        ):
+                            return self._gm.bad_request(
+                                get_error_message("EVAL_NAME_EXISTS")
+                            )
+
+                        self._rename_eval_columns(
+                            eval_metric, eval_metric.name, new_name, experiment_id
+                        )
+                        eval_metric.name = new_name
 
                 # Update the config (already validated above)
                 if new_config:
