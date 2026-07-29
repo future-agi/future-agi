@@ -3,9 +3,13 @@ import uuid
 
 import pytest
 from django.contrib import admin
+from django.contrib.auth.models import Permission
+from django.contrib.contenttypes.models import ContentType
 from django.contrib.messages.storage.fallback import FallbackStorage
 from django.core.exceptions import PermissionDenied
 from django.test import RequestFactory
+from django.urls import reverse
+from structlog.testing import capture_logs
 
 from accounts.admin import SOSLoginProxy
 from accounts.models.auth_token import AuthToken, AuthTokenType
@@ -124,7 +128,16 @@ class TestSOSAdminIndexIsolation:
         ]
 
     def test_staff_sees_only_the_sos_entry(self, sos_operator):
-        assert self._models_for(sos_operator) == ["SOSLoginProxy"]
+        sos_operator.user_permissions.add(
+            Permission.objects.get(
+                codename="view_organization",
+                content_type=ContentType.objects.get_for_model(Organization),
+            )
+        )
+        operator = User.objects.get(pk=sos_operator.pk)  # drop the perm cache
+
+        assert operator.has_perm("accounts.view_organization")
+        assert self._models_for(operator) == ["SOSLoginProxy"]
 
     def test_superuser_sees_the_full_admin(self, superuser):
         models = self._models_for(superuser)
@@ -452,3 +465,52 @@ class TestSOSCopyLink:
 
         existing.refresh_from_db()
         assert existing.is_active is True
+
+
+@pytest.mark.django_db
+class TestSOSAuditLog:
+    """Every SOS mint emits `sos_login_started`, whichever path issued it.
+
+    The shared-key Appsmith path is the one with no operator identity, so it
+    is the path where a missing audit line would matter most.
+    """
+
+    def _started(self, logs):
+        return next(entry for entry in logs if entry["event"] == "sos_login_started")
+
+    def test_admin_path_records_the_operator(
+        self, sos_admin, sos_operator, user, settings
+    ):
+        settings.APP_URL = "app.futureagi.com"
+        request = _request(
+            RequestFactory().post, LOGIN_URL, sos_operator, {"user_id": str(user.id)}
+        )
+
+        with capture_logs() as logs:
+            sos_admin.start_sos_session_view(request)
+
+        entry = self._started(logs)
+        assert entry["operator_id"] == str(sos_operator.id)
+        assert entry["operator_email"] == sos_operator.email
+        assert entry["target_user_id"] == str(user.id)
+        assert entry["source"] == "django_admin"
+
+    def test_appsmith_path_records_an_unattributed_mint(
+        self, client, user, monkeypatch
+    ):
+        monkeypatch.setenv("API_KEY", "test-api-key")
+
+        with capture_logs() as logs:
+            response = client.post(
+                reverse("sos_login"),
+                data=json.dumps({"email": user.email}),
+                content_type="application/json",
+                HTTP_X_API_KEY="test-api-key",
+            )
+
+        assert response.status_code == 200, response.content
+        entry = self._started(logs)
+        assert entry["operator_id"] is None
+        assert entry["operator_email"] is None
+        assert entry["target_user_id"] == str(user.id)
+        assert entry["source"] == "appsmith_api"

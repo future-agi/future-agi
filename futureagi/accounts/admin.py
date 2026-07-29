@@ -1,10 +1,6 @@
-from urllib.parse import urlencode
-
-import structlog
-from django.conf import settings
 from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin
-from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.exceptions import PermissionDenied
 from django.db.models import Q
 from django.http import HttpResponseNotAllowed, HttpResponseRedirect, JsonResponse
 from django.template.response import TemplateResponse
@@ -14,16 +10,13 @@ from django.utils.html import format_html, format_html_join
 from accounts.models.auth_token import AuthToken
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
-from accounts.services.token_service import issue_sos_tokens
-from tfc.settings.settings import ssl
+from accounts.services.sos_service import build_sos_handoff_url
 
 from .models import (
     Organization,
     OrgApiKey,
     User,
 )
-
-logger = structlog.get_logger(__name__)
 
 
 @admin.register(Organization)
@@ -504,8 +497,8 @@ class SOSLoginAdmin(admin.ModelAdmin):
     admin session instead of the shared API_KEY, so the operator is identifiable
     and the handoff is audit-logged.
 
-    Access requires an explicit `can_sos_login` grant — being a superuser is not
-    enough. Grant it through the "SOS Operators" group, or per user.
+    Access requires an active staff account (`is_staff`) — see `has_sos_access`.
+    Superusers qualify, since Django's admin already grants them staff status.
     """
 
     RESULT_LIMIT = 50
@@ -531,7 +524,7 @@ class SOSLoginAdmin(admin.ModelAdmin):
 
     def sos_login_view(self, request):
         if not has_sos_access(request.user):
-            raise PermissionDenied("SOS login requires the can_sos_login permission.")
+            raise PermissionDenied("SOS login requires staff access.")
 
         query = request.GET.get("q", "").strip()
         users, total_count = [], 0
@@ -565,36 +558,8 @@ class SOSLoginAdmin(admin.ModelAdmin):
         return TemplateResponse(request, "admin/sos_login.html", context)
 
     def _build_sos_url(self, request, user_id, source):
-        """Mint an SOS token pair and return (url, error_message).
-
-        Exactly one of the two is non-None. Callers decide how to surface the
-        error — a redirect with a message for the browser flow, JSON for the
-        copy-link flow.
-        """
-        try:
-            target = User.objects.select_related("organization").get(
-                id=user_id, is_active=True
-            )
-        except (User.DoesNotExist, ValidationError, ValueError):
-            return None, "Active user not found."
-
-        if not settings.APP_URL:
-            return None, "APP_URL is not configured — cannot build the SOS handoff URL."
-
-        tokens = issue_sos_tokens(target)
-
-        logger.warning(
-            "sos_login_started",
-            operator_id=str(request.user.id),
-            operator_email=request.user.email,
-            target_user_id=str(target.id),
-            target_email=target.email,
-            target_organization=getattr(target.organization, "name", None),
-            source=source,
-        )
-
-        params = urlencode({"access": tokens["access"], "refresh": tokens["refresh"]})
-        return f"{ssl}{settings.APP_URL}/sos?{params}", None
+        """Delegate to the SOS service; returns (url, error_message)."""
+        return build_sos_handoff_url(user_id, source=source, operator=request.user)
 
     def start_sos_session_view(self, request):
         if request.method != "POST":
@@ -603,7 +568,7 @@ class SOSLoginAdmin(admin.ModelAdmin):
         if not has_sos_access(request.user):
             self.message_user(
                 request,
-                "SOS login requires the can_sos_login permission.",
+                "SOS login requires staff access.",
                 messages.ERROR,
             )
             return HttpResponseRedirect("../")
@@ -623,7 +588,7 @@ class SOSLoginAdmin(admin.ModelAdmin):
 
         if not has_sos_access(request.user):
             return JsonResponse(
-                {"error": "SOS login requires the can_sos_login permission."},
+                {"error": "SOS login requires staff access."},
                 status=403,
             )
 

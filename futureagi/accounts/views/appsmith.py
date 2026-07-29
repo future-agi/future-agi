@@ -21,7 +21,7 @@ from accounts.serializers.user import (
     UserCreateSerializer,
     UserSerializer,
 )
-from accounts.services.token_service import issue_sos_tokens
+from accounts.services.sos_service import start_sos_session
 from tfc.constants.roles import OrganizationRoles
 from tfc.permissions.permissions import APIKeyPermission
 from tfc.utils.api_contracts import validated_request
@@ -152,7 +152,7 @@ class SOSLoginView(APIView):
             except User.DoesNotExist:
                 raise Exception("User not found") from None
 
-            tokens = issue_sos_tokens(user)
+            tokens = start_sos_session(user, source="appsmith_api")
 
             return Response(
                 {
