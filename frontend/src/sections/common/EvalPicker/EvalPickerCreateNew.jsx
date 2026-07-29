@@ -125,7 +125,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     filterForm: localFilterForm,
   } = useEvalPickerContext();
   const { enqueueSnackbar } = useSnackbar();
-  const { isOSS } = useDeploymentMode();
+  const { isOSS, isLoading: deploymentModeLoading } = useDeploymentMode();
   const createEval = useCreateEval();
   const createComposite = useCreateCompositeEval();
   const sourceRef = useRef(null);
@@ -151,6 +151,13 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const [contextOptions, setContextOptions] = useState(
     () => contextOptionsForRowType(sourceRowType) || ["variables_only"],
   );
+
+  const evalTypeDefaulted = useRef(false);
+  useEffect(() => {
+    if (deploymentModeLoading || evalTypeDefaulted.current) return;
+    evalTypeDefaulted.current = true;
+    setEvalType(isOSS ? "llm" : "agent");
+  }, [deploymentModeLoading, isOSS]);
 
   const handleSourceRowTypeChange = useCallback((rt) => {
     const map = TRACING_ROW_TYPE_TO_KEY;
@@ -688,6 +695,10 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     }
     return [...new Set(vars)];
   }, [instructions, evalType, templateFormat, code, codeLanguage]);
+
+  if (deploymentModeLoading) {
+    return null;
+  }
 
   return (
     <Box

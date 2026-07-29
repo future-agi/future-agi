@@ -145,7 +145,7 @@ const EvalCreatePage = () => {
   const canEditEvals =
     RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][role];
   const { enqueueSnackbar } = useSnackbar();
-  const { isOSS } = useDeploymentMode();
+  const { isOSS, isLoading: deploymentModeLoading } = useDeploymentMode();
   const createEval = useCreateEval();
   const createComposite = useCreateCompositeEval();
   const testPlaygroundRef = useRef(null);
@@ -246,9 +246,17 @@ const EvalCreatePage = () => {
     setIsTesting(false);
   }, []);
 
+  const evalTypeDefaulted = useRef(false);
+  useEffect(() => {
+    if (deploymentModeLoading || evalTypeDefaulted.current) return;
+    evalTypeDefaulted.current = true;
+    setEvalType(isOSS ? "llm" : "agent");
+  }, [deploymentModeLoading, isOSS]);
+
   // Load existing draft from URL, or create a new one
   const draftLoaded = useRef(false);
   useEffect(() => {
+    if (deploymentModeLoading) return;
     if (draftCreating.current) return;
 
     // If URL has a draft ID, load its config
@@ -330,7 +338,7 @@ const EvalCreatePage = () => {
         }
       })();
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [deploymentModeLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-save config to draft (debounced, skip initial load)
   const autoSaveTimer = useRef(null);
@@ -639,6 +647,11 @@ const EvalCreatePage = () => {
   // and can be tested individually.
   const canSave =
     canEditEvals && (mode === "single" ? canSaveSingle : canSaveComposite);
+
+
+  if (deploymentModeLoading) {
+    return null;
+  }
 
   return (
     <Box
