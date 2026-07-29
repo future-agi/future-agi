@@ -31,7 +31,6 @@ Real Postgres test DB, real DRF client, EE gates bypassed so tests focus on
 queue behavior.
 """
 
-import importlib.util
 import json
 import uuid
 from contextlib import ExitStack
@@ -155,25 +154,18 @@ def _bypass_entitlements():
     with ExitStack() as stack:
         stack.enter_context(patch("tfc.ee_gating.check_ee_can_create"))
         stack.enter_context(patch("tfc.ee_gating.check_ee_feature"))
-        try:
-            entitlements_available = (
-                importlib.util.find_spec("ee.usage.services.entitlements") is not None
+        stack.enter_context(
+            patch(
+                "ee.usage.services.entitlements.Entitlements.check_feature",
+                return_value=SimpleNamespace(allowed=True, reason=None),
             )
-        except ModuleNotFoundError:
-            entitlements_available = False
-        if entitlements_available:
-            stack.enter_context(
-                patch(
-                    "ee.usage.services.entitlements.Entitlements.check_feature",
-                    return_value=SimpleNamespace(allowed=True, reason=None),
-                )
+        )
+        stack.enter_context(
+            patch(
+                "ee.usage.services.entitlements.Entitlements.can_create",
+                return_value=SimpleNamespace(allowed=True, reason=None),
             )
-            stack.enter_context(
-                patch(
-                    "ee.usage.services.entitlements.Entitlements.can_create",
-                    return_value=SimpleNamespace(allowed=True, reason=None),
-                )
-            )
+        )
         yield
 
 

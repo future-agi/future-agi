@@ -2927,12 +2927,21 @@ class TestGetAnnotationLabelsLegacy:
         categorical_label,
         monkeypatch,
     ):
+        from tracer.services.clickhouse.query_builders.trace_list import (
+            TraceListQueryBuilder,
+        )
         from tracer.services.clickhouse.query_service import AnalyticsQueryService
 
         monkeypatch.setattr(
             AnalyticsQueryService,
             "should_use_clickhouse",
             lambda self, query_type: False,
+        )
+    
+        monkeypatch.setattr(
+            TraceListQueryBuilder,
+            "resolve_user_ids",
+            lambda self, trace_ids, analytics: {},
         )
         api_client.force_authenticate(user=user)
         resp = api_client.get(
@@ -2972,6 +2981,22 @@ class TestGetAnnotationLabelsLegacy:
 @pytest.mark.django_db
 @pytest.mark.integration
 class TestGetAnnotationValues:
+    @pytest.fixture(autouse=True)
+    def _force_pg_annotation_source(self, monkeypatch):
+        """Force the endpoint's PG fallback.
+
+        The ClickHouse branch reads the v1 ``model_hub_score`` table, which
+        the test sidecar (v2/CH25 schema) does not provision, so the view's
+        broad ``except Exception`` turns the missing table into a 400.
+        """
+        from tracer.views.annotation import TraceAnnotationView
+
+        monkeypatch.setattr(
+            TraceAnnotationView,
+            "_get_annotations_from_clickhouse",
+            lambda self, *args, **kwargs: [],
+        )
+
     def test_returns_annotations_for_span(
         self, auth_client, user, observation_span, star_label
     ):

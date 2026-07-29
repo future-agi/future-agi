@@ -1331,12 +1331,12 @@ class TestItemActionCrossOrg:
     ):
         qid, iid = queue_with_item
         resp = other_org_client.get(_annotate_detail_url(qid, iid))
-        assert resp.status_code in (401, 403, 404), resp.status_code
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
     def test_other_org_cannot_next_item(self, other_org_client, queue_with_item):
         qid, _ = queue_with_item
         resp = other_org_client.get(_next_item_url(qid))
-        assert resp.status_code in (401, 403, 404), resp.status_code
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
     def test_other_org_cannot_submit(
         self, other_org_client, queue_with_item, queue_label
@@ -1348,24 +1348,24 @@ class TestItemActionCrossOrg:
             {"annotations": [{"label_id": str(queue_label.id), "value": "Yes"}]},
             format="json",
         )
-        assert resp.status_code in (401, 403, 404), resp.status_code
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
     def test_other_org_cannot_complete(self, other_org_client, queue_with_item):
         qid, iid = queue_with_item
         resp = other_org_client.post(_complete_url(qid, iid), {}, format="json")
-        assert resp.status_code in (401, 403, 404), resp.status_code
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
     def test_other_org_cannot_skip(self, other_org_client, queue_with_item):
         qid, iid = queue_with_item
         resp = other_org_client.post(_skip_url(qid, iid), {}, format="json")
-        assert resp.status_code in (401, 403, 404), resp.status_code
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
     def test_other_org_cannot_assign(self, other_org_client, queue_with_item):
         qid, iid = queue_with_item
         resp = other_org_client.post(
             _assign_url(qid), {"item_ids": [iid], "user_ids": []}, format="json"
         )
-        assert resp.status_code in (401, 403, 404), resp.status_code
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
     def test_other_org_cannot_add_items(
         self, other_org_client, queue_with_item, dataset_with_rows
@@ -1377,28 +1377,28 @@ class TestItemActionCrossOrg:
             {"items": [{"source_type": "dataset_row", "source_id": str(rows[0].id)}]},
             format="json",
         )
-        assert resp.status_code in (401, 403, 404), resp.status_code
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
     def test_other_org_cannot_bulk_remove(self, other_org_client, queue_with_item):
         qid, iid = queue_with_item
         resp = other_org_client.post(
             _bulk_remove_url(qid), {"item_ids": [iid]}, format="json"
         )
-        assert resp.status_code in (401, 403, 404), resp.status_code
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
     def test_other_org_cannot_review(self, other_org_client, queue_with_item):
         qid, iid = queue_with_item
         resp = other_org_client.post(
             _review_url(qid, iid), {"action": "approve"}, format="json"
         )
-        assert resp.status_code in (401, 403, 404), resp.status_code
+        assert resp.status_code == status.HTTP_403_FORBIDDEN, resp.status_code
 
     def test_other_org_cannot_discussion(self, other_org_client, queue_with_item):
         qid, iid = queue_with_item
         resp = other_org_client.post(
             _discussion_url(qid, iid), {"comment": "hi"}, format="json"
         )
-        assert resp.status_code in (401, 403, 404), resp.status_code
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
     def test_other_org_cannot_import(
         self, other_org_client, queue_with_item, queue_label
@@ -1417,7 +1417,7 @@ class TestItemActionCrossOrg:
             },
             format="json",
         )
-        assert resp.status_code in (401, 403, 404), resp.status_code
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
 def _queue_detail_url(qid):
     return f"{QUEUE_URL}{qid}/"
@@ -1464,9 +1464,6 @@ def _export_to_dataset_url(qid):
 
 
 
-_REJECT = (401, 402, 403, 404)
-
-
 @pytest.mark.django_db
 class TestQueueLevelCrossOrg:
     """Org B must not read/mutate org A's queue-level endpoints, and org A's
@@ -1488,17 +1485,17 @@ class TestQueueLevelCrossOrg:
 
     def test_other_org_cannot_progress(self, other_org_client, queue):
         resp = other_org_client.get(_progress_url(queue))
-        assert resp.status_code in _REJECT, resp.status_code
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
     def test_other_org_cannot_update_status(self, other_org_client, queue):
         resp = other_org_client.post(
             _update_status_url(queue), {"status": "paused"}, format="json"
         )
-        assert resp.status_code in _REJECT, resp.status_code
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
     def test_other_org_cannot_restore(self, other_org_client, queue):
         resp = other_org_client.post(_restore_url(queue), {}, format="json")
-        assert resp.status_code in _REJECT, resp.status_code
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
     def test_other_org_cannot_hard_delete(self, other_org_client, queue):
         resp = other_org_client.post(
@@ -1506,7 +1503,7 @@ class TestQueueLevelCrossOrg:
             {"force": True, "confirm_name": "E2E Gap Queue"},
             format="json",
         )
-        assert resp.status_code in _REJECT, resp.status_code
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
     def test_other_org_cannot_add_label(
         self, other_org_client, queue, numeric_label
@@ -1514,7 +1511,7 @@ class TestQueueLevelCrossOrg:
         resp = other_org_client.post(
             _add_label_url(queue), {"label_id": str(numeric_label.id)}, format="json"
         )
-        assert resp.status_code in _REJECT, resp.status_code
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
     def test_other_org_cannot_remove_label(
         self, other_org_client, queue, numeric_label
@@ -1524,25 +1521,25 @@ class TestQueueLevelCrossOrg:
             {"label_id": str(numeric_label.id)},
             format="json",
         )
-        assert resp.status_code in _REJECT, resp.status_code
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
     def test_other_org_cannot_analytics(self, other_org_client, queue):
         resp = other_org_client.get(_analytics_url(queue))
-        assert resp.status_code in _REJECT, resp.status_code
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
     def test_other_org_cannot_agreement(self, other_org_client, queue):
         resp = other_org_client.get(_agreement_url(queue))
-        assert resp.status_code in _REJECT, resp.status_code
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
     def test_other_org_cannot_export(self, other_org_client, queue):
         resp = other_org_client.get(_export_url(queue))
-        assert resp.status_code in _REJECT, resp.status_code
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
     def test_other_org_cannot_export_to_dataset(self, other_org_client, queue):
         resp = other_org_client.post(
             _export_to_dataset_url(queue), {"dataset_name": "x"}, format="json"
         )
-        assert resp.status_code in _REJECT, resp.status_code
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.status_code
 
 
 @pytest.mark.django_db
