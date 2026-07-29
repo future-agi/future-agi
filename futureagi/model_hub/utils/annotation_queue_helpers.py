@@ -1844,7 +1844,7 @@ def _normalize_eval_output(row, output_type):
             return val
         str_list = row.get("output_str_list")
         if str_list is not None:
-            return str(str_list)
+            return str(sorted(str_list))
         return None
 
 
@@ -2010,7 +2010,7 @@ def _calculate_judge_human_agreement(queue):
 
     evaluator_name = (
         queue.custom_eval_config.name
-        or queue.custom_eval_config.eval_template.name
+        or getattr(queue.custom_eval_config.eval_template, "name", "")
     )
 
     return {
