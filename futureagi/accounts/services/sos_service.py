@@ -1,11 +1,18 @@
 """SOS (support impersonation) session minting.
 
-Both entry points route through here so that no path can mint an
-impersonation token without leaving a record: the Django admin view, where
-the operator is the signed-in staff user, and the Appsmith-facing API, which
-authenticates with a shared key and therefore has no operator identity.
+Both current entry points route through here so that every mint leaves a
+record: the Django admin view, where the operator is the signed-in staff
+user, and the Appsmith-facing API, which authenticates with a shared key and
+therefore has no operator identity.
+
+This is a convention, not an invariant. `issue_sos_tokens` remains callable
+directly, so a future caller could mint a pair with no audit line; the ruff
+banned-api rule on that import is what keeps the convention honest in CI.
+Making it unforgeable needs the provenance on the row itself (an `is_sos` /
+`issued_by` column on AuthToken), which is tracked as follow-up work.
 """
 
+from typing import TypedDict
 from urllib.parse import urlencode
 
 import structlog
@@ -19,7 +26,14 @@ from tfc.settings.settings import ssl
 logger = structlog.get_logger(__name__)
 
 
-def start_sos_session(target, *, source, operator=None):
+class SosTokens(TypedDict):
+    access: str
+    refresh: str
+
+
+def start_sos_session(
+    target: User, *, source: str, operator: User | None = None
+) -> SosTokens:
     """Mint an SOS token pair for ``target`` and emit the audit line.
 
     ``operator`` is the staff user starting the session, or None when the
@@ -43,7 +57,9 @@ def start_sos_session(target, *, source, operator=None):
     return tokens
 
 
-def build_sos_handoff_url(user_id, *, source, operator=None):
+def build_sos_handoff_url(
+    user_id: str, *, source: str, operator: User | None = None
+) -> tuple[str, None] | tuple[None, str]:
     """Resolve ``user_id``, mint a session, and return (url, error_message).
 
     Exactly one of the two is non-None. Callers decide how to surface the
