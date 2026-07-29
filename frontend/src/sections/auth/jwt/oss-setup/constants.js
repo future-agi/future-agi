@@ -5,6 +5,12 @@ export const OSS_SETUP_TABS = {
   RESET: "reset",
 };
 
+export function shouldClearOssSetupHint(hint, open, activeTab) {
+  if (!hint) return false;
+  if (!Object.values(OSS_SETUP_TABS).includes(hint)) return true;
+  return open && activeTab === hint;
+}
+
 const INSTALL_GUIDE_BASE =
   "https://github.com/future-agi/future-agi/blob/main/INSTALLATION.md";
 

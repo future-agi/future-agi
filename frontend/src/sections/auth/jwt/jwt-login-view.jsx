@@ -43,7 +43,11 @@ import {
 import RightSectionAuth from "./RightSectionAuth";
 import { isValidUtm } from "src/utils/utmUtils";
 import { usePostLoginPath } from "src/hooks/useDeploymentMode";
-import { OssSetupModal, useOssSetupModal } from "./oss-setup";
+import {
+  OssSetupModal,
+  shouldClearOssSetupHint,
+  useOssSetupModal,
+} from "./oss-setup";
 
 // ----------------------------------------------------------------------
 
@@ -66,10 +70,11 @@ export default function JwtLoginView() {
   const { search } = useLocation();
   const { enqueueSnackbar } = useSnackbar();
   const { uuid, token } = useParams();
+  const ossSetupHint = searchParams.get("ossSetup");
 
   const ossSetup = useOssSetupModal({
     enabled: !token,
-    autoOpenTab: searchParams.get("ossSetup"),
+    autoOpenTab: ossSetupHint,
   });
   // Only apply OSS treatment on a confirmed "oss" response; a failed
   // deployment-info read falls back to the full login (social/SSO shown).
@@ -80,16 +85,19 @@ export default function JwtLoginView() {
   // The hint has done its job once the modal opens on the right tab; strip it
   // so a reload doesn't reopen the modal.
   useEffect(() => {
-    if (searchParams.get("ossSetup")) {
+    if (
+      shouldClearOssSetupHint(ossSetupHint, ossSetup.open, ossSetup.activeTab)
+    ) {
       setSearchParams(
         (prev) => {
-          prev.delete("ossSetup");
-          return prev;
+          const next = new URLSearchParams(prev);
+          next.delete("ossSetup");
+          return next;
         },
         { replace: true },
       );
     }
-  }, [searchParams, setSearchParams]);
+  }, [ossSetup.activeTab, ossSetup.open, ossSetupHint, setSearchParams]);
 
   const [inviteFailed, setInviteFailed] = useState(false);
 
