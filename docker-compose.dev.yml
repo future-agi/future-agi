@@ -29,7 +29,7 @@ services:
   backend:
     build:
       context: .
-      dockerfile: Dockerfile.oss
+      dockerfile: Dockerfile
     image: futureagi/future-agi:dev
     ports:
       - "${BACKEND_GRPC_PORT:-50051}:50051"
