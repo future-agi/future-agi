@@ -181,7 +181,6 @@ function Scenarios() {
         ),
       },
       {
-      {
         id: "description",
         accessorKey: "description",
         header: "Description",
