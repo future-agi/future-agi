@@ -35,6 +35,7 @@ from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.evals_metric import (
     CompositeEvalChild,
     EvalTemplate,
+    EvalTemplateVersion,
     UserEvalMetric,
 )
 from tfc.middleware.workspace_context import set_workspace_context
@@ -1684,6 +1685,122 @@ class TestEditAndRunUserEvalView:
         assert response.status_code == status.HTTP_200_OK
         user_eval_metric.refresh_from_db()
         assert user_eval_metric.name == "updated-eval"
+        assert not Column.objects.filter(
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(user_eval_metric.id),
+            dataset=dataset,
+            deleted=False,
+        ).exists()
+
+    def test_edit_and_run_user_eval_renames_existing_columns(
+        self, auth_client, dataset, user_eval_metric
+    ):
+        """A dataset eval rename updates its value and both grid headers."""
+        eval_column = Column.objects.create(
+            name="Test Evaluation",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(user_eval_metric.id),
+        )
+        reason_column = Column.objects.create(
+            name="Test Evaluation-reason",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION_REASON.value,
+            source_id=f"{eval_column.id}-sourceid-{user_eval_metric.id}",
+        )
+
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{user_eval_metric.id}/",
+            {
+                "name": "renamed-evaluation",
+                "config": {"mapping": {"output": "Output Column"}},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        user_eval_metric.refresh_from_db()
+        eval_column.refresh_from_db()
+        reason_column.refresh_from_db()
+        assert user_eval_metric.name == "renamed-evaluation"
+        assert eval_column.name == "renamed-evaluation"
+        assert reason_column.name == "renamed-evaluation-reason"
+
+    def test_edit_and_run_user_eval_rejects_invalid_rename_before_writes(
+        self, auth_client, dataset, user_eval_metric
+    ):
+        """Invalid names fail before versioning or the metric can be changed."""
+        original_name = user_eval_metric.name
+        version_count = EvalTemplateVersion.objects.filter(
+            eval_template=user_eval_metric.template
+        ).count()
+
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{user_eval_metric.id}/",
+            {
+                "name": "My Eval!",
+                "config": {"mapping": {"output": "Output Column"}},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        user_eval_metric.refresh_from_db()
+        assert user_eval_metric.name == original_name
+        assert EvalTemplateVersion.objects.filter(
+            eval_template=user_eval_metric.template
+        ).count() == version_count
+
+    def test_edit_and_run_user_eval_rejects_duplicate_name(
+        self,
+        auth_client,
+        dataset,
+        user_eval_metric,
+        organization,
+        workspace,
+    ):
+        """A dataset cannot contain two active eval instances with one name."""
+        UserEvalMetric.objects.create(
+            name="taken-evaluation",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=user_eval_metric.template,
+            status=StatusType.NOT_STARTED.value,
+            config={},
+        )
+
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{user_eval_metric.id}/",
+            {
+                "name": "taken-evaluation",
+                "config": {"mapping": {"output": "Output Column"}},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        user_eval_metric.refresh_from_db()
+        assert user_eval_metric.name == "Test Evaluation"
+
+    def test_edit_and_run_user_eval_blank_name_is_noop(
+        self, auth_client, dataset, user_eval_metric
+    ):
+        """An empty optional name leaves the existing instance name intact."""
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{user_eval_metric.id}/",
+            {
+                "name": "",
+                "config": {"mapping": {"output": "Output Column"}},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        user_eval_metric.refresh_from_db()
+        assert user_eval_metric.name == "Test Evaluation"
 
     def test_edit_and_run_user_eval_without_name(
         self, auth_client, dataset, user_eval_metric, output_column
