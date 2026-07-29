@@ -73,7 +73,11 @@ x-backend-env: &backend-env
   CH_PORT: 9000
   CH_HTTP_PORT: 8123
   CH_USER: default
+
+  CH_USERNAME: ${CH_USERNAME:-default}
   CH_PASSWORD: ""
+
+  CH_ENABLED: ${CH_ENABLED:-true}
 
   CH_DATABASE: ${CH_DATABASE:-default}
   # CH25 schema/read path. Keep this aligned with FI_CH_DATABASE so the
