@@ -26,6 +26,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml ./
 RUN uv pip install --system .
 
+# Pre-bake the fixed embedding models into the image so runtime never fetches
+# them from HuggingFace (protects against HF rate-limiting / outages). Offline
+# mode is deliberately NOT set: user-supplied external models still load online.
+# HF_TOKEN is a build-only arg to authenticate the one-time download and is not
+# persisted into the image env.
+ARG HF_TOKEN=""
+ENV HF_HOME=/opt/models/hf \
+    SENTENCE_TRANSFORMERS_HOME=/opt/models/st
+RUN python - <<'PY'
+from sentence_transformers import SentenceTransformer
+from transformers import CLIPModel, AutoProcessor, Wav2Vec2Model, Wav2Vec2Processor
+SentenceTransformer("all-MiniLM-L6-v2")
+SentenceTransformer("clip-ViT-B-32")
+CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+AutoProcessor.from_pretrained("openai/clip-vit-base-patch32")
+Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base")
+Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base")
+PY
+
 COPY . .
 RUN chmod +x entrypoint.sh
 
