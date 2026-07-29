@@ -250,7 +250,7 @@ const getDataSource = (
           : await queryClient.fetchQuery({ ...queryOptions });
 
         const result = data?.data?.result;
-        const processingData = result?.isProcessingData;
+        const processingData = getResultIsProcessingData(result);
 
         useProcessingStore.getState().setIsProcessingData(processingData);
 
