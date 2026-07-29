@@ -17,6 +17,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import React, {
   useCallback,
   useEffect,
@@ -1072,17 +1073,7 @@ const EvalDetailPage = () => {
 
   if (isLoading) {
     return (
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          height: "100%",
-          py: 8,
-        }}
-      >
-        <CircularProgress />
-      </Box>
+      <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />
     );
   }
 

@@ -1,6 +1,7 @@
 import React, { useMemo, useCallback, useEffect, useRef } from "react";
 import PropTypes from "prop-types";
-import { Box, Paper, useTheme, CircularProgress, Alert } from "@mui/material";
+import { Box, Paper, useTheme, Alert } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
 
 import { useObserveHeader } from "../project/context/ObserveHeaderContext";
@@ -26,17 +27,10 @@ import { resetTabStore } from "./LLMTracing/tabStore";
 
 // Loading component for tab content
 const TabContentLoader = () => (
-  <Box
-    sx={{
-      display: "flex",
-      justifyContent: "center",
-      alignItems: "center",
-      height: "200px",
-      backgroundColor: "background.paper",
-    }}
-  >
-    <CircularProgress />
-  </Box>
+  <LoadingScreen
+    variant="orbit"
+    sx={{ minHeight: "60vh", backgroundColor: "background.paper" }}
+  />
 );
 
 // Error boundary component

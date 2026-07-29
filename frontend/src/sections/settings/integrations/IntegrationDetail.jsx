@@ -6,7 +6,6 @@ import {
   Box,
   Button,
   Card,
-  CircularProgress,
   Grid,
   IconButton,
   Menu,
@@ -16,6 +15,7 @@ import {
 } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
 import Iconify from "src/components/iconify";
+import { LoadingScreen } from "src/components/loading-screen";
 import { paths } from "src/routes/paths";
 import { fDateTime, fToNow } from "src/utils/format-time";
 import {
@@ -84,9 +84,7 @@ export default function IntegrationDetail() {
 
   if (isLoading) {
     return (
-      <Box display="flex" justifyContent="center" py={8}>
-        <CircularProgress />
-      </Box>
+      <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />
     );
   }
 
