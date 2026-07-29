@@ -645,6 +645,7 @@ const QueryInput = forwardRef(function QueryInput(
     setInputValue("");
     setRangeFrom("");
     setRangeTo("");
+    setLogicOperator("AND");
   }, [initialTokensKey]);
 
   const phase = !partialField ? "field" : !partialOp ? "operator" : "value";
