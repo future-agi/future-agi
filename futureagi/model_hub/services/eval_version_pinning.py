@@ -16,6 +16,9 @@ def maybe_pin_new_version(eval_metric, request_data, user, organization, workspa
 
     Mutates eval_metric.pinned_version in place. The caller is responsible
     for persisting eval_metric via save().
+
+    Works for both ``UserEvalMetric`` (``.template``) and
+    ``PromptEvalConfig`` (``.eval_template``).
     """
     from model_hub.models.choices import OwnerChoices
 
@@ -25,17 +28,25 @@ def maybe_pin_new_version(eval_metric, request_data, user, organization, workspa
     )
     if not has_config_changes:
         return None
-    if eval_metric.template.owner != OwnerChoices.USER.value:
+
+    tpl = getattr(eval_metric, "template", None) or getattr(
+        eval_metric, "eval_template", None
+    )
+    if tpl is None or tpl.owner != OwnerChoices.USER.value:
         return None
 
-    tpl = eval_metric.template
     req_config = request_data.get("config") or {}
     inner_config = req_config.get("config", {})
     run_config = req_config.get("run_config", {})
-    mapping = req_config.get("mapping") or (eval_metric.config or {}).get("mapping", {})
+    mapping = req_config.get("mapping") or (eval_metric.config or {}).get(
+        "mapping", {}
+    ) or getattr(eval_metric, "mapping", None) or {}
     resolved_model = (
-        request_data.get("model") or eval_metric.model
-        or tpl.model or ""
+        request_data.get("model")
+        or getattr(eval_metric, "model", None)
+        or (eval_metric.config or {}).get("run_config", {}).get("model")
+        or tpl.model
+        or ""
     )
 
     # Build snapshot: template base → FE config → run_config → top-level fields
@@ -62,12 +73,15 @@ def maybe_pin_new_version(eval_metric, request_data, user, organization, workspa
     current_pinned = eval_metric.pinned_version
     if current_pinned:
         new_snap_json = json.dumps(snap, sort_keys=True, default=str)
-        old_snap_json = json.dumps(current_pinned.config_snapshot or {}, sort_keys=True, default=str)
+        old_snap_json = json.dumps(
+            current_pinned.config_snapshot or {}, sort_keys=True, default=str
+        )
         if new_snap_json == old_snap_json:
             return None
 
     prompt_messages = config_to_prompt_messages(
-        snap, criteria=criteria,
+        snap,
+        criteria=criteria,
         eval_type_id=snap.get("eval_type_id"),
     )
 
@@ -82,3 +96,4 @@ def maybe_pin_new_version(eval_metric, request_data, user, organization, workspa
         workspace=workspace,
     )
     eval_metric.pinned_version = ver
+    return ver

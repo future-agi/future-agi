@@ -2103,6 +2103,59 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         finally:
             close_old_connections()
 
+    def _apply_prompt_eval_version_pin(self, prompt_eval, request, new_config):
+        """Re-baseline / create-pin EvalTemplateVersion for a PromptEvalConfig.
+
+        Returns an error string on failure, else None.
+        """
+        from model_hub.models.evals_metric import EvalTemplateVersion
+        from model_hub.services.eval_version_pinning import maybe_pin_new_version
+
+        explicit_version_id = new_config.get("pinned_version_id") or request.data.get(
+            "pinned_version_id"
+        )
+        if explicit_version_id and str(explicit_version_id) != str(
+            prompt_eval.pinned_version_id or ""
+        ):
+            selected_ver = EvalTemplateVersion.objects.filter(
+                id=explicit_version_id,
+                eval_template_id=prompt_eval.eval_template_id,
+                deleted=False,
+            ).first()
+            if not selected_ver:
+                return "Selected version not found"
+            prompt_eval.pinned_version = selected_ver
+
+        # Nest workbench payload into the shape maybe_pin expects.
+        binding_config = new_config.get("config") or {}
+        pin_request = {
+            "model": request.data.get("model")
+            or (binding_config.get("run_config") or {}).get("model"),
+            "config": {
+                "mapping": new_config.get("mapping") or prompt_eval.mapping or {},
+                "config": binding_config.get("config")
+                if isinstance(binding_config.get("config"), dict)
+                else {
+                    k: v
+                    for k, v in binding_config.items()
+                    if k not in ("run_config", "params")
+                },
+                "run_config": binding_config.get("run_config") or {},
+                "params": new_config.get("params")
+                or binding_config.get("params")
+                or {},
+            },
+        }
+        maybe_pin_new_version(
+            prompt_eval,
+            pin_request,
+            user=request.user,
+            organization=getattr(request, "organization", None)
+            or getattr(request.user, "organization", None),
+            workspace=getattr(request, "workspace", None),
+        )
+        return None
+
     @action(detail=True, methods=["get"], url_path="evaluation-configs")
     def get_evaluation_configs(self, request, pk=None):
         """
@@ -2122,7 +2175,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             # Get the evaluation configs
             evaluation_configs = PromptEvalConfig.objects.filter(
                 prompt_template=template, deleted=False
-            ).select_related("eval_template", "eval_group")
+            ).select_related("eval_template", "eval_group", "pinned_version")
 
             response = []
             for config in evaluation_configs:
@@ -2151,6 +2204,11 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                         "updated_at": config.updated_at.isoformat(),
                         "eval_group": (
                             config.eval_group.name if config.eval_group else None
+                        ),
+                        "pinned_version_id": (
+                            str(config.pinned_version_id)
+                            if config.pinned_version_id
+                            else None
                         ),
                     }
                 )
@@ -2233,14 +2291,21 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     kb = KnowledgeBaseFile.objects.get(id=new_config.get("kb_id"))
                 except KnowledgeBaseFile.DoesNotExist:
                     pass
+            # Binding storage only keeps runtime keys (params / run_config).
+            # Nested template overrides under config.config are for version
+            # pinning and must not be written onto PromptEvalConfig.config.
+            incoming_config = new_config.get("config", {}) or {}
+            binding_runtime_config = {
+                k: v for k, v in incoming_config.items() if k != "config"
+            }
             normalized_config = normalize_eval_runtime_config(
                 eval_template.config,
                 {
-                    **(new_config.get("config", {}) or {}),
+                    **binding_runtime_config,
                     "params": (
                         new_config.get("params", {})
                         if new_config.get("params", {})
-                        else (new_config.get("config", {}) or {}).get("params", {})
+                        else binding_runtime_config.get("params", {})
                     ),
                 },
             )
@@ -2263,19 +2328,8 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 prompt_eval.error_localizer = new_config.get(
                     "error_localizer", False
                 )
-                prompt_eval.save(
-                    update_fields=[
-                        "name",
-                        "eval_template",
-                        "mapping",
-                        "config",
-                        "kb",
-                        "error_localizer",
-                        "updated_at",
-                    ]
-                )
             else:
-                prompt_eval = PromptEvalConfig.objects.create(
+                prompt_eval = PromptEvalConfig(
                     name=eval_name,
                     prompt_template=template,
                     eval_template=eval_template,
@@ -2285,6 +2339,29 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     kb=kb,
                     error_localizer=new_config.get("error_localizer", False),
                 )
+
+            pin_error = self._apply_prompt_eval_version_pin(
+                prompt_eval,
+                request,
+                new_config,
+            )
+            if pin_error:
+                return self._gm.bad_request(pin_error)
+
+            update_fields = [
+                "name",
+                "eval_template",
+                "mapping",
+                "config",
+                "kb",
+                "error_localizer",
+                "pinned_version",
+                "updated_at",
+            ]
+            if user_eval_id:
+                prompt_eval.save(update_fields=update_fields)
+            else:
+                prompt_eval.save()
 
             # If is_run is true, run evaluations on specified versions
             if is_run:
@@ -2391,6 +2468,11 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 {
                     "message": "Evaluation configuration updated successfully",
                     "prompt_eval_config_id": str(prompt_eval.id),
+                    "pinned_version_id": (
+                        str(prompt_eval.pinned_version_id)
+                        if prompt_eval.pinned_version_id
+                        else None
+                    ),
                 }
             )
 
@@ -2661,16 +2743,28 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             # Add response as the last message
             chat_history.append({"role": "assistant", "content": response})
 
-            # Get evaluation class and configuration
+            # Get evaluation class and configuration — prefer the pinned
+            # version snapshot when present so workbench runs the version
+            # the user selected in the picker.
             from evaluations.engine.registry import get_eval_class
 
-            eval_class = get_eval_class(eval_template.config.get("eval_type_id"))
+            base_config = evaluation.eval_template.config or {}
+            effective_template_config = (
+                dict(base_config) if isinstance(base_config, dict) else {}
+            )
+            pinned = getattr(evaluation, "pinned_version", None)
+            if pinned and isinstance(pinned.config_snapshot, dict):
+                effective_template_config.update(pinned.config_snapshot)
 
-            data_config = evaluation.eval_template.config
+            eval_class = get_eval_class(effective_template_config.get("eval_type_id"))
+
+            data_config = effective_template_config
             config = (
                 data_config.copy()
-                if evaluation.eval_template == OwnerChoices.USER.value
+                if evaluation.eval_template.owner == OwnerChoices.USER.value
                 else data_config.get("config", {}).copy()
+                if isinstance(data_config.get("config"), dict)
+                else data_config.copy()
             )
             config = evaluation_runner.update_config_list_values(config)
             from evaluations.engine.instance import resolve_binding_model
@@ -2678,7 +2772,8 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             eval_instance = evaluation_runner._create_eval_instance(
                 config=config,
                 eval_class=eval_class,
-                model=resolve_binding_model(evaluation.config, eval_template),
+                model=resolve_binding_model(evaluation.config, eval_template)
+                or (pinned.model if pinned else None),
                 kb_id=str(evaluation.kb_id) if evaluation.kb_id else None,
                 runtime_config=evaluation.config,
             )
@@ -3117,7 +3212,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             organization_id = template.organization.id
             evaluation_configs = PromptEvalConfig.objects.filter(
                 id__in=prompt_eval_config_ids, prompt_template=template, deleted=False
-            )
+            ).select_related("eval_template", "pinned_version")
 
             def get_max_len(variable_names):
                 return (

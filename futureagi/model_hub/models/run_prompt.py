@@ -389,3 +389,11 @@ class PromptEvalConfig(BaseModel):
         blank=True,
         default=None,
     )
+    pinned_version = models.ForeignKey(
+        "model_hub.EvalTemplateVersion",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pinned_prompt_eval_configs",
+        help_text="Pin to a specific eval template version for workbench runtime.",
+    )

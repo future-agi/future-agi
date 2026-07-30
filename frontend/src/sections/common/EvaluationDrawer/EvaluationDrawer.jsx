@@ -653,7 +653,11 @@ const EvaluationDrawerChild = ({
               name: evalConfig.name,
               mapping: evalConfig.mapping || {},
               model: isComposite ? undefined : evalConfig.model,
+              // Nest like dataset/editEval so maybe_pin gets template
+              // overrides under config.config; binding-only keys stay at
+              // config.run_config / config.params.
               config: {
+                config: isComposite ? {} : evalConfig.config || {},
                 params: evalParams,
                 ...(Object.keys(runConfig).length
                   ? { run_config: runConfig }
@@ -662,6 +666,9 @@ const EvaluationDrawerChild = ({
               error_localizer: runConfig.error_localizer_enabled || false,
               is_run: true,
               version_to_run: workbenchVersions || [],
+              ...(evalConfig.versionId
+                ? { pinned_version_id: evalConfig.versionId }
+                : {}),
             };
           } else {
             payload = {
@@ -770,6 +777,11 @@ const EvaluationDrawerChild = ({
           // await so errors propagate to EvalPickerDrawer's handleSaveEval
           // catch block — keeps the drawer open on failure.
           await handleRun(payload, () => {
+            if (evalConfig.templateId) {
+              queryClient.invalidateQueries({
+                queryKey: ["evals", "versions", evalConfig.templateId],
+              });
+            }
             setEvalPickerOpen(false);
             setVisibleSection("list");
           });

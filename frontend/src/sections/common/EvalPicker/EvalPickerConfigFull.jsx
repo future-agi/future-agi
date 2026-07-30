@@ -1035,6 +1035,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         data_injection: dataInjection,
         error_localizer_enabled: errorLocalizerEnabled,
         composite_weight_overrides: compositeChildWeights,
+        // Hosts (wizard / workbench) use this to decide local-only vs save.
+        isDirty,
       });
       return;
     }
@@ -1074,6 +1076,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       knowledge_bases: knowledgeBaseIds,
       data_injection: dataInjection,
       error_localizer_enabled: errorLocalizerEnabled,
+      // Hosts (wizard / workbench) use this to decide local-only vs save.
+      isDirty,
     });
   }, [
     templateId,
@@ -1111,6 +1115,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     source,
     onFiltersChange,
     localFilterForm,
+    isDirty,
   ]);
 
   if (isLoading) {
