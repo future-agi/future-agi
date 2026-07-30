@@ -214,6 +214,7 @@ export default function ConfirmAlertsDialog() {
           color={action?.color}
           size="small"
           variant="contained"
+          data-alert-confirm-action={actionModal.type || ""}
           disabled={isDeletingAlerts || isMutingAlerts}
         >
           {action?.title}

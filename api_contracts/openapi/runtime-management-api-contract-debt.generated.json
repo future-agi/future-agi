@@ -1,0 +1,37 @@
+{
+  "generated_from": [
+    "futureagi/accounts/views",
+    "futureagi/model_hub/views",
+    "futureagi/tracer/views"
+  ],
+  "app_wide_generated_from": [
+    "futureagi/accounts/views",
+    "futureagi/agent_playground/views",
+    "futureagi/agentcc/views",
+    "futureagi/integrations/views",
+    "futureagi/mcp_server/views",
+    "futureagi/model_hub/views",
+    "futureagi/sdk/views",
+    "futureagi/simulate/views",
+    "futureagi/tfc/views",
+    "futureagi/tracer/views",
+    "futureagi/ai_tools/views.py",
+    "futureagi/saml2_auth/views.py"
+  ],
+  "summary": {
+    "runtime_backed_validated_request_decorators": 356,
+    "direct_swagger_auto_schema_decorators": 134,
+    "doc_only_input_contract_decorators": 0,
+    "broad_request_contract_decorators": 0
+  },
+  "app_wide_summary": {
+    "runtime_backed_validated_request_decorators": 462,
+    "direct_swagger_auto_schema_decorators": 242,
+    "doc_only_input_contract_decorators": 0,
+    "broad_request_contract_decorators": 0
+  },
+  "doc_only_input_contract_decorators": [],
+  "broad_request_contract_decorators": [],
+  "app_wide_doc_only_input_contract_decorators": [],
+  "app_wide_broad_request_contract_decorators": []
+}

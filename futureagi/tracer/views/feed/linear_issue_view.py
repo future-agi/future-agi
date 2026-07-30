@@ -5,6 +5,8 @@ POST /tracer/feed/issues/{cluster_id}/create-linear-issue/
 GET  /tracer/feed/integrations/linear/teams/
 """
 
+import uuid as _uuid
+
 import structlog
 from django.conf import settings
 from rest_framework import serializers
@@ -13,12 +15,21 @@ from rest_framework.views import APIView
 
 from integrations.models.integration_connection import IntegrationPlatform
 from integrations.services.credentials import CredentialManager
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.trace_error_analysis import TraceErrorGroup
-from tracer.utils import feed as feed_service
+from tracer.queries.feed import trace_judge, priority_to_severity
 from tracer.views.feed._permissions import resolve_requested_project_ids
 
 logger = structlog.get_logger(__name__)
+
+ERROR_RESPONSES = {
+    400: ApiErrorResponseSerializer,
+    403: ApiErrorResponseSerializer,
+    404: ApiErrorResponseSerializer,
+    500: ApiErrorResponseSerializer,
+}
 
 
 class CreateLinearIssueSerializer(serializers.Serializer):
@@ -27,6 +38,34 @@ class CreateLinearIssueSerializer(serializers.Serializer):
     title = serializers.CharField(required=False, allow_blank=True)
     description = serializers.CharField(required=False, allow_blank=True)
     priority = serializers.IntegerField(required=False, default=0)
+
+
+class CreateLinearIssueResultSerializer(serializers.Serializer):
+    already_linked = serializers.BooleanField(required=False)
+    issue_id = serializers.CharField(required=False, allow_null=True)
+    issue_url = serializers.CharField(required=False, allow_null=True)
+    issue_title = serializers.CharField(required=False, allow_null=True)
+
+
+class CreateLinearIssueResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = CreateLinearIssueResultSerializer()
+
+
+class LinearTeamSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField()
+    key = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+
+class LinearTeamsResultSerializer(serializers.Serializer):
+    connected = serializers.BooleanField()
+    teams = LinearTeamSerializer(many=True)
+
+
+class LinearTeamsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = LinearTeamsResultSerializer()
 
 
 def _cluster_url(cluster_id: str) -> str:
@@ -38,58 +77,69 @@ def _cluster_url(cluster_id: str) -> str:
     return f"{scheme}{app_url}/dashboard/error-feed/{cluster_id}"
 
 
-def _build_issue_description(
-    cluster: TraceErrorGroup, trace_id: str | None
-) -> str:
+def _build_issue_description(cluster: TraceErrorGroup, trace_id: str | None) -> str:
     """Build the Linear issue description.
 
-    Kept intentionally short: title, link back, and — when a deep
-    analysis has run for the supplied trace — its root causes and
-    immediate fixes. No noisy stats; those live on the cluster page.
+    The cluster-level RCA (synthesis + fix + confidence + evidence), when one
+    has run, is included in full — the assignee should be able to act from
+    the ticket without opening the app. Per-trace deep analysis (when a trace
+    is supplied) follows. No noisy stats; those live on the cluster page.
     """
     parts: list[str] = []
 
     cluster_url = _cluster_url(cluster.cluster_id)
     if cluster_url:
-        parts.append(f"**[View in Future AGI]({cluster_url})** — `{cluster.cluster_id}`")
+        parts.append(
+            f"**[View in Future AGI]({cluster_url})** — `{cluster.cluster_id}`"
+        )
     else:
         parts.append(f"**Cluster**: `{cluster.cluster_id}`")
+
+    context_bits = [f"Severity: **{priority_to_severity(cluster.priority)}**"]
+    if cluster.unique_traces:
+        context_bits.append(f"{cluster.unique_traces} traces")
+    if cluster.issue_group:
+        context_bits.append(f"`{cluster.issue_group}`")
+    parts.append(" · ".join(context_bits))
+
+    if cluster.rca_synthesis:
+        parts.append("## Root cause analysis")
+        parts.append(cluster.rca_synthesis)
+        if cluster.rca_fix:
+            parts.append("## Recommended fix")
+            parts.append(cluster.rca_fix)
+        meta_bits: list[str] = []
+        if cluster.rca_confidence:
+            meta_bits.append(f"Confidence: **{cluster.rca_confidence}**")
+        # Runs persisted before the alias fix stored LLM-facing labels
+        # (T01, ...) — meaningless outside the run, so only ship real UUIDs.
+        evidence_ids = []
+        for t in cluster.rca_evidence_trace_ids or []:
+            try:
+                _uuid.UUID(str(t))
+                evidence_ids.append(str(t))
+            except ValueError:
+                continue
+        if evidence_ids:
+            ids = ", ".join(f"`{t}`" for t in evidence_ids[:5])
+            meta_bits.append(f"Evidence traces: {ids}")
+        if meta_bits:
+            parts.append(" · ".join(meta_bits))
 
     if trace_id is None:
         return "\n\n".join(parts)
 
+    # Eval clusters have no deep analysis; the evaluator's reasoning for the
+    # sampled trace is the per-trace context worth shipping instead.
     try:
-        analysis = feed_service.get_deep_analysis(
-            cluster.cluster_id, trace_id=str(trace_id)
-        )
+        judge_reason, judge_score = trace_judge(str(trace_id))
     except Exception:
-        # Deep analysis is best-effort context — never block ticket creation.
-        logger.exception(
-            "linear_description_deep_analysis_failed",
-            cluster_id=cluster.cluster_id,
-            trace_id=str(trace_id),
-        )
-        return "\n\n".join(parts)
-
-    if analysis is None or analysis.status != "done":
-        return "\n\n".join(parts)
-
-    if analysis.root_causes:
-        parts.append("## Root causes")
-        for rc in analysis.root_causes:
-            line = f"{rc.rank}. **{rc.title}**"
-            if rc.description:
-                line += f" — {rc.description}"
-            parts.append(line)
-
-    fixes: list[str] = []
-    for rec in analysis.recommendations:
-        if rec.immediate_fix:
-            label = rec.title or rec.id
-            fixes.append(f"- **{label}**: {rec.immediate_fix}")
-    if fixes:
-        parts.append("## Immediate fixes")
-        parts.extend(fixes)
+        logger.warning("trace_judge_failed", exc_info=True)
+        judge_reason, judge_score = None, None
+    if judge_reason:
+        score_sfx = f" ({judge_score:.2f}/1.00)" if judge_score is not None else ""
+        parts.append(f"## Evaluator reasoning — sampled trace{score_sfx}")
+        parts.append(judge_reason)
 
     return "\n\n".join(parts)
 
@@ -100,11 +150,11 @@ class CreateLinearIssueView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=CreateLinearIssueSerializer,
+        responses={200: CreateLinearIssueResponseSerializer, **ERROR_RESPONSES},
+    )
     def post(self, request, cluster_id: str):
-        body = CreateLinearIssueSerializer(data=request.data)
-        if not body.is_valid():
-            return self._gm.bad_request(body.errors)
-
         project_ids = resolve_requested_project_ids(request, None)
         if project_ids is None:
             return self._gm.forbidden_response("Access denied")
@@ -151,14 +201,15 @@ class CreateLinearIssueView(APIView):
 
         credentials = CredentialManager.decrypt(connection.encrypted_credentials)
 
-        title = body.validated_data.get("title") or ""
+        # Build default title/description from cluster if not provided
+        title = request.validated_data.get("title") or ""
         if not title:
             title = f"[{cluster.cluster_id}] {cluster.title or cluster.error_type}"
 
-        description = body.validated_data.get("description") or ""
+        description = request.validated_data.get("description") or ""
         if not description:
             description = _build_issue_description(
-                cluster, body.validated_data.get("trace_id")
+                cluster, request.validated_data.get("trace_id")
             )
 
         try:
@@ -167,10 +218,10 @@ class CreateLinearIssueView(APIView):
             service = LinearService()
             issue = service.create_issue(
                 credentials=credentials,
-                team_id=body.validated_data["team_id"],
+                team_id=request.validated_data["team_id"],
                 title=title[:200],
                 description=description,
-                priority=body.validated_data.get("priority", 0),
+                priority=request.validated_data.get("priority", 0),
             )
         except Exception:
             logger.exception("linear_create_issue_failed", cluster_id=cluster_id)
@@ -209,6 +260,9 @@ class LinearTeamsView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        responses={200: LinearTeamsResponseSerializer, **ERROR_RESPONSES},
+    )
     def get(self, request):
         from integrations.models.integration_connection import (
             ConnectionStatus,

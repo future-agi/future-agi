@@ -180,13 +180,13 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
       name: evalName,
       model,
       mapping,
-        evalTemplate: normalizedEvalData,
-        evalType: normalizedEvalData?.evalType,
-        templateType: normalizedEvalData?.templateType,
-        outputType: normalizedEvalData?.outputType,
-        config: normalizedEvalData?.config,
-      };
-      onSave(evalConfig);
+      evalTemplate: normalizedEvalData,
+      evalType: normalizedEvalData?.evalType,
+      templateType: normalizedEvalData?.templateType,
+      outputType: normalizedEvalData?.outputType,
+      config: normalizedEvalData?.config,
+    };
+    onSave(evalConfig);
   }, [evalData, normalizedEvalData, evalName, model, mapping, onSave]);
 
   return (
@@ -427,8 +427,8 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
             Evaluation Summary
           </Typography>
           <Typography variant="body2" sx={{ fontSize: "12px" }}>
-            {evalData?.name} ({evalData?.evalType || "LLM"} eval,{" "}
-            {evalData?.outputType || "pass_fail"} output)
+            {evalData?.name} ({evalData?.eval_type || "LLM"} eval,{" "}
+            {evalData?.output_type || "pass_fail"} output)
           </Typography>
           {evalData?.description && (
             <Typography

@@ -1,14 +1,96 @@
-import { describe, expect, it } from "vitest";
-import { objectCamelToSnake } from "src/utils/utils";
+/* eslint-disable react/prop-types */
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import PropTypes from "prop-types";
+import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
 import {
   buildAnnotatorFilterChipLabelMap,
+  buildReadOnlyColumnDefs,
   buildSimulationSelectorColumnDefs,
   buildSimulationSelectorFilterFields,
+  DatasetRowSelector,
+  SelectionCheckboxNudge,
 } from "../items/add-items-dialog";
 import {
+  buildSessionSelectAllMeta,
   buildSessionSelectionFilters,
   buildSessionSelectorFilterFields,
+  getSessionSelectionRowId,
 } from "../items/add-items-session-utils";
+
+const agGridMock = vi.hoisted(() => ({
+  api: {
+    setGridOption: vi.fn(),
+    getGridOption: vi.fn(),
+    getDisplayedRowCount: vi.fn(() => 0),
+    getLastDisplayedRowIndex: vi.fn(() => -1),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    isDestroyed: vi.fn(() => false),
+    getServerSideSelectionState: vi.fn(() => ({ selectAll: false })),
+    forEachNode: vi.fn(),
+  },
+}));
+
+const queryClientMock = vi.hoisted(() => ({
+  fetchQuery: vi.fn(async () => ({
+    data: { result: { table: [], metadata: { total_rows: 0 } } },
+  })),
+}));
+
+vi.mock("src/hooks/use-debounce", () => ({
+  useDebounce: (value) => value,
+}));
+
+vi.mock("ag-grid-react", async () => {
+  const React = await import("react");
+  const AgGridReact = ({ onGridReady }) => {
+    React.useEffect(() => {
+      onGridReady?.({ api: agGridMock.api });
+    }, [onGridReady]);
+    return React.createElement("div", { "data-testid": "dataset-grid" });
+  };
+  AgGridReact.propTypes = { onGridReady: PropTypes.func };
+  return { AgGridReact };
+});
+
+vi.mock("@tanstack/react-query", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useQueryClient: () => queryClientMock,
+    useQuery: (options) => {
+      const key = options?.queryKey || [];
+      if (key[0] === "datasets-list-simple") {
+        return {
+          data: [{ dataset_id: "dataset-1", name: "Support Prompts" }],
+          isLoading: false,
+          isFetching: false,
+        };
+      }
+      if (key[0] === "dataset-detail") {
+        return {
+          data: {
+            data: {
+              result: {
+                column_config: [
+                  {
+                    id: "prompt",
+                    name: "Prompt",
+                    data_type: "text",
+                    is_visible: true,
+                  },
+                ],
+              },
+            },
+          },
+          isLoading: false,
+          isFetching: false,
+        };
+      }
+      return actual.useQuery(options);
+    },
+  };
+});
 
 function valuesByHeader(row, columnOrder = []) {
   return Object.fromEntries(
@@ -226,6 +308,22 @@ describe("Simulation add-items filters", () => {
   });
 });
 
+describe("Add-items selection nudge", () => {
+  it("shows the checkbox guidance until rows are selected", () => {
+    const { rerender } = render(<SelectionCheckboxNudge selectionCount={0} />);
+
+    expect(
+      screen.getByText(/use the checkbox column to select rows/i),
+    ).toBeInTheDocument();
+
+    rerender(<SelectionCheckboxNudge selectionCount={2} />);
+
+    expect(
+      screen.queryByText(/use the checkbox column to select rows/i),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("Session add-items filters", () => {
   it("maps session fields to the searchable filter panel shape", () => {
     const fields = buildSessionSelectorFilterFields([
@@ -265,18 +363,18 @@ describe("Session add-items filters", () => {
     const filters = buildSessionSelectionFilters(
       [
         {
-          columnId: "total_traces_count",
-          filterConfig: {
-            filterType: "number",
-            filterOp: "greater_than",
-            filterValue: "2",
+          column_id: "total_traces_count",
+          filter_config: {
+            filter_type: "number",
+            filter_op: "greater_than",
+            filter_value: "2",
           },
         },
       ],
       { dateFilter: ["2026-01-01", "2026-02-01"] },
     );
 
-    expect(objectCamelToSnake(filters)).toEqual([
+    expect(filters).toEqual([
       {
         column_id: "total_traces_count",
         filter_config: {
@@ -297,6 +395,145 @@ describe("Session add-items filters", () => {
         },
       },
     ]);
+  });
+
+  it("builds select-all metadata from backend session_id rows", () => {
+    const api = {
+      getServerSideSelectionState: () => ({
+        selectAll: true,
+        toggledNodes: ["session-2"],
+      }),
+      getGridOption: () => ({ totalRowCount: 4 }),
+      getRenderedNodes: () => [
+        { data: { session_id: "session-1" } },
+        { data: { session_id: "session-2" } },
+        { data: { session_id: "session-3" } },
+      ],
+    };
+
+    const meta = buildSessionSelectAllMeta(api);
+
+    expect(meta.totalCount).toBe(4);
+    expect(meta.visibleCount).toBe(2);
+    expect(meta.visibleRowIds).toEqual(["session-1", "session-3"]);
+    expect([...meta.excludedIds]).toEqual(["session-2"]);
+  });
+
+  it("keeps session row id extraction on the backend contract key first", () => {
+    expect(
+      getSessionSelectionRowId({
+        id: "node-fallback",
+        data: {
+          session_id: "backend-session",
+          sessionId: "camel-session",
+          id: "row-id",
+        },
+      }),
+    ).toBe("backend-session");
+  });
+});
+
+describe("Dataset read-only column defs", () => {
+  it("builds columns from the snake_case dataset config the API returns", () => {
+    const columns = buildReadOnlyColumnDefs([
+      {
+        id: "prompt",
+        name: "Prompt",
+        data_type: "text",
+        is_frozen: true,
+        is_visible: true,
+      },
+    ]);
+
+    expect(columns).toHaveLength(1);
+    expect(columns[0]).toMatchObject({
+      field: "prompt",
+      headerName: "Prompt",
+      dataType: "text",
+      pinned: true,
+      hide: false,
+    });
+    expect(columns[0].col.dataType).toBe("text");
+  });
+
+  it("hides only columns explicitly marked is_visible: false", () => {
+    const columns = buildReadOnlyColumnDefs([
+      { id: "a", name: "A", data_type: "text", is_visible: false },
+      { id: "b", name: "B", data_type: "text" },
+      { id: "c", name: "C", data_type: "text", is_visible: true },
+    ]);
+
+    expect(columns.map((col) => col.field)).toEqual(["b", "c"]);
+    expect(columns.every((col) => col.hide === false)).toBe(true);
+  });
+
+  it("reads cell values off the snake_case cell_value key", () => {
+    const [column] = buildReadOnlyColumnDefs([
+      { id: "prompt", name: "Prompt", data_type: "text", is_visible: true },
+    ]);
+
+    const value = column.valueGetter({
+      data: { prompt: { cell_value: "hello" } },
+    });
+
+    expect(value).toBe("hello");
+  });
+});
+
+describe("Dataset add-items search", () => {
+  beforeEach(() => {
+    agGridMock.api.setGridOption.mockClear();
+    agGridMock.api.getGridOption.mockClear();
+    agGridMock.api.getDisplayedRowCount.mockClear();
+    agGridMock.api.getLastDisplayedRowIndex.mockClear();
+    agGridMock.api.addEventListener.mockClear();
+    agGridMock.api.removeEventListener.mockClear();
+    agGridMock.api.isDestroyed.mockClear();
+    agGridMock.api.getServerSideSelectionState.mockClear();
+    agGridMock.api.forEachNode.mockClear();
+    queryClientMock.fetchQuery.mockClear();
+  });
+
+  it("refreshes dataset rows as search text changes without waiting for Enter", async () => {
+    const user = userEvent.setup();
+    render(
+      <DatasetRowSelector onSetSelection={vi.fn()} onSelectAll={vi.fn()} />,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: /dataset/i }));
+    await user.click(screen.getByRole("option", { name: "Support Prompts" }));
+
+    const searchInput =
+      await screen.findByPlaceholderText(/search in dataset/i);
+    agGridMock.api.setGridOption.mockClear();
+    await user.type(searchInput, "refund");
+
+    await waitFor(() => {
+      expect(agGridMock.api.setGridOption).toHaveBeenCalledWith(
+        "serverSideDatasource",
+        expect.any(Object),
+      );
+    });
+
+    const dataSource =
+      agGridMock.api.setGridOption.mock.calls.at(-1)?.[1] ?? null;
+    expect(dataSource).toEqual(
+      expect.objectContaining({ getRows: expect.any(Function) }),
+    );
+
+    const success = vi.fn();
+    const fail = vi.fn();
+    await dataSource.getRows({
+      request: { startRow: 0, sortModel: [] },
+      api: agGridMock.api,
+      success,
+      fail,
+    });
+
+    const queryOptions = queryClientMock.fetchQuery.mock.calls.at(-1)?.[0];
+    expect(queryOptions?.queryKey?.[5]).toBe("refund");
+    expect(success).toHaveBeenCalled();
+    expect(fail).not.toHaveBeenCalled();
   });
 });
 

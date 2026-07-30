@@ -13,7 +13,12 @@ import (
 // passed through without authentication (health checks, admin routes, etc.).
 //
 // If keyStore is nil, auth is considered disabled and all requests pass through.
-func KeyAuth(keyStore *auth.KeyStore) func(http.Handler) http.Handler {
+func KeyAuth(keyStore *auth.KeyStore, enabled ...bool) func(http.Handler) http.Handler {
+	authEnabled := keyStore != nil
+	if len(enabled) > 0 {
+		authEnabled = enabled[0]
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Skip auth for non-API routes (health, admin, etc.).
@@ -23,7 +28,7 @@ func KeyAuth(keyStore *auth.KeyStore) func(http.Handler) http.Handler {
 			}
 
 			// If auth is disabled, pass through.
-			if keyStore == nil {
+			if !authEnabled || keyStore == nil {
 				next.ServeHTTP(w, r)
 				return
 			}

@@ -176,6 +176,7 @@ export default function AgentVoiceForm() {
     mutationFn: (data) =>
       axios.post(endpoints.agentDefinitions.fetchAssistantFromProvider, data),
     onSuccess: (data) => {
+      clearErrors("assistantId");
       const providerData = data?.data?.result;
       if (!agentName?.includes(providerData?.name)) {
         setValue("agentName", `${agentName} (${providerData?.name})`, {
@@ -189,7 +190,6 @@ export default function AgentVoiceForm() {
         shouldDirty: true,
       });
       setValue("description", providerData?.prompt, { shouldDirty: true });
-      setValue("apiKey", providerData?.api_key, { shouldDirty: true });
       setShowSuccess(true);
     },
     meta: {
@@ -330,6 +330,9 @@ export default function AgentVoiceForm() {
               "livekit",
               "livekit_bridge",
             ];
+            // "bland" is intentionally excluded: its raw-authorization key is
+            // distinct from these Bearer providers, so switching into or out of
+            // Bland must clear the key rather than carry a stale one.
 
             // Clear authenticationMethod only if switching to or from "others"
             const isPrevMain = mainProviders.includes(selectedProvider);

@@ -33,14 +33,15 @@ import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import TestPlayground from "./TestPlayground";
 import { buildCompositeChildConfigs } from "../Helpers/compositeRuntimeConfig";
 import { useCompositeChildrenUnionKeys } from "../hooks/useCompositeChildrenKeys";
-import CodeEditor from "./CodeEditor";
-import CodeEvalEditor, {
-  PYTHON_CODE_TEMPLATE,
-  JS_CODE_TEMPLATE,
-} from "./CodeEvalEditor";
+import CodeEvalEditor, { PYTHON_CODE_TEMPLATE } from "./CodeEvalEditor";
 import CompositeDetailPanel from "./CompositeDetailPanel";
 import UnsavedChangesDialog from "src/sections/projects/MonitorsView/UnsavedChangesDialog";
-import { extractVariables } from "src/utils/utils";
+import {
+  extractVariables,
+  extractVariablesFromMessages,
+} from "src/utils/utils";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 
 const EVAL_TYPE_TABS = [
@@ -119,12 +120,19 @@ const resolveContextOptions = (dataInjection) => {
   }
   const opts = [];
   if (dataInjection.full_row || dataInjection.fullRow) opts.push("dataset_row");
-  if (dataInjection.span_context || dataInjection.spanContext) opts.push("span_context");
-  if (dataInjection.trace_context || dataInjection.traceContext) opts.push("trace_context");
-  if (dataInjection.session_context || dataInjection.sessionContext) opts.push("session_context");
-  if (dataInjection.call_context || dataInjection.callContext) opts.push("call_context");
+  if (dataInjection.span_context || dataInjection.spanContext)
+    opts.push("span_context");
+  if (dataInjection.trace_context || dataInjection.traceContext)
+    opts.push("trace_context");
+  if (dataInjection.session_context || dataInjection.sessionContext)
+    opts.push("session_context");
+  if (dataInjection.call_context || dataInjection.callContext)
+    opts.push("call_context");
   if (opts.length > 0) return opts;
-  if (dataInjection.variables_only === false || dataInjection.variablesOnly === false) {
+  if (
+    dataInjection.variables_only === false ||
+    dataInjection.variablesOnly === false
+  ) {
     return ["full_row"];
   }
   return ["variables_only"];
@@ -133,6 +141,9 @@ const resolveContextOptions = (dataInjection) => {
 const EvalCreatePage = () => {
   const { draftId: urlDraftId } = useParams();
   const navigate = useNavigate();
+  const { role } = useAuthContext();
+  const canEditEvals =
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][role];
   const { enqueueSnackbar } = useSnackbar();
   const { isOSS } = useDeploymentMode();
   const createEval = useCreateEval();
@@ -166,7 +177,6 @@ const EvalCreatePage = () => {
   const [fewShotExamples, setFewShotExamples] = useState([]);
   const [messages, setMessages] = useState([{ role: "system", content: "" }]);
   const [templateFormat, setTemplateFormat] = useState("mustache");
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [datasetColumns, setDatasetColumns] = useState([]);
   const [datasetJsonSchemas, setDatasetJsonSchemas] = useState({});
 
@@ -256,7 +266,7 @@ const EvalCreatePage = () => {
             setInstructions(d.instructions || "");
             setCode(config.code || d.code || PYTHON_CODE_TEMPLATE);
             setCodeLanguage(config.language || "python");
-            setModel(config.model || d.model || ("turing_large"));
+            setModel(config.model || d.model || "turing_large");
             setOutputType(d.output_type_normalized || "pass_fail");
             setPassThreshold(d.pass_threshold ?? 0.5);
             setChoiceScores(d.choice_scores || {});
@@ -339,7 +349,7 @@ const EvalCreatePage = () => {
       eval_type: evalType,
       instructions:
         evalType === "code"
-          ? ""
+          ? undefined
           : evalType === "llm"
             ? instructions ||
               messages.find((m) => m.role === "system")?.content ||
@@ -419,7 +429,7 @@ const EvalCreatePage = () => {
       );
       return;
     }
-    if (isOSS && FAGI_MODEL_VALUES.has(model)) {
+    if (isOSS && evalType !== "code" && FAGI_MODEL_VALUES.has(model)) {
       enqueueSnackbar(
         "Turing models are not available in OSS. Please select your own model.",
         { variant: "error" },
@@ -466,6 +476,7 @@ const EvalCreatePage = () => {
     enqueueSnackbar,
     navigate,
     isOSS,
+    evalType,
     model,
   ]);
 
@@ -479,6 +490,12 @@ const EvalCreatePage = () => {
         }
         return acc;
       }, {});
+      const pinnedVersions = selectedChildren.reduce((acc, child) => {
+        if (child.pinned_version_id) {
+          acc[child.child_id] = child.pinned_version_id;
+        }
+        return acc;
+      }, {});
       const payload = {
         name: compositeName.trim(),
         description: compositeDescription || null,
@@ -488,6 +505,8 @@ const EvalCreatePage = () => {
         aggregation_function: aggregationFunction,
         composite_child_axis: compositeChildAxis,
         child_weights: Object.keys(weights).length > 0 ? weights : null,
+        child_pinned_versions:
+          Object.keys(pinnedVersions).length > 0 ? pinnedVersions : null,
       };
       const result = await createComposite.mutateAsync(payload);
       enqueueSnackbar("Composite evaluation created successfully", {
@@ -569,8 +588,7 @@ const EvalCreatePage = () => {
   // excluded: the save button is already disabled while `isLoading`, so the
   // user can't double-fire, and including it here would open a dialog about
   // "clearing test results" when there are none to clear.
-  const hasProgressToDiscard =
-    testPassed || testError !== null || isTesting;
+  const hasProgressToDiscard = testPassed || testError !== null || isTesting;
 
   const handleModeChange = useCallback(
     (_, val) => {
@@ -603,10 +621,15 @@ const EvalCreatePage = () => {
   }, []);
   // Mirrors the Test button's content rules: prompt-based single evals must
   // have a template that actually references inputs, otherwise the saved
-  // eval can't be run against real data.
+  // eval can't be run against real data. For LLM evals the variable can
+  // live in any turn (System / User / Assistant), so scan the whole
+  // messages array in addition to instructions.
   const singleHasInstructionVariables =
-    !!instructions.trim() &&
-    extractVariables(instructions, templateFormat).length > 0;
+    evalType === "llm"
+      ? extractVariablesFromMessages(instructions, messages, templateFormat)
+          .length > 0
+      : !!instructions.trim() &&
+        extractVariables(instructions, templateFormat).length > 0;
   const canSaveSingle =
     !!name.trim() &&
     (evalType === "code" ? !!code.trim() : singleHasInstructionVariables);
@@ -614,7 +637,8 @@ const EvalCreatePage = () => {
   // Single evals require a successful test run before save. Composites
   // don't have a test flow in the create page — their children already exist
   // and can be tested individually.
-  const canSave = mode === "single" ? canSaveSingle : canSaveComposite;
+  const canSave =
+    canEditEvals && (mode === "single" ? canSaveSingle : canSaveComposite);
 
   return (
     <Box
@@ -787,7 +811,13 @@ const EvalCreatePage = () => {
                       fontWeight={600}
                       sx={{ mb: 0.5 }}
                     >
-                      Eval Name<Box component="span" sx={{ color: "error.main", ml: 0.25 }}>*</Box>
+                      Eval Name
+                      <Box
+                        component="span"
+                        sx={{ color: "error.main", ml: 0.25 }}
+                      >
+                        *
+                      </Box>
                     </Typography>
                     <TextField
                       fullWidth
@@ -1036,123 +1066,68 @@ const EvalCreatePage = () => {
                     </Box>
                   )}
 
-                  {/* Advanced — collapsible */}
+                  {/* Description */}
                   <Box>
-                    <Button
+                    <Typography
+                      variant="body2"
+                      fontWeight={600}
+                      sx={{ mb: 0.5 }}
+                    >
+                      Description
+                    </Typography>
+                    <TextField
+                      fullWidth
                       size="small"
-                      onClick={() => setShowAdvanced((p) => !p)}
-                      startIcon={
-                        <Iconify
-                          icon={
-                            showAdvanced ? "mdi:chevron-up" : "mdi:chevron-down"
-                          }
-                          width={16}
-                        />
-                      }
+                      multiline
+                      minRows={2}
+                      placeholder="What does this evaluation check?"
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                    />
+                  </Box>
+
+                  {/* Tags */}
+                  <Box>
+                    <Typography
+                      variant="body2"
+                      fontWeight={600}
+                      sx={{ mb: 0.5 }}
+                    >
+                      Tags
+                    </Typography>
+                    <Box
                       sx={{
-                        textTransform: "none",
-                        fontSize: "13px",
-                        color: "text.secondary",
-                        fontWeight: 500,
-                        px: 0,
-                        "&:hover": {
-                          bgcolor: "transparent",
-                          color: "text.primary",
-                        },
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: 0.75,
                       }}
                     >
-                      Advanced
-                      {(description || tags.length > 0) && (
-                        <Chip
-                          label={[
-                            description && "description",
-                            tags.length > 0 && `${tags.length} tags`,
-                          ]
-                            .filter(Boolean)
-                            .join(", ")}
-                          size="small"
-                          sx={{ ml: 1, fontSize: "10px", height: 18 }}
-                        />
-                      )}
-                    </Button>
-
-                    {showAdvanced && (
-                      <Box
-                        sx={{
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: 2,
-                          mt: 1.5,
-                          pl: 0.5,
-                        }}
-                      >
-                        {/* Description */}
-                        <Box>
-                          <Typography
-                            variant="caption"
-                            fontWeight={600}
-                            color="text.secondary"
-                            sx={{ mb: 0.5, display: "block" }}
-                          >
-                            Description
-                          </Typography>
-                          <TextField
-                            fullWidth
+                      {EVAL_TAGS.map((tag) => {
+                        const selected = tags.includes(tag.value);
+                        return (
+                          <Chip
+                            key={tag.value}
+                            icon={<Iconify icon={tag.icon} width={14} />}
+                            label={tag.label}
                             size="small"
-                            multiline
-                            minRows={2}
-                            placeholder="What does this evaluation check?"
-                            value={description}
-                            onChange={(e) => setDescription(e.target.value)}
-                          />
-                        </Box>
-
-                        {/* Tags */}
-                        <Box>
-                          <Typography
-                            variant="caption"
-                            fontWeight={600}
-                            color="text.secondary"
-                            sx={{ mb: 0.75, display: "block" }}
-                          >
-                            Tags
-                          </Typography>
-                          <Box
+                            variant={selected ? "filled" : "outlined"}
+                            color={selected ? "primary" : "default"}
+                            onClick={() =>
+                              setTags((prev) =>
+                                selected
+                                  ? prev.filter((t) => t !== tag.value)
+                                  : [...prev, tag.value],
+                              )
+                            }
                             sx={{
-                              display: "flex",
-                              flexWrap: "wrap",
-                              gap: 0.75,
+                              fontSize: "12px",
+                              cursor: "pointer",
+                              "& .MuiChip-icon": { fontSize: "14px" },
                             }}
-                          >
-                            {EVAL_TAGS.map((tag) => {
-                              const selected = tags.includes(tag.value);
-                              return (
-                                <Chip
-                                  key={tag.value}
-                                  icon={<Iconify icon={tag.icon} width={14} />}
-                                  label={tag.label}
-                                  size="small"
-                                  variant={selected ? "filled" : "outlined"}
-                                  color={selected ? "primary" : "default"}
-                                  onClick={() =>
-                                    setTags((prev) =>
-                                      selected
-                                        ? prev.filter((t) => t !== tag.value)
-                                        : [...prev, tag.value],
-                                    )
-                                  }
-                                  sx={{
-                                    fontSize: "12px",
-                                    cursor: "pointer",
-                                    "& .MuiChip-icon": { fontSize: "14px" },
-                                  }}
-                                />
-                              );
-                            })}
-                          </Box>
-                        </Box>
-                      </Box>
-                    )}
+                          />
+                        );
+                      })}
+                    </Box>
                   </Box>
                 </>
               ) : (
@@ -1198,6 +1173,7 @@ const EvalCreatePage = () => {
                   ref={testPlaygroundRef}
                   templateId={draftId}
                   model={model}
+                  evalName={name || ""}
                   instructions={
                     mode === "composite" || evalType === "code"
                       ? ""
@@ -1295,10 +1271,26 @@ const EvalCreatePage = () => {
                 {(() => {
                   const hasCompositeChildren = selectedChildren.length > 0;
                   const hasCode = !!code.trim();
-                  const hasInstructions = !!instructions.trim();
-                  const instructionVariables = hasInstructions
-                    ? extractVariables(instructions, templateFormat)
-                    : [];
+                  // For LLM evals, prompt content and its variables can live
+                  // in any turn (System / User / Assistant), not just the
+                  // instructions field (which mirrors the System turn).
+                  const hasAnyPromptContent =
+                    evalType === "llm"
+                      ? !!instructions.trim() ||
+                        (Array.isArray(messages) &&
+                          messages.some((m) => (m?.content || "").trim()))
+                      : !!instructions.trim();
+                  const hasInstructions = hasAnyPromptContent;
+                  const instructionVariables =
+                    evalType === "llm"
+                      ? extractVariablesFromMessages(
+                          instructions,
+                          messages,
+                          templateFormat,
+                        )
+                      : hasInstructions
+                        ? extractVariables(instructions, templateFormat)
+                        : [];
                   const hasInstructionVariables =
                     instructionVariables.length > 0;
                   const instructionsReady =
@@ -1309,16 +1301,25 @@ const EvalCreatePage = () => {
                       : evalType === "code"
                         ? hasCode
                         : instructionsReady;
-                  const testDisabled = isTesting || !hasTestInput;
+                  const testDisabled =
+                    isTesting || !hasTestInput || !canEditEvals;
 
                   let testDisabledReason = "";
-                  if (isTesting) {
+                  if (!canEditEvals) {
+                    testDisabledReason =
+                      "You don't have permission to create or edit evaluations.";
+                  } else if (isTesting) {
                     testDisabledReason = "Test is already running.";
                   } else if (mode === "composite" && !hasCompositeChildren) {
                     testDisabledReason =
                       "Add at least one child evaluation to run a test.";
-                  } else if (mode !== "composite" && evalType === "code" && !hasCode) {
-                    testDisabledReason = "Write some code before running a test.";
+                  } else if (
+                    mode !== "composite" &&
+                    evalType === "code" &&
+                    !hasCode
+                  ) {
+                    testDisabledReason =
+                      "Write some code before running a test.";
                   } else if (
                     mode !== "composite" &&
                     evalType !== "code" &&
@@ -1333,8 +1334,8 @@ const EvalCreatePage = () => {
                   ) {
                     testDisabledReason =
                       templateFormat === "jinja"
-                        ? 'Your Jinja template has no variables. Reference an input with a {{ variable }} expression or a {% ... %} block (e.g. {{ input }}) so test input can be passed in.'
-                        : 'Your Mustache template has no variables. Add a {{variable}} placeholder (e.g. {{input}}) so test input can be passed in.';
+                        ? "Your Jinja template has no variables. Reference an input with a {{ variable }} expression or a {% ... %} block (e.g. {{ input }}) so test input can be passed in."
+                        : "Your Mustache template has no variables. Add a {{variable}} placeholder (e.g. {{input}}) so test input can be passed in.";
                   }
 
                   return (
@@ -1371,7 +1372,10 @@ const EvalCreatePage = () => {
                 {(() => {
                   const saveDisabled = isLoading || !canSave;
                   let saveDisabledReason = "";
-                  if (isLoading) {
+                  if (!canEditEvals) {
+                    saveDisabledReason =
+                      "You don't have permission to create or edit evaluations.";
+                  } else if (isLoading) {
                     saveDisabledReason = "Save is already in progress.";
                   } else if (mode === "composite") {
                     if (!compositeName.trim()) {
@@ -1382,10 +1386,19 @@ const EvalCreatePage = () => {
                         "Add at least one child evaluation before saving.";
                     }
                   } else if (!name.trim()) {
-                    saveDisabledReason = "Give this evaluation a name before saving.";
+                    saveDisabledReason =
+                      "Give this evaluation a name before saving.";
                   } else if (evalType === "code" && !code.trim()) {
                     saveDisabledReason = "Write some code before saving.";
-                  } else if (evalType !== "code" && !instructions.trim()) {
+                  } else if (
+                    evalType !== "code" &&
+                    !instructions.trim() &&
+                    !(
+                      evalType === "llm" &&
+                      Array.isArray(messages) &&
+                      messages.some((m) => (m?.content || "").trim())
+                    )
+                  ) {
                     saveDisabledReason = "Add instructions before saving.";
                   } else if (
                     evalType !== "code" &&

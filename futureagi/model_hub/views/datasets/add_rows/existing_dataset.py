@@ -3,31 +3,84 @@ import traceback
 import uuid
 
 import structlog
-from django.shortcuts import get_object_or_404
+from django.db.models import Q
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
-logger = structlog.get_logger(__name__)
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.experiments import ExperimentDatasetTable
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    DatasetAddRowsFromExistingRequestSerializer,
+)
+from model_hub.serializers.develop_dataset_contracts import (
+    DatasetRowsImportedResponseSerializer,
+)
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 try:
-    from ee.usage.utils.usage_entries import ROW_LIMIT_REACHED_MESSAGE, log_and_deduct_cost_for_resource_request
+    from ee.usage.utils.usage_entries import (
+        ROW_LIMIT_REACHED_MESSAGE,
+        log_and_deduct_cost_for_resource_request,
+    )
 except ImportError:
     ROW_LIMIT_REACHED_MESSAGE = None
     log_and_deduct_cost_for_resource_request = None
+
+logger = structlog.get_logger(__name__)
+
+
+def _request_organization(request):
+    return getattr(request, "organization", None) or request.user.organization
+
+
+def _request_workspace_filter(request, field_name="workspace"):
+    workspace = getattr(request, "workspace", None)
+    if not workspace:
+        return Q()
+
+    if getattr(workspace, "is_default", False):
+        return (
+            Q(**{field_name: workspace})
+            | Q(
+                **{
+                    f"{field_name}__is_default": True,
+                    f"{field_name}__organization_id": workspace.organization_id,
+                }
+            )
+            | Q(**{f"{field_name}__isnull": True})
+        )
+
+    return Q(**{field_name: workspace})
+
+
+def _request_dataset_queryset(request):
+    return Dataset.objects.filter(
+        _request_workspace_filter(request),
+        organization=_request_organization(request),
+        deleted=False,
+    )
 
 
 class AddRowsFromExistingView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=DatasetAddRowsFromExistingRequestSerializer,
+        responses={
+            200: DatasetRowsImportedResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            source_dataset_id = request.data.get("source_dataset_id")
-            column_mapping = request.data.get("column_mapping")
+            data = request.validated_data
+            source_dataset_id = data.get("source_dataset_id")
+            column_mapping = data.get("column_mapping")
 
             if source_dataset_id == dataset_id:
                 return self._gm.bad_request(
@@ -48,20 +101,34 @@ class AddRowsFromExistingView(APIView):
             if len(target_ids) != len(set(target_ids)):
                 return self._gm.bad_request("Duplicate target columns in mapping")
 
-            # Get both datasets and verify they exist
-            target_dataset = get_object_or_404(Dataset, id=dataset_id, deleted=False)
+            target_dataset = (
+                _request_dataset_queryset(request).filter(id=dataset_id).first()
+            )
+            if not target_dataset:
+                return self._gm.not_found("Target dataset not found")
             source_dataset = None
 
             try:
-                source_dataset = Dataset.objects.get(
-                    id=source_dataset_id, deleted=False
+                source_dataset = _request_dataset_queryset(request).get(
+                    id=source_dataset_id
                 )
             except Dataset.DoesNotExist:
                 try:
-
-                    experiment_table = ExperimentDatasetTable.objects.select_related(
-                        "experiment__dataset"
-                    ).get(id=source_dataset_id, deleted=False)
+                    experiment_table = (
+                        ExperimentDatasetTable.objects.filter(
+                            _request_workspace_filter(
+                                request,
+                                "experiment__dataset__workspace",
+                            ),
+                            id=source_dataset_id,
+                            deleted=False,
+                            experiment__dataset__organization=_request_organization(
+                                request
+                            ),
+                        )
+                        .select_related("experiment__dataset")
+                        .get()
+                    )
 
                     experiment = experiment_table.experiment
                     source_dataset = experiment.dataset if experiment else None
@@ -73,6 +140,26 @@ class AddRowsFromExistingView(APIView):
 
                 except ExperimentDatasetTable.DoesNotExist:
                     return self._gm.bad_request("Source dataset not found")
+
+            try:
+                source_column_ids = [
+                    uuid.UUID(str(column_id)) for column_id in column_mapping.keys()
+                ]
+            except ValueError:
+                return self._gm.bad_request(get_error_message("COLUMN_NOT_FOUND"))
+            target_column_ids = list(column_mapping.values())
+            if Column.objects.filter(
+                id__in=source_column_ids,
+                dataset=source_dataset,
+                deleted=False,
+            ).count() != len(source_column_ids):
+                return self._gm.bad_request(get_error_message("COLUMN_NOT_FOUND"))
+            if Column.objects.filter(
+                id__in=target_column_ids,
+                dataset=target_dataset,
+                deleted=False,
+            ).count() != len(target_column_ids):
+                return self._gm.bad_request(get_error_message("COLUMN_NOT_FOUND"))
 
             # --- Row Limit Check Start ---
 
@@ -105,7 +192,7 @@ class AddRowsFromExistingView(APIView):
             # Get max order of target dataset to append rows at the end
             last_row = (
                 Row.all_objects.filter(dataset=target_dataset)
-                .order_by("-created_at")
+                .order_by("-order")
                 .first()
             )
             if last_row:

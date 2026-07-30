@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -38,6 +38,12 @@ const SORT_OPTIONS = [
   { value: "most_requests", label: "Most Requests" },
   { value: "highest_cost", label: "Highest Cost" },
 ];
+
+const SESSION_ORDERING_BY_SORT = {
+  newest: "-last_request_at",
+  most_requests: "-request_count",
+  highest_cost: "-total_cost",
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -132,12 +138,12 @@ function SessionDetail({ sessionId, onRequestClick }) {
             onClick={() => onRequestClick(req.id)}
           >
             <TableCell sx={{ whiteSpace: "nowrap" }}>
-              {formatTimestamp(req.startedAt)}
+              {formatTimestamp(req.started_at)}
             </TableCell>
             <TableCell>
-              <Tooltip title={req.requestId || req.id} placement="top" arrow>
+              <Tooltip title={req.request_id || req.id} placement="top" arrow>
                 <Typography variant="body2" noWrap sx={{ maxWidth: 120 }}>
-                  {(req.requestId || req.id || "").slice(0, 12)}...
+                  {(req.request_id || req.id || "").slice(0, 12)}...
                 </Typography>
               </Tooltip>
             </TableCell>
@@ -155,12 +161,12 @@ function SessionDetail({ sessionId, onRequestClick }) {
                 variant="body2"
                 sx={{
                   color:
-                    req.latencyMs != null
-                      ? getLatencyColor(req.latencyMs)
+                    req.latency_ms != null
+                      ? getLatencyColor(req.latency_ms)
                       : undefined,
                 }}
               >
-                {req.latencyMs != null ? `${req.latencyMs}ms` : "-"}
+                {req.latency_ms != null ? `${req.latency_ms}ms` : "-"}
               </Typography>
             </TableCell>
             <TableCell>{formatCost(req.cost)}</TableCell>
@@ -181,18 +187,15 @@ const SessionExplorer = ({ filters, onRequestClick }) => {
   const [pageSize, setPageSize] = useState(25);
   const [expandedSession, setExpandedSession] = useState(null);
 
-  // Map the UI sort value to API ordering param
-  const orderingMap = {
-    newest: "-last_request_at",
-    most_requests: "-request_count",
-    highest_cost: "-total_cost",
-  };
+  const queryFilters = useMemo(
+    () => ({ ...filters, ordering: SESSION_ORDERING_BY_SORT[sortBy] }),
+    [filters, sortBy],
+  );
 
   const { data, isLoading } = useSessions({
-    ...filters,
-    page: String(page),
-    pageSize: String(pageSize),
-    sessionSort: orderingMap[sortBy],
+    filters: queryFilters,
+    page,
+    pageSize,
   });
 
   const sessions = data?.result?.results ?? data?.results ?? [];
@@ -334,13 +337,13 @@ const SessionExplorer = ({ filters, onRequestClick }) => {
                     noWrap
                     sx={{ ml: "auto" }}
                   >
-                    {formatTimestamp(session.firstRequestAt)} -{" "}
-                    {formatTimestamp(session.lastRequestAt)}
+                    {formatTimestamp(session.first_request_at)} -{" "}
+                    {formatTimestamp(session.last_request_at)}
                   </Typography>
 
-                  {session.errorCount > 0 && (
+                  {session.error_count > 0 && (
                     <Chip
-                      label={`${session.errorCount} errors`}
+                      label={`${session.error_count} errors`}
                       size="small"
                       color="error"
                       variant="outlined"

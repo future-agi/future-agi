@@ -9,44 +9,139 @@ import structlog
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Case, CharField, Q, Value, When
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import MethodNotAllowed, NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from accounts.models import User
+from accounts.utils import get_request_organization
 from agentic_eval.core.embeddings.embedding_manager import (
     EmbeddingManager,
 )
-from tfc.constants.levels import Level
 
-logger = structlog.get_logger(__name__)
+# from ee.agenthub.feedback_agent_updated.utils import RAG
+from model_hub.models import AnnotationTask
 from model_hub.models.choices import (
     AnnotationTypeChoices,
     CellStatus,
     DataTypeChoices,
     SourceChoices,
 )
-
-# from ee.agenthub.feedback_agent_updated.utils import RAG
 from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.serializers.annotation import AnnotationTaskSerializer
 from model_hub.serializers.develop_annotations import (
+    AnnotateRowQuerySerializer,
+    AnnotationActionMessageResponseSerializer,
+    AnnotationLabelCreateResponseSerializer,
+    AnnotationLabelRestoreResponseSerializer,
+    AnnotationLabelsListQuerySerializer,
     AnnotationsLabelsSerializer,
     AnnotationsSerializer,
+    AnnotationSummaryResponseSerializer,
+    AnnotationTaskListQuerySerializer,
+    BulkDestroyAnnotationsRequestSerializer,
+    BulkDestroyAnnotationsResponseSerializer,
+    PreviewAnnotationsRequestSerializer,
+    PreviewAnnotationsResponseSerializer,
+    ResetAnnotationsRequestSerializer,
+    UpdateAnnotationCellsRequestSerializer,
     UserSerializer,
 )
 from model_hub.utils.auto_annotate import generate_annotations_task
-from model_hub.utils.SQL_queries import SQLQueryHandler
 from model_hub.utils.utils import corpus_builder
-from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
+from tfc.constants.levels import Level
 from tfc.ee_gating import FeatureUnavailable
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import (
+    ApiTextErrorResponseSerializer,
+    EmptyRequestSerializer,
+)
+from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
+
+logger = structlog.get_logger(__name__)
+
+ERROR_RESPONSES = {
+    400: ApiTextErrorResponseSerializer,
+    403: ApiTextErrorResponseSerializer,
+    500: ApiTextErrorResponseSerializer,
+}
+
+
+class AnnotationTaskViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = AnnotationTaskSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = ExtendedPageNumberPagination
+
+    @swagger_auto_schema(
+        manual_parameters=[
+            openapi.Parameter(
+                "predictive_journey",
+                openapi.IN_QUERY,
+                description="Optional AI model id to filter annotation tasks.",
+                type=openapi.TYPE_STRING,
+                format=openapi.FORMAT_UUID,
+                required=False,
+            )
+        ]
+    )
+    def list(self, request, *args, **kwargs):
+        query_serializer = AnnotationTaskListQuerySerializer(data=request.query_params)
+        if not query_serializer.is_valid():
+            return GeneralMethods().bad_request(query_serializer.errors)
+        return super().list(request, *args, **kwargs)
+
+    def get_queryset(self):
+        queryset = (
+            AnnotationTask.objects.select_related(
+                "ai_model", "organization", "workspace"
+            )
+            .prefetch_related("assigned_users")
+            .filter(is_deleted=False)
+            .order_by("-created_at")
+        )
+
+        organization = getattr(self.request, "organization", None)
+        if not organization:
+            from accounts.utils import get_user_organization
+
+            organization = get_user_organization(self.request.user)
+        if organization:
+            queryset = queryset.filter(organization=organization)
+
+        workspace = getattr(self.request, "workspace", None)
+        if workspace:
+            if getattr(workspace, "is_default", False):
+                queryset = queryset.filter(
+                    Q(workspace=workspace)
+                    | Q(
+                        workspace__is_default=True,
+                        workspace__organization=workspace.organization,
+                    )
+                    | Q(workspace__isnull=True)
+                )
+            else:
+                queryset = queryset.filter(workspace=workspace)
+
+        query_serializer = AnnotationTaskListQuerySerializer(
+            data=self.request.query_params
+        )
+        query_serializer.is_valid(raise_exception=True)
+        predictive_journey = query_serializer.validated_data.get("predictive_journey")
+        if predictive_journey:
+            queryset = queryset.filter(ai_model_id=predictive_journey)
+
+        return queryset
 
 
 class AnnotationsLabelsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
@@ -55,23 +150,38 @@ class AnnotationsLabelsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelV
     pagination_class = ExtendedPageNumberPagination
     _gm = GeneralMethods()
 
-    def get_queryset(self):
-        dataset_id = self.request.query_params.get("dataset", None)
-        project_id = self.request.query_params.get("project_id", None)
-        label_type = self.request.query_params.get("type", None)
-        search = self.request.query_params.get("search", None)
-        include_usage_count = (
-            self.request.query_params.get("include_usage_count", "").lower() == "true"
+    def _get_validated_query_params(self):
+        if hasattr(self, "_validated_query_params"):
+            return self._validated_query_params
+        query_serializer = AnnotationLabelsListQuerySerializer(
+            data=self.request.query_params
         )
+        query_serializer.is_valid(raise_exception=True)
+        self._validated_query_params = query_serializer.validated_data
+        return self._validated_query_params
+
+    def get_queryset(self):
+        query_params = self._get_validated_query_params()
+        dataset_id = query_params.get("dataset")
+        project_id = query_params.get("project_id")
+        label_type = query_params.get("type")
+        search = query_params.get("search")
+        include_usage_count = query_params.get("include_usage_count", False)
+        archived = query_params.get("archived")
         # ``include_archived=true`` returns soft-deleted labels alongside live
         # ones so the frontend can offer a "show archived" toggle. The mixin's
         # default queryset filters ``deleted=False``; using
         # ``AnnotationsLabels.all_objects`` bypasses that.
-        include_archived = (
-            self.request.query_params.get("include_archived", "").lower() == "true"
-        )
+        include_archived = query_params.get("include_archived", False)
 
-        if include_archived:
+        if archived is True:
+            queryset = AnnotationsLabels.all_objects.select_related("project").filter(
+                deleted=True
+            )
+            org = getattr(self.request, "organization", None)
+            if org is not None:
+                queryset = queryset.filter(organization=org)
+        elif include_archived:
             queryset = AnnotationsLabels.all_objects.select_related("project")
             # Re-apply the mixin's organization filter manually since we
             # bypassed its get_queryset.
@@ -209,8 +319,65 @@ class AnnotationsLabelsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelV
 
         return data
 
+    @swagger_auto_schema(
+        manual_parameters=[
+            openapi.Parameter(
+                "dataset",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_STRING,
+                format=openapi.FORMAT_UUID,
+                required=False,
+            ),
+            openapi.Parameter(
+                "project_id",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_STRING,
+                format=openapi.FORMAT_UUID,
+                required=False,
+            ),
+            openapi.Parameter(
+                "type",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_STRING,
+                enum=[choice.value for choice in AnnotationTypeChoices],
+                required=False,
+            ),
+            openapi.Parameter(
+                "search",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_STRING,
+                required=False,
+            ),
+            openapi.Parameter(
+                "include_usage_count",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_BOOLEAN,
+                required=False,
+            ),
+            openapi.Parameter(
+                "include_archived",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_BOOLEAN,
+                required=False,
+            ),
+            openapi.Parameter(
+                "archived",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_BOOLEAN,
+                required=False,
+            ),
+        ],
+        responses={200: AnnotationsLabelsSerializer(many=True), **ERROR_RESPONSES},
+    )
     def list(self, request, *args, **kwargs):
         try:
+            query_serializer = AnnotationLabelsListQuerySerializer(
+                data=request.query_params
+            )
+            if not query_serializer.is_valid():
+                return self._gm.bad_request(query_serializer.errors)
+            self._validated_query_params = query_serializer.validated_data
+
             queryset = self.get_queryset()
 
             # Apply pagination
@@ -237,21 +404,17 @@ class AnnotationsLabelsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelV
                 "Failed to list annotation labels"
             )
 
+    @validated_request(
+        request_serializer=AnnotationsLabelsSerializer,
+        serializer_context=lambda request: {"request": request},
+        responses={200: AnnotationLabelCreateResponseSerializer, **ERROR_RESPONSES},
+    )
     def create(self, request, *args, **kwargs):
         """Custom create to provide clearer error responses in GM format."""
-        serializer = self.get_serializer(data=request.data)
-        if not serializer.is_valid():
-            # Return validation errors in the same structure frontend expects.
-            logger.warning(f"Annotation label validation failed: {serializer.errors}")
-            return self._gm.bad_request(
-                f"Annotation label creation failed: {serializer.errors}"
-            )
+        serializer = request.validated_serializer
 
         try:
-            serializer.save(
-                organization=getattr(request, "organization", None)
-                or request.user.organization
-            )
+            serializer.save(organization=get_request_organization(request))
         except serializers.ValidationError as exc:
             # Serializer or model raised duplicate-label validation.
             detail = exc.detail
@@ -265,8 +428,12 @@ class AnnotationsLabelsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelV
             logger.warning(f"Annotation label save failed (model validation): {detail}")
             return self._gm.bad_request(f"Annotation label creation failed: {detail}")
 
-        return self._gm.success_response("Annotation label created successfully")
+        return self._gm.success_response(serializer.data)
 
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={200: AnnotationLabelRestoreResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="restore")
     def restore(self, request, pk=None):
         """Restore a soft-deleted (archived) annotation label."""
@@ -292,6 +459,43 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    def _request_organization(self):
+        return (
+            getattr(self.request, "organization", None)
+            or self.request.user.organization
+        )
+
+    def _workspace_filter(self, field_name="workspace"):
+        workspace = getattr(self.request, "workspace", None)
+        if not workspace:
+            return Q()
+        if getattr(workspace, "is_default", False):
+            return (
+                Q(**{field_name: workspace})
+                | Q(
+                    **{
+                        f"{field_name}__is_default": True,
+                        f"{field_name}__organization": workspace.organization,
+                    }
+                )
+                | Q(**{f"{field_name}__isnull": True})
+            )
+        return Q(**{field_name: workspace})
+
+    def _scoped_datasets(self):
+        return Dataset.objects.filter(
+            self._workspace_filter(),
+            organization=self._request_organization(),
+            deleted=False,
+        )
+
+    def _scoped_labels(self):
+        return AnnotationsLabels.objects.filter(
+            self._workspace_filter(),
+            organization=self._request_organization(),
+            deleted=False,
+        )
+
     def get_queryset(self):
         dataset_id = self.request.query_params.get("dataset", None)
 
@@ -304,16 +508,14 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
         )
 
         if dataset_id:
-            try:
-                dataset = get_object_or_404(Dataset, id=dataset_id)
-                queryset = queryset.filter(dataset=dataset)
-            except Exception as e:
-                logger.exception(f"Error in loading annotation: {str(e)}")
-                # Note: get_queryset cannot return Response, so we return empty queryset
-                return Annotations.objects.none()
+            queryset = queryset.filter(
+                dataset_id=dataset_id,
+                dataset__in=self._scoped_datasets(),
+            )
 
         return queryset
 
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
         try:
             # Extract label requirements before modifying request data
@@ -341,16 +543,26 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 from tfc.ee_gating import EEFeature, check_ee_feature
 
                 org = (
-                    getattr(request, "organization", None)
-                    or request.user.organization
+                    getattr(request, "organization", None) or request.user.organization
                 )
                 check_ee_feature(EEFeature.REQUIRED_LABELS, org_id=str(org.id))
 
             serializer = self.get_serializer(data=modified_data)
             serializer.is_valid(raise_exception=True)
+
+            dataset = get_object_or_404(
+                self._scoped_datasets(),
+                id=serializer.validated_data.get("dataset").id,
+            )
+            label_ids = [str(label_id) for label_id in modified_data["labels"]]
+            labels = list(self._scoped_labels().filter(id__in=label_ids))
+            if len(labels) != len(set(label_ids)):
+                return self._gm.not_found("Annotation label not found")
+
             annotation = serializer.save(
-                organization=getattr(request, "organization", None)
-                or request.user.organization
+                organization=self._request_organization(),
+                workspace=getattr(request, "workspace", None),
+                dataset=dataset,
             )
 
             # Then set M2M fields and validate them
@@ -361,8 +573,8 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 annotation.validate_assigned_users()
 
             # Set and validate labels
-            if modified_data["labels"]:
-                annotation.labels.set(modified_data["labels"])
+            if labels:
+                annotation.labels.set(labels)
                 annotation.validate_labels()
 
             self.process_new_annotaion(
@@ -406,6 +618,7 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
 
             return self._gm.success_response("Annotation created successfully")
         except ValidationError:
+            transaction.set_rollback(True)
             return self._gm.bad_request(get_error_message("ANNOTATION_CREATION_FAILED"))
         except FeatureUnavailable:
             raise
@@ -415,39 +628,48 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 get_error_message("ANNOTATION_CREATION_FAILED")
             )
 
+    @transaction.atomic
     def update(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
+            partial = kwargs.pop("partial", False)
 
             # Process labels and their requirements
+            labels_payload_present = "labels" in request.data
+            assigned_users_payload_present = "assigned_users" in request.data
             labels_data = request.data.get("labels", [])
             label_requirements = {}
             modified_data = request.data.copy()
-            modified_data["labels"] = []
             has_required_labels = False
+            label_ids = []
 
-            for label_item in labels_data:
-                if isinstance(label_item, dict):
-                    label_id = label_item["id"]
-                    required = label_item.get("required", True)
-                    modified_data["labels"].append(label_id)
-                    label_requirements[str(label_id)] = required
-                    has_required_labels = has_required_labels or bool(required)
-                else:
-                    modified_data["labels"].append(label_item)
-                    label_requirements[str(label_item)] = True
-                    has_required_labels = True
+            if labels_payload_present:
+                modified_data["labels"] = []
+                for label_item in labels_data:
+                    if isinstance(label_item, dict):
+                        label_id = label_item["id"]
+                        required = label_item.get("required", True)
+                        modified_data["labels"].append(label_id)
+                        label_ids.append(str(label_id))
+                        label_requirements[str(label_id)] = required
+                        has_required_labels = has_required_labels or bool(required)
+                    else:
+                        modified_data["labels"].append(label_item)
+                        label_ids.append(str(label_item))
+                        label_requirements[str(label_item)] = True
+                        has_required_labels = True
 
             if has_required_labels:
                 from tfc.ee_gating import EEFeature, check_ee_feature
 
                 org = (
-                    getattr(request, "organization", None)
-                    or request.user.organization
+                    getattr(request, "organization", None) or request.user.organization
                 )
                 check_ee_feature(EEFeature.REQUIRED_LABELS, org_id=str(org.id))
 
-            serializer = self.get_serializer(instance, data=modified_data)
+            serializer = self.get_serializer(
+                instance, data=modified_data, partial=partial
+            )
             serializer.is_valid(raise_exception=True)
 
             # Get the old labels before saving
@@ -457,44 +679,43 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
 
             # Save the updated annotation
             annotation = serializer.save()
-            new_labels = set(annotation.labels.all())
             new_responses = annotation.responses
-            new_users = set(annotation.assigned_users.all())
+            new_labels = old_labels
 
             # Then set M2M fields and validate them
-            annotation.assigned_users.clear()
-            assigned_users = request.data.get("assigned_users", [])
-            removed_user = old_users - new_users
-
-            cells = Cell.objects.filter(
-                dataset=annotation.dataset,
-                column__in=annotation.columns.all(),
-                deleted=False,
-                feedback_info__annotation__user_id__in=removed_user,
-            )
-
-            for cell in cells:
-                feedback_info = cell.feedback_info or {}
-                if "annotation" in feedback_info:
-                    feedback_info["annotation"]["user_id"] = None
-                    cell.value = None
-                    cell.feedback_info = feedback_info
-
-            if cells:
-                Cell.objects.bulk_update(cells, ["value", "feedback_info"])
-
-            if assigned_users:
-                for user in assigned_users:
-                    annotation.assigned_users.add(user)
-                # Explicitly run M2M validations
+            if assigned_users_payload_present:
+                assigned_users = request.data.get("assigned_users", [])
+                annotation.assigned_users.set(assigned_users)
                 annotation.validate_assigned_users()
+                new_users = set(annotation.assigned_users.all())
+                removed_users = old_users - new_users
+                removed_user_ids = [str(user.id) for user in removed_users]
 
-            # Set and validate labels'
-            annotation.labels.clear()
-            if modified_data["labels"]:
-                for label in modified_data["labels"]:
-                    annotation.labels.add(label)
+                cells = Cell.objects.filter(
+                    dataset=annotation.dataset,
+                    column__in=annotation.columns.all(),
+                    deleted=False,
+                    feedback_info__annotation__user_id__in=removed_user_ids,
+                )
+
+                for cell in cells:
+                    feedback_info = cell.feedback_info or {}
+                    if "annotation" in feedback_info:
+                        feedback_info["annotation"]["user_id"] = None
+                        cell.value = None
+                        cell.feedback_info = feedback_info
+
+                if cells:
+                    Cell.objects.bulk_update(cells, ["value", "feedback_info"])
+
+            # Set and validate labels.
+            if labels_payload_present:
+                labels = list(self._scoped_labels().filter(id__in=label_ids))
+                if len(labels) != len(set(label_ids)):
+                    return self._gm.not_found("Annotation label not found")
+                annotation.labels.set(labels)
                 annotation.validate_labels()
+                new_labels = set(annotation.labels.all())
 
             # Find removed and added labels
             removed_labels = old_labels - new_labels
@@ -617,7 +838,7 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                     annotation.dataset.save()
                     annotation.save()
 
-            if label_requirements:
+            if labels_payload_present:
                 annotation.summary["label_requirements"] = label_requirements
                 annotation.save()
 
@@ -626,9 +847,12 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
 
             return self._gm.success_response("Annotation updated successfully")
         except ValidationError:
+            transaction.set_rollback(True)
             return self._gm.bad_request(
                 get_error_message("FAILED_TO_UPDATE_ANNOTATION")
             )
+        except FeatureUnavailable:
+            raise
         except Exception as e:
             logger.exception(f"Error in updating annotation: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -640,18 +864,22 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
             annotation = self.get_object()
 
             rows = Row.objects.filter(dataset=annotation.dataset)
-            columns = Column.objects.filter(
+            columns_qs = Column.objects.filter(
                 source_id__startswith=f"{annotation.id}",
                 dataset=annotation.dataset,
                 deleted=False,
-            ).values_list("id", flat=True)
+            )
+            column_ids = list(columns_qs.values_list("id", flat=True))
             cells = Cell.objects.filter(
-                dataset=annotation.dataset, row__in=rows, column__in=columns
+                dataset=annotation.dataset,
+                row__in=rows,
+                column_id__in=column_ids,
+                deleted=False,
             )
 
             dataset = annotation.dataset
             # Remove column from column_order and column_config
-            column_str_ids = [str(col_id) for col_id in columns]
+            column_str_ids = [str(col_id) for col_id in column_ids]
             dataset.column_order = [
                 col_id
                 for col_id in dataset.column_order
@@ -662,13 +890,16 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
             for col_id in column_str_ids:
                 dataset.column_config.pop(col_id, None)
 
-            columns.update(deleted=True, deleted_at=timezone.now())
-            cells.update(deleted=True, deleted_at=timezone.now())
+            now = timezone.now()
+            columns_qs.update(deleted=True, deleted_at=now)
+            cells.update(deleted=True, deleted_at=now)
             dataset.save()
 
             annotation.delete()
 
             return self._gm.success_response("Annotation deleted successfully")
+        except Http404:
+            return self._gm.not_found(get_error_message("ANNOTATION_NOT_FOUND"))
         except ValidationError:
             return self._gm.bad_request(
                 get_error_message("FAILED_TO_DELETE_ANNOTATION")
@@ -679,6 +910,10 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 get_error_message("FAILED_TO_DELETE_ANNOTATION")
             )
 
+    @validated_request(
+        request_serializer=BulkDestroyAnnotationsRequestSerializer,
+        responses={200: BulkDestroyAnnotationsResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["post"])
     @transaction.atomic
     def bulk_destroy(self, request):
@@ -687,16 +922,9 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
         Expected input: {"annotation_ids": ["uuid1", "uuid2", ...]}
         """
         try:
-            annotation_ids = request.data.get("annotation_ids", [])
-            if not annotation_ids:
-                return self._gm.bad_request(get_error_message("ANNOTATION_ID_REQUIRED"))
+            annotation_ids = request.validated_data["annotation_ids"]
 
-            annotations = Annotations.objects.filter(
-                id__in=annotation_ids,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                deleted=False,
-            )
+            annotations = self.get_queryset().filter(id__in=annotation_ids)
 
             if not annotations.exists():
                 return self._gm.not_found(get_error_message("ANNOTATION_NOT_FOUND"))
@@ -742,17 +970,18 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
             label_type, "text"
         )  # Default to string if type not found
 
+    @validated_request(
+        request_serializer=UpdateAnnotationCellsRequestSerializer,
+        responses={200: AnnotationActionMessageResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"])
     def update_cells(self, request, pk=None):
         try:
             annotation = self.get_object()
-            label_updates = request.data.get("label_values", [])
-            response_fields_updates = request.data.get("response_field_values", [])
-
-            if not label_updates and not response_fields_updates:
-                return self._gm.bad_request(
-                    get_error_message("LABLE_VALUES_OR_RESPONSE_FIELD_VALUES_MISSING")
-                )
+            label_updates = request.validated_data.get("label_values", [])
+            response_fields_updates = request.validated_data.get(
+                "response_field_values", []
+            )
 
             if not annotation.assigned_users.filter(id=request.user.id).exists():
                 return self._gm.forbidden_response(
@@ -767,12 +996,6 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 description = update.get("description", "")
                 column_id = update.get("column_id")
                 time_taken = update.get("time_taken")
-                if not all([row_id, label_id, value]):
-                    return self._gm.bad_request(
-                        get_error_message(
-                            "ROW_ID_LABEL_ID_AND_VALUE_REQUIRED_IN_LABLE_UPDATE"
-                        )
-                    )
 
                 label = AnnotationsLabels.objects.get(id=label_id)
                 auto_annotate = label.settings.get("auto_annotate", False)
@@ -945,11 +1168,6 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 column_id = str(update.get("column_id"))
                 value = update.get("value")
 
-                if not all([row_id, column_id, value]):
-                    return self._gm.bad_request(
-                        get_error_message("ROW_ID_COLUMN_ID_AND_VALUE_REQUIRED")
-                    )
-
                 try:
                     column = Column.objects.get(id=column_id)
                 except Column.DoesNotExist:
@@ -1019,19 +1237,21 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
         except Exception as e:
             raise ValidationError(f"Validation error: {str(e)}")  # noqa: B904
 
+    @validated_request(
+        request_serializer=ResetAnnotationsRequestSerializer,
+        responses={200: AnnotationActionMessageResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"])
     def reset_annotations(self, request, pk=None):
         try:
-            annotation = Annotations.objects.get(id=pk)
-            row_id = str(request.data.get("row_id"))
+            annotation = self.get_object()
+            row_id = str(request.validated_data["row_id"])
             user_id = str(request.user.id)
 
             if request.user not in annotation.assigned_users.all():
                 return self._gm.forbidden_response(
                     get_error_message("ONLY_OWNER_CAN_VIEW_TEAMS")
                 )
-            if not row_id:
-                return self._gm.bad_request(get_error_message("ROW_ID_MISSING"))
 
             try:
                 row = Row.objects.get(id=row_id)
@@ -1076,6 +1296,7 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 get_error_message("FAILED_TO_RESET_ANNOTATION")
             )
 
+    @validated_request(query_serializer=AnnotateRowQuerySerializer)
     @action(detail=True, methods=["get"])
     def annotate_row(self, request, pk=None):
         """
@@ -1083,23 +1304,23 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
         """
         try:
             # Retrieve the annotation object
-            annotation = Annotations.objects.get(id=pk, deleted=False)
-            Dataset.objects.get(id=annotation.dataset.id, deleted=False)
+            annotation = self.get_object()
+            Dataset.objects.get(
+                self._workspace_filter(),
+                id=annotation.dataset.id,
+                organization=self._request_organization(),
+                deleted=False,
+            )
 
-            # Get the row order from the request data
-            row_order = request.query_params.get(
-                "row_order"
-            ) or request.query_params.get("rowOrder")
-            if row_order is None:
-                return self._gm.bad_request(get_error_message("ROW_ORDER_MISSING"))
+            row_order = request.validated_query_data["row_order"]
 
-            row = Row.objects.get(dataset=annotation.dataset, order=int(row_order))
+            row = Row.objects.get(dataset=annotation.dataset, order=row_order)
 
             try:
                 next_row = (
                     Row.objects.filter(
                         dataset=annotation.dataset,
-                        order__gt=int(row_order),
+                        order__gt=row_order,
                         deleted=False,
                     )
                     .order_by("order")
@@ -1119,7 +1340,7 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 previous_row = (
                     Row.objects.filter(
                         dataset=annotation.dataset,
-                        order__lt=int(row_order),
+                        order__lt=row_order,
                         deleted=False,
                     )
                     .order_by("-order")
@@ -1322,32 +1543,26 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
 
         return False, None
 
+    @validated_request(
+        request_serializer=PreviewAnnotationsRequestSerializer,
+        responses={200: PreviewAnnotationsResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["post"])
     def preview_annotations(self, request):
         """
         Preview the first row of data for specified columns in a dataset.
         """
-        dataset_id = request.data.get("dataset_id")
-        static_columns = request.data.get("static_column", [])
-        response_columns = request.data.get("response_column", [])
-
-        if not dataset_id:
-            return self._gm.bad_request(get_error_message("DATASET_ID_MISSING"))
+        request_data = request.validated_data
+        dataset_id = request_data["dataset_id"]
+        static_columns = request_data.get("static_column", [])
+        response_columns = request_data.get("response_column", [])
 
         try:
-            Dataset.objects.get(
+            self._scoped_datasets().get(
                 id=dataset_id,
-                deleted=False,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
             )
         except Dataset.DoesNotExist:
             return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
-
-        if not static_columns and not response_columns:
-            return self._gm.bad_request(
-                get_error_message("STATIC_OR_RESPONSE_COLUMN_MISSING")
-            )
 
         first_row = Row.objects.filter(dataset_id=dataset_id, deleted=False).first()
 
@@ -1467,45 +1682,174 @@ class UserViewSet(viewsets.ModelViewSet):
     pagination_class = UserPagination
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        manual_parameters=[
+            openapi.Parameter(
+                "search",
+                openapi.IN_QUERY,
+                description="Filter organization users by name or email.",
+                type=openapi.TYPE_STRING,
+                required=False,
+            ),
+            openapi.Parameter(
+                "is_active",
+                openapi.IN_QUERY,
+                description="Filter users by active status.",
+                type=openapi.TYPE_BOOLEAN,
+                required=False,
+            ),
+        ]
+    )
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
+    @swagger_auto_schema(auto_schema=None)
+    def create(self, request, *args, **kwargs):
+        raise MethodNotAllowed(
+            "POST",
+            detail="Organization user mutations are not supported on this route.",
+        )
+
+    @swagger_auto_schema(auto_schema=None)
+    def update(self, request, *args, **kwargs):
+        raise MethodNotAllowed(
+            "PUT",
+            detail="Organization user mutations are not supported on this route.",
+        )
+
+    @swagger_auto_schema(auto_schema=None)
+    def partial_update(self, request, *args, **kwargs):
+        raise MethodNotAllowed(
+            "PATCH",
+            detail="Organization user mutations are not supported on this route.",
+        )
+
+    @swagger_auto_schema(auto_schema=None)
+    def destroy(self, request, *args, **kwargs):
+        raise MethodNotAllowed(
+            "DELETE",
+            detail="Organization user mutations are not supported on this route.",
+        )
+
+    def _resolve_org_access(self, organization_id):
+        """Authorize the requester and return their visibility scope.
+
+        Returns ``"org"`` when the user has org-wide visibility (an active
+        ``OrganizationMembership``) or ``"workspace"`` when access is granted
+        only through a ``WorkspaceMembership`` (membership drift: some workspace
+        members have no org-membership row). Raises ``NotFound`` (fail-closed)
+        when the user has no access.
+
+        We intentionally do NOT require the URL org to equal the request's
+        *currently-active* org/workspace. That coupling 404s legitimate lookups
+        for another org the user also belongs to (e.g. the annotation annotator
+        picker passing the queue's org while a different org is active) without
+        adding any access control — the membership check below already blocks
+        foreign orgs, so the coupling was pure breakage (TH-6156).
+        """
+        from accounts.models.organization_membership import OrganizationMembership
+        from accounts.models.workspace import WorkspaceMembership
+
+        # The unique constraint (user, organization) WHERE deleted=False means at
+        # most one non-deleted row. An *inactive* row is a deliberate removal:
+        # fail closed and never let a lingering workspace row re-authorize the
+        # user (a removed member must not regain visibility via drift).
+        org_membership = OrganizationMembership.no_workspace_objects.filter(
+            user=self.request.user,
+            organization_id=organization_id,
+        ).first()
+        if org_membership is not None:
+            if org_membership.is_active:
+                return "org"
+            raise NotFound(detail="No users found for the specified organization.")
+
+        # No org-membership row at all → genuine drift. Grant workspace-scoped
+        # access only through a *live* workspace (a soft-deleted or deactivated
+        # workspace's stale membership must not authorize).
+        has_live_workspace_membership = WorkspaceMembership.no_workspace_objects.filter(
+            user=self.request.user,
+            workspace__organization_id=organization_id,
+            workspace__deleted=False,
+            workspace__is_active=True,
+            is_active=True,
+        ).exists()
+        if not has_live_workspace_membership:
+            raise NotFound(detail="No users found for the specified organization.")
+        return "workspace"
+
     def get_queryset(self):
         try:
             from accounts.models.organization_membership import OrganizationMembership
             from accounts.models.workspace import WorkspaceMembership
 
             organization_id = self.kwargs["organization_id"]
+            access_scope = self._resolve_org_access(organization_id)
             is_active_param = self.request.query_params.get("is_active")
 
-            # Prefer workspace-level filtering when workspace context is available
+            # Prefer workspace-level filtering only when the active workspace
+            # actually belongs to the requested org. When a different org is
+            # active, request.workspace is from that other org — using it would
+            # return an empty/admin-only slice of the requested org, so fall back
+            # to the org-wide member list instead (TH-6156).
             workspace = getattr(self.request, "workspace", None)
-            if workspace:
+            if workspace and str(workspace.organization_id) == str(organization_id):
                 explicit_workspace_user_ids = WorkspaceMembership.objects.filter(
-                    workspace=workspace, is_active=True
-                ).values_list("user_id", flat=True)
-                auto_access_user_ids = OrganizationMembership.no_workspace_objects.filter(
-                    organization_id=organization_id,
+                    workspace=workspace,
+                    workspace__organization_id=organization_id,
                     is_active=True,
-                ).filter(
-                    Q(level__gte=Level.ADMIN)
-                    | Q(level__isnull=True, role__in=["Admin", "Owner"])
                 ).values_list("user_id", flat=True)
+                auto_access_user_ids = (
+                    OrganizationMembership.no_workspace_objects.filter(
+                        organization_id=organization_id,
+                        is_active=True,
+                    )
+                    .filter(
+                        Q(level__gte=Level.ADMIN)
+                        | Q(level__isnull=True, role__in=["Admin", "Owner"])
+                    )
+                    .values_list("user_id", flat=True)
+                )
                 user_ids = list(explicit_workspace_user_ids) + list(
                     auto_access_user_ids
                 )
-            else:
-                # Fallback to org membership
+            elif access_scope == "org":
+                # Org-wide visibility (active org membership) with no matching
+                # active workspace → the full org member list.
                 user_ids = OrganizationMembership.no_workspace_objects.filter(
                     organization_id=organization_id, is_active=True
                 ).values_list("user_id", flat=True)
+            else:
+                # Workspace-only (drift) requester whose active workspace is a
+                # different org. Fail closed against the org-wide list: scope to
+                # the members of the *live* workspaces the requester belongs to in
+                # this org, so drift access never leaks the whole org (TH-6156).
+                requester_workspace_ids = (
+                    WorkspaceMembership.no_workspace_objects.filter(
+                        user=self.request.user,
+                        workspace__organization_id=organization_id,
+                        workspace__deleted=False,
+                        workspace__is_active=True,
+                        is_active=True,
+                    ).values_list("workspace_id", flat=True)
+                )
+                user_ids = WorkspaceMembership.no_workspace_objects.filter(
+                    workspace_id__in=list(requester_workspace_ids),
+                    is_active=True,
+                ).values_list("user_id", flat=True)
 
+            user_ids = list(dict.fromkeys(user_ids))
+            # The requesting user passed the access gate above, so they are a
+            # valid annotator for their own queue — always keep them selectable.
+            # This also guarantees a non-empty list for brand-new/empty
+            # workspaces, where the old empty-list 404 surfaced as the misleading
+            # "No users found for the specified organization." error (TH-6156).
+            if self.request.user.id not in user_ids:
+                user_ids.append(self.request.user.id)
+
+            queryset = User.objects.filter(id__in=user_ids)
             if is_active_param is not None:
                 is_active = str(is_active_param).lower() in ["true", "1", "t", "yes"]
-                queryset = User.objects.filter(id__in=user_ids, is_active=is_active)
-            else:
-                queryset = User.objects.filter(id__in=user_ids)
-
-            if not queryset.exists():
-                self._gm.not_found(get_error_message("USER_NOT_FOUND_IN_ORG"))
-                raise NotFound(detail="No users found for the specified organization.")
+                queryset = queryset.filter(is_active=is_active)
 
             # Search by name or email (applied after existence check so empty
             # search results don't trigger 404 for the entire org)
@@ -1515,10 +1859,12 @@ class UserViewSet(viewsets.ModelViewSet):
                     Q(name__icontains=search) | Q(email__icontains=search)
                 )
 
-            return queryset
+            return queryset.distinct().order_by("email")
         except KeyError:
             self._gm.bad_request(get_error_message("ORGANIZATION_ID_MISSING"))
             raise NotFound(detail="Organization ID is required.")  # noqa: B904
+        except NotFound:
+            raise
         except Exception as e:
             logger.exception(f"Error in fetching the user of an organization: {str(e)}")
             self._gm.internal_server_error_response(
@@ -1526,15 +1872,6 @@ class UserViewSet(viewsets.ModelViewSet):
             )
             raise Exception(  # noqa: B904
                 f"An error occurred while processing your request: {str(e)}"
-            )
-
-    def list(self, request, *args, **kwargs):
-        try:
-            return super().list(request, *args, **kwargs)
-        except Exception as e:
-            logger.exception(f"Error in fetching the user of an organization: {str(e)}")
-            return self._gm.internal_server_error_response(
-                get_error_message("FAILED_TO_LOAD_USER_OF_ORG")
             )
 
 
@@ -1728,6 +2065,9 @@ class AnnotationSummaryView(APIView):
             return [self.nan_to_none(x) for x in obj]
         return obj
 
+    @swagger_auto_schema(
+        responses={200: AnnotationSummaryResponseSerializer, **ERROR_RESPONSES},
+    )
     def get(self, request, dataset_id):
         try:
             organization = (
@@ -1748,9 +2088,7 @@ class AnnotationSummaryView(APIView):
             except ImportError:
                 pass
 
-            dataset = get_object_or_404(
-                Dataset, id=dataset_id, organization=organization
-            )
+            get_object_or_404(Dataset, id=dataset_id, organization=organization)
 
             # Score-only data path. Reads the unified Score model
             # (`source_type='dataset_row'`) instead of the legacy

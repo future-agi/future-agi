@@ -15,7 +15,9 @@ from rest_framework import status
 
 from model_hub.models.choices import DatasetSourceChoices, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import AgentDefinition, Scenarios
+from simulate.models.eval_config import SimulateEvalConfig
 from simulate.models.run_test import RunTest
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import CallExecution, TestExecution
@@ -389,6 +391,48 @@ class TestGetKpiEvalMetricsQuery:
         assert sr[1] == "Accuracy"
         # avg_value: (0.85*100 + 0.70*100) / 2 = 77.5
         assert float(sr[3]) == 77.5
+
+    def test_kpi_query_excludes_deleted_eval_configs(
+        self, test_execution, scenario, run_test, organization
+    ):
+        template = EvalTemplate.objects.create(
+            name="KPI Delete Template", config={}, organization=organization
+        )
+        live = SimulateEvalConfig.objects.create(
+            name="Live", eval_template=template, run_test=run_test
+        )
+        deleted = SimulateEvalConfig.objects.create(
+            name="Deleted", eval_template=template, run_test=run_test
+        )
+        deleted.delete()
+
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number="+7000000001",
+            status="completed",
+            eval_outputs={
+                str(live.id): {
+                    "name": "Live Metric",
+                    "output": "Passed",
+                    "output_type": "Pass/Fail",
+                },
+                str(deleted.id): {
+                    "name": "Deleted Metric",
+                    "output": "Passed",
+                    "output_type": "Pass/Fail",
+                },
+            },
+        )
+
+        query, params = get_kpi_eval_metrics_query(test_execution.id)
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+        metric_names = {r[1] for r in rows}
+        assert "Live Metric" in metric_names
+        assert "Deleted Metric" not in metric_names
 
     def test_no_eval_outputs(self, test_execution, scenario):
         """Test query returns empty for calls without eval_outputs."""

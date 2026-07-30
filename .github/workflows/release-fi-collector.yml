@@ -1,0 +1,38 @@
+# Manual escape hatch for ad-hoc and -dev builds. Stable releases go through
+# release-images.yml (tag-triggered); this wrapper shares the same build via
+# build-image.yml so the two paths cannot drift.
+name: Release fi-collector
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to publish (e.g. v2.1.0-dev)'
+        required: true
+        type: string
+      branch:
+        description: 'Branch to build from'
+        required: true
+        default: 'main'
+        type: choice
+        options: [main, dev]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image: futureagi/fi-collector
+      context: ./fi-collector
+      dockerfile: ./fi-collector/Dockerfile
+      version: ${{ inputs.version }}
+      ref: ${{ inputs.branch }}
+      platforms: linux/amd64,linux/arm64
+      push-latest: false
+      free-disk: false
+      cache-scope: fi-collector
+    secrets:
+      dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+      dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}

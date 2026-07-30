@@ -5,7 +5,7 @@ Provides fixtures specific to tracer models and test data.
 
 import json
 import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from django.utils import timezone
@@ -24,6 +24,54 @@ from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
+from tracer.tests._ch_seed import (
+    seed_ch_span,
+    seed_ch_spans,
+    seed_ch_trace_sessions,
+    truncate_ch_spans,
+)
+
+
+@pytest.fixture(autouse=True)
+def _stub_eval_task_workflow(monkeypatch):
+    """Keep eval-task create/edit views and tools from connecting to Temporal."""
+
+    def _fake_start(task, **kwargs):
+        return f"eval-task-{task.id}"
+
+    monkeypatch.setattr(
+        "tfc.temporal.eval_tasks.client.start_eval_task_workflow_sync",
+        _fake_start,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tracer.views.eval_task.start_eval_task_workflow_sync",
+        _fake_start,
+        raising=False,
+    )
+
+
+@pytest.fixture
+def ch_seed():
+    """Seed ObservationSpan rows directly into the CH ``spans`` table.
+
+    Tests that exercise CH-backed endpoints can request ``ch_seed`` and call
+    ``ch_seed(span)`` or ``ch_seed([span1, span2])``. The fixture wipes the
+    CH ``spans`` table after the test to keep cross-test state from leaking.
+
+    Use this when the test creates spans via ``ObservationSpan.objects.create``
+    and then hits an endpoint that reads from CH — without seeding CH, the
+    endpoint sees an empty table even though PG is populated.
+    """
+
+    def _seed(spans_or_span):
+        if hasattr(spans_or_span, "__iter__") and not hasattr(spans_or_span, "id"):
+            return seed_ch_spans(spans_or_span)
+        seed_ch_span(spans_or_span)
+        return 1
+
+    yield _seed
+    truncate_ch_spans()
 
 
 @pytest.fixture(autouse=True)
@@ -127,9 +175,10 @@ def session_trace(db, observe_project, trace_session):
 
 @pytest.fixture
 def observation_span(db, project, trace):
-    """Create a test observation span."""
+    """Create a test observation span. Auto-seeds CH so endpoints that read
+    from the CH ``spans`` table see the row alongside PG."""
     span_id = f"span_{uuid.uuid4().hex[:16]}"
-    return ObservationSpan.objects.create(
+    span = ObservationSpan.objects.create(
         id=span_id,
         project=project,
         trace=trace,
@@ -148,13 +197,16 @@ def observation_span(db, project, trace):
         status="OK",
         metadata={"key": "value"},
     )
+    seed_ch_span(span)
+    return span
 
 
 @pytest.fixture
 def child_span(db, project, trace, observation_span):
-    """Create a child observation span."""
+    """Create a child observation span. Auto-seeds CH so the parent/child
+    chain is visible to endpoints that walk via parent_span_id in CH."""
     span_id = f"child_span_{uuid.uuid4().hex[:16]}"
-    return ObservationSpan.objects.create(
+    span = ObservationSpan.objects.create(
         id=span_id,
         project=project,
         trace=trace,
@@ -168,6 +220,8 @@ def child_span(db, project, trace, observation_span):
         latency_ms=200,
         status="OK",
     )
+    seed_ch_span(span)
+    return span
 
 
 @pytest.fixture
@@ -365,6 +419,7 @@ def stub_cost_log(monkeypatch):
     """
     try:
         from tfc.constants.api_calls import APICallStatusChoices
+
         processing_status = APICallStatusChoices.PROCESSING.value
     except ImportError:
         processing_status = "processing"
@@ -378,7 +433,9 @@ def stub_cost_log(monkeypatch):
         def save(self):
             pass
 
-    def _stub(*, organization, api_call_type, source, source_id, config, workspace, **kwargs):
+    def _stub(
+        *, organization, api_call_type, source, source_id, config, workspace, **kwargs
+    ):
         return _StubCostLog(config)
 
     monkeypatch.setattr(
@@ -494,16 +551,37 @@ def populated_observe_project(db, observe_project):
                     observation_type="llm" if sp_idx % 2 == 0 else "tool",
                     start_time=timezone.now() - timedelta(seconds=10 - sp_idx),
                     end_time=timezone.now() - timedelta(seconds=9 - sp_idx),
-                    input={"messages": [{"role": "user", "content": f"hi s{s_idx}t{t_idx}_{sp_idx}"}]},
-                    output={"choices": [{"message": {"content": f"reply s{s_idx}t{t_idx}_{sp_idx}"}}]},
+                    input={
+                        "messages": [
+                            {"role": "user", "content": f"hi s{s_idx}t{t_idx}_{sp_idx}"}
+                        ]
+                    },
+                    output={
+                        "choices": [
+                            {"message": {"content": f"reply s{s_idx}t{t_idx}_{sp_idx}"}}
+                        ]
+                    },
                     span_attributes={
-                        "input": {"value": f"hi s{s_idx}t{t_idx}_{sp_idx}"},
-                        "output": {"value": f"reply s{s_idx}t{t_idx}_{sp_idx}"},
+                        "input": f"hi s{s_idx}t{t_idx}_{sp_idx}",
+                        "output": f"reply s{s_idx}t{t_idx}_{sp_idx}",
+                        "model_name": "gpt-4",
+                        "provider_name": "openai",
+                        "operation": "chat",
+                        "prompt_tokens": "10",
+                        "completion_tokens": "5",
                     },
                     model="gpt-4",
                     status="OK",
                 )
             spans.extend(list(trace.observation_spans.order_by("start_time")))
+
+    # Seed CH so endpoints that read from ClickHouse see the rows. Spans carry
+    # the analytics; the curated `trace_sessions` rows back the post-P3c session
+    # reads (resolve_session_fields) — ingestion dual-writes them in prod, so the
+    # PG-direct fixture must seed them too or session reads resolve to "does not
+    # exist".
+    seed_ch_spans(spans)
+    seed_ch_trace_sessions(sessions)
 
     return {
         "project": observe_project,

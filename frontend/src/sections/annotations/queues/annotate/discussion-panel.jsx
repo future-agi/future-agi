@@ -27,9 +27,11 @@ import Iconify from "src/components/iconify";
 import { fDateTime, fToNowStrict } from "src/utils/format-time";
 import {
   useCreateDiscussionComment,
+  useDeleteDiscussionComment,
   useReopenDiscussionThread,
   useResolveDiscussionThread,
   useToggleDiscussionReaction,
+  useUpdateDiscussionComment,
 } from "src/api/annotation-queues/annotation-queues";
 
 const MAX_MENTION_SUGGESTIONS = 6;
@@ -1414,13 +1416,46 @@ ReactionBar.propTypes = {
 
 function ThreadComment({
   comment,
+  queueId,
+  itemId,
   labels = [],
   onFocusScope,
   onReact,
   isReacting,
 }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editDraft, setEditDraft] = useState(comment?.comment || "");
+  const { mutate: updateComment, isPending: isUpdating } =
+    useUpdateDiscussionComment();
+  const { mutate: deleteComment, isPending: isDeleting } =
+    useDeleteDiscussionComment();
   const isSystemAction = comment?.action && comment.action !== "comment";
   const timestamp = timelineTimeMeta(comment?.created_at);
+  const canEdit = !isSystemAction && comment?.can_edit;
+  const canDelete = !isSystemAction && comment?.can_delete;
+  const canSaveEdit = editDraft.trim() && !isUpdating;
+
+  const handleSaveEdit = () => {
+    if (!canSaveEdit) return;
+    updateComment(
+      {
+        queueId,
+        itemId,
+        commentId: comment.id,
+        comment: editDraft.trim(),
+      },
+      { onSuccess: () => setIsEditing(false) },
+    );
+  };
+
+  const handleDelete = () => {
+    deleteComment({
+      queueId,
+      itemId,
+      commentId: comment.id,
+    });
+  };
+
   return (
     <Box
       sx={{
@@ -1482,13 +1517,84 @@ function ThreadComment({
                 </Typography>
               </Tooltip>
             )}
+            {(canEdit || canDelete) && (
+              <Stack direction="row" spacing={0.25} sx={{ ml: "auto" }}>
+                {canEdit && (
+                  <Tooltip title="Edit comment">
+                    <IconButton
+                      size="small"
+                      aria-label="Edit comment"
+                      disabled={isUpdating || isDeleting}
+                      onClick={() => {
+                        setEditDraft(comment?.comment || "");
+                        setIsEditing(true);
+                      }}
+                      sx={{ width: 24, height: 24 }}
+                    >
+                      <Iconify icon="solar:pen-bold" width={14} />
+                    </IconButton>
+                  </Tooltip>
+                )}
+                {canDelete && (
+                  <Tooltip title="Delete comment">
+                    <IconButton
+                      size="small"
+                      color="error"
+                      aria-label="Delete comment"
+                      disabled={isUpdating || isDeleting}
+                      onClick={handleDelete}
+                      sx={{ width: 24, height: 24 }}
+                    >
+                      {isDeleting ? (
+                        <CircularProgress size={12} color="inherit" />
+                      ) : (
+                        <Iconify icon="solar:trash-bin-trash-bold" width={14} />
+                      )}
+                    </IconButton>
+                  </Tooltip>
+                )}
+              </Stack>
+            )}
           </Stack>
-          <HighlightedComment
-            comment={comment}
-            labels={labels}
-            onFocusScope={onFocusScope}
-          />
-          {!isSystemAction && (
+          {isEditing ? (
+            <Stack spacing={0.75} sx={{ mt: 0.75 }}>
+              <TextField
+                fullWidth
+                multiline
+                minRows={2}
+                size="small"
+                value={editDraft}
+                onChange={(event) => setEditDraft(event.target.value)}
+                autoFocus
+              />
+              <Stack direction="row" spacing={0.75} justifyContent="flex-end">
+                <Button
+                  size="small"
+                  color="inherit"
+                  disabled={isUpdating}
+                  onClick={() => setIsEditing(false)}
+                >
+                  Cancel
+                </Button>
+                <LoadingButton
+                  size="small"
+                  variant="contained"
+                  loading={isUpdating}
+                  disabled={!canSaveEdit}
+                  onClick={handleSaveEdit}
+                >
+                  Save
+                </LoadingButton>
+              </Stack>
+            </Stack>
+          ) : (
+            <HighlightedComment
+              comment={comment}
+              labels={labels}
+              onFocusScope={onFocusScope}
+            />
+          )}
+          {!isSystemAction && !isEditing && (
             <ReactionBar
               comment={comment}
               onReact={onReact}
@@ -1503,6 +1609,8 @@ function ThreadComment({
 
 ThreadComment.propTypes = {
   comment: PropTypes.object,
+  queueId: PropTypes.string,
+  itemId: PropTypes.string,
   labels: PropTypes.array,
   onFocusScope: PropTypes.func,
   onReact: PropTypes.func,
@@ -1637,6 +1745,8 @@ function DiscussionThreadCard({
             <ThreadComment
               key={comment.id || comment.created_at}
               comment={comment}
+              queueId={queueId}
+              itemId={itemId}
               labels={labels}
               onFocusScope={onFocusScope}
               onReact={(targetComment, emoji) =>

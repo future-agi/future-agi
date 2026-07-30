@@ -143,3 +143,34 @@ class TestAgentccProviderCredentialOrganizationIsolation:
         # Signature: (provider_name, base_url, api_key, api_format)
         assert args[0] == "openai"
         assert args[2] == "sk-org-b"
+
+    def test_fetch_models_returns_bad_request_when_saved_credential_cannot_decrypt(
+        self, secondary_org_context, secondary_org_client
+    ):
+        org_b, _ = secondary_org_context
+        AgentccProviderCredential.no_workspace_objects.create(
+            organization=org_b,
+            provider_name="openai",
+            display_name="Org B OpenAI",
+            encrypted_credentials=b"invalid-ciphertext",
+            api_format="openai",
+        )
+
+        with (
+            patch(
+                "agentcc.views.provider_credential.CredentialManager.decrypt",
+                side_effect=ValueError("decrypt failed"),
+            ),
+            patch(
+                "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._fetch_models_from_provider",
+            ) as mock_fetch,
+        ):
+            response = secondary_org_client.post(
+                "/agentcc/provider-credentials/fetch_models/",
+                {"provider_name": "openai"},
+                format="json",
+            )
+
+        assert response.status_code == 400, response.json()
+        assert "could not be decrypted" in response.json()["message"]
+        mock_fetch.assert_not_called()

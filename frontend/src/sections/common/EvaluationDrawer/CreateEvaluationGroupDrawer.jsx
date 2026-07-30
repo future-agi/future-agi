@@ -361,9 +361,11 @@ export default function CreateEvaluationGroupDrawer({
   useEffect(() => {
     if (groupId && groupData) {
       initialGroupData.current = groupData?.result;
+      const evalGroup =
+        groupData?.result?.eval_group || groupData?.result?.evalGroup || {};
       reset({
-        name: groupData?.result?.evalGroup?.name || "",
-        description: groupData?.result?.evalGroup?.description || "",
+        name: evalGroup?.name || "",
+        description: evalGroup?.description || "",
       });
       setSelectedEvals(
         groupData?.result?.members?.map((evalItem) => ({

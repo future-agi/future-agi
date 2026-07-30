@@ -14,6 +14,8 @@ class ProviderChoices(models.TextChoices):
     RETELL = "retell", "Retell"
     LIVEKIT = "livekit", "LiveKit"
     OTHERS = "others", "Others"
+    BLAND = "bland", "Bland.ai"
+    TWILIO = "twilio", "Twilio"
 
 
 class ObservabilityProvider(BaseModel):

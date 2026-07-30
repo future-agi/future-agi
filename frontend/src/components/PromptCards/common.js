@@ -497,6 +497,47 @@ export const embedPdfs = (pdfs, quill, location) => {
   }
 };
 
+const CAMEL_TO_SNAKE_OUTER = {
+  imageUrl: "image_url",
+  audioUrl: "audio_url",
+  pdfUrl: "pdf_url",
+};
+
+const CAMEL_TO_SNAKE_INNER = {
+  image_url: { imgName: "img_name", imgSize: "img_size" },
+  audio_url: {
+    audioName: "audio_name",
+    audioSize: "audio_size",
+    audioType: "audio_type",
+  },
+  pdf_url: { fileName: "file_name", pdfSize: "pdf_size" },
+};
+
+export function normalizeContentBlocks(blocks) {
+  if (!blocks) return blocks;
+  return blocks.map((block) => {
+    if (!block || typeof block !== "object") return block;
+    const fixedType = CAMEL_TO_SNAKE_OUTER[block.type] || block.type;
+    const result = { ...block, type: fixedType };
+    for (const [oldKey, newKey] of Object.entries(CAMEL_TO_SNAKE_OUTER)) {
+      if (block[oldKey] !== undefined && result[newKey] === undefined) {
+        result[newKey] = block[oldKey];
+        delete result[oldKey];
+      }
+    }
+    const innerMap = CAMEL_TO_SNAKE_INNER[fixedType];
+    if (innerMap && result[fixedType]) {
+      result[fixedType] = Object.fromEntries(
+        Object.entries(result[fixedType]).map(([k, v]) => [
+          innerMap[k] || k,
+          v,
+        ]),
+      );
+    }
+    return result;
+  });
+}
+
 export const getBlocks = (quill) => {
   const blocks = [];
   const delta = quill.getContents();
@@ -554,21 +595,30 @@ export const getBlocks = (quill) => {
     if (imageObject) {
       blocks.push({
         type: "image_url",
-        imageUrl: imageObject,
+        image_url: {
+          ...imageObject,
+          img_name: imageObject.imgName,
+          img_size: imageObject.imgSize,
+        },
       });
       imageObject = null;
     }
     if (audioObject) {
       blocks.push({
         type: "audio_url",
-        audioUrl: audioObject,
+        audio_url: {
+          ...audioObject,
+          audio_name: audioObject.audioName,
+          audio_size: audioObject.audioSize,
+          audio_type: audioObject.audioType,
+        },
       });
       audioObject = null;
     }
     if (pdfObject) {
       blocks.push({
         type: "pdf_url",
-        pdfUrl: { ...pdfObject, file_name: pdfObject.pdf_name },
+        pdf_url: { ...pdfObject, file_name: pdfObject.pdf_name },
       });
       pdfObject = null;
     }

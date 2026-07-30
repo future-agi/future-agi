@@ -52,7 +52,11 @@ def _build_monitor_graph_ch_builder(monitor):
         except CustomEvalConfig.DoesNotExist:
             pass
 
-    return MonitorMetricsQueryBuilder(
+    # v1↔v2 dispatch — flips with CH25_QUERY_TYPES_V2_PRIMARY=MONITOR_METRICS
+    from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
+
+    BuilderCls = get_query_builder_class("MONITOR_METRICS")
+    return BuilderCls(
         project_id=str(monitor.project_id),
         filters=monitor.filters,
         eval_config_id=eval_config_id,
@@ -136,32 +140,42 @@ def get_static_metric_graph_data(monitor, time_window_start=None, time_window_en
     """
     # --- ClickHouse dispatch ---
     analytics = AnalyticsQueryService()
-    if analytics.should_use_clickhouse(QueryType.MONITOR_METRICS):
-        try:
-            frequency_seconds = _get_frequency_seconds(monitor)
-            if not frequency_seconds:
-                return []
+    try:
+        frequency_seconds = _get_frequency_seconds(monitor)
+        if not frequency_seconds:
+            return []
 
-            effective_end = time_window_end or timezone.now()
-            effective_start = time_window_start or (effective_end - timedelta(days=7))
+        effective_end = time_window_end or timezone.now()
+        effective_start = time_window_start or (effective_end - timedelta(days=7))
 
-            builder = _build_monitor_graph_ch_builder(monitor)
-            query, params = builder.build_time_series_query(
-                monitor.metric_type,
-                effective_start,
-                effective_end,
-                frequency_seconds,
-            )
-            result = analytics.execute_ch_query(query, params, timeout_ms=10000)
-            return _format_ch_time_series(result.data)
-        except Exception as e:
-            logger.warning(
-                "CH static graph data failed, falling back to PG",
-                error=str(e),
-                monitor_id=str(monitor.id),
-            )
+        builder = _build_monitor_graph_ch_builder(monitor)
+        query, params = builder.build_time_series_query(
+            monitor.metric_type,
+            effective_start,
+            effective_end,
+            frequency_seconds,
+        )
+        result = analytics.execute_ch_query(query, params, timeout_ms=10000)
+        return _format_ch_time_series(result.data)
+    except Exception as e:
+        logger.warning(
+            "CH static graph data failed, falling back to PG",
+            error=str(e),
+            monitor_id=str(monitor.id),
+        )
 
     # --- PostgreSQL fallback ---
+    # CH25-TODO(blocked-on-reader-extension): the CH primary branch above
+    # uses MonitorMetricsQueryBuilder.build_time_series_query which fully
+    # supports span_attributes_filters (via FilterEngine v2),
+    # status-stratified Count/Avg(Case), and group-by-session/provider
+    # error-free rates. The new time_bucket_aggregate reader from
+    # 46153d310 only accepts observation_type as a filter; it cannot
+    # consume the full parsing_evaltask_filters Q-object that
+    # monitor.filters produces nor emit the status / group-stratified
+    # columns this graph path needs. Fallback intentionally left as ORM
+    # for resilience; remove only when time_bucket_aggregate_with_filters
+    # + group_by_*_window helpers exist on CHSpanReader.
     try:
         metric_type = monitor.metric_type
 
@@ -290,6 +304,16 @@ def _get_eval_metric_graph_data(
 
     filters = parsing_monitor_filters(monitor.filters)
 
+    # CH25-TODO(PG-fallback / Django-subquery-shape): this is the PG
+    # fallback for evaluation-metric monitor graphs. The CH primary path
+    # at L142 routes through MonitorMetricsQueryBuilder which already
+    # reads the CH-side tracer_eval_logger CDC table (EVAL_TABLE) for
+    # eval-metric time series (see monitor_metrics.py:48, 677). This
+    # ORM path uses Django subquery shape `observation_span__in=
+    # ObservationSpan.objects.filter(filters)` against EvalLogger; the
+    # inner subquery isn't naturally replaceable by `time_bucket_
+    # aggregate` since the downstream aggregation is on EvalLogger
+    # output_float / output_bool, not span columns. Defer.
     base_queryset = EvalLogger.objects.filter(
         custom_eval_config=custom_eval_config,
         target_type="span",
@@ -353,7 +377,14 @@ def _get_eval_metric_graph_data(
 def _get_group_error_free_rate_data(
     monitor, time_window_start=None, time_window_end=None, frequency_seconds=None
 ):
-    """Handles graph data generation for group-based error-free rate metrics."""
+    """Handles graph data generation for group-based error-free rate metrics.
+
+    CH25-TODO(blocked-on-reader-extension): bucket + group_by(session OR
+    provider) + per-bucket error_count + ratio derivation. Needs
+    group_by_session_window / group_by_provider_window readers that emit
+    `{bucket, session_id|provider, total, error_count}` rows. PG fallback
+    stays as ORM until the CH primary path covers all branches.
+    """
     metric_type = monitor.metric_type
     filters = parsing_monitor_filters(monitor.filters)
 
@@ -437,7 +468,17 @@ def _calculate_std_dev(data):
 def _get_eval_metric_buckets(
     monitor, extended_start, time_window_end, bucket_annotation, filters
 ):
-    """Handles bucket creation for EVALUATION_METRICS."""
+    """Handles bucket creation for EVALUATION_METRICS.
+
+    CH25-TODO(PG-fallback / Django-subquery-shape): same pattern as
+    _get_eval_metric_graph_data above. CH already has the
+    tracer_eval_logger CDC table (see schema.py:258) and
+    MonitorMetricsQueryBuilder reads it on the CH primary path —
+    EvalLogger is not "stuck in PG". The blocker is the Django subquery
+    inside EvalLogger.objects.filter(observation_span__in=...) which
+    can't be replaced by a CH bucket aggregate without rewriting the
+    surrounding EvalLogger aggregation. Defer.
+    """
     try:
         custom_eval_config = CustomEvalConfig.objects.get(id=monitor.metric)
         eval_output_type = custom_eval_config.eval_template.config.get("output")
@@ -496,7 +537,13 @@ def _get_eval_metric_buckets(
 def _get_group_error_rate_buckets(
     monitor, extended_start, time_window_end, bucket_annotation, filters
 ):
-    """Handles bucket creation for group-based error rate metrics."""
+    """Handles bucket creation for group-based error rate metrics.
+
+    CH25-TODO(blocked-on-reader-extension): same shape as
+    _get_group_error_free_rate_data above. Needs group_by_session_window /
+    group_by_provider_window readers that emit per-bucket per-group
+    {total, error_count} pairs.
+    """
     metric_type = monitor.metric_type
     base_queryset = ObservationSpan.objects.filter(project=monitor.project)
     base_queryset = _apply_time_window_filter(
@@ -550,7 +597,16 @@ def _get_group_error_rate_buckets(
 def _get_default_observation_span_buckets(
     monitor, extended_start, time_window_end, bucket_annotation, filters
 ):
-    """Handles bucket creation for default ObservationSpan metrics."""
+    """Handles bucket creation for default ObservationSpan metrics.
+
+    CH25-TODO(blocked-on-reader-extension): _get_aggregation_expression
+    below selects between Sum("total_tokens"), Count("id", filter=Q(
+    status="ERROR")), Avg("latency_ms"), and Avg(Case(...status=ERROR...))
+    based on metric_type. time_bucket_aggregate covers the Sum/Avg
+    branches but not the status-stratified Count(filter=Q) or the
+    Avg(Case) error-rate branch. Defer until the reader emits
+    `error_count` alongside `span_count`.
+    """
     metric_type = monitor.metric_type
     base_queryset = ObservationSpan.objects.filter(project=monitor.project)
     base_queryset = _apply_time_window_filter(
@@ -695,62 +751,61 @@ def get_percentage_change_metric_graph_data(
     """
     # --- ClickHouse dispatch ---
     analytics = AnalyticsQueryService()
-    if analytics.should_use_clickhouse(QueryType.MONITOR_METRICS):
-        try:
-            frequency_seconds = _get_frequency_seconds(monitor)
-            if not frequency_seconds:
-                return {"graph_data": [], "alert_bar_data": []}
+    try:
+        frequency_seconds = _get_frequency_seconds(monitor)
+        if not frequency_seconds:
+            return {"graph_data": [], "alert_bar_data": []}
 
-            auto_threshold_time_window = timedelta(
-                minutes=monitor.auto_threshold_time_window
-            )
+        auto_threshold_time_window = timedelta(
+            minutes=monitor.auto_threshold_time_window
+        )
 
-            effective_end = time_window_end or timezone.now()
-            extended_start = None
-            if time_window_start:
-                extended_start = time_window_start - auto_threshold_time_window
+        effective_end = time_window_end or timezone.now()
+        extended_start = None
+        if time_window_start:
+            extended_start = time_window_start - auto_threshold_time_window
 
-            builder = _build_monitor_graph_ch_builder(monitor)
-            query, params = builder.build_time_series_query(
-                monitor.metric_type,
-                extended_start or (effective_end - timedelta(days=30)),
-                effective_end,
-                frequency_seconds,
-            )
-            result = analytics.execute_ch_query(query, params, timeout_ms=10000)
+        builder = _build_monitor_graph_ch_builder(monitor)
+        query, params = builder.build_time_series_query(
+            monitor.metric_type,
+            extended_start or (effective_end - timedelta(days=30)),
+            effective_end,
+            frequency_seconds,
+        )
+        result = analytics.execute_ch_query(query, params, timeout_ms=10000)
 
-            # Convert CH results to bucket format expected by _process_percentage_change_buckets
-            all_buckets = []
-            for row in result.data:
-                ts = row.get("timestamp")
-                if ts is not None:
-                    if isinstance(ts, str):
-                        ts = dt_datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                    ts = _ensure_timezone_aware(ts)
-                    all_buckets.append(
-                        {
-                            "timestamp": ts,
-                            "value": row.get("value", 0),
-                        }
-                    )
+        # Convert CH results to bucket format expected by _process_percentage_change_buckets
+        all_buckets = []
+        for row in result.data:
+            ts = row.get("timestamp")
+            if ts is not None:
+                if isinstance(ts, str):
+                    ts = dt_datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                ts = _ensure_timezone_aware(ts)
+                all_buckets.append(
+                    {
+                        "timestamp": ts,
+                        "value": row.get("value", 0),
+                    }
+                )
 
-            if not all_buckets:
-                return {"graph_data": [], "alert_bar_data": []}
+        if not all_buckets:
+            return {"graph_data": [], "alert_bar_data": []}
 
-            frequency_delta = timedelta(seconds=frequency_seconds)
-            return _process_percentage_change_buckets(
-                all_buckets,
-                monitor,
-                time_window_start,
-                frequency_delta,
-                auto_threshold_time_window,
-            )
-        except Exception as e:
-            logger.warning(
-                "CH percentage change graph data failed, falling back to PG",
-                error=str(e),
-                monitor_id=str(monitor.id),
-            )
+        frequency_delta = timedelta(seconds=frequency_seconds)
+        return _process_percentage_change_buckets(
+            all_buckets,
+            monitor,
+            time_window_start,
+            frequency_delta,
+            auto_threshold_time_window,
+        )
+    except Exception as e:
+        logger.warning(
+            "CH percentage change graph data failed, falling back to PG",
+            error=str(e),
+            monitor_id=str(monitor.id),
+        )
 
     # --- PostgreSQL fallback ---
     try:

@@ -8,6 +8,15 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models.webauthn_credential import WebAuthnCredential
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    AccountsEmptyRequestSerializer,
+    AccountsTokenPairResponseSerializer,
+    PasskeyCredentialRequestSerializer,
+    PasskeyOptionsResponseSerializer,
+    PasskeyRegisterVerifyResponseSerializer,
+    PasskeyRenameResponseSerializer,
+)
 from accounts.serializers.two_factor import (
     PasskeyRegisterVerifySerializer,
     PasskeyRenameSerializer,
@@ -20,6 +29,7 @@ from accounts.services.webauthn_service import (
     verify_authentication,
     verify_registration,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -31,6 +41,11 @@ class PasskeyRegisterOptionsView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=AccountsEmptyRequestSerializer,
+        responses={200: PasskeyOptionsResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         try:
             options_json, _ = get_registration_options(request.user)
@@ -38,7 +53,7 @@ class PasskeyRegisterOptionsView(APIView):
         except Exception as e:
             logger.exception("passkey_register_options_failed", error=str(e))
             return self._gm.bad_request(
-                {"error": "Failed to generate registration options."}
+                "Failed to generate registration options."
             )
 
 
@@ -48,22 +63,24 @@ class PasskeyRegisterVerifyView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=PasskeyRegisterVerifySerializer,
+        responses={
+            201: PasskeyRegisterVerifyResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request):
-        serializer = PasskeyRegisterVerifySerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-
-        credential_response = serializer.validated_data["credential"]
-        name = serializer.validated_data.get("name", "")
+        credential_response = request.validated_data["credential"]
+        name = request.validated_data.get("name", "")
 
         try:
             # Retrieve the stored challenge
             challenge_key = f"webauthn_reg_challenge:{request.user.id}"
             stored_challenge = cache.get(challenge_key)
             if not stored_challenge:
-                return self._gm.bad_request(
-                    {"error": "Registration challenge expired."}
-                )
+                return self._gm.bad_request("Registration challenge expired.")
 
             from webauthn.helpers import base64url_to_bytes
 
@@ -104,6 +121,12 @@ class PasskeyListView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        responses={
+            200: WebAuthnCredentialSerializer(many=True),
+            **ACCOUNTS_ERROR_RESPONSES,
+        }
+    )
     def get(self, request):
         passkeys = WebAuthnCredential.objects.filter(user=request.user)
         serializer = WebAuthnCredentialSerializer(passkeys, many=True)
@@ -116,32 +139,28 @@ class PasskeyDetailView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=PasskeyRenameSerializer,
+        responses={200: PasskeyRenameResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def patch(self, request, pk):
         try:
             passkey = WebAuthnCredential.objects.get(id=pk, user=request.user)
         except WebAuthnCredential.DoesNotExist:
-            return Response(
-                {"error": "Passkey not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return self._gm.not_found("Passkey not found.")
 
-        serializer = PasskeyRenameSerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-
-        passkey.name = serializer.validated_data["name"]
+        passkey.name = request.validated_data["name"]
         passkey.save(update_fields=["name", "updated_at"])
 
         return Response({"id": str(passkey.id), "name": passkey.name})
 
+    @validated_request(responses={204: "Passkey deleted.", **ACCOUNTS_ERROR_RESPONSES})
     def delete(self, request, pk):
         try:
             passkey = WebAuthnCredential.objects.get(id=pk, user=request.user)
         except WebAuthnCredential.DoesNotExist:
-            return Response(
-                {"error": "Passkey not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return self._gm.not_found("Passkey not found.")
 
         passkey.delete()
 
@@ -162,6 +181,11 @@ class PasskeyAuthenticateOptionsView(APIView):
     authentication_classes = []
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=AccountsEmptyRequestSerializer,
+        responses={200: PasskeyOptionsResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         try:
             options_json, _ = get_authentication_options(user=None)
@@ -169,7 +193,7 @@ class PasskeyAuthenticateOptionsView(APIView):
         except Exception as e:
             logger.exception("passkey_auth_options_failed", error=str(e))
             return self._gm.bad_request(
-                {"error": "Failed to generate authentication options."}
+                "Failed to generate authentication options."
             )
 
 
@@ -180,8 +204,16 @@ class PasskeyAuthenticateVerifyView(APIView):
     authentication_classes = []
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=PasskeyCredentialRequestSerializer,
+        responses={
+            200: AccountsTokenPairResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request):
-        credential_response = request.data.get("credential")
+        credential_response = request.validated_data.get("credential")
         if not credential_response:
             return self._gm.bad_request("Credential data is required.")
 
@@ -194,14 +226,12 @@ class PasskeyAuthenticateVerifyView(APIView):
 
         try:
             # Get stored challenge — session_id at top level of request
-            session_id = request.data.get("session_id", "") or credential_response.pop(
-                "_session_id", ""
-            )
+            session_id = request.validated_data.get(
+                "session_id", ""
+            ) or credential_response.pop("_session_id", "")
             raw_data = cache.get(f"webauthn_auth_challenge:{session_id}")
             if not raw_data:
-                return self._gm.bad_request(
-                    {"error": "Authentication challenge expired."}
-                )
+                return self._gm.bad_request("Authentication challenge expired.")
 
             challenge_data = json.loads(raw_data)
             from webauthn.helpers import base64url_to_bytes

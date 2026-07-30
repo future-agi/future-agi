@@ -7,9 +7,11 @@ empty when ``_build_schedule_for_config`` runs and every schedule falls back
 to ``DEFAULT_RETRY_POLICY`` regardless of decorator-declared max_retries.
 """
 
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from temporalio.client import ScheduleSpec
 
 from tfc.temporal.drop_in.decorator import _ACTIVITY_REGISTRY, temporal_activity
 from tfc.temporal.drop_in.workflow import TaskRunnerInput
@@ -17,6 +19,7 @@ from tfc.temporal.schedules.config import ScheduleConfig
 from tfc.temporal.schedules.manager import (
     _build_schedule_for_config,
     a_register_schedules,
+    a_update_schedule,
 )
 
 
@@ -87,6 +90,51 @@ class TestBuildScheduleReadsRegistry:
         # No registry entry → both fields stay None; workflow uses DEFAULT_RETRY_POLICY.
         assert run_input.max_retries is None
         assert run_input.retry_delay is None
+
+    def test_jitter_is_passed_to_temporal_schedule_spec(self):
+        config = ScheduleConfig(
+            schedule_id="fixture-jitter",
+            activity_name="never_registered_scheduled_activity",
+            interval_seconds=300,
+            jitter_seconds=45,
+            queue="default",
+        )
+
+        schedule = _build_schedule_for_config(config)
+
+        assert schedule.spec.jitter == timedelta(seconds=45)
+
+
+class TestUpdateSchedule:
+    @pytest.mark.asyncio
+    async def test_update_preserves_timezone_without_overwriting_new_jitter(self):
+        client = MagicMock()
+        handle = MagicMock()
+        client.get_schedule_handle.return_value = handle
+
+        async def update(updater):
+            existing_spec = ScheduleSpec(time_zone_name="America/New_York")
+            existing_schedule = MagicMock()
+            existing_schedule.spec = existing_spec
+            description = MagicMock()
+            description.schedule = existing_schedule
+            return await updater(MagicMock(description=description))
+
+        handle.update = AsyncMock(side_effect=update)
+        schedule = _build_schedule_for_config(
+            ScheduleConfig(
+                schedule_id="fixture-jitter",
+                activity_name="never_registered_scheduled_activity",
+                interval_seconds=300,
+                jitter_seconds=45,
+                queue="default",
+            )
+        )
+
+        await a_update_schedule(client, "fixture-jitter", schedule)
+
+        assert schedule.spec.time_zone_name == "America/New_York"
+        assert schedule.spec.jitter == timedelta(seconds=45)
 
 
 class _AsyncIterMock:

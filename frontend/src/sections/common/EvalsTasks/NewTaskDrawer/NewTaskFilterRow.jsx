@@ -11,7 +11,7 @@ import { debounce } from "lodash";
 import CustomTooltip from "src/components/tooltip";
 
 const FilterTypes = [
-  { label: "Span Type", value: "observationType" },
+  { label: "Span Type", value: "observation_type" },
   { label: "Attributes", value: "attributes" },
 ];
 
@@ -92,7 +92,7 @@ const NewTaskFilterRow = ({
             showClear={false}
             fullWidth={!compact ? false : Boolean(property !== "")}
           />
-          <ShowComponent condition={property === "observationType"}>
+          <ShowComponent condition={property === "observation_type"}>
             <Typography
               variant="s2"
               fontWeight={"fontWeightRegular"}

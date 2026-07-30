@@ -2,60 +2,104 @@
 .env
 .env.*
 !.env.test
+*_Creds.json
+*_creds.json
+*_credentials.json
+*-credentials.json
+credentials.json
+service-account*.json
+*.pem
+*.key
+!**/test*.key
+Vertex_AI_Creds.json
+Vertex.json
+vertex.json
 
-# Python cache
+# Python cache (at any depth)
 __pycache__/
+**/__pycache__/
 *.py[cod]
+**/*.py[cod]
 *$py.class
 *.so
 .Python
 
 # Virtual environments
 .venv/
+.venv*/
+**/.venv*/
 venv/
+**/venv/
 env/
+env.bak/
 
 # UV cache
 .uv-cache/
+**/.uv-cache/
+pip-wheel-metadata/
+wheels/
 
 # Testing and coverage (generated at runtime)
 .pytest_cache/
+**/.pytest_cache/
 .mypy_cache/
+**/.mypy_cache/
 .ruff_cache/
+**/.ruff_cache/
+.hypothesis/
+.tox/
+.nox/
 htmlcov/
+coverage/
 coverage-reports/
 test-reports/
 test-logs/
+playwright-report/
+test-results/
 .coverage
 .coverage.*
 *.cover
 
 # IDE
 .vscode/
+.cursor/
 .idea/
 *.swp
 *.swo
 *~
 .DS_Store
+**/.DS_Store
 
-# Git
+# Git / CI
 .git/
 .gitignore
+.github/
+.gitlab-ci.yml
+.codex-tmp/
+**/.codex-tmp/
+.playwright-mcp/
+**/.playwright-mcp/
+ee.local-leftover/
 
 # Documentation (not needed in image)
 *.md
 docs/
 changelog/
 
-# Media and logs (generated at runtime)
+# Media and logs (generated at runtime, at any depth)
 media/
+**/media/
 logs/
+**/logs/
 *.log
+**/*.log
 app.log
 
 # Database files
 *.sqlite3
 *.db
+db.sqlite3
+db.sqlite3-journal
 
 # Docker files (not needed in image)
 docker-compose*.yml
@@ -67,6 +111,8 @@ Dockerfile.prod
 dist/
 build/
 *.egg-info/
+*.egg
+*.out
 
 # Static files (collected at runtime)
 static/
@@ -79,5 +125,28 @@ out.out
 pre.out
 celerybeat-schedule
 
+# Process core dumps
+core
+!agentic_eval/core/
+!agentic_eval/core/**
+core.[0-9]*
+core-*-[0-9]*
+
 # Large data directories
 minio_data/
+postgres_data/
+clickhouse_data/
+redis_data/
+dumps/
+model_serving/
+
+# ML model weights and caches
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.gguf
+*.onnx
+model_cache/
+embedding_cache/
+checkpoints/
