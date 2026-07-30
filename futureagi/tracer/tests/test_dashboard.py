@@ -449,7 +449,7 @@ class TestWidgetReadEndpoints:
         list_resp = auth_client.get(
             f"/tracer/dashboard/{other_dash.id}/widgets/"
         )
-        assert list_resp.status_code in (200, 404)
+        assert list_resp.status_code == 200
         assert str(other_widget.id) not in list_resp.content.decode()
         # The widget itself is not retrievable across the workspace boundary.
         detail_resp = auth_client.get(
@@ -4776,7 +4776,7 @@ class TestDashboardWorkspaceIsolation:
     ):
         other = self._other_ws_dashboard(organization, user)
         response = auth_client.get(f"/tracer/dashboard/{other.id}/")
-        assert response.status_code in (400, 403, 404)
+        assert response.status_code == 400
         assert "Other WS Dashboard" not in response.content.decode()
 
     @pytest.mark.django_db
@@ -4789,7 +4789,7 @@ class TestDashboardWorkspaceIsolation:
             {"name": "Hijacked"},
             format="json",
         )
-        assert response.status_code in (400, 403, 404)
+        assert response.status_code == 400
         other.refresh_from_db()
         assert other.name == "Other WS Dashboard"
 
@@ -4799,7 +4799,7 @@ class TestDashboardWorkspaceIsolation:
     ):
         other = self._other_ws_dashboard(organization, user)
         response = auth_client.delete(f"/tracer/dashboard/{other.id}/")
-        assert response.status_code in (400, 403, 404)
+        assert response.status_code == 400
         other.refresh_from_db()
         assert other.deleted is False
 
@@ -5416,7 +5416,7 @@ class TestWidgetWriteIsolation:
             },
             format="json",
         )
-        assert resp.status_code in (400, 403, 404)
+        assert resp.status_code == 404
         assert DashboardWidget.objects.filter(dashboard=dash).count() == before
 
     @pytest.mark.django_db
@@ -5434,7 +5434,7 @@ class TestWidgetWriteIsolation:
             },
             format="json",
         )
-        assert resp.status_code in (400, 403, 404)
+        assert resp.status_code == 404
         widget.refresh_from_db()
         assert widget.name == "Foreign Widget"
 
@@ -5444,7 +5444,7 @@ class TestWidgetWriteIsolation:
         resp = auth_client.delete(
             f"/tracer/dashboard/{dash.id}/widgets/{widget.id}/"
         )
-        assert resp.status_code in (400, 403, 404)
+        assert resp.status_code == 404
         widget.refresh_from_db()
         assert widget.deleted is False
 
@@ -5456,7 +5456,7 @@ class TestWidgetWriteIsolation:
             {"order": [str(widget.id)]},
             format="json",
         )
-        assert resp.status_code in (400, 403, 404)
+        assert resp.status_code == 404
         widget.refresh_from_db()
         assert widget.position == 0
 
@@ -5467,7 +5467,11 @@ class TestWidgetWriteIsolation:
         resp = auth_client.post(
             f"/tracer/dashboard/{dash.id}/widgets/{widget.id}/duplicate/"
         )
-        assert resp.status_code in (400, 403, 404)
+        # 400, not 404 like the sibling write tests above: duplicate_widget wraps
+        # get_object() in a broad `except Exception`, so the Http404 raised by the
+        # workspace-scoped queryset is swallowed and re-emitted as 400. Isolation
+        # itself works (no copy is created). Tracked in TH-7087.
+        assert resp.status_code == 400
         assert DashboardWidget.objects.filter(dashboard=dash).count() == before
 
 
@@ -5516,7 +5520,7 @@ class TestQueryEngineFailure:
         resp = auth_client.post(
             f"/tracer/dashboard/{dashboard.id}/widgets/{dashboard_widget.id}/query/"
         )
-        assert resp.status_code in (200, 400)
+        assert resp.status_code == 400
 
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
@@ -5532,7 +5536,7 @@ class TestQueryEngineFailure:
             {"query_config": sample_query_config},
             format="json",
         )
-        assert resp.status_code in (200, 400)
+        assert resp.status_code == 400
 
 
 class TestWidgetMutationErrorBranches:
@@ -5553,7 +5557,7 @@ class TestWidgetMutationErrorBranches:
         resp = auth_client.post(
             f"/tracer/dashboard/{dashboard.id}/widgets/{uuid.uuid4()}/duplicate/"
         )
-        assert resp.status_code in (400, 404)
+        assert resp.status_code == 400
         assert DashboardWidget.objects.filter(dashboard=dashboard).count() == before
 
 
