@@ -1,10 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import axios from "src/utils/axios";
 import { endpoints } from "src/utils/axios";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 
 export const useKnowledgeBaseList = (search_text, options, newPayload = {}) => {
-  const { isOSS } = useDeploymentMode();
   const payload = {};
   const queryKey = ["knowledge-base"];
 
@@ -24,7 +22,7 @@ export const useKnowledgeBaseList = (search_text, options, newPayload = {}) => {
     addToPayloadAndKey(key, value);
   });
 
-  const query = useQuery({
+  return useQuery({
     queryKey,
     queryFn: () =>
       axios.get(endpoints.knowledge.list, {
@@ -35,8 +33,5 @@ export const useKnowledgeBaseList = (search_text, options, newPayload = {}) => {
     select: (d) => d?.data?.result?.table_data,
     staleTime: 1 * 60 * 1000, // 1 min stale time
     ...options,
-    enabled: !isOSS && (options?.enabled ?? true),
   });
-
-  return { ...query, isOSS };
 };

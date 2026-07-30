@@ -6,6 +6,8 @@ import errorFeedPreview from "src/assets/oss-gate/error_feed_light.png";
 import errorFeedPreviewDark from "src/assets/oss-gate/error_feed_dark.png";
 import optimizationPreview from "src/assets/oss-gate/optimization_light.png";
 import optimizationPreviewDark from "src/assets/oss-gate/optimization_dark.png";
+import falconAIPreview from "src/assets/oss-gate/falcon_ai_light.png";
+import falconAIPreviewDark from "src/assets/oss-gate/falcon_ai_dark.png";
 
 const CONTACT_URL = "https://futureagi.com/talk-to-human";
 const DOCS_URL = "https://docs.futureagi.com";
@@ -48,6 +50,19 @@ const FEATURES = {
       "Talk to us to enable Optimization on your workspace.",
       "Pick a dataset or simulation and choose an optimizer.",
       "We iterate on your prompts and surface the best-performing variant.",
+    ],
+  },
+  falconAI: {
+    eyebrow: "Cloud feature",
+    title: "Upgrade to use Falcon AI",
+    description:
+      "Your AI copilot for Future AGI — ask questions, build evals, and debug traces in natural language.",
+    image: falconAIPreview,
+    imageDark: falconAIPreviewDark,
+    steps: [
+      "Talk to us to enable Falcon AI on your workspace.",
+      "Connect your tools so Falcon AI can act on your data.",
+      "Ask in plain language and Falcon AI does the work for you.",
     ],
   },
   usageSummary: {

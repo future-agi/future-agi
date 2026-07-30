@@ -35,7 +35,6 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 
 const DatasetsSelectRow = ({
   setIsChooseWinnerSelected,
@@ -96,7 +95,6 @@ const DatasetsSelectRow = ({
     initiateCreateMode: state.initiateCreateMode,
   }));
   const { setOpenRunOptimization } = useRunOptimizationStore();
-  const { isOSS } = useDeploymentMode();
   const { processingComplete } = useDatasetOriginStore();
   const { isProcessingData } = useProcessingStore();
 
@@ -229,12 +227,10 @@ const DatasetsSelectRow = ({
         {
           icon: "ic_optimize",
           title: "Optimize",
-          hoverText: isOSS
-            ? " Not available on self host"
-            : "Improve your prompt’s accuracy, reduce errors, enhance output quality",
+          hoverText:
+            "Improve your prompt’s accuracy, reduce errors, enhance output quality",
           link: "https://docs.futureagi.com/docs/cookbook/quickstart/dataset-optimization",
           action: () => setOpenRunOptimization(true),
-          disabled: isOSS,
           // event: Events.optimizeClicked,
         },
         {
