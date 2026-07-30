@@ -47,6 +47,7 @@ services:
 
 
   worker:
+    <<: *dev-worker
     deploy:
       replicas: 0
 

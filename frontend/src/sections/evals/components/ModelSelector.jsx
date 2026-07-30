@@ -27,7 +27,6 @@ import { useDebounce } from "src/hooks/use-debounce";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { useNavigate } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
-import { useSnackbar } from "notistack";
 import { getProviderLogoFilterSx } from "./modelLogo";
 
 // ---------------------------------------------------------------------------
@@ -150,6 +149,9 @@ const FAGI_MODELS = [
 ];
 
 export const FAGI_MODEL_VALUES = new Set(FAGI_MODELS.map((m) => m.value));
+
+const FAGI_MODEL_OSS_TOOLTIP =
+  "Turing models are not available on self-hosted (OSS) deployments. Select your own model, or upgrade your plan.";
 
 const CHIP_STYLES = {
   backgroundColor: (theme) =>
@@ -668,8 +670,7 @@ const ModelSelector = ({
   const [keysDrawerModel, setKeysDrawerModel] = useState(null);
   const navigate = useNavigate();
   const { isOSS, isLoading: deploymentModeLoading } = useDeploymentMode();
-  const { enqueueSnackbar } = useSnackbar();
-  const fagiModelsHidden = isOSS && !deploymentModeLoading;
+  const fagiModelsLocked = isOSS && !deploymentModeLoading;
 
   const currentMode = MODES.find((m) => m.value === mode) || MODES[1];
 
@@ -718,7 +719,6 @@ const ModelSelector = ({
     },
     initialPageParam: 0,
     staleTime: 60000,
-    enabled: !isOSS,
   });
 
   // API returns {status, result: {table_data: [...], total_rows}} per page.
@@ -786,17 +786,18 @@ const ModelSelector = ({
 
 
   const filteredFagiModels = useMemo(() => {
-    if (fagiModelsHidden) return [];
     if (!modelSearch) return FAGI_MODELS;
     return FAGI_MODELS.filter((m) =>
       m.label.toLowerCase().includes(modelSearch.toLowerCase()),
     );
-  }, [fagiModelsHidden, modelSearch]);
+  }, [modelSearch]);
 
-
+  // OSS can't run Turing models, but callers still seed `model` with
+  // "turing_large". Drop it so the pill reads "Select model" instead of
+  // preselecting something the backend would 402 on save.
   useEffect(() => {
-    if (fagiModelsHidden && FAGI_MODEL_VALUES.has(model)) onModelChange("");
-  }, [fagiModelsHidden, model, onModelChange]);
+    if (fagiModelsLocked && FAGI_MODEL_VALUES.has(model)) onModelChange("");
+  }, [fagiModelsLocked, model, onModelChange]);
 
   return (
     <Box
@@ -1163,48 +1164,75 @@ const ModelSelector = ({
                 FutureAGI Models
               </Typography>
               {filteredFagiModels.map((m) => (
-                <MenuItem
+                <Tooltip
                   key={m.value}
-                  selected={m.value === model}
-                  onClick={() => {
-                    onModelChange(m.value);
-                    setModelAnchor(null);
-                    setModelSearch("");
-                  }}
-                  sx={{ mx: 0.5, borderRadius: "6px", py: 0.75, gap: 1 }}
+                  title={fagiModelsLocked ? FAGI_MODEL_OSS_TOOLTIP : ""}
+                  placement="right"
+                  arrow
                 >
-                  <Iconify
-                    icon={m.icon}
-                    width={18}
-                    sx={{
-                      color:
-                        m.value === model ? "primary.main" : "text.secondary",
-                      flexShrink: 0,
-                    }}
-                  />
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Typography
-                      variant="body2"
-                      sx={{ fontSize: "13px", fontWeight: 500 }}
+                  <span>
+                    <MenuItem
+                      selected={m.value === model}
+                      disabled={fagiModelsLocked}
+                      onClick={() => {
+                        onModelChange(m.value);
+                        setModelAnchor(null);
+                        setModelSearch("");
+                      }}
+                      sx={{
+                        mx: 0.5,
+                        borderRadius: "6px",
+                        py: 0.75,
+                        gap: 1,
+                        width: "auto",
+                      }}
                     >
-                      {m.label}
-                    </Typography>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ fontSize: "11px" }}
-                    >
-                      {m.description}
-                    </Typography>
-                  </Box>
-                  {m.value === model && (
-                    <Iconify
-                      icon="mdi:check"
-                      width={16}
-                      sx={{ color: "primary.main", flexShrink: 0 }}
-                    />
-                  )}
-                </MenuItem>
+                      <Iconify
+                        icon={m.icon}
+                        width={18}
+                        sx={{
+                          color:
+                            m.value === model
+                              ? "primary.main"
+                              : "text.secondary",
+                          flexShrink: 0,
+                        }}
+                      />
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Typography
+                          variant="body2"
+                          sx={{ fontSize: "13px", fontWeight: 500 }}
+                        >
+                          {m.label}
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ fontSize: "11px" }}
+                        >
+                          {fagiModelsLocked
+                            ? "Not available on self-host"
+                            : m.description}
+                        </Typography>
+                      </Box>
+                      {fagiModelsLocked ? (
+                        <Iconify
+                          icon="mdi:lock-outline"
+                          width={16}
+                          sx={{ color: "text.disabled", flexShrink: 0 }}
+                        />
+                      ) : (
+                        m.value === model && (
+                          <Iconify
+                            icon="mdi:check"
+                            width={16}
+                            sx={{ color: "primary.main", flexShrink: 0 }}
+                          />
+                        )
+                      )}
+                    </MenuItem>
+                  </span>
+                </Tooltip>
               ))}
             </>
           )}
@@ -1452,52 +1480,42 @@ const ModelSelector = ({
               label: "Summary",
               desc: "Control how detailed or brief the evaluation output should be",
             },
-          ].map((item) => {
-            const kbLocked = isOSS && item.key === "knowledge";
-            return (
-              <MenuItem
-                key={item.key}
-                onClick={() => {
-                  if (kbLocked) {
-                    enqueueSnackbar(
-                      "Knowledge Base is not supported in self-hosted (OSS).",
-                      { variant: "info" },
-                    );
-                    return;
-                  }
-                  setPlusSubmenu(plusSubmenu === item.key ? null : item.key);
-                }}
-                selected={plusSubmenu === item.key}
-                sx={{ borderRadius: "6px", py: 1, opacity: kbLocked ? 0.5 : 1 }}
-              >
-                <Iconify
-                  icon={item.icon}
-                  width={18}
-                  sx={{ mr: 1.5, color: "text.secondary" }}
-                />
-                <Box sx={{ flex: 1 }}>
-                  <Typography
-                    variant="body2"
-                    sx={{ fontSize: "13px", fontWeight: 500 }}
-                  >
-                    {item.label}
-                  </Typography>
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    sx={{ fontSize: "11px" }}
-                  >
-                    {kbLocked ? "Not supported in self-host" : item.desc}
-                  </Typography>
-                </Box>
-                <Iconify
-                  icon={kbLocked ? "mdi:lock-outline" : "mdi:chevron-right"}
-                  width={16}
-                  sx={{ color: "text.disabled" }}
-                />
-              </MenuItem>
-            );
-          })}
+          ].map((item) => (
+            <MenuItem
+              key={item.key}
+              onClick={() =>
+                setPlusSubmenu(plusSubmenu === item.key ? null : item.key)
+              }
+              selected={plusSubmenu === item.key}
+              sx={{ borderRadius: "6px", py: 1 }}
+            >
+              <Iconify
+                icon={item.icon}
+                width={18}
+                sx={{ mr: 1.5, color: "text.secondary" }}
+              />
+              <Box sx={{ flex: 1 }}>
+                <Typography
+                  variant="body2"
+                  sx={{ fontSize: "13px", fontWeight: 500 }}
+                >
+                  {item.label}
+                </Typography>
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ fontSize: "11px" }}
+                >
+                  {item.desc}
+                </Typography>
+              </Box>
+              <Iconify
+                icon="mdi:chevron-right"
+                width={16}
+                sx={{ color: "text.disabled" }}
+              />
+            </MenuItem>
+          ))}
         </Box>
 
         {/* Submenu */}

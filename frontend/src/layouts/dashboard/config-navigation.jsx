@@ -1,7 +1,10 @@
 /* eslint-disable react-refresh/only-export-components */
 import React from "react";
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import {
+  useWorkspaceFromList,
+  useWorkspacesList,
+} from "src/api/workspaces/list";
 import { paths } from "src/routes/paths";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
@@ -14,7 +17,6 @@ import {
   showRoleSpecific,
   RoutesName,
 } from "src/utils/rolePermissionMapping";
-import axiosInstance, { endpoints } from "src/utils/axios";
 
 const icon = (name) => (
   <SvgColor src={`/assets/icons/navbar/${name}.svg`} />
@@ -60,7 +62,6 @@ const ICONS = {
 export function useNavData() {
   const { user } = useAuthContext();
   const { currentWorkspaceRole } = useWorkspace();
-  const { isOSS } = useDeploymentMode();
   const userOrgRole = user?.organization_role;
   const userDefaultWsRole = user?.default_workspace_role;
   const isOwner = userOrgRole === "Owner";
@@ -270,14 +271,12 @@ export function useNavData() {
           title: "Falcon AI",
           path: paths.dashboard.falconAI,
           icon: ICONS.falconAI,
-          disabled: isOSS,
-          disabledTooltip: "Not available on self-hosted",
         },
       ],
     });
 
     return sections;
-  }, [isOwner, isAdmin, isOSS]);
+  }, [isOwner, isAdmin]);
   return data;
 }
 
@@ -344,12 +343,8 @@ export function useNavSettingsData() {
   const { isOSS } = useDeploymentMode();
   const { currentWorkspaceRole } = useWorkspace();
 
-  const { data: workspaces = [] } = useQuery({
-    queryKey: ["workspaces-list", "settings"],
-    queryFn: () => axiosInstance.get(endpoints.workspace.workspaceList),
-    select: (res) => res.data?.results || [],
+  const { data: workspaces = [] } = useWorkspacesList({
     enabled: !!user?.ws_enabled,
-    staleTime: 30_000,
   });
 
   // Use organization role for org-level settings
@@ -417,7 +412,7 @@ export function useNavSettingsData() {
       });
     }
     // Falcon AI Connectors — same access as integrations
-    if (!isOSS && canAccess(RoutesName.integrations)) {
+    if (canAccess(RoutesName.integrations)) {
       wsSettingsItems.push({
         title: "Falcon AI Connectors",
         path: "/dashboard/settings/falcon-ai-connectors",
@@ -528,14 +523,7 @@ export function useNavSettingsData() {
 export function useWorkspaceSettingsNav(workspaceId) {
   const { user } = useAuthContext();
 
-  const { data: workspace = null } = useQuery({
-    queryKey: ["workspaces-list", "settings"],
-    queryFn: () => axiosInstance.get(endpoints.workspace.workspaceList),
-    select: (res) =>
-      (res.data?.results || []).find((w) => w.id === workspaceId) || null,
-    enabled: !!workspaceId,
-    staleTime: 30_000,
-  });
+  const { workspace } = useWorkspaceFromList(workspaceId);
 
   if (!workspaceId || !workspace) return null;
 

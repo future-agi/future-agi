@@ -448,7 +448,12 @@ class QueueItemListSerializer(serializers.ListSerializer):
 
     def to_representation(self, data):
         items = list(data)
-        self.context["ch_source_cache"] = CollectorSourceCache.for_items(items)
+        # Only items WITHOUT a captured preview need the CH read. Once a page is
+        # fully captured this collapses to zero reads, which is the whole point of
+        # QueueItem.source_preview (TH-7211) — building the cache unconditionally
+        # would keep paying the ``spans FINAL`` merge the capture exists to avoid.
+        uncaptured = [item for item in items if not item.source_preview]
+        self.context["ch_source_cache"] = CollectorSourceCache.for_items(uncaptured)
         return super().to_representation(items)
 
 
@@ -516,6 +521,12 @@ class QueueItemSerializer(serializers.ModelSerializer):
         ]
 
     def get_source_preview(self, obj):
+        # Captured at add time for CH-backed sources, so rendering a page costs no
+        # ``spans FINAL`` merge (TH-7211). NULL means "not captured" — a row added
+        # before this existed, or a Postgres-backed source that was always cheap —
+        # and falls back to the live read, same shape either way.
+        if obj.source_preview:
+            return obj.source_preview
         return resolve_source_preview(obj, ch_cache=self.context.get("ch_source_cache"))
 
     def get_workflow_status(self, obj):

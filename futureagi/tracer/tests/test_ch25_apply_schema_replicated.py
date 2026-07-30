@@ -429,3 +429,65 @@ class TestAttrValueBloomIndexFile:
             assert _extract_table_name(stmt) == "spans"
             out = _rewrite(stmt)
             assert "ON CLUSTER 'default'" in out
+
+
+class TestAttrValueNgramIndexFile:
+    """023_attr_value_ngram_index.sql — ngram bloom for substring (ILIKE)
+    search over attribute values (the filter-value picker's search path)."""
+
+    @pytest.fixture()
+    def statements(self):
+        import pathlib
+
+        here = pathlib.Path(__file__).resolve().parents[1]
+        f = (
+            here
+            / "services"
+            / "clickhouse"
+            / "v2"
+            / "schema"
+            / "023_attr_value_ngram_index.sql"
+        )
+        assert f.exists(), f"{f.name} missing from v2 schema dir"
+        return split_statements(f.read_text())
+
+    def test_adds_ngram_index_over_lowered_values(self, statements):
+        adds = [s for s in statements if "ADD INDEX" in s]
+        assert len(adds) == 1
+        stmt = adds[0]
+        # Must stay byte-identical to the companion predicate the view
+        # emits, or the index silently disengages.
+        assert (
+            "arrayStringConcat(arrayMap(x -> lower(x), mapValues(attrs_string)))"
+            in stmt
+        )
+        assert "IF NOT EXISTS" in stmt
+        # 32768 bytes sized for ~43k measured 4-grams/granule (1024 saturates).
+        assert "TYPE ngrambf_v1(4, 32768, 3, 0)" in stmt
+        assert "GRANULARITY 1" in stmt
+
+    def test_does_not_materialize_the_index(self, statements):
+        # MATERIALIZE is a full-table mutation (~70 GiB of attrs_string per
+        # replica on US) and must never fire unattended from an applier run —
+        # it is a documented manual deploy step in the file header instead.
+        assert not any("MATERIALIZE INDEX" in s for s in statements)
+        # ...and the header must keep telling the deployer to run it.
+        import pathlib
+
+        here = pathlib.Path(__file__).resolve().parents[1]
+        raw = (
+            here
+            / "services"
+            / "clickhouse"
+            / "v2"
+            / "schema"
+            / "023_attr_value_ngram_index.sql"
+        ).read_text()
+        assert "MATERIALIZE INDEX idx_attrs_str_ngram" in raw
+        assert "DEPLOY STEP" in raw
+
+    def test_every_statement_survives_replicated_rewrite(self, statements):
+        for stmt in statements:
+            assert _extract_table_name(stmt) == "spans"
+            out = _rewrite(stmt)
+            assert "ON CLUSTER 'default'" in out

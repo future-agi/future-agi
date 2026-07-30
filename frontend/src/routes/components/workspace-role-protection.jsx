@@ -1,9 +1,8 @@
 import React from "react";
 import PropTypes from "prop-types";
 import { useParams, Navigate } from "react-router";
-import { useQuery } from "@tanstack/react-query";
 import { CircularProgress, Box } from "@mui/material";
-import axiosInstance, { endpoints } from "src/utils/axios";
+import { useWorkspaceFromList } from "src/api/workspaces/list";
 import { useAuthContext } from "src/auth/hooks";
 
 /**
@@ -33,11 +32,8 @@ const WorkspaceRoleProtection = ({ allowedRoles, children }) => {
   const isOrgAdminPlus = orgRole === "Owner" || orgRole === "Admin";
 
   // Fetch workspace list to get user's role for this specific workspace
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ["workspace-detail-protection", workspaceId],
-    queryFn: () => axiosInstance.get(endpoints.workspace.workspaceList),
-    enabled: !!workspaceId && !isOrgAdminPlus, // Skip query if org admin
-    staleTime: 30000, // Cache for 30 seconds to avoid excessive requests
+  const { workspace, isLoading, isError } = useWorkspaceFromList(workspaceId, {
+    enabled: !isOrgAdminPlus, // Skip query if org admin
   });
 
   // Loading state
@@ -65,11 +61,6 @@ const WorkspaceRoleProtection = ({ allowedRoles, children }) => {
   if (isOrgAdminPlus) {
     return <>{children}</>;
   }
-
-  // Find the specific workspace and get user's role for it
-  const workspace = (data?.data?.results || []).find(
-    (ws) => ws.id === workspaceId,
-  );
 
   if (!workspace) {
     // Workspace not found or user has no access
