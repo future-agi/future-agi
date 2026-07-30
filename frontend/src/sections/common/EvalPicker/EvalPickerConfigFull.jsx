@@ -81,6 +81,9 @@ import {
   hasNonEmptyPromptMessage,
 } from "./evalPickerConfigUtils";
 
+const ERROR_LOCALIZER_OSS_TOOLTIP =
+  "Error Localization is not available on self-hosted (OSS) deployments.";
+
 const build_tools_payload = (selected_tools) =>
   (selected_tools || []).reduce((acc, tool_name) => {
     if (tool_name) acc[tool_name] = true;
@@ -172,6 +175,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [knowledgeBaseIds, setKnowledgeBaseIds] = useState([]);
   const [contextOptions, setContextOptions] = useState(["variables_only"]);
   const [errorLocalizerEnabled, setErrorLocalizerEnabled] = useState(false);
+  const errorLocalizerActive = errorLocalizerEnabled && !isOSS;
   // Name for the UserEvalMetric — defaults to template name, user can customise
   const [evalName, setEvalName] = useState("");
   const [dataReady, setDataReady] = useState(false);
@@ -833,6 +837,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       );
       return;
     }
+    if (isOSS && evalType !== "code" && !model) {
+      enqueueSnackbar("Please select a model.", { variant: "error" });
+      return;
+    }
     try {
       const payload = {
         instructions:
@@ -1033,7 +1041,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         config: fullEval?.config || evalData?.config,
         versionId: selectedVersionId,
         data_injection: dataInjection,
-        error_localizer_enabled: errorLocalizerEnabled,
+        error_localizer_enabled: errorLocalizerActive,
         composite_weight_overrides: compositeChildWeights,
       });
       return;
@@ -1073,7 +1081,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       tools,
       knowledge_bases: knowledgeBaseIds,
       data_injection: dataInjection,
-      error_localizer_enabled: errorLocalizerEnabled,
+      error_localizer_enabled: errorLocalizerActive,
     });
   }, [
     templateId,
@@ -1102,7 +1110,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     knowledgeBaseIds,
     contextOptions,
     compositeChildWeights,
-    errorLocalizerEnabled,
+    errorLocalizerActive,
     hasValidPromptMessages,
     templateFormat,
     onSave,
@@ -1686,10 +1694,17 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   Code evals don't support error localization — the feature
                   introspects model traces, which code evals don't produce. */}
               {!isComposite && evalType !== "code" && (
+                <CustomTooltip
+                  show={isOSS}
+                  type=""
+                  arrow
+                  title={ERROR_LOCALIZER_OSS_TOOLTIP}
+                >
                 <FormControlLabel
                   control={
                     <Checkbox
-                      checked={errorLocalizerEnabled}
+                      checked={errorLocalizerActive}
+                      disabled={isOSS}
                       onChange={(e) => {
                         setErrorLocalizerEnabled(e.target.checked);
                         setIsDirty(true);
@@ -1714,6 +1729,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   }
                   sx={{ alignItems: "flex-start" }}
                 />
+                </CustomTooltip>
               )}
             </Box>
           }
@@ -1801,7 +1817,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     initialDatasetId={sourceId}
                     onReadyChange={handleSourceReadyChange}
                     contextOptions={contextOptions}
-                    errorLocalizerEnabled={errorLocalizerEnabled}
+                    errorLocalizerEnabled={errorLocalizerActive}
                     initialMapping={evalData?.mapping}
                     {...compositeSourceModeProps}
                     sourceColumns={
@@ -1822,7 +1838,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     onColumnsLoaded={handleColumnsLoaded}
                     onReadyChange={handleSourceReadyChange}
                     hasDataInjection={hasDataInjection}
-                    errorLocalizerEnabled={errorLocalizerEnabled}
+                    errorLocalizerEnabled={errorLocalizerActive}
                     initialMapping={evalData?.mapping}
                     {...compositeSourceModeProps}
                   />
@@ -1838,7 +1854,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     onClearResult={handleClearTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
                     onReadyChange={handleSourceReadyChange}
-                    errorLocalizerEnabled={errorLocalizerEnabled}
+                    errorLocalizerEnabled={errorLocalizerActive}
                     initialMapping={evalData?.mapping}
                     initialRunTestId={sourceId}
                     {...compositeSourceModeProps}
@@ -1871,7 +1887,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     initialProjectId={sourceId}
                     initialRowType={sourceRowType}
                     initialMapping={evalData?.mapping}
-                    errorLocalizerEnabled={errorLocalizerEnabled}
+                    errorLocalizerEnabled={errorLocalizerActive}
                     localFilters={localApiFilters}
                     allowCustomFieldPath
                     {...compositeSourceModeProps}
@@ -1890,7 +1906,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     initialDatasetId={sourceId}
                     onReadyChange={handleSourceReadyChange}
                     contextOptions={contextOptions}
-                    errorLocalizerEnabled={errorLocalizerEnabled}
+                    errorLocalizerEnabled={errorLocalizerActive}
                     {...compositeSourceModeProps}
                   />
                 )}

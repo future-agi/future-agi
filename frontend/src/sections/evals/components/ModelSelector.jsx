@@ -20,7 +20,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import PropTypes from "prop-types";
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Iconify from "src/components/iconify";
 import KeysDrawer from "src/components/custom-model-dropdown/KeysDrawer";
 import { useDebounce } from "src/hooks/use-debounce";
@@ -667,8 +667,9 @@ const ModelSelector = ({
   const debouncedKbSearch = useDebounce(kbSearch.trim(), 400);
   const [keysDrawerModel, setKeysDrawerModel] = useState(null);
   const navigate = useNavigate();
-  const { isOSS } = useDeploymentMode();
+  const { isOSS, isLoading: deploymentModeLoading } = useDeploymentMode();
   const { enqueueSnackbar } = useSnackbar();
+  const fagiModelsHidden = isOSS && !deploymentModeLoading;
 
   const currentMode = MODES.find((m) => m.value === mode) || MODES[1];
 
@@ -783,12 +784,19 @@ const ModelSelector = ({
     );
   }, [connectors, connectorSearch]);
 
-  // Filter FAGI models by search — always shown in both OSS and EE
-  const filteredFagiModels = modelSearch
-    ? FAGI_MODELS.filter((m) =>
-        m.label.toLowerCase().includes(modelSearch.toLowerCase()),
-      )
-    : FAGI_MODELS;
+
+  const filteredFagiModels = useMemo(() => {
+    if (fagiModelsHidden) return [];
+    if (!modelSearch) return FAGI_MODELS;
+    return FAGI_MODELS.filter((m) =>
+      m.label.toLowerCase().includes(modelSearch.toLowerCase()),
+    );
+  }, [fagiModelsHidden, modelSearch]);
+
+
+  useEffect(() => {
+    if (fagiModelsHidden && FAGI_MODEL_VALUES.has(model)) onModelChange("");
+  }, [fagiModelsHidden, model, onModelChange]);
 
   return (
     <Box

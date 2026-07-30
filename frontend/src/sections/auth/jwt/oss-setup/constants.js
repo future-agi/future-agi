@@ -13,14 +13,14 @@ export const OSS_DOC_URL = {
   [OSS_SETUP_TABS.RESET]: `${INSTALL_GUIDE_BASE}#password-reset-without-email`,
 };
 
-export const CREATE_USER_CMD = `docker compose exec backend python manage.py create_user`;
+export const CREATE_USER_CMD = `docker exec -it futureagi-backend-1 python manage.py create_user`;
 
-export const CREATE_USER_CMD_NONINTERACTIVE = `docker compose exec backend python manage.py create_user \\
+export const CREATE_USER_CMD_NONINTERACTIVE = `docker exec -it futureagi-backend-1 python manage.py create_user \\
   --email you@example.com \\
   --name "Your Name" \\
   --password yourpassword`;
 
-export const RESET_SHELL_CMD = `docker compose exec backend python manage.py shell`;
+export const RESET_SHELL_CMD = `docker exec -it futureagi-backend-1 python manage.py shell`;
 
 export const RESET_PYTHON_SNIPPET = `from django.utils import timezone
 from django.utils.http import urlsafe_base64_encode

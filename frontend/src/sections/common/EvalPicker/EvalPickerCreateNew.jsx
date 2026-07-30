@@ -502,6 +502,10 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       );
       return;
     }
+    if (isOSS && evalType !== "code" && !model) {
+      enqueueSnackbar("Please select a model.", { variant: "error" });
+      return;
+    }
     if (!validate()) return;
     if (!draftId) {
       enqueueSnackbar("Draft not ready, please wait a moment", {
