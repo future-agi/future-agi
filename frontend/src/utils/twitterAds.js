@@ -63,7 +63,6 @@ export function trackTwitterSignup({ email, method = "email", userId } = {}) {
   if (!normalizedEmail) return;
 
   try {
-
     window.twq("event", "Signup", {
       value: AD_CONVERSION_VALUE,
       currency: AD_CONVERSION_CURRENCY,

@@ -1,0 +1,62 @@
+<?xml version="1.0"?>
+<!--
+  Tiered storage policy for the spans table.
+
+  Production deployment:
+    • hot   = the built-in `default` disk (local NVMe / SSD on the CH node)
+    • cold  = S3 (US) or GCS-via-S3-API (EU)
+
+  Local test deployment:
+    • hot   = the built-in `default` disk (container ext4)
+    • cold  = a SECOND local volume so we can prove `TTL ... TO VOLUME 'cold'`
+              actually moves parts. We do NOT plug in real S3 locally to keep
+              the dev cycle fast and offline-friendly.
+
+  CH 25.x quirk (decision rationale in DECISIONS.md #003-A, this file):
+    • You cannot declare a custom disk that points to the same path as the
+      server's `<path>` config. The default disk is already there, and CH
+      refuses to register a second disk at the same path.
+    • Therefore: 'hot' in our policies refers to the built-in `default` disk.
+      We only declare `cold` here.
+
+  Why this shape:
+    • Industry standard from ClickHouse docs, SigNoz prod, ClickStack —
+      "hot SSD for last 7d, S3 cold for 90d, then DELETE."
+    • TTL alignment depends on PARTITION BY toDate(start_time) in the spans
+      table — see schema/002_spans_v2.sql.
+    • `move_factor` controls when CH proactively moves parts. Default 0.1
+      (move once disk is 10% from full). Tunable later if hot disk runs hot.
+-->
+<clickhouse>
+  <storage_configuration>
+    <disks>
+      <!-- 'default' is already provided by CH at the server's <path>; do not redeclare. -->
+      <cold_local>
+        <!-- LOCAL ONLY: a second path inside the container.
+             In prod, replace this <cold_local> with an <s3_cold> block:
+                 <type>s3</type>
+                 <endpoint>https://s3.us-east-2.amazonaws.com/futureagi-spans-cold/</endpoint>
+                 <use_environment_credentials>true</use_environment_credentials>
+             and update the policy below to reference s3_cold instead of cold_local. -->
+        <path>/var/lib/clickhouse/cold/</path>
+        <keep_free_space_bytes>536870912</keep_free_space_bytes>   <!-- 512 MiB headroom -->
+      </cold_local>
+    </disks>
+
+    <policies>
+      <tiered>
+        <volumes>
+          <hot>
+            <disk>default</disk>
+            <max_data_part_size_bytes>10737418240</max_data_part_size_bytes>  <!-- 10 GiB part cap -->
+          </hot>
+          <cold>
+            <disk>cold_local</disk>
+          </cold>
+        </volumes>
+        <!-- Move parts to cold when hot disk is 5% from full. -->
+        <move_factor>0.05</move_factor>
+      </tiered>
+    </policies>
+  </storage_configuration>
+</clickhouse>

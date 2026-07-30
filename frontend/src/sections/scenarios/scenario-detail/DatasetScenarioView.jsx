@@ -12,7 +12,7 @@ const DatasetScenarioView = () => {
 
   useEffect(() => {
     // If scenario is loaded and it's not a dataset type, redirect back
-    if (scenario && scenario.scenarioType !== "dataset") {
+    if (scenario && scenario.scenario_type !== "dataset") {
       navigate("/dashboard/simulate/scenarios");
     }
   }, [scenario, navigate]);

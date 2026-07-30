@@ -136,13 +136,13 @@ Configure your IDE to suggest branch names:
 Use the provided script for easy branch creation:
 ```bash
 # Create a feat branch with ticket ID
-./scripts/create-branch.sh feat user-authentication AUTH-123
+./frontend/scripts/create-branch.sh feat user-authentication AUTH-123
 
 # Create a fix branch with ticket ID
-./scripts/create-branch.sh fix login-error BUG-456
+./frontend/scripts/create-branch.sh fix login-error BUG-456
 
 # Create a docs branch without ticket ID
-./scripts/create-branch.sh docs update-readme
+./frontend/scripts/create-branch.sh docs update-readme
 ```
 
 The script will:

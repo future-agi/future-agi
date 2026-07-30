@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
   Box,
+  Button,
   Checkbox,
   Radio,
   Slider,
@@ -118,11 +119,9 @@ export default function LabelInput({
           sx={{ flex: 1, lineHeight: 1.3, transition: "color 0.15s" }}
         >
           {label.name}
-          {label.required && (
-            <Typography component="span" color="error.main" sx={{ ml: 0.25 }}>
-              *
-            </Typography>
-          )}
+          <Typography component="span" color="error.main" sx={{ ml: 0.25 }}>
+            *
+          </Typography>
           {hasError && (
             <Typography
               component="span"
@@ -337,57 +336,77 @@ function StarInput({ value, settings, onChange, focused }) {
   const current = value?.rating || 0;
 
   return (
-    <Stack direction="row" spacing={0.25} alignItems="center">
-      {Array.from({ length: max }, (_, i) => {
-        const starVal = i + 1;
-        const isActive = starVal <= current;
-        return (
-          <Box
-            key={starVal}
-            onClick={() =>
-              onChange({ rating: starVal === current ? 0 : starVal })
-            }
-            sx={{
-              position: "relative",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: 32,
-              height: 32,
-              borderRadius: 0.5,
-              transition: "all 0.1s",
-              bgcolor: isActive ? "rgba(239,68,68,0.1)" : "transparent",
-              "&:hover": {
-                bgcolor: "rgba(239,68,68,0.15)",
-              },
-            }}
-          >
-            <Iconify
-              icon={isActive ? "solar:star-bold" : "solar:star-line-duotone"}
-              width={20}
+    <Stack spacing={0.5}>
+      <Stack direction="row" spacing={0.25} alignItems="center">
+        {Array.from({ length: max }, (_, i) => {
+          const starVal = i + 1;
+          const isActive = starVal <= current;
+          return (
+            <Box
+              key={starVal}
+              onClick={() =>
+                onChange({ rating: starVal === current ? 0 : starVal })
+              }
               sx={{
-                color: isActive ? "#ef4444" : "text.disabled",
-                transition: "color 0.1s",
+                position: "relative",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 32,
+                height: 32,
+                borderRadius: 0.5,
+                transition: "all 0.1s",
+                bgcolor: isActive ? "rgba(239,68,68,0.1)" : "transparent",
+                "&:hover": {
+                  bgcolor: "rgba(239,68,68,0.15)",
+                },
               }}
-            />
-            {focused && (
-              <Box
+            >
+              <Iconify
+                icon={isActive ? "solar:star-bold" : "solar:star-line-duotone"}
+                width={20}
                 sx={{
-                  position: "absolute",
-                  bottom: -1,
-                  fontSize: 8,
-                  fontWeight: 700,
-                  color: "text.disabled",
-                  lineHeight: 1,
+                  color: isActive ? "#ef4444" : "text.disabled",
+                  transition: "color 0.1s",
                 }}
-              >
-                {starVal}
-              </Box>
-            )}
-          </Box>
-        );
-      })}
+              />
+              {focused && (
+                <Box
+                  sx={{
+                    position: "absolute",
+                    bottom: -1,
+                    fontSize: 8,
+                    fontWeight: 700,
+                    color: "text.disabled",
+                    lineHeight: 1,
+                  }}
+                >
+                  {starVal === 10 ? 0 : starVal}
+                </Box>
+              )}
+            </Box>
+          );
+        })}
+      </Stack>
+      {focused && max >= 10 && (
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 0.5,
+            color: "text.secondary",
+          }}
+        >
+          <Typography variant="caption" sx={{ fontSize: 11 }}>
+            Press
+          </Typography>
+          <Kbd>0</Kbd>
+          <Typography variant="caption" sx={{ fontSize: 11 }}>
+            for 10
+          </Typography>
+        </Box>
+      )}
     </Stack>
   );
 }
@@ -499,6 +518,13 @@ function CategoricalInput({ settings, value, onChange, focused }) {
   const options = rawOptions.map(getOptionLabel).filter(Boolean);
   const isMulti = settings.multi_choice || false;
 
+  const keyHintFor = (i) => {
+    if (options.length > 10) return null;
+    if (i < 9) return i + 1;
+    if (i === 9 && options.length === 10) return 0;
+    return null;
+  };
+
   if (isMulti) {
     return (
       <Stack spacing={0.25}>
@@ -541,7 +567,7 @@ function CategoricalInput({ settings, value, onChange, focused }) {
               />
               <Typography variant="body2">{opt}</Typography>
             </Box>
-            {focused && i < 9 && <Kbd>{i + 1}</Kbd>}
+            {focused && keyHintFor(i) !== null && <Kbd>{keyHintFor(i)}</Kbd>}
           </Box>
         ))}
       </Stack>
@@ -585,7 +611,7 @@ function CategoricalInput({ settings, value, onChange, focused }) {
               />
               <Typography variant="body2">{opt}</Typography>
             </Box>
-            {focused && i < 9 && <Kbd>{i + 1}</Kbd>}
+            {focused && keyHintFor(i) !== null && <Kbd>{keyHintFor(i)}</Kbd>}
           </Box>
         );
       })}
@@ -606,7 +632,69 @@ CategoricalInput.propTypes = {
 function NumericInput({ settings, value, onChange, inputRef }) {
   const min = settings.min ?? 0;
   const max = settings.max ?? 10;
-  const step = settings.step ?? 1;
+  const rawStep = settings.step_size ?? settings.step ?? 1;
+  const step = Number(rawStep) > 0 ? Number(rawStep) : 1;
+  const displayType = settings.display_type || "slider";
+
+  const clamp = (nextValue) => Math.max(min, Math.min(max, nextValue));
+  const handleNumberChange = (nextValue) => {
+    const n = nextValue === "" ? null : Number(nextValue);
+    if (n === null || !Number.isNaN(n)) {
+      onChange(n === null ? n : clamp(n));
+    }
+  };
+
+  if (displayType === "button") {
+    const buttonValues = [];
+    for (
+      let option = Number(min);
+      option <= Number(max) + Number.EPSILON && buttonValues.length < 101;
+      option += step
+    ) {
+      buttonValues.push(Number(option.toFixed(6)));
+    }
+    if (!buttonValues.includes(Number(max))) buttonValues.push(Number(max));
+
+    return (
+      <Stack spacing={1}>
+        <Stack direction="row" flexWrap="wrap" gap={0.75}>
+          {buttonValues.map((option) => {
+            const selected = Number(value) === Number(option);
+            return (
+              <Button
+                key={option}
+                size="small"
+                variant={selected ? "contained" : "outlined"}
+                color="primary"
+                onClick={() => onChange(option)}
+                sx={{
+                  minWidth: 42,
+                  borderRadius: 0.75,
+                  px: 1,
+                  fontWeight: 700,
+                }}
+              >
+                {option}
+              </Button>
+            );
+          })}
+        </Stack>
+        <TextField
+          inputRef={inputRef}
+          type="number"
+          size="small"
+          value={value ?? ""}
+          onChange={(e) => handleNumberChange(e.target.value)}
+          inputProps={{ min, max, step }}
+          sx={{
+            width: 96,
+            "& .MuiOutlinedInput-root": { fontSize: 13, color: "text.primary" },
+            "& input": { textAlign: "center", px: 0.5 },
+          }}
+        />
+      </Stack>
+    );
+  }
 
   return (
     <Stack direction="row" spacing={2} alignItems="center">
@@ -623,12 +711,7 @@ function NumericInput({ settings, value, onChange, inputRef }) {
         type="number"
         size="small"
         value={value ?? ""}
-        onChange={(e) => {
-          const n = e.target.value === "" ? null : Number(e.target.value);
-          if (n === null || !Number.isNaN(n)) {
-            onChange(n === null ? n : Math.max(min, Math.min(max, n)));
-          }
-        }}
+        onChange={(e) => handleNumberChange(e.target.value)}
         inputProps={{ min, max, step }}
         sx={{
           width: 64,

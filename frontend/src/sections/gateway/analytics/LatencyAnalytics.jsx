@@ -33,10 +33,10 @@ function formatLatency(value) {
 // ---------------------------------------------------------------------------
 
 const SUMMARY_STATS = [
-  { key: "p50Ms", label: "P50" },
-  { key: "p95Ms", label: "P95" },
-  { key: "p99Ms", label: "P99" },
-  { key: "avgMs", label: "Average" },
+  { key: "p50_ms", label: "P50" },
+  { key: "p95_ms", label: "P95" },
+  { key: "p99_ms", label: "P99" },
+  { key: "avg_ms", label: "Average" },
 ];
 
 StatCard.propTypes = {
@@ -147,21 +147,21 @@ function buildSeries(timeseries) {
       name: "P50",
       data: timeseries.map((point) => ({
         x: new Date(point.bucket).getTime(),
-        y: point.p50Ms ?? 0,
+        y: point.p50_ms ?? 0,
       })),
     },
     {
       name: "P95",
       data: timeseries.map((point) => ({
         x: new Date(point.bucket).getTime(),
-        y: point.p95Ms ?? 0,
+        y: point.p95_ms ?? 0,
       })),
     },
     {
       name: "P99",
       data: timeseries.map((point) => ({
         x: new Date(point.bucket).getTime(),
-        y: point.p99Ms ?? 0,
+        y: point.p99_ms ?? 0,
       })),
     },
   ];

@@ -103,7 +103,9 @@ const AddFeedbackForm = (props) => {
     mutationFn: (formData) =>
       axios.post(endpoints.project.submitFeedback, formData),
     onSuccess: (data) => {
-      setFeedbackId(data?.data?.result?.feedbackId);
+      setFeedbackId(
+        data?.data?.result?.feedback_id || data?.data?.result?.feedbackId || "",
+      );
       reset();
       onClose();
       setOpenSubmissionModal(true);

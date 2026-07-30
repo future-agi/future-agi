@@ -67,26 +67,17 @@ export const transformDefaultData = (editConfigData, allColumns) => {
           };
         }
 
-        // Handle media content (image, pdf, audio) with nested keys
-        const mediaTypes = {
-          image_url: "imageUrl",
-          pdf_url: "pdfUrl",
-          audio_url: "audioUrl",
-        };
-
-        if (mediaTypes[part?.type] && part[mediaTypes[part?.type]]) {
-          const original = part?.[mediaTypes?.[part?.type]];
-          const converted = Object?.fromEntries(
-            Object.entries(original)?.map(([key, value]) => [
+        const MEDIA_TYPES = ["image_url", "pdf_url", "audio_url"];
+        if (MEDIA_TYPES.includes(part?.type) && part[part.type]) {
+          const original = part[part.type];
+          const converted = Object.fromEntries(
+            Object.entries(original).map(([key, value]) => [
               _.snakeCase(key),
               value,
             ]),
           );
 
-          return {
-            ...part,
-            [mediaTypes[part.type]]: converted,
-          };
+          return { ...part, [part.type]: converted };
         }
 
         return part;
@@ -137,6 +128,12 @@ export const transformDefaultData = (editConfigData, allColumns) => {
   const resolvedModelType =
     runPromptConfig?.model_type || runPromptConfig?.modelType;
 
+  const rawResponseFormat = editConfigData?.response_format;
+  const resolvedResponseFormat =
+    typeof rawResponseFormat === "object"
+      ? rawResponseFormat?.name ?? "text"
+      : rawResponseFormat ?? "text";
+
   let voiceInputColumn = "";
   if (resolvedModelType === MODEL_TYPES.STT) {
     const userMessage = editConfigData?.messages?.find(
@@ -155,7 +152,9 @@ export const transformDefaultData = (editConfigData, allColumns) => {
         providers: runPromptConfig?.providers,
         isAvailable: runPromptConfig?.isAvailable,
         voice: runPromptConfig?.voice || "",
-        voiceId: runPromptConfig?.voiceId || "",
+        // Saved config is snake_case (`voice_id`); read it first so TTS/STT
+        // prompts keep their voice on edit.
+        voiceId: runPromptConfig?.voice_id || runPromptConfig?.voiceId || "",
       },
       modelType: resolvedModelType || MODEL_TYPES.LLM,
       voiceInputColumn,
@@ -211,10 +210,7 @@ export const transformDefaultData = (editConfigData, allColumns) => {
 
         return msgs;
       })(),
-      responseFormat:
-        typeof editConfigData?.responseFormat === "object"
-          ? editConfigData?.responseFormat?.name
-          : editConfigData?.responseFormat,
+      responseFormat: resolvedResponseFormat,
       // temperature: editConfigData?.temperature,
       // topP: editConfigData?.topP,
       // maxTokens: editConfigData?.maxTokens,
@@ -365,10 +361,7 @@ export const getDropdownOptionsFromCols = (
 
     // If this is a json/text column with top-level array data, add indexed options
     const colSchema = jsonSchemas?.[col?.field];
-    if (
-      col?.dataType !== "images" &&
-      colSchema?.maxArrayCount
-    ) {
+    if (col?.dataType !== "images" && colSchema?.maxArrayCount) {
       const count = Math.min(colSchema.maxArrayCount, 2);
       for (let idx = 0; idx < count; idx++) {
         options.push({
@@ -472,7 +465,11 @@ export function findInvalidVariables(
         (col) => normalize(col?.headerName) === normalize(baseColumn),
       );
 
-      if (column && (column.dataType === "json" || jsonSchemas?.[column.field]?.keys?.length)) {
+      if (
+        column &&
+        (column.dataType === "json" ||
+          jsonSchemas?.[column.field]?.keys?.length)
+      ) {
         // Column has nested paths (json type or text with JSON values) — allow any path
         return;
       }
@@ -527,7 +524,7 @@ export const TextContent = z.object({
 
 export const ImageContent = z.object({
   type: z.literal("image_url"),
-  imageUrl: z.object({
+  image_url: z.object({
     img_name: z.string().optional(),
     url: z.string(),
     img_size: z.number().optional(),
@@ -536,7 +533,7 @@ export const ImageContent = z.object({
 
 export const PdfContent = z.object({
   type: z.literal("pdf_url"),
-  pdfUrl: z.object({
+  pdf_url: z.object({
     pdf_name: z.string().optional(),
     file_name: z.string().optional(),
     url: z.string(),
@@ -546,7 +543,7 @@ export const PdfContent = z.object({
 
 export const AudioContent = z.object({
   type: z.literal("audio_url"),
-  audioUrl: z.object({
+  audio_url: z.object({
     audio_name: z.string().optional(),
     url: z.string(),
     audio_size: z.number().optional(),
@@ -572,6 +569,18 @@ export const getOutputFormatForModelType = (modelType) => {
   if (modelType === MODEL_TYPES.IMAGE) return "image";
   return "string";
 };
+
+export const modelTypeByValueType = {
+  chat: MODEL_TYPES.LLM,
+  tts: MODEL_TYPES.TTS,
+  stt: MODEL_TYPES.STT,
+  image_generation: MODEL_TYPES.IMAGE,
+};
+
+export const getOutputFormatFromCatalogType = (catalogType) =>
+  getOutputFormatForModelType(
+    modelTypeByValueType[catalogType] ?? MODEL_TYPES.LLM,
+  );
 
 export const DUMMY_MODEL_PARAMS = [
   {
@@ -641,7 +650,12 @@ export const DUMMY_MODEL_PARAMS = [
  * @param {Array} allColumns - All columns in the dataset
  * @returns {Object} { text: string, invalidVariables: string[] }
  */
-export const replaceVariablesWithFields = (text, matches, allColumns, jsonSchemas = {}) => {
+export const replaceVariablesWithFields = (
+  text,
+  matches,
+  allColumns,
+  jsonSchemas = {},
+) => {
   let updatedText = text;
   const invalidVariables = [];
 
@@ -672,7 +686,11 @@ export const replaceVariablesWithFields = (text, matches, allColumns, jsonSchema
           normalizeForComparison(baseColumn).toLowerCase(),
       );
 
-      if (jsonColumn && (jsonColumn.dataType === "json" || jsonSchemas?.[jsonColumn.field]?.keys?.length)) {
+      if (
+        jsonColumn &&
+        (jsonColumn.dataType === "json" ||
+          jsonSchemas?.[jsonColumn.field]?.keys?.length)
+      ) {
         const replacePattern = new RegExp(
           `{{\\s*${rawVar.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*}}`,
           "g",

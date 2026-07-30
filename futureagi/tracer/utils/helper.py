@@ -2,7 +2,7 @@ import json
 from collections.abc import MutableMapping
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
-from typing import Any
+from typing import Any, TypedDict, Union
 
 import pandas as pd
 from rest_framework import serializers
@@ -16,6 +16,7 @@ from tracer.utils.constants import (
     RANGE_OPS,
     SPAN_ATTR_ALLOWED_OPS,
 )
+from tracer.utils.filter_operators import FILTER_TYPE_ALLOWED_OPS
 
 
 @dataclass
@@ -322,6 +323,118 @@ def update_column_config_based_on_eval_config(
     return column_config
 
 
+def _normalize_eval_output_type(output_type: str | None) -> str:
+    """Normalize an eval ``output`` type for comparison (``Pass/Fail`` → ``PASS_FAIL``)."""
+    return (output_type or "").replace("/", "_").replace(" ", "_").upper()
+
+
+class EvalErrorScore(TypedDict):
+    """All eval rows for a ``(trace, config)`` pair errored."""
+
+    error: bool
+
+
+class EvalChoicesScore(TypedDict):
+    """CHOICES eval — ``{choice: percentage}`` across non-errored rows."""
+
+    per_choice: dict[str, float]
+
+
+class EvalMarkerScore(TypedDict, total=False):
+    """Non-terminal / skipped lifecycle marker (no completed score, no error)."""
+
+    status: str
+    skipped_reason: str
+
+
+class EvalNumericScore(TypedDict):
+    """Completed numeric score — ``avg_score``/``pass_rate`` pre-scaled ×100."""
+
+    avg_score: float | None
+    pass_rate: float | None
+    count: int
+
+
+# Closed set of shapes emitted by ``pivot_eval_results`` per (trace, config).
+PivotEvalScore = Union[
+    EvalErrorScore, EvalChoicesScore, EvalMarkerScore, EvalNumericScore
+]
+
+
+def flatten_eval_score_into_entry(
+    entry: dict,
+    config_id: str,
+    scores: PivotEvalScore | Any,
+    output_type: str | None,
+) -> None:
+    """Flatten one pivoted ``(trace, config)`` eval score onto a list-grid row.
+
+    ``scores`` is the per-``(trace, config)`` value from
+    ``TraceListQueryBuilder.pivot_eval_results`` — already averaged across the
+    trace's spans (SQL ``avgIf``/``groupArray`` grouped by
+    ``trace_id, custom_eval_config_id``). The list grids bind eval columns to
+    flat row keys, so spread it:
+
+    * CHOICES   → ``{config_id}**{choice}`` = per-choice percentage.
+    * PASS_FAIL → ``{config_id}`` = pass rate (avg of ``output_bool``).
+    * SCORE     → ``{config_id}`` = numeric avg (avg of ``output_float`` × 100).
+
+    PASS_FAIL must use the pass rate, never the score: an eval that also wrote an
+    ``output_float`` (e.g. deterministic evaluators) would otherwise surface the
+    score field — frequently inverted vs the real pass/fail result. Non-dict /
+    error / non-terminal markers are passed through under ``{config_id}`` so the
+    grid can render an error/loading state.
+    """
+    if not isinstance(scores, dict):
+        entry[config_id] = scores
+        return
+    if scores.get("per_choice"):
+        for choice, pct in scores["per_choice"].items():
+            entry[f"{config_id}**{choice}"] = pct
+        return
+    if "avg_score" in scores or "pass_rate" in scores:
+        entry[config_id] = select_eval_score(scores, output_type)
+        return
+    entry[config_id] = scores
+
+
+def select_eval_score(
+    scores: EvalNumericScore, output_type: str | None
+) -> float | None:
+    """Pick the output-type-aware scalar from a pivoted score dict.
+
+    PASS_FAIL → ``pass_rate`` (rate), everything else → ``avg_score``. Returns
+    the value as-is (may be ``0.0``); ``None`` only when the field is absent.
+    """
+    if _normalize_eval_output_type(output_type) == "PASS_FAIL":
+        return scores.get("pass_rate")
+    return scores.get("avg_score")
+
+
+def eval_output_type_for_config(config: CustomEvalConfig) -> str | None:
+    """Read an eval config's configured ``output`` type from its template."""
+    template = getattr(config, "eval_template", None)
+    if template is None:
+        return None
+    return (getattr(template, "config", None) or {}).get("output")
+
+
+def get_project_eval_configs(
+    project_id,
+) -> tuple[list[CustomEvalConfig], list[str]]:
+    """Non-deleted eval configs for a project, read from PG (no ClickHouse).
+
+    Replaces the CH ``dictGet('trace_dict',...)`` discovery scan on the voice
+    endpoints. Uses the ``(project, created_at)`` index. Returns
+    ``(eval_configs, eval_config_ids)``.
+    """
+    qs = CustomEvalConfig.objects.filter(
+        project_id=project_id, deleted=False
+    ).select_related("eval_template")
+    configs = list(qs)
+    return configs, [str(c.id) for c in configs]
+
+
 def _validate_span_attribute_filter(column_id, filter_config):
     """Enforce the SPAN_ATTRIBUTE type/op/value contract; raise on mismatch."""
     ftype = (filter_config.get("filter_type") or "").lower()
@@ -389,7 +502,9 @@ def validate_filters_helper(value):
         return []
 
     REQUIRED_FILTER_KEYS = ["column_id", "filter_config"]
-    VALID_CONFIG_KEYS = ["filter_type", "filter_op", "filter_value"]
+    VALID_FILTER_KEYS = {"column_id", "display_name", "filter_config"}
+    REQUIRED_CONFIG_KEYS = ["filter_type", "filter_op"]
+    VALID_CONFIG_KEYS = {"filter_type", "filter_op", "filter_value", "col_type"}
 
     for filter_item in value:
         if not isinstance(filter_item, dict):
@@ -400,22 +515,60 @@ def validate_filters_helper(value):
             raise serializers.ValidationError(
                 f"Missing required filter keys: {', '.join(missing_keys)}"
             )
+        extra_keys = sorted(set(filter_item) - VALID_FILTER_KEYS)
+        if extra_keys:
+            raise serializers.ValidationError(
+                f"Unknown filter keys: {', '.join(extra_keys)}"
+            )
 
         filter_config = filter_item.get("filter_config")
         if not isinstance(filter_config, dict):
             raise serializers.ValidationError("Filter config must be a dictionary.")
 
-        missing_keys = [key for key in VALID_CONFIG_KEYS if key not in filter_config]
+        missing_keys = [key for key in REQUIRED_CONFIG_KEYS if key not in filter_config]
         if missing_keys:
             raise serializers.ValidationError(
                 f"Missing required filter config keys: {', '.join(missing_keys)}"
             )
-
-        col_type = filter_config.get("col_type") or filter_config.get("colType")
-        if col_type == "SPAN_ATTRIBUTE":
-            _validate_span_attribute_filter(
-                filter_item.get("column_id"), filter_config
+        extra_config_keys = sorted(set(filter_config) - VALID_CONFIG_KEYS)
+        if extra_config_keys:
+            raise serializers.ValidationError(
+                f"Unknown filter config keys: {', '.join(extra_config_keys)}"
             )
+
+        filter_type = filter_config.get("filter_type")
+        filter_op = filter_config.get("filter_op")
+        allowed_ops = FILTER_TYPE_ALLOWED_OPS.get(filter_type)
+        if allowed_ops is None:
+            raise serializers.ValidationError(
+                f"Unsupported filter_type {filter_type!r}."
+            )
+        if filter_op not in allowed_ops:
+            raise serializers.ValidationError(
+                f"Unsupported filter_op {filter_op!r} for filter_type {filter_type!r}."
+            )
+        if filter_op in RANGE_OPS:
+            filter_value = filter_config.get("filter_value")
+            if not isinstance(filter_value, list) or len(filter_value) != 2:
+                raise serializers.ValidationError(
+                    f"Filter {filter_item.get('column_id')!r}: {filter_op!r} "
+                    "requires a 2-element filter_value list."
+                )
+        elif filter_op in LIST_OPS:
+            filter_value = filter_config.get("filter_value")
+            if not isinstance(filter_value, list) or not filter_value:
+                raise serializers.ValidationError(
+                    f"Filter {filter_item.get('column_id')!r}: {filter_op!r} "
+                    "requires a non-empty filter_value list."
+                )
+        elif filter_op not in NO_VALUE_OPS and "filter_value" not in filter_config:
+            raise serializers.ValidationError(
+                f"Filter {filter_item.get('column_id')!r}: {filter_op!r} requires filter_value."
+            )
+
+        col_type = filter_config.get("col_type")
+        if col_type == "SPAN_ATTRIBUTE":
+            _validate_span_attribute_filter(filter_item.get("column_id"), filter_config)
 
     return value
 
@@ -448,36 +601,36 @@ def validate_sort_params_helper(value):
     return value
 
 
-def get_annotation_labels_for_project(project_id, organization=None):
+def get_annotation_labels_for_project(project_id, organization=None, project_ids=None):
     """Find annotation labels that have at least one Score in a project.
 
     Labels may not have a direct ``project`` FK set (e.g. org-wide centralized
-    labels), so we look for labels referenced by Score records whose trace or
-    observation_span belongs to the project.
+    labels), so we also look for labels referenced by Score records in the project.
 
-    Pre-deprecation this method also union'd in ``TraceAnnotation``-referenced
-    labels. Score is the unified store now (the dual-write mirrors every
-    TraceAnnotation write to Score, so any label in TraceAnnotation is also
-    reachable via Score). Reading both was redundant; reading Score alone
-    is the path forward toward fully retiring TraceAnnotation.
+    Pass ``project_ids`` (a list) instead of ``project_id`` to scope across
+    multiple projects (org-scoped span listing).
+
+    The score→project lookup is routed via ``_REGISTRY["ANNOTATION_LABELS"]``:
+    V1_ONLY reads PG (Score joins legacy trace/observation_span), V2_ONLY reads
+    CH (model_hub_score scoped via spans). See ``annotation_label_source``.
     """
     from django.db.models import Q
 
-    from model_hub.models.score import Score
+    from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
 
-    # Labels with scores for this project
-    score_label_ids = (
-        Score.objects.filter(
-            Q(trace__project_id=project_id)
-            | Q(observation_span__project_id=project_id),
-            deleted=False,
-        )
-        .values("label_id")
-        .distinct()
-    )
+    SourceCls = get_query_builder_class("ANNOTATION_LABELS")  # noqa: N806
+
+    if project_ids is not None:
+        score_label_ids = set()
+        for pid in project_ids:
+            score_label_ids.update(SourceCls().label_ids_for_project(pid))
+        owner_q = Q(project_id__in=project_ids)
+    else:
+        score_label_ids = SourceCls().label_ids_for_project(project_id)
+        owner_q = Q(project_id=project_id)
 
     return AnnotationsLabels.objects.filter(
-        Q(project_id=project_id) | Q(id__in=score_label_ids),
+        owner_q | Q(id__in=score_label_ids),
         deleted=False,
     ).distinct()
 

@@ -416,7 +416,7 @@ export default function ModelOptionsState({
                     },
                   }}
                   options={[
-                    ...(runPromptOptions?.toolChoices || []),
+                    ...(runPromptOptions?.tool_choices || []),
                     { value: "none", label: "None" },
                   ]}
                 />

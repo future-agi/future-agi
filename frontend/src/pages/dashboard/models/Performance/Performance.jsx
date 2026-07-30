@@ -43,6 +43,27 @@ import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 
 // const formatDate = (date) => format(date, "yyyy-MM-dd HH:mm:ss");
 
+const toPerformanceApiFilter = (filter) => ({
+  type: filter.type,
+  datatype: filter.datatype,
+  operator: filter.operator,
+  values: filter.values || [],
+  key: filter.key,
+  key_id: filter.keyId || filter.key_id || "",
+});
+
+const toPerformanceApiDataset = (dataset) => ({
+  environment: dataset.environment,
+  version: dataset.version,
+  metric_id: dataset.metricId || dataset.metric_id,
+  filters: (dataset.filters || []).map(toPerformanceApiFilter),
+});
+
+const toPerformanceApiBreakdown = (breakdown) => ({
+  key: breakdown.key,
+  key_id: breakdown.keyId || breakdown.key_id,
+});
+
 const Performance = () => {
   const customDatePickerAnc = useRef(null);
   const { enqueueSnackbar, closeSnackbar } = useSnackbar();
@@ -167,6 +188,12 @@ const Performance = () => {
   const validatedBreakdown = selectedBreakdown.filter(filterBreakdown);
 
   const selectedDatasetObj = validatedDatasets?.[selectedDataset];
+  const apiDatasets = validatedDatasets.map(toPerformanceApiDataset);
+  const apiFilters = validatedFilters.map(toPerformanceApiFilter);
+  const apiBreakdown = validatedBreakdown.map(toPerformanceApiBreakdown);
+  const apiSelectedDatasetObj = selectedDatasetObj
+    ? toPerformanceApiDataset(selectedDatasetObj)
+    : null;
 
   useEffect(() => {
     if (!selectedDatasets?.[0]?.metricId && allCustomMetrics?.length) {
@@ -192,13 +219,13 @@ const Performance = () => {
       dateFilter,
     ],
     queryFn: () =>
-      axios.post(`${endpoints.performance.graphData}${id}/`, {
-        startDate: dateFilter[0],
-        endDate: dateFilter[1],
-        aggBy: selectedAggregation,
-        datasets: validatedDatasets,
-        filters: validatedFilters,
-        breakdown: validatedBreakdown,
+      axios.post(endpoints.performance.graphData(id), {
+        start_date: dateFilter[0],
+        end_date: dateFilter[1],
+        agg_by: selectedAggregation,
+        datasets: apiDatasets,
+        filters: apiFilters,
+        breakdown: apiBreakdown,
       }),
     select: (d) => d.data,
     enabled: !isNoData && validatedDatasets.length > 0,
@@ -216,12 +243,12 @@ const Performance = () => {
       ],
       queryFn: () => {
         return axios.post(`${endpoints.performance.getTagDistribution(id)}`, {
-          dataset: selectedDatasetObj,
-          filters: validatedFilters,
-          aggBy: selectedAggregation,
-          startDate: dateFilter[0],
-          endDate: dateFilter[1],
-          graphType: selectedTagDistributionType,
+          dataset: apiSelectedDatasetObj,
+          filters: apiFilters,
+          agg_by: selectedAggregation,
+          start_date: dateFilter[0],
+          end_date: dateFilter[1],
+          graph_type: selectedTagDistributionType,
         });
       },
       select: (d) => d.data?.result,
@@ -246,16 +273,12 @@ const Performance = () => {
       dateFilter,
     ],
     queryFn: ({ pageParam }) => {
-      return axios.post(`${endpoints.performance.tableData}${id}/`, {
-        startDate: dateFilter[0],
-        endDate: dateFilter[1],
-        aggBy: selectedAggregation,
-        dataset: selectedDatasetObj,
-        filters: validatedFilters,
-        breakdown: validatedBreakdown,
+      return axios.post(endpoints.performance.tableData(id), {
+        start_date: dateFilter[0],
+        end_date: dateFilter[1],
+        dataset: apiSelectedDatasetObj,
+        filters: apiFilters,
         page: pageParam ? pageParam : null,
-        orderOption,
-        limit: 15,
       });
     },
     getNextPageParam: (o) => (o.data.isNext === true ? o.data.page + 1 : null),
@@ -309,12 +332,11 @@ const Performance = () => {
 
   const { mutate: generateExport } = useMutation({
     mutationFn: () => {
-      return axios.post(`${endpoints.performance.tableExport}${id}/`, {
-        dataset: {
-          startDate: dateFilter[0],
-          endDate: dateFilter[1],
-          aggBy: selectedAggregation,
-        },
+      return axios.post(endpoints.performance.tableExport(id), {
+        dataset: apiSelectedDatasetObj,
+        filters: apiFilters,
+        start_date: dateFilter[0],
+        end_date: dateFilter[1],
       });
     },
     onSuccess: (data) => {

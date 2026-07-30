@@ -17,8 +17,13 @@ import pytest
 from django.core.cache import cache
 from rest_framework.test import APIClient
 
+from accounts.models import User
+from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.recovery_code import RecoveryCode
+from accounts.models.workspace import WorkspaceMembership
 from accounts.models.webauthn_credential import WebAuthnCredential
+from tfc.constants.levels import Level
+from tfc.constants.roles import OrganizationRoles
 
 # ---------------------------------------------------------------------------
 # Helpers for mocking py_webauthn responses
@@ -83,6 +88,38 @@ def _create_passkey_for_user(user, name="My Passkey", credential_id=None):
     )
 
 
+def _assert_unknown_field(response, field_name):
+    assert response.status_code == 400
+    assert field_name in response.json()["details"]
+
+
+def _create_workspace_viewer(organization, workspace, email):
+    viewer = User.objects.create_user(
+        email=email,
+        password="testpassword123",
+        name="Passkey Viewer",
+        organization=organization,
+        organization_role=OrganizationRoles.MEMBER_VIEW_ONLY,
+        is_active=True,
+    )
+    org_membership = OrganizationMembership.no_workspace_objects.create(
+        user=viewer,
+        organization=organization,
+        role=OrganizationRoles.MEMBER_VIEW_ONLY,
+        level=Level.VIEWER,
+        is_active=True,
+    )
+    WorkspaceMembership.no_workspace_objects.create(
+        user=viewer,
+        workspace=workspace,
+        role=OrganizationRoles.WORKSPACE_VIEWER,
+        level=Level.WORKSPACE_VIEWER,
+        organization_membership=org_membership,
+        is_active=True,
+    )
+    return viewer
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -122,11 +159,55 @@ class TestPasskeyRegisterOptions:
         assert "challenge" in data
         assert "rp" in data
 
+    @patch(
+        "accounts.services.webauthn_service.options_to_json",
+        side_effect=_fake_options_to_json,
+    )
+    @patch(
+        "accounts.services.webauthn_service.generate_registration_options",
+        return_value=_fake_registration_options(),
+    )
+    def test_register_options_allows_workspace_viewer_user_owned_setup(
+        self, mock_gen, mock_json, api_client, organization, workspace
+    ):
+        """Workspace write restrictions must not block user-owned passkey setup."""
+        viewer = _create_workspace_viewer(
+            organization,
+            workspace,
+            "passkey-viewer@futureagi.com",
+        )
+        login = api_client.post(
+            "/accounts/token/",
+            {"email": viewer.email, "password": "testpassword123"},
+            format="json",
+        )
+        assert login.status_code == 200
+
+        response = api_client.post(
+            "/accounts/passkey/register/options/",
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {login.json()['access']}",
+            HTTP_X_ORGANIZATION_ID=str(organization.id),
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
+        )
+
+        assert response.status_code == 200
+        assert "challenge" in response.json()
+
     def test_register_options_unauthenticated(self):
         """Unauthenticated request to register options is rejected."""
         client = APIClient()
         response = client.post("/accounts/passkey/register/options/")
         assert response.status_code in (401, 403)
+
+    def test_register_options_rejects_unknown_request_fields(self, auth_client):
+        """Empty request contracts should not accept stray body fields."""
+        response = auth_client.post(
+            "/accounts/passkey/register/options/",
+            {"unexpected": True},
+            format="json",
+        )
+        _assert_unknown_field(response, "unexpected")
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +319,21 @@ class TestPasskeyRegisterVerify:
         )
         assert response.status_code == 400
 
+    def test_register_verify_rejects_unknown_request_fields(self, auth_client, user):
+        """Registration verify accepts the documented credential/name shape only."""
+        self._setup_challenge(user)
+
+        response = auth_client.post(
+            "/accounts/passkey/register/verify/",
+            {
+                "credential": {"id": "test", "type": "public-key"},
+                "name": "My Laptop Key",
+                "deviceName": "legacy camel alias",
+            },
+            format="json",
+        )
+        _assert_unknown_field(response, "deviceName")
+
     def test_register_verify_unauthenticated(self):
         """Unauthenticated request is rejected."""
         client = APIClient()
@@ -301,6 +397,14 @@ class TestPasskeyDelete:
         fake_id = uuid.uuid4()
         response = auth_client.delete(f"/accounts/passkeys/{fake_id}/")
         assert response.status_code == 404
+        data = response.json()
+        assert data["status"] is False
+        assert data["type"] == "not_found"
+        assert data["code"] == "not_found"
+        assert data["detail"] == "Passkey not found."
+        assert data["message"] == data["detail"]
+        assert data["error"] == data["detail"]
+        assert data["result"] == data["detail"]
 
     def test_delete_passkey_cleans_up_recovery_codes_when_last_2fa(
         self, auth_client, user
@@ -360,6 +464,25 @@ class TestPasskeyRename:
             format="json",
         )
         assert response.status_code == 404
+        data = response.json()
+        assert data["status"] is False
+        assert data["type"] == "not_found"
+        assert data["code"] == "not_found"
+        assert data["detail"] == "Passkey not found."
+        assert data["message"] == data["detail"]
+        assert data["error"] == data["detail"]
+        assert data["result"] == data["detail"]
+
+    def test_rename_rejects_unknown_request_fields(self, auth_client, user):
+        """Passkey rename should reject fields outside the request serializer."""
+        passkey = _create_passkey_for_user(user, name="Old Name")
+
+        response = auth_client.patch(
+            f"/accounts/passkeys/{passkey.id}/",
+            {"name": "New Name", "displayName": "legacy camel alias"},
+            format="json",
+        )
+        _assert_unknown_field(response, "displayName")
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +508,16 @@ class TestPasskeyAuthenticateOptions:
         data = response.json()
         assert "challenge" in data
         assert "session_id" in data
+
+    def test_authenticate_options_rejects_unknown_request_fields(self):
+        """Passwordless auth options are an empty-body API."""
+        client = APIClient()
+        response = client.post(
+            "/accounts/passkey/authenticate/options/",
+            {"email": "someone@example.com"},
+            format="json",
+        )
+        _assert_unknown_field(response, "email")
 
 
 # ---------------------------------------------------------------------------
@@ -468,6 +601,26 @@ class TestPasskeyAuthenticateVerify:
             format="json",
         )
         assert response.status_code == 400
+
+    def test_authenticate_verify_rejects_unknown_request_fields(self, user):
+        """Passwordless auth verify accepts only credential/session_id/name."""
+        _create_passkey_for_user(user)
+
+        client = APIClient()
+        response = client.post(
+            "/accounts/passkey/authenticate/verify/",
+            {
+                "session_id": "test",
+                "credential": {
+                    "id": FAKE_CREDENTIAL_ID_B64,
+                    "rawId": FAKE_CREDENTIAL_ID_B64,
+                    "type": "public-key",
+                },
+                "sessionId": "legacy camel alias",
+            },
+            format="json",
+        )
+        _assert_unknown_field(response, "sessionId")
 
     @patch(
         "accounts.services.webauthn_service.verify_authentication_response",

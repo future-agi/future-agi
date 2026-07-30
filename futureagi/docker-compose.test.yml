@@ -29,7 +29,28 @@ services:
       retries: 5
 
   test-clickhouse:
-    image: clickhouse/clickhouse-server:24.10.2.80
+    # 25.3-alpine matches the production CH 25.3 path. Bumped 2026-05-27
+    # during CH25 migration close-out so tests exercise the typed-JSON
+    # schema (013): `metadata` / `resource_attrs` / `attributes_extra` as
+    # JSON columns + the `is_deleted` UInt8 column. Django migration
+    # 0078_ch25_apply_schema applies the schema on first boot.
+    image: clickhouse/clickhouse-server:25.3-alpine
+    environment:
+      # CH 25.3 entrypoint refuses to start the default user without a
+      # password unless this is set; tests use CH_PASSWORD="" so we mirror
+      # that here.
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
+      CLICKHOUSE_DB: "test_tfc"
+    volumes:
+      # Provides macros (shard=01, replica=test-01) and an embedded
+      # clickhouse-keeper so the legacy ReplicatedReplacingMergeTree tables
+      # (model_hub.apps._ensure_analytics_schema → tracer/services/clickhouse/schema.py)
+      # can register paths without an external ZK ensemble.
+      - ./.ci/clickhouse-test-config.xml:/etc/clickhouse-server/config.d/test-overrides.xml:ro
+      # The v2 spans table declares `SETTINGS storage_policy = 'tiered'`.
+      # Defines the 'tiered' policy with a local cold volume.
+      - ./.ci/clickhouse-storage-policy.xml:/etc/clickhouse-server/config.d/001_storage_policy.xml:ro
     ports:
       - "18123:8123"
       - "19000:9000"

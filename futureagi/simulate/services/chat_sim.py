@@ -1,5 +1,4 @@
 import uuid
-from typing import List, Optional
 
 import structlog
 from django.conf import settings
@@ -15,8 +14,6 @@ from simulate.models.chat_message import ChatMessageModel
 from simulate.pydantic_schemas.chat import (
     ChatMessage,
     ChatRole,
-    ChatSessionResponse,
-    ChatSessionSendMessageResponse,
     SimulationCallType,
 )
 from simulate.services.chat_initial_message import get_chat_initial_message
@@ -33,8 +30,8 @@ logger = structlog.get_logger(__name__)
 
 def _get_chat_service(
     organization: Organization,
-    workspace: Optional[Workspace] = None,
-    provider: Optional[ChatProviderChoices] = None,
+    workspace: Workspace | None = None,
+    provider: ChatProviderChoices | None = None,
 ) -> ChatServiceManager:
     """Get configured chat service manager.
 
@@ -104,12 +101,11 @@ def _get_session_id_from_metadata(call_execution: CallExecution) -> str:
 
 def initiate_chat(
     call_execution: CallExecution, organization: Organization, workspace: Workspace
-) -> List[ChatMessage] | None:
+) -> list[ChatMessage] | None:
     """
     Initiate a chat
     """
     try:
-
         # Step 1 : Check if balance is there to initiate the chat
         test_executor = TestExecutor()
         (
@@ -122,7 +118,6 @@ def initiate_chat(
         )
 
         if not has_sufficient_balance:
-
             call_execution.status = CallExecution.CallStatus.FAILED
             call_execution.ended_reason = balance_error
             call_execution.ended_at = timezone.now()
@@ -244,7 +239,10 @@ def initiate_chat(
                 )
             except ImportError:
                 if settings.DEBUG:
-                    logger.warning("Could not import ee.agenthub.traceerroragent.token_utils", exc_info=True)
+                    logger.warning(
+                        "Could not import ee.agenthub.traceerroragent.token_utils",
+                        exc_info=True,
+                    )
                 return None
 
             initial_tokens = estimate_tokens_text(initial_msg_text)
@@ -288,7 +286,7 @@ def initiate_chat(
         call_execution.ended_reason = str(e)
         call_execution.ended_at = timezone.now()
         call_execution.save(update_fields=["status", "ended_reason", "ended_at"])
-        raise ValueError(f"Error initiating chat: {str(e)}")
+        raise ValueError(f"Error initiating chat: {str(e)}") from e
 
     except Exception as e:
         call_execution.status = CallExecution.CallStatus.FAILED
@@ -296,7 +294,7 @@ def initiate_chat(
         call_execution.ended_at = timezone.now()
         call_execution.save(update_fields=["status", "ended_reason", "ended_at"])
         logger.exception(f"Error initiating chat: {str(e)}")
-        raise Exception(f"Error initiating chat: {str(e)}")
+        raise Exception(f"Error initiating chat: {str(e)}") from e
 
 
 def run_prompt_based_conversation(
@@ -497,12 +495,11 @@ def send_message_to_chat(
     call_execution: CallExecution,
     organization: Organization,
     workspace: Workspace,
-    messages: List[ChatMessage],
-    metrics: Optional[dict[str, Optional[float | int]]] = None,
+    messages: list[ChatMessage],
+    metrics: dict[str, float | int | None] | None = None,
     store_sync: bool = False,
 ):
     try:
-
         if call_execution.status != CallExecution.CallStatus.ONGOING:
             raise Exception("Call execution is not ongoing")
 
@@ -596,7 +593,23 @@ def send_message_to_chat(
                     call_execution_id=str(call_execution.id),
                 )
         else:
-            store_chat_messages.apply_async(args=store_args)
+            try:
+                store_chat_messages.apply_async(args=store_args)
+            except Exception as dispatch_error:
+                logger.exception(
+                    "store_chat_messages_dispatch_failed_falling_back_sync",
+                    call_execution_id=str(call_execution.id),
+                    error=str(dispatch_error),
+                )
+                sync_store = getattr(
+                    store_chat_messages, "_original_func", store_chat_messages
+                )
+                result = sync_store(*store_args)
+                if result is None:
+                    logger.error(
+                        "store_chat_messages_failed_after_dispatch_fallback",
+                        call_execution_id=str(call_execution.id),
+                    )
 
         if send_result.has_chat_ended:
             notify_simulation_update(
@@ -630,7 +643,7 @@ def send_message_to_chat(
         call_execution.ended_reason = str(e)
         call_execution.ended_at = timezone.now()
         call_execution.save(update_fields=["status", "ended_reason", "ended_at"])
-        raise Exception(f"Error sending message to chat: {str(e)}")
+        raise Exception(f"Error sending message to chat: {str(e)}") from e
 
 
 def finalize_chat_execution(call_execution: CallExecution):

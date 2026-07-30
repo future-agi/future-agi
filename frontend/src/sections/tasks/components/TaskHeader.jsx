@@ -13,6 +13,8 @@ import {
 import { useNavigate } from "react-router";
 import Iconify from "src/components/iconify";
 import _ from "lodash";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 const STATUS_CONFIG = {
   pending: { color: "warning", icon: "solar:clock-circle-linear" },
@@ -70,6 +72,9 @@ const TaskHeader = ({
   backTo,
 }) => {
   const navigate = useNavigate();
+  const { role } = useAuthContext();
+  const canEditTask =
+    RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][role];
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(name || "");
 
@@ -167,6 +172,7 @@ const TaskHeader = ({
                   <IconButton
                     size="small"
                     onClick={() => setEditing(true)}
+                    disabled={!canEditTask}
                     sx={{ p: 0.25, color: "text.secondary" }}
                   >
                     <Iconify icon="solar:pen-2-linear" width={14} />

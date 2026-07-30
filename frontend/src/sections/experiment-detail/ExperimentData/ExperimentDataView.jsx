@@ -42,6 +42,7 @@ import FormSearchField from "src/components/FormSearchField/FormSearchField";
 
 import { enqueueSnackbar } from "notistack";
 import SingleImageViewerProvider from "src/sections/develop-detail/Common/SingleImageViewer/SingleImageViewerProvider";
+import CompositeEvalDialog from "src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/CompositeEvalDialog";
 import RenderCellRunningOptions from "./RenderCellRunningOptions";
 import { useRerunColumnInExperimentStoreShallow } from "./states";
 import { useGetExperimentDetails } from "src/hooks/useGetExperimentDetails";
@@ -193,14 +194,14 @@ function ExperimentDataView() {
 
       // Use unique row ID instead of rowIndex
       prev.forEach((row) => {
-        const id = row.data?.rowId;
+        const id = row.data?.row_id;
         if (id !== undefined) {
           mergedMap.set(id, row);
         }
       });
 
       newRows.forEach((row) => {
-        const id = row.data?.rowId;
+        const id = row.data?.row_id;
         if (id !== undefined) {
           mergedMap.set(id, row);
         }
@@ -213,9 +214,15 @@ function ExperimentDataView() {
       }
 
       // Check if any rows actually changed
-      const prevMap = new Map(prev.map((row) => [row.data?.rowId, row]));
+      const prevMap = new Map(
+        prev.map((row) => [row.data?.row_id, row]),
+      );
       const hasChanges = newRows.some(
-        (newRow) => !isEqual(prevMap.get(newRow.data?.rowId), newRow),
+        (newRow) =>
+          !isEqual(
+            prevMap.get(newRow.data?.row_id),
+            newRow,
+          ),
       );
 
       return hasChanges ? mergedArray : prev;
@@ -282,39 +289,29 @@ function ExperimentDataView() {
         }
       }
 
-      // Sort columns within each group to its right
+
       for (const groupId in columnsByGroup) {
-        const cols = columnsByGroup[groupId];
+        const cols = columnsByGroup[groupId] ?? [];
 
-        // Keep the first column untouched
-        const firstColumn = cols?.[0];
+        columnsByGroup[groupId] = [...cols].sort((a, b) => {
+          const nameA = a?.headerName ?? "";
+          const nameB = b?.headerName ?? "";
 
-        // Remaining columns to sort
-        const rest = cols?.slice(1);
-
-        // Sorting logic applied only to the rest
-        rest.sort((a, b) => {
-          const nameA = a?.headerName;
-          const nameB = b?.headerName;
-
-          const baseA = nameA?.replace(/-reason.*/, "");
-          const baseB = nameB?.replace(/-reason.*/, "");
+          const baseA = nameA.replace(/-reason.*/, "");
+          const baseB = nameB.replace(/-reason.*/, "");
 
           if (baseA !== baseB) {
-            return baseA?.localeCompare(baseB);
+            return baseA.localeCompare(baseB);
           }
 
-          const aIsReason = nameA?.endsWith("-reason");
-          const bIsReason = nameB?.endsWith("-reason");
+          const aIsReason = nameA.endsWith("-reason");
+          const bIsReason = nameB.endsWith("-reason");
 
           if (aIsReason && !bIsReason) return 1;
           if (!aIsReason && bIsReason) return -1;
 
           return 0;
         });
-
-        // Final result → first untouched, rest sorted
-        columnsByGroup[groupId] = [firstColumn, ...rest];
       }
 
       // Process grouped columns - organize in order: base columns, grouped columns, other columns
@@ -379,16 +376,25 @@ function ExperimentDataView() {
           let letterIndex = 0;
 
           for (let i = 0; i < col.children.length; i++) {
-            const colOrigin = col.children[i]?.col?.group?.origin;
+            const child = col.children[i];
+            const colOrigin = child?.col?.group?.origin;
+            const colOriginType = child?.col?.origin_type;
+            const childName = child?.col?.name ?? child?.headerName ?? "";
+            const isReasonColumn =
+              childName.includes("-reason") ||
+              colOriginType === "evaluation_reason";
+            const isBaseEvalColumn =
+              colOrigin === "Evaluation" && !child?.col?.source_id;
 
-            // Only assign letter when not hidden
-            const letter =
-              colOrigin === "Dataset" || (i === 0 && colOrigin === "Evaluation")
-                ? ""
-                : toExcelLetters(letterIndex++);
+            const skipLetter =
+              colOrigin === "Dataset" ||
+              isReasonColumn ||
+              isBaseEvalColumn ||
+              (colOrigin === "Evaluation" && col.children.length === 1);
+            const letter = skipLetter ? "" : toExcelLetters(letterIndex++);
 
-            col.children[i].headerComponentParams = {
-              ...col.children[i].headerComponentParams,
+            child.headerComponentParams = {
+              ...child.headerComponentParams,
               head: letter,
               index: letterIndex,
             };
@@ -500,7 +506,7 @@ function ExperimentDataView() {
         }
         // Process column data
       } catch (error) {
-        logger.error(`Error refreshing page ${p}:`, error);
+        logger.warn(`Error refreshing page ${p}:`, error);
       }
     }
   }, [experimentId, diffMode, refetchExperimentColumns]);
@@ -732,8 +738,10 @@ function ExperimentDataView() {
         };
 
         // Avoid unnecessary state updates if the same row is clicked
+        const prevRowKey = expandRow?.row_id;
+        const newRowKey = newExpandRow.row_id;
         if (
-          expandRow?.rowId !== newExpandRow.rowId ||
+          prevRowKey !== newRowKey ||
           expandRow?.index !== newExpandRow.index
         ) {
           setExpandRow(newExpandRow);
@@ -841,7 +849,6 @@ function ExperimentDataView() {
           setFetchingData(false);
         }
       },
-      getRowId: (data) => data.rowId,
     }),
     [experimentId, diffMode, setFetchingData, experimentSearch],
   );
@@ -958,6 +965,7 @@ function ExperimentDataView() {
         }}
       >
         <SingleImageViewerProvider>
+          <CompositeEvalDialog />
           <AgGridReact
             rowHeight={defaultRowHeightMapping["Short"]?.height}
             getRowHeight={getRowHeight}
@@ -982,7 +990,7 @@ function ExperimentDataView() {
             getMainMenuItems={menuList}
             debounceVerticalScrollbar={true}
             // postProcessPopup={postProcessPopup}
-            getRowId={({ data }) => data.rowId}
+            getRowId={({ data }) => data.row_id}
             theme={agTheme}
             onRowClicked={handleRowClick}
             suppressColumnMoveAnimation={true}

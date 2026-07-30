@@ -1,16 +1,16 @@
-import RenderFileIcons from './RenderFileIcons';
+import RenderFileIcons from "./RenderFileIcons";
 
 const meta = {
-  title: 'Components/RenderFileIcons',
+  title: "Components/RenderFileIcons",
   component: RenderFileIcons,
-  tags: ['autodocs'], // Optional, helps with Docs tab generation
+  tags: ["autodocs"], // Optional, helps with Docs tab generation
   args: {
-    fileType: 'document.pdf', // Default args for the story
+    fileType: "document.pdf", // Default args for the story
   },
   argTypes: {
     fileType: {
-      control: 'text',
-      description: 'File name or extension used to render the correct icon',
+      control: "text",
+      description: "File name or extension used to render the correct icon",
     },
   },
 };
@@ -19,25 +19,25 @@ export default meta;
 
 export const Default = {
   args: {
-    fileType: 'document.pdf',
+    fileType: "document.pdf",
   },
 };
 
 export const ImageFile = {
   args: {
-    fileType: 'photo.jpg',
+    fileType: "photo.jpg",
   },
 };
 
 export const UnknownExtension = {
   args: {
-    fileType: 'file.unknownext',
+    fileType: "file.unknownext",
   },
 };
 
 export const NoExtension = {
   args: {
-    fileType: 'filename',
+    fileType: "filename",
   },
 };
 

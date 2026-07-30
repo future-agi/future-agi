@@ -84,12 +84,15 @@ const queryClient = new QueryClient({
   }),
   defaultOptions: {
     queries: {
-      // Data stays fresh for 30s — no refetch on remount/focus within this window
-      staleTime: 30 * 1000,
-      // Keep unused data in cache for 5 min (default)
-      gcTime: 5 * 60 * 1000,
-      // Don't refetch when browser tab regains focus
-      refetchOnWindowFocus: false,
+      // Data is fresh for 5s; after that remount/focus/reconnect refetch —
+      // the cached value is shown instantly, then updated in place
+      staleTime: 5 * 1000,
+      // Keep unused data in cache for 1 min
+      gcTime: 1 * 60 * 1000,
+      // Refetch when the tab regains focus, on remount, and on reconnect
+      refetchOnWindowFocus: true,
+      refetchOnMount: true,
+      refetchOnReconnect: true,
       // Retry once on failure
       retry: 1,
     },

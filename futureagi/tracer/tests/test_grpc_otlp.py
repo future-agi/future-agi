@@ -138,6 +138,38 @@ class TestObservationSpanServiceUnit:
 
         asyncio.run(run_test())
 
+    @patch("tracer.services.grpc.bulk_create_observation_span_task")
+    def test_export_skips_rate_limit_when_unavailable(self, mock_task):
+        """OSS builds without EE rate limiting should still ingest traces."""
+
+        async def run_test():
+            mock_task.apply_async.return_value = None
+
+            mock_org = MagicMock()
+            mock_org.id = "00000000-0000-0000-0000-000000000123"
+
+            mock_user = MagicMock()
+            mock_user.id = "00000000-0000-0000-0000-000000000456"
+            mock_user.organization = mock_org
+
+            mock_context = MagicMock()
+            mock_context.user = mock_user
+            mock_context.abort = AsyncMock()
+
+            service = ObservationSpanService()
+            request = create_test_otlp_request()
+
+            with patch("ee.usage.services.rate_limiter.RateLimiter", None), patch(
+                "tracer.services.grpc.payload_storage.store", return_value="payload-key"
+            ):
+                response = await service.Export(request, mock_context)
+
+            assert isinstance(response, ExportTraceServiceResponse)
+            mock_context.abort.assert_not_called()
+            assert mock_task.apply_async.called
+
+        asyncio.run(run_test())
+
     def test_export_no_organization(self):
         """Test Export fails when user has no organization."""
 

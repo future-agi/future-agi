@@ -22,27 +22,15 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import { formatNumberWithCommas } from "../../../UsersView/common";
 import _ from "lodash";
+import {
+  getAlertFilterValue,
+  isAlertMuted,
+  normalizeAlertListRow,
+} from "../../common";
 
 const AlertsSheetView = lazy(
   () => import("../AlertsSheetView/AlertsSheetView"),
 );
-
-// Build the filter value getter for the "Filters" column
-function getFilterValue(data) {
-  const filters = [];
-  const observationTypes = data?.filters?.observationType ?? [];
-  if (observationTypes?.length > 0) {
-    filters.push(`Span Type is ${_.toUpper(data?.filters?.observationType)}`);
-  }
-  const spanAttributes = data?.filters?.spanAttributesFilters ?? [];
-  if (spanAttributes.length > 0) {
-    const customAttributeString = `Custom attribute is ${spanAttributes
-      .map((f) => `(${f.columnId})`)
-      .join(",")}`;
-    filters.push(customAttributeString);
-  }
-  return filters;
-}
 
 export default function AlertsListView() {
   const queryClient = useQueryClient();
@@ -52,7 +40,6 @@ export default function AlertsListView() {
     mainPage,
     searchQuery,
     setHasData,
-    handleCancelSelection,
     selectedRows,
     setSelectedRows,
     setTotalRows,
@@ -157,7 +144,10 @@ export default function AlertsListView() {
     refetchInterval: 10000,
   });
 
-  const items = useMemo(() => data?.table ?? [], [data]);
+  const items = useMemo(
+    () => (data?.table ?? []).map(normalizeAlertListRow),
+    [data],
+  );
   const total = data?.metadata?.total_rows ?? 0;
 
   // Sync store state on data change
@@ -218,10 +208,16 @@ export default function AlertsListView() {
         meta: { flex: 2 },
         minSize: 200,
         cell: ({ getValue, row }) => {
-          const isMuted = row.original.is_mute;
+          const isMuted = isAlertMuted(row.original);
           return (
             <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-              <Typography variant="body2" noWrap sx={{ fontWeight: 500 }}>
+              <Typography
+                variant="body2"
+                noWrap
+                sx={{ fontWeight: 500 }}
+                data-alert-row-name={row.original?.name}
+                data-alert-row-id={row.original?.id}
+              >
                 {getValue()}
               </Typography>
               {isMuted && (
@@ -342,7 +338,7 @@ export default function AlertsListView() {
         meta: { flex: 1 },
         enableSorting: false,
         cell: ({ row }) => {
-          const filterValues = getFilterValue(row.original);
+          const filterValues = getAlertFilterValue(row.original);
           return <FilterChipsRenderer value={filterValues} />;
         },
       },

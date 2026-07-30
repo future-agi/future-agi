@@ -11,7 +11,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # Structured logging configuration
@@ -136,6 +136,7 @@ INSTALLED_APPS = [
     # MCP Server (protocol layer for external AI clients)
     "mcp_server",
     "agentcc",
+    "tfc.deployment_telemetry",
     # gRPC framework
     "django_socio_grpc",
     # "djstripe"
@@ -191,6 +192,7 @@ MIDDLEWARE += [
 # To check all the APIs
 SWAGGER_SETTINGS = {
     "DEFAULT_INFO": "tfc.urls.info_api",
+    "DEFAULT_AUTO_SCHEMA_CLASS": "tfc.utils.api_contracts.ManagementAPIAutoSchema",
     "SECURITY_DEFINITIONS": {
         "X-Api-Key": {"type": "apiKey", "in": "header", "name": "X-Api-Key"},
         "X-Secret-Key": {
@@ -226,31 +228,96 @@ WSGI_APPLICATION = "tfc.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
-DATABASES = {
-    "default": {
+
+def _pg_config(host, port=None, *, name=None, disable_cursors=True, options=None):
+    """
+    Build a Postgres config dict for a Django DATABASES alias.
+
+    Mirrors PostHog's `postgres_config()` helper. The `default`, `replica`,
+    and `default_direct` aliases differ only by host/port and (for
+    default_direct) cursor + lock-timeout options, so we factor the shared
+    config here.
+
+    Behaviour note: an empty-string `port` or `name` falls back to the
+    PG_DB / PGBOUNCER_PORT defaults via `or` semantics. The previous
+    DATABASES block preserved empty strings verbatim — this is a small,
+    intentional behaviour change because an empty PORT / NAME would have
+    failed anyway at connection time.
+    """
+    cfg = {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.getenv("PG_DB", "tfc"),
+        "NAME": name or os.getenv("PG_DB", "tfc"),
         "USER": os.getenv("PG_USER", "user"),
         "PASSWORD": os.getenv("PG_PASSWORD", "password"),
-        "HOST": os.getenv("PGBOUNCER_HOST", "pgbouncer"),
-        "PORT": os.getenv("PGBOUNCER_PORT", 6432),
+        "HOST": host,
+        "PORT": port or os.getenv("PGBOUNCER_PORT", 6432),
         "CONN_MAX_AGE": 0,
-        "CONN_HEALTH_CHECKS": True,  # Verify connection is alive before use (prevents stale PgBouncer connections)
-        "DISABLE_SERVER_SIDE_CURSORS": True,  # Required for PgBouncer transaction pooling
-    },
+        # Verify connection is alive before use (prevents stale PgBouncer connections)
+        "CONN_HEALTH_CHECKS": True,
+        # Required for PgBouncer transaction pooling (server-side cursors need session persistence)
+        "DISABLE_SERVER_SIDE_CURSORS": disable_cursors,
+    }
+    if options is not None:
+        cfg["OPTIONS"] = options
+    return cfg
+
+
+DATABASES = {
+    "default": _pg_config(os.getenv("PGBOUNCER_HOST", "pgbouncer")),
 }
 
 # Read replica — only enabled when PGBOUNCER_READ_HOST is set.
 # Falls back to default when not configured, so safe to deploy without a replica.
 _read_host = os.getenv("PGBOUNCER_READ_HOST")
 if _read_host:
-    DATABASES["replica"] = {
-        **DATABASES["default"],
-        "HOST": _read_host,
-        "PORT": os.getenv("PGBOUNCER_READ_PORT", os.getenv("PGBOUNCER_PORT", 6432)),
-        "NAME": os.getenv("PG_READ_DB", os.getenv("PG_DB", "tfc")),
-        "TEST": {"MIRROR": "default"},  # Tests use default DB, not a real replica
-    }
+    DATABASES["replica"] = _pg_config(
+        _read_host,
+        port=os.getenv("PGBOUNCER_READ_PORT", os.getenv("PGBOUNCER_PORT", 6432)),
+        name=os.getenv("PG_READ_DB", os.getenv("PG_DB", "tfc")),
+    )
+    DATABASES["replica"]["TEST"] = {
+        "MIRROR": "default"
+    }  # Tests use default DB, not a real replica
+
+# Direct connection (bypasses PgBouncer) — used for migrations that need
+# `lock_timeout` set at connection time. PgBouncer transaction-pool mode
+# does not persist session-level SET statements between transactions, so a
+# `SET lock_timeout` issued by the migration runner would not survive.
+# This connection has server-side cursors ENABLED (no PgBouncer to break
+# them) — useful for data-migration scripts that iterate over large tables.
+_direct_host = os.getenv("PG_DIRECT_HOST")
+if _direct_host:
+    # Defensive: malformed env var should not crash Django at import time.
+    try:
+        _lock_timeout_ms = int(os.getenv("PG_MIGRATION_LOCK_TIMEOUT_MS", "20000"))
+    except (TypeError, ValueError):
+        _lock_timeout_ms = 20000
+    DATABASES["default_direct"] = _pg_config(
+        _direct_host,
+        port=os.getenv("PG_DIRECT_PORT", "5432"),
+        disable_cursors=False,
+        options={"options": f"-c lock_timeout={_lock_timeout_ms}"},
+    )
+    DATABASES["default_direct"]["TEST"] = {"MIRROR": "default"}
+
+# Opt-in list for read-replica routing. Comma-separated.
+# Accepts TWO kinds of strings, NAMESPACED to avoid collision:
+#   - Bare model class names (e.g. "Dashboard", "SavedView") — ReadReplicaRouter
+#     routes those models to the replica.
+#   - Feature/path keys prefixed with "feature:" (e.g. "feature:dashboard_render")
+#     — hot-path code checks these and switches its `db_manager()` target
+#     manually. The router ignores prefixed keys.
+# Special value 'ALL_MODELS_USE_READ_REPLICA' routes every model — DO NOT use
+# outside a controlled load-shed experiment (we have ~245 atomic/locking
+# sites; routing everything is a consistency incident waiting to happen).
+#
+# IMPORTANT: env-var changes only take effect after worker restart. The
+# router re-reads settings per call, but feature-key constants in hot paths
+# are computed at import time.
+_opt_in_raw = os.getenv("READ_REPLICA_OPT_IN", "")
+READ_REPLICA_OPT_IN: list[str] = [
+    s.strip() for s in _opt_in_raw.split(",") if s.strip()
+]
 
 DATABASE_ROUTERS = ["tfc.routers.ReadReplicaRouter"]
 
@@ -268,35 +335,11 @@ CLICKHOUSE = {
     "CH_FLUSH_INTERVAL_SECONDS": int(os.getenv("CH_FLUSH_INTERVAL_SECONDS", "5")),
     "CH_MAX_RETRIES": int(os.getenv("CH_MAX_RETRIES", "3")),
     "CH_RETRY_DELAY_SECONDS": int(os.getenv("CH_RETRY_DELAY_SECONDS", "1")),
-    # Query routing: "clickhouse", "postgres", or "auto" (ClickHouse with PG fallback)
-    "CH_ANALYTICS_BACKEND": os.getenv("CH_ANALYTICS_BACKEND", "postgres"),
     # Connection pool settings
     "CH_POOL_SIZE": int(os.getenv("CH_POOL_SIZE", "10")),
     "CH_CONNECT_TIMEOUT": int(os.getenv("CH_CONNECT_TIMEOUT", "10")),
     "CH_SEND_TIMEOUT": int(os.getenv("CH_SEND_TIMEOUT", "300")),
     "CH_RECEIVE_TIMEOUT": int(os.getenv("CH_RECEIVE_TIMEOUT", "300")),
-    # Per-query-type routing for gradual rollout
-    # Values: "postgres", "clickhouse", "auto" (CH with PG fallback), "shadow" (both, compare, return PG)
-    "CH_ROUTE_TIME_SERIES": os.getenv("CH_ROUTE_TIME_SERIES", "postgres"),
-    "CH_ROUTE_TRACE_LIST": os.getenv("CH_ROUTE_TRACE_LIST", "postgres"),
-    "CH_ROUTE_SESSION_LIST": os.getenv("CH_ROUTE_SESSION_LIST", "postgres"),
-    "CH_ROUTE_EVAL_METRICS": os.getenv("CH_ROUTE_EVAL_METRICS", "postgres"),
-    "CH_ROUTE_ERROR_ANALYSIS": os.getenv("CH_ROUTE_ERROR_ANALYSIS", "postgres"),
-    "CH_ROUTE_SPAN_LIST": os.getenv("CH_ROUTE_SPAN_LIST", "postgres"),
-    "CH_ROUTE_TRACE_OF_SESSION_LIST": os.getenv(
-        "CH_ROUTE_TRACE_OF_SESSION_LIST", "postgres"
-    ),
-    "CH_ROUTE_SPAN_GRAPH": os.getenv("CH_ROUTE_SPAN_GRAPH", "postgres"),
-    "CH_ROUTE_VOICE_CALL_LIST": os.getenv("CH_ROUTE_VOICE_CALL_LIST", "postgres"),
-    "CH_ROUTE_SESSION_ANALYTICS": os.getenv("CH_ROUTE_SESSION_ANALYTICS", "postgres"),
-    "CH_ROUTE_ANNOTATION_GRAPH": os.getenv("CH_ROUTE_ANNOTATION_GRAPH", "postgres"),
-    "CH_ROUTE_TRACE_DETAIL": os.getenv("CH_ROUTE_TRACE_DETAIL", "postgres"),
-    "CH_ROUTE_MONITOR_METRICS": os.getenv("CH_ROUTE_MONITOR_METRICS", "postgres"),
-    "CH_ROUTE_ANNOTATION_DETAIL": os.getenv("CH_ROUTE_ANNOTATION_DETAIL", "postgres"),
-    "CH_ROUTE_VOICE_CALL_DETAIL": os.getenv("CH_ROUTE_VOICE_CALL_DETAIL", "postgres"),
-    # Shadow mode: run both PG+CH, compare results, return PG
-    "CH_SHADOW_MODE": os.getenv("CH_SHADOW_MODE", "false").lower()
-    in ("true", "1", "yes"),
 }
 
 # Password validation
@@ -434,6 +477,9 @@ BILLING_CONFIG_PATH = os.environ.get(
 
 # EE license key (self-hosted only, JWT RS256)
 EE_LICENSE_KEY = os.environ.get("EE_LICENSE_KEY", "")
+EE_LICENSE_PRIVATE_KEY = os.environ.get("EE_LICENSE_PRIVATE_KEY", "").replace(
+    "\\n", "\n"
+)
 
 # Cloud API key for managed AI features (self-hosted → cloud Agentcc gateway)
 FUTUREAGI_CLOUD_API_KEY = os.environ.get("FUTUREAGI_CLOUD_API_KEY", "")
@@ -495,6 +541,10 @@ AIRBYTE_HOST = os.getenv("AIRBYTE_HOST")
 AIRBYTE_PORT = os.getenv("AIRBYTE_PORT")
 AIRBYTE_API_URL = f"http://{AIRBYTE_HOST}:{AIRBYTE_PORT}/api/v1"
 SLACK_WEBHOOK_CHANNEL = os.getenv("SLACK_WEBHOOK_CHANNEL", "")
+DEPLOYMENT_TELEMETRY_SLACK_WEBHOOK = os.getenv(
+    "DEPLOYMENT_TELEMETRY_SLACK_WEBHOOK",
+    SLACK_WEBHOOK_CHANNEL,
+)
 ERROR_LOGS_WEBHOOK = os.getenv("ERROR_LOGS_WEBHOOK", "")
 
 AIRBYTE_HEADERS = {
@@ -600,7 +650,7 @@ _ssl = "http://" if _is_local else "https://"
 ssl = _ssl  # exported — used by accounts.utils, accounts.views.workspace_management
 
 BASE_URL = os.getenv(
-    "BASE_URL", "http://localhost:8000" if _is_local else f"https://api.futureagi.com"
+    "BASE_URL", "http://localhost:8000" if _is_local else "https://api.futureagi.com"
 )
 WEBSOCKET_ENDPOINT = os.getenv("WEBSOCKET_ENDPOINT", f"{BASE_URL}/call-websocket/")
 MINIO_URL = os.getenv(
@@ -691,17 +741,25 @@ CHANNEL_LAYERS = {
 }
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-CACHES = {
-    "default": {
-        "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": os.getenv("REDIS_CACHE_URL", f"{REDIS_URL}"),
-        "OPTIONS": {
-            "CLIENT_CLASS": "django_redis.client.DefaultClient",
-        },
-        "KEY_PREFIX": "futureagi",
-        "TIMEOUT": 600,  # Default timeout in seconds (10 minutes)
+if os.getenv("DJANGO_CACHE_BACKEND") == "locmem":
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "futureagi-local-cache",
+        }
     }
-}
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": os.getenv("REDIS_CACHE_URL", f"{REDIS_URL}"),
+            "OPTIONS": {
+                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            },
+            "KEY_PREFIX": "futureagi",
+            "TIMEOUT": 600,  # Default timeout in seconds (10 minutes)
+        }
+    }
 
 # Authentication Security Settings
 MAX_LOGIN_ATTEMPTS = 10  # Maximum failed login attempts before account lockout
@@ -737,3 +795,53 @@ WEBAUTHN_ORIGIN = os.getenv("WEBAUTHN_ORIGIN", "http://localhost:3031")
 # 2FA challenge token TTLs (seconds)
 TWO_FACTOR_CHALLENGE_TTL = 300  # 5 minutes
 WEBAUTHN_CHALLENGE_TTL = 120  # 2 minutes
+
+# ─── ClickHouse 25.3 (v2) span store ────────────────────────────────────────
+# The new spans cluster (typed Maps + typed JSON; PLAN_V2_NO_CDC). Falls back
+# to the legacy CLICKHOUSE dict above for connection details if not set
+# explicitly — see tracer/services/clickhouse/v2/__init__.py:get_v2_config().
+CLICKHOUSE_V2 = {
+    "CH25_HOST":      os.getenv("CH25_HOST"),
+    "CH25_HTTP_PORT": os.getenv("CH25_HTTP_PORT", "8123"),
+    "CH25_TCP_PORT":  os.getenv("CH25_TCP_PORT", "9000"),
+    "CH25_USER":      os.getenv("CH25_USER", "default"),
+    "CH25_PASSWORD":  os.getenv("CH25_PASSWORD", ""),
+    "CH25_DATABASE":  os.getenv("CH25_DATABASE", "default"),
+    # ─── Per-query-type routing for the shadow-mode rollout ──────────────────
+    # Comma-separated query type names. See tracer/services/clickhouse/v2/shadow.py
+    # for RoutingMode definitions. Anything not listed defaults to V1_ONLY.
+    "QUERY_TYPES_V2_PRIMARY": os.getenv("CH25_QUERY_TYPES_V2_PRIMARY", ""),
+    "QUERY_TYPES_V2_ONLY":    os.getenv("CH25_QUERY_TYPES_V2_ONLY", ""),
+    "QUERY_TYPES_SHADOW":     os.getenv("CH25_QUERY_TYPES_SHADOW", ""),
+    "QUERY_TYPES_DISABLED":   os.getenv("CH25_QUERY_TYPES_DISABLED", ""),
+}
+
+# Fail-closed: rollup routing requires both flag=on and window >= coverage date.
+# Set COVERED_SINCE (ISO-8601) after running rebuild_dashboard_attr_rollup.
+DASHBOARD_ATTR_ROLLUP_ENABLED = (
+    os.getenv("DASHBOARD_ATTR_ROLLUP_ENABLED", "false").lower() == "true"
+)
+_dashboard_attr_rollup_covered_since = os.getenv("DASHBOARD_ATTR_ROLLUP_COVERED_SINCE")
+DASHBOARD_ATTR_ROLLUP_COVERED_SINCE = (
+    datetime.fromisoformat(_dashboard_attr_rollup_covered_since)
+    if _dashboard_attr_rollup_covered_since
+    else None
+)
+
+# Eval-logger table read by the trace/voice/user eval-config discovery queries.
+# The CH25 spans cutover intentionally kept the legacy peerdb CDC table
+# `tracer_eval_logger` (`_peerdb_is_deleted`/`deleted` columns); the v2 table
+# `tracer_eval_logger_v2` (`is_deleted`) is its prepared replacement. Flip this
+# per-deployment (default = legacy so the peerdb-backed stacks are unaffected;
+# CH-direct stacks set it to `tracer_eval_logger_v2`). See
+# tracer/services/clickhouse/v2/schema/011_eval_logger_v2.sql + docs/CH25_MIGRATION.md.
+CH25_EVAL_LOGGER_TABLE = os.getenv("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger")
+
+# Where the eval runner reads span data from.
+#   "postgres"   — current behavior; reads from tracer_observation_span (Django ORM)
+#   "clickhouse" — reads span data from CH 25.3 via the hybrid loader
+#                  (tracer/services/clickhouse/v2/eval_loader.py). Django FK
+#                  navigation (project, trace, end_user, …) still hits PG.
+# Default is "postgres" so cutover is opt-in. Flip to "clickhouse" only after
+# the backfill + validator pass and a soak period.
+EVAL_SPAN_READ_SOURCE = os.getenv("EVAL_SPAN_READ_SOURCE", "postgres").lower()

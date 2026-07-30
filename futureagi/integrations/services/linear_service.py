@@ -9,7 +9,7 @@ Endpoint: https://api.linear.app/graphql
 """
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import requests
 
@@ -58,7 +58,7 @@ class LinearService(BaseIntegrationService):
         self,
         host_url: str,
         credentials: dict,
-        ca_certificate: Optional[str] = None,
+        ca_certificate: str | None = None,
     ) -> dict:
         api_key = credentials.get("api_key", "")
         if not api_key:
@@ -189,6 +189,41 @@ class LinearService(BaseIntegrationService):
             "url": issue.get("url"),
             "title": issue.get("title"),
         }
+
+    def create_comment(self, credentials: dict, issue_ref: str, body: str) -> dict:
+        """Post a markdown comment on an issue.
+
+        ``issue_ref`` may be the issue UUID or the human identifier
+        (e.g. ``TH-123``) — the issue query resolves either, and
+        commentCreate requires the UUID.
+        """
+        api_key = credentials.get("api_key", "")
+        data = _gql(
+            api_key,
+            "query Issue($id: String!) { issue(id: $id) { id } }",
+            {"id": issue_ref},
+        )
+        issue_uuid = (data.get("issue") or {}).get("id")
+        if not issue_uuid:
+            raise ValueError(f"Linear issue not found: {issue_ref}")
+
+        data = _gql(
+            api_key,
+            """
+            mutation CreateComment($issueId: String!, $body: String!) {
+                commentCreate(input: { issueId: $issueId, body: $body }) {
+                    success
+                    comment { id url }
+                }
+            }
+            """,
+            {"issueId": issue_uuid, "body": body},
+        )
+        result = data.get("commentCreate", {})
+        if not result.get("success"):
+            raise ValueError("Linear commentCreate failed")
+        comment = result.get("comment", {})
+        return {"id": comment.get("id"), "url": comment.get("url")}
 
 
 # Self-register on module import

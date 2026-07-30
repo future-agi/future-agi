@@ -50,7 +50,7 @@ const SheetTableView = forwardRef((props, ref) => {
           page_number: p,
         });
 
-        const rows = data?.result?.tableData ?? [];
+        const rows = data?.result?.table_data ?? [];
 
         const transaction = {
           update: rows,
@@ -61,7 +61,7 @@ const SheetTableView = forwardRef((props, ref) => {
         }
         setStatus({
           status: data?.result?.status,
-          status_count: data?.result?.statusCount,
+          status_count: data?.result?.status_count,
         });
       } catch (e) {
         logger.error("Failed to refresh rows", e);
@@ -161,27 +161,21 @@ const SheetTableView = forwardRef((props, ref) => {
             sort: sort,
           });
 
-          // setRowDataForRefresh(data?.result?.tableData)
-
-          const lastUpdated =
-            data?.result?.last_updated ?? data?.result?.lastUpdated;
+          const lastUpdated = data?.result?.last_updated;
           if (lastUpdated) {
             setLastUpdatedDate(lastUpdated);
           }
 
-          const totalRows =
-            data?.result?.total_rows ?? data?.result?.totalRows ?? 0;
+          const totalRows = data?.result?.total_rows ?? 0;
           setTotalRows(totalRows);
 
           if (data?.result?.status) {
             setStatus({
               status: data?.result?.status,
-              status_count:
-                data?.result?.status_count ?? data?.result?.statusCount,
+              status_count: data?.result?.status_count,
             });
           }
-          const rows =
-            data?.result?.table_data ?? data?.result?.tableData ?? [];
+          const rows = data?.result?.table_data ?? [];
 
           params.success({
             rowData: rows,

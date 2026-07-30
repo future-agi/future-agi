@@ -17,7 +17,7 @@ The result sets are merged in Python, with raw_log processing delegated to
 the existing ``ObservabilityService.process_raw_logs()``.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
@@ -63,10 +63,10 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         project_id: str,
         page_number: int = 0,
         page_size: int = 10,
-        filters: Optional[List[Dict]] = None,
-        eval_config_ids: Optional[List[str]] = None,
+        filters: list[dict] | None = None,
+        eval_config_ids: list[str] | None = None,
         remove_simulation_calls: bool = False,
-        annotation_label_ids: Optional[List[str]] = None,
+        annotation_label_ids: list[str] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id, **kwargs)
@@ -81,7 +81,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
     # Phase 1: Paginated root conversation spans
     # ------------------------------------------------------------------
 
-    def build(self) -> Tuple[str, Dict[str, Any]]:
+    def build(self) -> tuple[str, dict[str, Any]]:
         """Build the Phase-1 query for paginated voice call data."""
         start_date, end_date = self.parse_time_range(self.filters)
         self.params["start_date"] = start_date
@@ -90,6 +90,8 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         fb = ClickHouseFilterBuilder(
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
         )
         extra_where, extra_params = fb.translate(self.filters)
         self.params.update(extra_params)
@@ -131,7 +133,40 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         """
         return query, self.params
 
-    def build_content_query(self, span_ids: List[str]) -> Tuple[str, Dict[str, Any]]:
+    def build_id_query(self) -> tuple[str, dict[str, Any]]:
+        """Filtered conversation-root span ids only — same predicate/window as
+        build(), no pagination/order. Lets the eval resolver select the same
+        voice calls this list endpoint returns."""
+        start_date, end_date = self.parse_time_range(self.filters)
+        self.params["start_date"] = start_date
+        self.params["end_date"] = end_date
+
+        fb = ClickHouseFilterBuilder(
+            table=self.TABLE,
+            annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+        )
+        extra_where, extra_params = fb.translate(self.filters)
+        self.params.update(extra_params)
+        filter_fragment = f"AND {extra_where}" if extra_where else ""
+
+        query = f"""
+        SELECT id
+        FROM {self.TABLE}
+        {self.project_where()}
+          AND (parent_span_id IS NULL OR parent_span_id = '')
+          AND observation_type = 'conversation'
+          AND created_at >= %(start_date)s - INTERVAL 1 DAY
+          AND start_time >= %(start_date)s
+          AND start_time < %(end_date)s
+          {filter_fragment}
+        ORDER BY start_time DESC
+        LIMIT 1 BY trace_id
+        """
+        return query, self.params
+
+    def build_content_query(self, span_ids: list[str]) -> tuple[str, dict[str, Any]]:
         """Fetch heavy attribute columns for a page of voice call span IDs."""
         if not span_ids:
             return "", {}
@@ -140,15 +175,17 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         SELECT id AS span_id, span_attributes_raw, span_attr_str, span_attr_num, metadata_map
         FROM {self.TABLE}
         PREWHERE id IN %(content_span_ids)s
-        WHERE project_id = %(project_id)s AND _peerdb_is_deleted = 0
+        WHERE project_id = %(project_id)s AND is_deleted = 0
         """
         return query, params
 
-    def build_count_query(self) -> Tuple[str, Dict[str, Any]]:
+    def build_count_query(self) -> tuple[str, dict[str, Any]]:
         """Build a query to count total matching voice calls."""
         fb = ClickHouseFilterBuilder(
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
         )
         extra_where, extra_params = fb.translate(self.filters)
         params = dict(self.params)
@@ -206,24 +243,30 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
 
     def build_eval_query(
         self,
-        trace_ids: List[str],
-    ) -> Tuple[str, Dict[str, Any]]:
+        trace_ids: list[str],
+    ) -> tuple[str, dict[str, Any]]:
         """Build eval-scores query for a page of trace IDs."""
         if not trace_ids or not self.eval_config_ids:
             return "", {}
 
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "trace_ids": tuple(trace_ids),
             "eval_config_ids": tuple(self.eval_config_ids),
         }
 
-        # Include errored rows but compute aggregates only over successful
-        # rows (error = 0). ``success_count`` / ``error_count`` let the
-        # pivot surface an explicit error state on the UI when every eval
-        # row for a (trace, config) pair errored.
+        # Aggregates are computed only over *completed*, non-errored rows so a
+        # non-terminal (pending/running) or skipped row never skews a score nor
+        # masquerades as a real value. The per-status counts let the shared
+        # pivot pick one cell state by the precedence
+        # completed > errored > skipped > running > pending; ``success_count``
+        # excludes non-terminal/skipped/errored rows via ``status NOT IN (...)``
+        # (a bare ``error = 0`` guard also matches pending/running/skipped
+        # rows). NOT-IN keeps legacy rows whose mirrored ``status`` is
+        # empty/NULL counted as completed.
         # Column order must match what ``pivot_eval_results`` expects:
         # trace_id, eval_config_id, avg_score, pass_rate, success_count,
-        # error_count, eval_count, str_lists.
+        # error_count, eval_count, str_lists — new per-status columns are
+        # appended after ``str_lists`` so the pivot's positional fallbacks hold.
         query = f"""
         SELECT
             trace_id,
@@ -232,23 +275,27 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             -- which json.dumps(allow_nan=False) rejects. NULL serializes as null.
             ifNotFinite(avgIf(
                 output_float,
-                error = 0 AND ifNull(output_str, '') != 'ERROR'
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
             ), NULL) AS avg_score,
             ifNotFinite(avgIf(
                 CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END,
-                error = 0 AND ifNull(output_str, '') != 'ERROR'
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
             ), NULL) AS pass_rate,
             countIf(
-                error = 0 AND ifNull(output_str, '') != 'ERROR'
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
             ) AS success_count,
             countIf(
-                error = 1 OR ifNull(output_str, '') = 'ERROR'
+                error = 1 OR ifNull(output_str, '') = 'ERROR' OR status = 'errored'
             ) AS error_count,
             count() AS eval_count,
             groupArrayIf(
                 output_str_list,
-                error = 0 AND ifNull(output_str, '') != 'ERROR'
-            ) AS str_lists
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS str_lists,
+            countIf(status = 'skipped') AS skipped_count,
+            countIf(status = 'running') AS running_count,
+            countIf(status = 'pending') AS pending_count,
+            anyIf(skipped_reason, status = 'skipped') AS skipped_reason
         FROM {self.EVAL_TABLE} FINAL
         WHERE _peerdb_is_deleted = 0
           AND (deleted = 0 OR deleted IS NULL)
@@ -264,9 +311,9 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
 
     def build_annotation_query(
         self,
-        trace_ids: List[str],
-        annotation_label_ids: Optional[List[str]] = None,
-    ) -> Tuple[str, Dict[str, Any]]:
+        trace_ids: list[str],
+        annotation_label_ids: list[str] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
         """Build annotation query for a page of trace IDs.
 
         Returns per-annotator rows so the view can build the structured
@@ -276,7 +323,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         if not trace_ids or not annotation_label_ids:
             return "", {}
 
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "trace_ids": tuple(trace_ids),
             "label_ids": tuple(annotation_label_ids),
         }
@@ -314,13 +361,13 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
 
     def build_child_spans_query(
         self,
-        trace_ids: List[str],
-    ) -> Tuple[str, Dict[str, Any]]:
+        trace_ids: list[str],
+    ) -> tuple[str, dict[str, Any]]:
         """Build query to fetch child spans for voice call traces."""
         if not trace_ids:
             return "", {}
 
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "project_id": self.project_id,
             "trace_ids": tuple(trace_ids),
         }
@@ -353,7 +400,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             tags
         FROM {self.TABLE}
         WHERE project_id = %(project_id)s
-          AND _peerdb_is_deleted = 0
+          AND is_deleted = 0
           AND trace_id IN %(trace_ids)s
           AND parent_span_id IS NOT NULL
         ORDER BY start_time ASC

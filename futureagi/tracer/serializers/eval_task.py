@@ -9,21 +9,81 @@ from tracer.models.eval_task import (
     RunType,
 )
 from tracer.models.project import Project
+from tracer.serializers.filters import (
+    SortParamListQueryParamField,
+    StrictInputSerializer,
+    eval_task_filters_field,
+    filter_list_query_param_field,
+)
 
 
 class PaginationQuerySerializer(serializers.Serializer):
-    """Shared query-params validator for paginated eval-log endpoints.
+    """Shared query-params validator for eval-log endpoints."""
 
-    DRF's ``PageNumberPagination`` is 1-indexed; the FE state is 0-indexed,
-    so consumers send ``page+1``. ``page_size`` is exposed under the
-    paginator's ``page_size_query_param='limit'`` alias too — this
-    serializer accepts either spelling to keep older FE callers working.
-    """
+    page = serializers.IntegerField(required=False, default=0, min_value=0)
+    page_size = serializers.IntegerField(required=False, default=25, min_value=1)
 
-    page = serializers.IntegerField(required=False, default=1, min_value=1)
+    def validate_page_size(self, value):
+        return min(value, 100)
+
+
+class EvalTaskListQuerySerializer(StrictInputSerializer):
+    project_id = serializers.UUIDField(required=False)
+    name = serializers.CharField(required=False, allow_blank=True)
+    filters = filter_list_query_param_field(required=False, default=list)
+    sort_params = SortParamListQueryParamField(required=False, default=list)
+    page_number = serializers.IntegerField(required=False, default=0, min_value=0)
     page_size = serializers.IntegerField(
-        required=False, default=25, min_value=1, max_value=100
+        required=False, default=30, min_value=1, max_value=500
     )
+
+
+class EvalTaskListWithProjectNameQuerySerializer(EvalTaskListQuerySerializer):
+    page_size = serializers.IntegerField(
+        required=False, default=10, min_value=1, max_value=500
+    )
+
+
+class EvalTaskIdQuerySerializer(StrictInputSerializer):
+    eval_task_id = serializers.UUIDField(required=True)
+
+
+class EvalTaskDeleteRequestSerializer(StrictInputSerializer):
+    eval_task_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=True,
+    )
+
+
+class EvalTaskCreateResultSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+
+
+class EvalTaskCreateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = EvalTaskCreateResultSerializer()
+
+
+class EvalTaskMessageResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+
+
+class EvalTaskMessageResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = EvalTaskMessageResultSerializer()
+
+
+class EvalTaskUpdateResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    edit_type = serializers.ChoiceField(
+        choices=[("edit_rerun", "edit_rerun"), ("fresh_run", "fresh_run")]
+    )
+    task_id = serializers.UUIDField()
+
+
+class EvalTaskUpdateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = EvalTaskUpdateResultSerializer()
 
 
 class EvalTaskSerializer(serializers.ModelSerializer):
@@ -44,13 +104,12 @@ class EvalTaskSerializer(serializers.ModelSerializer):
         required=False,
         default=RowType.SPANS,
     )
-    # Progress block so the UI can render an "X of Y complete" bar
-    # while a historical task is draining. Not persisted — computed
-    # on read from ``EvalTaskLogger.offset`` (dispatched) and the
-    # live ``EvalLogger`` row count (completed). ``None`` for
-    # continuous tasks, which run indefinitely and don't have a
-    # meaningful "expected" total.
+    # Progress block so the UI can render an "X of Y complete" bar while a
+    # historical task is draining. Not persisted — computed on read from the
+    # task's entry status counts. ``None`` for continuous tasks, which run
+    # indefinitely and don't have a meaningful "expected" total.
     progress = serializers.SerializerMethodField()
+    filters = eval_task_filters_field(required=False, allow_null=True, default=dict)
 
     class Meta:
         model = EvalTask
@@ -78,20 +137,21 @@ class EvalTaskSerializer(serializers.ModelSerializer):
     def get_progress(self, obj):
         if obj.run_type != RunType.HISTORICAL:
             return None
-        # Import locally to avoid a circular dependency: ``eval_tasks``
-        # imports ``evaluate_observation_span_observe`` from
-        # ``tracer.utils.eval``, which in turn imports serializers
-        # transitively through the view layer.
-        from tracer.utils.eval_tasks import compute_drain_state
+        from tracer.selectors.eval_tasks.progress import count_by_status
 
-        state = compute_drain_state(obj)
-        dispatched = state["dispatched"]
-        completed = state["completed"]
-        percent = round(100.0 * completed / dispatched, 2) if dispatched else None
+        counts = count_by_status(obj)
+        done = (
+            counts.get("completed", 0)
+            + counts.get("errored", 0)
+            + counts.get("skipped", 0)
+        )
+        remaining = counts.get("pending", 0) + counts.get("running", 0)
+        total = done + remaining
+        percent = round(100.0 * done / total, 2) if total else None
         return {
-            "dispatched": dispatched,
-            "completed": completed,
-            "missing": state["missing"],
+            "dispatched": total,
+            "completed": done,
+            "missing": remaining,
             "percent": percent,
         }
 
@@ -119,14 +179,14 @@ class EvalTaskLoggerSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = EvalTaskLogger
-        fields = ["id", "eval_task", "offset", "status", "errors", "spanids_processed"]
+        fields = ["id", "eval_task", "status", "errors"]
 
 
 class EditEvalTaskSerializer(serializers.Serializer):
     name = serializers.CharField(
         required=False, allow_blank=False, min_length=1, max_length=255
     )
-    filters = serializers.JSONField(required=False, allow_null=True)
+    filters = eval_task_filters_field(required=False, allow_null=True)
     sampling_rate = serializers.FloatField(
         required=False, allow_null=True, min_value=1.0, max_value=100.0
     )
@@ -151,6 +211,8 @@ class EditEvalTaskSerializer(serializers.Serializer):
         )
 
     def validate_evals(self, value):
+        if not value:
+            raise serializers.ValidationError("At least one eval config is required.")
         try:
             eval_objects = list(
                 CustomEvalConfig.objects.filter(id__in=value, deleted=False)
@@ -171,3 +233,7 @@ class EditEvalTaskSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 f"Invalid eval config IDs: {str(e)}"
             ) from e
+
+
+class EvalTaskUpdateRequestSerializer(EditEvalTaskSerializer):
+    eval_task_id = serializers.UUIDField(required=True)

@@ -66,12 +66,12 @@ const UploadFileModal = ({ open, onClose, refreshGrid }) => {
       });
       queryClient.invalidateQueries({ queryKey: ["dataset-detail"] });
       trackEvent(Events.datasetFromJSONCSVSuccessful, {
-        [PropertyName.datasetId]: data?.data?.result?.datasetId,
+        [PropertyName.datasetId]: data?.data?.result?.dataset_id,
       });
       onCloseClick(null, true);
       reset();
       refreshGrid();
-      navigate(`/dashboard/develop/${data?.data?.result?.datasetId}?tab=data`);
+      navigate(`/dashboard/develop/${data?.data?.result?.dataset_id}?tab=data`);
     },
     onError: (error) => {
       enqueueSnackbar(
@@ -241,7 +241,7 @@ const UploadFileModal = ({ open, onClose, refreshGrid }) => {
                 }}
                 onDrop={handleFileChange}
                 heading="Choose a file or drag & drop it here"
-                description="Supports JSONL, JSON, and CSV file format up to 10 MB"
+                description="Supports JSONL, JSON, and CSV file format up to 25 MB"
                 actionButton={
                   <Button
                     variant="outlined"

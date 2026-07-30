@@ -1,10 +1,10 @@
-import LinkifiedTypography from './LinkifiedTypography';
+import LinkifiedTypography from "./LinkifiedTypography";
 
 const meta = {
   component: LinkifiedTypography,
   title: "Components/LinkifiedTypography", // Add this line to define the category in Storybook
   argTypes: {
-    text: { control: "text" },  // Allows changing the `text` prop directly from the Storybook UI
+    text: { control: "text" }, // Allows changing the `text` prop directly from the Storybook UI
   },
 };
 

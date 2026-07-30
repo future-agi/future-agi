@@ -5,20 +5,34 @@ Tests for Agentcc gateway, API key, request log, and webhook endpoints.
 Includes Phase 5.2 tests for advanced filters, search, sessions, and export.
 """
 
+import json
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import pytest
 from django.utils import timezone
 from rest_framework import status
+from rest_framework.test import APIClient
 
-from agentcc.models import AgentccAPIKey, AgentccRequestLog
+from accounts.models.workspace import Workspace
+from agentcc.models import (
+    AgentccAPIKey,
+    AgentccGuardrailPolicy,
+    AgentccOrgConfig,
+    AgentccProject,
+    AgentccProviderCredential,
+    AgentccRequestLog,
+)
+from integrations.services.credentials import CredentialManager
 
 
 @pytest.fixture
 def gateway_id():
     """Return the virtual gateway ID used by the ViewSet."""
     return "default"
+
+
+AGENTCC_TEST_ADMIN_TOKEN = "agentcc-admin-secret"
 
 
 @pytest.mark.integration
@@ -117,6 +131,15 @@ class TestAgentccGatewayAPI:
         assert data["result"]["provider_count"] == 0
         assert data["result"]["model_count"] == 0
 
+    def test_health_check_rejects_body_fields(self, auth_client, gateway_id):
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/health_check/",
+            {"unexpected": True},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["unexpected"] == ["Unknown field."]
+
     @patch("agentcc.views.gateway.get_gateway_client")
     def test_health_check_unreachable(self, mock_get_client, auth_client, gateway_id):
         from agentcc.services.gateway_client import GatewayClientError
@@ -128,7 +151,9 @@ class TestAgentccGatewayAPI:
         response = auth_client.post(f"/agentcc/gateways/{gateway_id}/health_check/")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         data = response.json()
-        assert data["result"]["status"] == "unreachable"
+        assert data["status"] is False
+        assert data["details"]["status"] == ["unreachable"]
+        assert "Connection refused" in data["detail"]
 
     @patch("agentcc.views.gateway.get_gateway_client")
     def test_get_config(self, mock_get_client, auth_client, gateway_id):
@@ -154,6 +179,302 @@ class TestAgentccGatewayAPI:
 
         response = auth_client.get(f"/agentcc/gateways/{gateway_id}/providers/")
         assert response.status_code == status.HTTP_200_OK
+
+    @patch("agentcc.views.gateway.push_org_config", return_value=False)
+    def test_gateway_provider_action_lifecycle(
+        self, mock_push_config, auth_client, gateway_id, organization
+    ):
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/update-provider/",
+            {
+                "name": "api_gateway_action_provider",
+                "config": {
+                    "api_key": "sk-gateway-action-secret",
+                    "display_name": "Gateway Action Provider",
+                    "api_format": "openai",
+                    "models": ["gpt-4o-mini"],
+                    "default_timeout": 17,
+                    "max_concurrent": 3,
+                    "conn_pool_size": 5,
+                    "base_url": "https://api.example.com/v1",
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        result = response.json()["result"]
+        assert result["provider"] == "api_gateway_action_provider"
+        assert result["action"] == "updated"
+        assert result["gateway_synced"] is False
+
+        credential = AgentccProviderCredential.no_workspace_objects.get(
+            organization=organization,
+            provider_name="api_gateway_action_provider",
+            deleted=False,
+        )
+        assert credential.display_name == "Gateway Action Provider"
+        assert credential.models_list == ["gpt-4o-mini"]
+        assert credential.default_timeout_seconds == 17
+        assert CredentialManager.decrypt(credential.encrypted_credentials) == {
+            "api_key": "sk-gateway-action-secret"
+        }
+
+        remove = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/remove-provider/",
+            {"name": "api_gateway_action_provider"},
+            format="json",
+        )
+
+        assert remove.status_code == status.HTTP_200_OK, remove.json()
+        removed = remove.json()["result"]
+        assert removed["provider"] == "api_gateway_action_provider"
+        assert removed["action"] == "removed"
+        credential.refresh_from_db()
+        assert credential.deleted is True
+        assert credential.deleted_at is not None
+        assert mock_push_config.call_count == 2
+
+    @patch("agentcc.views.gateway.push_org_config", return_value=False)
+    def test_gateway_guardrail_actions_create_versioned_config(
+        self, mock_push_config, auth_client, gateway_id, organization
+    ):
+        before_count = AgentccOrgConfig.no_workspace_objects.filter(
+            organization=organization,
+            deleted=False,
+        ).count()
+
+        update = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/update-guardrail/",
+            {
+                "name": "api_gateway_action_guardrail",
+                "config": {
+                    "enabled": True,
+                    "action": "flag",
+                    "stage": "pre",
+                    "threshold": 0.42,
+                    "mode": "sync",
+                    "config": {"source": "api-test"},
+                },
+            },
+            format="json",
+        )
+
+        assert update.status_code == status.HTTP_200_OK, update.json()
+        update_result = update.json()["result"]
+        assert update_result["guardrail"] == "api_gateway_action_guardrail"
+        assert update_result["action"] == "updated"
+        assert update_result["gateway_synced"] is False
+
+        toggle = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/toggle-guardrail/",
+            {"name": "api_gateway_action_guardrail", "enabled": False},
+            format="json",
+        )
+
+        assert toggle.status_code == status.HTTP_200_OK, toggle.json()
+        toggle_result = toggle.json()["result"]
+        assert toggle_result["guardrail"] == "api_gateway_action_guardrail"
+        assert toggle_result["enabled"] is False
+
+        active_config = AgentccOrgConfig.no_workspace_objects.get(
+            organization=organization,
+            is_active=True,
+            deleted=False,
+        )
+        rules = active_config.guardrails["rules"]
+        rule = next(
+            item for item in rules if item["name"] == "api_gateway_action_guardrail"
+        )
+        assert rule["enabled"] is False
+        assert rule["threshold"] == 0.42
+        assert (
+            AgentccOrgConfig.no_workspace_objects.filter(
+                organization=organization,
+                deleted=False,
+            ).count()
+            == before_count + 2
+        )
+        assert mock_push_config.call_count == 2
+
+    @patch("agentcc.views.gateway.get_gateway_client")
+    def test_gateway_batch_and_mcp_guard_paths_do_not_dispatch_unowned_work(
+        self, mock_get_client, auth_client, gateway_id
+    ):
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        empty_submit = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/submit-batch/",
+            {"requests": []},
+            format="json",
+        )
+        assert empty_submit.status_code == status.HTTP_400_BAD_REQUEST
+        mock_client.submit_batch.assert_not_called()
+
+        missing_batch = auth_client.get(f"/agentcc/gateways/{gateway_id}/get-batch/")
+        assert missing_batch.status_code == status.HTTP_400_BAD_REQUEST
+        mock_client.get_batch.assert_not_called()
+
+        unknown_batch = auth_client.get(
+            f"/agentcc/gateways/{gateway_id}/get-batch/?batch_id=unknown-batch"
+        )
+        assert unknown_batch.status_code == status.HTTP_404_NOT_FOUND
+        mock_client.get_batch.assert_not_called()
+
+        unknown_cancel = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/cancel-batch/",
+            {"batch_id": "unknown-batch"},
+            format="json",
+        )
+        assert unknown_cancel.status_code == status.HTTP_404_NOT_FOUND
+        mock_client.cancel_batch.assert_not_called()
+
+        no_mcp = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/test-mcp-tool/",
+            {"name": "echo", "arguments": {"message": "hello"}},
+            format="json",
+        )
+        assert no_mcp.status_code == status.HTTP_400_BAD_REQUEST
+        mock_client.mcp_test_tool.assert_not_called()
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestAgentccGuardrailPolicyAPI:
+    """Tests for /agentcc/guardrail-policies/ generated endpoints."""
+
+    @patch("agentcc.views.guardrail_policy.sync_guardrail_policies", return_value=False)
+    def test_guardrail_policy_put_preserves_encrypted_check_secret(
+        self, mock_sync, auth_client, organization
+    ):
+        raw_secret = "sk-guardrail-policy-put-secret"
+        check_name = "contract_guardrail_check"
+        name = f"contract_guardrail_put_{str(organization.id)[:8]}"
+
+        created = auth_client.post(
+            "/agentcc/guardrail-policies/",
+            {
+                "name": name,
+                "description": "Create through generated policy contract test.",
+                "scope": AgentccGuardrailPolicy.SCOPE_GLOBAL,
+                "mode": AgentccGuardrailPolicy.MODE_MONITOR,
+                "is_active": False,
+                "priority": 501,
+                "checks": [
+                    {
+                        "name": check_name,
+                        "type": "regex",
+                        "enabled": True,
+                        "config": {
+                            "pattern": "contract-create",
+                            "api_key": raw_secret,
+                        },
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        assert created.status_code == status.HTTP_200_OK, created.json()
+        created_result = created.json()["result"]
+        assert raw_secret not in json.dumps(created_result)
+        assert created_result["checks"][0]["config"]["api_key"] == "__encrypted__"
+
+        policy = AgentccGuardrailPolicy.no_workspace_objects.get(
+            id=created_result["id"], organization=organization
+        )
+        assert policy.checks[0]["config"]["api_key"] == "__encrypted__"
+        assert CredentialManager.decrypt(policy.encrypted_check_configs) == {
+            check_name: {"api_key": raw_secret}
+        }
+
+        updated = auth_client.put(
+            f"/agentcc/guardrail-policies/{policy.id}/",
+            {
+                "name": name,
+                "description": "Full PUT update preserves encrypted secret.",
+                "scope": AgentccGuardrailPolicy.SCOPE_GLOBAL,
+                "mode": AgentccGuardrailPolicy.MODE_ENFORCE,
+                "is_active": True,
+                "priority": 502,
+                "applied_keys": [],
+                "applied_projects": [],
+                "checks": [
+                    {
+                        "name": check_name,
+                        "type": "regex",
+                        "enabled": True,
+                        "config": {
+                            "pattern": "contract-put",
+                            "api_key": "__encrypted__",
+                        },
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        assert updated.status_code == status.HTTP_200_OK, updated.json()
+        updated_result = updated.json()["result"]
+        assert updated_result["mode"] == AgentccGuardrailPolicy.MODE_ENFORCE
+        assert updated_result["priority"] == 502
+        assert raw_secret not in json.dumps(updated_result)
+        assert updated_result["checks"][0]["config"]["api_key"] == "__encrypted__"
+        assert updated_result["gateway_synced"] is False
+
+        policy.refresh_from_db()
+        assert policy.checks[0]["config"]["pattern"] == "contract-put"
+        assert CredentialManager.decrypt(policy.encrypted_check_configs) == {
+            check_name: {"api_key": raw_secret}
+        }
+        assert mock_sync.call_count == 2
+
+    @patch("agentcc.views.guardrail_policy.sync_guardrail_policies", return_value=False)
+    def test_guardrail_policy_apply_targets_scoped_api_keys(
+        self, mock_sync, auth_client, organization, workspace
+    ):
+        policy = AgentccGuardrailPolicy.no_workspace_objects.create(
+            organization=organization,
+            name=f"contract_guardrail_apply_{str(organization.id)[:8]}",
+            description="Apply route contract test.",
+            scope=AgentccGuardrailPolicy.SCOPE_GLOBAL,
+            mode=AgentccGuardrailPolicy.MODE_MONITOR,
+            is_active=True,
+            priority=503,
+            checks=[],
+        )
+        api_key = AgentccAPIKey.no_workspace_objects.create(
+            organization=organization,
+            workspace=workspace,
+            gateway_key_id=f"contract-guardrail-apply-{policy.id}",
+            key_prefix="pk-apply",
+            key_hash="hash",
+            name="contract guardrail apply key",
+            owner="api-test",
+            status=AgentccAPIKey.ACTIVE,
+            allowed_models=[],
+            allowed_providers=[],
+            metadata={},
+        )
+
+        response = auth_client.post(
+            f"/agentcc/guardrail-policies/{policy.id}/apply/",
+            {"key_ids": [str(api_key.id)]},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        result = response.json()["result"]
+        assert result["scope"] == AgentccGuardrailPolicy.SCOPE_KEY
+        assert result["applied_keys"] == [str(api_key.id)]
+        assert result["gateway_synced"] is False
+        assert "gateway_warning" in result
+
+        policy.refresh_from_db()
+        assert policy.scope == AgentccGuardrailPolicy.SCOPE_KEY
+        assert policy.applied_keys == [str(api_key.id)]
+        assert mock_sync.call_count == 1
 
 
 @pytest.mark.integration
@@ -224,6 +545,86 @@ class TestAgentccAPIKeyAPI:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    @patch("agentcc.views.api_key.auth_bridge")
+    def test_create_api_key_uses_active_workspace_project(
+        self,
+        mock_bridge,
+        auth_client,
+        organization,
+        workspace,
+        user,
+    ):
+        project = AgentccProject.no_workspace_objects.create(
+            name="api-key-active-project",
+            organization=organization,
+            workspace=workspace,
+        )
+        api_key = AgentccAPIKey(
+            gateway_key_id="gw-active-project",
+            key_prefix="pk-active",
+            name="project-key",
+            owner="",
+            status=AgentccAPIKey.ACTIVE,
+            allowed_models=[],
+            allowed_providers=[],
+            metadata={},
+            organization=organization,
+            workspace=None,
+            project=project,
+            user=user,
+        )
+        now = timezone.now()
+        api_key.created_at = now
+        api_key.updated_at = now
+        mock_bridge.provision_key.return_value = (api_key, "pk-active-full-key")
+
+        response = auth_client.post(
+            "/agentcc/api-keys/",
+            {
+                "name": "project-key",
+                "project_id": str(project.id),
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED, response.json()
+        mock_bridge.provision_key.assert_called_once()
+        assert mock_bridge.provision_key.call_args.kwargs["project"] == project
+
+    @patch("agentcc.views.api_key.auth_bridge")
+    def test_create_api_key_rejects_same_org_other_workspace_project(
+        self,
+        mock_bridge,
+        auth_client,
+        organization,
+        workspace,
+        user,
+    ):
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="AgentCC API key hidden workspace",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_project = AgentccProject.no_workspace_objects.create(
+            name="api-key-hidden-project",
+            organization=organization,
+            workspace=other_workspace,
+        )
+
+        response = auth_client.post(
+            "/agentcc/api-keys/",
+            {
+                "name": "hidden-project-key",
+                "project_id": str(hidden_project.id),
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND, response.json()
+        mock_bridge.provision_key.assert_not_called()
+
     def test_list_api_keys_filter_by_gateway(
         self, auth_client, gateway_id, organization, workspace
     ):
@@ -249,6 +650,164 @@ class TestAgentccAPIKeyAPI:
             mock_bridge.revoke_key.return_value = (key, False)
             response = auth_client.post(f"/agentcc/api-keys/{key.id}/revoke/")
         assert response.status_code == status.HTTP_200_OK
+
+    @patch("agentcc.views.api_key.auth_bridge")
+    def test_put_api_key_uses_gateway_update_bridge(
+        self, mock_bridge, auth_client, organization, workspace
+    ):
+        key = AgentccAPIKey.objects.create(
+            gateway_key_id="gw-put",
+            key_prefix="pk-put",
+            name="put-original",
+            owner="before",
+            organization=organization,
+            workspace=workspace,
+            allowed_models=["gpt-4o"],
+            metadata={"before": True},
+        )
+
+        def update_key(api_key, **kwargs):
+            for field, value in kwargs.items():
+                setattr(api_key, field, value)
+            api_key.save(
+                update_fields=[*kwargs.keys(), "updated_at"],
+            )
+            return api_key
+
+        mock_bridge.update_key.side_effect = update_key
+
+        response = auth_client.put(
+            f"/agentcc/api-keys/{key.id}/",
+            {
+                "name": "put-updated",
+                "owner": "after",
+                "allowed_models": ["gpt-4o-mini"],
+                "metadata": {"updated": True},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        mock_bridge.update_key.assert_called_once()
+        assert mock_bridge.update_key.call_args.args[0] == key
+        assert mock_bridge.update_key.call_args.kwargs == {
+            "name": "put-updated",
+            "owner": "after",
+            "allowed_models": ["gpt-4o-mini"],
+            "metadata": {"updated": True},
+        }
+        key.refresh_from_db()
+        assert key.name == "put-updated"
+        assert key.owner == "after"
+        assert key.allowed_models == ["gpt-4o-mini"]
+        assert key.metadata == {"updated": True}
+        assert key.status == AgentccAPIKey.ACTIVE
+
+        bad_response = auth_client.put(
+            f"/agentcc/api-keys/{key.id}/",
+            {"status": AgentccAPIKey.REVOKED},
+            format="json",
+        )
+        assert bad_response.status_code == status.HTTP_400_BAD_REQUEST
+        assert mock_bridge.update_key.call_count == 1
+        key.refresh_from_db()
+        assert key.status == AgentccAPIKey.ACTIVE
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestAgentccAPIKeyBulkAPI:
+    """Tests for the gateway startup /agentcc/api-keys/bulk/ endpoint."""
+
+    def _admin_client(self):
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {AGENTCC_TEST_ADMIN_TOKEN}")
+        return client
+
+    def test_bulk_api_keys_requires_admin_token(self, db):
+        client = APIClient()
+        with patch("agentcc.permissions.AGENTCC_ADMIN_TOKEN", AGENTCC_TEST_ADMIN_TOKEN):
+            assert client.get("/agentcc/api-keys/bulk/").status_code == (
+                status.HTTP_403_FORBIDDEN
+            )
+
+            client.credentials(HTTP_AUTHORIZATION="Bearer wrong-token")
+            assert client.get("/agentcc/api-keys/bulk/").status_code == (
+                status.HTTP_403_FORBIDDEN
+            )
+
+    def test_bulk_api_keys_returns_gateway_safe_metadata(
+        self,
+        organization,
+        workspace,
+    ):
+        active = AgentccAPIKey.no_workspace_objects.create(
+            gateway_key_id="gw-bulk-active",
+            key_prefix="pk-bulk",
+            key_hash="a" * 64,
+            name="bulk-active",
+            owner="platform",
+            organization=organization,
+            workspace=workspace,
+            status=AgentccAPIKey.ACTIVE,
+            allowed_models=["gpt-4o"],
+            allowed_providers=["openai"],
+            metadata={
+                "source": "api-test",
+                "enabled": True,
+                "limits": {"rpm": 10},
+                "tags": ["startup", "sync"],
+                "none": None,
+            },
+        )
+        no_hash = AgentccAPIKey.no_workspace_objects.create(
+            gateway_key_id="gw-bulk-no-hash",
+            name="bulk-no-hash",
+            organization=organization,
+            workspace=workspace,
+            status=AgentccAPIKey.ACTIVE,
+            key_hash="",
+        )
+        revoked = AgentccAPIKey.no_workspace_objects.create(
+            gateway_key_id="gw-bulk-revoked",
+            name="bulk-revoked",
+            organization=organization,
+            workspace=workspace,
+            status=AgentccAPIKey.REVOKED,
+            key_hash="b" * 64,
+        )
+        deleted = AgentccAPIKey.no_workspace_objects.create(
+            gateway_key_id="gw-bulk-deleted",
+            name="bulk-deleted",
+            organization=organization,
+            workspace=workspace,
+            status=AgentccAPIKey.ACTIVE,
+            key_hash="c" * 64,
+            deleted=True,
+        )
+
+        with patch("agentcc.permissions.AGENTCC_ADMIN_TOKEN", AGENTCC_TEST_ADMIN_TOKEN):
+            response = self._admin_client().get("/agentcc/api-keys/bulk/")
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        rows = response.json()["result"]
+        returned_ids = {row["id"] for row in rows}
+        assert active.gateway_key_id in returned_ids
+        assert no_hash.gateway_key_id not in returned_ids
+        assert revoked.gateway_key_id not in returned_ids
+        assert deleted.gateway_key_id not in returned_ids
+
+        row = next(row for row in rows if row["id"] == active.gateway_key_id)
+        assert row["key_hash"] == "a" * 64
+        assert row["models"] == ["gpt-4o"]
+        assert row["providers"] == ["openai"]
+        assert row["metadata"] == {
+            "source": "api-test",
+            "enabled": "true",
+            "limits": '{"rpm":10}',
+            "tags": '["startup","sync"]',
+            "org_id": str(organization.id),
+        }
 
 
 @pytest.mark.integration
@@ -398,6 +957,26 @@ class TestWebhookAPI:
             )
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["result"]["ingested"] == 0
+
+    def test_webhook_rejects_unknown_body_field(self, api_client):
+        response = api_client.post(
+            "/agentcc/webhook/logs/",
+            {"logs": [], "legacy_extra": True},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["legacy_extra"] == ["Unknown field."]
+
+    def test_shadow_webhook_rejects_unknown_body_field(self, api_client):
+        response = api_client.post(
+            "/agentcc/webhook/shadow-results/",
+            {"results": [], "legacy_extra": True},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["legacy_extra"] == ["Unknown field."]
 
     def test_webhook_with_secret(self, api_client, gateway_id):
         with patch("agentcc.views.webhook.AGENTCC_WEBHOOK_SECRET", "my-secret"):
@@ -581,6 +1160,15 @@ class TestRequestLogAdvancedFilters:
         data = response.json()
         assert data["count"] == 1
 
+    def test_filter_by_status_code_range(self, auth_client, sample_logs):
+        response = auth_client.get(
+            "/agentcc/request-logs/?min_status_code=400&max_status_code=499"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["count"] == 1
+        assert data["results"][0]["status_code"] == 429
+
     def test_ordering_by_latency(self, auth_client, sample_logs):
         response = auth_client.get("/agentcc/request-logs/?ordering=-latency_ms")
         assert response.status_code == status.HTTP_200_OK
@@ -683,6 +1271,26 @@ class TestRequestLogSessions:
         assert sess_b["request_count"] == 1
         assert sess_b["error_count"] == 0
 
+    def test_sessions_ordering_by_request_count(self, auth_client, sample_logs):
+        response = auth_client.get(
+            "/agentcc/request-logs/sessions/?ordering=-request_count"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["results"][0]["session_id"] == "sess-A"
+        assert data["results"][0]["request_count"] == 2
+
+    def test_sessions_apply_log_filters_before_aggregation(
+        self, auth_client, sample_logs
+    ):
+        response = auth_client.get("/agentcc/request-logs/sessions/?provider=anthropic")
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["count"] == 1
+        assert data["results"][0]["session_id"] == "sess-A"
+        assert data["results"][0]["request_count"] == 1
+        assert data["results"][0]["providers"] == ["anthropic"]
+
     def test_session_detail(self, auth_client, sample_logs):
         response = auth_client.get("/agentcc/request-logs/sessions/sess-A/")
         assert response.status_code == status.HTTP_200_OK
@@ -721,7 +1329,7 @@ class TestRequestLogExport:
         assert response.status_code == status.HTTP_200_OK
         assert "ndjson" in response["Content-Type"]
         content = b"".join(response.streaming_content).decode()
-        lines = [l for l in content.strip().split("\n") if l]
+        lines = [line for line in content.strip().split("\n") if line]
         assert len(lines) == 4  # 4 data rows (no header in JSON)
 
     def test_export_with_filters(self, auth_client, sample_logs):
@@ -732,6 +1340,17 @@ class TestRequestLogExport:
         content = b"".join(response.streaming_content).decode()
         lines = content.strip().split("\n")
         assert len(lines) == 2  # header + 1 data row
+
+    def test_export_with_search_param(self, auth_client, sample_logs):
+        response = auth_client.get(
+            "/agentcc/request-logs/export/?export_format=csv&search=req-003",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        content = b"".join(response.streaming_content).decode()
+        lines = content.strip().split("\n")
+        assert len(lines) == 2  # header + 1 data row
+        assert "req-003" in lines[1]
+        assert "req-001" not in content
 
     def test_export_empty(self, auth_client, sample_logs):
         response = auth_client.get(
@@ -940,7 +1559,9 @@ class TestAnalyticsUsageTimeseries:
         assert total == 10
 
     def test_usage_grouped_by_model(self, auth_client, analytics_logs):
-        response = auth_client.get("/agentcc/analytics/usage-timeseries/?group_by=model")
+        response = auth_client.get(
+            "/agentcc/analytics/usage-timeseries/?group_by=model"
+        )
         assert response.status_code == status.HTTP_200_OK
         result = response.json()["result"]
         assert result["group_by"] == "model"
@@ -958,7 +1579,9 @@ class TestAnalyticsUsageTimeseries:
         assert "anthropic" in result["groups"]
 
     def test_usage_with_granularity(self, auth_client, analytics_logs):
-        response = auth_client.get("/agentcc/analytics/usage-timeseries/?granularity=day")
+        response = auth_client.get(
+            "/agentcc/analytics/usage-timeseries/?granularity=day"
+        )
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["result"]["granularity"] == "day"
 
@@ -997,7 +1620,9 @@ class TestAnalyticsCostBreakdown:
             assert field in item, f"Missing field: {field}"
 
     def test_cost_by_provider(self, auth_client, analytics_logs):
-        response = auth_client.get("/agentcc/analytics/cost-breakdown/?group_by=provider")
+        response = auth_client.get(
+            "/agentcc/analytics/cost-breakdown/?group_by=provider"
+        )
         assert response.status_code == status.HTTP_200_OK
         result = response.json()["result"]
         assert result["group_by"] == "provider"
@@ -1006,7 +1631,9 @@ class TestAnalyticsCostBreakdown:
         assert "anthropic" in names
 
     def test_cost_by_user(self, auth_client, analytics_logs):
-        response = auth_client.get("/agentcc/analytics/cost-breakdown/?group_by=user_id")
+        response = auth_client.get(
+            "/agentcc/analytics/cost-breakdown/?group_by=user_id"
+        )
         assert response.status_code == status.HTTP_200_OK
         result = response.json()["result"]
         assert len(result["breakdown"]) == 3  # user-1, user-2, user-3

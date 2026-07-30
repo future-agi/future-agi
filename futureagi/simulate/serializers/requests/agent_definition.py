@@ -434,13 +434,15 @@ class FetchAssistantRequestSerializer(serializers.Serializer):
 
     assistant_id = serializers.CharField(required=True)
     api_key = serializers.CharField(required=True)
+    agent_id = serializers.UUIDField(required=False, allow_null=True)
     provider = serializers.ChoiceField(
         choices=[
             ProviderChoices.VAPI,
             ProviderChoices.RETELL,
             ProviderChoices.ELEVEN_LABS,
+            ProviderChoices.BLAND,
             ProviderChoices.OTHERS,
         ],
         default=ProviderChoices.VAPI,
-        help_text="Voice provider. One of: vapi, retell, eleven_labs, others.",
+        help_text="Voice provider. One of: vapi, retell, eleven_labs, bland, others.",
     )

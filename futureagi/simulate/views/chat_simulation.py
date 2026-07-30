@@ -1,13 +1,13 @@
 import structlog
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
 from pydantic import ValidationError
-from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.models.user import OrgApiKey
+from accounts.utils import get_request_organization
 from simulate.constants.installation_guide import CHAT_SDK_CODE, INSTALLATION_GUIDE
 from simulate.models import (
     CallExecution,
@@ -17,10 +17,24 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.pydantic_schemas.chat import ChatSendMessageViewResponse, SendChatRequest
+from simulate.serializers.chat_simulation import (
+    ChatSDKCodeResponseSerializer,
+    ChatSendMessageResponseSerializer,
+    RunTestChatExecutionResponseSerializer,
+    RunTestNameResponseSerializer,
+    SendChatRequestSerializer,
+    TestExecutionChatBatchResponseSerializer,
+)
 from simulate.services.chat_sim import initiate_chat, send_message_to_chat
 from simulate.services.test_executor import TestExecutor
 from simulate.utils.scenario_completeness import check_scenarios_incomplete
 from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
+from simulate.views.scoping import run_test_workspace_filter
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import (
+    ApiTextErrorResponseSerializer,
+    EmptyRequestSerializer,
+)
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -37,6 +51,13 @@ class RunTestNameView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={
+            200: RunTestNameResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        },
+    )
     def get(self, request, run_test_name, *args, **kwargs):
         try:
             # Get the organization from the authenticated user
@@ -83,6 +104,16 @@ class RunTestChatExecutionView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={
+            200: RunTestChatExecutionResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, run_test_id, *args, **kwargs):
         """Execute a test run"""
         try:
@@ -92,10 +123,7 @@ class RunTestChatExecutionView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return self.gm.not_found("Organization not found for the user.")
 
             # Get the run test
             run_test = get_object_or_404(
@@ -160,6 +188,15 @@ class TestExecutionChatBatchView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={
+            200: TestExecutionChatBatchResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, test_execution_id, *args, **kwargs):
         """
         Create a batch of CallExecution records for chat execution (exactly 10 per API call).
@@ -224,8 +261,8 @@ class TestExecutionChatBatchView(APIView):
                 f"Processed row_ids by scenario: {processed_row_ids_by_scenario}"
             )
 
-            # Initialize TestExecutor for helper methods
-            test_executor = TestExecutor()
+            # Only helper methods are needed here; avoid requiring voice-provider config.
+            test_executor = TestExecutor(initialize_voice_service=False)
 
             # Cache for SimulatorAgent per scenario (to avoid repeated lookups)
             simulator_agent_cache = {}
@@ -437,11 +474,29 @@ class ChatSendMessageView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=SendChatRequestSerializer,
+        responses={
+            200: ChatSendMessageResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, call_execution_id, *args, **kwargs):
         """Send a message to a chat execution"""
         try:
+            user_organization = get_request_organization(request)
+            if not user_organization:
+                return self.gm.not_found("Organization not found for the user.")
+
             call_execution = get_object_or_404(
-                CallExecution, id=call_execution_id, deleted=False
+                CallExecution,
+                run_test_workspace_filter(request, "test_execution__run_test"),
+                id=call_execution_id,
+                deleted=False,
+                test_execution__run_test__organization=user_organization,
+                test_execution__run_test__deleted=False,
             )
 
             if (
@@ -450,14 +505,13 @@ class ChatSendMessageView(APIView):
             ):
                 return self.gm.bad_request("Call execution is not a chat execution")
 
-            request_data = request.data
+            request_data = request.validated_data
 
             if (
                 request_data is None
                 or (isinstance(request_data, dict) and not request_data)
                 or len(request_data) == 0
             ):
-
                 return self.gm.bad_request(
                     "Request data is required and must be of type SendChatRequest"
                 )
@@ -479,7 +533,6 @@ class ChatSendMessageView(APIView):
                 )
 
             if chat_request.initiate_chat:
-
                 if call_execution.test_execution.status not in [
                     TestExecution.ExecutionStatus.RUNNING,
                     TestExecution.ExecutionStatus.EVALUATING,
@@ -549,7 +602,7 @@ class ChatSendMessageView(APIView):
             )
             return self.gm.success_response(response_data.model_dump(exclude_none=True))
 
-        except CallExecution.DoesNotExist:
+        except (CallExecution.DoesNotExist, Http404):
             return self.gm.bad_request("Call execution not found")
         except ValidationError as e:
             return self.gm.bad_request(
@@ -573,6 +626,13 @@ class ChatSDKCodeView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={
+            200: ChatSDKCodeResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        },
+    )
     def get(self, request, run_test_id, *args, **kwargs):
         """Get the SDK code with placeholders filled"""
         try:
@@ -593,32 +653,7 @@ class ChatSDKCodeView(APIView):
             except RunTest.DoesNotExist:
                 return self.gm.bad_request("Run test not found")
 
-            # Get organization API keys (system API key)
-            try:
-                org_api_key = OrgApiKey.objects.filter(
-                    organization=user_organization,
-                    type="user",
-                    enabled=True,
-                ).first()
-
-                if not org_api_key:
-                    # Create one if it doesn't exist
-                    org_api_key = OrgApiKey.objects.create(
-                        organization=user_organization, type="user", user=request.user
-                    )
-
-                fi_api_key = org_api_key.api_key
-                fi_secret_key = org_api_key.secret_key
-            except Exception as e:
-                logger.exception(f"Error retrieving API keys: {str(e)}")
-                return self.gm.bad_request("Failed to retrieve API keys")
-
-            # Render the SDK code template
-            rendered_code = CHAT_SDK_CODE.format(
-                fi_api_key=fi_api_key,
-                fi_secret_key=fi_secret_key,
-                run_test_name=run_test.name,
-            )
+            rendered_code = CHAT_SDK_CODE.format(run_test_name=run_test.name)
 
             return self.gm.success_response(
                 {

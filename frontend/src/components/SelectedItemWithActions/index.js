@@ -1,1 +1,1 @@
-export {default} from "./SelectedItemWithActions"
+export { default } from "./SelectedItemWithActions";

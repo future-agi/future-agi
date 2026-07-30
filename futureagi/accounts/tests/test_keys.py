@@ -9,6 +9,11 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 
+def _assert_unknown_field(response, field_name):
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert field_name in response.json()["details"]
+
+
 @pytest.fixture
 def created_key(auth_client):
     """Create a test API key and return key_id."""
@@ -135,6 +140,15 @@ class TestSecretKeyCustomActionsAPI:
             status.HTTP_403_FORBIDDEN,
         ]
 
+    def test_generate_secret_key_rejects_unknown_request_fields(self, auth_client):
+        """Key generation accepts only the documented snake_case body."""
+        response = auth_client.post(
+            "/accounts/key/generate_secret_key/",
+            {"key_name": "Test API Key", "keyName": "legacy camel alias"},
+            format="json",
+        )
+        _assert_unknown_field(response, "keyName")
+
     def test_enable_key_invalid_id(self, auth_client):
         """Enabling nonexistent key fails."""
         response = auth_client.post(
@@ -143,6 +157,18 @@ class TestSecretKeyCustomActionsAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_enable_key_rejects_unknown_request_fields(self, auth_client):
+        """Enable key rejects camelCase aliases."""
+        response = auth_client.post(
+            "/accounts/key/enable_key/",
+            {
+                "key_id": "00000000-0000-0000-0000-000000000000",
+                "keyId": "legacy camel alias",
+            },
+            format="json",
+        )
+        _assert_unknown_field(response, "keyId")
 
     def test_disable_key_invalid_id(self, auth_client):
         """Disabling nonexistent key fails."""
@@ -153,6 +179,18 @@ class TestSecretKeyCustomActionsAPI:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_disable_key_rejects_unknown_request_fields(self, auth_client):
+        """Disable key rejects camelCase aliases."""
+        response = auth_client.post(
+            "/accounts/key/disable_key/",
+            {
+                "key_id": "00000000-0000-0000-0000-000000000000",
+                "keyId": "legacy camel alias",
+            },
+            format="json",
+        )
+        _assert_unknown_field(response, "keyId")
+
     def test_delete_key_invalid_id(self, auth_client):
         """Deleting nonexistent key fails."""
         response = auth_client.delete(
@@ -161,6 +199,18 @@ class TestSecretKeyCustomActionsAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_delete_key_rejects_unknown_request_fields(self, auth_client):
+        """Delete key rejects camelCase aliases."""
+        response = auth_client.delete(
+            "/accounts/key/delete_secret_key/",
+            {
+                "key_id": "00000000-0000-0000-0000-000000000000",
+                "keyId": "legacy camel alias",
+            },
+            format="json",
+        )
+        _assert_unknown_field(response, "keyId")
 
     def test_full_key_lifecycle(self, auth_client):
         """Can create, disable, enable, and delete a secret key."""
@@ -197,6 +247,31 @@ class TestSecretKeyCustomActionsAPI:
             format="json",
         )
         assert delete_response.status_code == status.HTTP_200_OK
+
+    def test_get_secret_keys_masks_key_material(self, auth_client):
+        """Secret-key list must not return raw key material after creation."""
+        create_response = auth_client.post(
+            "/accounts/key/generate_secret_key/",
+            {"key_name": "Masked List Contract Key"},
+            format="json",
+        )
+        assert create_response.status_code == status.HTTP_200_OK
+        created = create_response.json().get("result", {})
+        key_id = created.get("key_id")
+        raw_api_key = created.get("api_key")
+        raw_secret_key = created.get("secret_key")
+
+        response = auth_client.get(
+            "/accounts/key/get_secret_keys/?search=Masked%20List%20Contract%20Key"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        table = response.json().get("result", {}).get("table", [])
+        row = next((item for item in table if str(item.get("id")) == str(key_id)), None)
+        assert row is not None
+        assert row["api_key"] != raw_api_key
+        assert row["secret_key"] != raw_secret_key
+        assert "*" in row["api_key"]
+        assert "*" in row["secret_key"]
 
 
 @pytest.mark.integration

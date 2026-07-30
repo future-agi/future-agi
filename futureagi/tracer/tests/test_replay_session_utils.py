@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -155,7 +156,7 @@ class TestGetSystemPrompt:
 class TestGetAgentSuggestions:
     """Tests for get_agent_suggestions function."""
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     def test_returns_existing_agent_definition(self, mock_get_agent_def_from_sessions):
         """Should return existing agent definition data when found."""
         mock_project = MagicMock()
@@ -188,7 +189,7 @@ class TestGetAgentSuggestions:
         assert "scenario_name" in suggestions
         assert agent_def == mock_agent_def
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     def test_generates_defaults_when_no_agent_definition(
         self, mock_get_agent_def_from_sessions
     ):
@@ -222,7 +223,7 @@ class TestGetAgentSuggestions:
         assert suggestions["version_name"] is None
         assert agent_def is None
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     def test_handles_agent_definition_not_found(self, mock_get_agent_def_from_sessions):
         """Should generate defaults when no agent_def is found from replay sessions."""
         mock_project = MagicMock()
@@ -246,7 +247,7 @@ class TestGetAgentSuggestions:
         assert suggestions["agent_description"] == ""
         assert agent_def is None
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     def test_handles_none_latest_version(self, mock_get_agent_def_from_sessions):
         """Should handle agent_def with no latest_version."""
         mock_project = MagicMock()
@@ -340,7 +341,7 @@ class TestUpdateAgentDefinition:
 class TestGetOrCreateAgentDefinition:
     """Tests for get_or_create_agent_definition function."""
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     @patch("tracer.utils.replay_session._update_agent_definition")
     def test_returns_existing_and_updates(
         self, mock_update, mock_get_agent_def_from_sessions
@@ -366,7 +367,7 @@ class TestGetOrCreateAgentDefinition:
             voice_config=None,
         )
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     @patch("tracer.utils.replay_session.AgentDefinition")
     def test_creates_new_when_no_existing(
         self, mock_agent_def_model, mock_get_agent_def_from_sessions
@@ -390,7 +391,7 @@ class TestGetOrCreateAgentDefinition:
         mock_agent_def_model.objects.create.assert_called_once()
         mock_new_agent_def.create_version.assert_called_once()
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     @patch("tracer.utils.replay_session.AgentDefinition")
     def test_creates_new_with_correct_params(
         self, mock_agent_def_model, mock_get_agent_def_from_sessions
@@ -420,7 +421,7 @@ class TestGetOrCreateAgentDefinition:
             languages=["en"],
         )
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     @patch("tracer.utils.replay_session.AgentDefinition")
     def test_creates_version_after_agent_def(
         self, mock_agent_def_model, mock_get_agent_def_from_sessions
@@ -603,29 +604,37 @@ class TestGetTranscriptsFromSessionQuery:
     def test_groups_traces_by_session_id(self):
         """Should group traces by session_id."""
         session_id = uuid.uuid4()
+        now = datetime(2025, 1, 1, tzinfo=None)
 
-        mock_queryset = MagicMock()
-        mock_annotate = MagicMock()
-        mock_order = MagicMock()
-
-        mock_queryset.annotate.return_value = mock_annotate
-        mock_annotate.order_by.return_value = mock_order
-        mock_order.values.return_value = [
+        trace_rows = [
             {
                 "id": uuid.uuid4(),
                 "session_id": session_id,
                 "input": "Turn 1 input",
                 "output": "Turn 1 output",
+                "created_at": now,
             },
             {
                 "id": uuid.uuid4(),
                 "session_id": session_id,
                 "input": "Turn 2 input",
                 "output": "Turn 2 output",
+                "created_at": now,
             },
         ]
 
+        mock_queryset = MagicMock()
+        mock_queryset.values.return_value = trace_rows
+
+        mock_reader = MagicMock()
+        mock_reader.per_trace_root_span_start_times.return_value = {}
+        mock_reader.__enter__ = lambda s: s
+        mock_reader.__exit__ = MagicMock(return_value=False)
+
         with patch(
+            "tracer.services.clickhouse.v2.get_reader",
+            return_value=mock_reader,
+        ), patch(
             "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
             return_value=set(),
         ):
@@ -638,29 +647,37 @@ class TestGetTranscriptsFromSessionQuery:
         """Should handle multiple sessions correctly."""
         session_id_1 = uuid.uuid4()
         session_id_2 = uuid.uuid4()
+        now = datetime(2025, 1, 1, tzinfo=None)
 
-        mock_queryset = MagicMock()
-        mock_annotate = MagicMock()
-        mock_order = MagicMock()
-
-        mock_queryset.annotate.return_value = mock_annotate
-        mock_annotate.order_by.return_value = mock_order
-        mock_order.values.return_value = [
+        trace_rows = [
             {
                 "id": uuid.uuid4(),
                 "session_id": session_id_1,
                 "input": "S1 Input",
                 "output": "S1 Output",
+                "created_at": now,
             },
             {
                 "id": uuid.uuid4(),
                 "session_id": session_id_2,
                 "input": "S2 Input",
                 "output": "S2 Output",
+                "created_at": now,
             },
         ]
 
+        mock_queryset = MagicMock()
+        mock_queryset.values.return_value = trace_rows
+
+        mock_reader = MagicMock()
+        mock_reader.per_trace_root_span_start_times.return_value = {}
+        mock_reader.__enter__ = lambda s: s
+        mock_reader.__exit__ = MagicMock(return_value=False)
+
         with patch(
+            "tracer.services.clickhouse.v2.get_reader",
+            return_value=mock_reader,
+        ), patch(
             "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
             return_value=set(),
         ):
@@ -673,30 +690,60 @@ class TestGetTranscriptsFromSessionQuery:
     def test_returns_empty_dict_for_empty_queryset(self):
         """Should return empty dict when queryset is empty."""
         mock_queryset = MagicMock()
-        mock_annotate = MagicMock()
-        mock_order = MagicMock()
-
-        mock_queryset.annotate.return_value = mock_annotate
-        mock_annotate.order_by.return_value = mock_order
-        mock_order.values.return_value = []
+        mock_queryset.values.return_value = []
 
         result = _get_transcripts_from_session_query(mock_queryset)
 
         assert result == {}
 
-    def test_orders_by_span_start_time(self):
-        """Should order traces by span_start_time."""
+    def test_orders_by_root_span_start_time(self):
+        """Should order traces by root span start_time from CH, falling back to created_at."""
+        session_id = uuid.uuid4()
+        trace_id_early = uuid.uuid4()
+        trace_id_late = uuid.uuid4()
+
+        # Intentionally list the late trace first in PG results
+        trace_rows = [
+            {
+                "id": trace_id_late,
+                "session_id": session_id,
+                "input": "Late",
+                "output": "Late out",
+                "created_at": datetime(2025, 1, 2, tzinfo=None),
+            },
+            {
+                "id": trace_id_early,
+                "session_id": session_id,
+                "input": "Early",
+                "output": "Early out",
+                "created_at": datetime(2025, 1, 1, tzinfo=None),
+            },
+        ]
+
         mock_queryset = MagicMock()
-        mock_annotate = MagicMock()
-        mock_order = MagicMock()
+        mock_queryset.values.return_value = trace_rows
 
-        mock_queryset.annotate.return_value = mock_annotate
-        mock_annotate.order_by.return_value = mock_order
-        mock_order.values.return_value = []
+        # CH returns root-span start_times that should drive sort order
+        mock_reader = MagicMock()
+        mock_reader.per_trace_root_span_start_times.return_value = {
+            str(trace_id_early): datetime(2025, 1, 1, 0, 0, 0),
+            str(trace_id_late): datetime(2025, 1, 2, 0, 0, 0),
+        }
+        mock_reader.__enter__ = lambda s: s
+        mock_reader.__exit__ = MagicMock(return_value=False)
 
-        _get_transcripts_from_session_query(mock_queryset)
+        with patch(
+            "tracer.services.clickhouse.v2.get_reader",
+            return_value=mock_reader,
+        ), patch(
+            "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
+            return_value=set(),
+        ):
+            result = _get_transcripts_from_session_query(mock_queryset)
 
-        mock_annotate.order_by.assert_called_once_with("span_start_time")
+        turns = result[str(session_id)]
+        assert turns[0]["input"] == "Early"
+        assert turns[1]["input"] == "Late"
 
 
 @pytest.mark.unit
@@ -829,3 +876,44 @@ class TestCreateScenario:
 
         call_kwargs = mock_scenarios.objects.create.call_args[1]
         assert call_kwargs["description"] == "Custom description"
+
+
+@pytest.mark.django_db
+class TestResolveAgentDefinitionForProject:
+    def test_existing_replay_session_returns_agent(self, project):
+        from model_hub.models.agent_registry import AgentDefinition
+        from tracer.models import ReplaySession
+        agent = AgentDefinition.objects.create(name="ReplayAgent", project=project)
+        ReplaySession.objects.create(project=project, agent_definition=agent)
+        
+        from tracer.utils.replay_session import _resolve_agent_definition_for_project
+        result = _resolve_agent_definition_for_project(project)
+        assert result == agent
+
+    def test_empty_and_no_providers_returns_none(self, project):
+        from tracer.utils.replay_session import _resolve_agent_definition_for_project
+        result = _resolve_agent_definition_for_project(project)
+        assert result is None
+
+    def test_empty_replay_sessions_returns_newest_provider_agent(self, project):
+        from model_hub.models.agent_registry import AgentDefinition
+        from tfc.models import ObservabilityProvider
+        from datetime import datetime, timedelta
+        
+        provider = ObservabilityProvider.objects.create(project=project, name="TestProv")
+        
+        # Create older agent
+        old_agent = AgentDefinition.objects.create(name="Old", project=project, observability_provider=provider)
+        old_agent.created_at = datetime.now() - timedelta(days=1)
+        old_agent.save()
+        
+        # Create newer agent
+        new_agent = AgentDefinition.objects.create(name="New", project=project, observability_provider=provider)
+        new_agent.created_at = datetime.now()
+        new_agent.save()
+        
+        from tracer.utils.replay_session import _resolve_agent_definition_for_project
+        result = _resolve_agent_definition_for_project(project)
+        
+        # Should return the newest one
+        assert result == new_agent

@@ -1,16 +1,30 @@
 import structlog
+from concurrent.futures import ThreadPoolExecutor
+from django.http import Http404
+from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
+from tfc.routers import uses_db
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import (
+    ApiErrorResponseSerializer,
+    EmptyRequestSerializer,
+)
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
+from tracer.db_routing import DATABASE_FOR_DASHBOARD_LIST
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.dashboard import Dashboard, DashboardWidget
-from tracer.models.project import Project, ProjectSourceChoices
+from tracer.models.project import Project
 from tracer.serializers.dashboard import (
     DashboardCreateUpdateSerializer,
     DashboardDetailSerializer,
+    DashboardFilterValuesQuerySerializer,
+    DashboardMetricsCatalogResponseSerializer,
+    DashboardPreviewQuerySerializer,
+    DashboardQueryApiResponseSerializer,
     DashboardQuerySerializer,
     DashboardSerializer,
     DashboardWidgetSerializer,
@@ -19,10 +33,11 @@ from tracer.services.clickhouse.client import (
     get_clickhouse_client,
     is_clickhouse_enabled,
 )
+from tracer.services.dashboard_metrics_catalog import get_cached_metrics_catalog
 from tracer.services.clickhouse.query_builders.dashboard import (
     METRIC_UNITS,
-    SYSTEM_METRICS,
     DashboardQueryBuilder,
+    InvalidMetricCombinationError,
 )
 from tracer.services.clickhouse.query_builders.dataset_dashboard import (
     DATASET_FILTER_COLUMNS,
@@ -30,111 +45,84 @@ from tracer.services.clickhouse.query_builders.dataset_dashboard import (
     DatasetQueryBuilder,
 )
 from tracer.services.clickhouse.query_builders.simulation_dashboard import (
+    _STRING_DIMENSION_METRICS,
     SIMULATION_FILTER_COLUMNS,
     SIMULATION_METRIC_UNITS,
-    SIMULATION_SYSTEM_METRICS,
-    _STRING_DIMENSION_METRICS,
     SimulationQueryBuilder,
 )
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.clickhouse.v2.id_remap_sql import (
+    remap_left_join,
+    resolved_id_expr,
+)
 from tracer.utils.sql_queries import SQL_query_handler
 
 logger = structlog.get_logger(__name__)
 
+DASHBOARD_FILTER_COL_TYPE_TO_METRIC_TYPE = {
+    "SYSTEM_METRIC": "system_metric",
+    "EVAL_METRIC": "eval_metric",
+    "ANNOTATION": "annotation_metric",
+    "SPAN_ATTRIBUTE": "custom_attribute",
+    "CUSTOM_COLUMN": "custom_column",
+}
 
-def _customer_attribute_metric_aliases():
-    from tracer.utils.filters import FilterEngine
+DASHBOARD_FILTER_OP_TO_INTERNAL = {
+    "equals": "equal_to",
+    "not_equals": "not_equal_to",
+    "in": "contains",
+    "not_in": "not_contains",
+    "contains": "str_contains",
+    "not_contains": "str_not_contains",
+    "is_not_null": "is_set",
+    "is_null": "is_not_set",
+}
 
-    aliases = {}
-    for metric_id, definition in FilterEngine.VOICE_METRIC_DEFINITIONS.items():
-        json_keys = definition.get("json_keys") or []
-        if len(json_keys) == 1:
-            aliases[json_keys[0]] = metric_id
-    return aliases
 
+def _dashboard_filter_to_internal(filter_item):
+    config = filter_item.get("filter_config") if isinstance(filter_item, dict) else None
+    if not isinstance(config, dict):
+        return filter_item
 
-def _suppress_customer_attribute_metric_aliases(metric_entries):
-    aliases = _customer_attribute_metric_aliases()
-    exposed_metric_names = {
-        metric.get("name")
-        for metric in metric_entries
-        if metric.get("category") != "custom_attribute"
+    col_type = config.get("col_type") or "SYSTEM_METRIC"
+    metric_type = DASHBOARD_FILTER_COL_TYPE_TO_METRIC_TYPE.get(
+        col_type, "system_metric"
+    )
+    filter_type = config.get("filter_type") or "text"
+    internal = {
+        "metric_type": metric_type,
+        "metric_name": filter_item.get("column_id"),
+        "operator": DASHBOARD_FILTER_OP_TO_INTERNAL.get(
+            config.get("filter_op"), config.get("filter_op")
+        ),
+        "value": config.get("filter_value"),
+        "source": filter_item.get("source", "traces"),
     }
-    return [
-        metric
-        for metric in metric_entries
-        if not (
-            metric.get("category") == "custom_attribute"
-            and aliases.get(metric.get("name")) in exposed_metric_names
-        )
+    if filter_item.get("output_type"):
+        internal["output_type"] = filter_item["output_type"]
+    if metric_type == "custom_attribute":
+        internal["attribute_type"] = "number" if filter_type == "number" else "string"
+    return internal
+
+
+def _normalize_dashboard_query_filters(query_config):
+    """Translate canonical API filters to the dashboard builders' internal shape."""
+    query_config = dict(query_config)
+    query_config["filters"] = [
+        _dashboard_filter_to_internal(filter_item)
+        for filter_item in query_config.get("filters", [])
     ]
+    metrics = []
+    for metric in query_config.get("metrics", []):
+        metric_copy = dict(metric)
+        metric_copy["filters"] = [
+            _dashboard_filter_to_internal(filter_item)
+            for filter_item in metric_copy.get("filters", [])
+        ]
+        metrics.append(metric_copy)
+    query_config["metrics"] = metrics
+    return query_config
 
-
-def _normalize_eval_output_type(template_config):
-    """Normalize EvalTemplate config.output → SCORE/PASS_FAIL/CHOICE(S)."""
-    if not isinstance(template_config, dict):
-        return "SCORE"
-    ot = (template_config.get("output", "") or "").upper().replace("/", "_").replace(" ", "_")
-    return ot if ot in ("PASS_FAIL", "CHOICE", "CHOICES", "SCORE") else "SCORE"
-
-
-def build_eval_metric_entries(
-    eval_templates,
-    project_ids,
-    workspace,
-    per_eval_config,
-):
-    """Build eval-metric entries; per-config when opted in, else per-template."""
-    entries = []
-
-    if per_eval_config:
-        eval_cfg_qs = CustomEvalConfig.objects.filter(
-            deleted=False
-        ).select_related("eval_template")
-        if project_ids:
-            eval_cfg_qs = eval_cfg_qs.filter(project_id__in=project_ids)
-        else:
-            eval_cfg_qs = eval_cfg_qs.filter(project__workspace=workspace)
-
-        for cfg in eval_cfg_qs:
-            tmpl = cfg.eval_template
-            if not tmpl or getattr(tmpl, "deleted", False):
-                continue
-            output_type = _normalize_eval_output_type(tmpl.config or {})
-            entry = {
-                "name": str(cfg.id),  # custom_eval_config_id
-                "display_name": cfg.name or tmpl.name,
-                "category": "eval_metric",
-                "source": "all",
-                "sources": ["all"],
-                "output_type": output_type,
-                "eval_template_id": str(tmpl.id),
-            }
-            if output_type in ("CHOICE", "CHOICES") and tmpl.choices:
-                entry["choices"] = tmpl.choices
-            elif output_type == "PASS_FAIL":
-                entry["choices"] = ["Passed", "Failed"]
-            entries.append(entry)
-        return entries
-
-    for et in eval_templates:
-        tid = str(et["id"])
-        output_type = _normalize_eval_output_type(et["config"] or {})
-        entry = {
-            "name": tid,  # eval_template_id
-            "display_name": et["name"],
-            "category": "eval_metric",
-            "source": "all",
-            "sources": ["all"],
-            "output_type": output_type,
-        }
-        choices = et.get("choices") or []
-        if output_type in ("CHOICE", "CHOICES") and choices:
-            entry["choices"] = choices
-        elif output_type == "PASS_FAIL":
-            entry["choices"] = ["Passed", "Failed"]
-        entries.append(entry)
-    return entries
 
 
 class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
@@ -165,33 +153,59 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         )
         return 30000 if has_eval_metrics or has_project_breakdown else 10000
 
-    def _empty_simulation_metric_result(self, metric):
-        return (
-            {
-                "id": metric.get("id", ""),
-                "name": metric.get("displayName")
-                or metric.get("display_name")
-                or metric.get("name", ""),
-                "type": metric.get("type", "system_metric"),
-                "aggregation": metric.get("aggregation", "avg"),
-                "source": "simulation",
-            },
-            [],
-        )
+    @staticmethod
+    def _run_metric_queries(builder, source, fetch_rows):
+        """Build + execute each metric in parallel; return [(metric_info, rows)].
+
+        Only ``InvalidMetricCombinationError`` is caught per-metric (the metric
+        is non-sensical and a user-facing message is attached). All other
+        exceptions (connection, timeout, programming bugs) propagate so they
+        surface as real errors instead of being silently masked as per-widget
+        "could not be computed" text.
+        """
+        metrics = builder.metrics
+        if not metrics:
+            return []
+
+        def _exec_one(metric):
+            metric_info = builder.metric_info(metric)
+            metric_info["source"] = source
+            try:
+                sql, params = builder.build_metric_query(metric)
+                return (metric_info, fetch_rows(sql, params))
+            except InvalidMetricCombinationError as e:
+                metric_info["error"] = str(e)
+                return (metric_info, [])
+            except Exception as e:
+                logger.warning("metric_query_failed", metric=metric_info.get("name"), error=str(e)[:200])
+                return (metric_info, [])
+
+        if len(metrics) == 1:
+            return [_exec_one(metrics[0])]
+
+        with ThreadPoolExecutor(max_workers=min(len(metrics), 4)) as pool:
+            futures = [pool.submit(_exec_one, m) for m in metrics]
+        return [f.result() for f in futures]
 
     def _format_merged_metric_results(self, query_config, all_metric_results):
-        formatter = DatasetQueryBuilder({**query_config, "metrics": query_config["metrics"]})
+        formatter = DatasetQueryBuilder(
+            {**query_config, "metrics": query_config["metrics"]}
+        )
         start_date, end_date = formatter.parse_time_range()
         from tracer.services.clickhouse.query_builders.dashboard_base import (
             _generate_time_buckets,
         )
 
-        all_buckets = _generate_time_buckets(start_date, end_date, formatter.granularity)
+        all_buckets = _generate_time_buckets(
+            start_date, end_date, formatter.granularity
+        )
         unit_map = {**METRIC_UNITS, **DATASET_METRIC_UNITS, **SIMULATION_METRIC_UNITS}
         formatted_metrics = []
         for metric_info, rows in all_metric_results:
             formatted_metrics.append(
-                formatter._format_metric_result(metric_info, rows, all_buckets, unit_map)
+                formatter._format_metric_result(
+                    metric_info, rows, all_buckets, unit_map
+                )
             )
 
         return {
@@ -203,39 +217,24 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             "granularity": formatter.granularity,
         }
 
-    def _run_simulation_queries(self, simulation_config, fetch_rows):
-        results = []
-        for metric in simulation_config.get("metrics", []):
-            metric_config = {**simulation_config, "metrics": [metric]}
-            try:
-                builder = SimulationQueryBuilder(metric_config)
-                sql, params, metric_info = builder.build_all_queries()[0]
-                metric_info["source"] = "simulation"
-                results.append((metric_info, fetch_rows(sql, params)))
-            except Exception as e:
-                logger.warning(
-                    "Simulation query failed",
-                    metric_name=metric.get("id") or metric.get("name"),
-                    error=str(e),
-                )
-                results.append(self._empty_simulation_metric_result(metric))
-        return results
-
     def _run_simulation_analytics_queries(self, analytics, simulation_config):
-        return self._run_simulation_queries(
-            simulation_config,
-            lambda sql, params: analytics.execute_ch_query(
-                sql, params, timeout_ms=10000
-            ).data,
+        builder = SimulationQueryBuilder(simulation_config)
+        return DashboardViewSet._run_metric_queries(
+            builder,
+            "simulation",
+            lambda sql, params: (
+                analytics.execute_ch_query(sql, params, timeout_ms=10000).data
+            ),
         )
 
     def _run_simulation_clickhouse_queries(self, ch_client, simulation_config):
         def _fetch_rows(sql, params):
             rows, column_types, _ = ch_client.execute_read(sql, params)
             col_names = [ct[0] for ct in column_types]
-            return [dict(zip(col_names, row)) for row in rows]
+            return [dict(zip(col_names, row, strict=True)) for row in rows]
 
-        return self._run_simulation_queries(simulation_config, _fetch_rows)
+        builder = SimulationQueryBuilder(simulation_config)
+        return DashboardViewSet._run_metric_queries(builder, "simulation", _fetch_rows)
 
     def _normalize_metric_sources(self, metrics):
         """Route simulation-scoped trace attributes through the trace builder.
@@ -255,9 +254,16 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             normalized.append(metric_copy)
         return normalized
 
+    @uses_db(DATABASE_FOR_DASHBOARD_LIST, feature_key="feature:dashboard_list")
     def list(self, request, *args, **kwargs):
         try:
-            queryset = self.get_queryset()
+            # Route the main list read to replica when "feature:dashboard_list"
+            # is opted in. Note: DashboardSerializer.get_widget_count() does
+            # an `obj.widgets.filter().count()` per row that goes through the
+            # router for DashboardWidget (and likely lands on `default`).
+            # That's a pre-existing N+1 we are NOT fixing here — pure-routing
+            # change only. Fixing the serializer is a separate refactor.
+            queryset = self.get_queryset().using(DATABASE_FOR_DASHBOARD_LIST)
             serializer = DashboardSerializer(
                 queryset, many=True, context={"request": request}
             )
@@ -323,7 +329,17 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            instance.delete()
+            deleted_at = timezone.now()
+            DashboardWidget.objects.filter(
+                dashboard=instance,
+                deleted=False,
+            ).update(deleted=True, deleted_at=deleted_at)
+            instance.deleted = True
+            instance.deleted_at = deleted_at
+            instance.updated_by = request.user
+            instance.save(
+                update_fields=["deleted", "deleted_at", "updated_by", "updated_at"]
+            )
             return self._gm.success_response("Dashboard deleted successfully.")
         except Exception as e:
             logger.error(f"Failed to delete dashboard: {e}", exc_info=True)
@@ -333,6 +349,14 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
     # Query endpoint — routes each metric to the right builder by source
     # ------------------------------------------------------------------
 
+    @validated_request(
+        request_serializer=DashboardQuerySerializer,
+        responses={
+            200: DashboardQueryApiResponseSerializer,
+            400: ApiErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=False, methods=["post"])
     def query(self, request):
         """Execute a widget query and return chart data.
@@ -341,26 +365,14 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         Metrics are partitioned by source and dispatched to the appropriate
         query builder.  Results are merged into a single response.
 
-        Backward compat: if ``workflow`` is present and metrics lack
-        ``source``, infer source from workflow.
+        Each metric is validated against the canonical query contract before
+        it reaches any query builder.
         """
-        serializer = DashboardQuerySerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(f"Invalid query config: {serializer.errors}")
-        query_config = serializer.validated_data
+        query_config = _normalize_dashboard_query_filters(request.validated_data)
 
-        # Backward compat: infer source from workflow when missing
-        workflow = query_config.get("workflow")
-        for m in query_config["metrics"]:
-            if "source" not in m:
-                if workflow == "dataset":
-                    m["source"] = "datasets"
-                elif workflow == "simulation":
-                    m["source"] = "simulation"
-                else:
-                    m["source"] = "traces"
-
-        query_config["metrics"] = self._normalize_metric_sources(query_config["metrics"])
+        query_config["metrics"] = self._normalize_metric_sources(
+            query_config["metrics"]
+        )
 
         # Partition metrics by source
         # "both" source metrics (e.g. annotations) go to trace_metrics
@@ -379,7 +391,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         try:
             analytics = AnalyticsQueryService()
             all_metric_results = []
-            all_metric_infos = []
             project_name_map = {}
 
             # --- Trace metrics via DashboardQueryBuilder ---
@@ -433,14 +444,23 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 trace_config["organization_id"] = str(request.workspace.organization_id)
                 trace_config["workspace_id"] = str(request.workspace.id)
 
-                builder = DashboardQueryBuilder(trace_config)
+                # v1↔v2 dispatch — flips with CH25_QUERY_TYPES_V2_PRIMARY=DASHBOARD
+                from tracer.services.clickhouse.v2.dispatch import (
+                    get_query_builder_class,
+                )
+
+                _DashCls = get_query_builder_class("DASHBOARD")
+                builder = _DashCls(trace_config)
                 query_timeout = self._get_trace_query_timeout_ms(trace_config)
-                for sql, params, metric_info in builder.build_all_queries():
-                    metric_info["source"] = "traces"
-                    result = analytics.execute_ch_query(
-                        sql, params, timeout_ms=query_timeout
+                all_metric_results.extend(
+                    self._run_metric_queries(
+                        builder,
+                        "traces",
+                        lambda sql, params: analytics.execute_ch_query(
+                            sql, params, timeout_ms=query_timeout
+                        ).data,
                     )
-                    all_metric_results.append((metric_info, result.data))
+                )
 
             # --- Dataset metrics via DatasetQueryBuilder ---
             if dataset_metrics:
@@ -463,10 +483,15 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         )
 
                 builder = DatasetQueryBuilder(ds_config)
-                for sql, params, metric_info in builder.build_all_queries():
-                    metric_info["source"] = "datasets"
-                    result = analytics.execute_ch_query(sql, params, timeout_ms=10000)
-                    all_metric_results.append((metric_info, result.data))
+                all_metric_results.extend(
+                    self._run_metric_queries(
+                        builder,
+                        "datasets",
+                        lambda sql, params: analytics.execute_ch_query(
+                            sql, params, timeout_ms=10000
+                        ).data,
+                    )
+                )
 
             # --- Simulation metrics via SimulationQueryBuilder ---
             if simulation_metrics:
@@ -476,10 +501,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     self._run_simulation_analytics_queries(analytics, sim_config)
                 )
 
-            # --- Resolve project UUIDs to names in breakdown values ---
-            has_project_breakdown = any(
-                bd.get("name") == "project" for bd in query_config.get("breakdowns", [])
-            )
+            breakdown_names = {
+                (bd.get("name") or bd.get("id") or "").lower()
+                for bd in query_config.get("breakdowns", [])
+            }
+            has_project_breakdown = "project" in breakdown_names
             if has_project_breakdown and project_name_map:
                 for _metric_info, rows in all_metric_results:
                     for row in rows:
@@ -487,30 +513,25 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         if bv:
                             bv_str = str(bv)
                             if " / " in bv_str:
-                                # Multi-breakdown: resolve each segment independently
                                 parts = bv_str.split(" / ")
                                 parts = [project_name_map.get(p, p) for p in parts]
                                 row["breakdown_value"] = " / ".join(parts)
                             elif bv_str in project_name_map:
                                 row["breakdown_value"] = project_name_map[bv_str]
 
-            # --- Resolve dataset UUIDs to names in breakdown values ---
-            has_dataset_breakdown = any(
-                bd.get("name") == "dataset" for bd in query_config.get("breakdowns", [])
-            )
+            has_dataset_breakdown = "dataset" in breakdown_names
             if has_dataset_breakdown:
-                # Collect all dataset UUIDs from breakdown values
                 import uuid as _uuid
 
                 ds_uuids = set()
                 for _metric_info, rows in all_metric_results:
                     for row in rows:
-                        bv = row.get("breakdown_value", "")
-                        try:
-                            _uuid.UUID(bv)
-                            ds_uuids.add(bv)
-                        except (ValueError, AttributeError):
-                            pass
+                        for part in str(row.get("breakdown_value", "")).split(" / "):
+                            try:
+                                _uuid.UUID(part)
+                                ds_uuids.add(part)
+                            except (ValueError, AttributeError):
+                                pass
 
                 if ds_uuids:
                     from model_hub.models.develop_dataset import Dataset
@@ -524,12 +545,12 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     if ds_name_map:
                         for _metric_info, rows in all_metric_results:
                             for row in rows:
-                                bv = row.get("breakdown_value", "")
-                                if bv in ds_name_map:
-                                    row["breakdown_value"] = ds_name_map[bv]
+                                bv = str(row.get("breakdown_value", ""))
+                                parts = bv.split(" / ")
+                                row["breakdown_value"] = " / ".join(
+                                    ds_name_map.get(part, part) for part in parts
+                                )
 
-            # --- Format merged results ---
-            # Use DatasetQueryBuilder for time-bucket generation (same logic in both)
             merged_config = {**query_config, "metrics": query_config["metrics"]}
             if dataset_metrics:
                 merged_config["workspace_id"] = str(request.workspace.id)
@@ -551,6 +572,12 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
     # Unified metrics endpoint — all sources, no workflow selector
     # ------------------------------------------------------------------
 
+    @validated_request(
+        responses={
+            200: DashboardMetricsCatalogResponseSerializer,
+            400: ApiErrorResponseSerializer,
+        },
+    )
     @action(detail=False, methods=["get"])
     def metrics(self, request):
         """Return all available metrics across traces and datasets.
@@ -567,955 +594,16 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         # --- Unified: collect from all sources ---
         try:
-            metrics = []
-
-            # 1. Trace system metrics
-            metrics.extend(
-                [
-                    {
-                        "name": "project",
-                        "display_name": "Project",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "latency",
-                        "display_name": "Latency",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "number",
-                        "unit": "ms",
-                    },
-                    {
-                        "name": "error_rate",
-                        "display_name": "Error Rate",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "number",
-                        "unit": "%",
-                    },
-                    {
-                        "name": "tokens",
-                        "display_name": "Tokens",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "number",
-                        "unit": "tokens",
-                    },
-                    {
-                        "name": "input_tokens",
-                        "display_name": "Input Tokens",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "number",
-                        "unit": "tokens",
-                    },
-                    {
-                        "name": "output_tokens",
-                        "display_name": "Output Tokens",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "number",
-                        "unit": "tokens",
-                    },
-                    {
-                        "name": "time_to_first_token",
-                        "display_name": "Time to First Token",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "number",
-                        "unit": "ms",
-                    },
-                    {
-                        "name": "cost",
-                        "display_name": "Cost",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "number",
-                        "unit": "$",
-                    },
-                    # Trace numeric: session & user counts
-                    {
-                        "name": "session_count",
-                        "display_name": "Session Count",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "number",
-                        "unit": "",
-                    },
-                    {
-                        "name": "user_count",
-                        "display_name": "User Count",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "number",
-                        "unit": "",
-                    },
-                    {
-                        "name": "trace_count",
-                        "display_name": "Trace Count",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "number",
-                        "unit": "",
-                    },
-                    {
-                        "name": "span_count",
-                        "display_name": "Span Count",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "number",
-                        "unit": "",
-                    },
-                    # Trace string dimensions for breakdown/filter
-                    {
-                        "name": "model",
-                        "display_name": "Model",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "status",
-                        "display_name": "Status",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "service_name",
-                        "display_name": "Service Name",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "span_kind",
-                        "display_name": "Span Kind",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "provider",
-                        "display_name": "Provider",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "session",
-                        "display_name": "Session",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "user",
-                        "display_name": "User",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "user_id_type",
-                        "display_name": "User ID Type",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    # Prompt dimensions
-                    {
-                        "name": "prompt_name",
-                        "display_name": "Prompt Name",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "prompt_version",
-                        "display_name": "Prompt Version",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "prompt_label",
-                        "display_name": "Prompt Label",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "tag",
-                        "display_name": "Tag",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "string",
-                        "unit": "",
-                    },
-                ]
-            )
-
-            # Eval-specific dimensions (available across all sources)
-            metrics.extend(
-                [
-                    {
-                        "name": "dataset",
-                        "display_name": "Dataset",
-                        "category": "system_metric",
-                        "source": "all",
-                        "sources": ["all"],
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "eval_source",
-                        "display_name": "Eval Source",
-                        "category": "system_metric",
-                        "source": "all",
-                        "sources": ["all"],
-                        "type": "string",
-                        "unit": "",
-                    },
-                ]
-            )
-
-            # 2. Dataset system metrics
-            metrics.extend(
-                [
-                    {
-                        "name": "row_count",
-                        "display_name": "Row Count",
-                        "category": "system_metric",
-                        "source": "datasets",
-                        "type": "number",
-                        "unit": "",
-                    },
-                    {
-                        "name": "prompt_tokens",
-                        "display_name": "Prompt Tokens",
-                        "category": "system_metric",
-                        "source": "datasets",
-                        "type": "number",
-                        "unit": "tokens",
-                    },
-                    {
-                        "name": "completion_tokens",
-                        "display_name": "Completion Tokens",
-                        "category": "system_metric",
-                        "source": "datasets",
-                        "type": "number",
-                        "unit": "tokens",
-                    },
-                    {
-                        "name": "total_tokens",
-                        "display_name": "Total Tokens",
-                        "category": "system_metric",
-                        "source": "datasets",
-                        "type": "number",
-                        "unit": "tokens",
-                    },
-                    {
-                        "name": "response_time",
-                        "display_name": "Response Time",
-                        "category": "system_metric",
-                        "source": "datasets",
-                        "type": "number",
-                        "unit": "ms",
-                    },
-                    {
-                        "name": "cell_error_rate",
-                        "display_name": "Cell Error Rate",
-                        "category": "system_metric",
-                        "source": "datasets",
-                        "type": "number",
-                        "unit": "%",
-                    },
-                ]
-            )
-
-            # Project IDs for trace-scoped metrics (custom attrs, evals, annotations)
-            # If caller passes project_ids, scope to those; otherwise all workspace projects.
-            req_project_ids_str = request.query_params.get("project_ids", "")
-            req_project_ids = [
-                pid.strip() for pid in req_project_ids_str.split(",") if pid.strip()
-            ]
-
-            workspace_project_ids = set(
-                str(pid)
-                for pid in Project.objects.filter(workspace=workspace).values_list(
-                    "id", flat=True
-                )
-            )
-            if req_project_ids:
-                project_ids = [
-                    pid for pid in req_project_ids if pid in workspace_project_ids
-                ]
-            else:
-                project_ids = list(workspace_project_ids)
-
-            filter_by_project = bool(req_project_ids and project_ids)
-
-            if filter_by_project and not Project.objects.filter(
-                id__in=project_ids,
-            ).exclude(
-                source=ProjectSourceChoices.SIMULATOR.value,
-            ).exists():
-                metrics.append(
-                    {
-                        "name": "agent_talk_percentage",
-                        "display_name": "Agent Talk %",
-                        "category": "system_metric",
-                        "source": "traces",
-                        "type": "number",
-                        "unit": "%",
-                    }
-                )
-
-            # 3. Eval metrics — scoped to project(s) when project_ids provided
-            try:
-                from model_hub.models.evals_metric import EvalTemplate
-
-                used_template_ids = []
-                if is_clickhouse_enabled():
-                    from tracer.services.clickhouse.client import (
-                        get_clickhouse_client,
-                    )
-
-                    ch = get_clickhouse_client()
-
-                    if filter_by_project:
-                        # Get eval template IDs that have results on traces in the given project(s)
-                        result = ch.execute_read(
-                            "SELECT DISTINCT toString(custom_eval_config_id) AS tid "
-                            "FROM tracer_eval_logger "
-                            "WHERE _peerdb_is_deleted = 0 AND deleted = 0 "
-                            "AND custom_eval_config_id != toUUID('00000000-0000-0000-0000-000000000000') "
-                            "AND dictGet('trace_dict', 'project_id', trace_id) IN %(project_ids)s",
-                            {"project_ids": project_ids},
-                            timeout_ms=5000,
-                        )
-                    else:
-                        ws_id = str(workspace.id)
-                        result = ch.execute_read(
-                            "SELECT DISTINCT source_id FROM usage_apicalllog "
-                            "WHERE workspace_id = toUUID(%(ws_id)s) "
-                            "AND status = 'success' AND length(source_id) > 0 "
-                            "AND _peerdb_is_deleted = 0",
-                            {"ws_id": ws_id},
-                            timeout_ms=5000,
-                        )
-
-                    # execute_read returns (rows, columns, time_ms)
-                    raw_rows = result[0] if isinstance(result, tuple) else result
-                    used_template_ids = [
-                        (
-                            r[0]
-                            if isinstance(r, (list, tuple))
-                            else r.get("tid", r.get("source_id", ""))
-                        )
-                        for r in raw_rows
-                    ]
-
-                if not used_template_ids and filter_by_project:
-                    # PG fallback: resolve via CustomEvalConfig → EvalTemplate
-                    used_template_ids = list(
-                        CustomEvalConfig.objects.filter(
-                            project_id__in=project_ids,
-                            deleted=False,
-                        ).values_list("eval_template_id", flat=True).distinct()
-                    )
-                elif used_template_ids and filter_by_project:
-                    # CH returned CustomEvalConfig IDs; resolve to EvalTemplate
-                    used_template_ids = list(
-                        CustomEvalConfig.objects.filter(
-                            id__in=used_template_ids,
-                        ).values_list("eval_template_id", flat=True)
-                    )
-
-                if used_template_ids:
-                    # Use no_workspace_objects since system eval templates
-                    # may have no workspace (workspace=None).
-                    eval_templates = EvalTemplate.no_workspace_objects.filter(
-                        id__in=used_template_ids,
-                        deleted=False,
-                    ).values("id", "name", "config", "choices")
-                elif filter_by_project:
-                    # Project-scoped but no evals found — return empty
-                    eval_templates = EvalTemplate.objects.none().values(
-                        "id", "name", "config", "choices"
-                    )
-                else:
-                    # Fallback: list all templates for the org
-                    eval_templates = EvalTemplate.objects.filter(
-                        organization=workspace.organization,
-                        deleted=False,
-                    ).values("id", "name", "config", "choices")
-
-                # Observe filter dropdowns opt in via ?per_eval_config=true.
-                # Query params are strings;
-                per_eval_config = (
+            metrics = get_cached_metrics_catalog(
+                workspace,
+                project_ids_param=request.query_params.get("project_ids", ""),
+                agent_definition_id=(
+                    request.query_params.get("agent_definition_id", "") or ""
+                ),
+                per_eval_config=(
                     request.query_params.get("per_eval_config") == "true"
-                )
-
-                metrics.extend(
-                    build_eval_metric_entries(
-                        eval_templates=eval_templates,
-                        project_ids=project_ids if filter_by_project else [],
-                        workspace=workspace,
-                        per_eval_config=per_eval_config,
-                    )
-                )
-            except (ImportError, Exception) as e:
-                logger.warning(f"Failed to load eval templates: {e}")
-
-            # 4. Annotation metrics — scoped to project(s) when project_ids provided
-            try:
-                from django.db.models import Q
-
-                from model_hub.models.develop_annotations import AnnotationsLabels
-
-                if filter_by_project:
-    
-                    from model_hub.models.score import Score
-
-                    used_label_ids = list(
-                        Score.objects.filter(
-                            Q(project_id__in=project_ids)
-                            | Q(trace__project_id__in=project_ids)
-                            | Q(observation_span__project_id__in=project_ids)
-                            | Q(trace_session__project_id__in=project_ids),
-                            deleted=False,
-                        )
-                        .values_list("label_id", flat=True)
-                        .distinct()
-                    )
-                    if used_label_ids:
-                        annotation_labels = (
-                            AnnotationsLabels.no_workspace_objects.filter(
-                                id__in=used_label_ids,
-                            ).values("id", "name", "type", "settings")
-                        )
-                    else:
-                        annotation_labels = (
-                            AnnotationsLabels.no_workspace_objects.none().values(
-                                "id", "name", "type", "settings"
-                            )
-                        )
-                else:
-                    annotation_labels = AnnotationsLabels.no_workspace_objects.filter(
-                        Q(organization=workspace.organization),
-                        Q(workspace__isnull=True) | Q(workspace=workspace),
-                    ).values("id", "name", "type", "settings")
-
-                for al in annotation_labels:
-                    label_type = al.get("type", "numeric")
-                    settings = al.get("settings") or {}
-
-                    metric_entry = {
-                        "name": str(al["id"]),
-                        "display_name": al["name"],
-                        "category": "annotation_metric",
-                        "source": "both",
-                        "sources": ["datasets", "traces"],
-                        "output_type": label_type,
-                    }
-
-                    # Include static choices for choice-based annotation types
-                    if label_type == "categorical":
-                        options = settings.get("options", [])
-                        metric_entry["choices"] = [
-                            opt.get("label", "")
-                            for opt in options
-                            if isinstance(opt, dict) and opt.get("label")
-                        ]
-                    elif label_type == "thumbs_up_down":
-                        metric_entry["choices"] = ["Thumbs Up", "Thumbs Down"]
-
-                    metrics.append(metric_entry)
-            except Exception:
-                logger.exception("annotation_metrics_failed")
-
-            # 6. Span attributes (traces only) — single query for all projects
-            custom_attributes = []
-            try:
-                if is_clickhouse_enabled() and project_ids:
-                    from tracer.services.clickhouse.client import get_clickhouse_client
-
-                    ch = get_clickhouse_client()
-                    rows, cols, _ = ch.execute_read(
-                        """
-                        SELECT key, argMax(type, cnt) AS type FROM (
-                            SELECT
-                                pair.1 AS key,
-                                pair.2 AS type,
-                                count() AS cnt
-                            FROM (
-                                SELECT span_attr_str, span_attr_num, span_attr_bool
-                                FROM spans
-                                WHERE project_id IN %(project_ids)s
-                                  AND _peerdb_is_deleted = 0
-                                LIMIT 100000
-                            )
-                            ARRAY JOIN arrayConcat(
-                                arrayMap(k -> (k, 'text'),    mapKeys(span_attr_str)),
-                                arrayMap(k -> (k, 'number'),  mapKeys(span_attr_num)),
-                                arrayMap(k -> (k, 'boolean'), mapKeys(span_attr_bool))
-                            ) AS pair
-                            GROUP BY pair.1, pair.2
-                        )
-                        GROUP BY key ORDER BY key LIMIT 2000
-                        """,
-                        {"project_ids": project_ids},
-                        timeout_ms=15000,
-                    )
-                    for r in rows:
-                        if isinstance(r, dict):
-                            k, t = r.get("key", ""), r.get("type", "string")
-                        elif isinstance(r, (list, tuple)) and len(r) >= 2:
-                            k, t = r[0], r[1]
-                        else:
-                            continue
-                        if k:
-                            custom_attributes.append({"key": k, "type": t})
-                elif project_ids:
-                    for pid in project_ids:
-                        keys = SQL_query_handler.get_span_attributes_for_project(pid)
-                        for key in keys:
-                            k = key if isinstance(key, str) else str(key)
-                            if k not in [
-                                a.get("key") if isinstance(a, dict) else a
-                                for a in custom_attributes
-                            ]:
-                                custom_attributes.append({"key": k, "type": "string"})
-            except Exception:
-                pass  # non-fatal — attributes just won't appear in picker
-
-            for attr in custom_attributes:
-                k = attr["key"] if isinstance(attr, dict) else attr
-                t = attr.get("type", "string") if isinstance(attr, dict) else "string"
-                metrics.append(
-                    {
-                        "name": k,
-                        "display_name": k,
-                        "category": "custom_attribute",
-                        "source": "traces",
-                        "type": t,
-                    }
-                )
-
-            # 7. Custom columns (datasets only)
-            try:
-                from model_hub.models.develop_dataset import Column
-
-                cols = (
-                    Column.no_workspace_objects.filter(
-                        dataset__workspace=workspace,
-                        dataset__deleted=False,
-                        data_type__in=["float", "integer", "boolean"],
-                    )
-                    .values("id", "name", "data_type")
-                    .distinct()
-                )
-                seen_names = set()
-                for col in cols:
-                    if col["name"] in seen_names:
-                        continue
-                    seen_names.add(col["name"])
-                    metrics.append(
-                        {
-                            "name": str(col["id"]),
-                            "display_name": col["name"],
-                            "category": "custom_column",
-                            "source": "datasets",
-                            "type": (
-                                "number" if col["data_type"] != "boolean" else "boolean"
-                            ),
-                            "data_type": col["data_type"],
-                        }
-                    )
-            except (ImportError, Exception):
-                pass
-
-            # 8. Simulation system metrics (numeric — for aggregation)
-            metrics.extend(
-                [
-                    {
-                        "name": "call_count",
-                        "display_name": "Call Count",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "",
-                    },
-                    {
-                        "name": "success_rate",
-                        "display_name": "Success Rate",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "%",
-                    },
-                    {
-                        "name": "failure_rate",
-                        "display_name": "Failure Rate",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "%",
-                    },
-                    {
-                        "name": "duration",
-                        "display_name": "Duration",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "s",
-                    },
-                    {
-                        "name": "response_time",
-                        "display_name": "Response Time",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "ms",
-                    },
-                    {
-                        "name": "agent_latency",
-                        "display_name": "Agent Latency",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "ms",
-                    },
-                    {
-                        "name": "stt_latency",
-                        "display_name": "STT Latency",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "ms",
-                    },
-                    {
-                        "name": "tts_latency",
-                        "display_name": "TTS Latency",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "ms",
-                    },
-                    {
-                        "name": "llm_latency",
-                        "display_name": "LLM Latency",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "ms",
-                    },
-                    {
-                        "name": "total_cost",
-                        "display_name": "Total Cost",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "cents",
-                    },
-                    {
-                        "name": "stt_cost",
-                        "display_name": "STT Cost",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "cents",
-                    },
-                    {
-                        "name": "tts_cost",
-                        "display_name": "TTS Cost",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "cents",
-                    },
-                    {
-                        "name": "llm_cost",
-                        "display_name": "LLM Cost",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "cents",
-                    },
-                    {
-                        "name": "customer_cost",
-                        "display_name": "Customer Cost",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "cents",
-                    },
-                    {
-                        "name": "overall_score",
-                        "display_name": "Overall Score",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "",
-                    },
-                    {
-                        "name": "message_count",
-                        "display_name": "Message Count",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "",
-                    },
-                    {
-                        "name": "user_interruptions",
-                        "display_name": "User Interruptions",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "",
-                    },
-                    {
-                        "name": "user_interruption_rate",
-                        "display_name": "User Interruption Rate",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "/min",
-                    },
-                    {
-                        "name": "ai_interruptions",
-                        "display_name": "AI Interruptions",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "",
-                    },
-                    {
-                        "name": "ai_interruption_rate",
-                        "display_name": "AI Interruption Rate",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "/min",
-                    },
-                    {
-                        "name": "stop_time_after_interruption",
-                        "display_name": "Stop Time After Interruption",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "ms",
-                    },
-                    {
-                        "name": "user_wpm",
-                        "display_name": "User WPM",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "wpm",
-                    },
-                    {
-                        "name": "bot_wpm",
-                        "display_name": "Bot WPM",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "wpm",
-                    },
-                    {
-                        "name": "talk_ratio",
-                        "display_name": "Talk Ratio",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "number",
-                        "unit": "%",
-                    },
-                ]
+                ),
             )
-
-            # 8b. Simulation breakdown/filter dimensions (string — for grouping & filtering)
-            metrics.extend(
-                [
-                    {
-                        "name": "scenario",
-                        "display_name": "Scenario",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "agent_definition",
-                        "display_name": "Agent",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "agent_version",
-                        "display_name": "Agent Version",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "persona",
-                        "display_name": "Persona",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "call_type",
-                        "display_name": "Call Type",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "status",
-                        "display_name": "Status",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "scenario_type",
-                        "display_name": "Scenario Type",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "ended_reason",
-                        "display_name": "Ended Reason",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "run_test",
-                        "display_name": "Test",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "test_execution",
-                        "display_name": "Test Run",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    # Persona attributes for breakdown/filtering
-                    {
-                        "name": "persona_gender",
-                        "display_name": "Persona Gender",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "persona_age_group",
-                        "display_name": "Persona Age Group",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "persona_location",
-                        "display_name": "Persona Location",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "persona_profession",
-                        "display_name": "Persona Profession",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "persona_personality",
-                        "display_name": "Persona Personality",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "persona_communication_style",
-                        "display_name": "Persona Communication Style",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "persona_accent",
-                        "display_name": "Persona Accent",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "persona_language",
-                        "display_name": "Persona Language",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "string",
-                        "unit": "",
-                    },
-                    {
-                        "name": "persona_conversation_speed",
-                        "display_name": "Persona Conversation Speed",
-                        "category": "system_metric",
-                        "source": "simulation",
-                        "type": "string",
-                        "unit": "",
-                    },
-                ]
-            )
-
-            for metric in metrics:
-                if metric.get("source") == "simulation" and metric.get("type") == "string":
-                    metric["allowed_aggregations"] = ["count", "count_distinct"]
-
-            metrics = _suppress_customer_attribute_metric_aliases(metrics)
-
-            # (Simulation eval metrics are now covered by the central
-            #  EvalTemplate listing in section 3 above.)
 
             # --- Optional server-side filtering & pagination ---
             search = request.query_params.get("search", "").strip()
@@ -1685,23 +773,16 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         except (ImportError, Exception):
             pass
 
+        # CH-only span attribute key inventory. PG fallback removed
+        # post-migration — the attrs_* typed-Map indexes on CH are the
+        # authoritative source of which keys exist for a project.
         custom_attributes = []
+        analytics = AnalyticsQueryService() if is_clickhouse_enabled() else None
         for pid in project_ids:
-            try:
-                if is_clickhouse_enabled():
-                    analytics = AnalyticsQueryService()
-                    keys = analytics.get_span_attribute_keys_ch(pid)
-                else:
-                    keys = SQL_query_handler.get_span_attributes_for_project(pid)
-            except Exception as e:
-                logger.warning(
-                    f"CH span attributes failed for {pid}, falling back to PG",
-                    error=str(e),
-                )
-                try:
-                    keys = SQL_query_handler.get_span_attributes_for_project(pid)
-                except Exception:
-                    keys = []
+            if analytics is not None:
+                keys = analytics.get_span_attribute_keys_ch(pid)
+            else:
+                keys = SQL_query_handler.get_span_attributes_for_project(pid)
             for key in keys:
                 attr = {"name": key, "display_name": key, "type": "string"}
                 if attr not in custom_attributes:
@@ -1864,19 +945,18 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
     @action(detail=False, methods=["get"])
     def filter_values(self, request):
         """Return distinct values for a given metric/attribute, for filter value picker."""
-        metric_name = request.query_params.get("metric_name", "")
-        metric_type = request.query_params.get("metric_type", "system_metric")
-        source = request.query_params.get("source", "")
-        # Backward compat: infer source from workflow
-        workflow = request.query_params.get("workflow", "")
-        if not source:
-            source = "datasets" if workflow == "dataset" else "traces"
+        query_serializer = DashboardFilterValuesQuerySerializer(
+            data=request.query_params
+        )
+        if not query_serializer.is_valid():
+            return self._gm.bad_request(query_serializer.errors)
 
-        project_ids_str = request.query_params.get("project_ids", "")
-        project_ids = [pid.strip() for pid in project_ids_str.split(",") if pid.strip()]
-
-        if not metric_name:
-            return self._gm.bad_request("metric_name is required")
+        query_params = query_serializer.validated_data
+        metric_name = query_params["metric_name"]
+        metric_type = query_params["metric_type"]
+        source = query_params["source"]
+        project_ids = query_params.get("project_ids", [])
+        search = query_params.get("search", "").strip()
 
         # Route by source
         if source == "datasets":
@@ -1887,7 +967,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             # frontend can reuse the same hook wiring as traces/datasets.
             return self._filter_values_dataset_column(
                 request,
-                dataset_id=request.query_params.get("dataset_id", ""),
+                dataset_id=str(query_params.get("dataset_id") or ""),
                 column_id=metric_name,
             )
         if source == "simulation":
@@ -1895,12 +975,12 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         # Traces source (default)
         # Validate project_ids belong to this workspace
-        workspace_project_ids = set(
+        workspace_project_ids = {
             str(pid)
             for pid in Project.objects.filter(
                 workspace=request.workspace,
             ).values_list("id", flat=True)
-        )
+        }
         if project_ids:
             project_ids = [pid for pid in project_ids if pid in workspace_project_ids]
         else:
@@ -1908,38 +988,20 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         try:
             if metric_type == "annotation_metric" and metric_name == "annotator":
-                from django.db.models import Q
+                from accounts.models.user import User
+                from tracer.services.annotation_label_source import AnnotationLabelScoresCH
 
-                from model_hub.models.score import Score
-
-                rows = (
-                    Score.objects.filter(
-                        deleted=False,
-                        annotator_id__isnull=False,
-                    )
-                    .filter(
-                        Q(project_id__in=project_ids)
-                        | Q(trace__project_id__in=project_ids)
-                        | Q(observation_span__project_id__in=project_ids)
-                        | Q(trace_session__project_id__in=project_ids)
-                    )
-                    .values(
-                        "annotator_id",
-                        "annotator__name",
-                        "annotator__email",
-                    )
-                    .distinct()
-                    .order_by("annotator__name", "annotator__email")
+                annotator_ids = AnnotationLabelScoresCH().annotator_ids_for_projects(project_ids)
+                users = (
+                    User.objects.filter(id__in=annotator_ids)
+                    .values("id", "name", "email")
+                    .order_by("name", "email")
                 )
                 values = []
-                seen = set()
-                for row in rows:
-                    user_id = str(row["annotator_id"])
-                    if user_id in seen:
-                        continue
-                    seen.add(user_id)
-                    name = (row.get("annotator__name") or "").strip()
-                    email = (row.get("annotator__email") or "").strip()
+                for u in users:
+                    user_id = str(u["id"])
+                    name = (u.get("name") or "").strip()
+                    email = (u.get("email") or "").strip()
                     label = name or email or user_id
                     option = {"value": user_id, "label": label}
                     if name:
@@ -1969,7 +1031,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "provider": "provider",
                     "observation_type": "observation_type",
                     "span_kind": "observation_type",  # span_kind maps to observation_type in CH
-                    "service_name": "name",  # service_name maps to span name
+                    "service_name": "service_name",  # OTel service.name; matches _STRING_FILTER_COL
                     "name": "name",
                     "span_name": "name",
                     "session": "toString(trace_session_id)",
@@ -1978,20 +1040,19 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "prompt_version": "dictGet('prompt_dict', 'template_version', prompt_version_id)",
                     "prompt_label": "dictGet('prompt_label_dict', 'name', prompt_label_id)",
                 }
-
                 enduser_string_cols = {
                     "user": "user_id",
+                    "user_id": "user_id",
                     "user_id_type": "user_id_type",
                 }
-
                 if metric_name in enduser_string_cols:
                     enduser_col = enduser_string_cols[metric_name]
                     try:
                         sql = (
                             f"SELECT DISTINCT {enduser_col} AS val "
-                            f"FROM tracer_enduser FINAL "
+                            f"FROM end_users FINAL "
                             f"WHERE project_id IN %(project_ids)s "
-                            f"AND _peerdb_is_deleted = 0 "
+                            f"AND is_deleted = 0 "
                             f"AND {enduser_col} IS NOT NULL "
                             f"AND {enduser_col} != '' "
                             f"ORDER BY val "
@@ -2000,7 +1061,10 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         result = analytics.execute_ch_query(
                             sql, {"project_ids": project_ids}, timeout_ms=5000
                         )
-                        values = [row["val"] for row in result.data]
+                        values = [
+                            {"value": row["val"], "label": row["val"]}
+                            for row in result.data
+                        ]
                     except Exception as e:
                         logger.warning(
                             "filter_values_ch_query_failed",
@@ -2008,7 +1072,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             error=str(e)[:200],
                         )
                         values = []
-                    values = [{"value": v, "label": v} for v in values]
                     return self._gm.success_response({"values": values})
 
                 col_expr = col_map.get(metric_name)
@@ -2024,23 +1087,62 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     null_uuid = "00000000-0000-0000-0000-000000000000"
                     # Trace Name = root span name; restrict to root spans.
                     root_only_clause = (
-                        "AND parent_span_id IS NULL "
+                        "AND (parent_span_id IS NULL OR parent_span_id = '') "
                         if metric_name == "name"
                         else ""
                     )
-                    sql = (
-                        f"SELECT DISTINCT {col_expr} AS val "
-                        f"FROM spans "
-                        f"WHERE project_id IN %(project_ids)s "
-                        f"AND _peerdb_is_deleted = 0 "
-                        f"AND {col_expr} NOT IN ('', '{null_uuid}') "
-                        f"{root_only_clause}"
-                        f"ORDER BY val "
-                        f"LIMIT 500"
-                    )
-                    result = analytics.execute_ch_query(
-                        sql, {"project_ids": project_ids}, timeout_ms=5000
-                    )
+
+                    ch_params: dict = {"project_ids": project_ids}
+                    if metric_name == "session":
+                        ts_remap_join = remap_left_join(
+                            "sp.trace_session_id",
+                            "trace_session_id_remap",
+                            "ts_remap",
+                        )
+                        ts_resolved = resolved_id_expr(
+                            "sp.trace_session_id", "ts_remap"
+                        )
+                        col_expr = f"toString({ts_resolved})"
+                        limit = 20 if search else 500
+                        if search:
+                            ch_params["search_pattern"] = f"%{search}%"
+                        search_clause = (
+                            f"AND {col_expr} ILIKE %(search_pattern)s "
+                            if search
+                            else ""
+                        )
+                        sql = (
+                            f"SELECT DISTINCT {col_expr} AS val "
+                            f"FROM spans AS sp "
+                            f"{ts_remap_join} "
+                            f"WHERE sp.project_id IN %(project_ids)s "
+                            f"AND sp.is_deleted = 0 "
+                            f"AND {col_expr} NOT IN ('', '{null_uuid}') "
+                            f"{search_clause}"
+                            f"ORDER BY val "
+                            f"LIMIT {limit}"
+                        )
+                    else:
+                        limit = 20 if search else 500
+                        if search:
+                            ch_params["search_pattern"] = f"%{search}%"
+                        search_clause = (
+                            f"AND toString({col_expr}) ILIKE %(search_pattern)s "
+                            if search
+                            else ""
+                        )
+                        sql = (
+                            f"SELECT DISTINCT {col_expr} AS val "
+                            f"FROM spans "
+                            f"WHERE project_id IN %(project_ids)s "
+                            f"AND is_deleted = 0 "
+                            f"AND {col_expr} NOT IN ('', '{null_uuid}') "
+                            f"{root_only_clause}"
+                            f"{search_clause}"
+                            f"ORDER BY val "
+                            f"LIMIT {limit}"
+                        )
+                    result = analytics.execute_ch_query(sql, ch_params, timeout_ms=5000)
                     values = [row["val"] for row in result.data]
                 except Exception as e:
                     logger.warning(
@@ -2050,7 +1152,26 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     )
                     values = []
 
-                if metric_name == "project":
+                if metric_name == "session" and source == "sessions":
+                    from tracer.services.clickhouse.v2.trace_session_dict_reader import (
+                        resolve_session_fields,
+                    )
+
+                    session_fields = resolve_session_fields(values)
+                    values = [
+                        {
+                            "value": value,
+                            "label": str(
+                                session_fields.get(value, {}).get("display_name")
+                                or session_fields.get(value, {}).get(
+                                    "external_session_id"
+                                )
+                                or value
+                            ),
+                        }
+                        for value in values
+                    ]
+                elif metric_name == "project":
                     name_map = dict(
                         Project.objects.filter(
                             id__in=project_ids,
@@ -2101,14 +1222,10 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     for opt in settings.get("options", []):
                         if isinstance(opt, dict):
                             option_value = (
-                                opt.get("value")
-                                or opt.get("label")
-                                or opt.get("name")
+                                opt.get("value") or opt.get("label") or opt.get("name")
                             )
                             option_label = (
-                                opt.get("label")
-                                or opt.get("name")
-                                or option_value
+                                opt.get("label") or opt.get("name") or option_value
                             )
                             add_value_option(
                                 values, seen_values, option_value, option_label
@@ -2116,27 +1233,18 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         else:
                             add_value_option(values, seen_values, opt)
 
-                    # Include actual stored categorical choices as a fallback
-                    # and as protection against stale label settings.
-                    from django.db.models import Q
+                    # CH-backed stored categorical choices (Score.value), scoped via spans.
+                    import json
 
-                    from model_hub.models.score import Score
+                    from tracer.services.annotation_label_source import AnnotationLabelScoresCH
 
-                    score_qs = Score.objects.filter(
-                        label_id=label.id,
-                        deleted=False,
-                    )
-                    if project_ids:
-                        score_qs = score_qs.filter(
-                            Q(project_id__in=project_ids)
-                            | Q(trace__project_id__in=project_ids)
-                            | Q(observation_span__project_id__in=project_ids)
-                            | Q(trace_session__project_id__in=project_ids)
-                        )
-
-                    for payload in score_qs.values_list("value", flat=True).order_by(
-                        "-updated_at"
-                    )[:5000]:
+                    for payload_str in AnnotationLabelScoresCH().categorical_values_for_label(
+                        label.id, project_ids
+                    ):
+                        try:
+                            payload = json.loads(payload_str)
+                        except (TypeError, ValueError):
+                            payload = payload_str
                         raw_values = []
                         if isinstance(payload, dict):
                             selected = payload.get("selected")
@@ -2152,7 +1260,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             raw_values.extend(payload)
                         elif payload not in (None, ""):
                             raw_values.append(payload)
-
                         for raw_value in raw_values:
                             add_value_option(values, seen_values, raw_value)
                 elif label_type == "star":
@@ -2171,7 +1278,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     values = []
 
             elif metric_type == "custom_attribute":
-                # Use mapContains() so the `idx_span_attr_str_keys` bloom
+                # Use mapContains() so the `idx_attrs_string_keys` bloom
                 # filter index prunes granules that don't have the key.
                 # Without this, wide-attribute projects can blow past
                 # ClickHouse's `max_bytes_to_read` limit (code 307) and
@@ -2179,12 +1286,12 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 # conversation.recording.mono.assistant / ended_reason for
                 # heavy voice projects.
                 sql = (
-                    "SELECT DISTINCT span_attr_str[%(attr_key)s] AS val "
+                    "SELECT DISTINCT attrs_string[%(attr_key)s] AS val "
                     "FROM spans "
                     "WHERE project_id IN %(project_ids)s "
-                    "AND _peerdb_is_deleted = 0 "
-                    "AND mapContains(span_attr_str, %(attr_key)s) "
-                    "AND span_attr_str[%(attr_key)s] != '' "
+                    "AND is_deleted = 0 "
+                    "AND mapContains(attrs_string, %(attr_key)s) "
+                    "AND attrs_string[%(attr_key)s] != '' "
                     "ORDER BY val "
                     "LIMIT 500"
                 )
@@ -2477,18 +1584,11 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
         return DashboardWidget.objects.filter(
             dashboard_id=dashboard_id,
             dashboard__workspace=self.request.workspace,
+            dashboard__deleted=False,
         )
 
     def _get_trace_query_timeout_ms(self, trace_config):
         return DashboardViewSet._get_trace_query_timeout_ms(self, trace_config)
-
-    def _empty_simulation_metric_result(self, metric):
-        return DashboardViewSet._empty_simulation_metric_result(self, metric)
-
-    def _run_simulation_queries(self, simulation_config, fetch_rows):
-        return DashboardViewSet._run_simulation_queries(
-            self, simulation_config, fetch_rows
-        )
 
     def _run_simulation_clickhouse_queries(self, ch_client, simulation_config):
         return DashboardViewSet._run_simulation_clickhouse_queries(
@@ -2542,6 +1642,8 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
 
             response_serializer = DashboardWidgetSerializer(widget)
             return self._gm.success_response(response_serializer.data)
+        except Http404:
+            return self._gm.not_found("Widget not found.")
         except Exception as e:
             logger.error(f"Failed to update widget: {e}", exc_info=True)
             return self._gm.bad_request("Failed to update widget.")
@@ -2558,6 +1660,8 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             dashboard.updated_by = request.user
             dashboard.save(update_fields=["updated_by", "updated_at"])
             return self._gm.success_response("Widget deleted successfully.")
+        except Http404:
+            return self._gm.not_found("Widget not found.")
         except Exception as e:
             logger.error(f"Failed to delete widget: {e}", exc_info=True)
             return self._gm.bad_request("Failed to delete widget.")
@@ -2636,16 +1740,19 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         Routes each metric to the appropriate builder based on source.
         """
-        # Infer source from workflow for backward compat
-        workflow = query_config.get("workflow", "")
-        for m in query_config.get("metrics", []):
-            if "source" not in m:
-                m["source"] = "datasets" if workflow == "dataset" else "traces"
+        serializer = DashboardQuerySerializer(data=query_config)
+        if not serializer.is_valid():
+            return self._gm.bad_request(f"Invalid query config: {serializer.errors}")
+        query_config = _normalize_dashboard_query_filters(serializer.validated_data)
 
-        query_config["metrics"] = self._normalize_metric_sources(query_config["metrics"])
+        query_config["metrics"] = self._normalize_metric_sources(
+            query_config["metrics"]
+        )
 
         trace_metrics = [
-            m for m in query_config["metrics"] if m.get("source") == "traces"
+            m
+            for m in query_config["metrics"]
+            if m.get("source") in ("traces", "both", "all")
         ]
         dataset_metrics = [
             m for m in query_config["metrics"] if m.get("source") == "datasets"
@@ -2677,27 +1784,41 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                     return self._gm.bad_request(
                         "Some project_ids are invalid or not in this workspace"
                     )
-            builder = DashboardQueryBuilder(trace_config)
+            trace_config["organization_id"] = str(workspace.organization_id)
+            trace_config["workspace_id"] = str(workspace.id)
+            # v1↔v2 dispatch — flips with CH25_QUERY_TYPES_V2_PRIMARY=DASHBOARD
+            from tracer.services.clickhouse.v2.dispatch import (
+                get_query_builder_class,
+            )
+
+            _DashCls = get_query_builder_class("DASHBOARD")
+            builder = _DashCls(trace_config)
             query_timeout = self._get_trace_query_timeout_ms(trace_config)
-            for sql, params, metric_info in builder.build_all_queries():
-                metric_info["source"] = "traces"
+
+            def _fetch_trace_rows(sql, params):
                 rows, column_types, _ = ch_client.execute_read(
                     sql, params, timeout_ms=query_timeout
                 )
                 col_names = [ct[0] for ct in column_types]
-                row_dicts = [dict(zip(col_names, row)) for row in rows]
-                metric_results.append((metric_info, row_dicts))
+                return [dict(zip(col_names, row, strict=True)) for row in rows]
+
+            metric_results.extend(
+                DashboardViewSet._run_metric_queries(builder, "traces", _fetch_trace_rows)
+            )
 
         if dataset_metrics:
             ds_config = {**query_config, "metrics": dataset_metrics}
             ds_config["workspace_id"] = str(workspace.id)
             builder = DatasetQueryBuilder(ds_config)
-            for sql, params, metric_info in builder.build_all_queries():
-                metric_info["source"] = "datasets"
+
+            def _fetch_ds_rows(sql, params):
                 rows, column_types, _ = ch_client.execute_read(sql, params)
                 col_names = [ct[0] for ct in column_types]
-                row_dicts = [dict(zip(col_names, row)) for row in rows]
-                metric_results.append((metric_info, row_dicts))
+                return [dict(zip(col_names, row, strict=True)) for row in rows]
+
+            metric_results.extend(
+                DashboardViewSet._run_metric_queries(builder, "datasets", _fetch_ds_rows)
+            )
 
         if simulation_metrics:
             sim_config = {**query_config, "metrics": simulation_metrics}
@@ -2726,6 +1847,14 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         return self._gm.success_response(formatted)
 
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={
+            200: DashboardQueryApiResponseSerializer,
+            400: ApiErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"], url_path="query")
     def execute_query(self, request, *args, **kwargs):
         """Execute the widget's query_config against ClickHouse and return results."""
@@ -2745,6 +1874,14 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.error("widget_query_execution_failed", error=str(e), exc_info=True)
             return self._gm.bad_request(f"Query execution failed: {str(e)}")
 
+    @validated_request(
+        request_serializer=DashboardPreviewQuerySerializer,
+        responses={
+            200: DashboardQueryApiResponseSerializer,
+            400: ApiErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=False, methods=["post"], url_path="preview")
     def preview_query(self, request, *args, **kwargs):
         """Execute an ad-hoc query_config without saving, for live preview."""
@@ -2752,9 +1889,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             if not is_clickhouse_enabled():
                 return self._gm.bad_request("ClickHouse is not enabled.")
 
-            query_config = request.data.get("query_config", {})
-            if not query_config or not query_config.get("metrics"):
-                return self._gm.bad_request("query_config with metrics is required.")
+            query_config = request.validated_data["query_config"]
 
             return self._execute_ch_query_config(query_config, request.workspace)
         except Exception as e:

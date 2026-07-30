@@ -7,6 +7,30 @@ from rest_framework import serializers
 from tfc.constants.levels import Level
 
 
+class _StrictSerializer(serializers.Serializer):
+    """Reject unknown keys at nested contract boundaries."""
+
+    def to_internal_value(self, data):
+        if hasattr(data, "keys"):
+            unknown = sorted(set(data.keys()) - set(self.fields.keys()))
+            if unknown:
+                raise serializers.ValidationError(
+                    {key: ["Unknown field."] for key in unknown}
+                )
+        return super().to_internal_value(data)
+
+
+class WorkspaceAccessInputSerializer(_StrictSerializer):
+    workspace_id = serializers.UUIDField()
+    level = serializers.ChoiceField(
+        choices=Level.WORKSPACE_CHOICES,
+        required=False,
+    )
+
+    def validate_workspace_id(self, value):
+        return str(value)
+
+
 class InviteCreateSerializer(serializers.Serializer):
     """
     POST /accounts/organization/invite/
@@ -22,8 +46,8 @@ class InviteCreateSerializer(serializers.Serializer):
         choices=Level.CHOICES,
         help_text="Integer org level to grant (Owner=15, Admin=8, Member=3, Viewer=1).",
     )
-    workspace_access = serializers.ListField(
-        child=serializers.DictField(),
+    workspace_access = WorkspaceAccessInputSerializer(
+        many=True,
         required=False,
         default=list,
         help_text='List of {"workspace_id": "<uuid>", "level": <int>}.',
@@ -42,7 +66,6 @@ class InviteCreateSerializer(serializers.Serializer):
                     f"Invalid workspace level: {ws_level}. "
                     f"Valid: {[c[0] for c in Level.WORKSPACE_CHOICES]}"
                 )
-            # Issue 3 fix: strip to only allowed keys
             sanitized.append(
                 {
                     "workspace_id": entry["workspace_id"],
@@ -50,6 +73,19 @@ class InviteCreateSerializer(serializers.Serializer):
                 }
             )
         return sanitized
+
+
+class InviteCreateResultSerializer(serializers.Serializer):
+    invited = serializers.ListField(child=serializers.EmailField())
+    already_members = serializers.ListField(
+        child=serializers.EmailField(),
+        required=False,
+    )
+
+
+class InviteCreateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = InviteCreateResultSerializer()
 
 
 class InviteResendSerializer(serializers.Serializer):
@@ -68,6 +104,15 @@ class InviteCancelSerializer(serializers.Serializer):
     """DELETE /accounts/organization/invite/cancel/"""
 
     invite_id = serializers.UUIDField()
+
+
+class RBACMessageResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+
+
+class RBACMessageResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = RBACMessageResultSerializer()
 
 
 class MemberRoleUpdateSerializer(serializers.Serializer):
@@ -92,8 +137,8 @@ class MemberRoleUpdateSerializer(serializers.Serializer):
         allow_null=True,
         help_text="Required when updating ws_level.",
     )
-    workspace_access = serializers.ListField(
-        child=serializers.DictField(),
+    workspace_access = WorkspaceAccessInputSerializer(
+        many=True,
         required=False,
         default=list,
         help_text="List of {workspace_id, level} for explicit workspace grants on demotion.",
@@ -111,14 +156,116 @@ class MemberRoleUpdateSerializer(serializers.Serializer):
         return data
 
 
+class MemberWorkspaceAccessSerializer(serializers.Serializer):
+    workspace_id = serializers.UUIDField()
+    workspace_name = serializers.CharField()
+    ws_level = serializers.IntegerField()
+    ws_role = serializers.CharField()
+    auto_access = serializers.BooleanField(required=False)
+
+
+class MemberListItemSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField(allow_blank=True)
+    email = serializers.EmailField()
+    org_level = serializers.IntegerField(required=False, allow_null=True)
+    org_role = serializers.CharField(required=False, allow_null=True)
+    ws_level = serializers.IntegerField(required=False, allow_null=True)
+    ws_role = serializers.CharField(required=False, allow_null=True)
+    workspaces = MemberWorkspaceAccessSerializer(many=True, required=False)
+    status = serializers.CharField()
+    created_at = serializers.CharField(allow_blank=True)
+    type = serializers.ChoiceField(choices=["member", "invite"])
+    auto_access = serializers.BooleanField(required=False)
+
+
+class MemberListResultSerializer(serializers.Serializer):
+    results = MemberListItemSerializer(many=True)
+    total = serializers.IntegerField()
+    page = serializers.IntegerField()
+    limit = serializers.IntegerField()
+
+
+class MemberListResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = MemberListResultSerializer()
+
+
+class WorkspaceMemberRowSerializer(serializers.Serializer):
+    """Contract for a single row of the workspace-members list — the shape built
+    by ``services.workspace_members._member_row`` (explicit members, auto-access
+    admins, and pending invites all share it)."""
+
+    id = serializers.UUIDField()
+    name = serializers.CharField(allow_blank=True)
+    email = serializers.EmailField()
+    ws_level = serializers.IntegerField(required=False, allow_null=True)
+    ws_role = serializers.CharField(required=False, allow_null=True)
+    org_level = serializers.IntegerField(required=False, allow_null=True)
+    org_role = serializers.CharField(required=False, allow_null=True)
+    status = serializers.CharField()
+    created_at = serializers.CharField(allow_blank=True)
+    type = serializers.ChoiceField(choices=["member", "invite"])
+    auto_access = serializers.BooleanField(required=False)
+
+
+class WorkspaceMemberListResultSerializer(serializers.Serializer):
+    results = WorkspaceMemberRowSerializer(many=True)
+    total = serializers.IntegerField()
+    page = serializers.IntegerField()
+    limit = serializers.IntegerField()
+
+
+class WorkspaceMemberListResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = WorkspaceMemberListResultSerializer()
+
+
+class MemberRoleUpdateResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    changes = serializers.JSONField()
+
+
+class MemberRoleUpdateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = MemberRoleUpdateResultSerializer()
+
+
 class MemberRemoveSerializer(serializers.Serializer):
     """DELETE /accounts/organization/members/remove/"""
 
     user_id = serializers.UUIDField()
 
 
+class MemberUserMutationResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    user_id = serializers.UUIDField()
+
+
+class MemberUserMutationResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = MemberUserMutationResultSerializer()
+
+
 class MemberListRequestSerializer(serializers.Serializer):
     """GET /accounts/organization/members/ query params."""
+
+    SORT_CHOICES = [
+        "name",
+        "-name",
+        "email",
+        "-email",
+        "status",
+        "-status",
+        "type",
+        "-type",
+        "date_joined",
+        "-date_joined",
+        "created_at",
+        "-created_at",
+        "org_level",
+        "-org_level",
+    ]
 
     page = serializers.IntegerField(min_value=1, default=1)
     limit = serializers.IntegerField(min_value=1, max_value=100, default=20)
@@ -135,7 +282,11 @@ class MemberListRequestSerializer(serializers.Serializer):
         required=False,
         default=list,
     )
-    sort = serializers.CharField(required=False, default="-created_at")
+    sort = serializers.ChoiceField(
+        choices=SORT_CHOICES,
+        required=False,
+        default="-created_at",
+    )
 
 
 # ── Workspace-scoped member endpoints ──
@@ -143,6 +294,23 @@ class MemberListRequestSerializer(serializers.Serializer):
 
 class WorkspaceMemberListRequestSerializer(serializers.Serializer):
     """GET /accounts/workspace/<uuid>/members/ query params."""
+
+    SORT_CHOICES = [
+        "name",
+        "-name",
+        "email",
+        "-email",
+        "status",
+        "-status",
+        "type",
+        "-type",
+        "date_joined",
+        "-date_joined",
+        "created_at",
+        "-created_at",
+        "ws_level",
+        "-ws_level",
+    ]
 
     page = serializers.IntegerField(min_value=1, default=1)
     limit = serializers.IntegerField(min_value=1, max_value=100, default=20)
@@ -157,7 +325,11 @@ class WorkspaceMemberListRequestSerializer(serializers.Serializer):
         required=False,
         default=list,
     )
-    sort = serializers.CharField(required=False, default="-created_at")
+    sort = serializers.ChoiceField(
+        choices=SORT_CHOICES,
+        required=False,
+        default="-created_at",
+    )
 
 
 class WorkspaceMemberRoleUpdateSerializer(serializers.Serializer):
@@ -171,3 +343,15 @@ class WorkspaceMemberRemoveSerializer(serializers.Serializer):
     """DELETE /accounts/workspace/<uuid>/members/remove/"""
 
     user_id = serializers.UUIDField()
+
+
+class WorkspaceMemberRoleUpdateResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    user_id = serializers.UUIDField()
+    ws_level = serializers.IntegerField()
+    ws_role = serializers.CharField()
+
+
+class WorkspaceMemberRoleUpdateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = WorkspaceMemberRoleUpdateResultSerializer()

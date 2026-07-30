@@ -9,8 +9,6 @@ Pattern:
 - Helper functions: create, update, delete, pause, unpause, trigger, exists
 """
 
-import asyncio
-from typing import List, Optional
 
 from asgiref.sync import async_to_sync
 from temporalio.client import (
@@ -98,7 +96,7 @@ async def a_update_schedule(
     async def updater(input: ScheduleUpdateInput) -> ScheduleUpdate:
         if keep_tz and input.description.schedule.spec:
             # Preserve existing timezone
-            schedule.spec.jitter = input.description.schedule.spec.jitter
+            schedule.spec.time_zone_name = input.description.schedule.spec.time_zone_name
         return ScheduleUpdate(schedule=schedule)
 
     await handle.update(updater)
@@ -138,7 +136,7 @@ async def delete_schedule(client: Client, schedule_id: str) -> bool:
 async def a_pause_schedule(
     client: Client,
     schedule_id: str,
-    note: Optional[str] = None,
+    note: str | None = None,
 ) -> None:
     """Pause a schedule."""
     handle = client.get_schedule_handle(schedule_id)
@@ -150,7 +148,7 @@ async def a_pause_schedule(
 async def pause_schedule(
     client: Client,
     schedule_id: str,
-    note: Optional[str] = None,
+    note: str | None = None,
 ) -> None:
     """Sync wrapper for a_pause_schedule."""
     return await a_pause_schedule(client, schedule_id, note=note)
@@ -159,7 +157,7 @@ async def pause_schedule(
 async def a_unpause_schedule(
     client: Client,
     schedule_id: str,
-    note: Optional[str] = None,
+    note: str | None = None,
 ) -> None:
     """Unpause a schedule."""
     handle = client.get_schedule_handle(schedule_id)
@@ -171,7 +169,7 @@ async def a_unpause_schedule(
 async def unpause_schedule(
     client: Client,
     schedule_id: str,
-    note: Optional[str] = None,
+    note: str | None = None,
 ) -> None:
     """Sync wrapper for a_unpause_schedule."""
     return await a_unpause_schedule(client, schedule_id, note=note)
@@ -210,7 +208,7 @@ async def describe_schedule(client: Client, schedule_id: str):
     return await a_describe_schedule(client, schedule_id)
 
 
-async def a_list_schedules(client: Client) -> List[str]:
+async def a_list_schedules(client: Client) -> list[str]:
     """List all schedule IDs."""
     schedules = []
     schedules_iter = await client.list_schedules()
@@ -220,7 +218,7 @@ async def a_list_schedules(client: Client) -> List[str]:
 
 
 @async_to_sync
-async def list_schedules(client: Client) -> List[str]:
+async def list_schedules(client: Client) -> list[str]:
     """Sync wrapper for a_list_schedules."""
     return await a_list_schedules(client)
 
@@ -233,9 +231,15 @@ async def list_schedules(client: Client) -> List[str]:
 def _build_schedule_for_config(config: ScheduleConfig) -> Schedule:
     """Build a Temporal Schedule from a ScheduleConfig."""
     if config.cron_expression:
-        spec = ScheduleSpec(cron_expressions=[config.cron_expression])
+        spec = ScheduleSpec(
+            cron_expressions=[config.cron_expression],
+            jitter=config.jitter,
+        )
     else:
-        spec = ScheduleSpec(intervals=[ScheduleIntervalSpec(every=config.interval)])
+        spec = ScheduleSpec(
+            intervals=[ScheduleIntervalSpec(every=config.interval)],
+            jitter=config.jitter,
+        )
 
     policy_kwargs: dict = {"overlap": config.overlap_policy}
     if config.catchup_window is not None:
@@ -331,7 +335,7 @@ async def cleanup_orphaned_schedules(
 
 async def a_register_schedules(
     client: Client,
-    schedules: List[ScheduleConfig],
+    schedules: list[ScheduleConfig],
     cleanup_orphans: bool = True,
 ) -> None:
     """
@@ -404,7 +408,7 @@ async def a_register_schedules(
 @async_to_sync
 async def register_schedules(
     client: Client,
-    schedules: List[ScheduleConfig],
+    schedules: list[ScheduleConfig],
     cleanup_orphans: bool = True,
 ) -> None:
     """Sync wrapper for a_register_schedules."""

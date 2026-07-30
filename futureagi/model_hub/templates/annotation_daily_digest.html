@@ -1,0 +1,57 @@
+{% extends "billing/base_billing.html" %}
+{% block title %}Your annotation digest{% endblock %}
+{% block preheader %}{% if annotator_total %}{{ annotator_total }} pending{% if reviewer_total %} · {% endif %}{% endif %}{% if reviewer_total %}{{ reviewer_total }} reviews{% endif %}{% endblock %}
+{% block txid %}◦ ANNOTATION / DAILY DIGEST{% endblock %}
+{% block content %}
+  <span class="eyebrow" style="display:inline-block; font-family:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace; font-size:10px; font-weight:500; letter-spacing:0.14em; text-transform:uppercase; color:#c7c7cc; background:rgba(255,255,255,0.03); border:1px solid #3f3f46; padding:5px 10px; border-radius:999px; margin-bottom:20px;">
+    <span style="display:inline-block; width:5px; height:5px; border-radius:50%; background:#fafafa; margin-right:8px; vertical-align:middle; box-shadow:0 0 8px rgba(255,255,255,0.7);"></span>Daily digest
+  </span>
+
+  <h1 class="hx" style="font-family:'Inter',sans-serif; font-size:28px; line-height:1.22; font-weight:600; color:#fafafa; letter-spacing:-0.015em; margin:16px 0 14px 0;">
+    Hi {{ user_name }} — here's what's on your plate today
+  </h1>
+
+  <p class="px" style="font-family:'Inter',sans-serif; font-size:16px; line-height:1.65; color:#d4d4d8; margin:0 0 24px 0;">
+    Current state of your pending annotation work.
+  </p>
+
+  {% if annotator_buckets %}
+  <div class="log" style="background-color:#0a0a0a; border:1px solid #27272a; border-radius:10px; padding:20px 22px; margin:24px 0; font-family:'Inter',sans-serif; color:#c7c7cc;">
+    <p class="log-hdr" style="margin:0 0 14px 0; font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:#a1a1aa;">
+      <span style="display:inline-block; width:6px; height:6px; border-radius:50%; margin-right:10px; vertical-align:middle; background:#10b981;"></span>Pending your annotation · {{ annotator_total }} item{{ annotator_total|pluralize }}
+    </p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      {% for bucket in annotator_buckets %}
+      <tr>
+        <td style="padding:7px 0; font-family:'Inter',sans-serif; font-size:14px; color:#fafafa;{% if not forloop.first %} border-top:1px solid #1a1a1d;{% endif %}">{{ bucket.queue_name }}</td>
+        <td style="padding:7px 0; text-align:right; font-family:'JetBrains Mono',monospace; font-size:13px; color:#10b981; font-weight:500;{% if not forloop.first %} border-top:1px solid #1a1a1d;{% endif %}">{{ bucket.count }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+
+  {% if reviewer_buckets %}
+  <div class="log" style="background-color:#0a0a0a; border:1px solid #27272a; border-radius:10px; padding:20px 22px; margin:24px 0; font-family:'Inter',sans-serif; color:#c7c7cc;">
+    <p class="log-hdr" style="margin:0 0 14px 0; font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:#a1a1aa;">
+      <span style="display:inline-block; width:6px; height:6px; border-radius:50%; margin-right:10px; vertical-align:middle; background:#f59e0b;"></span>Pending your review · {{ reviewer_total }} item{{ reviewer_total|pluralize }}
+    </p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      {% for bucket in reviewer_buckets %}
+      <tr>
+        <td style="padding:7px 0; font-family:'Inter',sans-serif; font-size:14px; color:#fafafa;{% if not forloop.first %} border-top:1px solid #1a1a1d;{% endif %}">{{ bucket.queue_name }}</td>
+        <td style="padding:7px 0; text-align:right; font-family:'JetBrains Mono',monospace; font-size:13px; color:#f59e0b; font-weight:500;{% if not forloop.first %} border-top:1px solid #1a1a1d;{% endif %}">{{ bucket.count }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+
+  <div style="margin: 28px 0 12px 0;">
+    {% include "billing/_button.html" with url=queues_url text="Open my work &rarr;" variant="primary" %}
+  </div>
+
+  <p style="font-family:'Inter',sans-serif; font-size:12px; line-height:1.6; color:#71717a; margin:28px 0 0 0;">
+    You're getting a daily digest at your local morning. <a href="{{ unsubscribe_url }}" style="color:#a1a1aa;">Unsubscribe</a>
+  </p>
+{% endblock %}

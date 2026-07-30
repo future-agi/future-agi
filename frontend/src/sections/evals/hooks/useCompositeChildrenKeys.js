@@ -80,10 +80,7 @@ export function useCompositeChildrenSchemas(children = []) {
           r.config_params_desc ||
           null,
         requiredKeys:
-          r.required_keys ||
-          config.required_keys ||
-          config.requiredKeys ||
-          [],
+          r.required_keys || config.required_keys || config.requiredKeys || [],
       };
     });
     return map;

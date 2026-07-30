@@ -45,6 +45,11 @@ const VOICE_RUNTIME_LEAVES = [
   "assistant_recording",
   "customer_recording",
   "agent_prompt",
+  // Only the voice pipeline populates these; chat resolves them to "".
+  "summary",
+  "phone_number",
+  "recording_url",
+  "stereo_recording_url",
 ];
 const TEXT_RUNTIME_LEAVES = [
   "transcript",
@@ -53,14 +58,10 @@ const TEXT_RUNTIME_LEAVES = [
   "agent_prompt",
 ];
 const COMMON_RUNTIME_LEAVES = [
-  "summary",
   "ended_reason",
   "duration_seconds",
   "status",
   "overall_score",
-  "phone_number",
-  "recording_url",
-  "stereo_recording_url",
 ];
 
 const PRIORITY_PREFIXES = [

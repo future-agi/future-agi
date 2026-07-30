@@ -13,6 +13,18 @@ const CustomModalKeyCard = ({ data, onDeleteClick }) => {
   const queryClient = useQueryClient();
   const [openModal, setOpenModal] = useState(false);
   const theme = useTheme();
+  const modelName =
+    data?.userModelId ??
+    data?.user_model_id ??
+    data?.modelName ??
+    data?.model_name ??
+    "";
+  const configJson = data?.configJson ?? data?.config_json ?? null;
+  const inputTokenCost = data?.inputTokenCost ?? data?.input_token_cost;
+  const outputTokenCost = data?.outputTokenCost ?? data?.output_token_cost;
+  const hasConfigJson =
+    !!configJson &&
+    (typeof configJson !== "object" || Object.keys(configJson).length > 0);
 
   const { mutate: updateCustomModel } = useMutation({
     /**
@@ -33,15 +45,21 @@ const CustomModalKeyCard = ({ data, onDeleteClick }) => {
       });
       queryClient.invalidateQueries({ queryKey: ["model-list"] });
       queryClient.invalidateQueries({ queryKey: ["custom-models"] });
+      queryClient.invalidateQueries({ queryKey: ["customModals"] });
       setOpenModal(false);
     },
   });
 
-  const onSubmit = ({ configJson, payload }) => {
-    const newConfigJson = { ...configJson };
+  const onSubmit = ({ configJson: submittedConfigJson, payload }) => {
+    const newConfigJson = { ...submittedConfigJson };
     /// if this was custom provider we need to always send customProvider true
-    if (data?.configJson?.customProvider) {
-      newConfigJson.customProvider = true;
+    if (
+      configJson?.customProvider ||
+      configJson?.custom_provider ||
+      submittedConfigJson?.customProvider ||
+      submittedConfigJson?.custom_provider
+    ) {
+      newConfigJson.custom_provider = true;
     }
     updateCustomModel({
       configJson: newConfigJson,
@@ -60,11 +78,9 @@ const CustomModalKeyCard = ({ data, onDeleteClick }) => {
       return;
     }
     const payload = {
-      modelName: data.model_name,
-      modelProvider: data.modelProvider,
-      inputTokenCost: data.inputTokenCost,
-      outputTokenCost: data.outputTokenCost,
-      configJson,
+      model_name: modelName,
+      input_token_cost: inputTokenCost,
+      output_token_cost: outputTokenCost,
     };
     onSubmit({ ...formData, configJson, payload });
   };
@@ -98,7 +114,7 @@ const CustomModalKeyCard = ({ data, onDeleteClick }) => {
           }}
         >
           {/* Avatar Circle */}
-          <CustomModalAvatar text={data?.userModelId} />
+          <CustomModalAvatar text={modelName} />
 
           {/* Title + Subtitle Column */}
           <Box sx={{ display: "flex", flexDirection: "column" }}>
@@ -107,12 +123,12 @@ const CustomModalKeyCard = ({ data, onDeleteClick }) => {
               fontWeight="fontWeightMedium"
               color="text.primary"
             >
-              {data?.userModelId}
+              {modelName}
             </Typography>
           </Box>
         </Box>
 
-        {data?.configJson ? (
+        {hasConfigJson ? (
           <Icon
             icon="gg-check-o"
             width={16}
@@ -139,20 +155,19 @@ const CustomModalKeyCard = ({ data, onDeleteClick }) => {
           </Button>
         )}
       </Box>
-      <ShowComponent
-        condition={data?.configJson && Object.keys(data.configJson).length > 0}
-      >
+      <ShowComponent condition={hasConfigJson}>
         <APIKeyReadOnlyView
           isJsonKey={true}
           showJsonField={true}
           openModal={openModal}
           setOpenModal={setOpenModal}
-          keyValue={data?.configJson}
+          keyValue={configJson}
           provider={{
             ...data,
-            maskedKey: data.configJson,
+            maskedKey: configJson,
             logoUrl: "",
-            displayName: data.userModelId,
+            displayName: modelName,
+            display_name: modelName,
             type: "json",
             hasKey: true,
           }}
