@@ -18,6 +18,9 @@ const testTheme = createTheme({
     whiteScale: {
       500: "divider",
     },
+    green: {
+      500: "#4caf50",
+    },
     black: {
       500: "#666666",
       1000: "#000000",
