@@ -816,6 +816,10 @@ export const normalizeEvalCellValue = (value) => {
 export const cleanChoiceLabel = (value) => {
   const parsed = parsePythonReprIfNeeded(value);
   if (Array.isArray(parsed)) return parsed.map((v) => String(v)).join(", ");
+  // Scored choices evals emit {score, choice} / {score, choices} as the bucket
+  // key, which would otherwise stringify to "[object Object]".
+  const choiceLabel = extractChoiceLabel(parsed);
+  if (choiceLabel !== null) return choiceLabel;
   return String(parsed ?? value);
 };
 

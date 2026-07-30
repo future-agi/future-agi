@@ -170,6 +170,8 @@ class RunTestChatExecutionView(APIView):
                 }
             )
 
+        except Http404:
+            return self.gm.not_found("Run test not found.")
         except Exception as e:
             logger.exception(f"Error executing test: {str(e)}")
             return self.gm.internal_server_error_response("Failed to execute test")
@@ -603,7 +605,7 @@ class ChatSendMessageView(APIView):
             return self.gm.success_response(response_data.model_dump(exclude_none=True))
 
         except (CallExecution.DoesNotExist, Http404):
-            return self.gm.bad_request("Call execution not found")
+            return self.gm.not_found("Call execution not found")
         except ValidationError as e:
             return self.gm.bad_request(
                 f"Invalid request data format. Expected SendChatRequest schema. Errors: {str(e)}"
@@ -643,15 +645,16 @@ class ChatSDKCodeView(APIView):
             if not user_organization:
                 return self.gm.bad_request("Organization not found for the user")
 
-            # Get run_test by ID
+            # Get run_test by ID (scoped by workspace + org)
             try:
                 run_test = RunTest.objects.get(
+                    run_test_workspace_filter(request),
                     id=run_test_id,
                     organization=user_organization,
                     deleted=False,
                 )
             except RunTest.DoesNotExist:
-                return self.gm.bad_request("Run test not found")
+                return self.gm.not_found("Run test not found")
 
             rendered_code = CHAT_SDK_CODE.format(run_test_name=run_test.name)
 

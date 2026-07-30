@@ -8,6 +8,7 @@ import { useParams } from "react-router";
 import CustomTooltip from "src/components/tooltip";
 import { useFixMyAgentDrawerStoreShallow } from "./FixMyAgentDrawer/state";
 import { FixMyAgentDrawerSections } from "./FixMyAgentDrawer/common";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 
 const TestExecutionDetailTabsComponent = ({
   tabs,
@@ -21,8 +22,12 @@ const TestExecutionDetailTabsComponent = ({
   }));
 
   const { executionId } = useParams();
+  const { isOSS } = useDeploymentMode();
 
-  const { disabled, reason } = useFixMyAgentBlocked(executionId);
+  const { disabled: blocked, reason: blockedReason } =
+    useFixMyAgentBlocked(executionId);
+  const disabled = blocked || isOSS;
+  const reason = isOSS ? "Not available on self host" : blockedReason;
 
   const { setOpenSection } = useFixMyAgentDrawerStoreShallow((s) => ({
     setOpenSection: s.setOpenSection,

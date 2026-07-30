@@ -36,6 +36,7 @@ const UnifiedCallTranscript = ({
       duration,
       timeStamp,
       content,
+      rawContent: Array.isArray(item.content) ? item.content : [],
       align: role === "user" ? "flex-end" : "flex-start",
     };
   };
@@ -107,6 +108,7 @@ const UnifiedCallTranscript = ({
               role={itemProps.role}
               align={itemProps.align}
               content={itemProps.content}
+              rawContent={itemProps.rawContent}
               duration={itemProps.duration}
               timeStamp={itemProps.timeStamp}
               agentName={agentName}

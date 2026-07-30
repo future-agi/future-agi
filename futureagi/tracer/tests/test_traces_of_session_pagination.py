@@ -103,3 +103,112 @@ class TestTracesOfSessionPagination:
         assert len(payload["table"]) == page_size
         # total_rows comes from the (correct) uniq() count, unchanged by the trim.
         assert payload["metadata"]["total_rows"] == total
+
+    def test_span_trace_map_skipped_without_annotation_labels(self):
+        """No annotation labels -> the annotation map is a guaranteed no-op,
+        so the span->trace map query must not run at all."""
+        view = self._make_view()
+        request = self._make_request(page_size=5)
+        trace_rows = [{"trace_id": str(uuid.uuid4())} for _ in range(3)]
+        analytics = self._routing_analytics(trace_rows=trace_rows, total=3)
+
+        with (
+            mock.patch("tracer.views.trace.CustomEvalConfig") as mock_cfg,
+            mock.patch(
+                "tracer.views.trace.get_annotation_labels_for_project",
+                return_value=[],
+            ),
+            mock.patch(
+                "tracer.views.trace._build_annotation_map_from_scores",
+                return_value={},
+            ),
+        ):
+            mock_cfg.objects.filter.return_value.select_related.return_value = []
+            status, _ = view._list_traces_of_session_clickhouse(
+                request,
+                project_id=str(uuid.uuid4()),
+                validated_data={"filters": [], "page_number": 0, "page_size": 5},
+                analytics=analytics,
+                org_project_ids=None,
+                org=request.organization,
+            )
+
+        assert status == "ok"
+        analytics.get_span_trace_map.assert_not_called()
+
+    @pytest.mark.django_db
+    def test_span_trace_map_runs_with_annotation_labels(self):
+        """With labels present the span->trace map runs, scoped to project + window."""
+        view = self._make_view()
+        request = self._make_request(page_size=5)
+        trace_rows = [{"trace_id": str(uuid.uuid4())} for _ in range(3)]
+        analytics = self._routing_analytics(trace_rows=trace_rows, total=3)
+        label = mock.Mock()
+        label.id = uuid.uuid4()
+        label.type = "text"
+        label.name = "Quality"
+        label.settings = {}
+        project_id = str(uuid.uuid4())
+
+        with (
+            mock.patch("tracer.views.trace.CustomEvalConfig") as mock_cfg,
+            mock.patch(
+                "tracer.views.trace.get_annotation_labels_for_project",
+                return_value=[label],
+            ),
+            mock.patch(
+                "tracer.views.trace._build_annotation_map_from_scores",
+                return_value={},
+            ),
+        ):
+            mock_cfg.objects.filter.return_value.select_related.return_value = []
+            status, _ = view._list_traces_of_session_clickhouse(
+                request,
+                project_id=project_id,
+                validated_data={"filters": [], "page_number": 0, "page_size": 5},
+                analytics=analytics,
+                org_project_ids=None,
+                org=request.organization,
+            )
+
+        assert status == "ok"
+        analytics.get_span_trace_map.assert_called_once()
+        assert analytics.get_span_trace_map.call_args.kwargs["project_id"] == project_id
+
+    def test_content_shortfall_logs_buffer_warning(self):
+        """Fewer content rows than page traces -> the window-buffer warning fires."""
+        view = self._make_view()
+        request = self._make_request(page_size=5)
+        trace_rows = [{"trace_id": str(uuid.uuid4())} for _ in range(3)]
+        analytics = self._routing_analytics(trace_rows=trace_rows, total=3)
+
+        with (
+            mock.patch("tracer.views.trace.CustomEvalConfig") as mock_cfg,
+            mock.patch(
+                "tracer.views.trace.get_annotation_labels_for_project",
+                return_value=[],
+            ),
+            mock.patch(
+                "tracer.views.trace._build_annotation_map_from_scores",
+                return_value={},
+            ),
+            mock.patch("tracer.views.trace.logger") as mock_logger,
+        ):
+            mock_cfg.objects.filter.return_value.select_related.return_value = []
+            status, _ = view._list_traces_of_session_clickhouse(
+                request,
+                project_id=str(uuid.uuid4()),
+                validated_data={"filters": [], "page_number": 0, "page_size": 5},
+                analytics=analytics,
+                org_project_ids=None,
+                org=request.organization,
+            )
+
+        assert status == "ok"
+        warning_events = [
+            c.args[0] for c in mock_logger.warning.call_args_list if c.args
+        ]
+        assert (
+            "trace content enrichment returned fewer traces than requested"
+            in warning_events
+        )

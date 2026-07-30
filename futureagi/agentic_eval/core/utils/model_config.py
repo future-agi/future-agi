@@ -134,6 +134,13 @@ class ModelConfigs:
         max_tokens=8100,
     )
 
+    VERTEX_GEMINI_3_6_FLASH: Final[ModelConfig] = ModelConfig(
+        provider=LiteLlmProvider.VERTEX_AI.value,
+        model_name="vertex_ai/gemini-3.6-flash",
+        temperature=0.2,
+        max_tokens=8100,
+    )
+
     VERTEX_GEMINI_3_1_FLASH_LITE: Final[ModelConfig] = ModelConfig(
         provider=LiteLlmProvider.VERTEX_AI.value,
         model_name="vertex_ai/gemini-3.1-flash-lite",

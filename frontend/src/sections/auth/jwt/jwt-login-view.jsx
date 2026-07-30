@@ -43,6 +43,7 @@ import {
 import RightSectionAuth from "./RightSectionAuth";
 import { isValidUtm } from "src/utils/utmUtils";
 import { usePostLoginPath } from "src/hooks/useDeploymentMode";
+import { OssSetupModal, useOssSetupModal } from "./oss-setup";
 
 // ----------------------------------------------------------------------
 
@@ -51,7 +52,7 @@ export default function JwtLoginView() {
   const postLoginPath = usePostLoginPath();
   const router = useRouter();
   const [errorMsg, setErrorMsg] = useState("");
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const returnTo = searchParams.get("returnTo");
   // Persist returnTo on a login action so it survives flows that drop the
   // URL param (OAuth round-trip, login → setup-org).
@@ -65,6 +66,30 @@ export default function JwtLoginView() {
   const { search } = useLocation();
   const { enqueueSnackbar } = useSnackbar();
   const { uuid, token } = useParams();
+
+  const ossSetup = useOssSetupModal({
+    enabled: !token,
+    autoOpenTab: searchParams.get("ossSetup"),
+  });
+  // Only apply OSS treatment on a confirmed "oss" response; a failed
+  // deployment-info read falls back to the full login (social/SSO shown).
+  const confirmedOSS = ossSetup.isSuccess && ossSetup.isOSS;
+  const showOssUi = confirmedOSS;
+  const showSocial = !confirmedOSS;
+
+  // The hint has done its job once the modal opens on the right tab; strip it
+  // so a reload doesn't reopen the modal.
+  useEffect(() => {
+    if (searchParams.get("ossSetup")) {
+      setSearchParams(
+        (prev) => {
+          prev.delete("ossSetup");
+          return prev;
+        },
+        { replace: true },
+      );
+    }
+  }, [searchParams, setSearchParams]);
 
   const [inviteFailed, setInviteFailed] = useState(false);
 
@@ -560,10 +585,14 @@ export default function JwtLoginView() {
           color="primary"
           underline="always"
           href={paths.auth.jwt["forget-password"]}
-          onClick={() => {
+          onClick={(e) => {
             trackEvent(Events.forgotPasswordClicked, {
               [PropertyName.click]: true,
             });
+            if (showOssUi) {
+              e.preventDefault();
+              ossSetup.openReset();
+            }
           }}
         >
           Forgot Password
@@ -611,13 +640,15 @@ export default function JwtLoginView() {
         </Link>
         .
       </Typography>
-      <Divider>
-        <Typography variant="body2" sx={{ color: "text.disabled" }}>
-          or
-        </Typography>
-      </Divider>
+      {showSocial && (
+        <Divider>
+          <Typography variant="body2" sx={{ color: "text.disabled" }}>
+            or
+          </Typography>
+        </Divider>
+      )}
       <Stack spacing={1.5}>
-        {browserSupportsWebAuthn() && (
+        {showSocial && browserSupportsWebAuthn() && (
           <LoadingButton
             sx={{
               border: "1px solid",
@@ -638,24 +669,29 @@ export default function JwtLoginView() {
             </Typography>
           </LoadingButton>
         )}
-        <Button
-          sx={{
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 0.5,
+        {showSocial && (
+          <>
+            <Button
+              sx={{
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 0.5,
 
-            color: "text.primary",
-            height: 44,
-          }}
-          onClick={() => handleServiceProvider("google")}
-          startIcon={<Iconify icon="logos:google-icon" width={20} />}
-        >
-          <Typography fontWeight={"fontWeightMedium"} sx={{ fontSize: "15px" }}>
-            Continue with Google
-          </Typography>
-        </Button>
+                color: "text.primary",
+                height: 44,
+              }}
+              onClick={() => handleServiceProvider("google")}
+              startIcon={<Iconify icon="logos:google-icon" width={20} />}
+            >
+              <Typography
+                fontWeight={"fontWeightMedium"}
+                sx={{ fontSize: "15px" }}
+              >
+                Continue with Google
+              </Typography>
+            </Button>
 
-        {/* <Button
+            {/* <Button
         sx={{
           border: "1px solid",
           borderColor: "divider",
@@ -683,56 +719,56 @@ export default function JwtLoginView() {
           Continue with Microsoft
         </Typography>
       </Button> */}
-        <Button
-          sx={{
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 0.5,
+            <Button
+              sx={{
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 0.5,
 
-            height: 44,
-          }}
-          onClick={() => handleServiceProvider("github")}
-          startIcon={
-            <Iconify
-              icon="bi:github"
-              width={24}
-              sx={{ color: "text.primary" }}
-            />
-          }
-        >
-          <Typography
-            fontWeight={"fontWeightMedium"}
-            sx={{ fontSize: "15px", color: "text.primary" }}
-          >
-            Continue with Github
-          </Typography>
-        </Button>
-        <Button
-          sx={{
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 0.5,
+                height: 44,
+              }}
+              onClick={() => handleServiceProvider("github")}
+              startIcon={
+                <Iconify
+                  icon="bi:github"
+                  width={24}
+                  sx={{ color: "text.primary" }}
+                />
+              }
+            >
+              <Typography
+                fontWeight={"fontWeightMedium"}
+                sx={{ fontSize: "15px", color: "text.primary" }}
+              >
+                Continue with Github
+              </Typography>
+            </Button>
+            <Button
+              sx={{
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 0.5,
 
-            height: 44,
-            color: "text.primary",
-          }}
-          onClick={handleSsoLogin}
-          startIcon={
-            <SvgColor
-              sx={{ marginLeft: 2 }}
-              src="/assets/icons/ic_sso_saml.svg"
-            />
-          }
-        >
-          <Typography
-            fontWeight={"fontWeightMedium"}
-            sx={{ fontSize: "15px", marginRight: -1.5 }}
-          >
-            Continue with SSO/SAML
-          </Typography>
-        </Button>
-
-        {/* 🔹 New SAML/SSO Login Button */}
+                height: 44,
+                color: "text.primary",
+              }}
+              onClick={handleSsoLogin}
+              startIcon={
+                <SvgColor
+                  sx={{ marginLeft: 2 }}
+                  src="/assets/icons/ic_sso_saml.svg"
+                />
+              }
+            >
+              <Typography
+                fontWeight={"fontWeightMedium"}
+                sx={{ fontSize: "15px", marginRight: -1.5 }}
+              >
+                Continue with SSO/SAML
+              </Typography>
+            </Button>
+          </>
+        )}
 
         {/* ✅ Added Create Account Link */}
         <Typography
@@ -744,14 +780,34 @@ export default function JwtLoginView() {
           Don’t have an account?
           <Link
             variant="subtitle2"
-            component={RouterLink}
-            to={paths.auth.jwt.register + search}
+            component={showOssUi ? "button" : RouterLink}
+            type={showOssUi ? "button" : undefined}
+            to={showOssUi ? undefined : paths.auth.jwt.register + search}
+            onClick={(e) => {
+              if (showOssUi) {
+                e.preventDefault();
+                ossSetup.openCreate();
+              }
+            }}
             sx={{ color: "primary.main" }}
           >
             {" "}
             Sign up
           </Link>
         </Typography>
+
+        {showOssUi && (
+          <Link
+            component="button"
+            type="button"
+            variant="s2"
+            underline="hover"
+            onClick={ossSetup.openCreate}
+            sx={{ color: "text.secondary", alignSelf: "center" }}
+          >
+            Self-hosted? Set up via CLI
+          </Link>
+        )}
       </Stack>
     </Stack>
   );
@@ -822,6 +878,13 @@ export default function JwtLoginView() {
           </FormProvider>
         </Box>
       </Box>
+
+      <OssSetupModal
+        open={ossSetup.open}
+        onClose={ossSetup.onClose}
+        activeTab={ossSetup.activeTab}
+        onTabChange={ossSetup.setActiveTab}
+      />
 
       {/* Right Side - Image with Text Overlay */}
       <Box

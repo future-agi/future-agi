@@ -635,12 +635,9 @@ export function useTraceFilterProperties(
   { enabled = true, isSimulator = false, sourceScope = null } = {},
 ) {
   return useQuery({
-    queryKey: [
-      "trace-filter-properties-v2",
-      projectId,
-      isSimulator,
-      sourceScope,
-    ],
+    // Key on projectId only — isSimulator/sourceScope affect only the
+    // per-observer `select`, not the request, so keying on them duplicated fetches.
+    queryKey: ["trace-filter-properties-v2", projectId],
     enabled: enabled && Boolean(projectId),
     queryFn: async () => {
       const params = {};

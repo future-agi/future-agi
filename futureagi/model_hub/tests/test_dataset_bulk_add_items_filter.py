@@ -1108,39 +1108,122 @@ class TestAddItemsFilterModeCallExecutionRichFilters:
         assert resp.data["count"] == 1
         assert [row["id"] for row in resp.data["results"]] == [str(completed_long.id)]
 
-    def test_filter_mode_status_filter_narrows_result(
-        self, auth_client, active_queue, seeded_mixed_call_executions
-    ):
-        agent_def, *_ = seeded_mixed_call_executions
-        resp = auth_client.post(
-            _add_items_url(active_queue.id),
-            {
-                "selection": {
-                    "mode": "filter",
-                    "source_type": "call_execution",
-                    "project_id": str(agent_def.id),
-                    "filter": [
-                        {
-                            "column_id": "status",
-                            "filter_config": {
-                                "filter_type": "categorical",
-                                "filter_op": "equals",
-                                "filter_value": "completed",
-                            },
-                        }
-                    ],
+    # ─── Filter-mode POST cases — parametrized ──────────────────────────
+    # Each case: (id, filter_spec, expected_status, expected_added_or_none,
+    #             expected_total_or_none, expected_message_substring_or_none)
+    _FILTER_MODE_CASES = [
+        (
+            "status_filter_narrows_result",
+            [
+                {
+                    "column_id": "status",
+                    "filter_config": {
+                        "filter_type": "categorical",
+                        "filter_op": "equals",
+                        "filter_value": "completed",
+                    },
                 }
-            },
-            format="json",
-        )
-        assert resp.status_code == 200, resp.data
-        # Only the 2 completed calls — NOT the failed one. Pre-fix this
-        # would have added all 3 because the filter was silently dropped.
-        assert resp.data["result"]["added"] == 2
-        assert resp.data["result"]["total_matching"] == 2
+            ],
+            200,
+            2,  # only 2 completed calls; NOT the failed one
+            2,
+            None,
+        ),
+        (
+            "duration_range_narrows_result",
+            [
+                {
+                    "column_id": "duration_seconds",
+                    "filter_config": {
+                        "filter_type": "number",
+                        "filter_op": "less_than",
+                        "filter_value": 60,
+                    },
+                }
+            ],
+            200,
+            2,  # 10s + 30s match; 120s excluded
+            2,
+            None,
+        ),
+        (
+            "persona_field_narrows_result",
+            [
+                {
+                    "column_id": "persona.communication_style",
+                    "filter_config": {
+                        "filter_type": "categorical",
+                        "filter_op": "equals",
+                        "filter_value": "Direct and concise",
+                    },
+                }
+            ],
+            200,
+            1,
+            1,
+            None,
+        ),
+        (
+            "unsupported_column_returns_400",
+            [
+                {
+                    "column_id": "totally_made_up_column",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "x",
+                    },
+                }
+            ],
+            400,
+            None,
+            None,
+            # ValueError from resolver → bad_request. Better than the old
+            # silent match-all behaviour.
+            "totally_made_up_column",
+        ),
+        (
+            "combined_status_and_duration",
+            [
+                {
+                    "column_id": "status",
+                    "filter_config": {
+                        "filter_type": "categorical",
+                        "filter_op": "equals",
+                        "filter_value": "completed",
+                    },
+                },
+                {
+                    "column_id": "duration_seconds",
+                    "filter_config": {
+                        "filter_type": "number",
+                        "filter_op": "less_than",
+                        "filter_value": 60,
+                    },
+                },
+            ],
+            200,
+            1,  # only completed_short (10s, completed) matches both filters
+            1,
+            None,
+        ),
+    ]
 
-    def test_filter_mode_duration_range_narrows_result(
-        self, auth_client, active_queue, seeded_mixed_call_executions
+    @pytest.mark.parametrize(
+        "filter_spec,expected_status,expected_added,expected_total,error_substring",
+        [case[1:] for case in _FILTER_MODE_CASES],
+        ids=[case[0] for case in _FILTER_MODE_CASES],
+    )
+    def test_filter_mode(
+        self,
+        auth_client,
+        active_queue,
+        seeded_mixed_call_executions,
+        filter_spec,
+        expected_status,
+        expected_added,
+        expected_total,
+        error_substring,
     ):
         agent_def, *_ = seeded_mixed_call_executions
         resp = auth_client.post(
@@ -1150,119 +1233,15 @@ class TestAddItemsFilterModeCallExecutionRichFilters:
                     "mode": "filter",
                     "source_type": "call_execution",
                     "project_id": str(agent_def.id),
-                    "filter": [
-                        {
-                            "column_id": "duration_seconds",
-                            "filter_config": {
-                                "filter_type": "number",
-                                "filter_op": "less_than",
-                                "filter_value": 60,
-                            },
-                        }
-                    ],
+                    "filter": filter_spec,
                 }
             },
             format="json",
         )
-        assert resp.status_code == 200, resp.data
-        # 10s + 30s match; 120s excluded.
-        assert resp.data["result"]["added"] == 2
-        assert resp.data["result"]["total_matching"] == 2
-
-    def test_filter_mode_persona_field_narrows_result(
-        self, auth_client, active_queue, seeded_mixed_call_executions
-    ):
-        agent_def, *_ = seeded_mixed_call_executions
-        resp = auth_client.post(
-            _add_items_url(active_queue.id),
-            {
-                "selection": {
-                    "mode": "filter",
-                    "source_type": "call_execution",
-                    "project_id": str(agent_def.id),
-                    "filter": [
-                        {
-                            "column_id": "persona.communication_style",
-                            "filter_config": {
-                                "filter_type": "categorical",
-                                "filter_op": "equals",
-                                "filter_value": "Direct and concise",
-                            },
-                        }
-                    ],
-                }
-            },
-            format="json",
-        )
-        assert resp.status_code == 200, resp.data
-        assert resp.data["result"]["added"] == 1
-        assert resp.data["result"]["total_matching"] == 1
-
-    def test_filter_mode_unsupported_column_returns_400(
-        self, auth_client, active_queue, seeded_mixed_call_executions
-    ):
-        agent_def, *_ = seeded_mixed_call_executions
-        resp = auth_client.post(
-            _add_items_url(active_queue.id),
-            {
-                "selection": {
-                    "mode": "filter",
-                    "source_type": "call_execution",
-                    "project_id": str(agent_def.id),
-                    "filter": [
-                        {
-                            "column_id": "totally_made_up_column",
-                            "filter_config": {
-                                "filter_type": "text",
-                                "filter_op": "equals",
-                                "filter_value": "x",
-                            },
-                        }
-                    ],
-                }
-            },
-            format="json",
-        )
-        # ValueError from resolver -> bad_request. Better than the old
-        # silent match-all behaviour.
-        assert resp.status_code == 400, resp.data
-        body = resp.data.get("result") or resp.data.get("message") or ""
-        assert "totally_made_up_column" in str(body) or "cannot apply" in str(body)
-
-    def test_filter_mode_combined_status_and_duration(
-        self, auth_client, active_queue, seeded_mixed_call_executions
-    ):
-        agent_def, *_ = seeded_mixed_call_executions
-        resp = auth_client.post(
-            _add_items_url(active_queue.id),
-            {
-                "selection": {
-                    "mode": "filter",
-                    "source_type": "call_execution",
-                    "project_id": str(agent_def.id),
-                    "filter": [
-                        {
-                            "column_id": "status",
-                            "filter_config": {
-                                "filter_type": "categorical",
-                                "filter_op": "equals",
-                                "filter_value": "completed",
-                            },
-                        },
-                        {
-                            "column_id": "duration_seconds",
-                            "filter_config": {
-                                "filter_type": "number",
-                                "filter_op": "less_than",
-                                "filter_value": 60,
-                            },
-                        },
-                    ],
-                }
-            },
-            format="json",
-        )
-        assert resp.status_code == 200, resp.data
-        # Only completed_short (10s, completed) matches both filters.
-        assert resp.data["result"]["added"] == 1
-        assert resp.data["result"]["total_matching"] == 1
+        assert resp.status_code == expected_status, resp.data
+        if expected_status == 200:
+            assert resp.data["result"]["added"] == expected_added
+            assert resp.data["result"]["total_matching"] == expected_total
+        else:
+            body = resp.data.get("result") or resp.data.get("message") or ""
+            assert error_substring in str(body) or "cannot apply" in str(body)

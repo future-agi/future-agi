@@ -32,6 +32,15 @@ class ObservabilityService:
             api_endpoint = (
                 f"{ObservabilityRoutes.RETELL_LIST_ASSISTANTS_URL.value}?limit=1"
             )
+        elif provider == ProviderChoices.BLAND:
+            # Bland validates via its read-only account endpoint and takes the
+            # raw key in the authorization header (no Bearer prefix).
+            response = requests.get(
+                ObservabilityRoutes.BLAND_ME_URL.value,
+                headers={"authorization": api_key},
+                timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+            )
+            return response.status_code
         else:
             raise ValueError(f"Invalid choice for provider: {provider}")
         headers = {"Authorization": f"Bearer {api_key}"}
@@ -55,6 +64,14 @@ class ObservabilityService:
             endpoint = (
                 f"{ObservabilityRoutes.RETELL_GET_ASSISTANT_URL.value}/{assistant_id}"
             )
+        elif provider == ProviderChoices.BLAND:
+            # Bland's "assistant" is a pathway; the raw key goes in authorization.
+            response = requests.get(
+                f"{ObservabilityRoutes.BLAND_PATHWAY_URL.value}/{assistant_id}",
+                headers={"authorization": api_key},
+                timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+            )
+            return response.status_code
         else:
             raise ValueError(f"Invalid choice for provider: {provider}")
 
@@ -831,9 +848,24 @@ class ObservabilityService:
                 "call_metadata": sim_meta,
             }
 
-        if provider == ProviderChoices.VAPI:
-            processed = ObservabilityService._process_vapi_logs(raw_log, span_attributes)
-        elif provider == ProviderChoices.RETELL:
+        # The `provider` hot column can carry the LLM provider (e.g. 'openai')
+        # for a voice span whose assistant runs an OpenAI model — the collector
+        # ranks gen_ai.provider.name above gen_ai.system. Resolve the real voice
+        # provider: prefer gen_ai.system, then default to vapi (the dominant
+        # provider) rather than 400 the whole voice list on an unrecognized label.
+        voice_providers = {
+            ProviderChoices.VAPI,
+            ProviderChoices.RETELL,
+            ProviderChoices.ELEVEN_LABS,
+            ProviderChoices.BLAND,
+            ProviderChoices.TWILIO,
+        }
+        if provider not in voice_providers:
+            provider = (span_attributes or {}).get("gen_ai.system") or provider
+        if provider not in voice_providers:
+            provider = ProviderChoices.VAPI
+
+        if provider == ProviderChoices.RETELL:
             processed = ObservabilityService._process_retell_logs(raw_log)
         elif provider == ProviderChoices.ELEVEN_LABS:
             processed = ObservabilityService._process_eleven_labs_raw(raw_log)
@@ -841,8 +873,8 @@ class ObservabilityService:
             processed = ObservabilityService._process_bland_raw(raw_log)
         elif provider == ProviderChoices.TWILIO:
             processed = ObservabilityService._process_twilio_raw(raw_log)
-        else:
-            raise ValueError(f"Invalid choice for provider: {provider}")
+        else:  # VAPI, and the default for any still-unrecognized label
+            processed = ObservabilityService._process_vapi_logs(raw_log, span_attributes)
 
         if span_attributes:
             from tracer.utils.vapi_recording import VapiRecordingService

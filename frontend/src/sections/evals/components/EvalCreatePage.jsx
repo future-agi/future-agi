@@ -145,7 +145,7 @@ const EvalCreatePage = () => {
   const canEditEvals =
     RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][role];
   const { enqueueSnackbar } = useSnackbar();
-  const { isOSS } = useDeploymentMode();
+  const { isOSS, isLoading: deploymentModeLoading } = useDeploymentMode();
   const createEval = useCreateEval();
   const createComposite = useCreateCompositeEval();
   const testPlaygroundRef = useRef(null);
@@ -155,7 +155,7 @@ const EvalCreatePage = () => {
 
   // --- Single eval state ---
   const [name, setName] = useState("");
-  const [evalType, setEvalType] = useState("agent");
+  const [evalType, setEvalType] = useState(isOSS ? "llm" : "agent");
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState(PYTHON_CODE_TEMPLATE);
   const [codeLanguage, setCodeLanguage] = useState("python");
@@ -246,9 +246,17 @@ const EvalCreatePage = () => {
     setIsTesting(false);
   }, []);
 
+  const evalTypeDefaulted = useRef(false);
+  useEffect(() => {
+    if (deploymentModeLoading || evalTypeDefaulted.current) return;
+    evalTypeDefaulted.current = true;
+    setEvalType(isOSS ? "llm" : "agent");
+  }, [deploymentModeLoading, isOSS]);
+
   // Load existing draft from URL, or create a new one
   const draftLoaded = useRef(false);
   useEffect(() => {
+    if (deploymentModeLoading) return;
     if (draftCreating.current) return;
 
     // If URL has a draft ID, load its config
@@ -314,7 +322,7 @@ const EvalCreatePage = () => {
             endpoints.develop.eval.createEvalTemplateV2,
             {
               is_draft: true,
-              eval_type: "agent",
+              eval_type: isOSS ? "llm" : "agent",
               output_type: "pass_fail",
               model: "turing_large",
               pass_threshold: 0.5,
@@ -330,7 +338,7 @@ const EvalCreatePage = () => {
         }
       })();
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [deploymentModeLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-save config to draft (debounced, skip initial load)
   const autoSaveTimer = useRef(null);
@@ -640,6 +648,11 @@ const EvalCreatePage = () => {
   const canSave =
     canEditEvals && (mode === "single" ? canSaveSingle : canSaveComposite);
 
+
+  if (deploymentModeLoading) {
+    return null;
+  }
+
   return (
     <Box
       sx={{
@@ -838,7 +851,16 @@ const EvalCreatePage = () => {
                   {/* Eval Type Toggle — pill tabs (same as EvalAccordion Text/Image/Audio) */}
                   <Tabs
                     value={evalType}
-                    onChange={(_, val) => setEvalType(val)}
+                    onChange={(_, val) => {
+                      if (isOSS && val === "agent") {
+                        enqueueSnackbar(
+                          "Agent evaluations require an Enterprise (EE) license. Upgrade to EE license key to enable.",
+                          { variant: "info" },
+                        );
+                        return;
+                      }
+                      setEvalType(val);
+                    }}
                     variant="standard"
                     scrollButtons={false}
                     TabIndicatorProps={{ style: { display: "none" } }}
@@ -865,35 +887,64 @@ const EvalCreatePage = () => {
                           : "background.neutral",
                     }}
                   >
-                    {EVAL_TYPE_TABS.map((tab) => (
-                      <Tab
-                        key={tab.value}
-                        value={tab.value}
-                        label={tab.label}
-                        sx={{
-                          bgcolor:
-                            evalType === tab.value
-                              ? (theme) =>
-                                  theme.palette.mode === "dark"
-                                    ? "rgba(255,255,255,0.12)"
-                                    : "background.paper"
-                              : "transparent",
-                          boxShadow:
-                            evalType === tab.value
-                              ? (theme) =>
-                                  theme.palette.mode === "dark"
-                                    ? "none"
-                                    : "0 1px 3px rgba(0,0,0,0.08)"
-                              : "none",
-                          borderRadius: "6px",
-                          fontWeight: evalType === tab.value ? 600 : 400,
-                          color:
-                            evalType === tab.value
-                              ? "text.primary"
-                              : "text.disabled",
-                        }}
-                      />
-                    ))}
+                    {EVAL_TYPE_TABS.map((tab) => {
+                      const locked = isOSS && tab.value === "agent";
+                      return (
+                        <Tab
+                          key={tab.value}
+                          value={tab.value}
+                          label={
+                            locked ? (
+                              <CustomTooltip
+                                show
+                                type=""
+                                arrow
+                                title="Agent evaluations require an Enterprise (EE) license. Upgrade to EE license key to enable."
+                              >
+                                <Box
+                                  sx={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 0.5,
+                                  }}
+                                >
+                                  {tab.label}
+                                  <Iconify
+                                    icon="mdi:lock-outline"
+                                    width={14}
+                                  />
+                                </Box>
+                              </CustomTooltip>
+                            ) : (
+                              tab.label
+                            )
+                          }
+                          sx={{
+                            bgcolor:
+                              evalType === tab.value
+                                ? (theme) =>
+                                    theme.palette.mode === "dark"
+                                      ? "rgba(255,255,255,0.12)"
+                                      : "background.paper"
+                                : "transparent",
+                            boxShadow:
+                              evalType === tab.value
+                                ? (theme) =>
+                                    theme.palette.mode === "dark"
+                                      ? "none"
+                                      : "0 1px 3px rgba(0,0,0,0.08)"
+                                : "none",
+                            borderRadius: "6px",
+                            fontWeight: evalType === tab.value ? 600 : 400,
+                            opacity: locked ? 0.6 : 1,
+                            color:
+                              evalType === tab.value
+                                ? "text.primary"
+                                : "text.disabled",
+                          }}
+                        />
+                      );
+                    })}
                   </Tabs>
 
                   {/* ═══ Tab-specific content ═══ */}

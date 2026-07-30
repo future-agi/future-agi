@@ -548,6 +548,11 @@ class QueueItemSerializer(serializers.ModelSerializer):
         }.get(status, status)
 
     def get_comment_count(self, obj):
+        # Annotated by QueueItemViewSet.get_queryset; the query is the fallback
+        # for callers that serialize an item they fetched themselves.
+        annotated = getattr(obj, "annotated_comment_count", None)
+        if annotated is not None:
+            return annotated
         return QueueItemReviewComment.objects.filter(
             queue_item=obj,
             action=QueueItemReviewComment.ACTION_COMMENT,
@@ -555,6 +560,9 @@ class QueueItemSerializer(serializers.ModelSerializer):
         ).count()
 
     def get_open_feedback_count(self, obj):
+        annotated = getattr(obj, "annotated_open_feedback_count", None)
+        if annotated is not None:
+            return annotated
         return QueueItemReviewThread.objects.filter(
             queue_item=obj,
             blocking=True,
@@ -1789,6 +1797,12 @@ class AnnotateDetailSerializer(serializers.Serializer):
         labels = instance["labels"]
         annotations = instance["annotations"]
         progress = instance["progress"]
+        # Same page cache the view built, under the key ``get_source_preview``
+        # already uses. content and preview resolve the SAME tracer source, so
+        # without it they each did their own CH point-read (TH-7104).
+        ch_cache = self.context.get("ch_source_cache")
+        if ch_cache is None:
+            ch_cache = CollectorSourceCache.for_items([item])
 
         return {
             "item": {
@@ -1826,8 +1840,8 @@ class AnnotateDetailSerializer(serializers.Serializer):
                         "user"
                     )
                 ],
-                "source_content": resolve_source_content(item),
-                "source_preview": resolve_source_preview(item),
+                "source_content": resolve_source_content(item, ch_cache=ch_cache),
+                "source_preview": resolve_source_preview(item, ch_cache=ch_cache),
                 "review_notes": item.review_notes,
                 "reviewed_by_name": (
                     item.reviewed_by.name if item.reviewed_by else None

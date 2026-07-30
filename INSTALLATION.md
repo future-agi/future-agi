@@ -48,10 +48,10 @@ For production, do not rely on local-only defaults. See [`deploy/README.md`](dep
 
 Useful flags:
 
-| Flag | What it does |
-|---|---|
+| Flag                   | What it does                                                     |
+| ---------------------- | ---------------------------------------------------------------- |
 | `--skip-user-creation` | Skip the first-user prompt. Run the `create_user` command later. |
-| `--no-up` | Bootstrap `.env` only; don't start the stack. |
+| `--no-up`              | Bootstrap `.env` only; don't start the stack.                    |
 
 When the backend logs `Application startup complete`, open:
 
@@ -63,7 +63,7 @@ When the backend logs `Application startup complete`, open:
 If you skipped the prompt at install time, create the admin account via the CLI:
 
 ```bash
-docker exec -it futureagi-backend-1 python manage.py create_user
+docker compose exec backend python manage.py create_user
 ```
 
 You will be prompted for your email, full name, and password. Then log in at <http://localhost:3000>.
@@ -71,7 +71,7 @@ You will be prompted for your email, full name, and password. Then log in at <ht
 To pass credentials non-interactively (useful for automated setups):
 
 ```bash
-docker exec futureagi-backend-1 python manage.py create_user \
+docker compose exec backend python manage.py create_user \
   --email you@example.com \
   --name "Your Name" \
   --password yourpassword
@@ -98,15 +98,15 @@ docker compose up
 
 ## Prerequisites
 
-| Requirement | Minimum | Notes |
-|---|---|---|
-| Docker Engine | 24.0+ | Docker Desktop on Mac/Windows, or native Docker on Linux |
-| Docker Compose | v2.20+ | `docker compose version` should print v2.x |
-| RAM | 8 GB | 16 GB recommended (ClickHouse and the worker each hold ~1 GB) |
-| Disk | 20 GB free | Image pulls are ~3 GB; data grows from there |
-| CPU | 4 cores | — |
-| Platform | `privileged: true` supported | `code-executor` needs it — won't run on Fargate, Cloud Run, or some PaaS |
-| Architecture | `linux/amd64` | Prebuilt images ship amd64 only; see Apple Silicon note below |
+| Requirement    | Minimum                      | Notes                                                                    |
+| -------------- | ---------------------------- | ------------------------------------------------------------------------ |
+| Docker Engine  | 24.0+                        | Docker Desktop on Mac/Windows, or native Docker on Linux                 |
+| Docker Compose | v2.20+                       | `docker compose version` should print v2.x                               |
+| RAM            | 8 GB                         | 16 GB recommended (ClickHouse and the worker each hold ~1 GB)            |
+| Disk           | 20 GB free                   | Image pulls are ~3 GB; data grows from there                             |
+| CPU            | 4 cores                      | —                                                                        |
+| Platform       | `privileged: true` supported | `code-executor` needs it — won't run on Fargate, Cloud Run, or some PaaS |
+| Architecture   | `linux/amd64`                | Prebuilt images ship amd64 only; see Apple Silicon note below            |
 
 On Docker Desktop for Mac, give Docker at least **8 GB RAM** and **64 GB disk** under Settings → Resources. The defaults are often too small.
 
@@ -180,33 +180,34 @@ Every knob in the compose file has a sensible local default, so the stack boots 
 
 Only needed if you enable the corresponding feature:
 
-| Variable | Used by |
-|---|---|
-| `OPENAI_API_KEY` | Evaluations, agent loops, text simulation |
-| `ANTHROPIC_API_KEY` | Same as above |
-| `GOOGLE_API_KEY` | Gemini models |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Bedrock models, S3 object storage |
-| `FUTURE_AGI_CLOUD_API_KEY` | Future AGI Cloud API features. Leave blank to run fully offline. |
+| Variable                                      | Used by                                                          |
+| --------------------------------------------- | ---------------------------------------------------------------- |
+| `OPENAI_API_KEY`                              | Evaluations, agent loops, text simulation                        |
+| `ANTHROPIC_API_KEY`                           | Same as above                                                    |
+| `GOOGLE_API_KEY`                              | Gemini models                                                    |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Bedrock models, S3 object storage                                |
+| `FUTURE_AGI_CLOUD_API_KEY`                    | Future AGI Cloud API features. Leave blank to run fully offline. |
 
 ### Ports reference
 
 All ports are configurable via `.env`. Defaults:
 
-| Service | Port | URL |
-|---|---|---|
-| Frontend | `3000` | <http://localhost:3000> |
-| Backend API | `8000` | <http://localhost:8000> |
-| Gateway (LLM proxy) | `8090` | internal only by default |
-| Model serving (embeddings) | `8080` | internal only by default |
-| Code executor | `8060` | internal only by default |
-| Postgres | `5432` | `127.0.0.1` — dev mode only: `0.0.0.0` |
-| ClickHouse HTTP | `8123` | same |
-| ClickHouse TCP | `9000` | same |
-| Redis | `6379` | same |
-| MinIO S3 API | `9000` | same |
-| MinIO console | `9001` | same |
-| Temporal gRPC | `7233` | same |
-| Temporal UI | `8085` | dev mode only |
+| Service                    | Port   | URL                                    |
+| -------------------------- | ------ | -------------------------------------- |
+| Frontend                   | `3000` | <http://localhost:3000>                |
+| Backend API                | `8000` | <http://localhost:8000>                |
+| Gateway (LLM proxy)        | `8090` | internal only by default               |
+| Model serving (embeddings) | `8080` | internal only by default               |
+| Code executor              | `8060` | internal only by default               |
+| Postgres                   | `5432` | `127.0.0.1` — dev mode only: `0.0.0.0` |
+| ClickHouse HTTP            | `8123` | same                                   |
+| ClickHouse TCP             | `9000` | same                                   |
+| Redis                      | `6379` | same                                   |
+| MinIO S3 API               | `9000` | same                                   |
+| MinIO console              | `9001` | same                                   |
+| Temporal gRPC              | `7233` | same                                   |
+| Temporal UI                | `8085` | dev mode only                          |
+
 To run two stacks side-by-side, copy `.env` to `.env.stackB`, change every port, and `docker compose --env-file .env.stackB -p stackb up`.
 
 ---
@@ -215,28 +216,28 @@ To run two stacks side-by-side, copy `.env` to `.env.stackB`, change every port,
 
 ### Application services
 
-| Service | Purpose |
-|---|---|
-| `frontend` | React SPA served by nginx. UI for traces, evals, datasets, playground. |
-| `backend` | Django API. Serves REST + gRPC + WebSockets. Reads/writes Postgres + ClickHouse + Redis + MinIO. |
-| `worker` | Single Temporal worker polling all queues. Replaced by six per-queue workers in dev mode. |
+| Service           | Purpose                                                                                                                |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `frontend`        | React SPA served by nginx. UI for traces, evals, datasets, playground.                                                 |
+| `backend`         | Django API. Serves REST + gRPC + WebSockets. Reads/writes Postgres + ClickHouse + Redis + MinIO.                       |
+| `worker`          | Single Temporal worker polling all queues. Replaced by six per-queue workers in dev mode.                              |
 | `agentcc-gateway` | Go-based LLM proxy. Routes calls to OpenAI, Anthropic, Gemini, Bedrock, Vertex. Handles retries, rate limits, logging. |
-| `serving` | Python service for embeddings and small model inference. |
-| `code-executor` | nsjail-sandboxed Python/JS code runner for evaluation code. **Requires `privileged: true`.** |
+| `serving`         | Python service for embeddings and small model inference.                                                               |
+| `code-executor`   | nsjail-sandboxed Python/JS code runner for evaluation code. **Requires `privileged: true`.**                           |
 
 ### Data stores
 
-| Service | Role |
-|---|---|
-| `postgres` | Primary transactional store (users, traces, datasets, evals, prompts, annotations). |
-| `clickhouse` | Analytics store for traces, spans, dashboards, and evaluation queries. |
-| `redis` | Cache, rate limits, Celery/Django cache, WebSocket pub/sub. |
-| `minio` | S3-compatible object storage (uploaded files, eval artifacts). In production, swap for real S3 by setting `S3_ENDPOINT_URL` to an AWS endpoint. **Note:** the backend uses `S3_ENDPOINT_URL` (internal Docker hostname) to talk to MinIO, but URLs returned to the browser use `MINIO_URL` (defaults to `http://localhost:9005`). If you access the UI from anywhere other than the host machine — e.g. another machine on your LAN, a remote VM, or a domain name — set `MINIO_URL` in `.env` to a URL the browser can reach (e.g. `http://your-host.example.com:9005`). |
+| Service      | Role                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `postgres`   | Primary transactional store (users, traces, datasets, evals, prompts, annotations).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `clickhouse` | Analytics store for traces, spans, dashboards, and evaluation queries.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `redis`      | Cache, rate limits, Celery/Django cache, WebSocket pub/sub.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `minio`      | S3-compatible object storage (uploaded files, eval artifacts). In production, swap for real S3 by setting `S3_ENDPOINT_URL` to an AWS endpoint. **Note:** the backend uses `S3_ENDPOINT_URL` (internal Docker hostname) to talk to MinIO, but URLs returned to the browser use `MINIO_URL` (defaults to `http://localhost:9005`). If you access the UI from anywhere other than the host machine — e.g. another machine on your LAN, a remote VM, or a domain name — set `MINIO_URL` in `.env` to a URL the browser can reach (e.g. `http://your-host.example.com:9005`). |
 
 ### Workflow engine
 
-| Service | Role |
-|---|---|
+| Service    | Role                                                            |
+| ---------- | --------------------------------------------------------------- |
 | `temporal` | Durable workflow server (auto-setup). Shares the main Postgres. |
 
 ## Configuring LLM providers
@@ -299,22 +300,31 @@ Restart the backend: `docker compose up -d --force-recreate backend worker`.
 If SMTP is not configured and a user needs a password reset, a shell admin can generate the reset link directly:
 
 ```bash
-docker exec -it futureagi-backend-1 python manage.py shell
+docker compose exec backend python manage.py shell
 ```
 
 ```python
-from django.contrib.auth.tokens import default_token_generator
+from django.utils import timezone
 from django.utils.http import urlsafe_base64_encode
 from django.utils.encoding import force_bytes
+from django.conf import settings
 from accounts.models import User
+from accounts.models.auth_token import AuthToken, AuthTokenType
+from accounts.authentication import generate_encrypted_message
 
 user = User.objects.get(email="user@example.com")
-uid = urlsafe_base64_encode(force_bytes(user.pk))
-token = default_token_generator.make_token(user)
-print(f"http://localhost:3000/auth/reset-password/{uid}/{token}/")
+access_token = AuthToken.objects.create(
+    user=user,
+    auth_type=AuthTokenType.ACCESS.value,
+    is_active=True,
+    last_used_at=timezone.now(),
+)
+token = generate_encrypted_message({"user_id": str(user.id), "id": str(access_token.id)})
+uidb64 = urlsafe_base64_encode(force_bytes(user.id))
+print(f"{settings.APP_URL or 'http://localhost:3000'}/auth/jwt/verify/{uidb64}/{token}")
 ```
 
-Share the printed URL with the user out-of-band (Slack, email, etc.).
+Share the printed URL over a private channel. It **signs the user in as that account**, so treat it like a password and have them use it promptly. If your `APP_URL` has no scheme, prefix the URL with `http://` or `https://` when opening it.
 
 ---
 
@@ -322,9 +332,9 @@ Share the printed URL with the user out-of-band (Slack, email, etc.).
 
 The standard Compose stack runs the full OSS application path from published images:
 
-| Mode | Containers | What you get | When to use |
-|---|---|---|---|
-| **standard** | ~12 | Frontend, backend, worker, agentcc-gateway, serving, code-executor, postgres, clickhouse, redis, minio, rabbitmq, temporal | Local evaluation, team installs, and VM-based self-hosting. |
+| Mode         | Containers | What you get                                                                                                               | When to use                                                 |
+| ------------ | ---------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| **standard** | ~12        | Frontend, backend, worker, agentcc-gateway, serving, code-executor, postgres, clickhouse, redis, minio, rabbitmq, temporal | Local evaluation, team installs, and VM-based self-hosting. |
 
 Start it with:
 
@@ -380,37 +390,49 @@ MinIO can be mirrored to any S3 endpoint via `mc mirror`.
 ## Troubleshooting
 
 ### `Cannot connect to the Docker daemon`
+
 Docker isn't running. Start Docker Desktop (Mac/Windows) or `sudo systemctl start docker` (Linux).
 
 ### `ERROR: You don't have enough free space in /var/cache/apt/archives/`
+
 Docker Desktop's virtual disk is full. Either:
+
 - Settings → Resources → Disk image size — raise to 100 GB+.
 - Clean up: `docker system prune -af && docker builder prune -af`.
 
 ### `ports are not available: exposing port ... address already in use`
+
 Another process is using that port. Either kill it or override in `.env`:
+
 ```
 FRONTEND_PORT=3100
 BACKEND_PORT=8100
 ```
 
 ### Backend logs `FATAL: password authentication failed for user "futureagi"`
+
 You changed `PG_PASSWORD` after the volume was created. Postgres initializes the password on first boot only. Either:
+
 - Revert `PG_PASSWORD` to the original, or
 - Wipe and reinitialize: `docker compose down -v` (⚠ destroys all data).
 
 ### Frontend loads but API calls fail with CORS errors
+
 You're on a split-domain deployment without `VITE_HOST_API` set. Set it in `.env` (or your production env file) to your absolute backend URL and restart the frontend container:
+
 ```bash
 echo "VITE_HOST_API=https://api.example.com" >> .env
 docker compose up -d frontend
 ```
+
 The container's entrypoint regenerates `/config.js` on each start, so no rebuild is needed.
 
 ### `code-executor` crashes with `clone: Operation not permitted`
+
 The host kernel or container platform disallows `privileged: true` (Fargate, Cloud Run, some Kubernetes policies). Either run on a platform that allows privileged containers (EC2, GKE with privileged enabled, bare-metal) or disable code evaluation features.
 
 ### `temporal-server` keeps restarting
+
 Postgres connection is the usual cause. Check `docker compose logs postgres` for OOM. Raise Docker Desktop's RAM to 8 GB+.
 
 ---

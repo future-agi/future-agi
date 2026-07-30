@@ -63,8 +63,6 @@ def demote_queue_creator_to_annotator(queue_id, user):
 # ---------------------------------------------------------------------------
 
 
-
-
 @pytest.fixture
 def queue(auth_client):
     """Create a queue and return its ID."""
@@ -763,3 +761,49 @@ class TestQueueItemModelValidation:
         )
         with pytest.raises(ValidationError):
             item.full_clean()
+
+
+class TestItemsListQueryCount:
+    """TH-7104: rendering the items list must not query per row."""
+
+    def test_query_count_does_not_grow_with_page_size(
+        self, auth_client, queue, organization, workspace
+    ):
+        """comment_count / open_feedback_count used to be a .count() each, per
+        item — so a page cost 2N+12 queries and ?limit=1000 cost 2012. They are
+        annotated onto the queryset now, which makes the cost flat.
+
+        Asserting flatness rather than an absolute number: the constant is
+        incidental, the scaling is the contract.
+        """
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        for i in range(30):
+            QueueItem.objects.create(
+                queue_id=queue,
+                source_type="trace",
+                trace_id=uuid.uuid4(),
+                organization=organization,
+                workspace=workspace,
+                order=i,
+            )
+
+        def count_queries(limit):
+            url = f"{items_url(queue)}?limit={limit}&page=1"
+            auth_client.get(url)  # warm: auth/session lookups are one-offs
+            with CaptureQueriesContext(connection) as ctx:
+                resp = auth_client.get(url)
+            assert resp.status_code == status.HTTP_200_OK
+            assert len(resp.data["results"]) == limit
+            return len(ctx.captured_queries)
+
+        small = count_queries(5)
+        large = count_queries(25)
+
+        assert large == small, (
+            f"items list ran {small} queries for 5 items and {large} for 25 — "
+            f"{(large - small) / 20:.1f} extra queries per row. Something in the "
+            "serializer is querying per item instead of reading an annotation "
+            "(TH-7104)."
+        )

@@ -9,7 +9,16 @@ from decimal import Decimal, InvalidOperation
 import structlog
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Count, Exists, Max, OuterRef, Prefetch, Q
+from django.db.models import (
+    Count,
+    Exists,
+    Max,
+    OuterRef,
+    Prefetch,
+    Q,
+    Subquery,
+    Value,
+)
 from django.db.models.functions import Coalesce, Lower, TruncDate
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
@@ -1282,14 +1291,26 @@ def _reopen_items_missing_required_labels(queue):
     )
 
 
-def _span_notes_target_for_queue_item(item):
+def _span_notes_target_for_queue_item(item, *, ch_cache=None):
     """Return the span that stores whole-item notes for queue annotation.
 
     CH-native: span-source items resolve the span from CH by its soft id;
     trace-source items pick the trace's root span from CH (lean) — preference
     order ``observation_type="conversation"`` root (voice) → first root span →
     ``None``. Downstream only reads ``.id``. Never query PG (tables are dropped).
+
+    ``ch_cache`` (opt-in :class:`CollectorSourceCache`): reads the already-resolved
+    source off the page/item cache — same root-pick rule, so the same span — instead
+    of its own unscoped CH point-read. Callers that resolve the item's source anyway
+    should pass it; the bare read stays for callers that don't.
     """
+    if ch_cache is not None:
+        if item.source_type == "observation_span":
+            return ch_cache.span(item.observation_span_id)
+        if item.source_type == "trace":
+            return ch_cache.trace_root(item.trace_id)
+        return None
+
     from tracer.services.clickhouse.v2 import get_reader
 
     if item.source_type == "observation_span" and item.observation_span_id:
@@ -2130,6 +2151,7 @@ def _build_annotation_queue_export_fields(queue, sample_items=None):
         sample_items = (
             QueueItem.objects.filter(queue=queue, deleted=False)
             .select_related(
+                "project",
                 "dataset_row",
                 "prototype_run",
                 "call_execution",
@@ -2872,6 +2894,36 @@ def _review_workflow_entitlement_denial(request):
     return None
 
 
+def _related_count_subquery(manager, fk_field, **filters):
+    """Live rows of *manager* pointing at the outer row, as a correlated scalar
+    subquery: one indexed aggregate on ``fk_field``, never a join the outer
+    GROUP BY has to de-duplicate, and never a query per rendered row.
+
+    The CALLER picks the manager, because the correct one differs by call site
+    and the difference is invisible in tests:
+
+    * ``no_workspace_objects`` reproduces a joined ``Count()`` — a JOIN carries
+      no workspace predicate, so the aggregate it replaces never had one.
+    * ``objects`` reproduces a per-object ``Model.objects.filter(...).count()``
+      — ``BaseModelManager`` folds the ambient thread-local workspace in, so
+      that count always did have one.
+
+    Picking the wrong one changes counts only under a non-default workspace,
+    which neither the API test client nor ``manage.py`` ever sets — so it will
+    not fail a test, it will just be wrong in production.
+    """
+    lookups = {fk_field: OuterRef("pk"), "deleted": False, **filters}
+    return Coalesce(
+        Subquery(
+            manager.filter(**lookups)
+            .values(fk_field)
+            .annotate(count=Count("id"))
+            .values("count")[:1]
+        ),
+        Value(0),
+    )
+
+
 class AnnotationQueuePagination(ExtendedPageNumberPagination):
     def get_page_size(self, request):
         if self.page_size_query_param in request.query_params:
@@ -2954,41 +3006,26 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             queryset = queryset.filter(name__icontains=search)
 
         if include_counts:
+            # Correlated subqueries, NOT Count() over joins. Counting three
+            # multi-valued relations in one GROUP BY multiplies them into a
+            # labels x annotators x items cartesian the COUNT(DISTINCT)s then
+            # have to sort back down — a voice queue's item count is the
+            # multiplier, so the page spills to disk and takes seconds
+            # (TH-7104). Each subquery is an indexed aggregate on queue_id.
             queryset = queryset.annotate(
-                label_count=Coalesce(
-                    Count(
-                        "queue_labels",
-                        filter=Q(queue_labels__deleted=False),
-                        distinct=True,
-                    ),
-                    0,
+                label_count=_related_count_subquery(
+                    AnnotationQueueLabel.no_workspace_objects, "queue"
                 ),
-                annotator_count=Coalesce(
-                    Count(
-                        "queue_annotators",
-                        filter=Q(queue_annotators__deleted=False),
-                        distinct=True,
-                    ),
-                    0,
+                annotator_count=_related_count_subquery(
+                    AnnotationQueueAnnotator.no_workspace_objects, "queue"
                 ),
-                item_count=Coalesce(
-                    Count(
-                        "items",
-                        filter=Q(items__deleted=False),
-                        distinct=True,
-                    ),
-                    0,
+                item_count=_related_count_subquery(
+                    QueueItem.no_workspace_objects, "queue"
                 ),
-                completed_count=Coalesce(
-                    Count(
-                        "items",
-                        filter=Q(
-                            items__deleted=False,
-                            items__status="completed",
-                        ),
-                        distinct=True,
-                    ),
-                    0,
+                completed_count=_related_count_subquery(
+                    QueueItem.no_workspace_objects,
+                    "queue",
+                    status=QueueItemStatus.COMPLETED.value,
                 ),
             )
 
@@ -3326,6 +3363,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             .select_related(
                 "queue",
                 "reviewed_by",
+                "project",
                 "dataset_row",
                 "prototype_run",
                 "call_execution",
@@ -3343,9 +3381,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         export_max = getattr(
             settings, "ANNOTATION_EXPORT_SYNC_MAX", EXPORT_SYNC_MAX_ITEMS
         )
-        items_list = list(
-            items_qs.order_by("order", "created_at")[: export_max + 1]
-        )
+        items_list = list(items_qs.order_by("order", "created_at")[: export_max + 1])
         if len(items_list) > export_max:
             return self._gm.custom_error_response(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -3662,6 +3698,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             .select_related(
                 "queue",
                 "reviewed_by",
+                "project",
                 "dataset_row",
                 "prototype_run",
                 "call_execution",
@@ -4628,6 +4665,28 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                         deleted=False
                     ).select_related("user"),
                     to_attr="active_assignments",
+                ),
+            )
+            # comment_count / open_feedback_count were a .count() per rendered
+            # item — two extra queries per row, so a page cost 2N+12 queries and
+            # ?limit=1000 cost 2012 (TH-7104). Annotated here they cost nothing
+            # extra. ``objects``, not ``no_workspace_objects``: the per-object
+            # counts these replace went through the workspace-filtering manager,
+            # so keeping it preserves their semantics exactly.
+            .annotate(
+                annotated_comment_count=_related_count_subquery(
+                    QueueItemReviewComment.objects,
+                    "queue_item",
+                    action=QueueItemReviewComment.ACTION_COMMENT,
+                ),
+                annotated_open_feedback_count=_related_count_subquery(
+                    QueueItemReviewThread.objects,
+                    "queue_item",
+                    blocking=True,
+                    status__in=[
+                        QueueItemReviewThread.STATUS_OPEN,
+                        QueueItemReviewThread.STATUS_REOPENED,
+                    ],
                 ),
             )
         )
@@ -5838,6 +5897,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             # Tracer sources (trace / observation_span) resolve CH-native — no PG
             # select_related on them (a join to the dropped tracer tables would 500).
             item = QueueItem.objects.select_related(
+                "project",
                 "dataset_row",
                 "prototype_run",
                 "call_execution",
@@ -5956,10 +6016,17 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             is_reviewer=is_reviewer,
         )
 
+        # One CH read for the whole workspace. The notes target, the rendered
+        # content and the preview all resolve the SAME tracer source, and each
+        # used to do its own point-read — three unscoped `spans FINAL` scans per
+        # open on a voice trace (TH-7104). The cache reads once, pruned to the
+        # item's denormalized project_id, and the serializer reuses it.
+        ch_cache = CollectorSourceCache.for_items([item])
+
         existing_notes = ""
         span_notes = []
         span_notes_source_id = None
-        span_notes_target = _span_notes_target_for_queue_item(item)
+        span_notes_target = _span_notes_target_for_queue_item(item, ch_cache=ch_cache)
         if span_notes_target is not None:
             span_notes_source_id = span_notes_target.id
         span_notes = _item_note_payloads(
@@ -6091,7 +6158,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             "prev_item_id": str(prev_item) if prev_item else None,
         }
 
-        serializer = AnnotateDetailSerializer(data, context={"request": request})
+        serializer = AnnotateDetailSerializer(
+            data, context={"request": request, "ch_source_cache": ch_cache}
+        )
         return self._gm.success_response(serializer.data)
 
     @validated_request(

@@ -1362,3 +1362,66 @@ class TestComputedSerializerFieldsInContext:
         m = mock_run.call_args.kwargs["mappings"]
         assert m["a"] == "Customer called about order 123."
         assert m["b"] == ""  # scenario_columns subject fell back to {}
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+class TestRecordingSlotAvailability:
+    """An eval variable mapped to a recording the call has no audio for (e.g.
+    stereo / per-channel on a combined-only provider like Bland) fails with an
+    actionable message naming the available recordings, instead of the eval
+    engine's opaque 'No input received for <var>'."""
+
+    # Combined-only shape: only the mono combined recording exists.
+    _COMBINED_ONLY = {
+        "transcript": "agent: hi\ncustomer: hello",
+        "voice_recording": "s3://bucket/combined.mp3",
+        "assistant_recording": "",
+        "customer_recording": "",
+        "stereo_recording": "",
+        "user_chat_transcript": "",
+        "assistant_chat_transcript": "",
+    }
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_empty_stereo_slot_raises_actionable_error(
+        self, mock_run, run_test, call_execution, eval_template
+    ):
+        ec = _make_eval({"output": "call.stereo_recording"}, run_test, eval_template)
+
+        with pytest.raises(ValueError, match="combined-only"):
+            _run(ec, call_execution, dict(self._COMBINED_ONLY))
+
+        mock_run.assert_not_called()  # never reaches the eval engine
+        ec.refresh_from_db()
+        assert ec.status == StatusType.FAILED.value
+        call_execution.refresh_from_db()
+        reason = call_execution.eval_outputs[str(ec.id)]["reason"]
+        assert "call.voice_recording" in reason  # actionable hint for the FE
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_present_combined_recording_resolves_and_runs(
+        self, mock_run, run_test, call_execution, eval_template
+    ):
+        mock_run.return_value = _SUCCESS_STUB
+        ec = _make_eval({"output": "call.voice_recording"}, run_test, eval_template)
+
+        _run(ec, call_execution, dict(self._COMBINED_ONLY))
+
+        assert (
+            mock_run.call_args.kwargs["mappings"]["output"]
+            == "s3://bucket/combined.mp3"
+        )
+
+    @patch("simulate.temporal.activities.xl.close_old_connections", lambda: None)
+    def test_empty_stereo_slot_raises_on_xl_temporal_path(
+        self, run_test, call_execution, eval_template
+    ):
+        """Same guard on the temporal-activity path (two-sources-of-truth)."""
+        from model_hub.views.utils import evals as evals_mod
+
+        ec = _make_eval({"output": "call.stereo_recording"}, run_test, eval_template)
+        with patch.object(evals_mod, "run_eval_func") as mock_run:
+            with pytest.raises(ValueError, match="combined-only"):
+                _run_xl(ec, call_execution, dict(self._COMBINED_ONLY))
+            mock_run.assert_not_called()

@@ -3,6 +3,7 @@ import io
 import json
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from django.utils import timezone
@@ -12,7 +13,6 @@ from accounts.models.user import User
 from model_hub.models.ai_model import AIModel
 from model_hub.models.annotation_queues import (
     AnnotationQueue,
-    AnnotationQueueAnnotator,
     AnnotationQueueLabel,
     QueueItem,
     QueueItemNote,
@@ -32,6 +32,11 @@ from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.score import Score
+from model_hub.utils.annotation_queue_helpers import (
+    canonical_score_value,
+    eval_metrics_from_call_execution,
+    eval_output_value,
+)
 from simulate.models.agent_definition import AgentDefinition
 from simulate.models.run_test import RunTest
 from simulate.models.scenario_graph import ScenarioGraph
@@ -217,8 +222,7 @@ def _annotate_detail_url(queue, item):
 
 def _submit_url(queue, item):
     return (
-        f"/model-hub/annotation-queues/{queue.id}/items/{item.id}/"
-        "annotations/submit/"
+        f"/model-hub/annotation-queues/{queue.id}/items/{item.id}/annotations/submit/"
     )
 
 
@@ -2028,14 +2032,6 @@ class TestVoiceAnnotationRegressionE2E:
 
 # Unit tests for call_execution-side annotation queue export helpers
 
-from types import SimpleNamespace
-
-from model_hub.utils.annotation_queue_helpers import (
-    canonical_score_value,
-    eval_metrics_from_call_execution,
-    eval_output_value,
-)
-
 
 def _label(type_value):
     return SimpleNamespace(type=type_value, id="lbl-1")
@@ -2043,24 +2039,36 @@ def _label(type_value):
 
 class TestCanonicalScoreValue:
     def test_text_label_extracts_text_key(self):
-        assert canonical_score_value(
-            _label(AnnotationTypeChoices.TEXT.value), {"text": "hello"}
-        ) == "hello"
+        assert (
+            canonical_score_value(
+                _label(AnnotationTypeChoices.TEXT.value), {"text": "hello"}
+            )
+            == "hello"
+        )
 
     def test_numeric_label_extracts_value_key(self):
-        assert canonical_score_value(
-            _label(AnnotationTypeChoices.NUMERIC.value), {"value": 7}
-        ) == 7
+        assert (
+            canonical_score_value(
+                _label(AnnotationTypeChoices.NUMERIC.value), {"value": 7}
+            )
+            == 7
+        )
 
     def test_star_label_extracts_rating_key(self):
-        assert canonical_score_value(
-            _label(AnnotationTypeChoices.STAR.value), {"rating": 4}
-        ) == 4
+        assert (
+            canonical_score_value(
+                _label(AnnotationTypeChoices.STAR.value), {"rating": 4}
+            )
+            == 4
+        )
 
     def test_thumbs_label_extracts_value_key(self):
-        assert canonical_score_value(
-            _label(AnnotationTypeChoices.THUMBS_UP_DOWN.value), {"value": "up"}
-        ) == "up"
+        assert (
+            canonical_score_value(
+                _label(AnnotationTypeChoices.THUMBS_UP_DOWN.value), {"value": "up"}
+            )
+            == "up"
+        )
 
     def test_categorical_label_extracts_selected_key(self):
         assert canonical_score_value(
@@ -2068,10 +2076,15 @@ class TestCanonicalScoreValue:
         ) == ["a", "b"]
 
     def test_none_raw_returns_none(self):
-        assert canonical_score_value(_label(AnnotationTypeChoices.STAR.value), None) is None
+        assert (
+            canonical_score_value(_label(AnnotationTypeChoices.STAR.value), None)
+            is None
+        )
 
     def test_scalar_raw_passes_through(self):
-        assert canonical_score_value(_label(AnnotationTypeChoices.NUMERIC.value), 5) == 5
+        assert (
+            canonical_score_value(_label(AnnotationTypeChoices.NUMERIC.value), 5) == 5
+        )
 
     def test_missing_label_returns_raw_dict(self):
         assert canonical_score_value(None, {"value": 1}) == {"value": 1}
@@ -2332,4 +2345,148 @@ class TestQueueExportQueryCount:
             f"running per-item; the Prefetch is missing or _call_transcript_turns "
             f"is bypassing the prefetched attribute.\n"
             + "\n".join(q["sql"][:200] for q in ctx_3.captured_queries)
+        )
+
+
+class TestAnnotateDetailClickHouseReads:
+    """TH-7104: opening a voice item must not re-read the same trace from CH."""
+
+    def test_annotate_detail_reads_trace_root_once_scoped_to_project(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        observe_trace,
+        root_conversation_span,
+        thumbs_label,
+    ):
+        """One CH root-span read per open, pruned to the item's project.
+
+        The notes target, the rendered content and the preview all resolve the
+        SAME tracer source. Each used to do its own point-read, and none of
+        them passed the item's denormalized ``project_id``, so a voice item
+        cost three unscoped ``spans FINAL`` reads across the whole
+        multi-tenant table.
+        """
+        from tracer.services.clickhouse.v2 import span_reader
+
+        queue = _queue(
+            "TH-7104 CH read guard",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        item = QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.TRACE.value,
+            trace=observe_trace,
+            project=observe_project,
+            organization=organization,
+            workspace=workspace,
+            status=QueueItemStatus.PENDING.value,
+        )
+
+        calls = []
+        original = span_reader.CHSpanReader.roots_by_trace_ids
+
+        def recording(self, trace_ids, **kwargs):
+            calls.append(kwargs.get("project_id"))
+            return original(self, trace_ids, **kwargs)
+
+        span_reader.CHSpanReader.roots_by_trace_ids = recording
+        try:
+            resp = auth_client.get(_annotate_detail_url(queue, item))
+        finally:
+            span_reader.CHSpanReader.roots_by_trace_ids = original
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        detail = resp.data["result"]
+        # the read still has to produce the content the workspace renders
+        assert detail["item"]["source_content"]["type"] == "trace"
+        assert detail["item"]["source_preview"]["type"] == "trace"
+        assert detail["span_notes_source_id"] == root_conversation_span.id
+
+        assert len(calls) == 1, (
+            f"annotate-detail made {len(calls)} ClickHouse root-span reads for "
+            "one trace; content, preview and the notes target must share one "
+            "cached read (TH-7104)."
+        )
+        assert calls[0] == str(observe_project.id), (
+            "the root-span read was not scoped to the item's project, so it "
+            "cannot prune the spans PK prefix and scans every tenant "
+            f"(TH-7104). project_id passed: {calls[0]!r}"
+        )
+
+    def test_annotate_detail_reads_a_span_item_once(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        root_conversation_span,
+        thumbs_label,
+    ):
+        """The heavy path: an observation_span item must be read once, not thrice.
+
+        A span read carries the full column set including ``attributes_extra``,
+        which on a real voice conversation root is tens of MB. Measured on dev:
+        73 MiB and 203 MiB of ClickHouse memory per read, against 5.5 KiB for a
+        lean trace-root read. Tripling that is the expensive shape, so it gets
+        its own guard rather than riding on the trace test.
+        """
+        from tracer.services.clickhouse.v2 import span_reader
+
+        queue = _queue(
+            "TH-7104 span read guard",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        item = QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.OBSERVATION_SPAN.value,
+            observation_span=root_conversation_span,
+            project=observe_project,
+            organization=organization,
+            workspace=workspace,
+            status=QueueItemStatus.PENDING.value,
+        )
+
+        calls = []
+        orig_list = span_reader.CHSpanReader.list_by_ids
+        orig_get = span_reader.CHSpanReader.get
+
+        def rec_list(self, span_ids, **kwargs):
+            calls.append(("list_by_ids", kwargs.get("project_id")))
+            return orig_list(self, span_ids, **kwargs)
+
+        def rec_get(self, span_id, **kwargs):
+            calls.append(("get", kwargs.get("project_id")))
+            return orig_get(self, span_id, **kwargs)
+
+        span_reader.CHSpanReader.list_by_ids = rec_list
+        span_reader.CHSpanReader.get = rec_get
+        try:
+            resp = auth_client.get(_annotate_detail_url(queue, item))
+        finally:
+            span_reader.CHSpanReader.list_by_ids = orig_list
+            span_reader.CHSpanReader.get = orig_get
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        detail = resp.data["result"]
+        assert detail["item"]["source_content"]["type"] == "observation_span"
+        assert detail["item"]["source_preview"]["type"] == "observation_span"
+        assert detail["span_notes_source_id"] == root_conversation_span.id
+
+        assert len(calls) == 1, (
+            f"annotate-detail made {len(calls)} ClickHouse span reads "
+            f"({[c[0] for c in calls]}) for one item; the notes target, content "
+            "and preview must share one cached read (TH-7104)."
         )

@@ -113,6 +113,7 @@ except ImportError:
 from simulate.temporal.activities.xl import (
     PATH_MISSING,
     TRANSCRIPT_DOT_ALIASES,
+    assert_recording_slot_available,
     build_simulation_context_map,
     stringify_leaf,
     walk_subject_path,
@@ -133,16 +134,28 @@ from tfc.constants.api_calls import APICallStatusChoices
 try:
     from ee.usage.models.usage import APICallType
 except ImportError:
-    APICallType = None
+    class APICallType:
+        class objects:
+            @classmethod
+            def get_or_create(cls, name=None, defaults=None, **kwargs):
+                from types import SimpleNamespace
+
+                return SimpleNamespace(id=f"oss-noop-{name or 'unspecified'}"), False
 try:
     from ee.usage.services.metering import check_usage
 except ImportError:
-    check_usage = None
+    def check_usage(*args, **kwargs):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(allowed=True, reason=None)
 try:
     from ee.usage.utils.usage_entries import deduct_cost_for_request, log_and_deduct_cost_for_api_request
 except ImportError:
-    deduct_cost_for_request = None
-    log_and_deduct_cost_for_api_request = None
+    def deduct_cost_for_request(*args, **kwargs):
+        return None
+
+    def log_and_deduct_cost_for_api_request(*args, **kwargs):
+        return None
 
 
 class TestExecutor:
@@ -4851,6 +4864,14 @@ class TestExecutor:
                         ] = StatusType.FAILED.value
                         call_execution.save(update_fields=["eval_outputs"])
                         raise ValueError(error_message)
+
+            # A recording variable that resolved empty (e.g. stereo on a
+            # combined-only provider) fails here with an actionable message
+            # instead of an opaque "No input received" from the eval engine.
+            for map_key, map_value in mapping.items():
+                assert_recording_slot_available(
+                    map_key, map_value, updated_mapping.get(map_key), transcript_data
+                )
 
             # Prepare config
             config = eval_config.config.copy() if eval_config.config else {}
