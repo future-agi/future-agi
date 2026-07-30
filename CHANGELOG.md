@@ -1,5 +1,52 @@
 # Changelog
 
+## [1.24.0](https://github.com/future-agi/future-agi/compare/v1.23.1...v1.24.0) (2026-07-30)
+
+
+### Features
+
+* **oss:** ungate optimization and knowledge base, gate Falcon AI at route ([#1868](https://github.com/future-agi/future-agi/issues/1868)) ([79aa5dd](https://github.com/future-agi/future-agi/commit/79aa5ddbc0dcd311a98b98e9dbb3525aa279ddeb))
+
+
+### Bug Fixes
+
+* **agentcc:** return 404 for cross-tenant actions ([4bf9ae8](https://github.com/future-agi/future-agi/commit/4bf9ae8f7842677c34bfcf03b8308d836acc1f18))
+* **agentcc:** return 404 for cross-tenant actions ([4bf9ae8](https://github.com/future-agi/future-agi/commit/4bf9ae8f7842677c34bfcf03b8308d836acc1f18))
+* **annotations:** address review on the source_preview backfill ([5f9cab0](https://github.com/future-agi/future-agi/commit/5f9cab089c77933eecf18074dbb46708b15084d7))
+* **annotations:** tie the dedup key to the live spans ORDER BY ([ed31aa9](https://github.com/future-agi/future-agi/commit/ed31aa912a5346084327e8b152f83fb22e9377fe))
+* **oss:** gate Turing models and Error Localization ([#1870](https://github.com/future-agi/future-agi/issues/1870)) ([525c07a](https://github.com/future-agi/future-agi/commit/525c07a3fbeeef35dd059999dbc4831a6a375ead))
+* repair observe test suite drift and drop legacy CH-infra tests ([2e46bf3](https://github.com/future-agi/future-agi/commit/2e46bf30b634df8855da5c124997bf7e08895b76))
+* **simulate:** [TH-7080] green simulate test suite in OSS mode (with and without ee/) ([a06de4a](https://github.com/future-agi/future-agi/commit/a06de4a3f2ca591e118bfb51512d0d3c96335236))
+* **simulate:** guard scored choice rendering ([494e033](https://github.com/future-agi/future-agi/commit/494e033e1b76a3338580d5fb2602cb242ef6436e))
+* **simulate:** match categorical KPI labels ([0e72711](https://github.com/future-agi/future-agi/commit/0e72711f3d093c46f1ffb722695f8e03144bb6a0))
+* **simulate:** preserve configured KPI labels ([9c6451f](https://github.com/future-agi/future-agi/commit/9c6451feedbb7f23ae4ed869561551a5473c0f5d))
+* **simulate:** render drawer choice lists ([88f2fdd](https://github.com/future-agi/future-agi/commit/88f2fdd5b5a7d441e8aa187c1c5bd7b3cff36bb3))
+* **simulate:** render scored choice outputs ([9cb1c80](https://github.com/future-agi/future-agi/commit/9cb1c80a3f9c7944ecffbe5b90ff2430445d82b2))
+* **simulate:** restore categorical KPI labels ([7845ad6](https://github.com/future-agi/future-agi/commit/7845ad67b41c9d70b9b51d9584fb4ac89661d40f))
+* **simulate:** reuse scored choice readers ([689e375](https://github.com/future-agi/future-agi/commit/689e375533d43d0fe2f23b2d14fefb307f621025))
+* **simulate:** skip malformed score outputs ([16857ca](https://github.com/future-agi/future-agi/commit/16857caa19a936e02928fc34e95e7ff9a90b2f9c))
+* **simulate:** surface scored-choices dict-output evals in the KPI eval metrics ([6be9fc2](https://github.com/future-agi/future-agi/commit/6be9fc296876a057d4ce348e3d0c847608be9f16))
+* **simulate:** validate scored choice payloads ([49cdfaf](https://github.com/future-agi/future-agi/commit/49cdfaf15f078fcf8a9c122177fc0c125a04d754))
+* **storage:** pass region for GCS MinIO client ([86502c0](https://github.com/future-agi/future-agi/commit/86502c09c85f31b9cdc85ef574719cbbfb9c7a46))
+* **storage:** pass region for GCS MinIO client ([5e94f2e](https://github.com/future-agi/future-agi/commit/5e94f2e9479ca56ad37ccd7f9fe189cd1472d8c7))
+* **tracer-tests:** address observe-suite review feedback ([46dc3ac](https://github.com/future-agi/future-agi/commit/46dc3ac812c265122be6e97e19b5b0e336869694))
+* **tracer:** avoid shadowing django settings in filter_values ([d9eb5ed](https://github.com/future-agi/future-agi/commit/d9eb5ed97da8c32dca50d5314cf19b6490c216dd))
+* **workspaces:** dedupe /accounts/workspace/list/ behind one query key ([#1867](https://github.com/future-agi/future-agi/issues/1867)) ([16a2f9d](https://github.com/future-agi/future-agi/commit/16a2f9d6c863e6ce87106dc1716826ecfd920481))
+
+
+### Performance Improvements
+
+* **annotations:** annotate the review-thread lookup so the items grid stops querying per row ([d7fcbc9](https://github.com/future-agi/future-agi/commit/d7fcbc9377b2bda56c52c1a9bcd0dd986385a7c4))
+* **annotations:** annotate the review-thread lookup so the items grid stops querying per row ([5999f97](https://github.com/future-agi/future-agi/commit/5999f97bd59f0dd995d3ef8bd4ef19710457fe38))
+* **annotations:** batch bulk-review's per-item validation and writes ([71039af](https://github.com/future-agi/future-agi/commit/71039aff60ec43235f6112ce60c35ab6205951d9))
+* **annotations:** batch bulk-review's per-item validation and writes ([bf1e352](https://github.com/future-agi/future-agi/commit/bf1e3528efb742eaa5c4e7d5810c1b80bed449ed))
+* **annotations:** capture the item source preview so the grid stops reading ClickHouse ([f320a11](https://github.com/future-agi/future-agi/commit/f320a11ae56a7bbd7deb0c302dbf6128a344cfce))
+* **annotations:** dedup span reads with LIMIT 1 BY instead of FINAL ([15790be](https://github.com/future-agi/future-agi/commit/15790be9e4ebe8a246a3d1b40d44e31b49f2214b))
+* **annotations:** dedup span reads with LIMIT 1 BY instead of FINAL ([d705864](https://github.com/future-agi/future-agi/commit/d7058640c723d6fe5c6c7318356a51c49bcf34f3))
+* **annotations:** make bulk-review flat — 11 queries at any batch size ([c2fa866](https://github.com/future-agi/future-agi/commit/c2fa8667f9386eb514fcd977a7568e3a02ff53d0))
+* **tracer:** filter_values — fixed 7-day window, never-400, indexed search ([506a083](https://github.com/future-agi/future-agi/commit/506a08347e0b6f932d779d0db729d78dfcc155a1))
+* **tracer:** hook up filter-value search in the UI, drop redundant lookups ([ad01db3](https://github.com/future-agi/future-agi/commit/ad01db358369195c865d0fb5e1453c09119bfc74))
+
 ## [1.23.1](https://github.com/future-agi/future-agi/compare/v1.23.0...v1.23.1) (2026-07-29)
 
 
