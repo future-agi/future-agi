@@ -48,6 +48,26 @@ class TestNormalizeEvalOutput(unittest.TestCase):
             "deterministic",
         ) == "['A']"
 
+    def test_deterministic_str_list_is_sorted(self):
+        """str_list items are sorted before str() conversion so that
+        order differences don't cause false disagreements."""
+        assert _normalize_eval_output(
+            {"output_str": None, "output_str_list": ["B", "A", "C"]},
+            "deterministic",
+        ) == "['A', 'B', 'C']"
+
+    def test_pass_fail_none_bool_returns_none(self):
+        assert _normalize_eval_output(
+            {"output_bool": None}, "pass_fail"
+        ) is None
+
+    def test_output_type_none_falls_through_to_deterministic(self):
+        """When output_type is None (not one of the recognised values)
+        the function falls back to the deterministic codepath."""
+        assert _normalize_eval_output(
+            {"output_str": "abc"}, None
+        ) == "abc"
+
 
 class TestMajorityValue(unittest.TestCase):
     def test_returns_most_common(self):
@@ -70,6 +90,19 @@ class TestMajorityValue(unittest.TestCase):
         # 2 "a" vs 1 "b" → "a" has a strict majority.
         assert _majority_value(["a", "b", "a"]) == "a"
 
+    def test_equivalent_lists_are_not_ties(self):
+        """Lists with the same items in a different order are normalised
+        identically by _normalize_value and must not be reported as a tie."""
+        assert _majority_value([["A", "B"], ["B", "A"], ["A", "B"]]) == ["A", "B"]
+
+    def test_equivalent_dicts_are_not_ties(self):
+        """Dicts whose list-valued entries differ in order are normalised
+        identically by _normalize_value and must not be reported as a tie."""
+        assert _majority_value([
+            {"sel": ["A", "B"]},
+            {"sel": ["B", "A"]},
+        ]) == {"sel": ["A", "B"]}
+
 
 class TestCalculateJudgeHumanAgreement(unittest.TestCase):
     """The function is called with a real or mocked ``AnnotationQueue``
@@ -80,6 +113,58 @@ class TestCalculateJudgeHumanAgreement(unittest.TestCase):
         queue = MagicMock()
         queue.custom_eval_config_id = None
         assert _calculate_judge_human_agreement(queue) is None
+
+    def test_returns_none_when_output_type_is_none(self):
+        """When eval_template.output_type_normalized is None, bail early
+        because the normalisation codepath is undefined."""
+        queue = MagicMock()
+        queue.custom_eval_config_id = "eval-config-1"
+        queue.custom_eval_config.eval_template.output_type_normalized = None
+        queue.custom_eval_config.name = "Safety Eval"
+
+        assert _calculate_judge_human_agreement(queue) is None
+
+    @patch("tracer.models.observation_span.EvalLogger.objects")
+    @patch("model_hub.models.score.Score.objects")
+    def test_evaluator_name_falls_back_to_config_id_when_names_empty(
+        self, mock_score_objects, mock_eval_objects
+    ):
+        """When custom_eval_config.name is None and eval_template.name is
+        empty string, evaluator_name falls back to the config PK."""
+        queue = MagicMock()
+        queue.custom_eval_config_id = "eval-config-1"
+        queue.custom_eval_config.eval_template.output_type_normalized = (
+            "pass_fail"
+        )
+        queue.custom_eval_config.name = None
+        queue.custom_eval_config.eval_template.name = ""
+
+        queue.items.filter.return_value.values_list.return_value = [
+            ("item-1", "span-1"),
+        ]
+
+        mock_eval_objects.filter.return_value.values.return_value = [
+            {
+                "observation_span_id": "span-1",
+                "output_bool": True,
+                "output_float": None,
+                "output_str": None,
+                "output_str_list": [],
+            },
+        ]
+
+        mock_score_objects.filter.return_value.values.return_value = [
+            {
+                "queue_item_id": "item-1",
+                "label_id": "label-1",
+                "label__name": "Safety",
+                "label__type": "categorical",
+                "value": "pass",
+            },
+        ]
+
+        result = _calculate_judge_human_agreement(queue)
+        assert result["evaluator_name"] == "eval-config-1"
 
     @patch(
         "tracer.models.observation_span.EvalLogger.objects"

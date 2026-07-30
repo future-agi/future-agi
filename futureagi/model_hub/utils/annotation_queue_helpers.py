@@ -1887,6 +1887,13 @@ def _calculate_judge_human_agreement(queue):
     Returns ``None`` when no evaluator is linked or no overlapping data
     exists so the caller can distinguish "not configured" from "0 %
     agreement".
+
+    .. note::
+
+        The caller **must** ensure *queue* was fetched with
+        ``select_related("custom_eval_config__eval_template")`` — otherwise
+        accessing ``queue.custom_eval_config.eval_template`` triggers two
+        extra queries per invocation.
     """
     if queue.custom_eval_config_id is None:
         return None
@@ -1895,6 +1902,12 @@ def _calculate_judge_human_agreement(queue):
 
     from model_hub.models.score import Score
     from tracer.models.observation_span import EvalLogger
+
+    output_type = queue.custom_eval_config.eval_template.output_type_normalized
+    # EvalTemplate.output_type_normalized is nullable; when absent the
+    # normalisation logic has no defined path, so bail early.
+    if output_type is None:
+        return None
 
     # Only observation_span-sourced items carry a direct FK to the span
     # that EvalLogger rows reference.  Trace-, dataset-, and other sources
@@ -1940,7 +1953,6 @@ def _calculate_judge_human_agreement(queue):
         "output_str_list",
     )
 
-    output_type = queue.custom_eval_config.eval_template.output_type_normalized
     eval_map = {}
     for row in eval_rows:
         sid = str(row["observation_span_id"])
@@ -2011,6 +2023,7 @@ def _calculate_judge_human_agreement(queue):
     evaluator_name = (
         queue.custom_eval_config.name
         or getattr(queue.custom_eval_config.eval_template, "name", "")
+        or str(queue.custom_eval_config_id)
     )
 
     return {
