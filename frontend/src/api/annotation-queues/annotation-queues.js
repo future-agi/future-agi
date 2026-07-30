@@ -274,6 +274,9 @@ export const useUpdateAnnotationQueue = () => {
       queryClient.invalidateQueries({
         queryKey: annotationQueueKeys.detail(variables.id),
       });
+      queryClient.invalidateQueries({
+        queryKey: annotationQueueKeys.agreement(variables.id),
+      });
     },
     onError: (error) => {
       const msg = extractErrorMessage(error, "Failed to update queue");
