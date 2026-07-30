@@ -54,6 +54,9 @@ const MessageEditor = ({
   modelSelectorDisabled,
   model,
   onModelChange,
+  // Parent-rendered params control shown beside the model selector (same
+  // slot pattern as aiBar) — the eval picker uses it for judge model params.
+  modelParamsSlot,
   // Falcon AI: the parent renders the AI bar node (shown at the top of
   // the box when open) and passes the trigger handler for the bottom-bar
   // icon. aiOpen hides the trigger while the bar is open, matching agent.
@@ -299,7 +302,15 @@ const MessageEditor = ({
           }}
         >
           {onModelChange ? (
-            <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Box
+              sx={{
+                flex: 1,
+                minWidth: 0,
+                display: "flex",
+                alignItems: "center",
+                gap: 0.5,
+              }}
+            >
               <ModelSelector
                 model={model}
                 onModelChange={onModelChange}
@@ -307,6 +318,7 @@ const MessageEditor = ({
                 showPlus={false}
                 disabled={modelSelectorDisabled ?? disabled}
               />
+              {modelParamsSlot}
             </Box>
           ) : (
             <Box sx={{ flex: 1 }} />
@@ -373,6 +385,7 @@ MessageEditor.propTypes = {
   datasetJsonSchemas: PropTypes.object,
   disabled: PropTypes.bool,
   modelSelectorDisabled: PropTypes.bool,
+  modelParamsSlot: PropTypes.node,
   aiBar: PropTypes.node,
   onFalconClick: PropTypes.func,
   aiOpen: PropTypes.bool,

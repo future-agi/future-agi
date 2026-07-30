@@ -172,6 +172,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [knowledgeBaseIds, setKnowledgeBaseIds] = useState([]);
   const [contextOptions, setContextOptions] = useState(["variables_only"]);
   const [errorLocalizerEnabled, setErrorLocalizerEnabled] = useState(false);
+  // Judge model generation parameters (temperature, max_tokens, top_p, …)
+  // in backend snake_case, or null when the user has set none. Null must
+  // never reach the save payload — partial/undefined values would land in
+  // run_config and override provider defaults with garbage.
+  const [modelParams, setModelParams] = useState(null);
   // Name for the UserEvalMetric — defaults to template name, user can customise
   const [evalName, setEvalName] = useState("");
   const [dataReady, setDataReady] = useState(false);
@@ -542,6 +547,18 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           evalData?.multi_choice ??
           evalData?.multiChoice,
         params: rawRunConfig.params ?? evalData?.params,
+        // rawRunConfig can be the backend's filtered run_config view
+        // (build_run_config_view), which strips keys it doesn't know —
+        // model_params included. The drawer's edit flow spreads the RAW
+        // config.run_config blob flat into evalData.config, so fall through
+        // to it the same way `messages` does below.
+        model_params:
+          rawRunConfig.model_params ??
+          rawRunConfig.modelParams ??
+          evalData?.config?.model_params ??
+          evalData?.config?.modelParams ??
+          evalData?.model_params ??
+          evalData?.modelParams,
         // Multi-turn LLM evals store the full message chain on the template
         // config (fullEval.config.messages). Fall through every source so a
         // dataset / simulate / task / experiment scoped copy of a template
@@ -663,6 +680,16 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           fullEval.error_localizer_enabled ??
           false,
       );
+      // Saved judge model params (edit flow). Object check guards against
+      // legacy/corrupt values; Object.keys guards against `{}` masquerading
+      // as "params were set".
+      if (
+        config.model_params &&
+        typeof config.model_params === "object" &&
+        Object.keys(config.model_params).length > 0
+      ) {
+        setModelParams(config.model_params);
+      }
 
       // Edit mode: keep the saved name. Create mode: generate a unique name
       // from the template base name + source slug + date/time, e.g.
@@ -1066,6 +1093,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       // Runtime overrides — these become config.run_config on the backend.
       agent_mode: agentMode,
       check_internet: useInternet,
+      // Judge model generation params. Emitted only when the user applied
+      // values — a null/empty state must not put partial keys in run_config.
+      ...(modelParams && Object.keys(modelParams).length
+        ? { model_params: modelParams }
+        : {}),
       summary:
         summaryType === "custom"
           ? { type: "custom", custom: "" }
@@ -1101,6 +1133,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     connectorIds,
     knowledgeBaseIds,
     contextOptions,
+    modelParams,
     compositeChildWeights,
     errorLocalizerEnabled,
     hasValidPromptMessages,
@@ -1562,6 +1595,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     model={model}
                     onModelChange={(v) => {
                       setModel(v);
+                      setIsDirty(true);
+                    }}
+                    modelParams={modelParams}
+                    onModelParamsChange={(v) => {
+                      setModelParams(v);
                       setIsDirty(true);
                     }}
                     datasetColumns={datasetColumns}
