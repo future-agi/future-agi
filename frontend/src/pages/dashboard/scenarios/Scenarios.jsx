@@ -187,17 +187,20 @@ function Scenarios() {
         meta: { flex: 2 },
         minSize: 240,
         enableSorting: false,
-        cell: ({ getValue }) => (
-          <Tooltip title={getValue() || ""} placement="top" arrow>
-            <Typography
-              variant="body2"
-              noWrap
-              sx={{ fontSize: 13, color: "text.secondary" }}
-            >
-              {getValue() || "—"}
-            </Typography>
-          </Tooltip>
-        ),
+        cell: ({ getValue }) => {
+          const value = getValue();
+          return (
+            <Tooltip title={value || ""} placement="top" arrow>
+              <Typography
+                variant="body2"
+                noWrap
+                sx={{ fontSize: 13, color: "text.secondary" }}
+              >
+                {value || "—"}
+              </Typography>
+            </Tooltip>
+          );
+        },
       },
       {
         id: "agentType",
