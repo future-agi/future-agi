@@ -132,6 +132,25 @@ export const AUTH_METHODS_BY_PROVIDER = {
   others: OTHER_AUTH_METHODS,
 };
 
+/**
+ * Providers that offer a single selectable auth method (API Key) have nothing
+ * to choose, so preselect it rather than leaving a required field empty.
+ * Providers with a real menu return "" and the user picks.
+ *
+ * @param {string} provider
+ * @returns {string}
+ */
+export const defaultAuthMethodForProvider = (provider) => {
+  const byProvider =
+    /** @type {Record<string, {value: string, disabled?: boolean}[]>} */ (
+      AUTH_METHODS_BY_PROVIDER
+    );
+  const selectable = (byProvider[provider] || []).filter(
+    (method) => !method.disabled,
+  );
+  return selectable.length === 1 ? selectable[0].value : "";
+};
+
 export const stepsInfo = [
   {
     title: "Select agent definition",
