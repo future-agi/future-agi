@@ -616,7 +616,15 @@ const InstructionEditor = ({
       >
         <Typography variant="body2" fontWeight={600}>
           {label}
-          <span style={{ color: "#d32f2f" }}>*</span>
+          <Box
+            component="span"
+            sx={{
+              color: (t) =>
+                t.palette.mode === "dark" ? "error.light" : "#d32f2f",
+            }}
+          >
+            *
+          </Box>
         </Typography>
 
         {/* Template format selector */}

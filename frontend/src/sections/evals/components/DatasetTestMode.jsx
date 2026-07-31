@@ -1419,7 +1419,16 @@ const DatasetTestMode = React.forwardRef(
         {!initialDatasetId && !isWorkbenchMode && (
           <Box>
             <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
-              Choose Dataset<span style={{ color: "#d32f2f" }}>*</span>
+              Choose Dataset
+              <Box
+                component="span"
+                sx={{
+                  color: (t) =>
+                    t.palette.mode === "dark" ? "error.light" : "#d32f2f",
+                }}
+              >
+                *
+              </Box>
             </Typography>
             <Autocomplete
               fullWidth

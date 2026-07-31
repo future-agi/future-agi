@@ -86,7 +86,16 @@ const OutputTypeConfig = ({
       {/* Output Type Selection */}
       <Box>
         <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
-          Output Type<span style={{ color: "#d32f2f" }}>*</span>
+          Output Type
+          <Box
+            component="span"
+            sx={{
+              color: (t) =>
+                t.palette.mode === "dark" ? "error.light" : "#d32f2f",
+            }}
+          >
+            *
+          </Box>
         </Typography>
         <Typography
           variant="caption"

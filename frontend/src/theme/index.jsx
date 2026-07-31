@@ -91,6 +91,9 @@ export default function ThemeProvider({ children }) {
     s.setProperty("--surface-row-active", p.action.selected);
     s.setProperty("--surface-row-hover", p.action.hover);
     s.setProperty("--bg-input", p.background.neutral);
+    s.setProperty("--syntax-string", p.syntax.string);
+    s.setProperty("--syntax-number", p.syntax.number);
+    s.setProperty("--syntax-boolean", p.syntax.boolean);
   }, [theme.palette]);
 
   return (

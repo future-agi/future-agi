@@ -93,7 +93,10 @@ const SaveViewPopover = ({ anchorEl, open, onClose, onSave, isLoading }) => {
           size="small"
           label={
             <span>
-              View Name<span style={{ color: "#d92d20" }}>*</span>
+              View Name
+              <Box component="span" sx={{ color: "accent.fail" }}>
+                *
+              </Box>
             </span>
           }
           placeholder="Enter your view name"

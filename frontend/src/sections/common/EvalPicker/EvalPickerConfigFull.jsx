@@ -1265,7 +1265,16 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       {/* ── Eval Name ── */}
       <Box sx={{ py: 1.5, flexShrink: 0 }}>
         <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-          Name<span style={{ color: "#d32f2f" }}>*</span>
+          Name
+          <Box
+            component="span"
+            sx={{
+              color: (t) =>
+                t.palette.mode === "dark" ? "error.light" : "#d32f2f",
+            }}
+          >
+            *
+          </Box>
         </Typography>
         <TextField
           fullWidth

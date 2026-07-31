@@ -398,7 +398,7 @@ const DrawerToolbar = ({
                 "&:hover": {
                   background:
                     "linear-gradient(135deg, rgba(123,86,219,0.08) 0%, rgba(26,188,254,0.08) 100%)",
-                  color: "#7B56DB",
+                  color: "accent.brand",
                 },
               }}
             >

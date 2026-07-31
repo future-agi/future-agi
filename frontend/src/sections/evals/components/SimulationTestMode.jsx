@@ -1057,7 +1057,16 @@ const SimulationTestMode = React.forwardRef(
         {/* Simulation (Run Test) selector */}
         <Box>
           <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
-            Simulation<span style={{ color: "#d32f2f" }}>*</span>
+            Simulation
+            <Box
+              component="span"
+              sx={{
+                color: (t) =>
+                  t.palette.mode === "dark" ? "error.light" : "#d32f2f",
+              }}
+            >
+              *
+            </Box>
           </Typography>
           <Autocomplete
             size="small"

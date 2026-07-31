@@ -784,7 +784,6 @@ const ModelSelector = ({
     );
   }, [connectors, connectorSearch]);
 
-
   const filteredFagiModels = useMemo(() => {
     if (!modelSearch) return FAGI_MODELS;
     return FAGI_MODELS.filter((m) =>
@@ -1443,7 +1442,9 @@ const ModelSelector = ({
                   width: 12,
                   height: 12,
                   borderRadius: "50%",
-                  backgroundColor: "#fff",
+                  backgroundColor: useInternet
+                    ? "primary.contrastText"
+                    : "common.white",
                   position: "absolute",
                   top: 2,
                   left: useInternet ? 18 : 2,
