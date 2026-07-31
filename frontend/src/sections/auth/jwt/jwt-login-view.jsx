@@ -25,7 +25,7 @@ import Iconify from "src/components/iconify";
 import FormProvider, { RHFTextField } from "src/components/hook-form";
 import { useSearchParams, useNavigate, useLocation } from "react-router-dom";
 import { Events, trackEvent, PropertyName } from "src/utils/Mixpanel";
-import { Box, Button, CircularProgress } from "@mui/material";
+import { Button, CircularProgress } from "@mui/material";
 import axiosInstance, { endpoints } from "src/utils/axios";
 import { LOGIN_ERROR_CODES } from "src/utils/constants";
 import { useSnackbar } from "src/components/snackbar";
@@ -40,7 +40,7 @@ import {
   browserSupportsWebAuthn,
   startAuthentication,
 } from "@simplewebauthn/browser";
-import RightSectionAuth from "./RightSectionAuth";
+import AuthSpaceLayout from "./AuthSpaceLayout";
 import { isValidUtm } from "src/utils/utmUtils";
 import { usePostLoginPath } from "src/hooks/useDeploymentMode";
 import { OssSetupModal, useOssSetupModal } from "./oss-setup";
@@ -69,16 +69,20 @@ export default function JwtLoginView() {
 
   const ossSetup = useOssSetupModal({
     enabled: !token,
-    autoOpenTab: searchParams.get("ossSetup"),
+    autoOpen: searchParams.get("ossSetup") === "reset",
   });
   // Only apply OSS treatment on a confirmed "oss" response; a failed
   // deployment-info read falls back to the full login (social/SSO shown).
   const confirmedOSS = ossSetup.isSuccess && ossSetup.isOSS;
-  const showOssUi = confirmedOSS;
   const showSocial = !confirmedOSS;
+  // Signup works in the browser on OSS, so it is never diverted to the CLI.
+  // Only password reset is, and only when mail cannot actually reach the user
+  // — with a real SMTP provider the emailed flow
+  // works fine on self-hosted too.
+  const showOssResetFallback = confirmedOSS && !ossSetup.canDeliverEmail;
 
-  // The hint has done its job once the modal opens on the right tab; strip it
-  // so a reload doesn't reopen the modal.
+  // The hint has done its job once the modal is open; strip it so a reload
+  // doesn't reopen it.
   useEffect(() => {
     if (searchParams.get("ossSetup")) {
       setSearchParams(
@@ -589,7 +593,7 @@ export default function JwtLoginView() {
             trackEvent(Events.forgotPasswordClicked, {
               [PropertyName.click]: true,
             });
-            if (showOssUi) {
+            if (showOssResetFallback) {
               e.preventDefault();
               ossSetup.openReset();
             }
@@ -780,34 +784,14 @@ export default function JwtLoginView() {
           Don’t have an account?
           <Link
             variant="subtitle2"
-            component={showOssUi ? "button" : RouterLink}
-            type={showOssUi ? "button" : undefined}
-            to={showOssUi ? undefined : paths.auth.jwt.register + search}
-            onClick={(e) => {
-              if (showOssUi) {
-                e.preventDefault();
-                ossSetup.openCreate();
-              }
-            }}
+            component={RouterLink}
+            to={paths.auth.jwt.register + search}
             sx={{ color: "primary.main" }}
           >
             {" "}
             Sign up
           </Link>
         </Typography>
-
-        {showOssUi && (
-          <Link
-            component="button"
-            type="button"
-            variant="s2"
-            underline="hover"
-            onClick={ossSetup.openCreate}
-            sx={{ color: "text.secondary", alignSelf: "center" }}
-          >
-            Self-hosted? Set up via CLI
-          </Link>
-        )}
       </Stack>
     </Stack>
   );
@@ -815,87 +799,28 @@ export default function JwtLoginView() {
   // Show loading screen while accepting an invitation (token present but not yet failed)
   if (token && !inviteFailed) {
     return (
-      <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
-        <Box
-          sx={{
-            width: "50%",
-            height: "100vh",
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            bgcolor: "background.paper",
-          }}
-        >
-          <Stack spacing={2} alignItems="center">
-            <CircularProgress size={32} />
-            <Typography
-              fontWeight="fontWeightMedium"
-              sx={{ fontSize: "16px", color: "text.secondary" }}
-            >
-              Accepting your invitation...
-            </Typography>
-          </Stack>
-        </Box>
-        <Box
-          sx={{
-            width: "50%",
-            height: "100%",
-            backgroundColor: "background.neutral",
-          }}
-        >
-          <RightSectionAuth />
-        </Box>
-      </Box>
+      <AuthSpaceLayout>
+        <Stack spacing={2} alignItems="center">
+          <CircularProgress size={32} />
+          <Typography
+            fontWeight="fontWeightMedium"
+            sx={{ fontSize: "16px", color: "text.secondary" }}
+          >
+            Accepting your invitation...
+          </Typography>
+        </Stack>
+      </AuthSpaceLayout>
     );
   }
 
   return (
-    <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
-      {/* Left Side - Form */}
-      <Box
-        sx={{
-          width: "50%",
-          height: "100vh",
-          display: "flex",
-          justifyContent: "center",
+    <AuthSpaceLayout>
+      <FormProvider methods={methods} onSubmit={onSubmit}>
+        {renderHead}
+        {renderForm}
+      </FormProvider>
 
-          bgcolor: "background.paper",
-          overflowY: "auto",
-        }}
-      >
-        <Box
-          sx={{
-            maxWidth: "640px",
-            paddingY: "100px",
-            width: "100%",
-            px: 10,
-            height: "fit-content",
-          }}
-        >
-          <FormProvider methods={methods} onSubmit={onSubmit}>
-            {renderHead}
-            {renderForm}
-          </FormProvider>
-        </Box>
-      </Box>
-
-      <OssSetupModal
-        open={ossSetup.open}
-        onClose={ossSetup.onClose}
-        activeTab={ossSetup.activeTab}
-        onTabChange={ossSetup.setActiveTab}
-      />
-
-      {/* Right Side - Image with Text Overlay */}
-      <Box
-        sx={{
-          width: "50%",
-          height: "100%",
-          backgroundColor: "background.neutral",
-        }}
-      >
-        <RightSectionAuth />
-      </Box>
-    </Box>
+      <OssSetupModal open={ossSetup.open} onClose={ossSetup.onClose} />
+    </AuthSpaceLayout>
   );
 }

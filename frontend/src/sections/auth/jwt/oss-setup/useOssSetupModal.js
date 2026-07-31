@@ -1,70 +1,31 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect } from "react";
 
 import { useBoolean } from "src/hooks/use-boolean";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 
-import { OSS_SETUP_SEEN_KEY, OSS_SETUP_TABS } from "./constants";
-
-export function useOssSetupModal({ enabled = true, autoOpenTab = null } = {}) {
-  const { isOSS, isLoading, isSuccess } = useDeploymentMode();
+// Controls the CLI password-reset fallback.
+//
+// It never auto-opens on a first visit: signup works in the browser on OSS, so
+// there is nothing a new admin needs a shell for. It opens only when asked —
+// either from the Forgot Password link, or via ?ossSetup=reset when the route
+// guard diverted someone away from /forget-password.
+export function useOssSetupModal({ enabled = true, autoOpen = false } = {}) {
+  const { isOSS, isLoading, isSuccess, canDeliverEmail } = useDeploymentMode();
   const open = useBoolean(false);
-  const openModal = open.onTrue;
-  const [activeTab, setActiveTab] = useState(OSS_SETUP_TABS.CREATE);
-
-  const openCreate = useCallback(() => {
-    setActiveTab(OSS_SETUP_TABS.CREATE);
-    openModal();
-  }, [openModal]);
-
-  const openReset = useCallback(() => {
-    setActiveTab(OSS_SETUP_TABS.RESET);
-    openModal();
-  }, [openModal]);
+  const openReset = open.onTrue;
 
   useEffect(() => {
-    if (!enabled || isLoading || !isSuccess || !isOSS) return;
-
-    const hint = Object.values(OSS_SETUP_TABS).includes(autoOpenTab)
-      ? autoOpenTab
-      : null;
-
-    // A hint always opens; otherwise auto-open only on the first OSS visit.
-    if (!hint) {
-      try {
-        if (localStorage.getItem(OSS_SETUP_SEEN_KEY)) return;
-        localStorage.setItem(OSS_SETUP_SEEN_KEY, "1");
-      } catch {
-        return;
-      }
-    } else {
-      try {
-        localStorage.setItem(OSS_SETUP_SEEN_KEY, "1");
-      } catch {
-        /* ignore */
-      }
-    }
-
-    if (hint === OSS_SETUP_TABS.RESET) openReset();
-    else openCreate();
-  }, [
-    enabled,
-    isLoading,
-    isSuccess,
-    isOSS,
-    autoOpenTab,
-    openCreate,
-    openReset,
-  ]);
+    if (!enabled || isLoading || !isSuccess || !isOSS || !autoOpen) return;
+    openReset();
+  }, [enabled, isLoading, isSuccess, isOSS, autoOpen, openReset]);
 
   return {
     isOSS,
     isLoading,
     isSuccess,
+    canDeliverEmail,
     open: open.value,
-    activeTab,
-    setActiveTab,
     onClose: open.onFalse,
-    openCreate,
     openReset,
   };
 }

@@ -14,16 +14,25 @@ import {
   usePostLoginPath,
 } from "src/hooks/useDeploymentMode";
 import SOSLoginPage from "src/pages/SOSLoginPage";
+import { paths } from "src/routes/paths";
+import { isValidationDone } from "src/sections/oss-first-run/ossFlowState";
 
 const OAuthConsent = lazyWithRetry(() => import("src/pages/mcp/OAuthConsent"));
 const SharedView = lazyWithRetry(() => import("src/pages/shared/SharedView"));
+const OssSetupView = lazyWithRetry(
+  () => import("src/sections/oss-first-run/OssSetupView"),
+);
 
 // ----------------------------------------------------------------------
 
 export default function Router() {
   const { user } = useAuthContext();
   const { currentWorkspaceRole } = useWorkspace();
-  const { isOSS, isLoading: isDeploymentModeLoading } = useDeploymentMode();
+  const {
+    isOSS,
+    isSuccess: isDeploymentModeConfirmed,
+    isLoading: isDeploymentModeLoading,
+  } = useDeploymentMode();
   const postLoginPath = usePostLoginPath();
 
   const dashboardRoutesArray = useMemo(
@@ -31,10 +40,26 @@ export default function Router() {
     [user, currentWorkspaceRole, isOSS],
   );
 
+  // OSS first-run only. Routing must never send anyone to signup — that is
+  // reached solely by finishing the checks, or logout lands on "Create an
+  // account". Confirmed read required, or a failed probe sends cloud to /setup.
+  let rootTarget = postLoginPath;
+  if (isDeploymentModeConfirmed && isOSS && !isValidationDone()) {
+    rootTarget = paths.ossSetup;
+  }
+
   const element = useRoutes([
     {
       path: "/",
-      element: <Navigate to={postLoginPath} replace />,
+      element: <Navigate to={rootTarget} replace />,
+    },
+    {
+      path: paths.ossSetup,
+      element: (
+        <Suspense fallback={<SplashScreen />}>
+          <OssSetupView />
+        </Suspense>
+      ),
     },
     {
       path: "/sos",

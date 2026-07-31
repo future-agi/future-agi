@@ -17,7 +17,8 @@ import { Events, trackEvent, PropertyName } from "src/utils/Mixpanel";
 import PropTypes from "prop-types";
 import { paths } from "src/routes/paths";
 import { FormSearchSelectFieldState } from "src/components/FromSearchSelectField";
-import RightSectionAuth from "./RightSectionAuth";
+import AuthSpaceLayout from "./AuthSpaceLayout";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { Controller, useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import RadioField from "src/components/RadioField/RadioField";
@@ -172,7 +173,17 @@ MemberRow.propTypes = {
   onRemove: PropTypes.func,
 };
 
-const useOrganizationInitialData = (isOwner) => {
+const placeholderMembers = (seed) =>
+  seed
+    ? [{ email: "", name: "", organization_role: "Owner", disabled: false }]
+    : [];
+
+// `seedPlaceholderMember` controls what happens when the member list comes back
+// empty or the request fails. Cloud seeds one editable row, which the user can
+// see and type into. Self-hosted must NOT: the member block is hidden there, so
+// a seeded row with an empty email fails validation with nothing on screen to
+// fix, and Continue stays disabled forever with no visible cause.
+const useOrganizationInitialData = (isOwner, seedPlaceholderMember = true) => {
   const { enqueueSnackbar } = useSnackbar();
   const [isLoading, setIsLoading] = useState(true);
   const [initialData, setInitialData] = useState(null);
@@ -192,14 +203,7 @@ const useOrganizationInitialData = (isOwner) => {
                 organization_role: member.organization_role,
                 disabled: true,
               }))
-            : [
-                {
-                  email: "",
-                  name: "",
-                  organization_role: "Owner",
-                  disabled: false,
-                },
-              ];
+            : placeholderMembers(seedPlaceholderMember);
 
         setInitialData({
           orgName: orgDetails.org_name,
@@ -211,14 +215,7 @@ const useOrganizationInitialData = (isOwner) => {
         });
         setInitialData({
           orgName: "",
-          members: [
-            {
-              email: "",
-              name: "",
-              organization_role: "Owner",
-              disabled: false,
-            },
-          ],
+          members: placeholderMembers(seedPlaceholderMember),
         });
       } finally {
         setIsLoading(false);
@@ -256,8 +253,12 @@ const SetupOrganization = ({ getStarted = false }) => {
   const { enqueueSnackbar } = useSnackbar();
   const { user } = useAuthContext();
   const isOwner = user?.organization_role === "Owner";
+  // Confirmed reads only — a failed deployment-info probe must not hide the
+  // invite step from a cloud user.
+  const { isOSS: ossMode, isSuccess: modeConfirmed } = useDeploymentMode();
+  const isOSS = modeConfirmed && ossMode;
   const { initialData, isLoading: isFetchingInitialData } =
-    useOrganizationInitialData(isOwner);
+    useOrganizationInitialData(isOwner, !isOSS);
 
   const { data: invitesData, refetch: refetchInvites } = useQuery({
     queryKey: ["owner-org-invites"],
@@ -610,106 +611,117 @@ const SetupOrganization = ({ getStarted = false }) => {
             />
           )}
 
-          <Typography variant="m2" fontWeight="fontWeightMedium">
-            Invite people to collaborate in FutureAGI
-          </Typography>
+          {/* Self-hosted keeps this step to just the org name. Invites depend
+              on email reaching the person, which a self-hosted install can't
+              assume — teammates are added later from inside the product. */}
+          {!isOSS && (
+            <>
+              <Typography variant="m2" fontWeight="fontWeightMedium">
+                Invite people to collaborate in FutureAGI
+              </Typography>
 
-          <Box
-            sx={{
-              width: "100%",
-              height: getStarted ? "250px" : "220px",
-              bgcolor: "background.paper",
-              overflowY: "auto",
-              scrollbarWidth: "none",
-              scrollBehavior: "auto",
-              "&::-webkit-scrollbar": {
-                display: "none",
-              },
-              msOverflowStyle: "none",
-            }}
-          >
-            {/* Prefilled members */}
-            {prefilledMembers.length > 0 && (
-              <Box mt={2}>
-                {prefilledMembers.map((member) => {
+              <Box
+                sx={{
+                  width: "100%",
+                  height: getStarted ? "250px" : "220px",
+                  bgcolor: "background.paper",
+                  overflowY: "auto",
+                  scrollbarWidth: "none",
+                  scrollBehavior: "auto",
+                  "&::-webkit-scrollbar": {
+                    display: "none",
+                  },
+                  msOverflowStyle: "none",
+                }}
+              >
+                {/* Prefilled members */}
+                {prefilledMembers.length > 0 && (
+                  <Box mt={2}>
+                    {prefilledMembers.map((member) => {
+                      const originalIndex = fields.findIndex(
+                        (f) => f.id === member.id,
+                      );
+                      return (
+                        <MemberRow
+                          key={member.id}
+                          member={member}
+                          index={originalIndex}
+                          getStarted={getStarted}
+                          editable={false}
+                          control={orgForm.control}
+                        />
+                      );
+                    })}
+                  </Box>
+                )}
+
+                {/* Invited members from API */}
+                {invitesData?.results?.length > 0 && (
+                  <Box mt={2}>
+                    {invitesData.results.map((member) => (
+                      <MemberRow
+                        key={`invite-${member.id}`}
+                        member={member}
+                        getStarted={getStarted}
+                        editable={false}
+                      />
+                    ))}
+                  </Box>
+                )}
+
+                {newMembers.map((member) => {
                   const originalIndex = fields.findIndex(
                     (f) => f.id === member.id,
                   );
                   return (
-                    <MemberRow
-                      key={member.id}
-                      member={member}
-                      index={originalIndex}
-                      getStarted={getStarted}
-                      editable={false}
-                      control={orgForm.control}
-                    />
+                    <Box mt={2} key={member.id}>
+                      <MemberRow
+                        member={member}
+                        index={originalIndex}
+                        getStarted={getStarted}
+                        editable
+                        control={orgForm.control}
+                        onRemove={removeMember}
+                        errors={
+                          orgForm.formState.errors.members?.[originalIndex]
+                        }
+                      />
+                    </Box>
                   );
                 })}
-              </Box>
-            )}
 
-            {/* Invited members from API */}
-            {invitesData?.results?.length > 0 && (
-              <Box mt={2}>
-                {invitesData.results.map((member) => (
-                  <MemberRow
-                    key={`invite-${member.id}`}
-                    member={member}
-                    getStarted={getStarted}
-                    editable={false}
-                  />
-                ))}
-              </Box>
-            )}
+                <Box sx={{ mt: 2 }}>
+                  <Typography
+                    variant={getStarted ? "body2" : "s1.2"}
+                    sx={{
+                      color: "primary.main",
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      border: "1px solid",
+                      borderColor: "primary.main",
+                      borderRadius: getStarted ? 1 : 0.5,
+                      padding: "4px 10px",
+                      transition: "all 0.2s",
+                      fontWeight: !getStarted && 500,
+                      "&:hover": { bgcolor: "action.hover" },
+                    }}
+                    onClick={addMember}
+                    disable={!getStarted && memberToadd?.length > 3}
+                  >
+                    <SvgColor
+                      src="/assets/icons/ic_add.svg"
+                      width={15}
+                      height={15}
+                      sx={{ mr: 1 }}
+                    />
 
-            {newMembers.map((member) => {
-              const originalIndex = fields.findIndex((f) => f.id === member.id);
-              return (
-                <Box mt={2} key={member.id}>
-                  <MemberRow
-                    member={member}
-                    index={originalIndex}
-                    getStarted={getStarted}
-                    editable
-                    control={orgForm.control}
-                    onRemove={removeMember}
-                    errors={orgForm.formState.errors.members?.[originalIndex]}
-                  />
+                    {getStarted ? "Add members" : "Add"}
+                  </Typography>
                 </Box>
-              );
-            })}
-
-            <Box sx={{ mt: 2 }}>
-              <Typography
-                variant={getStarted ? "body2" : "s1.2"}
-                sx={{
-                  color: "primary.main",
-                  cursor: "pointer",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  border: "1px solid",
-                  borderColor: "primary.main",
-                  borderRadius: getStarted ? 1 : 0.5,
-                  padding: "4px 10px",
-                  transition: "all 0.2s",
-                  fontWeight: !getStarted && 500,
-                  "&:hover": { bgcolor: "action.hover" },
-                }}
-                onClick={addMember}
-                disable={!getStarted && memberToadd?.length > 3}
-              >
-                <SvgColor
-                  src="/assets/icons/ic_add.svg"
-                  width={15}
-                  height={15}
-                  sx={{ mr: 1 }}
-                />
-
-                {getStarted ? "Add members" : "Add"}
-              </Typography>
-            </Box>
-          </Box>
+              </Box>
+            </>
+          )}
 
           <LoadingButton
             fullWidth
@@ -974,50 +986,17 @@ const SetupOrganization = ({ getStarted = false }) => {
   }
 
   return (
-    <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
-      <Box
-        sx={{
-          width: "50%",
-          height: "100vh",
-          bgcolor: "background.paper",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          overflowY: "auto",
-        }}
-      >
-        <Box
-          sx={{
-            maxWidth: "640px",
-            width: "100%",
-            px: 10,
-            paddingY: "100px",
-            display: "flex",
-            flexDirection: "column",
-            gap: 2,
-            height: "fit-content",
-          }}
-        >
-          <DotsStepper
-            variant="dots"
-            steps={isOwner ? 3 : 2}
-            position="static"
-            activeStep={activeStep}
-          />
-          {renderContent()}
-        </Box>
-      </Box>
-
-      <Box
-        sx={{
-          width: "50%",
-          height: "100%",
-          backgroundColor: "background.neutral",
-        }}
-      >
-        <RightSectionAuth />
-      </Box>
-    </Box>
+    <AuthSpaceLayout>
+      <Stack sx={{ width: "100%", gap: 2 }}>
+        <DotsStepper
+          variant="dots"
+          steps={isOwner ? 3 : 2}
+          position="static"
+          activeStep={activeStep}
+        />
+        {renderContent()}
+      </Stack>
+    </AuthSpaceLayout>
   );
 };
 

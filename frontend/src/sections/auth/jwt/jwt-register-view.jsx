@@ -9,7 +9,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import LoadingButton from "@mui/lab/LoadingButton";
 import Divider from "@mui/material/Divider";
-import { Box, Button } from "@mui/material";
+import { Button, IconButton, InputAdornment } from "@mui/material";
 import { useNavigate, useLocation } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import { useAuthContext } from "src/auth/hooks";
@@ -29,14 +29,22 @@ import logger from "src/utils/logger";
 import SvgColor from "src/components/svg-color";
 import { RouterLink } from "src/routes/components";
 import RegionSelect from "src/components/RegionSelect";
-import RightSectionAuth from "./RightSectionAuth";
+import AuthSpaceLayout from "./AuthSpaceLayout";
 import { isValidUtm } from "src/utils/utmUtils";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 
 export default function JwtRegisterView() {
   const { register, login, awsRegister } = useAuthContext();
   const [errorMsg, setErrorMsg] = useState("");
   const [registerSuccess, setRegisterSuccess] = useState(false);
+  // Only treat this as OSS on a CONFIRMED read. The hook falls back to "oss"
+  // when deployment-info errors, and an unguarded check would show a cloud user
+  // the OSS signup form (password fields, no social) after one transient
+  // failure — and post a password the cloud backend would reject.
+  const { isOSS: ossMode, isSuccess: modeConfirmed } = useDeploymentMode();
+  const isOSS = modeConfirmed && ossMode;
   const password = useBoolean();
+  const confirmPassword = useBoolean();
   const navigate = useNavigate();
   const { search } = useLocation();
   const [loading, setLoading] = useState(false);
@@ -49,11 +57,22 @@ export default function JwtRegisterView() {
       .transform((value) => (typeof value === "string" ? value.trim() : value))
       .required("Email is required")
       .email("Email must be a valid email address"),
-    password: Yup.string().when("$registerSuccess", {
-      is: true,
-      then: (schema) => schema.required("Password is required"),
-      otherwise: (schema) => schema.notRequired(),
-    }),
+    // OSS sets the password here at sign-up (name → email → password →
+    // confirm, one screen). Cloud still sets it via an emailed link.
+    password: isOSS
+      ? Yup.string()
+          .required("Password is required")
+          .min(8, "Password must be at least 8 characters")
+      : Yup.string().when("$registerSuccess", {
+          is: true,
+          then: (schema) => schema.required("Password is required"),
+          otherwise: (schema) => schema.notRequired(),
+        }),
+    confirmPassword: isOSS
+      ? Yup.string()
+          .required("Please confirm your password")
+          .oneOf([Yup.ref("password")], "Passwords do not match")
+      : Yup.string().notRequired(),
   });
 
   const locallyExtractUtmParams = useCallback(() => {
@@ -106,6 +125,7 @@ export default function JwtRegisterView() {
     fullName: "",
     email: "",
     password: "",
+    confirmPassword: "",
   };
 
   const methods = useForm({
@@ -138,6 +158,8 @@ export default function JwtRegisterView() {
         company_name: "",
         recaptcha_response: token,
         allow_email: true,
+        // OSS: password chosen on this screen, no emailed set-password link.
+        ...(isOSS ? { password: data?.password } : {}),
       };
       let response;
       if (onboarding_token) {
@@ -149,14 +171,17 @@ export default function JwtRegisterView() {
         response = await register(payload);
       }
       if (response?.result) {
-        enqueueSnackbar({
-          variant: "success",
-          message:
-            response?.result?.message ||
-            "Thanks for registering! Please check your email.",
-          autoHideDuration: 3000,
-        });
-        setRegisterSuccess(true);
+        if (!isOSS) {
+          // Cloud: the password is set via an emailed link.
+          enqueueSnackbar({
+            variant: "success",
+            message:
+              response?.result?.message ||
+              "Thanks for registering! Please check your email.",
+            autoHideDuration: 3000,
+          });
+          setRegisterSuccess(true);
+        }
         trackEvent(Events.newUserSignUp, {
           [PropertyName.method]: "email",
           [PropertyName.email]: data.email,
@@ -181,8 +206,32 @@ export default function JwtRegisterView() {
           userId: response?.result?.user_id,
         });
 
-        // Always navigate to login after registration
-        // navigate(paths.auth.jwt.login);
+        if (isOSS) {
+          // Sign the new admin straight in with the password they just set,
+          // then continue to role → goals → org.
+          try {
+            const loginToken = await getRecaptchaToken("login");
+            const loginResp = await axios.post(endpoints.auth.login, {
+              email: data.email,
+              password: data.password,
+              recaptcha_response: loginToken,
+            });
+            await login(loginResp);
+            navigate(paths.auth.jwt.setup_org + search);
+          } catch (loginErr) {
+            // The account exists either way, so never strand them on an error
+            // screen — send them to login with the reason stated.
+            logger.info("OSS auto-login after signup failed", loginErr);
+            enqueueSnackbar({
+              variant: "info",
+              message: "Account created. Please sign in to continue.",
+              autoHideDuration: 4000,
+            });
+            navigate(paths.auth.jwt.login + search);
+          }
+          setLoading(false);
+          return;
+        }
       }
       setLoading(false);
     } catch (error) {
@@ -268,7 +317,6 @@ export default function JwtRegisterView() {
   };
 
   const onSubmit = handleSubmit(async (data) => {
-   
     (await registerSuccess) ? handleLogin(data) : handleSignup(data);
   });
 
@@ -353,6 +401,58 @@ export default function JwtRegisterView() {
         name="email"
         label="Business Email ID"
       />
+      {isOSS && (
+        <>
+          <RHFTextField
+            placeholder="Enter password"
+            size="small"
+            name="password"
+            label="Set Password"
+            type={password.value ? "text" : "password"}
+            autoComplete="new-password"
+            sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+            InputProps={{
+              endAdornment: (
+                <InputAdornment position="end">
+                  <IconButton onClick={password.onToggle} edge="end">
+                    <Iconify
+                      icon={
+                        password.value
+                          ? "solar:eye-bold"
+                          : "solar:eye-closed-bold"
+                      }
+                    />
+                  </IconButton>
+                </InputAdornment>
+              ),
+            }}
+          />
+          <RHFTextField
+            placeholder="Re-enter password"
+            size="small"
+            name="confirmPassword"
+            label="Confirm Password"
+            type={confirmPassword.value ? "text" : "password"}
+            autoComplete="new-password"
+            sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+            InputProps={{
+              endAdornment: (
+                <InputAdornment position="end">
+                  <IconButton onClick={confirmPassword.onToggle} edge="end">
+                    <Iconify
+                      icon={
+                        confirmPassword.value
+                          ? "solar:eye-bold"
+                          : "solar:eye-closed-bold"
+                      }
+                    />
+                  </IconButton>
+                </InputAdornment>
+              ),
+            }}
+          />
+        </>
+      )}
       {!!errorMsg && (
         <Alert
           icon={<Iconify icon="fluent:warning-24-regular" color="red.500" />}
@@ -416,29 +516,38 @@ export default function JwtRegisterView() {
           Your login credentials have been sent to your email.
         </Alert>
       )} */}
-      <Divider>
-        <Typography variant="body2" sx={{ color: "text.disabled" }}>
-          or
-        </Typography>
-      </Divider>
-      <Stack spacing={1.5}>
-        <Button
-          sx={{
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 0.5,
-
-            color: "text.primary",
-            height: 44,
-          }}
-          onClick={() => handleServiceProvider("google")}
-          startIcon={<Iconify icon="logos:google-icon" width={20} />}
-        >
-          <Typography fontWeight={"fontWeightMedium"} sx={{ fontSize: "15px" }}>
-            Continue with Google
+      {/* Self-hosted has no OAuth apps and no IdP, so social and SSO sign-up
+          are hidden entirely — only local email/password auth works. */}
+      {!isOSS && (
+        <Divider>
+          <Typography variant="body2" sx={{ color: "text.disabled" }}>
+            or
           </Typography>
-        </Button>
-        {/*
+        </Divider>
+      )}
+      <Stack spacing={1.5}>
+        {!isOSS && (
+          <>
+            <Button
+              sx={{
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 0.5,
+
+                color: "text.primary",
+                height: 44,
+              }}
+              onClick={() => handleServiceProvider("google")}
+              startIcon={<Iconify icon="logos:google-icon" width={20} />}
+            >
+              <Typography
+                fontWeight={"fontWeightMedium"}
+                sx={{ fontSize: "15px" }}
+              >
+                Continue with Google
+              </Typography>
+            </Button>
+            {/*
       <Button
         sx={{
           border: "1px solid",
@@ -468,54 +577,56 @@ export default function JwtRegisterView() {
           Continue with Microsoft
         </Typography>
       </Button> */}
-        <Button
-          sx={{
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 0.5,
+            <Button
+              sx={{
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 0.5,
 
-            height: 44,
-          }}
-          onClick={() => handleServiceProvider("github")}
-          startIcon={
-            <Iconify
-              icon="bi:github"
-              width={24}
-              sx={{ color: "text.primary" }}
-            />
-          }
-        >
-          <Typography
-            fontWeight={"fontWeightMedium"}
-            sx={{ fontSize: "15px", color: "text.primary" }}
-          >
-            Continue with Github
-          </Typography>
-        </Button>
-        <Button
-          sx={{
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 0.5,
+                height: 44,
+              }}
+              onClick={() => handleServiceProvider("github")}
+              startIcon={
+                <Iconify
+                  icon="bi:github"
+                  width={24}
+                  sx={{ color: "text.primary" }}
+                />
+              }
+            >
+              <Typography
+                fontWeight={"fontWeightMedium"}
+                sx={{ fontSize: "15px", color: "text.primary" }}
+              >
+                Continue with Github
+              </Typography>
+            </Button>
+            <Button
+              sx={{
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 0.5,
 
-            height: 44,
-            color: "text.primary",
-          }}
-          onClick={handleSsoLogin}
-          startIcon={
-            <SvgColor
-              sx={{ marginLeft: 2 }}
-              src="/assets/icons/ic_sso_saml.svg"
-            />
-          }
-        >
-          <Typography
-            fontWeight={"fontWeightMedium"}
-            sx={{ fontSize: "15px", marginRight: -1.5 }}
-          >
-            Continue with SSO/SAML
-          </Typography>
-        </Button>
+                height: 44,
+                color: "text.primary",
+              }}
+              onClick={handleSsoLogin}
+              startIcon={
+                <SvgColor
+                  sx={{ marginLeft: 2 }}
+                  src="/assets/icons/ic_sso_saml.svg"
+                />
+              }
+            >
+              <Typography
+                fontWeight={"fontWeightMedium"}
+                sx={{ fontSize: "15px", marginRight: -1.5 }}
+              >
+                Continue with SSO/SAML
+              </Typography>
+            </Button>
+          </>
+        )}
 
         <Typography
           fontSize={"15px"}
@@ -539,55 +650,23 @@ export default function JwtRegisterView() {
   );
 
   return (
-    <Box sx={{ display: "flex", width: "100%", height: "100vh" }}>
-      <Box
-        sx={{
-          width: "50%",
-          height: "100%",
-          display: "flex",
-          justifyContent: "center",
-
-          bgcolor: "background.paper",
-          overflowY: "auto",
-        }}
-      >
-        <Box
-          sx={{
-            maxWidth: "640px",
-            width: "100%",
-            px: 10,
-            paddingY: "100px",
-            height: "fit-content",
-          }}
-        >
-          <FormProvider methods={methods} onSubmit={onSubmit}>
-            {registerSuccess ? (
-              <PasswordSentView
-                email={email}
-                isSubmitting={loading}
-                errorMsg={errorMsg}
-                password={password}
-                setRegisterSuccess={setRegisterSuccess}
-              />
-            ) : (
-              <Stack spacing={4}>
-                {renderHead}
-                {renderForm}
-              </Stack>
-            )}
-          </FormProvider>
-        </Box>
-      </Box>
-
-      <Box
-        sx={{
-          width: "50%",
-          height: "100%",
-          backgroundColor: "background.neutral",
-        }}
-      >
-        <RightSectionAuth />
-      </Box>
-    </Box>
+    <AuthSpaceLayout>
+      <FormProvider methods={methods} onSubmit={onSubmit}>
+        {registerSuccess ? (
+          <PasswordSentView
+            email={email}
+            isSubmitting={loading}
+            errorMsg={errorMsg}
+            password={password}
+            setRegisterSuccess={setRegisterSuccess}
+          />
+        ) : (
+          <Stack spacing={4}>
+            {renderHead}
+            {renderForm}
+          </Stack>
+        )}
+      </FormProvider>
+    </AuthSpaceLayout>
   );
 }

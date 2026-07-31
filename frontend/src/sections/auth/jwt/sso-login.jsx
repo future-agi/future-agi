@@ -19,7 +19,7 @@ import { useSnackbar } from "src/components/snackbar";
 import { Box, Divider } from "@mui/material";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import logger from "src/utils/logger";
-import RightSectionAuth from "./RightSectionAuth";
+import AuthSpaceLayout from "./AuthSpaceLayout";
 
 // ----------------------------------------------------------------------
 
@@ -137,63 +137,11 @@ export default function SSOLogin() {
   );
 
   return (
-    <Box
-      sx={{
-        width: "100%",
-        height: "100vh",
-        display: "flex",
-        position: "relative",
-      }}
-    >
-      {/* Back Button */}
-      {/* <IconButton
-        onClick={handleBack}
-        sx={{
-          position: "absolute",
-          top: 16,
-          left: 16,
-          zIndex: 1,
-          color: "text.primary",
-          bgcolor: "common.white",
-          boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
-          "&:hover": {
-            bgcolor: "common.white",
-          },
-        }}
-      >
-        <Iconify icon="eva:arrow-ios-back-fill" />
-      </IconButton> */}
-
-      {/* Left Side - Form */}
-      <Box
-        sx={{
-          width: "50%",
-          height: "100vh",
-          display: "flex",
-          justifyContent: "center",
-          paddingY: "100px",
-          bgcolor: "background.paper",
-          overflowY: "auto",
-        }}
-      >
-        <Box sx={{ width: "640px", px: 10, height: "fit-content" }}>
-          <form onSubmit={onSubmit}>
-            {renderHead}
-            {renderForm}
-          </form>
-        </Box>
-      </Box>
-
-      {/* Right Side - Image with Text Overlay */}
-      <Box
-        sx={{
-          width: "50%",
-          height: "100%",
-          backgroundColor: "background.neutral",
-        }}
-      >
-        <RightSectionAuth />
-      </Box>
-    </Box>
+    <AuthSpaceLayout>
+      <form onSubmit={onSubmit}>
+        {renderHead}
+        {renderForm}
+      </form>
+    </AuthSpaceLayout>
   );
 }

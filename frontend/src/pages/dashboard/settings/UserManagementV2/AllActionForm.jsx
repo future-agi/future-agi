@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   alpha,
@@ -20,6 +20,8 @@ import { z } from "zod";
 import { LoadingButton } from "@mui/lab";
 import axios, { endpoints } from "src/utils/axios";
 import { orgRoleOptions, wsRoleOptions, LEVELS } from "./constant";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { InviteLinksResult, normalizeInvites } from "./invite-links";
 import { ShowComponent } from "src/components/show";
 import { useAuthContext } from "src/auth/hooks";
 import ChipsInput from "src/components/ChipsInput/ChipsInput";
@@ -101,6 +103,19 @@ const AllActionForm = ({
 }) => {
   const theme = useTheme();
   const queryClient = useQueryClient();
+  // Self-hosted with no mail delivery: show copyable invite links instead.
+  // Both terms are deliberate — cloud keeps the emailed flow either way.
+  // Gated here, not per call site, so every entry point behaves the same.
+  const {
+    isOSS,
+    isSuccess: modeConfirmed,
+    canDeliverEmail,
+  } = useDeploymentMode();
+  const showInviteLinks = modeConfirmed && isOSS && !canDeliverEmail;
+  const [inviteLinks, setInviteLinks] = useState(null);
+  // The request outlives a close, so onSuccess would otherwise repopulate
+  // inviteLinks and the next open would show the previous batch.
+  const awaitingInviteRef = useRef(false);
   const { user, orgLevel: actorOrgLevel } = useAuthContext();
   const { usersList } = useUserManagementStore();
   const existingEmails = usersList.map((u) => u.email);
@@ -219,6 +234,8 @@ const AllActionForm = ({
     editForm.reset();
     wsEditForm.reset();
     resendForm.reset();
+    setInviteLinks(null);
+    awaitingInviteRef.current = false;
     onClose();
   };
 
@@ -242,27 +259,36 @@ const AllActionForm = ({
         return;
       }
 
-      // Success case - show success message only if invites were sent
-      const successCount = result?.invited?.length || 0;
-      if (successCount > 0) {
-        enqueueSnackbar(`Successfully invited ${successCount} user(s)`, {
-          variant: "success",
-        });
-      }
-
       trackEvent(Events.workspaceSendInviteClicked, {
         [PropertyName.click]: "click",
         emails: variables?.emails,
         orgLevel: variables?.org_level,
       });
       refetchData();
+
+      // Stay open and show the links — a "sent" toast would be a lie when
+      // nothing was delivered. Only skipped if the user already closed.
+      if (showInviteLinks && awaitingInviteRef.current) {
+        setInviteLinks(normalizeInvites(result, variables?.emails));
+        return;
+      }
+      if (showInviteLinks) return;
+
+      const successCount = result?.invited?.length || 0;
+      if (successCount > 0) {
+        enqueueSnackbar(`Successfully invited ${successCount} user(s)`, {
+          variant: "success",
+        });
+      }
       handleOnClose();
     },
+    // Handled here, so opt out of the global handler's duplicate toast.
+    // `error.result` — the interceptor rejects with the flattened body.
+    meta: { errorHandled: true },
     onError: (error) => {
-      enqueueSnackbar(
-        error?.response?.data?.result || "Failed to send invite",
-        { variant: "error" },
-      );
+      enqueueSnackbar(error?.result || "Failed to send invite", {
+        variant: "error",
+      });
     },
   });
 
@@ -476,6 +502,7 @@ const AllActionForm = ({
             level: wsLevel,
           }));
 
+    awaitingInviteRef.current = true;
     inviteMutate({
       emails: formData.emails,
       org_level: orgLevel,
@@ -577,6 +604,23 @@ const AllActionForm = ({
     openActionForm?.action === "edit-role" &&
     watchedEditOrgLevel != null &&
     watchedEditOrgLevel < LEVELS.ADMIN;
+
+  // Invites succeeded but mail cannot reach them: hand the admin the links.
+  if (inviteLinks) {
+    return (
+      <InviteLinksResult
+        open={Boolean(openActionForm)}
+        invites={inviteLinks}
+        onClose={handleOnClose}
+        onInviteMore={() => {
+          // Clear emails or the next submit re-invites the same batch.
+          // Role and workspace are kept for the next one.
+          inviteForm.resetField("emails");
+          setInviteLinks(null);
+        }}
+      />
+    );
+  }
 
   return (
     <Box>

@@ -6,7 +6,6 @@ import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import LoadingButton from "@mui/lab/LoadingButton";
-import { Box } from "@mui/material";
 
 import { paths } from "src/routes/paths";
 import { useRouter } from "src/routes/hooks";
@@ -20,7 +19,7 @@ import { useSnackbar } from "src/components/snackbar";
 
 import { startAuthentication } from "@simplewebauthn/browser";
 
-import RightSectionAuth from "./RightSectionAuth";
+import AuthSpaceLayout from "./AuthSpaceLayout";
 
 // ----------------------------------------------------------------------
 
@@ -514,42 +513,5 @@ export default function TwoFactorVerifyView() {
     return null;
   }
 
-  return (
-    <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
-      {/* Left Side - Form */}
-      <Box
-        sx={{
-          width: "50%",
-          height: "100vh",
-          display: "flex",
-          justifyContent: "center",
-          bgcolor: "background.paper",
-          overflowY: "auto",
-        }}
-      >
-        <Box
-          sx={{
-            maxWidth: "640px",
-            paddingY: "100px",
-            width: "100%",
-            px: 10,
-            height: "fit-content",
-          }}
-        >
-          {renderContent()}
-        </Box>
-      </Box>
-
-      {/* Right Side - Image with Text Overlay */}
-      <Box
-        sx={{
-          width: "50%",
-          height: "100%",
-          backgroundColor: "background.neutral",
-        }}
-      >
-        <RightSectionAuth />
-      </Box>
-    </Box>
-  );
+  return <AuthSpaceLayout>{renderContent()}</AuthSpaceLayout>;
 }

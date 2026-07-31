@@ -177,18 +177,53 @@ initReddit();
 // Initialize Twitter (X) pixel (no-op if env vars are unset)
 initTwitter();
 
-if (
-  CURRENT_ENVIRONMENT === "local" &&
-  import.meta.env.VITE_ENABLE_MSW !== "false"
-) {
+// TH-7217 CLEANUP: remove this opt-in along with the mocks.
+// Keep the DEV guard until then — MSW_ENABLED also disables the real service
+// worker below, so a stray env var in a build would ship mocks and no SW.
+const MSW_ENABLED =
+  (import.meta.env.DEV && import.meta.env.VITE_ENABLE_MSW === "true") ||
+  (CURRENT_ENVIRONMENT === "local" &&
+    import.meta.env.VITE_ENABLE_MSW !== "false");
+
+// Rendering must wait for the worker to be ready, or requests fired on mount
+// (deployment-info is the first one out) race the service worker and hit the
+// real network instead of the handlers.
+let mocksReady = Promise.resolve();
+
+if (MSW_ENABLED) {
   logger.debug("STARTING MOCK SERVER");
-  worker.start({ onUnhandledRequest: "bypass" });
+  // A page is controlled by at most ONE service worker per scope, so the app's
+  // own /service-worker.js and MSW's cannot both intercept. Drop any existing
+  // app registration first, otherwise mocked requests sail past to the network.
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker
+      .getRegistrations()
+      .then((registrations) => {
+        registrations
+          .filter(
+            (r) =>
+              !(r.active || r.installing || r.waiting)?.scriptURL?.includes(
+                "mockServiceWorker",
+              ),
+          )
+          .forEach((r) => r.unregister());
+      })
+      .catch(() => {
+        /* nothing actionable — MSW still starts below */
+      });
+  }
+  mocksReady = worker.start({ onUnhandledRequest: "bypass" });
 }
 
 LicenseManager.setLicenseKey(import.meta.env.VITE_AG_GRID_LICENSE_KEY);
 
-// Register service worker in production
-if (CURRENT_ENVIRONMENT !== "local" && "serviceWorker" in navigator) {
+// Register service worker in production. Never alongside MSW: the two compete
+// for the same scope and the app worker would silently win.
+if (
+  !MSW_ENABLED &&
+  CURRENT_ENVIRONMENT !== "local" &&
+  "serviceWorker" in navigator
+) {
   window.addEventListener("load", () => {
     navigator.serviceWorker
       .register("/service-worker.js")
@@ -244,14 +279,18 @@ if (CURRENT_ENVIRONMENT !== "local" && "serviceWorker" in navigator) {
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 
-root.render(
-  <HelmetProvider>
-    <BrowserRouter>
-      <GoogleReCaptchaProvider reCaptchaKey={GOOGLE_SITE_KEY}>
-        <Suspense fallback={<SplashScreen />}>
-          <App />
-        </Suspense>
-      </GoogleReCaptchaProvider>
-    </BrowserRouter>
-  </HelmetProvider>,
-);
+// `finally`, not `then`: a mock worker that fails to start must never stop the
+// real app from rendering. Resolves immediately when mocks are disabled.
+mocksReady.finally(() => {
+  root.render(
+    <HelmetProvider>
+      <BrowserRouter>
+        <GoogleReCaptchaProvider reCaptchaKey={GOOGLE_SITE_KEY}>
+          <Suspense fallback={<SplashScreen />}>
+            <App />
+          </Suspense>
+        </GoogleReCaptchaProvider>
+      </BrowserRouter>
+    </HelmetProvider>,
+  );
+});

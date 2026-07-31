@@ -1,24 +1,7 @@
-export const OSS_SETUP_SEEN_KEY = "fai_oss_setup_seen";
-
-export const OSS_SETUP_TABS = {
-  CREATE: "create",
-  RESET: "reset",
-};
-
 const INSTALL_GUIDE_BASE =
   "https://github.com/future-agi/future-agi/blob/main/INSTALLATION.md";
 
-export const OSS_DOC_URL = {
-  [OSS_SETUP_TABS.CREATE]: `${INSTALL_GUIDE_BASE}#create-your-first-account`,
-  [OSS_SETUP_TABS.RESET]: `${INSTALL_GUIDE_BASE}#password-reset-without-email`,
-};
-
-export const CREATE_USER_CMD = `docker compose exec backend python manage.py create_user`;
-
-export const CREATE_USER_CMD_NONINTERACTIVE = `docker compose exec backend python manage.py create_user \\
-  --email you@example.com \\
-  --name "Your Name" \\
-  --password yourpassword`;
+export const OSS_RESET_DOC_URL = `${INSTALL_GUIDE_BASE}#password-reset-without-email`;
 
 export const RESET_SHELL_CMD = `docker compose exec backend python manage.py shell`;
 

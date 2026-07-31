@@ -1,8 +1,6 @@
 import PropTypes from "prop-types";
 
-import Tab from "@mui/material/Tab";
 import Link from "@mui/material/Link";
-import Tabs from "@mui/material/Tabs";
 import Stack from "@mui/material/Stack";
 import Dialog from "@mui/material/Dialog";
 import Divider from "@mui/material/Divider";
@@ -15,12 +13,9 @@ import Iconify from "src/components/iconify";
 
 import CommandBlock from "./CommandBlock";
 import {
-  OSS_DOC_URL,
-  OSS_SETUP_TABS,
-  CREATE_USER_CMD,
+  OSS_RESET_DOC_URL,
   RESET_SHELL_CMD,
   RESET_PYTHON_SNIPPET,
-  CREATE_USER_CMD_NONINTERACTIVE,
 } from "./constants";
 
 function StepLabel({ children }) {
@@ -37,12 +32,10 @@ function StepLabel({ children }) {
 
 StepLabel.propTypes = { children: PropTypes.node };
 
-export default function OssSetupModal({
-  open,
-  onClose,
-  activeTab,
-  onTabChange,
-}) {
+// Password-reset fallback for self-hosted installs that cannot send email.
+// Account creation is NOT here: signup works in the browser on OSS, so there is
+// nothing to do from a shell.
+export default function OssSetupModal({ open, onClose }) {
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
       <DialogTitle sx={{ pb: 1 }}>
@@ -54,12 +47,12 @@ export default function OssSetupModal({
         >
           <Stack spacing={0.5}>
             <Typography variant="m3" fontWeight="fontWeightSemiBold">
-              Set up your account
+              Reset your password
             </Typography>
             <Typography variant="s2" color="text.secondary">
-              Email and social sign-in aren&apos;t available in self-hosted
-              mode. Manage accounts from the CLI on the machine running
-              FutureAGI.
+              This installation can&apos;t send email, so a reset link
+              can&apos;t be delivered. Generate a sign-in link from the CLI on
+              the machine running FutureAGI.
             </Typography>
           </Stack>
           <IconButton
@@ -72,47 +65,24 @@ export default function OssSetupModal({
         </Stack>
       </DialogTitle>
 
-      <Tabs
-        value={activeTab}
-        onChange={(_e, value) => onTabChange(value)}
-        sx={{ px: 3, borderBottom: 1, borderColor: "divider" }}
-      >
-        <Tab value={OSS_SETUP_TABS.CREATE} label="Create account" />
-        <Tab value={OSS_SETUP_TABS.RESET} label="Reset password" />
-      </Tabs>
-
       <DialogContent sx={{ pt: 3 }}>
-        {activeTab === OSS_SETUP_TABS.CREATE && (
-          <Stack spacing={2}>
-            <StepLabel>Run this to create a user:</StepLabel>
-            <CommandBlock command={CREATE_USER_CMD} />
+        <Stack spacing={2}>
+          <StepLabel>1. Open a Django shell:</StepLabel>
+          <CommandBlock command={RESET_SHELL_CMD} />
 
-            <Typography variant="s2" color="text.secondary">
-              Or create it non-interactively:
-            </Typography>
-            <CommandBlock command={CREATE_USER_CMD_NONINTERACTIVE} />
+          <StepLabel>2. Generate a sign-in link:</StepLabel>
+          <CommandBlock command={RESET_PYTHON_SNIPPET} />
 
-            <Typography variant="s1" color="text.secondary">
-              Then close this and log in with those credentials.
-            </Typography>
-          </Stack>
-        )}
+          <Typography variant="s1" color="text.secondary">
+            This prints a link that signs the user in. Treat it like a password,
+            share it privately, and open it promptly to set a new password.
+          </Typography>
 
-        {activeTab === OSS_SETUP_TABS.RESET && (
-          <Stack spacing={2}>
-            <StepLabel>1. Open a Django shell:</StepLabel>
-            <CommandBlock command={RESET_SHELL_CMD} />
-
-            <StepLabel>2. Generate a sign-in link:</StepLabel>
-            <CommandBlock command={RESET_PYTHON_SNIPPET} />
-
-            <Typography variant="s1" color="text.secondary">
-              This prints a link that signs the user in. Treat it like a
-              password, share it privately, and open it promptly to set a new
-              password.
-            </Typography>
-          </Stack>
-        )}
+          <Typography variant="s2" color="text.secondary">
+            No shell access? Ask whoever administers this installation to run
+            these and send you the link.
+          </Typography>
+        </Stack>
       </DialogContent>
 
       <Divider />
@@ -124,15 +94,13 @@ export default function OssSetupModal({
         sx={{ px: 3, py: 2 }}
       >
         <Link
-          href={OSS_DOC_URL[activeTab]}
+          href={OSS_RESET_DOC_URL}
           target="_blank"
           rel="noopener"
           variant="s2"
           underline="hover"
         >
-          {activeTab === OSS_SETUP_TABS.RESET
-            ? "Password reset guide"
-            : "Account setup guide"}
+          Password reset guide
           <Iconify
             icon="mdi:open-in-new"
             width={14}
@@ -147,6 +115,4 @@ export default function OssSetupModal({
 OssSetupModal.propTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func,
-  activeTab: PropTypes.string,
-  onTabChange: PropTypes.func,
 };

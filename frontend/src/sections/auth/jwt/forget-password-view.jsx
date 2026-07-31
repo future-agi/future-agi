@@ -13,9 +13,9 @@ import { ForgotPasswordSchema } from "./validation";
 import axios, { endpoints } from "src/utils/axios";
 import { useMutation } from "@tanstack/react-query";
 import { useSnackbar } from "src/components/snackbar";
-import { Alert, Box, Divider } from "@mui/material";
+import { Alert, Divider } from "@mui/material";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
-import RightSectionAuth from "./RightSectionAuth";
+import AuthSpaceLayout from "./AuthSpaceLayout";
 
 // ----------------------------------------------------------------------
 
@@ -158,43 +158,11 @@ export default function ForgotPasswordView() {
   );
 
   return (
-    <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
-      {/* Left Side - Form */}
-      <Box
-        sx={{
-          width: "50%",
-          height: "100vh",
-          display: "flex",
-          justifyContent: "center",
-          bgcolor: "background.paper",
-          overflowY: "auto",
-        }}
-      >
-        <Box
-          sx={{
-            width: "640px",
-            px: 10,
-            paddingY: "100px",
-            height: "fit-content",
-          }}
-        >
-          <form onSubmit={onSubmit}>
-            {renderHead}
-            {renderForm}
-          </form>
-        </Box>
-      </Box>
-
-      {/* Right Side - Image with Text Overlay */}
-      <Box
-        sx={{
-          width: "50%",
-          height: "100%",
-          backgroundColor: "background.neutral",
-        }}
-      >
-        <RightSectionAuth />
-      </Box>
-    </Box>
+    <AuthSpaceLayout>
+      <form onSubmit={onSubmit}>
+        {renderHead}
+        {renderForm}
+      </form>
+    </AuthSpaceLayout>
   );
 }

@@ -5,7 +5,7 @@ import Typography from "@mui/material/Typography";
 import LoadingButton from "@mui/lab/LoadingButton";
 import InputAdornment from "@mui/material/InputAdornment";
 import IconButton from "@mui/material/IconButton";
-import { Alert, Box } from "@mui/material";
+import { Alert } from "@mui/material";
 import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import { paths } from "src/routes/paths";
 import Iconify from "src/components/iconify";
@@ -17,7 +17,7 @@ import { useSnackbar } from "src/components/snackbar";
 import { useNavigate } from "react-router";
 import { useParams } from "src/routes/hooks";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
-import RightSectionAuth from "./RightSectionAuth";
+import AuthSpaceLayout from "./AuthSpaceLayout";
 
 export default function ResetPasswordView() {
   const [showPassword, setShowPassword] = useState({
@@ -242,35 +242,11 @@ export default function ResetPasswordView() {
   );
 
   return (
-    <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
-      <Box
-        sx={{
-          width: "50%",
-          height: "100vh",
-          display: "flex",
-          justifyContent: "center",
-          bgcolor: "background.paper",
-          paddingY: "100px",
-          overflowY: "auto",
-        }}
-      >
-        <Box sx={{ width: "640px", px: 10, height: "fit-content" }}>
-          <form onSubmit={onSubmit}>
-            {renderHead}
-            {renderForm}
-          </form>
-        </Box>
-      </Box>
-
-      <Box
-        sx={{
-          width: "50%",
-          height: "100%",
-          backgroundColor: "background.neutral",
-        }}
-      >
-        <RightSectionAuth />
-      </Box>
-    </Box>
+    <AuthSpaceLayout>
+      <form onSubmit={onSubmit}>
+        {renderHead}
+        {renderForm}
+      </form>
+    </AuthSpaceLayout>
   );
 }
