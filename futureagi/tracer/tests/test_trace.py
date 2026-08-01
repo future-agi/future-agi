@@ -27,7 +27,10 @@ class TestTraceRetrieveAPI:
     def test_retrieve_trace_unauthenticated(self, api_client, trace):
         """Unauthenticated requests should be rejected."""
         response = api_client.get(f"/tracer/trace/{trace.id}/")
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     @pytest.mark.xfail(
         reason="Production CH query references span_attributes_raw/metadata_map (v1 columns) not yet migrated to v2 schema",
@@ -108,7 +111,10 @@ class TestTraceListTracesAPI:
             "/tracer/trace/list_traces/",
             {"project_version_id": str(project_version.id)},
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_list_traces_missing_project_version(self, auth_client):
         """List traces fails without project version ID."""
@@ -207,7 +213,10 @@ class TestTraceBulkCreateAPI:
             },
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_bulk_create_traces_success(self, auth_client, project):
         """Bulk create multiple traces."""
@@ -271,7 +280,10 @@ class TestTraceGetPropertiesAPI:
             "/tracer/trace/get_properties/",
             {"project_id": str(project.id)},
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_get_properties_missing_project_id(self, auth_client):
         """Get properties fails without project ID."""
@@ -304,7 +316,10 @@ class TestTraceGetEvalNamesAPI:
             "/tracer/trace/get_eval_names/",
             {"project_version_id": str(project_version.id)},
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_get_eval_names_missing_project_version(self, auth_client):
         """Get eval names fails without project version ID."""
@@ -333,7 +348,10 @@ class TestTraceCompareTracesAPI:
             {"trace_ids": [str(trace.id)]},
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_compare_traces_success(
         self, auth_client, project, project_version, multiple_traces, observation_span
@@ -366,7 +384,10 @@ class TestTraceGetTraceIdByIndexAPI:
             "/tracer/trace/get_trace_id_by_index/",
             {"project_version_id": str(project_version.id), "index": 0},
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_get_trace_by_index_missing_params(self, auth_client):
         """Get trace by index fails without required params."""
@@ -417,7 +438,10 @@ class TestTraceGetTraceIdByIndexObserveAPI:
             "/tracer/trace/get_trace_id_by_index_observe/",
             {"project_id": str(observe_project.id)},
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_get_trace_by_index_observe_missing_params(self, auth_client):
         """Missing required params should return 400."""
@@ -461,7 +485,10 @@ class TestTraceGraphMethodsAPI:
             {"project_id": str(project.id)},
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_get_graph_methods_missing_project(self, auth_client):
         """Get graph methods fails without project ID."""
@@ -536,6 +563,145 @@ class TestTraceGraphMethodsAPI:
 
         assert response.status_code == status.HTTP_200_OK
 
+    def test_get_graph_methods_returns_safe_degraded_contract_on_ch_error(
+        self, auth_client, observe_project, monkeypatch
+    ):
+        """Graph failures must not masquerade as a complete empty series."""
+
+        class FailingAnalytics:
+            def execute_ch_query(self, *args, **kwargs):
+                raise RuntimeError("private ClickHouse stack and query text")
+
+        monkeypatch.setattr(
+            "tracer.views.trace.AnalyticsQueryService",
+            FailingAnalytics,
+        )
+
+        response = auth_client.post(
+            "/tracer/trace/get_graph_methods/",
+            {
+                "project_id": str(observe_project.id),
+                "interval": "day",
+                "property": "average",
+                "req_data_config": {"id": "latency", "type": "SYSTEM_METRIC"},
+                "filters": [],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = get_result(response)
+        assert result["data"] == []
+        assert result["query_complete"] is False
+        assert result["query_status"] == "degraded"
+        assert result["query_error_code"] == "query_failed"
+        assert b"private ClickHouse" not in response.content
+
+    @pytest.mark.parametrize(
+        ("output_type", "value", "columns", "row", "expected_value"),
+        [
+            (
+                "bool",
+                False,
+                ["time_bucket", "value"],
+                {"time_bucket": "2026-07-30T00:00:00", "value": 75.0},
+                25.0,
+            ),
+            (
+                "str_list",
+                "Relevant",
+                ["time_bucket", "total_count", "choice_0"],
+                {
+                    "time_bucket": "2026-07-30T00:00:00",
+                    "total_count": 10,
+                    "choice_0": 60.0,
+                },
+                60.0,
+            ),
+        ],
+    )
+    def test_eval_graph_accepts_frontend_output_wire_and_returns_single_series(
+        self,
+        auth_client,
+        observe_project,
+        monkeypatch,
+        output_type,
+        value,
+        columns,
+        row,
+        expected_value,
+    ):
+        """The endpoint must consume LeftControl's output_type/value payload."""
+
+        class Result:
+            data = [row]
+
+            def __init__(self):
+                self.columns = columns
+
+        class Analytics:
+            def __init__(self):
+                self.calls = []
+
+            def execute_ch_query(self, query, params, timeout_ms, settings=None):
+                self.calls.append((query, params, timeout_ms, settings))
+                return Result()
+
+        analytics = Analytics()
+        eval_config_id = str(uuid.uuid4())
+        monkeypatch.setattr(
+            "tracer.views.trace.AnalyticsQueryService",
+            lambda: analytics,
+        )
+        monkeypatch.setattr(
+            "tracer.utils.eval_helpers.resolve_eval_config_id",
+            lambda config_id, **_kwargs: config_id,
+        )
+
+        response = auth_client.post(
+            "/tracer/trace/get_graph_methods/",
+            {
+                "project_id": str(observe_project.id),
+                "interval": "day",
+                "property": "average",
+                "filters": [
+                    {
+                        "column_id": "created_at",
+                        "filter_config": {
+                            "filter_type": "datetime",
+                            "filter_op": "between",
+                            "filter_value": [
+                                "2026-07-30T00:00:00Z",
+                                "2026-07-30T23:59:59Z",
+                            ],
+                        },
+                    }
+                ],
+                "req_data_config": {
+                    "id": eval_config_id,
+                    "type": "EVAL",
+                    "output_type": output_type,
+                    "value": value,
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = get_result(response)
+        assert result["metric_name"] == eval_config_id
+        assert isinstance(result["data"], list)
+        assert result["data"][0]["value"] == expected_value
+
+        query, params, timeout_ms, settings = analytics.calls[0]
+        assert timeout_ms == 750
+        assert settings["max_threads"] == 2
+        if output_type == "bool":
+            assert "output_bool" in query
+        else:
+            assert "choice_0" in query
+            assert params["choice_0"] == value
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -548,7 +714,10 @@ class TestUsersViewAPI:
             "/tracer/users/",
             {"project_id": str(project.id)},
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_get_users_without_project_id(self, auth_client):
         """Get users returns all workspace users when project_id is missing."""
@@ -576,7 +745,10 @@ class TestTraceListTracesOfSessionAPI:
             "/tracer/trace/list_traces_of_session/",
             {"session_id": str(trace_session.id)},
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_list_session_traces_missing_session_id(self, auth_client, observe_project):
         """List session traces supports org-scoped listing without session ID.
@@ -617,7 +789,10 @@ class TestTraceExportAPI:
             "/tracer/trace/get_trace_export_data/",
             {"project_id": str(project.id)},
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_export_traces_missing_project_id(self, auth_client):
         """Export traces fails without project ID."""
@@ -634,28 +809,21 @@ class TestTraceExportAPI:
         assert response.status_code in [status.HTTP_200_OK, status.HTTP_400_BAD_REQUEST]
 
 
-def test_get_span_trace_map_selects_from_spans(monkeypatch):
+def test_get_span_trace_map_rejects_unbounded_cross_project_scan(monkeypatch):
     from tracer.services.clickhouse.query_service import AnalyticsQueryService
 
-    captured = {}
+    called = False
 
-    def fake_exec(self, query, params=None, timeout_ms=5000):
-        captured["query"] = query
-        captured["params"] = params
-        class R:
-            data = [{"span_id": "s1", "trace_id": "t1"}]
-        return R()
+    def fake_exec(*args, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("unbounded ClickHouse scan was executed")
 
     monkeypatch.setattr(AnalyticsQueryService, "execute_ch_query", fake_exec)
     out = AnalyticsQueryService().get_span_trace_map(["t1"])
 
-    assert out == {"s1": "t1"}
-    assert "FROM spans" in captured["query"]
-    assert "trace_id IN %(trace_ids)s" in captured["query"]
-    assert "is_deleted = 0" in captured["query"]
-    assert captured["params"] == {"trace_ids": ["t1"]}
-    assert "project_id" not in captured["query"]
-    assert "start_time" not in captured["query"]
+    assert out == {}
+    assert called is False
 
 
 def _capture_span_trace_map_query(monkeypatch, **kwargs):
@@ -663,9 +831,11 @@ def _capture_span_trace_map_query(monkeypatch, **kwargs):
 
     captured = {}
 
-    def fake_exec(self, query, params=None, timeout_ms=5000):
+    def fake_exec(self, query, params=None, timeout_ms=5000, settings=None):
         captured["query"] = query
         captured["params"] = params
+        captured["timeout_ms"] = timeout_ms
+        captured["settings"] = settings
 
         class R:
             data = []
@@ -705,6 +875,20 @@ def test_get_span_trace_map_bounds_start_time_window(monkeypatch):
         "start_date": start,
         "end_date": end,
     }
+
+
+def test_get_span_trace_map_allows_time_bounded_org_scope(monkeypatch):
+    from datetime import datetime
+
+    start = datetime(2026, 7, 1)
+    end = datetime(2026, 7, 8)
+    captured = _capture_span_trace_map_query(
+        monkeypatch, start_date=start, end_date=end
+    )
+
+    assert "project_id" not in captured["query"]
+    assert "start_time >= %(start_date)s - INTERVAL 1 DAY" in captured["query"]
+    assert "start_time < %(end_date)s + INTERVAL 1 DAY" in captured["query"]
 
 
 def test_get_span_trace_map_window_needs_both_bounds(monkeypatch):

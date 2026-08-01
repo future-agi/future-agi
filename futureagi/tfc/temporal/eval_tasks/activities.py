@@ -9,6 +9,7 @@ context propagation, mirroring ``tfc/temporal/evaluations/activities.py``.
 
 from django.db import close_old_connections
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from tfc.telemetry import otel_sync_to_async
 from tfc.temporal.common.heartbeat import Heartbeater
@@ -32,6 +33,7 @@ from tfc.temporal.eval_tasks.types import (
     WorkflowLabelsInput,
     WorkflowLabelsOutput,
 )
+from tracer.selectors.eval_tasks.row_resolver import EvalTaskReadBudgetExceeded
 from tracer.services.eval_tasks.ch_guardrails import eval_ch_guardrails
 
 # =============================================================================
@@ -330,10 +332,20 @@ def _finalize_task_sync(task_id: str) -> dict:
 async def reconcile_eval_task_activity(
     input: ReconcileActivityInput,
 ) -> ReconcileActivityOutput:
-    async with Heartbeater():
-        result = await otel_sync_to_async(_reconcile_sync, thread_sensitive=False)(
-            input.task_id
-        )
+    try:
+        async with Heartbeater():
+            result = await otel_sync_to_async(_reconcile_sync, thread_sensitive=False)(
+                input.task_id
+            )
+    except EvalTaskReadBudgetExceeded as exc:
+        # This is an exact-selection guardrail, not a transient transport
+        # failure. Retrying the same ten-second sliced read five times only
+        # multiplies ClickHouse load and cannot produce a safe partial task.
+        raise ApplicationError(
+            str(exc),
+            type="EvalTaskReadBudgetExceeded",
+            non_retryable=True,
+        ) from None
     return ReconcileActivityOutput(
         task_id=result["task_id"],
         created=result["created"],

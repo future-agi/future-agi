@@ -1,12 +1,41 @@
 import { describe, expect, it } from "vitest";
 
-import { buildApiFilterArray } from "../TaskLivePreview";
+import {
+  buildApiFilterArray,
+  buildPreviewListParams,
+} from "../TaskLivePreview";
 
 const attrRow = (filterOp, filterValue) => ({
   property: "attributes",
   propertyId: "customer_tier",
   fieldCategory: "attribute",
   filterConfig: { filterType: "text", filterOp, filterValue },
+});
+
+describe("buildPreviewListParams — bounded task preview contract", () => {
+  it("opts span previews into the lean backend path", () => {
+    const filters = buildApiFilterArray([attrRow("equals", "enterprise")]);
+    const params = buildPreviewListParams("spans", "project-1", filters);
+
+    expect(params.preview).toBe(true);
+    expect(params.page_number).toBe(0);
+    expect(JSON.parse(params.filters)).toEqual(filters);
+  });
+
+  it("opts trace and session previews into their lean backend paths", () => {
+    expect(buildPreviewListParams("traces", "project-1", []).preview).toBe(
+      true,
+    );
+    expect(buildPreviewListParams("sessions", "project-1", []).preview).toBe(
+      true,
+    );
+  });
+
+  it("does not add the generic preview flag to voice calls", () => {
+    expect(
+      buildPreviewListParams("voiceCalls", "project-1", []).preview,
+    ).toBeUndefined();
+  });
 });
 
 describe("buildApiFilterArray — task live-preview wire builder", () => {
@@ -17,9 +46,9 @@ describe("buildApiFilterArray — task live-preview wire builder", () => {
     ]);
 
     expect(out).toHaveLength(2);
-    expect(
-      out.every((f) => f.filter_config.filter_op === "not_contains"),
-    ).toBe(true);
+    expect(out.every((f) => f.filter_config.filter_op === "not_contains")).toBe(
+      true,
+    );
     expect(out.map((f) => f.filter_config.filter_value)).toEqual([
       "enterprise",
       "startup",

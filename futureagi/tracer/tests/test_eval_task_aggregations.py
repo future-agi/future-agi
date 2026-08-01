@@ -539,19 +539,18 @@ class TestAggregationFlagsCombined:
 # ── start_date / end_date date range filter ────────────────────────────
 
 
-def _set_span_created_at(span, when):
-    """Override ``created_at`` (auto_now_add) for a span via ``.update()``."""
-    ObservationSpan.objects.filter(id=span.id).update(created_at=when)
+def _set_log_created_at(log, when):
+    """Override ``created_at`` (auto_now_add) for an eval run via ``.update()``."""
+    EvalLogger.objects.filter(id=log.id).update(created_at=when)
 
 
 @pytest.mark.integration
 @pytest.mark.api
 @pytest.mark.django_db
 class TestAggregationDateRange:
-    """``start_date`` / ``end_date`` filter both aggregations by the span's
-    own ``created_at`` (not the EvalLogger's). When neither is given, every
-    span linked to the task is included; otherwise the range bounds the
-    set of qualifying spans inclusively."""
+    """``start_date`` / ``end_date`` filter both aggregations by EvalLogger
+    ``created_at``. Source spans are direct-to-ClickHouse and have no PG row to
+    join; the eval-run timestamp keeps the task rollup self-contained."""
 
     def _get(self, auth_client, task, **extra):
         return auth_client.get(
@@ -562,10 +561,8 @@ class TestAggregationDateRange:
     def _setup_two_spans(
         self, project, organization, workspace, observation_span, child_span
     ):
-        # observation_span = 10 days ago, child_span = 1 day ago.
+        # First eval run = 10 days ago, second eval run = 1 day ago.
         now = timezone.now()
-        _set_span_created_at(observation_span, now - timedelta(days=10))
-        _set_span_created_at(child_span, now - timedelta(days=1))
 
         tpl = _template(
             organization=organization,
@@ -574,9 +571,21 @@ class TestAggregationDateRange:
         )
         cfg = _config(project=project, template=tpl, name="Toxicity")
         task = _task(project=project)
-        # old span passes, recent span fails — pass rate diverges per range.
-        _row(span=observation_span, cfg=cfg, task=task, output_bool=True)
-        _row(span=child_span, cfg=cfg, task=task, output_bool=False)
+        # Old run passes, recent run fails — pass rate diverges per range.
+        old_log = _row(
+            span=observation_span,
+            cfg=cfg,
+            task=task,
+            output_bool=True,
+        )
+        recent_log = _row(
+            span=child_span,
+            cfg=cfg,
+            task=task,
+            output_bool=False,
+        )
+        _set_log_created_at(old_log, now - timedelta(days=10))
+        _set_log_created_at(recent_log, now - timedelta(days=1))
         return task, cfg
 
     def test_no_date_range_includes_all_spans(
@@ -701,3 +710,38 @@ class TestAggregationDateRange:
         ).json()["result"]["span_aggregation"]
         # Only the recent (child) span survives the window.
         assert list(sa.keys()) == [str(child_span.id)]
+
+    def test_date_range_keeps_ch_only_span_by_eval_run_time(
+        self,
+        auth_client,
+        project,
+        organization,
+        workspace,
+    ):
+        """The date predicate never joins the absent PG ObservationSpan row."""
+        template = _template(
+            organization=organization,
+            workspace=workspace,
+            output_type_normalized="pass_fail",
+        )
+        config = _config(project=project, template=template, name="CH-only eval")
+        task = _task(project=project)
+        log = EvalLogger.objects.create(
+            target_type=EvalTargetType.SPAN,
+            observation_span_id=f"ch-only-{uuid.uuid4().hex}",
+            trace_id=uuid.uuid4(),
+            custom_eval_config=config,
+            eval_task_id=str(task.id),
+            output_bool=True,
+        )
+        _set_log_created_at(log, timezone.now() - timedelta(days=1))
+
+        response = self._get(
+            auth_client,
+            task,
+            start_date=(timezone.now() - timedelta(days=5)).isoformat(),
+        )
+
+        assert response.status_code == 200
+        aggregation = response.json()["result"]["eval_aggregation"]["CH-only eval"]
+        assert aggregation["aggregated_score"] == 100.0

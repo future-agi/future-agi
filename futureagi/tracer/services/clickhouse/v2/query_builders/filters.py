@@ -39,6 +39,11 @@ from typing import Any
 from tracer.services.clickhouse.query_builders.filters import (
     ClickHouseFilterBuilder,
     _coerce_strict_bool,
+    _sanitize_key,
+    build_literal_text_predicate,
+)
+from tracer.services.clickhouse.query_service import (
+    GUARANTEED_ROOT_SPAN_ATTRIBUTE_TYPES,
 )
 from tracer.services.clickhouse.v2.query_builders import columns as cols
 
@@ -305,8 +310,23 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
     Call sites swap one import line; everything else works.
     """
 
+    # These fields are physical v2 span columns, not arbitrary span attributes.
+    # Keeping them in the system-metric map prevents the fallback path from
+    # incorrectly probing attrs_string['service_name'/'tag'].
+    SYSTEM_METRIC_MAP = {
+        **ClickHouseFilterBuilder.SYSTEM_METRIC_MAP,
+        "service_name": "service_name",
+        "tag": "tags",
+        "tags": "tags",
+    }
+    _CASE_INSENSITIVE_COLUMNS = ClickHouseFilterBuilder._CASE_INSENSITIVE_COLUMNS | {
+        "service_name"
+    }
+    _TAG_COLUMN_IDS = frozenset({"tag", "tags"})
+
     # Expose the v2 attribute-type meta on the instance.
     SPAN_ATTR_TYPE_META = _SPAN_ATTR_TYPE_META_V2
+    _TRACE_ROOT_ATTRIBUTE_KEYS = frozenset(GUARANTEED_ROOT_SPAN_ATTRIBUTE_TYPES)
 
     # End-user filter subquery reads the v2 `end_users` RMT (keyed by
     # end_user_id, soft-deleted via is_deleted) instead of the dropped legacy
@@ -314,6 +334,52 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
     _ENDUSER_DIM_TABLE = "end_users"
     _ENDUSER_DIM_ID_COL = "end_user_id"
     _ENDUSER_DIM_NOT_DELETED = "is_deleted = 0"
+
+    def _build_column_condition(
+        self,
+        column: str,
+        filter_type: str | None,
+        filter_op: str | None,
+        filter_value: Any,
+    ) -> str | None:
+        """Use UTF-8 case folding for non-ASCII exact text comparisons.
+
+        The inherited compiler uses ClickHouse ``lower()``, which only folds
+        ASCII.  That made an exact/in filter for a physical string column such
+        as ``service_name`` silently miss values like ``ÉLITE`` even though
+        span-attribute filters already use ``lowerUTF8`` for the same case.
+        Keep the cheaper inherited expression for ASCII values so existing
+        skip-index behaviour is unchanged.
+        """
+        values = filter_value if isinstance(filter_value, list) else [filter_value]
+        has_non_ascii = any(
+            isinstance(value, str) and not value.isascii() for value in values
+        )
+        if (
+            column in self._CASE_INSENSITIVE_COLUMNS
+            and filter_op in ("equals", "not_equals", "in", "not_in")
+            and has_non_ascii
+        ):
+            param = self._next_param("col")
+            if filter_op in ("in", "not_in"):
+                if not values:
+                    return "1 = 1" if filter_op == "not_in" else "0 = 1"
+                self._params[param] = tuple(
+                    value.lower() if isinstance(value, str) else value
+                    for value in values
+                )
+                operator = "IN" if filter_op == "in" else "NOT IN"
+            else:
+                scalar = values[0]
+                self._params[param] = (
+                    scalar.lower() if isinstance(scalar, str) else scalar
+                )
+                operator = "=" if filter_op == "equals" else "!="
+            return f"lowerUTF8({column}) {operator} %({param})s"
+
+        return super()._build_column_condition(
+            column, filter_type, filter_op, filter_value
+        )
 
     def _span_attr_inner(
         self,
@@ -324,33 +390,78 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
         normalized_value: Any,
         case_insensitive: bool = False,
     ) -> str | None:
-        inner = super()._span_attr_inner(
-            map_column,
-            attribute_key,
-            exists_predicate,
-            filter_op,
-            normalized_value,
-            case_insensitive,
+        unicode_exact = (
+            case_insensitive
+            and filter_op in ("equals", "not_equals", "in", "not_in")
+            and (
+                (isinstance(normalized_value, str) and not normalized_value.isascii())
+                or (
+                    isinstance(normalized_value, list)
+                    and any(
+                        isinstance(value, str) and not value.isascii()
+                        for value in normalized_value
+                    )
+                )
+            )
         )
-        # idx_attrs_str_values is a bloom over arrayMap(x -> lower(x),
-        # mapValues(attrs_string)); the lower()-wrapped equality alone can
-        # never engage it, so equality/IN gain a companion predicate in the
-        # index's exact expression shape. The companion is implied by the
-        # real predicate (a matching row necessarily carries the lowered
-        # value), so result sets are unchanged. Negations must never get
-        # one (it would invert semantics) and substring ops can't use a
-        # plain bloom. lower() is ASCII-only on both sides — the CH lower()
-        # in the index expression and the Python .lower() on the constant
-        # must stay in step or the index silently disengages.
+        if unicode_exact:
+            column_access = f"{map_column}['{attribute_key}']"
+            param = self._next_param("attr")
+            if isinstance(normalized_value, list):
+                self._params[param] = tuple(
+                    value.lower() if isinstance(value, str) else value
+                    for value in normalized_value
+                )
+            else:
+                self._params[param] = (
+                    normalized_value.lower()
+                    if isinstance(normalized_value, str)
+                    else normalized_value
+                )
+            operator = {
+                "equals": "=",
+                "not_equals": "!=",
+                "in": "IN",
+                "not_in": "NOT IN",
+            }[filter_op]
+            inner = (
+                f"{exists_predicate} AND lowerUTF8({column_access}) "
+                f"{operator} %({param})s"
+            )
+        else:
+            inner = super()._span_attr_inner(
+                map_column,
+                attribute_key,
+                exists_predicate,
+                filter_op,
+                normalized_value,
+                case_insensitive,
+            )
+        # final_status is a production-verified trace-root attribute. Trace-mode callers
+        # predicate an already project/time-scoped root row directly (see
+        # _build_span_attr_condition below), so scanning every Map value for a
+        # bloom/ngram companion is redundant. The caller's time range still
+        # governs total scan cost. Span mode retains the generic companions.
+        if (
+            self.query_mode == self.QUERY_MODE_TRACE
+            and attribute_key in self._TRACE_ROOT_ATTRIBUTE_KEYS
+        ):
+            return inner
         if (
             not inner
             or not case_insensitive
-            or filter_op not in ("equals", "in")
             or map_column not in ("span_attr_str", cols.ATTRS_STRING)
         ):
             return inner
+
+        # Exact ASCII text comparisons use the same ASCII ``lower()`` contract
+        # as idx_attrs_str_values, so these equality/IN companions are truly
+        # implied and may safely retain bloom-index pruning. Non-ASCII exact
+        # needles use the lowerUTF8 branch above and deliberately skip them.
         lowered_values = f"arrayMap(x -> lower(x), mapValues({map_column}))"
         if filter_op == "equals":
+            if isinstance(normalized_value, str) and not normalized_value.isascii():
+                return inner
             param = self._next_param("attrv")
             self._params[param] = (
                 normalized_value.lower()
@@ -358,24 +469,185 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
                 else normalized_value
             )
             return f"{inner} AND has({lowered_values}, %({param})s)"
-        bound = []
-        for value in normalized_value:
-            param = self._next_param("attrv")
-            self._params[param] = value.lower() if isinstance(value, str) else value
-            bound.append(f"%({param})s")
-        return f"{inner} AND hasAny({lowered_values}, [{', '.join(bound)}])"
+        if filter_op == "in":
+            if any(
+                isinstance(value, str) and not value.isascii()
+                for value in normalized_value
+            ):
+                return inner
+            bound = []
+            for value in normalized_value:
+                param = self._next_param("attrv")
+                self._params[param] = value.lower() if isinstance(value, str) else value
+                bound.append(f"%({param})s")
+            return f"{inner} AND hasAny({lowered_values}, [{', '.join(bound)}])"
+
+        # Substring/prefix/suffix predicates are Unicode-aware regardless of
+        # whether the needle itself is ASCII. The deployed ngram index is
+        # ASCII-lowered, so a companion over it can reject a valid row such as
+        # ``KELVIN`` for the needle ``kelvin``. Keep only the authoritative
+        # literal predicate; an optimisation must never narrow the result set.
+        return inner
+
+    def _build_span_attr_condition(
+        self,
+        attribute_key: str,
+        filter_type: str | None,
+        filter_op: str | None,
+        filter_value: Any,
+    ) -> str | None:
+        """Apply trace-root attributes to the outer root row directly.
+
+        Generic attributes keep the inherited any-span membership semantics.
+        Span-mode callers also keep their existing row predicate unchanged.
+        """
+        if (
+            self.query_mode != self.QUERY_MODE_TRACE
+            or attribute_key not in self._TRACE_ROOT_ATTRIBUTE_KEYS
+        ):
+            return super()._build_span_attr_condition(
+                attribute_key,
+                filter_type,
+                filter_op,
+                filter_value,
+            )
+
+        attribute_key = _sanitize_key(attribute_key)
+        normalized_filter_type, map_column, value_coercer = (
+            self._resolve_span_attr_type(filter_type)
+        )
+        self._require_op_allowed_for_type(normalized_filter_type, filter_op)
+        normalized_value = self._normalize_span_attr_value(
+            filter_op, value_coercer, filter_value
+        )
+        exists_predicate = f"mapContains({map_column}, '{attribute_key}')"
+        inner_predicate = self._span_attr_inner(
+            map_column,
+            attribute_key,
+            exists_predicate,
+            filter_op,
+            normalized_value,
+            case_insensitive=(normalized_filter_type == "text"),
+        )
+        if not inner_predicate:
+            return None
+        return f"(parent_span_id IS NULL OR parent_span_id = '') AND {inner_predicate}"
+
+    def _build_tag_condition(
+        self,
+        filter_op: str | None,
+        filter_value: Any,
+        *,
+        tags_json: str = "tags",
+    ) -> str | None:
+        """Filter the JSON-encoded ``tags`` column as an array of tag values."""
+        tags_array = f"JSONExtract({tags_json}, 'Array(String)')"
+        if filter_op == "is_null":
+            return f"empty({tags_array})"
+        if filter_op == "is_not_null":
+            return f"notEmpty({tags_array})"
+
+        param = self._next_param("tag")
+        if filter_op in ("in", "not_in"):
+            values = (
+                list(filter_value) if isinstance(filter_value, list) else [filter_value]
+            )
+            values = [str(value).lower() for value in values if value is not None]
+            if not values:
+                return "1 = 1" if filter_op == "not_in" else "0 = 1"
+            self._params[param] = tuple(values)
+            predicate = f"arrayExists(x -> lowerUTF8(x) IN %({param})s, {tags_array})"
+            if filter_op == "not_in":
+                return f"notEmpty({tags_array}) AND NOT ({predicate})"
+            return predicate
+
+        scalar = filter_value[0] if isinstance(filter_value, list) else filter_value
+        if scalar is None:
+            return None
+        if filter_op in ("equals", "not_equals"):
+            self._params[param] = str(scalar).lower()
+            predicate = f"arrayExists(x -> lowerUTF8(x) = %({param})s, {tags_array})"
+            if filter_op == "not_equals":
+                return f"notEmpty({tags_array}) AND NOT ({predicate})"
+            return predicate
+
+        if filter_op in {"contains", "not_contains", "starts_with", "ends_with"}:
+            self._params[param] = str(scalar)
+            # ``not_contains`` negates the complete any-tag match below.
+            match_op = "contains" if filter_op == "not_contains" else filter_op
+            match = build_literal_text_predicate(
+                "x",
+                param,
+                match_op,
+                case_insensitive=True,
+            )
+            predicate = f"arrayExists(x -> {match}, {tags_array})"
+            if filter_op == "not_contains":
+                return f"notEmpty({tags_array}) AND NOT ({predicate})"
+            return predicate
+
+        raise ValueError(f"Unhandled tag filter_op {filter_op!r}")
+
+    def _build_system_metric_condition(
+        self,
+        col_id: str,
+        filter_type: str | None,
+        filter_op: str | None,
+        filter_value: Any,
+    ) -> str | None:
+        if col_id not in self._TAG_COLUMN_IDS:
+            mapped_col = self.SYSTEM_METRIC_MAP.get(col_id)
+            is_root_only = col_id in self.ROOT_ONLY_SYSTEM_METRICS or (
+                col_id != "span_name"
+                and mapped_col is not None
+                and mapped_col in self.ROOT_ONLY_SYSTEM_METRICS
+            )
+            if self.query_mode == self.QUERY_MODE_TRACE and is_root_only:
+                # Trace-list rows are already root spans. Applying these
+                # displayed trace fields to that row is equivalent to the
+                # inherited root-only membership subquery, but avoids building
+                # a project-wide trace-id set before the outer top-K.
+                return self._build_column_condition(
+                    mapped_col or col_id,
+                    filter_type,
+                    filter_op,
+                    filter_value,
+                )
+            return super()._build_system_metric_condition(
+                col_id, filter_type, filter_op, filter_value
+            )
+
+        # Span-list filters target ObservationSpan.tags. Trace-list tags are a
+        # different field: Trace.tags, surfaced on every row through trace_dict.
+        # Applying that dictionary expression directly to the outer root span
+        # also avoids building a second, project-wide span membership set.
+        tags_json = (
+            "tags"
+            if self.tag_query_mode == self.QUERY_MODE_SPAN
+            else ("dictGetOrDefault('trace_dict', 'tags', toUUID(trace_id), '[]')")
+        )
+        return self._build_tag_condition(
+            filter_op,
+            filter_value,
+            tags_json=tags_json,
+        )
 
     def _span_membership_date_filter(self) -> str:
         # The CH25 spans table is partitioned by toDate(start_time) with
         # toStartOfHour(start_time) in the primary key and no index on
         # created_at, so the inherited created_at bound prunes nothing there —
         # membership subqueries scanned the project's entire span history.
-        if not self.span_date_scope:
-            return ""
-        return (
-            " AND start_time >= %(start_date)s - INTERVAL 1 DAY"
-            " AND start_time < %(end_date)s + INTERVAL 1 DAY"
-        )
+        fragments = []
+        if self.span_date_scope:
+            fragments.extend(
+                (
+                    " AND start_time >= %(start_date)s - INTERVAL 1 DAY",
+                    " AND start_time < %(end_date)s + INTERVAL 1 DAY",
+                )
+            )
+        if self.span_trace_id_scope:
+            fragments.append(" AND trace_id IN %(candidate_trace_ids)s")
+        return "".join(fragments)
 
     def translate(self, filters):  # type: ignore[override]
         # `translate` returns a WHERE fragment that gets stitched into a larger

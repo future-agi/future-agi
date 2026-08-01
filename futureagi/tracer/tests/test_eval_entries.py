@@ -43,7 +43,7 @@ def _task(project, *, row_type=RowType.SPANS, evals=(), sampling_rate=100.0):
         name="mat-task",
         filters={},
         sampling_rate=sampling_rate,
-        spans_limit=1_000_000,
+        spans_limit=100_000,
         run_type=RunType.HISTORICAL,
         status=EvalTaskStatus.PENDING,
         row_type=row_type,

@@ -1,10 +1,9 @@
 """V2 (ClickHouse) trace-detail handler — unit tests for the CH-only-trace fix.
 
 These cover the behaviour added when routing ``GET /tracer/trace/{id}/`` through
-the v1/v2 dispatch (``TRACE_DETAIL``): the ClickHouse tenant gate, the metadata
-synthesis for collector-ingested traces that have no Postgres ``Trace`` row, and
-the v1/v2 response-envelope parity that keeps the two paths interchangeable for
-the frontend.
+the v1/v2 dispatch (``TRACE_DETAIL``): the ClickHouse tenant gate, metadata
+synthesis for directly-ingested traces, and the v1/v2 response-envelope parity
+that keeps the two paths interchangeable for the frontend.
 
 They are pure unit tests — the ClickHouse ``analytics`` client is faked and the
 Postgres managers are patched — so they need no database or CH test stack (the
@@ -19,11 +18,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 from django.db.models import Q
 
-from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.trace import Trace
 from tracer.services.clickhouse.query_builders.trace_detail import TraceDetailHandler
 from tracer.services.clickhouse.v2.query_builders.trace_detail import (
+    TraceDetailIncompleteError,
     retrieve_trace_detail_ch,
 )
 
@@ -44,16 +43,41 @@ class _FakeResult:
 class _FakeAnalytics:
     """Stands in for AnalyticsQueryService; routes by the SQL it is handed."""
 
-    def __init__(self, *, project_rows, span_rows=None, eval_rows=None):
+    def __init__(
+        self,
+        *,
+        project_rows,
+        compact_project_rows=None,
+        span_rows=None,
+        eval_rows=None,
+        dict_error=False,
+    ):
         self.project_rows = project_rows
+        self.compact_project_rows = (
+            project_rows if compact_project_rows is None else compact_project_rows
+        )
         self.span_rows = span_rows or []
         self.eval_rows = eval_rows or []
+        self.dict_error = dict_error
         self.queries = []
+        self.calls = []
 
-    def execute_ch_query(self, query, params=None, timeout_ms=None, **_):
+    def execute_ch_query(self, query, params=None, timeout_ms=None, settings=None, **_):
         self.queries.append(query)
-        if "AS project_id FROM spans" in query and "LIMIT 1" in query:
+        self.calls.append(
+            {
+                "query": query,
+                "params": params or {},
+                "timeout_ms": timeout_ms,
+                "settings": settings,
+            }
+        )
+        if "dictGetOrDefault" in query and "'trace_dict'" in query:
+            if self.dict_error:
+                raise RuntimeError("dictionary warming")
             return _FakeResult(list(self.project_rows))
+        if "FROM traces FINAL" in query:
+            return _FakeResult(list(self.compact_project_rows))
         if "ORDER BY start_time" in query:
             return _FakeResult(list(self.span_rows))
         if "FINAL" in query:
@@ -63,6 +87,7 @@ class _FakeAnalytics:
 
 def _root_span_row(**overrides):
     row = {
+        "project_id": "P1",
         "id": "S1",
         "trace_id": "T1",
         "parent_span_id": None,
@@ -101,21 +126,18 @@ def _patch_v2_pg(stack, *, project_accessible, pg_trace=None):
     """Patch the Postgres surfaces the v2 handler touches and return nothing.
 
     - Project tenant gate -> ``project_accessible``
-    - ``Trace.objects.filter().first()`` -> ``pg_trace`` (None == CH-only trace)
-    - scope-Q builder, eval-logger source, and the best-effort enrichment
-      managers (Score / ObservationSpan) -> empty, so no DB is touched.
+    - scope-Q builder, eval-logger source, and the annotation manager -> empty,
+      so no database is touched.
+
+    ``pg_trace`` remains an accepted argument for older call sites in this test
+    module; production code deliberately never consults it.
     """
+    _ = pg_trace
     proj_mgr = MagicMock()
-    proj_mgr.filter.return_value.exists.return_value = project_accessible
+    proj_mgr.filter.return_value.values_list.return_value.first.return_value = (
+        "P1" if project_accessible else None
+    )
     stack.enter_context(patch.object(Project, "no_workspace_objects", proj_mgr))
-
-    trace_mgr = MagicMock()
-    trace_mgr.filter.return_value.first.return_value = pg_trace
-    stack.enter_context(patch.object(Trace, "objects", trace_mgr))
-
-    obs_mgr = MagicMock()
-    obs_mgr.filter.return_value.exclude.return_value.values_list.return_value = []
-    stack.enter_context(patch.object(ObservationSpan, "objects", obs_mgr))
 
     if ScoreModel is not None:
         score_mgr = MagicMock()
@@ -144,12 +166,17 @@ class TestV2TenantGate:
     ``Trace.DoesNotExist`` (fail-closed) — before reading any span data."""
 
     def test_denies_when_project_not_accessible(self):
-        analytics = _FakeAnalytics(project_rows=[{"project_id": "P1"}])
+        analytics = _FakeAnalytics(
+            project_rows=[{"project_id": "P1"}],
+            span_rows=[_root_span_row()],
+        )
         with ExitStack() as stack:
             _patch_v2_pg(stack, project_accessible=False)
             with pytest.raises(Trace.DoesNotExist):
                 retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
-        # gate fails closed before the spans query runs
+        # The O(1) dictionary lookup supplies only the project id. No span
+        # payload is read unless the small Project/configuration gate succeeds.
+        assert any("dictGetOrDefault" in q for q in analytics.queries)
         assert not any("ORDER BY start_time" in q for q in analytics.queries)
 
     def test_denies_when_trace_has_no_spans_in_ch(self):
@@ -158,6 +185,21 @@ class TestV2TenantGate:
             _patch_v2_pg(stack, project_accessible=True)
             with pytest.raises(Trace.DoesNotExist):
                 retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
+
+    def test_compact_trace_fallback_covers_dictionary_refresh_window(self):
+        analytics = _FakeAnalytics(
+            project_rows=[],
+            compact_project_rows=[{"project_id": "P1"}],
+            span_rows=[_root_span_row()],
+            dict_error=True,
+        )
+        with ExitStack() as stack:
+            _patch_v2_pg(stack, project_accessible=True)
+            result = retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
+
+        assert result["trace"]["project"] == "P1"
+        assert any("dictGetOrDefault" in q for q in analytics.queries)
+        assert any("FROM traces FINAL" in q for q in analytics.queries)
 
 
 # --------------------------------------------------------------------------- #
@@ -188,23 +230,24 @@ class TestV2SynthesisFromRootSpan:
         assert result["summary"]["total_spans"] == 1
         assert result["summary"]["total_tokens"] == 15
 
-    def test_serializer_used_when_pg_trace_present(self):
-        """With a PG row, the trace metadata comes from the serializer, not
-        synthesis — proving synthesis is the no-row fallback, not the default."""
+    def test_pg_trace_and_serializer_are_not_consulted(self):
+        """Direct-to-CH telemetry must not be overlaid with a stale PG row."""
         analytics = _FakeAnalytics(
             project_rows=[{"project_id": "P1"}],
             span_rows=[_root_span_row()],
         )
         view = MagicMock()
-        view.get_serializer.return_value.data = {"id": "T1", "name": "from-serializer"}
+        trace_mgr = MagicMock()
         with ExitStack() as stack:
             _patch_v2_pg(
                 stack, project_accessible=True, pg_trace=SimpleNamespace(id="T1")
             )
+            stack.enter_context(patch.object(Trace, "objects", trace_mgr))
             result = retrieve_trace_detail_ch(view, MagicMock(), "T1", analytics)
 
-        assert result["trace"]["name"] == "from-serializer"
-        view.get_serializer.assert_called_once()
+        assert result["trace"]["name"] == "root-span"
+        trace_mgr.filter.assert_not_called()
+        view.get_serializer.assert_not_called()
 
 
 # --------------------------------------------------------------------------- #
@@ -465,39 +508,67 @@ class TestV2EvalScoreRendering:
 
 
 # --------------------------------------------------------------------------- #
-# 5) Enrichment fault logging (loud on genuine faults, silent on dropped table)
+# 5) Direct-to-CH read contract
 # --------------------------------------------------------------------------- #
-class TestV2EnrichmentFaultLogging:
-    """A genuine PG fault on the Trace lookup surfaces (logged) while the handler
-    degrades to root-span synthesis; the expected dropped-table case stays silent."""
-
-    def _run_with_trace_objects(self, trace_objects):
-        import tracer.services.clickhouse.v2.query_builders.trace_detail as td
-
+class TestV2DirectClickHouseReadContract:
+    def test_every_clickhouse_read_is_bounded(self):
         analytics = _FakeAnalytics(
             project_rows=[{"project_id": "P1"}],
             span_rows=[_root_span_row()],
         )
-        logger_mock = MagicMock()
         with ExitStack() as stack:
             _patch_v2_pg(stack, project_accessible=True, pg_trace=None)
-            stack.enter_context(patch.object(Trace, "objects", trace_objects))
-            stack.enter_context(patch.object(td, "logger", logger_mock))
             result = retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
-        return result, logger_mock
 
-    def test_genuine_fault_is_logged_and_degrades(self):
-        objs = MagicMock()
-        objs.filter.side_effect = RuntimeError("boom")
-        result, logger_mock = self._run_with_trace_objects(objs)
-        assert result["trace"]["id"] == "T1"  # synthesized from the root span
-        assert logger_mock.exception.called
-
-    def test_dropped_table_is_silent(self):
-        from django.db.utils import ProgrammingError
-
-        objs = MagicMock()
-        objs.filter.side_effect = ProgrammingError("relation does not exist")
-        result, logger_mock = self._run_with_trace_objects(objs)
         assert result["trace"]["id"] == "T1"
-        assert not logger_mock.exception.called
+        assert analytics.calls
+        assert all(call["timeout_ms"] == 750 for call in analytics.calls)
+        assert all(call["settings"]["max_threads"] == 2 for call in analytics.calls)
+        assert all(
+            call["settings"]["max_memory_usage"] == 256 * 1024 * 1024
+            for call in analytics.calls
+        )
+        assert all(
+            call["settings"]["timeout_overflow_mode"] == "throw"
+            for call in analytics.calls
+        )
+        main_call = next(
+            call for call in analytics.calls if "ORDER BY start_time" in call["query"]
+        )
+        assert "PREWHERE project_id = toUUID(%(project_id)s)" in main_call["query"]
+        assert main_call["params"]["project_id"] == "P1"
+
+    def test_span_cap_raises_instead_of_returning_partial_tree(self):
+        analytics = _FakeAnalytics(
+            project_rows=[{"project_id": "P1"}],
+            span_rows=[_root_span_row(), _root_span_row(id="S2")],
+        )
+        with (
+            ExitStack() as stack,
+            patch(
+                "tracer.services.clickhouse.v2.query_builders.trace_detail."
+                "TRACE_DETAIL_MAX_SPANS",
+                1,
+            ),
+        ):
+            _patch_v2_pg(stack, project_accessible=True, pg_trace=None)
+            with pytest.raises(TraceDetailIncompleteError):
+                retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
+
+        main_call = next(
+            call for call in analytics.calls if "ORDER BY start_time" in call["query"]
+        )
+        assert main_call["params"]["trace_detail_limit"] == 2
+
+    def test_eval_query_is_scoped_to_hydrated_span_ids(self):
+        analytics = _FakeAnalytics(
+            project_rows=[{"project_id": "P1"}],
+            span_rows=[_root_span_row()],
+        )
+        with ExitStack() as stack:
+            _patch_v2_pg(stack, project_accessible=True, pg_trace=None)
+            retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
+
+        eval_call = next(call for call in analytics.calls if " FINAL" in call["query"])
+        assert "observation_span_id IN %(span_ids)s" in eval_call["query"]
+        assert eval_call["params"]["span_ids"] == ("S1",)

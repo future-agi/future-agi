@@ -18,14 +18,14 @@ def project_id():
 
 
 class TestSearch:
-    def test_search_adds_ilike_filter(self, project_id):
+    def test_search_adds_literal_contains_filter(self, project_id):
         builder = TraceListQueryBuilder(
             project_id=project_id,
             search="hello world",
         )
         query, params = builder.build()
-        assert "ILIKE %(search)s" in query
-        assert params["search"] == "%hello world%"
+        assert "positionUTF8(lowerUTF8(" in query
+        assert params["search"] == "hello world"
 
     def test_search_none_omits_filter(self, project_id):
         builder = TraceListQueryBuilder(project_id=project_id)
@@ -46,7 +46,30 @@ class TestSearch:
         # Must call build() first to set start_date/end_date
         builder.build()
         count_query, count_params = builder.build_count_query()
-        assert "ILIKE %(search)s" in count_query
+        assert "positionUTF8(lowerUTF8(" in count_query
+        assert count_params["search"] == "test"
+
+    @pytest.mark.parametrize(
+        "needle",
+        ["%", "_", "\\", "O'Reilly", "café東京"],
+    )
+    def test_search_special_characters_stay_bound_literals(self, project_id, needle):
+        builder = TraceListQueryBuilder(project_id=project_id, search=needle)
+
+        query, params = builder.build()
+        id_query, id_params = builder.build_id_query()
+        count_query, count_params = builder.build_count_query()
+
+        for sql, bound in (
+            (query, params),
+            (id_query, id_params),
+            (count_query, count_params),
+        ):
+            assert "positionUTF8(lowerUTF8(" in sql
+            assert "ILIKE" not in sql
+            assert bound["search"] == needle
+            if needle not in {"%", "_"}:
+                assert needle not in sql
 
 
 class TestConfigurableColumns:
@@ -134,8 +157,8 @@ class TestSearchAndColumns:
         )
         query, params = builder.build()
         # Search applied
-        assert "ILIKE %(search)s" in query
-        assert params["search"] == "%error%"
+        assert "positionUTF8(lowerUTF8(" in query
+        assert params["search"] == "error"
         # Columns limited
         assert "status" in query
         assert "latency_ms" in query
@@ -219,7 +242,7 @@ class TestEvalAveragingAcrossSpans:
     ]
 
     def _row(self, **kw):
-        base = {c: None for c in self._COLS}
+        base = dict.fromkeys(self._COLS)
         base.update(
             trace_id="t1",
             eval_config_id="c1",

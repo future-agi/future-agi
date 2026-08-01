@@ -63,6 +63,7 @@ const TaskCreatePage = () => {
   const [testState, setTestState] = useState({
     canTest: false,
     isTesting: false,
+    isPreviewDegraded: false,
   });
   const handleTestStateChange = useCallback((next) => {
     setTestState(next);
@@ -224,7 +225,7 @@ const TaskCreatePage = () => {
           size="small"
           onClick={handleSubmit(onSubmit)}
           loading={isPending}
-          disabled={!canCreateTask}
+          disabled={!canCreateTask || testState.isPreviewDegraded}
           sx={{ textTransform: "none", fontWeight: 500, minWidth: 140 }}
         >
           Create Task

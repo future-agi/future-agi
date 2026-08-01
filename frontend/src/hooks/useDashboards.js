@@ -273,22 +273,32 @@ export function useDashboardFilterValues({
       search,
     ],
     queryFn: async () => {
-      try {
-        const res = await axios.get(endpoints.dashboard.filterValues, {
-          params: {
-            metric_name: metricName,
-            metric_type: metricType,
-            project_ids: (projectIds || []).join(","),
-            source,
-            ...(workflow ? { workflow } : {}),
-            ...(search ? { search } : {}),
-          },
-        });
-        return res;
-      } catch {
-        // Return empty on error (e.g. column doesn't exist in CH)
-        return { data: { result: { values: [] } } };
+      const res = await axios.get(endpoints.dashboard.filterValues, {
+        params: {
+          metric_name: metricName,
+          metric_type: metricType,
+          project_ids: (projectIds || []).join(","),
+          source,
+          ...(workflow ? { workflow } : {}),
+          ...(search ? { search } : {}),
+        },
+      });
+      const result = res.data?.result;
+      const sampled =
+        result?.query_status === "sampled" ||
+        result?.query_error_code === "sample_limit";
+      const degraded =
+        result?.query_status === "degraded" ||
+        result?.query_error_code === "read_budget_exceeded" ||
+        result?.query_error_code === "query_failed" ||
+        (result?.query_complete === false && !sampled);
+      if (degraded) {
+        // Keep backend details out of the UI while letting pickers distinguish
+        // an unavailable query from a legitimate empty or bounded sampled
+        // value set.
+        throw new Error("Filter values are temporarily unavailable");
       }
+      return res;
     },
     select: (res) => res.data?.result?.values || [],
     enabled: enabled && Boolean(metricName),

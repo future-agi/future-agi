@@ -1,26 +1,27 @@
 import time
 
 import structlog
+from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
-from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
 
-logger = structlog.get_logger(__name__)
 from accounts.utils import get_request_organization
 from tfc.utils.api_contracts import hide_swagger_schema_for_actions
 from tfc.utils.general_methods import GeneralMethods
-from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.serializers.monitor import (
     FetchGraphSerializer,
 )
+from tracer.services.clickhouse.read_budget import is_read_budget_error
 from tracer.utils.graphs_optimized import (
     get_all_system_metrics,
     get_eval_graph_data,
     get_system_metric_data,
 )
+
+logger = structlog.get_logger(__name__)
 
 
 @hide_swagger_schema_for_actions(
@@ -162,10 +163,18 @@ class ChartsView(GenericViewSet):
 
             return self._gm.success_response(metric_data)
 
-        except Exception as e:
+        except Exception as exc:
             elapsed_time = time.time() - start_time
-            logger.error(
-                f"fetch_graph_v2 failed after {elapsed_time:.3f}s: {str(e)}",
+            logger.exception(
+                "fetch_graph_v2 failed",
+                elapsed_seconds=round(elapsed_time, 3),
+                error_type=type(exc).__name__,
                 exc_info=True,
             )
-            return self._gm.bad_request(str(e))
+            response = self._gm.bad_request(
+                "Graph data could not be loaded. Please try again."
+            )
+            response.data["code"] = (
+                "read_budget_exceeded" if is_read_budget_error(exc) else "query_failed"
+            )
+            return response

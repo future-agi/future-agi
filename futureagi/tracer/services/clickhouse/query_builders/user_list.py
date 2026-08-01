@@ -4,7 +4,10 @@ from typing import Any
 
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
-from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
+from tracer.services.clickhouse.query_builders.filters import (
+    ClickHouseFilterBuilder,
+    build_literal_text_predicate,
+)
 
 
 class UserListQueryBuilder(BaseQueryBuilder):
@@ -147,7 +150,12 @@ class UserListQueryBuilder(BaseQueryBuilder):
 
         search_filter = ""
         if self.search:
-            search_filter = "AND positionCaseInsensitive(user_id, %(search)s) > 0"
+            search_filter = "AND " + build_literal_text_predicate(
+                "user_id",
+                "search",
+                "contains",
+                case_insensitive=True,
+            )
 
         end_user_filter = ""
         if self.end_user_id:
@@ -299,9 +307,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         """
         return query, self.params
 
-    def build_eval_query(
-        self, end_user_ids: list[str]
-    ) -> tuple[str, dict[str, Any]]:
+    def build_eval_query(self, end_user_ids: list[str]) -> tuple[str, dict[str, Any]]:
         """Build a lightweight eval-pass-rate query for a page of user IDs.
 
         Runs AFTER the main ``build()`` query returns the paginated page.
@@ -439,24 +445,14 @@ class UserListQueryBuilder(BaseQueryBuilder):
             return None, params
 
         params[prefix] = value
-        if op == "contains":
+        if op in {"contains", "not_contains", "starts_with", "ends_with"}:
             return (
-                f"positionCaseInsensitive(toString({column}), toString(%({prefix})s)) > 0",
-                params,
-            )
-        if op == "not_contains":
-            return (
-                f"positionCaseInsensitive(toString({column}), toString(%({prefix})s)) = 0",
-                params,
-            )
-        if op == "starts_with":
-            return (
-                f"startsWith(lower(toString({column})), lower(toString(%({prefix})s)))",
-                params,
-            )
-        if op == "ends_with":
-            return (
-                f"endsWith(lower(toString({column})), lower(toString(%({prefix})s)))",
+                build_literal_text_predicate(
+                    column,
+                    prefix,
+                    op,
+                    case_insensitive=True,
+                ),
                 params,
             )
 

@@ -4,6 +4,7 @@ Regression: `build_content_query` fetched only `attributes_extra`, so custom
 columns backed by the typed maps (string/number/bool) rendered as "-". These are
 pure unit tests — no DB / no ClickHouse.
 """
+
 from __future__ import annotations
 
 import json
@@ -21,6 +22,7 @@ from tracer.services.clickhouse.v2.span_selectors import (
 )
 
 PROJECT_ID = "11111111-1111-1111-1111-111111111111"
+TRACE_ID = "22222222-2222-2222-2222-222222222222"
 
 
 def _flatten(**row):
@@ -102,16 +104,26 @@ _MAP_ALIASES = ("attrs_string", "attrs_number", "attrs_bool")
 
 def _v1_content_sql():
     b = SpanListQueryBuilder(
-        project_id=PROJECT_ID, page_number=0, page_size=10,
-        filters=[], sort_params=[], eval_config_ids=[], annotation_label_ids=[],
+        project_id=PROJECT_ID,
+        page_number=0,
+        page_size=10,
+        filters=[],
+        sort_params=[],
+        eval_config_ids=[],
+        annotation_label_ids=[],
     )
     return b.build_content_query(span_ids=["sp1"])[0]
 
 
 def _v2_content_sql():
     b = SpanListQueryBuilderV2(
-        project_id=PROJECT_ID, page_number=0, page_size=10,
-        filters=[], sort_params=[], eval_config_ids=[], annotation_label_ids=[],
+        project_id=PROJECT_ID,
+        page_number=0,
+        page_size=10,
+        filters=[],
+        sort_params=[],
+        eval_config_ids=[],
+        annotation_label_ids=[],
     )
     return b.build_content_query(span_ids=["sp1"])[0]
 
@@ -119,9 +131,9 @@ def _v2_content_sql():
 class TestContentQuerySelectsTypedMaps:
     def test_v1_selects_legacy_maps_aliased(self):
         sql = _v1_content_sql()
-        assert "span_attr_str AS attrs_string" in sql
-        assert "span_attr_num AS attrs_number" in sql
-        assert "span_attr_bool AS attrs_bool" in sql
+        assert "argMax(span_attr_str, _peerdb_version) AS attrs_string" in sql
+        assert "argMax(span_attr_num, _peerdb_version) AS attrs_number" in sql
+        assert "argMax(span_attr_bool, _peerdb_version) AS attrs_bool" in sql
 
     def test_v2_exposes_map_aliases(self):
         sql = _v2_content_sql()
@@ -140,18 +152,28 @@ class TestContentQuerySelectsTypedMaps:
 # --------------------------------------------------------------------------- #
 def _v1_trace_content_sql():
     b = TraceListQueryBuilder(
-        project_id=PROJECT_ID, page_number=0, page_size=10,
-        filters=[], sort_params=[], eval_config_ids=[], annotation_label_ids=[],
+        project_id=PROJECT_ID,
+        page_number=0,
+        page_size=10,
+        filters=[],
+        sort_params=[],
+        eval_config_ids=[],
+        annotation_label_ids=[],
     )
-    return b.build_content_query(trace_ids=["t1"])[0]
+    return b.build_content_query(trace_ids=[TRACE_ID])[0]
 
 
 def _v2_trace_content_sql():
     b = TraceListQueryBuilderV2(
-        project_id=PROJECT_ID, page_number=0, page_size=10,
-        filters=[], sort_params=[], eval_config_ids=[], annotation_label_ids=[],
+        project_id=PROJECT_ID,
+        page_number=0,
+        page_size=10,
+        filters=[],
+        sort_params=[],
+        eval_config_ids=[],
+        annotation_label_ids=[],
     )
-    return b.build_content_query(trace_ids=["t1"])[0]
+    return b.build_content_query(trace_ids=[TRACE_ID])[0]
 
 
 class TestTraceContentQuerySelectsAttrs:
@@ -160,7 +182,22 @@ class TestTraceContentQuerySelectsAttrs:
         for col in ("attrs_string", "attrs_number", "attrs_bool", "attributes_extra"):
             assert col in sql
 
-    def test_v2_selects_all_typed_maps_and_extra(self):
-        sql = _v2_trace_content_sql()
+    def test_v2_reads_attrs_in_bounded_span_attribute_query(self):
+        builder = TraceListQueryBuilderV2(
+            project_id=PROJECT_ID,
+            page_number=0,
+            page_size=10,
+            filters=[],
+            sort_params=[],
+            eval_config_ids=[],
+            annotation_label_ids=[],
+        )
+        sql = builder.build_span_attributes_query(trace_ids=[TRACE_ID])[0]
         for col in ("attrs_string", "attrs_number", "attrs_bool", "attributes_extra"):
             assert col in sql
+
+    def test_v2_trace_content_stays_on_compact_trace_table(self):
+        sql = _v2_trace_content_sql()
+        assert "FROM traces FINAL" in sql
+        for col in ("attrs_string", "attrs_number", "attrs_bool", "attributes_extra"):
+            assert col not in sql

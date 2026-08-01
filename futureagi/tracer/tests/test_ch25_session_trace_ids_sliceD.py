@@ -481,12 +481,12 @@ class TestSessionTraceIdsSliceD:
         )
         ctx = build_session_context(vehicle)
         assert ctx is not None
-        # trace_count is the PG count over the CH-derived id set; the manufactured
-        # traces have NO PG Trace rows (net-new), so trace_count is 0 — but the
-        # CH-derived id set itself is non-empty. We assert the derivation ran by
-        # checking session_trace_ids directly returns the set the ctx was built
-        # from (the ctx 'traces' list is the PG-hydrated page, empty here since no
-        # PG rows; the headline is that the CH derivation is wired, not empty-FK).
+        # Trace summaries are hydrated directly from the session's CH spans, so
+        # the net-new trace set is present even though PG has no Trace rows.
+        assert ctx["trace_count"] == len(ids["netnew_traces"])
+        assert {trace["id"] for trace in ctx["traces"]} == ids["netnew_traces"]
+
+        # The standalone identity resolver sees the same set.
         from tracer.services.clickhouse.v2 import get_reader
 
         with get_reader() as reader:
@@ -504,12 +504,10 @@ class TestSessionTraceIdsSliceD:
         self, manufactured
     ):
         """REAL ``build_session_context`` on the historical session: the CH
-        ``session_trace_ids`` derivation yields the 2 trace ids, which hydrate
-        against the 2 REAL PG ``Trace`` rows → a POPULATED ``traces`` list and
-        ``trace_count == 2``. The OLD ``Trace.session`` FK walk is empty post-flip,
-        so this is the end-to-end positive proof that the new CH path restores the
-        trace set. ``session`` is the unsaved vehicle shape (id + project_id), the
-        same the session evaluator builds."""
+        session span read yields the 2 trace ids and hydrates their summaries
+        directly from CH → a POPULATED ``traces`` list and ``trace_count == 2``.
+        ``session`` is the unsaved vehicle shape (id + project_id), the same the
+        session evaluator builds."""
         from tracer.models.trace_session import TraceSession
         from tracer.utils.eval import build_session_context
 
@@ -524,7 +522,7 @@ class TestSessionTraceIdsSliceD:
         )
         ctx = build_session_context(vehicle)
         assert ctx is not None
-        # The CH-derived ids hydrated to the 2 real PG Trace rows.
+        # The CH-derived ids are summarized without any PG Trace hydration.
         assert ctx["trace_count"] == HIST_TRACE_COUNT
         assert {t["id"] for t in ctx["traces"]} == HIST_TRACE_IDS
         # PARITY: this historical session is the ONE case where the OLD FK walk is

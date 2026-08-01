@@ -3,9 +3,13 @@
 Asserts the response shape matches EvalUsageStatsResponseSerializer so
 runtime response validation never fires unexpectedly.
 """
+
 import uuid
+from datetime import UTC, datetime
 
 import pytest
+from django.db.models.query import QuerySet
+
 from accounts.models.workspace import Workspace
 from ee.usage.models.usage import APICallLog, APICallStatusChoices
 from model_hub.models.choices import OwnerChoices, SourceChoices
@@ -34,7 +38,8 @@ def _make_log(organization, workspace, template, config=None):
         cost=0,
         source=SourceChoices.EVAL_PLAYGROUND.value,
         source_id=str(template.id),
-        config=config or {
+        config=config
+        or {
             "output": {"output": 1.0, "reason": "looks good"},
             "mappings": {"response": "hello"},
         },
@@ -47,6 +52,7 @@ def user_eval_template(organization, workspace):
 
 
 # ── Shape tests (empty response) ─────────────────────────────────────────────
+
 
 @pytest.mark.django_db
 class TestEvalUsageStatsResponseShape:
@@ -69,6 +75,14 @@ class TestEvalUsageStatsResponseShape:
         assert "chart" in result
         assert "table" in result
         assert "logs" in result
+        assert {
+            "query_complete",
+            "query_status",
+            "backend",
+            "stale",
+            "as_of",
+            "total_is_lower_bound",
+        } <= result.keys()
 
     def test_table_is_list(self, auth_client, user_eval_template):
         resp = auth_client.get(
@@ -94,7 +108,13 @@ class TestEvalUsageStatsResponseShape:
             {"page": 0, "page_size": 5, "period": "30d"},
         )
         stats = resp.json()["result"]["stats"]
-        for field in ("total_runs", "runs_period", "success_count", "error_count", "pass_rate"):
+        for field in (
+            "total_runs",
+            "runs_period",
+            "success_count",
+            "error_count",
+            "pass_rate",
+        ):
             assert field in stats, f"stats.{field} missing"
 
     def test_chart_is_list(self, auth_client, user_eval_template):
@@ -119,9 +139,7 @@ class TestEvalUsageStatsResponseShape:
         """System templates have organization=NULL — the org-scoping filter
         must not exclude them (regression: a naive organization=org filter
         404s every system template's usage page)."""
-        template = _make_template(
-            organization=None, owner=OwnerChoices.SYSTEM.value
-        )
+        template = _make_template(organization=None, owner=OwnerChoices.SYSTEM.value)
         resp = auth_client.get(
             f"/model-hub/eval-templates/{template.id}/usage/",
             {"page": 0, "page_size": 5, "period": "30d"},
@@ -130,6 +148,7 @@ class TestEvalUsageStatsResponseShape:
 
 
 # ── Populated response contract ───────────────────────────────────────────────
+
 
 @pytest.mark.django_db
 class TestPopulatedContractResponse:
@@ -145,24 +164,42 @@ class TestPopulatedContractResponse:
         template = _make_template(organization, workspace)
 
         # Plain numeric score
-        _make_log(organization, workspace, template, config={
-            "output": {"output": 0.85, "reason": "close enough"},
-            "mappings": {"response": "hello"},
-            "input_var_response": "hello",
-        })
+        _make_log(
+            organization,
+            workspace,
+            template,
+            config={
+                "output": {"output": 0.85, "reason": "close enough"},
+                "mappings": {"response": "hello"},
+                "input_var_response": "hello",
+            },
+        )
 
         # Choice-format output {label, score}
-        _make_log(organization, workspace, template, config={
-            "output": {"output": {"label": "Passed", "score": 1.0}, "reason": "correct"},
-            "mappings": {"response": "world"},
-            "input_var_response": "world",
-        })
+        _make_log(
+            organization,
+            workspace,
+            template,
+            config={
+                "output": {
+                    "output": {"label": "Passed", "score": 1.0},
+                    "reason": "correct",
+                },
+                "mappings": {"response": "world"},
+                "input_var_response": "world",
+            },
+        )
 
         # Log with feedback
-        log_with_feedback = _make_log(organization, workspace, template, config={
-            "output": {"output": 0.0, "reason": "wrong"},
-            "mappings": {"response": "bad"},
-        })
+        log_with_feedback = _make_log(
+            organization,
+            workspace,
+            template,
+            config={
+                "output": {"output": 0.0, "reason": "wrong"},
+                "mappings": {"response": "bad"},
+            },
+        )
         Feedback.objects.create(
             organization=organization,
             user=user,
@@ -244,6 +281,7 @@ class TestPopulatedContractResponse:
 
 # ── Workspace isolation ───────────────────────────────────────────────────────
 
+
 @pytest.mark.django_db
 class TestWorkspaceIsolation:
     """One workspace must not be able to read another workspace's eval logs.
@@ -299,8 +337,71 @@ class TestWorkspaceIsolation:
         )
         assert resp.json()["result"]["logs"]["total"] == 1
 
+    def test_default_workspace_includes_legacy_null_workspace_usage(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        monkeypatch,
+    ):
+        template = _make_template(organization, workspace=None)
+        _make_log(organization, None, template)
+        captured = {}
+
+        def fake_analytics(**kwargs):
+            captured.update(kwargs)
+            return {
+                "total_runs": 1,
+                "runs_period": 1,
+                "success_count": 1,
+                "error_count": 0,
+                "chart": [],
+            }
+
+        monkeypatch.setattr(
+            "model_hub.views.separate_evals._clickhouse_eval_usage_analytics",
+            fake_analytics,
+        )
+
+        response = auth_client.get(
+            f"/model-hub/eval-templates/{template.id}/usage/",
+            {"page": 0, "page_size": 25, "period": "30d"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["result"]["logs"]["total"] == 1
+        assert captured["workspace_is_default"] is True
+
+    def test_non_default_workspace_cannot_access_legacy_null_workspace_template(
+        self,
+        organization,
+        user,
+    ):
+        from conftest import WorkspaceAwareAPIClient
+
+        template = _make_template(organization, workspace=None)
+        workspace_b = Workspace.objects.create(
+            name="workspace-b-exact-scope",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        client_b = WorkspaceAwareAPIClient()
+        client_b.force_authenticate(user=user)
+        client_b.set_workspace(workspace_b)
+
+        response = client_b.get(
+            f"/model-hub/eval-templates/{template.id}/usage/",
+            {"page": 0, "page_size": 25, "period": "30d"},
+        )
+
+        assert response.status_code == 404
+        client_b.stop_workspace_injection()
+
 
 # ── Date-range symmetry validation ───────────────────────────────────────────
+
 
 @pytest.mark.django_db
 class TestDateRangeSymmetry:
@@ -355,3 +456,479 @@ class TestDateRangeSymmetry:
             },
         )
         assert resp.status_code == 200
+
+
+# ── ClickHouse analytics acceleration ────────────────────────────────────────
+
+
+@pytest.mark.django_db
+class TestEvalUsageClickHouseAnalytics:
+    def test_successful_analytics_does_not_scan_or_count_period_queryset(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        monkeypatch,
+    ):
+        """Only the requested PG page may be materialized after CH succeeds."""
+        template = _make_template(organization, workspace)
+        _make_log(organization, workspace, template)
+
+        analytics = {
+            "total_runs": 41,
+            "runs_period": 1,
+            "success_count": 1,
+            "error_count": 0,
+            "chart": [],
+            "backend": "clickhouse",
+        }
+        monkeypatch.setattr(
+            "model_hub.views.separate_evals._clickhouse_eval_usage_analytics",
+            lambda **_kwargs: analytics,
+        )
+
+        original_iter = QuerySet.__iter__
+        original_count = QuerySet.count
+        original_values = QuerySet.values
+
+        def guarded_iter(queryset):
+            if queryset.model is APICallLog and queryset.query.high_mark is None:
+                raise AssertionError("unbounded APICallLog queryset materialized")
+            return original_iter(queryset)
+
+        def guarded_count(queryset):
+            if queryset.model is APICallLog:
+                raise AssertionError("APICallLog COUNT should come from analytics")
+            return original_count(queryset)
+
+        def guarded_values(queryset, *fields, **expressions):
+            if queryset.model is APICallLog:
+                raise AssertionError("period APICallLog configs were materialized")
+            return original_values(queryset, *fields, **expressions)
+
+        monkeypatch.setattr(QuerySet, "__iter__", guarded_iter)
+        monkeypatch.setattr(QuerySet, "count", guarded_count)
+        monkeypatch.setattr(QuerySet, "values", guarded_values)
+
+        response = auth_client.get(
+            f"/model-hub/eval-templates/{template.id}/usage/",
+            {"page": 0, "page_size": 25, "period": "30d"},
+        )
+
+        assert response.status_code == 200
+        result = response.json()["result"]
+        assert result["stats"] == {
+            "total_runs": 41,
+            "runs_period": 1,
+            "success_count": 1,
+            "error_count": 0,
+            "pass_rate": 100.0,
+        }
+        assert result["logs"]["total"] == 1
+        assert len(result["table"]) == 1
+        assert result["query_complete"] is True
+        assert result["query_status"] == "complete"
+        assert result["backend"] == "clickhouse"
+        assert result["stale"] is False
+        assert result["total_is_lower_bound"] is False
+        assert result["as_of"]
+
+    def test_clickhouse_query_is_bounded_tenant_scoped_and_aggregate_shaped(
+        self,
+        settings,
+        monkeypatch,
+    ):
+        from model_hub.views.separate_evals import (
+            _clickhouse_eval_usage_analytics,
+        )
+
+        organization_id = uuid.uuid4()
+        workspace_id = uuid.uuid4()
+        template_id = uuid.uuid4()
+        start_date = datetime(2026, 7, 30, 0, 0, tzinfo=UTC)
+        end_date = datetime(2026, 7, 30, 0, 29, tzinfo=UTC)
+        bucket = datetime(2026, 7, 30, 0, 0)
+
+        class FakeClickHouseClient:
+            def __init__(self):
+                self.calls = []
+
+            def execute_read(
+                self,
+                query,
+                params,
+                *,
+                timeout_ms,
+                settings,
+            ):
+                self.calls.append((query, params, timeout_ms, settings))
+                return (
+                    [
+                        (
+                            9,
+                            2,
+                            1,
+                            1,
+                            [(bucket, 2, 0.25, 0.75, 1, 1)],
+                        )
+                    ],
+                    [],
+                    2.5,
+                )
+
+        fake_client = FakeClickHouseClient()
+        settings.CLICKHOUSE = {
+            **settings.CLICKHOUSE,
+            "CH_EVAL_USAGE_ANALYTICS": True,
+        }
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.client.is_clickhouse_enabled",
+            lambda: True,
+        )
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.client.get_clickhouse_client",
+            lambda: fake_client,
+        )
+
+        result = _clickhouse_eval_usage_analytics(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            template_id=template_id,
+            start_date=start_date,
+            end_date=end_date,
+            period="30m",
+        )
+        cached_result = _clickhouse_eval_usage_analytics(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            template_id=template_id,
+            start_date=start_date,
+            end_date=end_date,
+            period="30m",
+        )
+
+        assert len(fake_client.calls) == 1
+        query, params, timeout_ms, query_settings = fake_client.calls[0]
+        normalized_query = " ".join(query.split())
+        assert normalized_query.count("FROM usage_apicalllog FINAL") == 2
+        assert "organization_id = toUUID(%(organization_id)s)" in normalized_query
+        assert "workspace_id = toUUID(%(workspace_id)s)" in normalized_query
+        assert "source_id = %(template_id)s" in normalized_query
+        assert "created_at >= %(start_date)s" in normalized_query
+        assert "created_at <= %(end_date)s" in normalized_query
+        assert "deleted = 0" in normalized_query
+        assert "_peerdb_is_deleted = 0" in normalized_query
+        assert "groupArray(tuple(" in normalized_query
+        assert params["organization_id"] == str(organization_id)
+        assert params["workspace_id"] == str(workspace_id)
+        assert params["template_id"] == str(template_id)
+        assert timeout_ms == 750
+        assert query_settings["max_threads"] == 2
+        assert query_settings["max_rows_to_read"] == 6_000_000
+        assert query_settings["max_bytes_to_read"] == 512 * 1024 * 1024
+        assert query_settings["max_memory_usage"] == 128 * 1024 * 1024
+        assert query_settings["max_result_rows"] == 1
+        assert "config" not in normalized_query
+        assert "eval_score" in normalized_query
+        assert "eval_output_str" in normalized_query
+        assert "JSONExtract" not in normalized_query
+
+        assert result["backend"] == "clickhouse"
+        assert result["query_complete"] is True
+        assert result["query_status"] == "complete"
+        assert result["stale"] is False
+        assert result["total_is_lower_bound"] is False
+        assert result["as_of"]
+        assert result["total_runs"] == 9
+        assert result["runs_period"] == 2
+        assert result["success_count"] == 1
+        assert result["error_count"] == 1
+        assert len(result["chart"]) == 3
+        assert result["chart"][0] == {
+            "timestamp": "2026-07-30T00:00:00+00:00",
+            "calls": 2,
+            "avg_latency_ms": 250,
+            "avg_score": 0.75,
+            "pass_count": 1,
+            "fail_count": 1,
+        }
+        assert cached_result["backend"] == "clickhouse_cache"
+        assert cached_result["total_runs"] == 9
+
+    def test_default_workspace_clickhouse_scope_and_cache_identity_include_legacy_null(
+        self,
+        monkeypatch,
+    ):
+        from model_hub.views.separate_evals import (
+            _eval_usage_cache_keys,
+            _query_clickhouse_eval_usage_analytics,
+        )
+
+        organization_id = uuid.uuid4()
+        workspace_id = uuid.uuid4()
+        template_id = uuid.uuid4()
+        start_date = datetime(2026, 7, 30, 0, 0, tzinfo=UTC)
+        end_date = datetime(2026, 7, 30, 0, 29, tzinfo=UTC)
+        calls = []
+
+        class FakeClickHouseClient:
+            def execute_read(self, query, params, *, timeout_ms, settings):
+                calls.append((query, params, timeout_ms, settings))
+                return [(0, 0, 0, 0, [])], [], 1.0
+
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.client.get_clickhouse_client",
+            lambda: FakeClickHouseClient(),
+        )
+
+        _query_clickhouse_eval_usage_analytics(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            template_id=template_id,
+            start_date=start_date,
+            end_date=end_date,
+            period="30m",
+            workspace_is_default=True,
+        )
+
+        normalized_query = " ".join(calls[0][0].split())
+        assert (
+            "(workspace_id = toUUID(%(workspace_id)s) OR workspace_id IS NULL)"
+            in normalized_query
+        )
+        exact_keys = _eval_usage_cache_keys(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            template_id=template_id,
+            cache_scope="period:30m",
+            workspace_is_default=False,
+        )
+        default_keys = _eval_usage_cache_keys(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            template_id=template_id,
+            cache_scope="period:30m",
+            workspace_is_default=True,
+        )
+        assert exact_keys != default_keys
+
+    def test_timeout_uses_stale_cache_without_postgres_analytics(
+        self,
+        settings,
+        monkeypatch,
+    ):
+        from django.core.cache import cache
+
+        from model_hub.views.separate_evals import (
+            _clickhouse_eval_usage_analytics,
+            _eval_usage_cache_keys,
+        )
+
+        organization_id = uuid.uuid4()
+        workspace_id = uuid.uuid4()
+        template_id = uuid.uuid4()
+        start_date = datetime(2026, 7, 1, tzinfo=UTC)
+        end_date = datetime(2026, 7, 30, tzinfo=UTC)
+        cache_scope = "period:30d"
+        fresh_key, stale_key = _eval_usage_cache_keys(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            template_id=template_id,
+            cache_scope=cache_scope,
+        )
+        cache.delete_many([fresh_key, stale_key])
+        cache.set(
+            stale_key,
+            {
+                "total_runs": 80,
+                "runs_period": 20,
+                "success_count": 18,
+                "error_count": 2,
+                "chart": [],
+            },
+            timeout=60,
+        )
+        settings.CLICKHOUSE = {
+            **settings.CLICKHOUSE,
+            "CH_EVAL_USAGE_ANALYTICS": True,
+        }
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.client.is_clickhouse_enabled",
+            lambda: True,
+        )
+        monkeypatch.setattr(
+            "model_hub.views.separate_evals._query_clickhouse_eval_usage_analytics",
+            lambda **_kwargs: (_ for _ in ()).throw(TimeoutError("budget exceeded")),
+        )
+
+        result = _clickhouse_eval_usage_analytics(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            template_id=template_id,
+            start_date=start_date,
+            end_date=end_date,
+            period="30d",
+            cache_scope=cache_scope,
+        )
+
+        assert result["backend"] == "clickhouse_stale"
+        assert result["stale"] is True
+        assert result["query_complete"] is False
+        assert result["query_status"] == "stale"
+        assert result["total_is_lower_bound"] is False
+        assert result["as_of"]
+        assert result["total_runs"] == 80
+        assert result["runs_period"] == 20
+
+    def test_programming_error_does_not_serve_stale_cache(
+        self,
+        settings,
+        monkeypatch,
+    ):
+        from django.core.cache import cache
+
+        from model_hub.views.separate_evals import (
+            _clickhouse_eval_usage_analytics,
+            _eval_usage_cache_keys,
+        )
+
+        organization_id = uuid.uuid4()
+        workspace_id = uuid.uuid4()
+        template_id = uuid.uuid4()
+        start_date = datetime(2026, 7, 1, tzinfo=UTC)
+        end_date = datetime(2026, 7, 30, tzinfo=UTC)
+        cache_scope = "period:30d-programming-error"
+        fresh_key, stale_key = _eval_usage_cache_keys(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            template_id=template_id,
+            cache_scope=cache_scope,
+        )
+        cache.delete_many([fresh_key, stale_key])
+        cache.set(
+            stale_key,
+            {
+                "total_runs": 80,
+                "runs_period": 20,
+                "success_count": 18,
+                "error_count": 2,
+                "chart": [],
+            },
+            timeout=60,
+        )
+        settings.CLICKHOUSE = {
+            **settings.CLICKHOUSE,
+            "CH_EVAL_USAGE_ANALYTICS": True,
+        }
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.client.is_clickhouse_enabled",
+            lambda: True,
+        )
+        monkeypatch.setattr(
+            "model_hub.views.separate_evals._query_clickhouse_eval_usage_analytics",
+            lambda **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("secret malformed eval usage SQL")
+            ),
+        )
+
+        with pytest.raises(RuntimeError, match="secret malformed eval usage SQL"):
+            _clickhouse_eval_usage_analytics(
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+                template_id=template_id,
+                start_date=start_date,
+                end_date=end_date,
+                period="30d",
+                cache_scope=cache_scope,
+            )
+
+    def test_programming_error_is_sanitized_at_usage_endpoint(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        monkeypatch,
+    ):
+        template = _make_template(organization, workspace)
+        monkeypatch.setattr(
+            "model_hub.views.separate_evals._clickhouse_eval_usage_analytics",
+            lambda **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("secret eval usage implementation detail")
+            ),
+        )
+
+        response = auth_client.get(
+            f"/model-hub/eval-templates/{template.id}/usage/",
+            {"page": 0, "page_size": 25, "period": "30d"},
+        )
+
+        assert response.status_code == 400
+        body = str(response.json())
+        assert "secret eval usage implementation detail" not in body
+        assert "Unable to load evaluation usage" in body
+
+    def test_timeout_without_cache_uses_only_bounded_page_lower_bound(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        monkeypatch,
+    ):
+        template = _make_template(organization, workspace)
+        for _ in range(3):
+            _make_log(organization, workspace, template)
+
+        monkeypatch.setattr(
+            "model_hub.views.separate_evals._clickhouse_eval_usage_analytics",
+            lambda **_kwargs: (_ for _ in ()).throw(TimeoutError("budget exceeded")),
+        )
+
+        original_iter = QuerySet.__iter__
+        original_count = QuerySet.count
+        original_values = QuerySet.values
+        original_aggregate = QuerySet.aggregate
+
+        def guarded_iter(queryset):
+            if queryset.model is APICallLog and queryset.query.high_mark is None:
+                raise AssertionError("unbounded APICallLog queryset materialized")
+            return original_iter(queryset)
+
+        def guarded_count(queryset):
+            if queryset.model is APICallLog:
+                raise AssertionError("APICallLog COUNT is not a bounded page read")
+            return original_count(queryset)
+
+        def guarded_values(queryset, *fields, **expressions):
+            if queryset.model is APICallLog:
+                raise AssertionError("APICallLog configs were scanned")
+            return original_values(queryset, *fields, **expressions)
+
+        def guarded_aggregate(queryset, *args, **kwargs):
+            if queryset.model is APICallLog:
+                raise AssertionError("APICallLog aggregate is not bounded")
+            return original_aggregate(queryset, *args, **kwargs)
+
+        monkeypatch.setattr(QuerySet, "__iter__", guarded_iter)
+        monkeypatch.setattr(QuerySet, "count", guarded_count)
+        monkeypatch.setattr(QuerySet, "values", guarded_values)
+        monkeypatch.setattr(QuerySet, "aggregate", guarded_aggregate)
+
+        response = auth_client.get(
+            f"/model-hub/eval-templates/{template.id}/usage/",
+            {"page": 0, "page_size": 2, "period": "30d"},
+        )
+
+        assert response.status_code == 200
+        result = response.json()["result"]
+        assert result["stats"]["total_runs"] == 3
+        assert result["stats"]["runs_period"] == 3
+        assert result["stats"]["success_count"] == 2
+        assert result["logs"]["total"] == 3
+        assert len(result["table"]) == 2
+        assert any(point["calls"] == 2 for point in result["chart"])
+        assert result["query_complete"] is False
+        assert result["query_status"] == "degraded"
+        assert result["backend"] == "postgres_page_lower_bound"
+        assert result["stale"] is False
+        assert result["total_is_lower_bound"] is True
+        assert result["as_of"]

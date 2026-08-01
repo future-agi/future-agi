@@ -179,6 +179,10 @@ function convertOldToNew(oldFilters) {
 
     const rawOp = f?.filterConfig?.filterOp || "equals";
     const category = f.fieldCategory || (isAttribute ? "attribute" : "system");
+    const apiColType = resolveApiColType(
+      f.apiColType || f?.filterConfig?.colType,
+      category,
+    );
     const ft = f?.filterConfig?.filterType;
     const fieldType =
       ft === "number" ? "number" : ft === "boolean" ? "boolean" : "string";
@@ -194,7 +198,7 @@ function convertOldToNew(oldFilters) {
 
     let entry;
     if (isMultiValueOp) {
-      const key = `${field}|${op}|${category}`;
+      const key = `${field}|${op}|${category}|${apiColType}`;
       entry = groups.get(key);
       if (!entry) {
         entry = {
@@ -202,6 +206,7 @@ function convertOldToNew(oldFilters) {
           fieldLabel: f.fieldLabel || field,
           fieldType,
           fieldCategory: category,
+          apiColType,
           operator: op,
           value: [],
         };
@@ -215,10 +220,7 @@ function convertOldToNew(oldFilters) {
         fieldType,
         fieldCategory: category,
         // Preserved so the panel re-renders the right chip on edit-open.
-        apiColType: resolveApiColType(
-          f.apiColType || f?.filterConfig?.colType,
-          category,
-        ),
+        apiColType,
         operator: op,
         value: [],
       };
@@ -320,6 +322,16 @@ const rowTypeToFilterTab = (rowType) => {
   if (key === "spans" || key === "span") return "spans";
   if (key === "traces" || key === "trace") return "trace";
   return null;
+};
+
+const getTaskFilterPanelContext = (rowType) => {
+  const tab = rowTypeToFilterTab(rowType);
+  const isSpansView = tab === "spans";
+  return {
+    tab,
+    source: isSpansView ? "spans" : "traces",
+    isSpansView,
+  };
 };
 
 // ── Main ──
@@ -454,6 +466,7 @@ const TaskFilterBar = ({
   }, [isPanelOpen, anchorToBar]);
 
   const hasFilters = panelFilters.length > 0;
+  const filterPanelContext = getTaskFilterPanelContext(rowType);
 
   return (
     <Box ref={barRef} sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
@@ -555,7 +568,9 @@ const TaskFilterBar = ({
         currentFilters={panelFilters}
         projectId={projectId}
         isSimulator={isSimulator}
-        tab={rowTypeToFilterTab(rowType)}
+        tab={filterPanelContext.tab}
+        source={filterPanelContext.source}
+        isSpansView={filterPanelContext.isSpansView}
         onApply={(next) => applyPanelFilters(next || [])}
       />
     </Box>

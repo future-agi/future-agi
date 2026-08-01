@@ -1,5 +1,4 @@
 import json
-import traceback
 import uuid as uuid_module
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
@@ -9,6 +8,7 @@ from django.db import models, transaction
 from django.db.models import Avg, Count, F, Func, Max, Q, Value
 from django.utils import timezone
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
@@ -32,6 +32,7 @@ from tracer.serializers.eval_task import (
     EvalTaskDeleteRequestSerializer,
     EvalTaskIdQuerySerializer,
     EvalTaskListQuerySerializer,
+    EvalTaskListResponseSerializer,
     EvalTaskListWithProjectNameQuerySerializer,
     EvalTaskMessageResponseSerializer,
     EvalTaskSerializer,
@@ -39,12 +40,26 @@ from tracer.serializers.eval_task import (
     EvalTaskUpdateResponseSerializer,
     PaginationQuerySerializer,
 )
+from tracer.services.clickhouse.read_budget import is_read_budget_error
 from tracer.services.eval_tasks.edit_options import validate_edit_action
 from tracer.services.eval_tasks.entries import soft_delete_live
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import get_default_eval_task_config
 
 logger = structlog.get_logger(__name__)
+
+_EVAL_TASK_SAVE_FAILED_MESSAGE = (
+    "Unable to save the evaluation task right now. Please try again."
+)
+
+
+def _eval_task_query_error_response(exc, message):
+    """Return a stable public error contract without exposing backend details."""
+    response = GeneralMethods().bad_request(message)
+    response.data["code"] = (
+        "read_budget_exceeded" if is_read_budget_error(exc) else "query_failed"
+    )
+    return response
 
 
 class _RegexpReplace(Func):
@@ -135,6 +150,117 @@ def _resolve_input_variables(custom_eval_config, obs_span):
             continue
         resolved[var_name] = value
     return resolved
+
+
+def _hydrate_usage_sources(logs, *, project_id):
+    """Best-effort CH hydration for one paginated eval-task usage page.
+
+    EvalLogger stores soft IDs for span/trace/session targets, while the source
+    telemetry itself is direct-to-ClickHouse. Never follow those IDs through
+    Django FK descriptors: CH-only rows have no related PostgreSQL object.
+    Keeping this helper page-bounded also prevents opening the Usage tab from
+    loading every source row for a large historical task.
+    """
+    span_ids = sorted(
+        {str(log.observation_span_id) for log in logs if log.observation_span_id}
+    )
+    session_ids = sorted(
+        {str(log.trace_session_id) for log in logs if log.trace_session_id}
+    )
+
+    enrichment_error_codes = []
+    spans_by_id = {}
+    if span_ids:
+        try:
+            from tracer.services.clickhouse.v2 import get_reader
+            from tracer.services.clickhouse.v2.eval_loader import (
+                _construct_from_chspan,
+            )
+
+            # The typed maps, input/output, and scalar columns needed by the
+            # table are all in the lean projection. Avoid attributes_extra:
+            # one voice span can carry a multi-megabyte raw log.
+            with get_reader() as reader:
+                rows = reader.list_by_ids(
+                    span_ids,
+                    include_heavy=False,
+                    project_id=str(project_id),
+                )
+            spans_by_id = {
+                str(row.id): _construct_from_chspan(row)
+                for row in rows
+                if not row.is_deleted
+            }
+            if not set(span_ids).issubset(spans_by_id):
+                enrichment_error_codes.append("query_failed")
+                logger.warning(
+                    "eval task usage span hydration returned fewer rows than requested",
+                    project_id=str(project_id),
+                    requested_count=len(span_ids),
+                    returned_count=len(spans_by_id),
+                )
+        except Exception as exc:
+            enrichment_error_codes.append(
+                "read_budget_exceeded" if is_read_budget_error(exc) else "query_failed"
+            )
+            logger.warning(
+                "eval task usage span hydration failed open",
+                project_id=str(project_id),
+                span_count=len(span_ids),
+                error=str(exc)[:200],
+            )
+
+    sessions_by_id = {}
+    if session_ids:
+        try:
+            from tracer.services.clickhouse.v2.trace_session_dict_reader import (
+                resolve_session_fields,
+            )
+
+            sessions_by_id = {
+                str(session_id): fields
+                for session_id, fields in resolve_session_fields(
+                    session_ids,
+                    project_id=str(project_id),
+                ).items()
+            }
+            if not set(session_ids).issubset(sessions_by_id):
+                enrichment_error_codes.append("query_failed")
+                logger.warning(
+                    "eval task usage session hydration returned fewer rows than requested",
+                    project_id=str(project_id),
+                    requested_count=len(session_ids),
+                    returned_count=len(sessions_by_id),
+                )
+        except Exception as exc:
+            enrichment_error_codes.append(
+                "read_budget_exceeded" if is_read_budget_error(exc) else "query_failed"
+            )
+            logger.warning(
+                "eval task usage session hydration failed open",
+                project_id=str(project_id),
+                session_count=len(session_ids),
+                error=str(exc)[:200],
+            )
+
+    if enrichment_error_codes:
+        error_code = (
+            "query_failed"
+            if "query_failed" in enrichment_error_codes
+            else "read_budget_exceeded"
+        )
+        query_state = {
+            "query_complete": False,
+            "query_status": "degraded",
+            "query_error_code": error_code,
+        }
+    else:
+        query_state = {
+            "query_complete": True,
+            "query_status": "complete",
+        }
+
+    return spans_by_id, sessions_by_id, query_state
 
 
 def _truthy(v):
@@ -466,12 +592,17 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
             return self._gm.success_response({"id": eval_task.id})
 
-        except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(str(e))
+        except ValidationError as exc:
+            return self._gm.bad_request(exc.detail)
+        except Exception:
+            logger.exception("eval_task_create_failed")
+            return self._gm.bad_request(_EVAL_TASK_SAVE_FAILED_MESSAGE)
 
     @action(detail=False, methods=["get"], pagination_class=None)
-    @validated_request(query_serializer=EvalTaskListQuerySerializer)
+    @validated_request(
+        query_serializer=EvalTaskListQuerySerializer,
+        responses={200: EvalTaskListResponseSerializer},
+    )
     def list_eval_tasks(self, request, *args, **kwargs):
         """
         List Eval Tasks filtered
@@ -560,8 +691,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.success_response(response)
 
         except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(f"error fetching the eval tasks list {str(e)}")
+            logger.exception("eval_task_list_failed", error=str(e))
+            return _eval_task_query_error_response(
+                e,
+                "Evaluation tasks could not be loaded. Please try again.",
+            )
 
     # Maximum number of distinct error groups returned per task. Most tasks
     # produce 1-5 distinct error types; this cap is a safety net for tasks
@@ -727,8 +861,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request(f"EvalTask with id {eval_task_id} not found.")
 
         except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(str(e))
+            logger.exception("eval_task_logs_failed", error=str(e))
+            return _eval_task_query_error_response(
+                e,
+                "Evaluation task logs could not be loaded. Please try again.",
+            )
 
     # ──────────────────────────────────────────────────────────────────
     # GET /tracer/eval-task/get_usage/?eval_task_id=<id>&period=<>&...
@@ -757,11 +894,13 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             if not eval_task_id:
                 return self._gm.bad_request("eval_task_id is required")
 
-            if (
-                not self._scope_eval_task_queryset(EvalTask.objects)
+            eval_task = (
+                self._scope_eval_task_queryset(EvalTask.objects)
+                .only("project_id")
                 .filter(id=eval_task_id)
-                .exists()
-            ):
+                .first()
+            )
+            if eval_task is None:
                 return self._gm.bad_request(
                     f"EvalTask with id {eval_task_id} not found."
                 )
@@ -786,8 +925,10 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             # is consistent whether or not a date range is supplied.
             #
             # Optional ``start_date`` / ``end_date`` (ISO-8601) scope the
-            # rollup to spans whose ``observation_span.created_at`` falls
-            # in the range.
+            # rollup to eval runs whose EvalLogger timestamp falls in the
+            # range. Source spans live only in ClickHouse, so joining through
+            # ``observation_span__created_at`` would silently drop every
+            # CH-only task row.
             eval_aggregation = _truthy(
                 self.request.query_params.get("eval_aggregation")
             )
@@ -809,15 +950,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 end_date_str = self.request.query_params.get("end_date")
                 if start_date_str:
                     agg_base_qs = agg_base_qs.filter(
-                        observation_span__created_at__gte=datetime.fromisoformat(
-                            start_date_str
-                        )
+                        created_at__gte=datetime.fromisoformat(start_date_str)
                     )
                 if end_date_str:
                     agg_base_qs = agg_base_qs.filter(
-                        observation_span__created_at__lte=datetime.fromisoformat(
-                            end_date_str
-                        )
+                        created_at__lte=datetime.fromisoformat(end_date_str)
                     )
 
                 agg_response = {"eval_task_id": str(eval_task_id)}
@@ -997,21 +1134,21 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     current_bucket += timedelta(minutes=bucket_minutes)
 
             # ── Paginated logs ──
-            # Eager-load the related ObservationSpan + CustomEvalConfig
-            # (and through that, the EvalTemplate for output_type) in a
-            # single query — without this we'd hit N+1 inside the loop.
-            # PR3: also eager-load trace_session so session-target rows can
-            # surface session_id / session_name without an extra query.
+            # Eager-load only PostgreSQL configuration. Source telemetry is
+            # hydrated in one bounded ClickHouse read after pagination; the
+            # EvalLogger FKs are soft IDs and may have no PG target row.
             logs_qs = period_qs.select_related(
-                "observation_span",
                 "custom_eval_config",
                 "custom_eval_config__eval_template",
-                "trace_session",
             ).order_by("-created_at")
 
             paginator = ExtendedPageNumberPagination()
             paginator.page_size = page_size
             logs_page = paginator.paginate_queryset(logs_qs, self.request, view=self)
+            spans_by_id, sessions_by_id, usage_query_state = _hydrate_usage_sources(
+                logs_page,
+                project_id=eval_task.project_id,
+            )
 
             log_items = []
             for log in logs_page:
@@ -1044,8 +1181,16 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     score = None
                     status = "success"
 
-                obs_span = log.observation_span
-                trace_session = log.trace_session
+                span_id = (
+                    str(log.observation_span_id) if log.observation_span_id else None
+                )
+                trace_id = str(log.trace_id) if log.trace_id else None
+                session_id = str(log.trace_session_id) if log.trace_session_id else None
+                obs_span = spans_by_id.get(span_id)
+                session_fields = sessions_by_id.get(session_id, {})
+                session_name = session_fields.get("display_name") or session_fields.get(
+                    "external_session_id"
+                )
                 config = log.custom_eval_config
                 target_type = log.target_type
 
@@ -1065,8 +1210,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                         input_str = json.dumps(input_val)[:200]
                     else:
                         input_str = str(input_val)[:200]
-                elif trace_session:
-                    input_str = (trace_session.name or "")[:200]
+                elif session_name:
+                    input_str = str(session_name)[:200]
 
                 reason = log.eval_explanation or log.error_message or ""
 
@@ -1098,15 +1243,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                         # observe page. Span and trace rows expose span/trace
                         # IDs (trace target = root span); session rows expose
                         # session_id with both other IDs NULL.
-                        "span_id": str(obs_span.id) if obs_span else None,
-                        "trace_id": (
-                            str(obs_span.trace_id)
-                            if obs_span and obs_span.trace_id
-                            else None
-                        ),
-                        "session_id": (
-                            str(trace_session.id) if trace_session else None
-                        ),
+                        "span_id": span_id,
+                        "trace_id": trace_id,
+                        "session_id": session_id,
                         "eval_id": str(config.id) if config else None,
                         "eval_name": config.name if config else None,
                         "model": config.model if config else None,
@@ -1124,18 +1263,10 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                             # without having to look up the parent EvalTask.
                             "target_type": target_type,
                             "span_name": obs_span.name if obs_span else None,
-                            "span_id": str(obs_span.id) if obs_span else None,
-                            "trace_id": (
-                                str(obs_span.trace_id)
-                                if obs_span and obs_span.trace_id
-                                else None
-                            ),
-                            "session_id": (
-                                str(trace_session.id) if trace_session else None
-                            ),
-                            "session_name": (
-                                trace_session.name if trace_session else None
-                            ),
+                            "span_id": span_id,
+                            "trace_id": trace_id,
+                            "session_id": session_id,
+                            "session_name": session_name,
                             "output_bool": log.output_bool,
                             "output_float": log.output_float,
                             "output_str": log.output_str,
@@ -1170,17 +1301,25 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 # "all" — the frontend can show a hint explaining why.
                 "period_requested": period,
                 "period_used": period_used,
+                # Eval-log rows are authoritative PostgreSQL data and remain
+                # present when ClickHouse source-field hydration fails. Expose
+                # that loss explicitly so blank input/session detail is never
+                # mistaken for a complete healthy row.
+                **usage_query_state,
             }
             return self._gm.success_response(response)
 
         except Exception as e:
-            traceback.print_exc()
             logger.error(
                 "eval_task.get_usage failed",
                 error=str(e),
                 eval_task_id=request.query_params.get("eval_task_id"),
+                exc_info=True,
             )
-            return self._gm.bad_request(str(e))
+            return _eval_task_query_error_response(
+                e,
+                "Evaluation task usage could not be loaded. Please try again.",
+            )
 
     @validated_request(
         request_serializer=EvalTaskDeleteRequestSerializer,
@@ -1229,9 +1368,16 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 {"message": "Eval tasks marked as deleted successfully"}
             )
 
-        except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(str(e))
+        except Exception as exc:
+            logger.exception(
+                "eval_tasks_delete_failed",
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            return _eval_task_query_error_response(
+                exc,
+                "Evaluation tasks could not be deleted. Please try again.",
+            )
 
     @validated_request(
         request_serializer=EmptyRequestSerializer,
@@ -1270,9 +1416,16 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 {"message": "Eval task paused successfully"}
             )
 
-        except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(str(e))
+        except Exception as exc:
+            logger.exception(
+                "eval_task_pause_failed",
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            return _eval_task_query_error_response(
+                exc,
+                "Evaluation task could not be paused. Please try again.",
+            )
 
     @validated_request(
         request_serializer=EmptyRequestSerializer,
@@ -1310,9 +1463,16 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 {"message": "Eval task unpaused successfully"}
             )
 
-        except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(str(e))
+        except Exception as exc:
+            logger.exception(
+                "eval_task_unpause_failed",
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            return _eval_task_query_error_response(
+                exc,
+                "Evaluation task could not be resumed. Please try again.",
+            )
 
     @action(detail=False, methods=["get"], pagination_class=None)
     @validated_request(query_serializer=EvalTaskListWithProjectNameQuerySerializer)
@@ -1388,8 +1548,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.success_response(response)
 
         except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(f"error fetching the traces list {str(e)}")
+            logger.exception("eval_task_project_list_failed", error=str(e))
+            return _eval_task_query_error_response(
+                e,
+                "Evaluation tasks could not be loaded. Please try again.",
+            )
 
     @validated_request(
         request_serializer=EvalTaskUpdateRequestSerializer,
@@ -1529,11 +1692,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     }
                 )
 
-        except Exception as e:
-            logger.error(
-                f"Error updating eval task {eval_task_id}: {str(e)}", exc_info=True
-            )
-            return self._gm.bad_request(f"Error updating evaluation task: {str(e)}")
+        except ValidationError as exc:
+            return self._gm.bad_request(exc.detail)
+        except Exception:
+            logger.exception("eval_task_update_failed", eval_task_id=str(eval_task_id))
+            return self._gm.bad_request(_EVAL_TASK_SAVE_FAILED_MESSAGE)
 
     def _extract_update_fields(self, validated_data):
         """Extract valid update fields from validated data.
@@ -1617,5 +1780,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         except EvalTask.DoesNotExist:
             return self._gm.not_found("Eval task not found")
         except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(f"Error fetching eval task details {str(e)}")
+            logger.exception("eval_task_details_failed", error=str(e))
+            return _eval_task_query_error_response(
+                e,
+                "Evaluation task details could not be loaded. Please try again.",
+            )

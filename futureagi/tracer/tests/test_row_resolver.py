@@ -26,7 +26,7 @@ def _make_task(
     *,
     row_type=RowType.SPANS,
     sampling_rate=100.0,
-    spans_limit=1_000_000,
+    spans_limit=100_000,
     filters=None,
     run_type=RunType.HISTORICAL,
 ):
@@ -115,7 +115,7 @@ class TestSamplingAndDeterminism:
 class TestOrderLimitAndBatching:
     def test_limit_returns_deterministic_prefix(self, project):
         _make_spans(project, 30)
-        task = _make_task(project, sampling_rate=100.0, spans_limit=1_000_000)
+        task = _make_task(project, sampling_rate=100.0, spans_limit=100_000)
         full = _ids(task)
         task.spans_limit = 5
         task.save()

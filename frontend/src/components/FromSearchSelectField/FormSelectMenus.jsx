@@ -35,6 +35,7 @@ const FormSelectMenus = ({
   onScrollEnd,
   isFetchingNextPage,
   selectAll,
+  allowCreateFromSearch,
   ...rest
 }) => {
   const popperRef = useRef(null);
@@ -83,24 +84,50 @@ const FormSelectMenus = ({
           ? true
           : item.label?.toLowerCase().includes(searchedValue?.toLowerCase()),
       ) || [];
+    const customValue = searchedValue?.trim();
+    const hasExactMatch =
+      customValue &&
+      filtered.some(
+        (item) =>
+          item.label?.toLowerCase() === customValue.toLowerCase() ||
+          String(item.value).toLowerCase() === customValue.toLowerCase(),
+      );
+    const customOption =
+      allowCreateFromSearch && customValue && !hasExactMatch
+        ? {
+            label: `Use "${customValue}"`,
+            value: customValue,
+          }
+        : null;
+
     return filtered.length > 0
-      ? filtered
-      : searchedValue
-        ? [
-            {
-              label: rest?.emptyMessage ?? "No option found",
-              value: emptyValue,
-              disabled: true,
-            },
-          ]
-        : [
-            {
-              label: rest?.noOptions ?? "No option provided",
-              value: emptyValue,
-              disabled: true,
-            },
-          ];
-  }, [options, rest?.emptyMessage, rest?.noOptions, searchedValue]);
+      ? customOption
+        ? [customOption, ...filtered]
+        : filtered
+      : customOption
+        ? [customOption]
+        : searchedValue
+          ? [
+              {
+                label: rest?.emptyMessage ?? "No option found",
+                value: emptyValue,
+                disabled: true,
+              },
+            ]
+          : [
+              {
+                label: rest?.noOptions ?? "No option provided",
+                value: emptyValue,
+                disabled: true,
+              },
+            ];
+  }, [
+    options,
+    allowCreateFromSearch,
+    rest?.emptyMessage,
+    rest?.noOptions,
+    searchedValue,
+  ]);
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -391,4 +418,5 @@ FormSelectMenus.propTypes = {
   onScrollEnd: PropTypes.func,
   isFetchingNextPage: PropTypes.bool,
   selectAll: PropTypes.bool,
+  allowCreateFromSearch: PropTypes.bool,
 };

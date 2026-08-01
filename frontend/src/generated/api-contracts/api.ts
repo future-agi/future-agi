@@ -303,6 +303,7 @@ import type {
   CustomerInvoicesResponseApi,
   DashboardCreateUpdateApi,
   DashboardDetailApi,
+  DashboardFilterValuesResponseApi,
   DashboardMetricsCatalogResponseApi,
   DashboardPreviewQueryApi,
   DashboardQueryApi,
@@ -381,6 +382,7 @@ import type {
   EmbeddingsResponseApi,
   EmptyRequestApi,
   ErrorResponseApi,
+  EvalApiLogIncompleteResponseApi,
   EvalApiLogRowResponseApi,
   EvalApiLogTableResponseApi,
   EvalCodeSnippetResponseApi,
@@ -412,6 +414,7 @@ import type {
   EvalTaskApi,
   EvalTaskCreateResponseApi,
   EvalTaskDeleteRequestApi,
+  EvalTaskListResponseApi,
   EvalTaskMessageResponseApi,
   EvalTaskUpdateRequestApi,
   EvalTaskUpdateResponseApi,
@@ -824,6 +827,7 @@ import type {
   ProjectApi,
   ProjectDetailResponseApi,
   ProjectIdListResponseApi,
+  ProjectListResponseApi,
   ProjectUserGraphDataRequestApi,
   ProjectUserMetricsRequestApi,
   ProjectUsersAggregateGraphDataRequestApi,
@@ -1087,6 +1091,8 @@ import type {
   TraceErrorTaskResponseApi,
   TraceErrorTaskUpdateRequestApi,
   TraceErrorTaskUpdateResponseApi,
+  TraceEvalRequestApi,
+  TraceEvalResponseApi,
   TraceObserveListResponseApi,
   TraceSessionApi,
   TraceSessionGraphDataRequestApi,
@@ -1099,7 +1105,6 @@ import type {
   TracerCustomEvalConfigListCustomEvalConfigs200,
   TracerCustomEvalConfigListCustomEvalConfigsParams,
   TracerCustomEvalConfigListParams,
-  TracerDashboardFilterValues200,
   TracerDashboardFilterValuesParams,
   TracerDashboardList200,
   TracerDashboardListParams,
@@ -1163,7 +1168,6 @@ import type {
   TracerProjectList200,
   TracerProjectListParams,
   TracerProjectListProjectIdsParams,
-  TracerProjectListProjects200,
   TracerProjectListProjectsParams,
   TracerProjectProjectSdkCode200,
   TracerProjectProjectSdkCodeParams,
@@ -17385,13 +17389,15 @@ export const getApiTracesSpanAttributeDetailListUrl = (params: ApiTracesSpanAttr
 }
 
 /**
- * Determines the attribute type by probing which map contains the key, then
-returns type-appropriate statistics:
+ * Uses a validated caller-supplied type when available. Legacy callers are
+supported by bounded per-map existence probes, with mixed types reported
+as ambiguous instead of selecting whichever row ClickHouse returns first.
+It then returns type-appropriate statistics:
   - string: top values with percentages
   - number: min, max, avg, p50, p95
   - boolean: true/false distribution
 
-GET /api/traces/span-attribute-detail/?project_id=<uuid>&key=<attr_key>
+GET /api/traces/span-attribute-detail/?project_id=<uuid>&key=<attr_key>&type=<type>
  * @summary Full detail for a specific span attribute key.
  */
 export const apiTracesSpanAttributeDetailList = async (params: ApiTracesSpanAttributeDetailListParams, options?: RequestInit): Promise<apiTracesSpanAttributeDetailListResponse> => {
@@ -17466,11 +17472,11 @@ export const getApiTracesSpanAttributeKeysListUrl = (params: ApiTracesSpanAttrib
 }
 
 /**
- * Returns every distinct key across the string, number, and boolean attribute
-maps together with its inferred type and occurrence count.
+ * The default response is a bounded sample across the three typed Maps.
+Supplying ``q`` performs an exact key-existence/type probe.
 
-GET /api/traces/span-attribute-keys/?project_id=<uuid>
- * @summary Discover all span attribute keys for a project.
+GET /api/traces/span-attribute-keys/?project_id=<uuid>[&q=<exact_key>]
+ * @summary Browse or exactly probe span attribute keys for a project.
  */
 export const apiTracesSpanAttributeKeysList = async (params: ApiTracesSpanAttributeKeysListParams, options?: RequestInit): Promise<apiTracesSpanAttributeKeysListResponse> => {
 
@@ -21018,15 +21024,20 @@ export type modelHubAnnotationQueuesForSourceResponse500 = {
   status: 500
 }
 
+export type modelHubAnnotationQueuesForSourceResponse503 = {
+  data: ApiTextErrorResponseApi
+  status: 503
+}
+
 export type modelHubAnnotationQueuesForSourceResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>
 }
 
 export type modelHubAnnotationQueuesForSourceResponseSuccess = (modelHubAnnotationQueuesForSourceResponse200) & {
   headers: Headers;
 };
-export type modelHubAnnotationQueuesForSourceResponseError = (modelHubAnnotationQueuesForSourceResponse400 | modelHubAnnotationQueuesForSourceResponse403 | modelHubAnnotationQueuesForSourceResponse404 | modelHubAnnotationQueuesForSourceResponse409 | modelHubAnnotationQueuesForSourceResponse500 | modelHubAnnotationQueuesForSourceResponseDefault) & {
+export type modelHubAnnotationQueuesForSourceResponseError = (modelHubAnnotationQueuesForSourceResponse400 | modelHubAnnotationQueuesForSourceResponse403 | modelHubAnnotationQueuesForSourceResponse404 | modelHubAnnotationQueuesForSourceResponse409 | modelHubAnnotationQueuesForSourceResponse500 | modelHubAnnotationQueuesForSourceResponse503 | modelHubAnnotationQueuesForSourceResponseDefault) & {
   headers: Headers;
 };
 
@@ -35667,6 +35678,78 @@ export const modelHubEvalTemplatesGroundTruthUploadCreate = async (templateId: s
 
 
 
+export type modelHubEvalTemplatesRunOnTraceCreateResponse200 = {
+  data: TraceEvalResponseApi
+  status: 200
+}
+
+export type modelHubEvalTemplatesRunOnTraceCreateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubEvalTemplatesRunOnTraceCreateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubEvalTemplatesRunOnTraceCreateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubEvalTemplatesRunOnTraceCreateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubEvalTemplatesRunOnTraceCreateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
+}
+
+export type modelHubEvalTemplatesRunOnTraceCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
+}
+
+export type modelHubEvalTemplatesRunOnTraceCreateResponseSuccess = (modelHubEvalTemplatesRunOnTraceCreateResponse200) & {
+  headers: Headers;
+};
+export type modelHubEvalTemplatesRunOnTraceCreateResponseError = (modelHubEvalTemplatesRunOnTraceCreateResponse400 | modelHubEvalTemplatesRunOnTraceCreateResponse403 | modelHubEvalTemplatesRunOnTraceCreateResponse404 | modelHubEvalTemplatesRunOnTraceCreateResponse409 | modelHubEvalTemplatesRunOnTraceCreateResponse500 | modelHubEvalTemplatesRunOnTraceCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type modelHubEvalTemplatesRunOnTraceCreateResponse = (modelHubEvalTemplatesRunOnTraceCreateResponseSuccess | modelHubEvalTemplatesRunOnTraceCreateResponseError)
+
+export const getModelHubEvalTemplatesRunOnTraceCreateUrl = (templateId: string,) => {
+
+
+
+
+  return `/model-hub/eval-templates/${templateId}/run-on-trace/`
+}
+
+/**
+ * Run an eval against a trace's data. Extracts input/output from the trace
+and passes it to the eval template.
+ * @summary POST /model-hub/eval-templates/<id>/run-on-trace/
+ */
+export const modelHubEvalTemplatesRunOnTraceCreate = async (templateId: string,
+    traceEvalRequestApi: TraceEvalRequestApi, options?: RequestInit): Promise<modelHubEvalTemplatesRunOnTraceCreateResponse> => {
+
+  return apiMutator<modelHubEvalTemplatesRunOnTraceCreateResponse>(getModelHubEvalTemplatesRunOnTraceCreateUrl(templateId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      traceEvalRequestApi,)
+  }
+);}
+
+
+
 export type modelHubEvalTemplatesUpdateUpdateResponse200 = {
   data: EvalTemplateUpdateResponseApi
   status: 200
@@ -39624,15 +39707,20 @@ export type modelHubGetEvalLogsDetailsListResponse500 = {
   status: 500
 }
 
+export type modelHubGetEvalLogsDetailsListResponse503 = {
+  data: EvalApiLogIncompleteResponseApi
+  status: 503
+}
+
 export type modelHubGetEvalLogsDetailsListResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>
 }
 
 export type modelHubGetEvalLogsDetailsListResponseSuccess = (modelHubGetEvalLogsDetailsListResponse200) & {
   headers: Headers;
 };
-export type modelHubGetEvalLogsDetailsListResponseError = (modelHubGetEvalLogsDetailsListResponse400 | modelHubGetEvalLogsDetailsListResponse403 | modelHubGetEvalLogsDetailsListResponse404 | modelHubGetEvalLogsDetailsListResponse409 | modelHubGetEvalLogsDetailsListResponse500 | modelHubGetEvalLogsDetailsListResponseDefault) & {
+export type modelHubGetEvalLogsDetailsListResponseError = (modelHubGetEvalLogsDetailsListResponse400 | modelHubGetEvalLogsDetailsListResponse403 | modelHubGetEvalLogsDetailsListResponse404 | modelHubGetEvalLogsDetailsListResponse409 | modelHubGetEvalLogsDetailsListResponse500 | modelHubGetEvalLogsDetailsListResponse503 | modelHubGetEvalLogsDetailsListResponseDefault) & {
   headers: Headers;
 };
 
@@ -58305,25 +58393,30 @@ export const tracerDashboardCreate = async (dashboardCreateUpdateApi: DashboardC
 
 
 export type tracerDashboardFilterValuesResponse200 = {
-  data: TracerDashboardFilterValues200
+  data: DashboardFilterValuesResponseApi
   status: 200
+}
+
+export type tracerDashboardFilterValuesResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
 }
 
 export type tracerDashboardFilterValuesResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 200 | 400>
 }
 
 export type tracerDashboardFilterValuesResponseSuccess = (tracerDashboardFilterValuesResponse200) & {
   headers: Headers;
 };
-export type tracerDashboardFilterValuesResponseError = (tracerDashboardFilterValuesResponseDefault) & {
+export type tracerDashboardFilterValuesResponseError = (tracerDashboardFilterValuesResponse400 | tracerDashboardFilterValuesResponseDefault) & {
   headers: Headers;
 };
 
 export type tracerDashboardFilterValuesResponse = (tracerDashboardFilterValuesResponseSuccess | tracerDashboardFilterValuesResponseError)
 
-export const getTracerDashboardFilterValuesUrl = (params?: TracerDashboardFilterValuesParams,) => {
+export const getTracerDashboardFilterValuesUrl = (params: TracerDashboardFilterValuesParams,) => {
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
@@ -58345,7 +58438,7 @@ export const getTracerDashboardFilterValuesUrl = (params?: TracerDashboardFilter
 /**
  * Return distinct values for a given metric/attribute, for filter value picker.
  */
-export const tracerDashboardFilterValues = async (params?: TracerDashboardFilterValuesParams, options?: RequestInit): Promise<tracerDashboardFilterValuesResponse> => {
+export const tracerDashboardFilterValues = async (params: TracerDashboardFilterValuesParams, options?: RequestInit): Promise<tracerDashboardFilterValuesResponse> => {
 
   return apiMutator<tracerDashboardFilterValuesResponse>(getTracerDashboardFilterValuesUrl(params),
   {
@@ -59737,7 +59830,7 @@ export const tracerEvalTaskGetUsage = async (params?: TracerEvalTaskGetUsagePara
 
 
 export type tracerEvalTaskListEvalTasksResponse200 = {
-  data: EvalTaskApi[]
+  data: EvalTaskListResponseApi
   status: 200
 }
 
@@ -63845,7 +63938,7 @@ export const tracerProjectListProjectIds = async (params?: TracerProjectListProj
 
 
 export type tracerProjectListProjectsResponse200 = {
-  data: TracerProjectListProjects200
+  data: ProjectListResponseApi
   status: 200
 }
 

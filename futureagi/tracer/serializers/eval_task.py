@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from tracer.constants.eval_tasks import MAX_BOUNDED_HISTORICAL_SPAN_TRACE_ROWS
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import (
     EvalTask,
@@ -10,6 +11,7 @@ from tracer.models.eval_task import (
 )
 from tracer.models.project import Project
 from tracer.serializers.filters import (
+    JsonValueField,
     SortParamListQueryParamField,
     StrictInputSerializer,
     eval_task_filters_field,
@@ -42,6 +44,56 @@ class EvalTaskListWithProjectNameQuerySerializer(EvalTaskListQuerySerializer):
     page_size = serializers.IntegerField(
         required=False, default=10, min_value=1, max_value=500
     )
+
+
+class EvalTaskListMetadataSerializer(serializers.Serializer):
+    total_rows = serializers.IntegerField(min_value=0)
+
+
+class EvalTaskListItemSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField(allow_blank=True, allow_null=True)
+    status = serializers.CharField(allow_blank=True, allow_null=True)
+    run_type = serializers.CharField(allow_blank=True, allow_null=True)
+    filters_applied = JsonValueField(allow_null=True)
+    created_at = serializers.DateTimeField()
+    evals_applied = serializers.ListField(child=serializers.CharField())
+    sampling_rate = serializers.FloatField(allow_null=True)
+    last_run = serializers.DateTimeField(allow_null=True)
+
+
+class EvalTaskListColumnConfigSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField()
+    is_visible = serializers.BooleanField()
+    group_by = serializers.CharField(allow_null=True)
+    output_type = serializers.CharField(required=False, allow_null=True)
+    reverse_output = serializers.BooleanField(required=False, allow_null=True)
+    annotation_label_type = serializers.CharField(required=False, allow_null=True)
+    choices = serializers.ListField(
+        child=serializers.CharField(allow_null=True),
+        required=False,
+        allow_null=True,
+    )
+    settings = JsonValueField(required=False, allow_null=True)
+    choices_map = JsonValueField(required=False, allow_null=True)
+    eval_template_id = serializers.CharField(required=False, allow_null=True)
+    annotators = JsonValueField(required=False, allow_null=True)
+    source_field = serializers.CharField(required=False, allow_null=True)
+    parent_eval_id = serializers.CharField(required=False, allow_null=True)
+
+
+class EvalTaskListResultSerializer(serializers.Serializer):
+    metadata = EvalTaskListMetadataSerializer()
+    table = EvalTaskListItemSerializer(many=True)
+    config = EvalTaskListColumnConfigSerializer(many=True)
+
+
+class EvalTaskListResponseSerializer(serializers.Serializer):
+    """Wire contract for ``GET /tracer/eval-task/list_eval_tasks/``."""
+
+    status = serializers.BooleanField()
+    result = EvalTaskListResultSerializer()
 
 
 class EvalTaskIdQuerySerializer(StrictInputSerializer):
@@ -161,11 +213,27 @@ class EvalTaskSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
-        run_type = attrs.get("run_type")
-        spans_limit = attrs.get("spans_limit")
+        instance = self.instance
+        run_type = attrs.get("run_type", getattr(instance, "run_type", None))
+        row_type = attrs.get("row_type", getattr(instance, "row_type", RowType.SPANS))
+        spans_limit = attrs.get("spans_limit", getattr(instance, "spans_limit", None))
         if run_type == RunType.HISTORICAL and not spans_limit:
             raise serializers.ValidationError(
                 {"spans_limit": "spans_limit is required for historical runs."}
+            )
+        if (
+            run_type == RunType.HISTORICAL
+            and row_type in (RowType.SPANS, RowType.TRACES)
+            and spans_limit is not None
+            and int(spans_limit) > MAX_BOUNDED_HISTORICAL_SPAN_TRACE_ROWS
+        ):
+            raise serializers.ValidationError(
+                {
+                    "spans_limit": (
+                        "Historical span and trace tasks support at most "
+                        f"{MAX_BOUNDED_HISTORICAL_SPAN_TRACE_ROWS} rows."
+                    )
+                }
             )
         if run_type == RunType.CONTINUOUS:
             attrs.pop("spans_limit", None)

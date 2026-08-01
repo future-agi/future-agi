@@ -31,6 +31,12 @@ import { useLLMTracingStoreShallow } from "../states";
 import { logger } from "src/utils/logger";
 import { FILTER_FOR_HAS_EVAL, toBackendFilters } from "../common";
 import { buildDefaultDateEntry } from "./graphFilterUtils";
+import {
+  GRAPH_QUERY_UNAVAILABLE_MESSAGE,
+  getGraphQueryAdjustedMessage,
+  isGraphQueryAdjusted,
+  isGraphQueryDegraded,
+} from "./graphQueryState";
 
 const deltaObject = {
   hour: { hours: 1 },
@@ -138,6 +144,7 @@ const GraphSection = ({
   // Trace Graph Data
   const {
     data: traceGraphData,
+    isError: traceGraphError,
     isFetching: traceGraphLoading,
     isPending: traceGraphPending,
   } = useQuery({
@@ -165,6 +172,7 @@ const GraphSection = ({
   // Span Graph Data
   const {
     data: spanGraphData,
+    isError: spanGraphError,
     isFetching: spanGraphLoading,
     isPending: spanGraphPending,
   } = useQuery({
@@ -191,6 +199,12 @@ const GraphSection = ({
   });
 
   const apiGraphData = selectedTab === "trace" ? traceGraphData : spanGraphData;
+  const apiGraphError =
+    selectedTab === "trace" ? traceGraphError : spanGraphError;
+  const apiGraphUnavailable =
+    apiGraphError || isGraphQueryDegraded(apiGraphData);
+  const apiGraphAdjusted = isGraphQueryAdjusted(apiGraphData);
+  const apiGraphAdjustedMessage = getGraphQueryAdjustedMessage(apiGraphData);
   const apiGraphLoading =
     selectedTab === "trace"
       ? traceGraphLoading && traceGraphPending
@@ -505,6 +519,16 @@ const GraphSection = ({
               <Typography typography="m3" fontWeight="fontWeightMedium">
                 {compareType === "primary" ? "Primary" : "Compare"} Graph
               </Typography>
+              <ShowComponent condition={apiGraphAdjusted}>
+                <Typography
+                  role="status"
+                  title={`${apiGraphData?.query_window_start} – ${apiGraphData?.query_window_end}`}
+                  fontSize="10px"
+                  color="text.secondary"
+                >
+                  {apiGraphAdjustedMessage}
+                </Typography>
+              </ShowComponent>
             </Box>
 
             <ShowComponent
@@ -606,7 +630,8 @@ const GraphSection = ({
                 (selectedGraphConfig ||
                   selectedGraphEvals?.length > 0 ||
                   Object.keys(selectedGraphAttributes || {}).length > 0) &&
-                !apiGraphLoading
+                !apiGraphLoading &&
+                !apiGraphUnavailable
               }
             >
               <ReactApexChart
@@ -621,6 +646,27 @@ const GraphSection = ({
             <ShowComponent condition={apiGraphLoading}>
               <Box sx={{ height: isCollapsed ? 124 : 248 }}>
                 <GraphSkeleton />
+              </Box>
+            </ShowComponent>
+
+            <ShowComponent condition={!apiGraphLoading && apiGraphUnavailable}>
+              <Box
+                sx={{
+                  height: isCollapsed ? 124 : 248,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  px: 2,
+                }}
+              >
+                <Typography
+                  role="alert"
+                  fontSize="12px"
+                  color="text.secondary"
+                  textAlign="center"
+                >
+                  {GRAPH_QUERY_UNAVAILABLE_MESSAGE}
+                </Typography>
               </Box>
             </ShowComponent>
           </Box>

@@ -120,6 +120,19 @@ export function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
   return userFilters;
 }
 
+// Task previews use dedicated lean backend paths: one bounded top-K read,
+// without grid-only exact counts or eval/annotation/content enrichment.
+// eslint-disable-next-line react-refresh/only-export-components
+export function buildPreviewListParams(rowType, projectId, apiFilters) {
+  return {
+    project_id: projectId,
+    page_number: 0,
+    page_size: 50,
+    filters: JSON.stringify(apiFilters),
+    ...(rowType !== "voiceCalls" ? { preview: true } : {}),
+  };
+}
+
 // Deep search: check if a value (including nested JSON) matches query
 function deepMatch(val, q) {
   if (val === null || val === undefined) return false;
@@ -146,20 +159,6 @@ function sortEntries(entries) {
     if (bi !== -1) return 1;
     return 0;
   });
-}
-
-// Find span by id recursively in the observation spans tree.
-function findSpanInTree(spans, spanId) {
-  if (!spans) return null;
-  for (const item of spans) {
-    const span = item.observation_span;
-    if (span?.id === spanId) return span;
-    if (item.children?.length) {
-      const found = findSpanInTree(item.children, spanId);
-      if (found) return found;
-    }
-  }
-  return null;
 }
 
 // Flatten span tree into an ordered list with smart indexing.
@@ -284,22 +283,22 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
       }
 
       const resp = await axios.get(url, {
-        params: {
-          project_id: projectId,
-          page_number: 0,
-          page_size: 50,
-          filters: JSON.stringify(apiFilters),
-        },
+        params: buildPreviewListParams(rowType, projectId, apiFilters),
       });
       const result = resp.data?.result || {};
+      const metadata = result.metadata || {};
       return {
         rows: result.table || result.results || result.data || [],
         total:
-          result.metadata?.total_rows ||
+          metadata.total_rows ||
           result.total_count ||
           result.total ||
           (result.table || []).length,
         columns: result.config || [],
+        isDegraded:
+          metadata.query_complete === false ||
+          metadata.query_status === "degraded" ||
+          metadata.query_error_code === "read_budget_exceeded",
       };
     },
     enabled: !!projectId,
@@ -310,6 +309,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
   const rows = listData?.rows || [];
   const total = listData?.total || 0;
   const columns = listData?.columns || [];
+  const isPreviewDegraded = listData?.isDegraded === true;
   const currentRow = rows[currentRowIndex] || null;
 
   // ── Fetch full detail for the currently selected row ──
@@ -341,21 +341,25 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
         } catch {
           detailData = { ...currentRow };
         }
-      } else if ((rowType === "spans" || rowType === "traces") && traceId) {
+      } else if (rowType === "spans" && spanId) {
+        // A span preview already has the exact selected span id. Hydrating the
+        // whole trace scanned every span for that trace and could silently
+        // substitute the root span when the selected id was stale. Read the
+        // exact span directly so field mapping cannot bind to the wrong row.
+        const { data } = await axios.get(
+          endpoints.project.getObservationSpan(spanId),
+          { params: { preview: true } },
+        );
+        const spanResult = data?.result;
+        detailData = spanResult?.observation_span || spanResult || null;
+      } else if (rowType === "traces" && traceId) {
         const { data } = await axios.get(endpoints.project.getTrace(traceId));
         const traceResult = data?.result;
 
         const spans = traceResult?.observation_spans;
-        if (rowType === "spans" && spanId && spans) {
-          detailData = findSpanInTree(spans, spanId);
-          if (!detailData) {
-            detailData = spans?.[0]?.observation_span || traceResult?.trace;
-          }
-        } else {
-          const traceInfo = traceResult?.trace || {};
-          const allSpans = sortSpansForMapping(flattenSpanTree(spans));
-          detailData = { ...traceInfo, spans: allSpans };
-        }
+        const traceInfo = traceResult?.trace || {};
+        const allSpans = sortSpansForMapping(flattenSpanTree(spans));
+        detailData = { ...traceInfo, spans: allSpans };
       } else if (rowType === "sessions" && currentRow?.session_id) {
         // Sessions need a layered fetch: list_sessions returns flat
         // session-summary rows (id, total_cost, traces_count, etc.) but
@@ -430,7 +434,13 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
 
   // ── Test all configured evals on the current row ──
   const handleRunTest = useCallback(async () => {
-    if (!currentRow || !evalsDetails?.length || !spanDetail) return;
+    if (
+      isPreviewDegraded ||
+      !currentRow ||
+      !evalsDetails?.length ||
+      !spanDetail
+    )
+      return;
 
     setIsTesting(true);
     setTestResults(
@@ -501,7 +511,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
       }),
     );
     setIsTesting(false);
-  }, [currentRow, evalsDetails, spanDetail, rowType]);
+  }, [currentRow, evalsDetails, spanDetail, rowType, isPreviewDegraded]);
 
   // Expose runTest to parent via ref so the Test button in the page
   // footer can trigger it
@@ -518,14 +528,20 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
   useEffect(() => {
     if (!onTestStateChange) return;
     onTestStateChange({
-      canTest: !!currentRow && !!spanDetail && (evalsDetails?.length || 0) > 0,
+      canTest:
+        !isPreviewDegraded &&
+        !!currentRow &&
+        !!spanDetail &&
+        (evalsDetails?.length || 0) > 0,
       isTesting,
+      isPreviewDegraded,
     });
   }, [
     currentRow,
     spanDetail,
     evalsDetails?.length,
     isTesting,
+    isPreviewDegraded,
     onTestStateChange,
   ]);
 
@@ -613,6 +629,34 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
           >
             Failed to load preview
           </Typography>
+        ) : isPreviewDegraded ? (
+          <Box
+            role="alert"
+            sx={{
+              border: "1px solid",
+              borderColor: "warning.main",
+              bgcolor: (theme) => alpha(theme.palette.warning.main, 0.08),
+              borderRadius: "6px",
+              px: 1.5,
+              py: 1.25,
+            }}
+          >
+            <Typography
+              variant="body2"
+              color="warning.main"
+              sx={{ fontSize: "12px", fontWeight: 600 }}
+            >
+              Preview reached the query safety limit
+            </Typography>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ display: "block", fontSize: "11px", mt: 0.5 }}
+            >
+              Narrow the date range or filters, then retry. Testing and saving
+              are disabled until a complete preview loads.
+            </Typography>
+          </Box>
         ) : rows.length === 0 ? (
           <EmptyState
             icon="solar:magnifer-outline"

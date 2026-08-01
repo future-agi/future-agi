@@ -18,17 +18,101 @@ paths actually resolves through the trace evaluator's
 """
 
 import json
+import uuid
 
 import pytest
+from rest_framework import status
 
 # Cycle-breaker — same rationale as the runtime test file.
 import model_hub.tasks  # noqa: F401, E402
+from accounts.models.workspace import Workspace
+from model_hub.models.ai_model import AIModel
+from tracer.models.custom_eval_config import CustomEvalConfig
+from tracer.models.project import Project
 
 
 @pytest.mark.integration
 @pytest.mark.api
 class TestGetEvalAttributesListSpans:
     """Legacy span behaviour — returned shape unchanged."""
+
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            "/tracer/observation-span/get_span_attributes_list/",
+            "/tracer/observation-span/get_eval_attributes_list/",
+        ],
+    )
+    def test_guaranteed_root_keys_survive_empty_bounded_sample(
+        self, endpoint, auth_client, populated_observe_project, monkeypatch
+    ):
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+        project = populated_observe_project["project"]
+        monkeypatch.setattr(
+            AnalyticsQueryService,
+            "get_span_attribute_keys_ch_for_projects",
+            lambda self, project_ids: [],
+        )
+
+        response = auth_client.get(
+            endpoint,
+            {
+                "filters": json.dumps({"project_id": str(project.id)}),
+                "row_type": "spans",
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["query_complete"] is False
+        assert payload["query_status"] == "sampled"
+        assert payload["query_error_code"] == "sample_limit"
+        assert payload["query_sampled"] is True
+        result = set(payload["result"])
+        assert "final_status" in result
+        assert "country" not in result
+
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            "/tracer/observation-span/get_span_attributes_list/",
+            "/tracer/observation-span/get_eval_attributes_list/",
+        ],
+    )
+    def test_guaranteed_root_keys_survive_discovery_failure(
+        self, endpoint, auth_client, populated_observe_project, monkeypatch
+    ):
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+        project = populated_observe_project["project"]
+
+        def fail_discovery(self, project_ids):
+            raise TimeoutError("bounded attribute discovery timed out")
+
+        monkeypatch.setattr(
+            AnalyticsQueryService,
+            "get_span_attribute_keys_ch_for_projects",
+            fail_discovery,
+        )
+
+        response = auth_client.get(
+            endpoint,
+            {
+                "filters": json.dumps({"project_id": str(project.id)}),
+                "row_type": "spans",
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["query_complete"] is False
+        assert payload["query_status"] == "degraded"
+        assert payload["query_error_code"] == "read_budget_exceeded"
+        assert payload["query_sampled"] is False
+        result = set(payload["result"])
+        assert "final_status" in result
+        assert "country" not in result
 
     def test_spans_default_returns_flat_list(
         self, auth_client, populated_observe_project
@@ -268,6 +352,7 @@ class TestSpanAttributeKeysNormalisation:
             "gen_ai.input.foo",
             "bare_string_key",
             "gen_ai.output.bar",
+            "final_status",
         ]
 
     def test_no_curly_braces_in_traces_response(
@@ -307,6 +392,81 @@ class TestSpanAttributeKeysNormalisation:
         assert bad == [], f"Found malformed paths: {bad[:5]}"
 
 
+class TestEvalMappingCardinalityClickHouseOnly:
+    def test_sizes_nested_paths_from_one_bounded_ch_query(self, monkeypatch):
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+        from tracer.views import observation_span as span_views
+
+        captured = {}
+
+        class _Result:
+            data = [
+                {
+                    "max_spans_per_trace": 3,
+                    "max_traces_per_session": 2,
+                }
+            ]
+
+        def fake_execute(self, query, params=None, timeout_ms=None, settings=None):
+            captured.update(
+                query=query,
+                params=params,
+                timeout_ms=timeout_ms,
+                settings=settings,
+            )
+            return _Result()
+
+        monkeypatch.setattr(
+            AnalyticsQueryService,
+            "execute_ch_query",
+            fake_execute,
+        )
+        monkeypatch.setattr(span_views.django_cache, "get", lambda key: None)
+        monkeypatch.setattr(
+            span_views.django_cache, "set", lambda key, value, timeout: None
+        )
+
+        result = span_views.ObservationSpanView()._observed_mapping_cardinality(
+            "11111111-1111-4111-8111-111111111111"
+        )
+
+        assert result == (3, 2)
+        assert "FROM spans" in captured["query"]
+        assert "Trace.objects" not in captured["query"]
+        assert "LIMIT %(input_sample_rows)s" in captured["query"]
+        assert captured["query"].index("LIMIT %(input_sample_rows)s") < captured[
+            "query"
+        ].index("GROUP BY trace_id")
+        assert captured["params"]["input_sample_rows"] == 10_000
+        assert captured["params"]["sample_size"] == 100
+        assert captured["timeout_ms"] == 750
+        assert captured["settings"]["max_threads"] == 2
+        assert captured["settings"]["max_memory_usage"] == 268_435_456
+
+    def test_budget_failure_still_exposes_first_nested_slot(self, monkeypatch):
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+        from tracer.views import observation_span as span_views
+
+        def fail_execute(self, query, params=None, timeout_ms=None, settings=None):
+            raise TimeoutError("bounded test timeout")
+
+        monkeypatch.setattr(
+            AnalyticsQueryService,
+            "execute_ch_query",
+            fail_execute,
+        )
+        monkeypatch.setattr(span_views.django_cache, "get", lambda key: None)
+        monkeypatch.setattr(
+            span_views.django_cache, "set", lambda key, value, timeout: None
+        )
+
+        result = span_views.ObservationSpanView()._observed_mapping_cardinality(
+            "11111111-1111-4111-8111-111111111111"
+        )
+
+        assert result == (1, 1)
+
+
 class TestSpanAttributeKeysPartitionPruning:
     """The recent-window discovery query must prune by the partition key.
 
@@ -317,8 +477,9 @@ class TestSpanAttributeKeysPartitionPruning:
     behind ``observation_type``/``service_name`` in the sort key, so an ordered
     top-N reads the whole window (materializing the fat ``attrs_*`` maps) before
     ``LIMIT`` applies -> Code 396 / Code 159 on high-volume projects. Without the
-    ORDER BY, ``project_id`` leading the sort key lets ``LIMIT 10000`` bound the
-    scan. Also pin that only the Map ``.keys`` subcolumn is read (never values).
+    ORDER BY, ``project_id`` leading the sort key lets the small per-map LIMIT
+    bound the scan. Also pin that only the Map ``.keys`` subcolumn is read
+    (never values).
     """
 
     def _capture_sql(self, monkeypatch, *, recent_days=7) -> str:
@@ -329,8 +490,10 @@ class TestSpanAttributeKeysPartitionPruning:
         class _Result:
             data: list = []
 
-        def _capture(self, query, params, timeout_ms=None):
+        def _capture(self, query, params, timeout_ms=None, settings=None):
             captured["query"] = query
+            captured["timeout_ms"] = timeout_ms
+            captured["settings"] = settings
             return _Result()
 
         monkeypatch.setattr(
@@ -339,13 +502,17 @@ class TestSpanAttributeKeysPartitionPruning:
         AnalyticsQueryService().get_span_attribute_keys_ch_for_projects(
             ["c4de3065-12b5-488c-a814-aa1c8e3f856f"], recent_days=recent_days
         )
+        assert captured["timeout_ms"] == 750
+        assert captured["settings"]["max_threads"] == 2
+        assert captured["settings"]["timeout_overflow_mode"] == "throw"
+        assert captured["settings"]["read_overflow_mode"] == "throw"
         return captured["query"]
 
     def test_windows_by_start_time_without_recency_order(self, monkeypatch):
         sql = self._capture_sql(monkeypatch, recent_days=7)
         # start_time is the partition key -> CH can prune to the window.
         assert "start_time >= now() - toIntervalDay" in sql
-        # The recency ORDER BY is dropped so LIMIT 10000 bounds the scan.
+        # The recency ORDER BY is dropped so the sample LIMIT bounds the scan.
         assert "ORDER BY start_time" not in sql
 
     def test_reads_keys_subcolumn_not_whole_map(self, monkeypatch):
@@ -359,8 +526,11 @@ class TestSpanAttributeKeysPartitionPruning:
 
     def test_preserves_limit_and_type_labels(self, monkeypatch):
         sql = self._capture_sql(monkeypatch, recent_days=7)
-        # The per-map LIMIT and type labels are unchanged by the fix.
-        assert "LIMIT 10000" in sql
+        # Wide maps made the old 10k-row sample exceed the endpoint's 256 MiB
+        # budget. Discovery is explicitly sampled, so keep the smaller cap.
+        # Three per-map samples plus the existing outer catalog cap.
+        assert sql.count("LIMIT 1000") == 4
+        assert "LIMIT 10000" not in sql
         assert "'string'" in sql
         assert "'number'" in sql
         assert "'boolean'" in sql
@@ -373,12 +543,12 @@ class TestSpanAttributeKeysPartitionPruning:
 
     def test_full_project_discovery_skips_order_by_to_short_circuit(self, monkeypatch):
         # recent_days=None (dashboard/metrics filter discovery): no window, so
-        # the ORDER BY must be dropped or LIMIT 10000 can't short-circuit and
+        # the ORDER BY must be dropped or the sample LIMIT can't short-circuit and
         # CH scans the whole project (~477k rows) instead of ~15k.
         sql = self._capture_sql(monkeypatch, recent_days=None)
         assert "start_time >= now()" not in sql
         assert "ORDER BY start_time" not in sql
-        assert "LIMIT 10000" in sql
+        assert sql.count("LIMIT 1000") == 4
 
 
 @pytest.mark.integration
@@ -394,3 +564,133 @@ class TestGetEvalAttributesListUnknownRowType:
             },
         )
         assert response.status_code == 400
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestEvalAttributeProjectScope:
+    @staticmethod
+    def _other_workspace_project(organization, user):
+        suffix = uuid.uuid4().hex[:8]
+        other_workspace = Workspace.objects.create(
+            name=f"Other Eval Attribute Workspace {suffix}",
+            organization=organization,
+            is_active=True,
+            created_by=user,
+        )
+        return Project.objects.create(
+            name=f"Other Eval Attribute Project {suffix}",
+            organization=organization,
+            workspace=other_workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+            metadata={},
+        )
+
+    @pytest.mark.parametrize(
+        "endpoint",
+        [
+            "/tracer/observation-span/get_span_attributes_list/",
+            "/tracer/observation-span/get_eval_attributes_list/",
+        ],
+    )
+    def test_rejects_same_org_other_workspace_before_clickhouse(
+        self, endpoint, auth_client, organization, user, monkeypatch
+    ):
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+        other_project = self._other_workspace_project(organization, user)
+
+        def fail_if_called(*args, **kwargs):
+            raise AssertionError(
+                "ClickHouse must not run before the Project tenant gate"
+            )
+
+        monkeypatch.setattr(
+            AnalyticsQueryService,
+            "get_span_attribute_keys_ch",
+            fail_if_called,
+        )
+
+        response = auth_client.get(
+            endpoint,
+            {
+                "filters": json.dumps({"project_id": str(other_project.id)}),
+                "row_type": "spans",
+            },
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestSavedEvalMappingAttributeInventory:
+    def test_span_picker_keeps_saved_mapping_missing_from_bounded_ch_sample(
+        self, auth_client, observe_project, eval_template, monkeypatch
+    ):
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+        CustomEvalConfig.objects.create(
+            project=observe_project,
+            eval_template=eval_template,
+            name=f"saved-rare-span-{uuid.uuid4().hex[:8]}",
+            mapping={"input_text": "rare_customer_attribute"},
+        )
+        monkeypatch.setattr(
+            AnalyticsQueryService,
+            "get_span_attribute_keys_ch",
+            lambda self, project_id: [{"key": "common_attribute", "type": "string"}],
+        )
+
+        response = auth_client.get(
+            "/tracer/observation-span/get_eval_attributes_list/",
+            {
+                "filters": json.dumps({"project_id": str(observe_project.id)}),
+                "row_type": "spans",
+            },
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"] == [
+            "common_attribute",
+            "final_status",
+            "rare_customer_attribute",
+        ]
+
+    def test_trace_picker_keeps_saved_indexed_path_beyond_sampled_cardinality(
+        self, auth_client, observe_project, eval_template, monkeypatch
+    ):
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+        from tracer.views.observation_span import ObservationSpanView
+
+        saved_path = "spans.7.rare_customer_attribute"
+        CustomEvalConfig.objects.create(
+            project=observe_project,
+            eval_template=eval_template,
+            name=f"saved-rare-trace-{uuid.uuid4().hex[:8]}",
+            mapping={"input_text": saved_path},
+        )
+        monkeypatch.setattr(
+            AnalyticsQueryService,
+            "get_span_attribute_keys_ch",
+            lambda self, project_id: [{"key": "common_attribute", "type": "string"}],
+        )
+        monkeypatch.setattr(
+            ObservationSpanView,
+            "_observed_mapping_cardinality",
+            lambda self, project_id: (1, 1),
+        )
+
+        response = auth_client.get(
+            "/tracer/observation-span/get_eval_attributes_list/",
+            {
+                "filters": json.dumps({"project_id": str(observe_project.id)}),
+                "row_type": "traces",
+            },
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert saved_path in response.json()["result"]

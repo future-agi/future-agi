@@ -125,8 +125,14 @@ METRIC_UNITS: dict[str, str] = {
 # ``rescale_rate_to_percent`` so the result matches the ``%`` unit.
 _RATE_INDICATOR_METRICS = frozenset({"error_rate"})
 
-# Covered by dashboard_attr_rollup. Adding one: extend the MV's ARRAY JOIN list too.
+# Physically stored by dashboard_attr_rollup. Adding one: extend the MV's
+# ARRAY JOIN list too.
 _ROLLUP_COVERED_ATTRS = frozenset({"final_status", "country"})
+
+# Semantically safe root-span attributes for dashboard reads. ``country`` is
+# physically present in the aggregate but is not guaranteed to live on the
+# trace root, so a root-only breakdown could silently omit child-span values.
+_ROLLUP_SAFE_ROOT_ATTRS = frozenset({"final_status"})
 
 # Rollup is hour-resolution; sub-hour granularities keep the spans scan.
 _ROLLUP_GRANULARITIES = frozenset({"hour", "day", "week", "month", "year"})
@@ -520,7 +526,7 @@ class DashboardQueryBuilder:
             and self.granularity in _ROLLUP_GRANULARITIES
             and single_bd is not None
             and single_bd.get("type") == "custom_attribute"
-            and single_bd.get("name") in _ROLLUP_COVERED_ATTRS
+            and single_bd.get("name") in _ROLLUP_SAFE_ROOT_ATTRS
             and not per_metric_filters
             and not self.global_filters
             and self._attr_rollup_window_covered(start_date)
@@ -794,6 +800,11 @@ class DashboardQueryBuilder:
         _trace_id_expr = "e.eval_trace_id"
 
         bd_exprs = []
+        trace_tags_array = (
+            "JSONExtract(dictGetOrDefault("
+            "'trace_dict', 'tags', toUUIDOrZero(e.eval_trace_id), '[]'), "
+            "'Array(String)')"
+        )
         for bd_idx, bd in enumerate(self.breakdowns):
             bd_name = (bd.get("name") or bd.get("id") or "").lower()
             bd_type = bd.get("type", "system_metric")
@@ -820,6 +831,12 @@ class DashboardQueryBuilder:
                     + _eval_source_bucket_expr(exclude="project")
                     + ")"
                 )
+            elif bd_name == "tag":
+                bd_expr = (
+                    f"arrayJoin(if(empty({trace_tags_array}), "
+                    f"['(not set)'], {trace_tags_array}))"
+                )
+
             elif bd_name in SYSTEM_METRICS:
                 need_spans_join = True
                 _, span_col = SYSTEM_METRICS[bd_name]
@@ -919,12 +936,54 @@ class DashboardQueryBuilder:
             op = f.get("operator", "")
             val = f.get("value")
             op_symbol = _get_operator_symbol(op)
-            if not op_symbol:
-                continue
 
             val_key = f"_evf_{i}_val"
 
-            if f_type == "system_metric" and f_name.lower() in SYSTEM_METRICS:
+            if f_type == "system_metric" and f_name.lower() == "tag":
+                if op == "is_set":
+                    where_parts.append(f"notEmpty({trace_tags_array})")
+                    continue
+                if op == "is_not_set":
+                    where_parts.append(f"empty({trace_tags_array})")
+                    continue
+
+                negative = op in (
+                    "not_equal_to",
+                    "not_contains",
+                    "str_not_contains",
+                )
+                if op in ("equal_to", "not_equal_to"):
+                    params[val_key] = str(val).lower()
+                    predicate = (
+                        f"arrayExists(x -> lowerUTF8(x) = "
+                        f"%({val_key})s, {trace_tags_array})"
+                    )
+                elif op in ("contains", "not_contains"):
+                    values = val if isinstance(val, list) else [val]
+                    params[val_key] = tuple(str(item).lower() for item in values)
+                    predicate = (
+                        f"arrayExists(x -> lowerUTF8(x) IN "
+                        f"%({val_key})s, {trace_tags_array})"
+                    )
+                elif op in ("str_contains", "str_not_contains"):
+                    params[val_key] = _coerce_filter_value(val, "str_contains")
+                    predicate = (
+                        f"arrayExists(x -> x ILIKE %({val_key})s, {trace_tags_array})"
+                    )
+                else:
+                    continue
+
+                if negative:
+                    where_parts.append(
+                        f"notEmpty({trace_tags_array}) AND NOT ({predicate})"
+                    )
+                else:
+                    where_parts.append(predicate)
+
+            elif not op_symbol:
+                continue
+
+            elif f_type == "system_metric" and f_name.lower() in SYSTEM_METRICS:
                 # Trace dimension filter → JOIN spans
                 need_spans_join = True
                 _, span_col = SYSTEM_METRICS[f_name.lower()]
@@ -1334,7 +1393,11 @@ class DashboardQueryBuilder:
         "prompt_name": "dictGetOrDefault('prompt_dict', 'prompt_name', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",
         "prompt_version": "concat(dictGetOrDefault('prompt_dict', 'prompt_name', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), ''), ' v', dictGetOrDefault('prompt_dict', 'template_version', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), ''))",
         "prompt_label": "dictGetOrDefault('prompt_label_dict', 'name', ifNull(prompt_label_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",
-        "tag": "arrayJoin(JSONExtract(tags, 'Array(String)'))",
+        "tag": (
+            "arrayJoin(JSONExtract("
+            "dictGetOrDefault('trace_dict', 'tags', toUUID(trace_id), '[]'), "
+            "'Array(String)'))"
+        ),
     }
 
     def _resolve_all_breakdowns(self, params: dict):
@@ -1555,7 +1618,6 @@ class DashboardQueryBuilder:
             "prompt_name": "dictGetOrDefault('prompt_dict', 'prompt_name', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",
             "prompt_version": "concat(dictGetOrDefault('prompt_dict', 'prompt_name', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), ''), ' v', dictGetOrDefault('prompt_dict', 'template_version', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), ''))",
             "prompt_label": "dictGetOrDefault('prompt_label_dict', 'name', ifNull(prompt_label_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",
-            "tag": "arrayJoin(JSONExtract(tags, 'Array(String)'))",
         }
         all_filters = self.global_filters + per_metric_filters
         # Skip filters that belong to other sources (e.g. simulation filters in trace queries)
@@ -1569,6 +1631,56 @@ class DashboardQueryBuilder:
                 f_name = (f.get("metric_name", "") or "").lower()
                 op = f.get("operator", "")
                 val = f.get("value")
+                if f_name == "tag":
+                    tags_array = (
+                        "JSONExtract(dictGetOrDefault("
+                        "'trace_dict', 'tags', toUUID(trace_id), '[]'), "
+                        "'Array(String)')"
+                    )
+                    if op == "is_set":
+                        clauses.append(f"notEmpty({tags_array})")
+                        continue
+                    if op == "is_not_set":
+                        clauses.append(f"empty({tags_array})")
+                        continue
+                    if val is None or val == "" or val == []:
+                        continue
+
+                    param_key = f"f_{idx}_val"
+                    negative = op in (
+                        "not_equal_to",
+                        "not_contains",
+                        "str_not_contains",
+                    )
+                    if op in ("equal_to", "not_equal_to"):
+                        params[param_key] = str(val).lower()
+                        predicate = (
+                            f"arrayExists(x -> lowerUTF8(x) = "
+                            f"%({param_key})s, {tags_array})"
+                        )
+                    elif op in ("contains", "not_contains"):
+                        values = val if isinstance(val, list) else [val]
+                        params[param_key] = tuple(str(item).lower() for item in values)
+                        predicate = (
+                            f"arrayExists(x -> lowerUTF8(x) IN "
+                            f"%({param_key})s, {tags_array})"
+                        )
+                    elif op in ("str_contains", "str_not_contains"):
+                        params[param_key] = _coerce_filter_value(val, "str_contains")
+                        predicate = (
+                            f"arrayExists(x -> x ILIKE %({param_key})s, {tags_array})"
+                        )
+                    else:
+                        logger.warning("Skipping unsupported tag operator: %s", op)
+                        continue
+
+                    if negative:
+                        clauses.append(f"notEmpty({tags_array}) AND NOT ({predicate})")
+                    else:
+                        clauses.append(predicate)
+                    idx += 1
+                    continue
+
                 # Use string-safe column for non-numeric metrics
                 if f_name in _STRING_FILTER_COL:
                     col = _STRING_FILTER_COL[f_name]

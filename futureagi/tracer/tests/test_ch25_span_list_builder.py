@@ -10,6 +10,9 @@ production side-by-side.
 
 from __future__ import annotations
 
+from datetime import datetime
+
+import pytest
 from django.test import override_settings
 
 from tracer.services.clickhouse.v2.query_builders.span_list import (
@@ -20,11 +23,17 @@ PROJECT_ID = "11111111-1111-1111-1111-111111111111"
 EVAL_CONFIG_ID = "22222222-2222-2222-2222-222222222222"
 
 
-def _make_builder(filters=None, sort_params=None, eval_config_ids=None):
+def _make_builder(
+    filters=None,
+    sort_params=None,
+    eval_config_ids=None,
+    page_number=0,
+    page_size=50,
+):
     return SpanListQueryBuilderV2(
         project_id=PROJECT_ID,
-        page_number=0,
-        page_size=50,
+        page_number=page_number,
+        page_size=page_size,
         filters=filters or [],
         sort_params=sort_params or [],
         eval_config_ids=eval_config_ids or [],
@@ -179,8 +188,100 @@ def test_build_with_since_adds_slice_predicate_and_keeps_window():
     # full-window params untouched by the slice
     assert params["start_date"] < since
     # the count query built afterwards must not inherit the slice narrowing
-    count_sql, _ = builder.build_count_query()
+    count_sql, count_params = builder.build_count_query()
     assert "slice_start" not in count_sql
+    assert "slice_start" not in count_params
+    assert "slice_end" not in count_params
+
+
+def test_build_with_adjacent_slice_has_exclusive_end_and_remaining_limit():
+    """One-minute scans are non-overlapping and transfer one global prefix."""
+    from datetime import datetime, timedelta
+
+    builder = _make_builder(page_number=3, page_size=25)
+    slice_end = datetime(2026, 7, 30, 12, 1)
+    slice_start = slice_end - timedelta(minutes=1)
+
+    sql, params = builder.build(
+        since=slice_start,
+        slice_end=slice_end,
+        limit=17,
+    )
+
+    assert "start_time >= %(slice_start)s" in sql
+    assert "start_time < %(slice_end)s" in sql
+    assert params["slice_start"] == slice_start
+    assert params["slice_end"] == slice_end
+    assert params["limit"] == 17
+    # The full request bounds stay present as an additional safety scope.
+    assert "start_time >= %(start_date)s" in sql
+    assert "start_time < %(end_date)s" in sql
+
+
+def test_build_rejects_slice_end_without_start():
+    with pytest.raises(ValueError, match="slice_end requires since"):
+        _make_builder().build(slice_end=datetime.utcnow())
+
+
+def test_string_filter_detection_is_generic_across_key_and_contract_casing():
+    snake_case = _make_builder(
+        filters=[
+            {
+                "column_id": "arbitrary_customer_attribute",
+                "filter_config": {
+                    "col_type": "SPAN_ATTRIBUTE",
+                    "filter_type": "text",
+                    "filter_op": "equals",
+                    "filter_value": "value",
+                },
+            }
+        ]
+    )
+    camel_case = _make_builder(
+        filters=[
+            {
+                "columnId": "arbitrary_camel_key",
+                "filterConfig": {
+                    "colType": "SPAN_ATTRIBUTE",
+                    "filterType": "string",
+                    "filterOp": "equals",
+                    "filterValue": "value",
+                },
+            }
+        ]
+    )
+    numeric = _make_builder(
+        filters=[
+            {
+                "column_id": "arbitrary_number",
+                "filter_config": {
+                    "col_type": "SPAN_ATTRIBUTE",
+                    "filter_type": "number",
+                    "filter_op": "equals",
+                    "filter_value": 1,
+                },
+            }
+        ]
+    )
+
+    assert snake_case.requires_bounded_filter_scan() is True
+    assert camel_case.requires_bounded_filter_scan() is True
+    assert numeric.requires_bounded_filter_scan() is True
+
+    direct_model = _make_builder(
+        filters=[
+            {
+                "column_id": "model",
+                "filter_config": {
+                    "col_type": "SYSTEM_METRIC",
+                    "filter_type": "text",
+                    "filter_op": "equals",
+                    "filter_value": "gpt-4",
+                },
+            }
+        ]
+    )
+    assert direct_model.requires_bounded_filter_scan() is False
 
 
 def test_build_without_since_has_no_slice_predicate():

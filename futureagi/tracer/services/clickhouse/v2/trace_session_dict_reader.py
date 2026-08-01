@@ -359,6 +359,7 @@ def resolve_session_fields(
     trace_session_ids: Iterable[object],
     *,
     project_id: str | None = None,
+    project_ids: Iterable[object] | None = None,
 ) -> dict[str, dict[str, object]]:
     """Batch-resolve ``{trace_session_id (str) -> {external_session_id,
     first_seen, project_id, bookmarked, display_name}}`` — the curated CH identity
@@ -391,14 +392,23 @@ def resolve_session_fields(
       • ``project_id`` is returned as a ``str``.
       • When several input ids resolve to the SAME survivor (straddler old+new
         both passed), each input id maps to its own copy of the one entity.
-      • ``project_id`` (optional kwarg): scope the WHERE to one tenant, pruning on
-        the ``trace_sessions`` ORDER BY ``(project_id, trace_session_id)``
-        sort-key prefix so an eval-path caller reads ~its own sessions instead
-        of the whole table.
+      • ``project_id`` / ``project_ids`` (mutually exclusive optional kwargs):
+        scope the WHERE to one or several allowed tenants, pruning on the
+        ``trace_sessions`` ORDER BY ``(project_id, trace_session_id)`` sort-key
+        prefix so organization-scoped callers never FINAL-merge all tenants.
       • Returns ``{}`` for empty input (no CH round-trip).
     """
     ids = {str(s) for s in trace_session_ids if s}
     if not ids:
+        return {}
+    if project_id is not None and project_ids is not None:
+        raise ValueError("Pass either project_id or project_ids, not both")
+    scoped_project_ids = (
+        tuple(sorted({str(value) for value in project_ids if value}))
+        if project_ids is not None
+        else ()
+    )
+    if project_ids is not None and not scoped_project_ids:
         return {}
 
     client = _get_client()
@@ -409,6 +419,9 @@ def resolve_session_fields(
     if project_id:
         params["pid"] = str(project_id)
         project_clause = " AND ts.project_id = %(pid)s"
+    elif scoped_project_ids:
+        params["pids"] = scoped_project_ids
+        project_clause = " AND ts.project_id IN %(pids)s"
     try:
         # Resolve new→old in the inner subquery (plain (input_id, resolved_id)
         # columns), join the curated table on the resolved id as a plain column,

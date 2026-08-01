@@ -184,9 +184,7 @@ class UserIdFilterTests(unittest.TestCase):
         self.assertNotIn("FROM end_users", sql)
         self.assertIn("FROM tracer_enduser", sql)
         self.assertIn("user_id =", sql)
-        self.assertEqual(
-            b._params.get("col_1"), "08ad78f8-1974-45c1-b6bc-4f2b2ba0b243"
-        )
+        self.assertEqual(b._params.get("col_1"), "08ad78f8-1974-45c1-b6bc-4f2b2ba0b243")
 
     @pytest.mark.xfail(
         reason=(
@@ -236,8 +234,8 @@ class UserIdFilterTests(unittest.TestCase):
         self.assertIsNotNone(sql)
         self.assertIn("trace_id IN (", sql)
         self.assertIn("FROM tracer_enduser", sql)
-        self.assertIn("user_id LIKE", sql)
-        self.assertEqual(b._params.get("col_1"), "%admin%")
+        self.assertIn("positionUTF8(toString(user_id)", sql)
+        self.assertEqual(b._params.get("col_1"), "admin")
 
     def test_user_id_not_contains_flips_outer(self):
         b = self._build()
@@ -250,9 +248,11 @@ class UserIdFilterTests(unittest.TestCase):
         )
         self.assertIsNotNone(sql)
         self.assertIn("trace_id NOT IN (", sql)
-        self.assertIn("user_id LIKE", sql)
-        self.assertNotIn("user_id NOT LIKE", sql)
-        self.assertEqual(b._params.get("col_1"), "%admin%")
+        # Negation remains on the outer trace-id membership set; the inner
+        # dimension lookup is the positive literal substring predicate.
+        self.assertIn("positionUTF8(toString(user_id)", sql)
+        self.assertIn("> 0", sql)
+        self.assertEqual(b._params.get("col_1"), "admin")
 
     def test_user_id_null_ops_do_not_query_end_users(self):
         # Null ops compare end_user_id against the zero-UUID directly — no

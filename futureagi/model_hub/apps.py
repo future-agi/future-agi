@@ -1,7 +1,50 @@
+import os
+
 import structlog
 from django.apps import AppConfig
 
 logger = structlog.get_logger(__name__)
+
+STARTUP_SAFE_MANAGEMENT_COMMANDS = frozenset(
+    {
+        "check",
+        "collectstatic",
+        "grpcrunaioserver",
+        "runserver",
+        "start_temporal_worker",
+    }
+)
+
+
+def startup_db_mutations_disabled() -> bool:
+    value = os.getenv("NO_STARTUP_DB_MUTATIONS", "false").strip().lower()
+    if value not in {"true", "false"}:
+        raise RuntimeError("NO_STARTUP_DB_MUTATIONS must be exactly 'true' or 'false'")
+    return value == "true"
+
+
+def guarded_management_command(argv: list[str]) -> str | None:
+    if not argv:
+        return None
+
+    executable = os.path.basename(argv[0])
+    command: str | None = None
+    if executable == "manage.py" and len(argv) >= 2:
+        command = argv[1]
+    elif executable in {"django-admin", "django-admin.py"} and len(argv) >= 2:
+        command = argv[1]
+    elif (
+        executable.startswith("python")
+        and len(argv) >= 4
+        and argv[1:3] == ["-m", "django"]
+    ):
+        command = argv[3]
+
+    if command is None:
+        return None
+    if command in STARTUP_SAFE_MANAGEMENT_COMMANDS:
+        return None
+    return command
 
 
 class ModelHubConfig(AppConfig):
@@ -14,6 +57,16 @@ class ModelHubConfig(AppConfig):
         import sys
 
         import model_hub.signals  # noqa: F401
+
+        if startup_db_mutations_disabled():
+            if command := guarded_management_command(sys.argv):
+                raise RuntimeError(
+                    f"{command} is disabled while NO_STARTUP_DB_MUTATIONS=true"
+                )
+            logger.info(
+                "Startup database mutations disabled; skipping seed and schema setup"
+            )
+            return
 
         if "migrate" in sys.argv or "makemigrations" in sys.argv:
             return
@@ -183,6 +236,32 @@ class ModelHubConfig(AppConfig):
         """
         from tracer.services.clickhouse.schema import should_drop_legacy_chain
 
+        # Do not infer the live table shape from a rollout flag. During the
+        # US CH25 cutover the legacy table had already been removed while
+        # CH25_DROP_LEGACY_CDC_CHAIN was false in some backend workers. Every
+        # worker startup consequently emitted UNKNOWN_TABLE for tracer_trace.
+        # Probe the actual read-only schema and warm whichever table exists.
+        trace_warmup = None
+        try:
+            if ch.table_exists("traces"):
+                trace_warmup = (
+                    "SELECT project_id, count() FROM traces "
+                    "WHERE is_deleted = 0 "
+                    "AND created_at >= now() - INTERVAL 7 DAY "
+                    "GROUP BY project_id",
+                    "traces (7d)",
+                )
+            elif ch.table_exists("tracer_trace"):
+                trace_warmup = (
+                    "SELECT project_id, count() FROM tracer_trace "
+                    "WHERE _peerdb_is_deleted = 0 "
+                    "AND created_at >= now() - INTERVAL 7 DAY "
+                    "GROUP BY project_id",
+                    "tracer_trace (7d)",
+                )
+        except Exception as e:
+            logger.warning("CH trace cache-warm table probe failed: %s", e)
+
         warmup_queries = [
             # Warm spans index + light columns for recent data. The v2
             # spans table uses `is_deleted`; pre-cutover prod still
@@ -195,14 +274,9 @@ class ModelHubConfig(AppConfig):
                 "GROUP BY project_id",
                 "spans (7d)",
             ),
-            # Warm tracer_trace for recent data
-            (
-                "SELECT project_id, count() FROM tracer_trace "
-                "WHERE _peerdb_is_deleted = 0 "
-                "AND created_at >= now() - INTERVAL 7 DAY "
-                "GROUP BY project_id",
-                "tracer_trace (7d)",
-            ),
+            # CH25 reads trace metadata from the canonical `traces` table.
+            # Warming a table that does not exist used to emit four 30-second
+            # failures on every backend rollout in the US cluster.
             # Warm usage_apicalllog for eval metrics
             (
                 "SELECT organization_id, count() FROM usage_apicalllog "
@@ -221,20 +295,43 @@ class ModelHubConfig(AppConfig):
                 "spans_hourly_rollup (7d)",
             ),
         ]
+        if trace_warmup is not None:
+            warmup_queries.insert(1, trace_warmup)
 
         # When the legacy chain is retained (prod default), also warm
-        # the legacy aggregate so it stays hot until the cutover.
+        # the legacy aggregate so it stays hot until the cutover. The
+        # rollout flag is not proof that the table still exists: during a
+        # staggered CH25 cutover the aggregate may already have been removed
+        # while an old worker still has the flag disabled. Probe the actual
+        # read-only schema first so startup never issues a guaranteed
+        # UNKNOWN_TABLE query.
         if not should_drop_legacy_chain():
-            warmup_queries.append(
-                (
-                    "SELECT count() FROM span_metrics_hourly "
-                    "WHERE hour >= now() - INTERVAL 7 DAY",
-                    "span_metrics_hourly (7d, legacy)",
-                )
-            )
+            try:
+                if ch.table_exists("span_metrics_hourly"):
+                    warmup_queries.append(
+                        (
+                            "SELECT count() FROM span_metrics_hourly "
+                            "WHERE hour >= now() - INTERVAL 7 DAY",
+                            "span_metrics_hourly (7d, legacy)",
+                        )
+                    )
+            except Exception as e:
+                logger.warning("CH legacy metrics cache-warm table probe failed: %s", e)
         for query, label in warmup_queries:
             try:
-                ch.execute_read(query, timeout_ms=30000)
+                ch.execute_read(
+                    query,
+                    timeout_ms=750,
+                    settings={
+                        "max_threads": 2,
+                        "max_memory_usage": 128 * 1024 * 1024,
+                        "max_bytes_to_read": 512 * 1024 * 1024,
+                        "read_overflow_mode": "break",
+                        "max_result_rows": 2000,
+                        "result_overflow_mode": "break",
+                        "timeout_overflow_mode": "break",
+                    },
+                )
                 logger.info(f"CH cache warmed: {label}")
             except Exception as e:
                 logger.warning(f"CH cache warm failed for {label}: {e}")

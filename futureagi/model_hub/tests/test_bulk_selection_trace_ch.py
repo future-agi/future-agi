@@ -2,21 +2,24 @@
 
 ``resolve_filtered_trace_ids`` is ClickHouse-only (the PG tracer tables are being
 dropped), so these unit-test the wiring the deleted PG-seeded suite used to
-cover: the all-history time injection, the cap+1 truncation sentinel (the trace
-``build()`` has no internal +1, unlike voice), exclude, voice/simulator flag
-passthrough, fail-closed propagation, the workspace early-return, and the
-cross-org guard. The builder SQL itself lives in the tracer builder tests and
-real CH parity in the ``ch_rehearsal`` suite — here the builder + CH client are
-faked so the *wiring* is asserted deterministically without a live ClickHouse.
+cover: all-history injection, unique cap+1 truncation, exclusion refill,
+current-state filtering, voice/simulator flag passthrough, fail-closed
+propagation, the workspace early-return, and the cross-org guard. ClickHouse is
+faked so the wiring and bounded-read contract are deterministic.
 """
 
 from __future__ import annotations
+
+import re
+import uuid
+from datetime import datetime, timedelta
 
 import pytest
 from structlog.testing import capture_logs
 
 from model_hub.models.ai_model import AIModel
 from model_hub.services.bulk_selection import (
+    BulkTraceSelectionIncomplete,
     ResolveResult,
     _resolve_trace_ids_clickhouse,
     _resolve_voice_call_ids_clickhouse,
@@ -30,26 +33,23 @@ class _FakeResult:
         self.data = rows
 
 
-def _install_fake_trace_builder(monkeypatch, *, rows, capture):
-    """Patch TraceListQueryBuilder + AnalyticsQueryService so
-    ``_resolve_trace_ids_clickhouse`` runs against a fake CH returning ``rows``.
-    ``capture`` records the builder constructor kwargs (page_size, filters)."""
-
-    class _FakeBuilder:
-        def __init__(self, **kwargs):
-            capture.update(kwargs)
-
-        def build(self):
-            return "SELECT trace_id FROM traces", {}
+def _install_fake_trace_analytics(monkeypatch, handler, calls):
+    """Run the bounded trace resolver against a deterministic fake CH."""
 
     class _FakeAnalytics:
-        def execute_ch_query(self, query, params, timeout_ms=None):
-            return _FakeResult(rows)
+        def execute_ch_query(self, query, params, timeout_ms=None, settings=None):
+            call = {
+                "query": query,
+                "params": params,
+                "timeout_ms": timeout_ms,
+                "settings": settings,
+            }
+            calls.append(call)
+            outcome = handler(call, len(calls) - 1)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return _FakeResult(outcome)
 
-    monkeypatch.setattr(
-        "tracer.services.clickhouse.query_builders.trace_list.TraceListQueryBuilder",
-        _FakeBuilder,
-    )
     monkeypatch.setattr(
         "tracer.services.clickhouse.query_service.AnalyticsQueryService",
         _FakeAnalytics,
@@ -57,7 +57,7 @@ def _install_fake_trace_builder(monkeypatch, *, rows, capture):
 
 
 def _install_fake_voice_builder(monkeypatch, *, rows, capture):
-    """Patch VoiceCallListQueryBuilder + AnalyticsQueryService for the voice
+    """Patch VoiceCallListQueryBuilderV2 + AnalyticsQueryService for the voice
     resolver, and neutralize the simulator post-filter (a second CH read)."""
 
     class _FakeBuilder:
@@ -72,7 +72,7 @@ def _install_fake_voice_builder(monkeypatch, *, rows, capture):
             return _FakeResult(rows)
 
     monkeypatch.setattr(
-        "tracer.services.clickhouse.query_builders.VoiceCallListQueryBuilder",
+        "tracer.services.clickhouse.v2.query_builders.voice_call_list.VoiceCallListQueryBuilderV2",
         _FakeBuilder,
     )
     monkeypatch.setattr(
@@ -86,61 +86,389 @@ def _install_fake_voice_builder(monkeypatch, *, rows, capture):
 
 
 # ---------------------------------------------------------------------------
-# _resolve_trace_ids_clickhouse — cap+1 sentinel, exclude, failure
+# _resolve_trace_ids_clickhouse — unique cap, exclusion, latest state, failure
 # ---------------------------------------------------------------------------
-def test_trace_requests_cap_plus_one_page(monkeypatch):
-    # The trace build() LIMIT is exactly page_size (no internal +1, unlike
-    # voice), so the resolver MUST request cap+1 or a >cap add silently caps at
-    # cap instead of reporting truncation (→ selection_too_large upstream).
-    capture: dict = {}
-    _install_fake_trace_builder(
+def test_trace_healthy_path_uses_unique_cap_plus_one_with_hard_budget(monkeypatch):
+    calls = []
+    _install_fake_trace_analytics(
         monkeypatch,
-        rows=[{"trace_id": f"t{i}"} for i in range(11)],
-        capture=capture,
+        lambda _call, _index: [{"trace_id": f"t{i}"} for i in range(3)],
+        calls,
     )
     res = _resolve_trace_ids_clickhouse(
-        project_id="p1", filters=[], exclude_ids=set(), cap=10,
+        project_id="p1",
+        filters=[],
+        exclude_ids=set(),
+        cap=2,
         annotation_label_ids=[],
     )
-    assert capture["page_size"] == 11  # cap + 1, not cap
+    assert res.ids == ["t0", "t1"]
     assert res.truncated is True
-    assert res.total_matching == 11
+    assert res.total_matching == 3
+    assert len(calls) == 1
+    assert "FROM spans FINAL" in calls[0]["query"]
+    assert "GROUP BY trace_id" in calls[0]["query"]
+    assert calls[0]["params"]["bulk_target"] == 3
+    assert calls[0]["timeout_ms"] <= 250
+    assert calls[0]["settings"]["timeout_overflow_mode"] == "throw"
+    assert calls[0]["settings"]["read_overflow_mode"] == "throw"
 
 
-def test_trace_cap_sentinel_survives_exclusion(monkeypatch):
-    # An excluded sentinel row drops the list to cap; truncated must stay True
-    # (more non-excluded rows may lie beyond the fetched window).
-    _install_fake_trace_builder(
+def test_trace_exclusions_are_applied_before_cap_and_refilled(monkeypatch):
+    calls = []
+    _install_fake_trace_analytics(
         monkeypatch,
-        rows=[{"trace_id": f"t{i}"} for i in range(11)],
-        capture={},
+        lambda _call, _index: [
+            {"trace_id": "t1"},
+            {"trace_id": "t2"},
+            {"trace_id": "t3"},
+        ],
+        calls,
     )
     res = _resolve_trace_ids_clickhouse(
-        project_id="p1", filters=[], exclude_ids={"t0"}, cap=10,
+        project_id="p1",
+        filters=[],
+        exclude_ids={"t0"},
+        cap=2,
         annotation_label_ids=[],
     )
-    assert res.ids == [f"t{i}" for i in range(1, 11)]
-    assert res.total_matching == 11
+    assert res.ids == ["t1", "t2"]
+    assert res.total_matching == 3
     assert res.truncated is True
+    assert "trace_id NOT IN %(bulk_excluded_trace_ids)s" in calls[0]["query"]
+    assert calls[0]["params"]["bulk_excluded_trace_ids"] == ("t0",)
+
+
+def test_trace_duplicate_rows_cannot_consume_unique_cap(monkeypatch):
+    calls = []
+
+    def _handler(_call, index):
+        if index == 0:
+            return TimeoutError("whole-window budget")
+        if index == 1:
+            # Defensive simulation of unmerged duplicate rows despite the
+            # grouped seed contract. Only two unique IDs occupy three rows.
+            return [
+                {"trace_id": "t1"},
+                {"trace_id": "t1"},
+                {"trace_id": "t2"},
+            ]
+        return [{"trace_id": "t3"}]
+
+    _install_fake_trace_analytics(monkeypatch, _handler, calls)
+    res = _resolve_trace_ids_clickhouse(
+        project_id="p1",
+        filters=[],
+        exclude_ids=set(),
+        cap=2,
+        annotation_label_ids=[],
+    )
+    assert res.ids == ["t1", "t2"]
+    assert res.total_matching == 3
+    assert res.truncated is True
+    assert "GROUP BY trace_id" in calls[1]["query"]
+    assert calls[2]["params"]["skip_trace_ids"] == ("t1", "t2")
+
+
+def test_trace_candidate_probe_uses_latest_state_and_rejects_stale_match(
+    monkeypatch,
+):
+    calls = []
+    now = datetime.utcnow().replace(microsecond=0)
+    time_filter = {
+        "column_id": "start_time",
+        "filter_config": {
+            "filter_type": "datetime",
+            "filter_op": "between",
+            "filter_value": [now - timedelta(minutes=1), now],
+        },
+    }
+    attr_filter = {
+        "column_id": "mutable_status",
+        "filter_config": {
+            "col_type": "SPAN_ATTRIBUTE",
+            "filter_type": "text",
+            "filter_op": "equals",
+            "filter_value": "live",
+        },
+    }
+
+    def _handler(call, index):
+        if index == 0:
+            return TimeoutError("whole-window budget")
+        if "max(start_time) AS bulk_order_start_time" in call["query"]:
+            return [{"trace_id": "stale"}, {"trace_id": "live"}]
+        # The current-state probe rejects the candidate whose old version was
+        # the only one matching the mutable attribute.
+        return [{"trace_id": "live"}]
+
+    _install_fake_trace_analytics(monkeypatch, _handler, calls)
+    res = _resolve_trace_ids_clickhouse(
+        project_id="p1",
+        filters=[time_filter, attr_filter],
+        exclude_ids=set(),
+        cap=2,
+        annotation_label_ids=[],
+    )
+    assert res.ids == ["live"]
+    assert res.truncated is False
+    probe = next(call for call in calls if "SELECT DISTINCT trace_id" in call["query"])
+    # Both the candidate root and the any-span attribute membership subquery
+    # must collapse ReplacingMergeTree versions before testing is_deleted/attrs.
+    assert probe["query"].count("FROM spans FINAL") >= 2
+    assert probe["params"]["candidate_trace_ids"] == ("stale", "live")
+
+
+def test_trace_root_attribute_filter_uses_scalar_seed_and_full_window_probe(
+    monkeypatch,
+):
+    calls = []
+    now = datetime.utcnow().replace(microsecond=0)
+    filters = [
+        {
+            "column_id": "start_time",
+            "filter_config": {
+                "filter_type": "datetime",
+                "filter_op": "between",
+                "filter_value": [now - timedelta(minutes=1), now],
+            },
+        },
+        {
+            "column_id": "final_status",
+            "filter_config": {
+                "col_type": "SPAN_ATTRIBUTE",
+                "filter_type": "text",
+                "filter_op": "equals",
+                "filter_value": "status_rejected",
+            },
+        },
+    ]
+
+    def _handler(_call, index):
+        if index == 0:
+            return TimeoutError("whole-window budget")
+        return [{"trace_id": "matched"}]
+
+    _install_fake_trace_analytics(monkeypatch, _handler, calls)
+    res = _resolve_trace_ids_clickhouse(
+        project_id="p1",
+        filters=filters,
+        exclude_ids=set(),
+        cap=2,
+        annotation_label_ids=[],
+    )
+    assert res.ids == ["matched"]
+    assert res.truncated is False
+    assert len(calls) == 3
+    assert all("FINAL" not in call["query"] for call in calls)
+    assert "final_status" not in calls[1]["query"]
+    assert "LIMIT 1 BY grouped_trace_id" in calls[1]["query"]
+    assert "final_status" in calls[2]["query"]
+    assert calls[2]["params"]["candidate_trace_ids"] == ("matched",)
+
+
+@pytest.mark.django_db
+def test_trace_bulk_selection_real_ch_uses_latest_version_and_tombstone(monkeypatch):
+    """FINAL must reject an old matching value and a deleted latest version."""
+
+    from tracer.services.clickhouse.query_service import (
+        AnalyticsQueryService as RealAnalyticsQueryService,
+    )
+    from tracer.services.clickhouse.v2 import get_reader, get_v2_config
+
+    database = str(get_v2_config().get("database") or "")
+    if not database.startswith("test_"):
+        pytest.skip(
+            "refusing to run the ClickHouse mutation fixture outside a test database"
+        )
+
+    project_id = uuid.uuid4()
+    table = f"bulk_trace_latest_{uuid.uuid4().hex[:10]}"
+    started_at = datetime.utcnow().replace(microsecond=0)
+    matching_trace = "00000000-0000-0000-0000-000000000010"
+    stale_trace = "00000000-0000-0000-0000-000000000020"
+    deleted_trace = "00000000-0000-0000-0000-000000000030"
+    duplicate_trace = "00000000-0000-0000-0000-000000000040"
+    columns = [
+        "project_id",
+        "observation_type",
+        "service_name",
+        "start_time",
+        "trace_id",
+        "id",
+        "parent_span_id",
+        "name",
+        "attrs_string",
+        "attrs_number",
+        "attrs_bool",
+        "is_deleted",
+        "_version",
+    ]
+
+    with get_reader() as reader:
+        ch = reader._client
+        ch.command(
+            f"""
+            CREATE TABLE {table} (
+                project_id UUID,
+                observation_type LowCardinality(String),
+                service_name LowCardinality(String),
+                start_time DateTime64(6, 'UTC'),
+                trace_id String,
+                id String,
+                parent_span_id String,
+                name String,
+                attrs_string Map(LowCardinality(String), String),
+                attrs_number Map(LowCardinality(String), Float64),
+                attrs_bool Map(LowCardinality(String), UInt8),
+                is_deleted UInt8,
+                _version UInt64
+            )
+            ENGINE = ReplacingMergeTree(_version, is_deleted)
+            PARTITION BY toDate(start_time)
+            ORDER BY (
+                project_id, observation_type, service_name,
+                toStartOfHour(start_time), trace_id, id
+            )
+            """
+        )
+        try:
+            ch.command(f"SYSTEM STOP MERGES {table}")
+
+            def _insert(
+                trace_id,
+                span_id,
+                status,
+                *,
+                version,
+                deleted=0,
+            ):
+                ch.insert(
+                    table,
+                    [
+                        [
+                            project_id,
+                            "span",
+                            "svc",
+                            started_at,
+                            trace_id,
+                            span_id,
+                            "",
+                            "root",
+                            {"final_status": status},
+                            {},
+                            {},
+                            deleted,
+                            version,
+                        ]
+                    ],
+                    column_names=columns,
+                )
+
+            _insert(matching_trace, "root-match", "status_rejected", version=1)
+            _insert(stale_trace, "root-stale", "status_rejected", version=1)
+            _insert(stale_trace, "root-stale", "status_approved", version=2)
+            _insert(deleted_trace, "root-deleted", "status_rejected", version=1)
+            _insert(
+                deleted_trace,
+                "root-deleted",
+                "status_rejected",
+                version=2,
+                deleted=1,
+            )
+            _insert(duplicate_trace, "root-dup-a", "status_rejected", version=1)
+            _insert(duplicate_trace, "root-dup-b", "status_rejected", version=1)
+
+            # Keep the fixture meaningful: the old pre-FINAL shape sees both
+            # the stale value and the live row preceding the tombstone.
+            naive = {
+                row[0]
+                for row in ch.query(
+                    f"SELECT trace_id FROM {table} "
+                    "WHERE is_deleted = 0 "
+                    "AND attrs_string['final_status'] = 'status_rejected'"
+                ).result_rows
+            }
+            assert stale_trace in naive
+            assert deleted_trace in naive
+
+            real_analytics = RealAnalyticsQueryService()
+
+            class _IsolatedTableAnalytics:
+                def execute_ch_query(
+                    self,
+                    query,
+                    params=None,
+                    timeout_ms=10_000,
+                    settings=None,
+                ):
+                    isolated_query = re.sub(
+                        r"\bspans\b",
+                        table,
+                        query,
+                    )
+                    return real_analytics.execute_ch_query(
+                        isolated_query,
+                        params,
+                        timeout_ms=timeout_ms,
+                        settings=settings,
+                    )
+
+            monkeypatch.setattr(
+                "tracer.services.clickhouse.query_service.AnalyticsQueryService",
+                _IsolatedTableAnalytics,
+            )
+            filters = [
+                {
+                    "column_id": "start_time",
+                    "filter_config": {
+                        "filter_type": "datetime",
+                        "filter_op": "between",
+                        "filter_value": [
+                            started_at - timedelta(minutes=1),
+                            started_at + timedelta(minutes=1),
+                        ],
+                    },
+                },
+                {
+                    "column_id": "final_status",
+                    "filter_config": {
+                        "col_type": "SPAN_ATTRIBUTE",
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "status_rejected",
+                    },
+                },
+            ]
+            result = _resolve_trace_ids_clickhouse(
+                project_id=project_id,
+                filters=filters,
+                exclude_ids=set(),
+                cap=10,
+                annotation_label_ids=[],
+            )
+            assert set(result.ids) == {matching_trace, duplicate_trace}
+            assert len(result.ids) == 2
+            assert result.truncated is False
+        finally:
+            ch.command(f"SYSTEM START MERGES {table}")
+            ch.command(f"DROP TABLE IF EXISTS {table}")
 
 
 def test_trace_ch_query_failure_propagates(monkeypatch):
     # CH is the sole backend — a failure must propagate, not resolve to empty.
-    class _Boom:
-        def __init__(self, **kwargs):
-            pass
-
-        def build(self):
-            raise RuntimeError("CH down")
-
-    monkeypatch.setattr(
-        "tracer.services.clickhouse.query_builders.trace_list.TraceListQueryBuilder",
-        _Boom,
+    _install_fake_trace_analytics(
+        monkeypatch,
+        lambda _call, _index: RuntimeError("CH down"),
+        [],
     )
     with capture_logs() as logs:
         with pytest.raises(RuntimeError, match="CH down"):
             _resolve_trace_ids_clickhouse(
-                project_id="p1", filters=[], exclude_ids=set(), cap=10,
+                project_id="p1",
+                filters=[],
+                exclude_ids=set(),
+                cap=10,
                 annotation_label_ids=[],
             )
     # The failure must leave a breadcrumb for log-based alerting before it raises.
@@ -151,46 +479,168 @@ def test_trace_ch_query_failure_propagates(monkeypatch):
     )
 
 
+def test_trace_read_timeout_never_returns_partial_or_empty_success(monkeypatch):
+    calls = []
+    _install_fake_trace_analytics(
+        monkeypatch,
+        lambda _call, _index: TimeoutError("read budget"),
+        calls,
+    )
+    with pytest.raises(
+        BulkTraceSelectionIncomplete,
+        match="Could not prove the complete trace selection",
+    ):
+        _resolve_trace_ids_clickhouse(
+            project_id="p1",
+            filters=[],
+            exclude_ids=set(),
+            cap=10,
+            annotation_label_ids=[],
+        )
+    # One exact fast-path attempt followed by bounded retries of the same
+    # newest slice down to the one-minute floor.
+    assert len(calls) >= 2
+    assert all(call["timeout_ms"] <= 750 for call in calls)
+
+
+def test_trace_future_skewed_root_keeps_bulk_selection_incomplete(monkeypatch):
+    now = datetime(2026, 7, 31, 3)
+
+    class _FrozenDateTime(datetime):
+        @classmethod
+        def utcnow(cls):
+            return now
+
+    calls = []
+
+    def _handler(_call, index):
+        if index == 0:
+            return TimeoutError("whole-window budget")
+        if index == 1:
+            return [{"future_tail_row": 1}]
+        raise AssertionError("fallback must not run after a future-tail row")
+
+    monkeypatch.setattr(
+        "model_hub.services.bulk_selection.datetime",
+        _FrozenDateTime,
+    )
+    _install_fake_trace_analytics(monkeypatch, _handler, calls)
+    filters = [
+        {
+            "column_id": "start_time",
+            "filter_config": {
+                "filter_type": "datetime",
+                "filter_op": "between",
+                "filter_value": [
+                    now - timedelta(days=7),
+                    now + timedelta(hours=4),
+                ],
+            },
+        }
+    ]
+
+    with pytest.raises(BulkTraceSelectionIncomplete):
+        _resolve_trace_ids_clickhouse(
+            project_id="p1",
+            filters=filters,
+            exclude_ids=set(),
+            cap=10,
+            annotation_label_ids=[],
+        )
+
+    assert len(calls) == 2
+    tail_call = calls[1]
+    assert "FROM spans" in tail_call["query"]
+    assert "FINAL" not in tail_call["query"]
+    assert "parent_span_id IS NULL" in tail_call["query"]
+    assert tail_call["params"]["future_tail_start"] == now + timedelta(minutes=5)
+    assert tail_call["params"]["future_tail_end"] == now + timedelta(hours=4)
+    assert tail_call["timeout_ms"] == 100
+    assert tail_call["settings"]["max_threads"] == 1
+    assert tail_call["settings"]["max_memory_usage"] == 64 * 1024 * 1024
+
+
 # ---------------------------------------------------------------------------
-# _resolve_voice_call_ids_clickhouse — voice build() has its own internal +1
+# _resolve_voice_call_ids_clickhouse — bounded trace candidate engine
 # ---------------------------------------------------------------------------
 def test_voice_truncation_and_flag_passthrough(monkeypatch):
-    # The voice build() adds LIMIT cap+1 internally, so the resolver passes
-    # page_size=cap; remove_simulation_calls must reach the builder.
     capture: dict = {}
-    _install_fake_voice_builder(
-        monkeypatch,
-        rows=[{"trace_id": f"v{i}"} for i in range(3)],
-        capture=capture,
+
+    def _fake_trace_resolver(**kwargs):
+        capture.update(kwargs)
+        return ResolveResult(ids=["v0", "v1"], total_matching=3, truncated=True)
+
+    monkeypatch.setattr(
+        "model_hub.services.bulk_selection._resolve_trace_ids_clickhouse",
+        _fake_trace_resolver,
     )
     res = _resolve_voice_call_ids_clickhouse(
-        project_id="p1", filters=[], exclude_ids=set(), cap=2,
-        remove_simulation_calls=True, annotation_label_ids=[],
+        project_id="p1",
+        filters=[],
+        exclude_ids=set(),
+        cap=2,
+        remove_simulation_calls=True,
+        annotation_label_ids=[],
     )
-    assert capture["page_size"] == 2  # voice adds its own +1
-    assert capture["remove_simulation_calls"] is True
+    assert capture["root_observation_type"] == "conversation"
+    assert callable(capture["candidate_post_filter"])
     assert res.ids == ["v0", "v1"]
     assert res.truncated is True
     assert res.total_matching == 3
 
 
-def test_voice_ch_query_failure_propagates(monkeypatch):
-    class _Boom:
-        def __init__(self, **kwargs):
-            pass
+def test_voice_simulator_rejections_refill_under_shared_trace_budget(monkeypatch):
+    calls = []
 
-        def build(self):
-            raise RuntimeError("CH down")
+    def _handler(_call, index):
+        if index == 0:
+            return [
+                {"trace_id": "v0"},
+                {"trace_id": "v1"},
+                {"trace_id": "v2"},
+            ]
+        return [{"trace_id": "v3"}, {"trace_id": "v4"}]
 
+    _install_fake_trace_analytics(monkeypatch, _handler, calls)
     monkeypatch.setattr(
-        "tracer.services.clickhouse.query_builders.VoiceCallListQueryBuilder",
-        _Boom,
+        "model_hub.services.bulk_selection._filter_out_simulator_calls_ch",
+        lambda ids, project_id, analytics, **kwargs: [
+            trace_id for trace_id in ids if trace_id not in {"v0", "v1"}
+        ],
+    )
+
+    result = _resolve_voice_call_ids_clickhouse(
+        project_id="p1",
+        filters=[],
+        exclude_ids=set(),
+        cap=2,
+        remove_simulation_calls=True,
+        annotation_label_ids=[],
+    )
+
+    assert result.ids == ["v2", "v3"]
+    assert result.truncated is True
+    assert result.total_matching == 3
+    assert "observation_type = %(bulk_root_observation_type)s" in calls[0]["query"]
+    assert calls[0]["params"]["bulk_root_observation_type"] == "conversation"
+    assert set(calls[1]["params"]["skip_trace_ids"]) >= {"v0", "v1", "v2"}
+    assert all(call["timeout_ms"] <= 750 for call in calls[1:])
+
+
+def test_voice_ch_query_failure_propagates(monkeypatch):
+    monkeypatch.setattr(
+        "model_hub.services.bulk_selection._resolve_trace_ids_clickhouse",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("CH down")),
     )
     with capture_logs() as logs:
         with pytest.raises(RuntimeError, match="CH down"):
             _resolve_voice_call_ids_clickhouse(
-                project_id="p1", filters=[], exclude_ids=set(), cap=10,
-                remove_simulation_calls=False, annotation_label_ids=[],
+                project_id="p1",
+                filters=[],
+                exclude_ids=set(),
+                cap=10,
+                remove_simulation_calls=False,
+                annotation_label_ids=[],
             )
     # The failure must leave a breadcrumb for log-based alerting before it raises.
     assert any(
@@ -234,9 +684,7 @@ class TestDispatch:
         resolve_filtered_trace_ids(
             project_id=observe_project.id, filters=[], organization=organization
         )
-        injected = [
-            f for f in capture["filters"] if f.get("column_id") == "start_time"
-        ]
+        injected = [f for f in capture["filters"] if f.get("column_id") == "start_time"]
         assert len(injected) == 1
         assert injected[0]["filter_config"]["filter_value"][0].startswith("1971")
 

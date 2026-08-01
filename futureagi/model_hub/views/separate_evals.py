@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import json
 import math
 import traceback
@@ -7,16 +8,17 @@ from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
 from django.db import IntegrityError, transaction
-from django.db.models import Q, QuerySet
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from drf_yasg.utils import swagger_auto_schema
+from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -39,7 +41,6 @@ from model_hub.models.evals_metric import (
     OwnerChoices,
     UserEvalMetric,
 )
-
 from model_hub.models.run_prompt import PromptEvalConfig
 from model_hub.selectors.feedback import resolve_feedback_edit_contexts
 from model_hub.serializers.contracts import (
@@ -53,6 +54,7 @@ from model_hub.serializers.contracts import (
     CompositeEvalExecuteResponseSerializer,
     CompositeEvalUpdateRequestSerializer,
     DuplicateEvalTemplateResponseSerializer,
+    EvalApiLogIncompleteResponseSerializer,
     EvalApiLogRowResponseSerializer,
     EvalApiLogTableQuerySerializer,
     EvalApiLogTableResponseSerializer,
@@ -96,6 +98,8 @@ from model_hub.serializers.contracts import (
     LegacyEvalTemplateUpdateResponseSerializer,
     ModelHubEmptyRequestSerializer,
     ModelHubStringResultResponseSerializer,
+    TraceEvalRequestSerializer,
+    TraceEvalResponseSerializer,
 )
 from model_hub.serializers.develop_dataset import (
     EvalPlayGroundFeedbackSerializer,
@@ -118,7 +122,6 @@ from model_hub.utils.function_eval_params import (
     has_function_params_schema,
     normalize_eval_runtime_config,
 )
-from model_hub.utils.SQL_queries import SQLQueryHandler
 from model_hub.views.utils.evals import run_eval_func, run_eval_func_task
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_workspace
@@ -126,13 +129,12 @@ from tfc.settings.settings import BASE_URL
 from tfc.telemetry import wrap_for_thread
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
-from tfc.utils.functions import calculate_eval_average
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.custom_eval_config import CustomEvalConfig, InlineEval, ModelChoices
 from tracer.models.external_eval_config import ExternalEvalConfig
 from tracer.models.observation_span import EvalLogger
+from tracer.services.clickhouse.read_budget import is_read_budget_error
 from tracer.utils.filters import apply_created_at_filters
-from tracer.utils.graphs import GraphEngine
 
 try:
     from ee.usage.exceptions import UsageLimitExceeded
@@ -141,10 +143,31 @@ except ImportError:
 
 logger = structlog.get_logger(__name__)
 
+_EVAL_CONTEXT_LOAD_FAILED_MESSAGE = (
+    "Evaluation context could not be loaded. Please try again."
+)
+_EVAL_EXECUTION_FAILED_MESSAGE = "Evaluation could not be completed. Please try again."
+
 try:
     from ee.usage.models.usage import APICallLog
 except ImportError:
     APICallLog = None
+
+
+def _eval_query_error_response(exc, message):
+    """Return a stable public query error without exposing backend details."""
+    response = GeneralMethods().bad_request(message)
+    response.data["code"] = (
+        "read_budget_exceeded" if is_read_budget_error(exc) else "query_failed"
+    )
+    return response
+
+
+def _eval_execution_error_response():
+    """Return a stable public eval failure without exposing provider internals."""
+    response = GeneralMethods().bad_request(_EVAL_EXECUTION_FAILED_MESSAGE)
+    response.data["code"] = "evaluation_failed"
+    return response
 
 
 def apply_filters(row_data, filters):
@@ -209,8 +232,11 @@ def apply_filters(row_data, filters):
                 }
 
                 if filter_op not in text_ops:
-                    message = "Invalid filter operation. \
-                        Allowed operations are: " + ", ".join(text_ops.keys())
+                    message = (
+                        "Invalid filter operation. \
+                        Allowed operations are: "
+                        + ", ".join(text_ops.keys())
+                    )
                     raise ValueError(message)
 
                 result = []
@@ -365,59 +391,564 @@ def apply_filters(row_data, filters):
     return filtered_data
 
 
-def get_eval_metric_data(eval_template, filters, logs, error=False):
-    if not eval_template:
-        raise Exception("EvalTemplate not found")
+_EVAL_METRIC_READ_TIMEOUT_MS = 750
+_EVAL_METRIC_MAX_BUCKETS = 400
+_EVAL_METRIC_FRESH_CACHE_SECONDS = 30
+_EVAL_METRIC_STALE_CACHE_SECONDS = 6 * 60 * 60
 
-    query = Q()
-    if filters:
-        filter_config = filters[0].get("filter_config") or {}
-        start_date, end_date = filter_config.get("filter_value", [])
 
-        if start_date:
-            query &= Q(created_at__gte=start_date)
-        if end_date:
-            query &= Q(created_at__lte=end_date)
-
-    api_logs = logs.filter(query)
-
-    api_call_count = api_logs.count()
-
-    if api_call_count != 0:
-        average = calculate_eval_average(eval_template, api_logs)
+def _eval_metric_datetime(value):
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        parsed = parse_datetime(value)
     else:
-        average = 0
+        parsed = None
+    if parsed is None:
+        return None
+    if timezone.is_naive(parsed):
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
-    graph_engine = GraphEngine(
-        objects=api_logs,
-        interval="day",
-        filters=filters,
-        observe_type="eval_metric",
-        error=error,
+
+def _eval_metric_window(filters):
+    now = timezone.now().astimezone(UTC).replace(second=0, microsecond=0)
+    lower_bounds = []
+    upper_bounds = []
+
+    for item in filters or []:
+        column_id = (
+            str(item.get("column_id") or item.get("columnId") or "").strip().lower()
+        )
+        if column_id.replace(" ", "_") != "created_at":
+            continue
+        config = item.get("filter_config") or {}
+        if config.get("filter_type") != "datetime":
+            continue
+        value = config.get("filter_value")
+        operation = config.get("filter_op")
+        if operation in ("between", "not_between"):
+            if not isinstance(value, (list, tuple)) or len(value) < 2:
+                raise ValueError("Datetime range filter requires two values")
+            parsed_start = _eval_metric_datetime(value[0])
+            parsed_end = _eval_metric_datetime(value[1])
+            if parsed_start is None or parsed_end is None:
+                raise ValueError("Invalid datetime filter value")
+            if operation == "between":
+                lower_bounds.append(min(parsed_start, parsed_end))
+                upper_bounds.append(max(parsed_start, parsed_end))
+        else:
+            parsed_value = _eval_metric_datetime(value)
+            if parsed_value is None:
+                raise ValueError("Invalid datetime filter value")
+            if operation == "equals":
+                lower_bounds.append(parsed_value)
+                upper_bounds.append(parsed_value)
+            elif operation in ("greater_than", "greater_than_or_equal"):
+                lower_bounds.append(parsed_value)
+            elif operation in ("less_than", "less_than_or_equal"):
+                upper_bounds.append(parsed_value)
+            elif operation != "not_equals":
+                raise ValueError(f"Unsupported datetime filter operation: {operation}")
+
+    if lower_bounds or upper_bounds:
+        end_date = min(upper_bounds) if upper_bounds else now
+        # An upper-only filter historically meant "all data before X". Keep it
+        # bounded to the endpoint's documented graph horizon, not the unrelated
+        # default seven-day window.
+        start_date = (
+            max(lower_bounds)
+            if lower_bounds
+            else end_date - timedelta(days=_EVAL_METRIC_MAX_BUCKETS - 1)
+        )
+    else:
+        end_date = now
+        start_date = end_date - timedelta(days=7)
+
+    # Keep response size and read scope bounded even if a client sends a
+    # multi-year range. The endpoint renders daily points only.
+    end_bucket = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    earliest_bucket = end_bucket - timedelta(days=_EVAL_METRIC_MAX_BUCKETS - 1)
+    if start_date < earliest_bucket:
+        start_date = earliest_bucket
+
+    return start_date, end_date
+
+
+def _eval_metric_datetime_predicates(filters, params):
+    """Compile every Created At filter exactly; window bounds are only pruning."""
+    predicates = []
+    for index, item in enumerate(filters or []):
+        column_id = (
+            str(item.get("column_id") or item.get("columnId") or "").strip().lower()
+        )
+        if column_id.replace(" ", "_") != "created_at":
+            continue
+        config = item.get("filter_config") or {}
+        if config.get("filter_type") != "datetime":
+            continue
+
+        operation = config.get("filter_op")
+        value = config.get("filter_value")
+        prefix = f"metric_datetime_{index}"
+        if operation in ("between", "not_between"):
+            if not isinstance(value, (list, tuple)) or len(value) < 2:
+                raise ValueError("Datetime range filter requires two values")
+            start = _eval_metric_datetime(value[0])
+            end = _eval_metric_datetime(value[1])
+            if start is None or end is None:
+                raise ValueError("Invalid datetime filter value")
+            params[f"{prefix}_start"] = min(start, end)
+            params[f"{prefix}_end"] = max(start, end)
+            inside = (
+                f"(created_at >= %({prefix}_start)s AND created_at <= %({prefix}_end)s)"
+            )
+            predicates.append(f"NOT {inside}" if operation == "not_between" else inside)
+            continue
+
+        parsed = _eval_metric_datetime(value)
+        if parsed is None:
+            raise ValueError("Invalid datetime filter value")
+        params[prefix] = parsed
+        operators = {
+            "equals": "=",
+            "not_equals": "!=",
+            "greater_than": ">",
+            "greater_than_or_equal": ">=",
+            "less_than": "<",
+            "less_than_or_equal": "<=",
+        }
+        sql_operator = operators.get(operation)
+        if sql_operator is None:
+            raise ValueError(f"Unsupported datetime filter operation: {operation}")
+        predicates.append(f"created_at {sql_operator} %({prefix})s")
+    return predicates
+
+
+def _eval_metric_value_sql(eval_template, params):
+    output_type = (eval_template.config or {}).get("output")
+    normalized_output_type = (
+        str(output_type).strip().lower().replace("-", "_").replace("/", "_")
     )
-    graph_data = graph_engine.generate_graph(
-        metric="eval_metric", eval_template=eval_template
+    output_object = "JSONType(config_json, 'output') = 'Object'"
+    null_value = "CAST(NULL, 'Nullable(Float64)')"
+
+    if normalized_output_type in {"pass_fail", "passfail"}:
+        output_label = "lowerUTF8(JSONExtractString(config_json, 'output', 'output'))"
+        return (
+            f"if({output_object}, "
+            f"if({output_label} = 'passed', 1.0, 0.0), {null_value})"
+        )
+
+    if normalized_output_type in {"score", "numeric", "percentage"}:
+        return "toFloat64OrNull(JSON_VALUE(config_json, '$.output.output'))"
+
+    if normalized_output_type in ("choices", "reason"):
+        choices_map = (eval_template.config or {}).get("choices_map") or {}
+        if choices_map and not eval_template.multi_choice:
+            choice_value = (
+                "coalesce("
+                "nullIf(arrayElement("
+                "JSONExtract(config_json, 'output', 'output', 'Array(String)'), 1"
+                "), ''), "
+                "JSONExtractString(config_json, 'output', 'output')"
+                ")"
+            )
+            branches = []
+            # Eval choices are a small template-level catalog. Capping this
+            # also bounds SQL size for malformed or adversarial configs.
+            for index, (choice, mapped_value) in enumerate(
+                list(choices_map.items())[:100]
+            ):
+                choice_param = f"metric_choice_{index}"
+                score_param = f"metric_choice_score_{index}"
+                params[choice_param] = str(choice)
+                normalized_score = str(mapped_value).strip().lower()
+                params[score_param] = (
+                    1.0
+                    if normalized_score == "pass"
+                    else 0.5
+                    if normalized_score == "neutral"
+                    else 0.0
+                )
+                branches.extend(
+                    [
+                        f"{choice_value} = %({choice_param})s",
+                        f"%({score_param})s",
+                    ]
+                )
+            mapped_score = f"multiIf({', '.join(branches)}, 0.0)" if branches else "0.0"
+            return f"if({output_object}, {mapped_score}, {null_value})"
+        return f"if({output_object}, 1.0, {null_value})"
+
+    return null_value
+
+
+def _eval_metric_cache_keys(
+    eval_template,
+    *,
+    organization_id,
+    workspace,
+    start_date,
+    end_date,
+    filters=None,
+):
+    fingerprint = {
+        "template_id": str(eval_template.id),
+        "organization_id": str(organization_id),
+        "workspace_id": str(workspace.id) if workspace is not None else None,
+        "workspace_is_default": bool(
+            workspace is not None and getattr(workspace, "is_default", False)
+        ),
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "filters": filters or [],
+        "config": eval_template.config or {},
+        "multi_choice": bool(eval_template.multi_choice),
+    }
+    digest = hashlib.sha256(
+        json.dumps(fingerprint, sort_keys=True, default=str).encode()
+    ).hexdigest()
+    return (
+        f"eval-metric:v2:fresh:{digest}",
+        f"eval-metric:v2:stale:{digest}",
     )
 
+
+def _empty_eval_metric_data(eval_template, *, error=False):
     response_data = {
         "base_eval_template_id": eval_template.id,
         "api_call_count": {
-            "api_call_count": api_call_count,
-            "count_graph_data": graph_data.get("count_graph_data"),
+            "api_call_count": 0,
+            "count_graph_data": [],
         },
         "average": {
-            "average": average,
-            "avg_graph_data": graph_data.get("avg_graph_data"),
+            "average": 0,
+            "avg_graph_data": [],
         },
+        "query_complete": False,
+        "query_status": "degraded",
+        "query_error_code": "read_budget_exceeded",
     }
     if error:
-        response_data.update({"error_rate": graph_data.get("error_rate")})
-
+        response_data["error_rate"] = []
     return response_data
 
-    unique_log_days = set({entry["log_date"].date() for entry in logs})
 
-    return len(unique_log_days)
+def _eval_metric_cache_get(cache_backend, key):
+    try:
+        return cache_backend.get(key)
+    except Exception as exc:
+        logger.warning(
+            "eval metric cache read failed",
+            cache_key=key[:64],
+            error=str(exc)[:200],
+        )
+        return None
+
+
+def _eval_metric_cache_set(cache_backend, key, value, *, timeout):
+    try:
+        cache_backend.set(key, value, timeout=timeout)
+    except Exception as exc:
+        logger.warning(
+            "eval metric cache write failed",
+            cache_key=key[:64],
+            error=str(exc)[:200],
+        )
+
+
+def _format_eval_metric_buckets(
+    buckets,
+    *,
+    start_date,
+    end_date,
+):
+    by_day = {}
+    for bucket, count, average in buckets or []:
+        if timezone.is_naive(bucket):
+            bucket = bucket.replace(tzinfo=UTC)
+        else:
+            bucket = bucket.astimezone(UTC)
+        by_day[bucket.date()] = (int(count or 0), float(average or 0))
+
+    count_graph_data = []
+    avg_graph_data = []
+    current = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    final = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    while current <= final:
+        count, average = by_day.get(current.date(), (0, 0.0))
+        timestamp = current.isoformat().replace("+00:00", "Z")
+        count_graph_data.append({"timestamp": timestamp, "value": count})
+        avg_graph_data.append({"timestamp": timestamp, "value": round(average, 2)})
+        current += timedelta(days=1)
+
+    return count_graph_data, avg_graph_data
+
+
+def get_eval_metric_data(
+    eval_template,
+    filters,
+    *,
+    organization_id,
+    workspace=None,
+    error=False,
+):
+    """Read eval-setting metrics with one resource-bounded ClickHouse query."""
+    if not eval_template:
+        raise Exception("EvalTemplate not found")
+
+    from django.core.cache import cache
+
+    from tracer.services.clickhouse.client import get_clickhouse_client
+
+    start_date, end_date = _eval_metric_window(filters)
+    fresh_cache_key, stale_cache_key = _eval_metric_cache_keys(
+        eval_template,
+        organization_id=organization_id,
+        workspace=workspace,
+        start_date=start_date,
+        end_date=end_date,
+        filters=filters,
+    )
+    cached = _eval_metric_cache_get(cache, fresh_cache_key)
+    if cached is not None:
+        return cached
+
+    params = {
+        "organization_id": str(organization_id),
+        "eval_template_id": str(eval_template.id),
+        "success_status": APICallStatusChoices.SUCCESS.value,
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+    scope = [
+        "organization_id = toUUID(%(organization_id)s)",
+        "source_id = %(eval_template_id)s",
+        "status = %(success_status)s",
+        "deleted = 0",
+        "_peerdb_is_deleted = 0",
+        "created_at >= %(start_date)s",
+        "created_at <= %(end_date)s",
+    ]
+    scope.extend(_eval_metric_datetime_predicates(filters, params))
+    if workspace is not None:
+        params["workspace_id"] = str(workspace.id)
+        if getattr(workspace, "is_default", False):
+            scope.append(
+                "(workspace_id = toUUID(%(workspace_id)s) OR workspace_id IS NULL)"
+            )
+        else:
+            scope.append("workspace_id = toUUID(%(workspace_id)s)")
+
+    metric_value = _eval_metric_value_sql(eval_template, params)
+    scope_sql = " AND ".join(scope)
+    query = f"""
+        SELECT
+            toInt64(ifNull(sum(bucket_count), 0)) AS api_call_count,
+            if(
+                ifNull(sum(metric_count), 0) = 0,
+                0.0,
+                round(sum(metric_sum) * 100.0 / sum(metric_count), 2)
+            ) AS average,
+            groupArray(tuple(
+                bucket,
+                bucket_count,
+                if(
+                    metric_count = 0,
+                    0.0,
+                    round(metric_sum * 100.0 / metric_count, 2)
+                )
+            )) AS buckets
+        FROM (
+            SELECT
+                toStartOfDay(created_at, 'UTC') AS bucket,
+                count() AS bucket_count,
+                sum(ifNull(metric_value, 0.0)) AS metric_sum,
+                countIf(isNotNull(metric_value)) AS metric_count
+            FROM (
+                SELECT
+                    created_at,
+                    {metric_value} AS metric_value
+                FROM (
+                    SELECT
+                        created_at,
+                        if(
+                            JSONType(config) = 'String',
+                            JSONExtractString(config),
+                            config
+                        ) AS config_json
+                    FROM usage_apicalllog FINAL
+                    WHERE {scope_sql}
+                )
+            )
+            GROUP BY bucket
+        )
+    """
+
+    try:
+        rows, _column_types, _query_time_ms = get_clickhouse_client().execute_read(
+            query,
+            params,
+            timeout_ms=_EVAL_METRIC_READ_TIMEOUT_MS,
+            settings={
+                "max_threads": 2,
+                "max_rows_to_read": 2_000_000,
+                "read_overflow_mode": "throw",
+                "max_bytes_to_read": 64 * 1024 * 1024,
+                "max_memory_usage": 128 * 1024 * 1024,
+                "max_result_rows": 1,
+                "max_result_bytes": 1024 * 1024,
+                "result_overflow_mode": "throw",
+                "timeout_overflow_mode": "throw",
+            },
+        )
+        if not rows:
+            raise RuntimeError("ClickHouse eval metric aggregate returned no row")
+
+        api_call_count, average, buckets = rows[0]
+        count_graph_data, avg_graph_data = _format_eval_metric_buckets(
+            buckets,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        response_data = {
+            "base_eval_template_id": eval_template.id,
+            "api_call_count": {
+                "api_call_count": int(api_call_count or 0),
+                "count_graph_data": count_graph_data,
+            },
+            "average": {
+                "average": round(float(average or 0), 2),
+                "avg_graph_data": avg_graph_data,
+            },
+            "query_complete": True,
+            "query_status": "complete",
+        }
+        if error:
+            response_data["error_rate"] = []
+        _eval_metric_cache_set(
+            cache,
+            fresh_cache_key,
+            response_data,
+            timeout=_EVAL_METRIC_FRESH_CACHE_SECONDS,
+        )
+        _eval_metric_cache_set(
+            cache,
+            stale_cache_key,
+            response_data,
+            timeout=_EVAL_METRIC_STALE_CACHE_SECONDS,
+        )
+        return response_data
+    except Exception as exc:
+        if not is_read_budget_error(exc):
+            raise
+        logger.warning(
+            "eval metric ClickHouse read exceeded budget; returning stale/empty data",
+            eval_template_id=str(eval_template.id),
+            organization_id=str(organization_id),
+            error=str(exc)[:200],
+        )
+        stale = _eval_metric_cache_get(cache, stale_cache_key)
+        if stale is not None:
+            stale_response = copy.deepcopy(stale)
+            stale_response.update(
+                {
+                    "query_complete": False,
+                    "query_status": "stale",
+                    "query_error_code": "read_budget_exceeded",
+                }
+            )
+            return stale_response
+        return _empty_eval_metric_data(eval_template, error=error)
+
+
+_EVAL_LOG_CANDIDATE_LIMIT = 500
+_EVAL_LOG_BATCH_SIZE = 25
+
+
+def _eval_log_model_field(column_data, column_id):
+    """Resolve only columns whose rendered value exactly matches a PG field."""
+    normalized_id = str(column_id or "").strip().lower().replace(" ", "_")
+    direct_fields = {
+        "created_at": "created_at",
+        "evaluation_id": "log_id",
+        "log_id": "log_id",
+    }
+    if normalized_id in direct_fields:
+        return direct_fields[normalized_id]
+
+    for index, column in enumerate(column_data):
+        if str(column.get("id")) != str(column_id):
+            continue
+        name = str(column.get("name") or "").strip()
+        if (
+            name == "Created At"
+            and column.get("origin_type") != SourceChoices.EVALUATION.value
+            and column.get("data_type") in (None, "datetime")
+        ):
+            return "created_at"
+        # The generated Evaluation ID column is always first. A template input
+        # can also be named "Evaluation ID", so do not translate later columns.
+        if name == "Evaluation ID" and index == 0:
+            return "log_id"
+        return None
+    return None
+
+
+def _push_eval_log_filters(logs, filters, column_data):
+    """Apply exact model-field filters before the bounded candidate read."""
+    remaining_filters = []
+    for filter_item in filters:
+        config = filter_item.get("filter_config") or {}
+        model_field = _eval_log_model_field(
+            column_data,
+            filter_item.get("column_id"),
+        )
+        if model_field != "created_at" or config.get("filter_type") != "datetime":
+            remaining_filters.append(filter_item)
+            continue
+
+        operation = config.get("filter_op")
+        if operation == "is_null":
+            logs = logs.none()
+            continue
+        if operation == "is_not_null":
+            continue
+
+        filtered_logs, unapplied = apply_created_at_filters(logs, [filter_item])
+        if unapplied:
+            remaining_filters.append(filter_item)
+        else:
+            logs = filtered_logs
+    return logs, remaining_filters
+
+
+def _eval_log_ordering(sort_config, column_data):
+    """Return deterministic PG ordering when every requested sort is exact."""
+    if not sort_config:
+        return ("-created_at", "-log_id"), True
+
+    requested_fields = []
+    for sort_item in sort_config:
+        model_field = _eval_log_model_field(
+            column_data,
+            sort_item.get("column_id"),
+        )
+        if model_field not in {"created_at", "log_id"}:
+            return ("-created_at", "-log_id"), False
+        prefix = "-" if sort_item.get("type") == "descending" else ""
+        requested_fields.append(f"{prefix}{model_field}")
+
+    # The legacy in-memory implementation applied stable sorts in request
+    # order, making the final item the primary sort. Preserve that contract.
+    ordering = list(reversed(requested_fields))
+    ordered_names = {field.lstrip("-") for field in ordering}
+    if "created_at" not in ordered_names:
+        ordering.append("-created_at")
+    if "log_id" not in ordered_names:
+        ordering.append("-log_id")
+    return tuple(ordering), True
 
 
 class GetAPICallLogDetailsView(APIView):
@@ -426,7 +957,11 @@ class GetAPICallLogDetailsView(APIView):
 
     @validated_request(
         query_serializer=EvalApiLogTableQuerySerializer,
-        responses={200: EvalApiLogTableResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: EvalApiLogTableResponseSerializer,
+            503: EvalApiLogIncompleteResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def get(self, request, *args, **kwargs):
         try:
@@ -443,8 +978,9 @@ class GetAPICallLogDetailsView(APIView):
             )
 
             try:
-                eval_template = _get_accessible_eval_template(
-                    eval_template_id, organization
+                eval_template = _get_accessible_eval_template_for_request(
+                    eval_template_id,
+                    request,
                 )
             except EvalTemplate.DoesNotExist:
                 return self._gm.not_found(get_error_message("EVAL_TEMP_NOT_FOUND"))
@@ -457,7 +993,8 @@ class GetAPICallLogDetailsView(APIView):
                     APICallStatusChoices.ERROR.value,
                 ],
                 deleted=False,
-            ).order_by("-created_at")
+            )
+            logs = logs.filter(_request_workspace_filter(request))
 
             if source == "feedback":
                 logs = logs.filter(source="feedback")
@@ -465,17 +1002,68 @@ class GetAPICallLogDetailsView(APIView):
             if source == "eval_playground":
                 logs = logs.filter(source="eval_playground")
 
-            column_data = get_column_data(eval_template_id, source, request.user)
+            column_data = get_column_data(
+                eval_template_id,
+                source,
+                request.user,
+                request=request,
+            )
 
             filters = query["filters"]
-            if filters:
-                logs, new_filters = apply_created_at_filters(logs, filters)
-            else:
-                new_filters = []
+            logs, new_filters = _push_eval_log_filters(
+                logs,
+                filters,
+                column_data,
+            )
+            sort_config = query["sort"]
+            ordering, sort_was_pushed = _eval_log_ordering(
+                sort_config,
+                column_data,
+            )
+            logs = logs.order_by(*ordering)
 
-            if not logs.exists():
+            candidate_logs = list(logs[: _EVAL_LOG_CANDIDATE_LIMIT + 1])
+            total_rows_is_lower_bound = len(candidate_logs) > _EVAL_LOG_CANDIDATE_LIMIT
+            candidate_logs = candidate_logs[:_EVAL_LOG_CANDIDATE_LIMIT]
+            search_requires_post_processing = bool(
+                search.get("key") and "text" in search.get("type", ["text"])
+            )
+            unsupported_operations = []
+            if new_filters:
+                unsupported_operations.append("filters")
+            if sort_config and not sort_was_pushed:
+                unsupported_operations.append("sort")
+            if search_requires_post_processing:
+                unsupported_operations.append("search")
+
+            if total_rows_is_lower_bound and unsupported_operations:
+                return self._incomplete_query_response(
+                    reason="post_processing_exceeds_candidate_limit",
+                    unsupported_operations=unsupported_operations,
+                    current_page=current_page,
+                )
+
+            requested_end = (current_page + 1) * page_size
+            if total_rows_is_lower_bound and requested_end > _EVAL_LOG_CANDIDATE_LIMIT:
+                return self._incomplete_query_response(
+                    reason="page_exceeds_candidate_limit",
+                    unsupported_operations=[],
+                    current_page=current_page,
+                )
+
+            if not candidate_logs:
                 return self._gm.success_response(
-                    {"table": [], "column_config": column_data}
+                    {
+                        "table": [],
+                        "column_config": column_data,
+                        "metadata": {
+                            "total_rows": 0,
+                            "total_pages": 0,
+                            "total_rows_is_lower_bound": False,
+                            "query_complete": True,
+                            "query_status": "complete",
+                        },
+                    }
                 )
 
             key_map = {col.get("id"): col.get("name") for col in column_data}
@@ -483,14 +1071,33 @@ class GetAPICallLogDetailsView(APIView):
             table_data["column_config"] = column_data
             row_data = []
 
+            feedback_by_log_id = {}
+            if {"Evaluation Feedback", "Feedback Explanation"} & set(key_map.values()):
+                log_ids = [str(log.log_id) for log in candidate_logs if log.log_id]
+                for feedback in (
+                    Feedback.objects.filter(
+                        source_id__in=log_ids,
+                        source=SourceChoices.EVAL_PLAYGROUND.value,
+                        organization=organization,
+                    )
+                    .only("source_id", "value", "explanation")
+                    .order_by("-created_at")
+                ):
+                    feedback_by_log_id.setdefault(str(feedback.source_id), feedback)
+
             # Wrap function with OTel context propagation for thread safety
             wrapped_populate_log_row_data = wrap_for_thread(populate_log_row_data)
 
             with ThreadPoolExecutor(max_workers=4) as executor:
                 futures = []
-                for batch in batch_queryset(logs, 10):
+                for start in range(0, len(candidate_logs), _EVAL_LOG_BATCH_SIZE):
+                    batch = candidate_logs[start : start + _EVAL_LOG_BATCH_SIZE]
                     future = executor.submit(
-                        wrapped_populate_log_row_data, eval_template, batch, key_map
+                        wrapped_populate_log_row_data,
+                        eval_template,
+                        batch,
+                        key_map,
+                        feedback_by_log_id,
                     )
                     futures.append(future)
 
@@ -502,8 +1109,7 @@ class GetAPICallLogDetailsView(APIView):
             if new_filters:
                 row_data = apply_filters(row_data, new_filters)
 
-            sort_config = query["sort"]
-            if sort_config and row_data and len(row_data) > 0:
+            if sort_config and not sort_was_pushed and row_data and len(row_data) > 0:
                 for sort_item in sort_config:
                     column_id = sort_item.get("column_id")
                     sort_type = sort_item.get("type")
@@ -544,13 +1150,51 @@ class GetAPICallLogDetailsView(APIView):
             metadata = {}
             metadata["total_rows"] = total_rows
             metadata["total_pages"] = (total_rows + page_size - 1) // page_size
+            metadata["total_rows_is_lower_bound"] = total_rows_is_lower_bound
+            metadata["query_complete"] = not total_rows_is_lower_bound
+            metadata["query_status"] = (
+                "bounded" if total_rows_is_lower_bound else "complete"
+            )
+            if total_rows_is_lower_bound:
+                metadata["query_error_code"] = "candidate_limit_reached"
+                metadata["candidate_limit"] = _EVAL_LOG_CANDIDATE_LIMIT
+                metadata["candidate_rows_scanned"] = len(candidate_logs)
             table_data["metadata"] = metadata
 
             return self._gm.success_response(table_data)
 
         except Exception as e:
             logger.exception(f"Error in GetAPICallLogs: {str(e)}")
-            return self._gm.internal_server_error_response(str(e))
+            return self._gm.internal_server_error_response(
+                "Unable to load evaluation logs. Please try again later."
+            )
+
+    def _incomplete_query_response(
+        self,
+        *,
+        reason,
+        unsupported_operations,
+        current_page,
+    ):
+        return self._gm.custom_error_response(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            result={
+                "message": (
+                    "This evaluation-log query cannot be completed safely within "
+                    f"the {_EVAL_LOG_CANDIDATE_LIMIT}-row read limit. Narrow the "
+                    "date range and retry."
+                ),
+                "error_code": "eval_log_query_incomplete",
+                "retryable": True,
+                "query_complete": False,
+                "query_status": "incomplete",
+                "reason": reason,
+                "unsupported_operations": unsupported_operations,
+                "candidate_limit": _EVAL_LOG_CANDIDATE_LIMIT,
+                "requested_page": current_page,
+            },
+            code="eval_log_query_incomplete",
+        )
 
 
 class GetAPICallLogView(APIView):
@@ -566,12 +1210,21 @@ class GetAPICallLogView(APIView):
             try:
                 if APICallLog is None:
                     return self._gm.success_response([])
-                log_row = APICallLog.objects.get(
-                    log_id=log_id,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
+                log_row = (
+                    APICallLog.objects.filter(
+                        log_id=log_id,
+                        organization=getattr(request, "organization", None)
+                        or request.user.organization,
+                        deleted=False,
+                    )
+                    .filter(_request_workspace_filter(request))
+                    .get()
                 )
-            except APICallLog.DoesNotExist:
+                _get_accessible_eval_template_for_request(
+                    log_row.source_id,
+                    request,
+                )
+            except (APICallLog.DoesNotExist, EvalTemplate.DoesNotExist):
                 return self._gm.bad_request(
                     get_error_message("LOG_ROW_FETCHING_FAILED")
                 )
@@ -1076,27 +1729,34 @@ class EvalMetricView(APIView):
     )
     def get(self, request, *args, **kwargs):
         try:
-            if APICallLog is None:
-                return self._gm.success_response([])
             query = request.validated_query_data
             eval_template_id = str(query["eval_template_id"])
             filters = query["filters"]
 
-            logs = APICallLog.objects.filter(
-                source_id=eval_template_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                status=APICallStatusChoices.SUCCESS.value,
+            organization = (
+                getattr(request, "organization", None) or request.user.organization
             )
-            eval_template = EvalTemplate.no_workspace_objects.filter(
-                id=eval_template_id
-            ).first()
-            response_data = get_eval_metric_data(eval_template, filters, logs)
+            workspace = getattr(request, "workspace", None) or get_current_workspace()
+            try:
+                eval_template = _get_accessible_eval_template_for_request(
+                    eval_template_id,
+                    request,
+                )
+            except EvalTemplate.DoesNotExist:
+                return self._gm.not_found("Eval template not found.")
+            response_data = get_eval_metric_data(
+                eval_template,
+                filters,
+                organization_id=organization.id,
+                workspace=workspace,
+            )
 
             return self._gm.success_response(response_data)
         except Exception as e:
             logger.exception(f"Error in EvalMetricView.get: {str(e)}")
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request(
+                "Unable to load evaluation metrics. Please try again later."
+            )
 
     @validated_request(
         request_serializer=EvalMetricRequestSerializer,
@@ -1104,27 +1764,34 @@ class EvalMetricView(APIView):
     )
     def post(self, request, *args, **kwargs):
         try:
-            if APICallLog is None:
-                return self._gm.success_response([])
             body = request.validated_data
             eval_template_id = str(body["eval_template_id"])
             filters = body["filters"]
 
-            logs = APICallLog.objects.filter(
-                source_id=eval_template_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                status=APICallStatusChoices.SUCCESS.value,
+            organization = (
+                getattr(request, "organization", None) or request.user.organization
             )
-            eval_template = EvalTemplate.no_workspace_objects.filter(
-                id=eval_template_id
-            ).first()
-            response_data = get_eval_metric_data(eval_template, filters, logs)
+            workspace = getattr(request, "workspace", None) or get_current_workspace()
+            try:
+                eval_template = _get_accessible_eval_template_for_request(
+                    eval_template_id,
+                    request,
+                )
+            except EvalTemplate.DoesNotExist:
+                return self._gm.not_found("Eval template not found.")
+            response_data = get_eval_metric_data(
+                eval_template,
+                filters,
+                organization_id=organization.id,
+                workspace=workspace,
+            )
 
             return self._gm.success_response(response_data)
         except Exception as e:
             logger.exception(f"Error in EvalMetricView.post: {str(e)}")
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request(
+                "Unable to load evaluation metrics. Please try again later."
+            )
 
 
 @workspace_read_only
@@ -1144,184 +1811,46 @@ class GetEvalTemplateNameView(APIView):
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
-            if APICallLog is None:
-                log_ids = []
-            else:
-                logs = APICallLog.objects.filter(
-                    organization=organization,
-                    deleted=False,
-                )
-                log_ids = [
-                    log.source_id
-                    for log in logs
-                    if log.source_id is not None and log.source_id != ""
-                ]
-            eval_ids = EvalTemplate.no_workspace_objects.filter(
-                organization=organization,
-                owner=OwnerChoices.USER.value,
-                deleted=False,
-            )
-            eval_ids = [eval.id for eval in eval_ids]
-            log_ids += eval_ids
-
             search_text = request.validated_data.get("search_text", "")
+            workspace = getattr(request, "workspace", None) or get_current_workspace()
+
+            # The picker describes the same catalog as the revamped list view.
+            # Reading APICallLog here used to load every usage row (including
+            # config JSON) merely to discover template IDs, making this small
+            # metadata endpoint proportional to an organization's full history.
+            from model_hub.utils.eval_list import build_eval_list_queryset
+
             eval_templates = (
-                EvalTemplate.no_workspace_objects.filter(id__in=log_ids, deleted=False)
-                .filter(
-                    Q(owner=OwnerChoices.SYSTEM.value)
-                    | Q(owner=OwnerChoices.USER.value, organization=organization)
+                build_eval_list_queryset(
+                    organization=organization,
+                    workspace=workspace,
+                    owner_filter="all",
+                    search=search_text,
                 )
-                .order_by("name")
+                .values("id", "name", "description")
+                .order_by("name", "id")
             )
-            if search_text:
-                from model_hub.utils.eval_list import normalize_search_for_name
-                eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
             eval_template_names = [
                 {
-                    "id": str(eval_template.id),
-                    "name": eval_template.name,
-                    "description": eval_template.description,
+                    "id": str(eval_template["id"]),
+                    "name": eval_template["name"],
+                    "description": eval_template["description"] or "",
                 }
                 for eval_template in eval_templates
             ]
             return self._gm.success_response(eval_template_names)
         except Exception as e:
             logger.exception(f"Error getting eval template names: {str(e)}")
-            return self._gm.bad_request(str(e))
+            return _eval_query_error_response(
+                e,
+                "Evaluation template names could not be loaded. Please try again.",
+            )
 
 
 @workspace_read_only
 class GetEvalTemplates(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
-
-    def process_graph_data_and_send_ws(
-        self, dates, template_logs_map, data, template_map, start_date
-    ):
-        try:
-            # Use pre-fetched logs instead of querying database again
-            eval_template_id = data.get("id")
-            eval_template = template_map.get(str(eval_template_id), None)
-
-            template_logs = template_logs_map.get(str(eval_template_id), [])
-
-            daily_averages = []
-            error_rates = []
-
-            for day in dates:
-                # Filter logs for this day in memory
-                day_logs = [
-                    log for log in template_logs if log["created_at"].date() == day
-                ]
-
-                average = calculate_eval_average(eval_template, day_logs)
-                daily_averages.append({"date": day, "value": average})
-
-                # Count error logs in memory
-                error_rate = len(
-                    [
-                        log
-                        for log in day_logs
-                        if log["status"] == APICallStatusChoices.ERROR.value
-                    ]
-                )
-                error_rates.append({"date": day, "value": error_rate})
-
-            avg_graph_data = self.generate_date_range_data(start_date, daily_averages)
-            error_rate_data = self.generate_date_range_data(start_date, error_rates)
-
-            if daily_averages:
-                max_avg = max(daily_averages, key=lambda x: x["value"])
-            else:
-                max_avg = None
-
-            if error_rates:
-                max_error_rate = max(error_rates, key=lambda x: x["value"])
-            else:
-                max_error_rate = None
-
-            max_avg_value = max_avg["value"] if max_avg else 0
-            max_error_rate_value = max_error_rate["value"] if max_error_rate else 0
-            max_axis = math.ceil(max(max_avg_value, max_error_rate_value))
-
-            new_average = {
-                "avg_graph_data": avg_graph_data,
-            }
-
-            data.update(
-                {
-                    "average": new_average,
-                    "error_rate": error_rate_data,
-                    "max_axis": max_axis,
-                }
-            )
-            return data
-
-        except Exception as e:
-            logger.exception(
-                f"Error pushing graph data for template {str(eval_template_id)}: {e}"
-            )
-
-    def generate_date_range_data(self, start_date, template_data):
-        """Generate time series data for the last 30 days"""
-        date_range = []
-        current_date = start_date
-
-        # Create a lookup dict for existing data
-        data_lookup = (
-            {item["date"]: item["value"] for item in template_data}
-            if template_data
-            else {}
-        )
-
-        for _ in range(31):
-            date_str = current_date.strftime("%Y-%m-%dT00:00:00")
-            date_range.append(
-                {
-                    "timestamp": date_str,
-                    "value": data_lookup.get(current_date.date(), 0),
-                }
-            )
-            current_date += timedelta(days=1)
-
-        return date_range
-
-    def prepare_template_data(self, template, template_logs_map):
-        template_id = str(template.id)
-        call_logs = template_logs_map.get(template_id, [])
-
-        # Calculate metrics efficiently
-        last30_run = len(call_logs)
-
-        # Get updated_at efficiently
-        if call_logs and len(call_logs) > 0:
-            # Sort in memory instead of database query
-            latest_log = max(call_logs, key=lambda x: x["updated_at"])
-            updated_at = latest_log["updated_at"].isoformat()
-        else:
-            updated_at = template.updated_at.isoformat()
-
-        # Calculate average efficiently
-        average = (
-            calculate_eval_average(template, call_logs)
-            if call_logs and len(call_logs) > 0
-            else 0
-        )
-
-        template_data = {
-            "id": template_id,
-            "max_axis": None,
-            "eval_template_name": template.name,
-            "average": {
-                "average": average,
-                "avg_graph_data": [],
-            },
-            "error_rate": [],
-            "last30_run": last30_run,
-            "updated_at": updated_at,
-        }
-
-        return template_data
 
     @validated_request(
         request_serializer=LegacyEvalTemplatesRequestSerializer,
@@ -1332,136 +1861,91 @@ class GetEvalTemplates(APIView):
     )
     def post(self, request, *args, **kwargs):
         try:
-            if APICallLog is None:
-                return self._gm.success_response([])
             request_data = request.validated_data
             page_size = request_data.get("page_size", 10)
             current_page = request_data.get("current_page_index", 0)
             search_text = request_data.get("search_text", "")
             sort_config_list = request_data.get("sort", [])
             sort_config = sort_config_list[0] if len(sort_config_list) > 0 else {}
-            # Calculate date range
-            end_date = timezone.now()
-            start_date = end_date - timedelta(days=30)
+            organization = (
+                getattr(request, "organization", None) or request.user.organization
+            )
+            workspace = getattr(request, "workspace", None) or get_current_workspace()
 
-            used_template_ids = list(
-                APICallLog.objects.filter(
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization
+            from model_hub.utils.eval_list import build_eval_list_queryset
+
+            templates_qs = build_eval_list_queryset(
+                organization=organization,
+                workspace=workspace,
+                owner_filter="all",
+                search=search_text,
+            ).exclude(name="deterministic_evals")
+
+            requested_sort = sort_config.get("column_id", "updated_at")
+            sort_field = {
+                "eval_template_name": "name",
+                "evalTemplateName": "name",
+                "updated_at": "updated_at",
+                "updatedAt": "updated_at",
+            }.get(requested_sort, "updated_at")
+            sort_prefix = (
+                "-" if sort_config.get("type", "descending") == "descending" else ""
+            )
+            templates_qs = templates_qs.order_by(
+                f"{sort_prefix}{sort_field}",
+                f"{sort_prefix}id",
+            )
+
+            total_rows = templates_qs.count()
+            offset = current_page * page_size
+            templates = list(templates_qs[offset : offset + page_size])
+            template_ids = [str(template.id) for template in templates]
+            charts, chart_query_metadata = (
+                EvalTemplateListChartsView()._fetch_charts_from_clickhouse(
+                    organization,
+                    workspace,
+                    template_ids,
+                    with_metadata=True,
                 )
-                .filter(deleted=False)
-                .exclude(source_id__isnull=True)
-                .exclude(source_id__exact="")
-                .values_list("source_id", flat=True)
-                .distinct()
             )
-
-            if not used_template_ids:
-                return self._gm.success_response(
-                    {
-                        "row_data": [],
-                        "total_rows": 0,
-                        "data_available": False,
-                    }
-                )
-
-            sort_by = sort_config.get("column_id", "updated_at")
-            sort_order = sort_config.get("type", "descending")
-
-            if sort_order == "descending":
-                sort_order = "DESC"
-            else:
-                sort_order = "ASC"
-
-            # Paginate FIRST to get only the template IDs we need
-            rows = SQLQueryHandler.get_all_templates(
-                used_template_ids,
-                search_text,
-                (
-                    getattr(request, "organization", None) or request.user.organization
-                ).id,
-                sort_order,
-                sort_by,
-                page_size,
-                current_page * page_size,
-                (
-                    getattr(request, "workspace", None).id
-                    if getattr(request, "workspace", None)
-                    else None
-                ),
-            )
-            paginated_data = []
-            paginated_template_ids = []
-            total_rows = 0
-            for row in rows:
-                result = {
-                    "id": row[0],
-                    "max_axis": None,
-                    "eval_template_name": row[1],
-                    "average": {"avg_graph_data": [], "average": 0},
-                    "error_rate": [],
-                    "last30_run": row[2],
-                    "updated_at": row[3],
-                }
-
-                paginated_data.append(result)
-                paginated_template_ids.append(row[0])
-                total_rows = row[4]
-
-            # Fetch logs ONLY for paginated templates (not all templates)
-            if APICallLog is None:
-                logs = []
-            else:
-                logs = APICallLog.objects.filter(
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                    deleted=False,
-                    created_at__gte=start_date,
-                    source_id__in=paginated_template_ids,
-                ).values("source_id", "created_at", "status", "config", "updated_at")
-
-            template_logs_map = defaultdict(list)
-            for log in logs:
-                if log["source_id"] is not None:
-                    template_logs_map[str(log["source_id"])].append(log)
-
-            templates = list(
-                EvalTemplate.no_workspace_objects.filter(id__in=paginated_template_ids)
-            )
-            template_map = {str(template.id): template for template in templates}
-            # Get dates efficiently for paginated templates
-            dates = set()
-            for template_id in paginated_template_ids:
-                template_logs = template_logs_map.get(str(template_id), [])
-                for log in template_logs:
-                    dates.add(log["created_at"].date())
-            dates = sorted(dates)
 
             final_data = []
-
-            # Helper function to bind context for thread pool execution
-            def process_graph_data(data):
-                return self.process_graph_data_and_send_ws(
-                    dates, template_logs_map, data, template_map, start_date
+            for template in templates:
+                template_id = str(template.id)
+                chart = charts.get(template_id) or {}
+                error_rate = chart.get("error_rate") or []
+                max_axis = math.ceil(
+                    max((point.get("value", 0) for point in error_rate), default=0)
                 )
-
-            # Wrap function with OTel context propagation for thread safety
-            wrapped_process_graph_data = wrap_for_thread(process_graph_data)
-
-            with ThreadPoolExecutor(max_workers=20) as executor:
-                results = list(
-                    executor.map(
-                        wrapped_process_graph_data,
-                        paginated_data,
-                    )
+                final_data.append(
+                    {
+                        "id": template_id,
+                        "max_axis": max_axis,
+                        "eval_template_name": template.name,
+                        "average": {"avg_graph_data": [], "average": 0},
+                        "error_rate": error_rate,
+                        "last30_run": int(chart.get("run_count") or 0),
+                        "updated_at": template.updated_at.isoformat(),
+                    }
                 )
-                final_data.extend(results)
 
             return self._gm.success_response(
                 {
                     "row_data": final_data,
                     "total_rows": total_rows,
-                    "data_available": len(paginated_template_ids) != 0,
+                    "data_available": bool(template_ids),
+                    "chart_query_complete": chart_query_metadata["query_complete"],
+                    "chart_query_status": chart_query_metadata["query_status"],
+                    "chart_data_stale": chart_query_metadata["data_stale"],
+                    **(
+                        {
+                            "chart_query_error_code": chart_query_metadata[
+                                "query_error_code"
+                            ]
+                        }
+                        if chart_query_metadata.get("query_error_code")
+                        else {}
+                    ),
                 }
             )
 
@@ -1469,7 +1953,9 @@ class GetEvalTemplates(APIView):
             logger.error(
                 f"Error in GetEvalTemplates: {str(e)}\n{traceback.format_exc()}"
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request(
+                "Unable to load evaluation templates. Please try again later."
+            )
 
 
 @workspace_read_only
@@ -1646,7 +2132,10 @@ class EvalTemplateListView(APIView):
             logger.error(
                 f"Error in EvalTemplateListView: {str(e)}\n{traceback.format_exc()}"
             )
-            return self._gm.bad_request(str(e))
+            return _eval_query_error_response(
+                e,
+                "Evaluation templates could not be loaded. Please try again.",
+            )
 
 
 @workspace_read_only
@@ -1661,6 +2150,10 @@ class EvalTemplateListChartsView(APIView):
 
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
+    _MAX_TEMPLATE_IDS = 100
+    _READ_TIMEOUT_MS = 750
+    _FRESH_CACHE_SECONDS = 30
+    _STALE_CACHE_SECONDS = 6 * 60 * 60
 
     @validated_request(
         request_serializer=EvalTemplateListChartsRequestSerializer,
@@ -1673,109 +2166,264 @@ class EvalTemplateListChartsView(APIView):
         try:
             template_ids = request.validated_data.get("template_ids", [])
             if not template_ids:
-                return self._gm.success_response({"charts": {}})
+                return self._gm.success_response(
+                    {
+                        "charts": {},
+                        "query_complete": True,
+                        "query_status": "complete",
+                        "data_stale": False,
+                    }
+                )
 
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
+            workspace = getattr(request, "workspace", None) or get_current_workspace()
 
-            charts = self._fetch_charts_from_postgres(organization, template_ids)
+            charts, query_metadata = self._fetch_charts_from_clickhouse(
+                organization,
+                workspace,
+                template_ids,
+                with_metadata=True,
+            )
 
-            return self._gm.success_response({"charts": charts})
+            return self._gm.success_response(
+                {
+                    "charts": charts,
+                    **query_metadata,
+                }
+            )
 
         except Exception as e:
             logger.error(
                 f"Error in EvalTemplateListChartsView: {str(e)}\n{traceback.format_exc()}"
             )
-            return self._gm.bad_request(str(e))
-
-    def _fetch_charts_from_postgres(self, organization, template_ids):
-        """
-        Query PostgreSQL for 30-day daily run counts and failure rates per template.
-        Failure = API error OR eval result is "Failed"/"Fail"/score 0.
-        Uses the same data source as the detail page so results are always fresh.
-        Returns: { template_id: { chart: [...], errorRate: [...], runCount: N } }
-        """
-        import json as _json
-        from collections import defaultdict
-        from datetime import date, timedelta
-
-        from django.utils import timezone
-
-        start_date = timezone.now() - timedelta(days=30)
-
-        # Fetch individual logs to inspect config.output for pass/fail
-        if APICallLog is None:
-            return []
-        logs = (
-            APICallLog.objects.filter(
-                organization=organization,
-                source_id__in=[str(tid) for tid in template_ids],
-                created_at__gte=start_date,
-                deleted=False,
+            return self._gm.bad_request(
+                "Unable to load evaluation charts. Please try again later."
             )
-            .values("source_id", "created_at", "status", "config")
-            .order_by("source_id", "created_at")
-        )
 
-        # Build per-template daily data
-        daily_data = defaultdict(
-            lambda: defaultdict(lambda: {"total": 0, "failures": 0})
-        )
-        for log in logs:
-            day = log["created_at"].date()
-            sid = log["source_id"]
-            daily_data[sid][day]["total"] += 1
-
-            # Count as failure if API error or eval result is Failed/Fail/0
-            if log["status"] == APICallStatusChoices.ERROR.value:
-                daily_data[sid][day]["failures"] += 1
-            else:
-                config = log.get("config") or {}
-                if isinstance(config, str):
-                    try:
-                        config = _json.loads(config)
-                    except (ValueError, TypeError):
-                        config = {}
-                output = config.get("output", {})
-                if isinstance(output, dict):
-                    result = output.get("output")
-                    if result in ("Failed", "Fail"):
-                        daily_data[sid][day]["failures"] += 1
-                    elif result == 0 or result == 0.0:
-                        daily_data[sid][day]["failures"] += 1
-
-        # Generate 31-day time series for each template
-        today = date.today()
-        start = today - timedelta(days=30)
+    @staticmethod
+    def _empty_charts(template_ids, *, start_day):
         result = {}
-
-        for tid in template_ids:
+        for template_id in template_ids:
             chart = []
             error_rate = []
-            run_count = 0
-            tid_str = str(tid)
-
-            for i in range(31):
-                day = start + timedelta(days=i)
-                ts = day.strftime("%Y-%m-%dT00:00:00")
-                day_data = daily_data.get(tid_str, {}).get(
-                    day, {"total": 0, "failures": 0}
-                )
-                total = day_data["total"]
-                failures = day_data["failures"]
-                chart.append({"timestamp": ts, "value": total})
-                rate = round((failures / total) * 100, 1) if total > 0 else 0
-                error_rate.append({"timestamp": ts, "value": rate})
-                run_count += total
-
-            result[tid_str] = {
+            for day_offset in range(31):
+                day = start_day + timedelta(days=day_offset)
+                timestamp = day.strftime("%Y-%m-%dT00:00:00")
+                chart.append({"timestamp": timestamp, "value": 0})
+                error_rate.append({"timestamp": timestamp, "value": 0})
+            result[str(template_id)] = {
                 "chart": chart,
                 "error_rate": error_rate,
-                "run_count": run_count,
+                "run_count": 0,
             }
-
         return result
+
+    def _fetch_charts_from_clickhouse(
+        self,
+        organization,
+        workspace,
+        template_ids,
+        *,
+        with_metadata=False,
+    ):
+        """Return one bounded ClickHouse aggregate for the 30-day chart page."""
+        from django.core.cache import cache
+
+        from tracer.services.clickhouse.client import get_clickhouse_client
+
+        template_ids = list(dict.fromkeys(str(value) for value in template_ids))[
+            : self._MAX_TEMPLATE_IDS
+        ]
+        today = timezone.now().astimezone(UTC).date()
+        start_day = today - timedelta(days=30)
+        end_day = today + timedelta(days=1)
+        empty = self._empty_charts(template_ids, start_day=start_day)
+
+        def _result(
+            charts,
+            *,
+            query_complete,
+            query_status,
+            data_stale=False,
+            query_error_code=None,
+        ):
+            metadata = {
+                "query_complete": query_complete,
+                "query_status": query_status,
+                "data_stale": data_stale,
+            }
+            if query_error_code:
+                metadata["query_error_code"] = query_error_code
+            return (charts, metadata) if with_metadata else charts
+
+        if not template_ids:
+            return _result(
+                empty,
+                query_complete=True,
+                query_status="complete",
+            )
+
+        workspace_id = str(workspace.id) if workspace is not None else None
+        fingerprint = {
+            "organization_id": str(organization.id),
+            "workspace_id": workspace_id,
+            "workspace_is_default": bool(
+                workspace is not None and getattr(workspace, "is_default", False)
+            ),
+            "template_ids": sorted(template_ids),
+            "start_day": start_day.isoformat(),
+        }
+        digest = hashlib.sha256(
+            json.dumps(fingerprint, sort_keys=True).encode()
+        ).hexdigest()
+        fresh_key = f"eval-list-charts:v2:fresh:{digest}"
+        stale_key = f"eval-list-charts:v2:stale:{digest}"
+        cached = _eval_metric_cache_get(cache, fresh_key)
+        if cached is not None:
+            return _result(
+                cached,
+                query_complete=True,
+                query_status="complete",
+            )
+
+        params = {
+            "organization_id": str(organization.id),
+            "template_ids": tuple(template_ids),
+            "start_date": datetime.combine(start_day, datetime.min.time(), tzinfo=UTC),
+            "end_date": datetime.combine(end_day, datetime.min.time(), tzinfo=UTC),
+            "error_status": APICallStatusChoices.ERROR.value,
+        }
+        scope = [
+            "organization_id = toUUID(%(organization_id)s)",
+            "source_id IN %(template_ids)s",
+            "created_at >= %(start_date)s",
+            "created_at < %(end_date)s",
+            "deleted = 0",
+            "_peerdb_is_deleted = 0",
+        ]
+        if workspace is not None:
+            params["workspace_id"] = workspace_id
+            if getattr(workspace, "is_default", False):
+                scope.append(
+                    "(workspace_id = toUUID(%(workspace_id)s) OR workspace_id IS NULL)"
+                )
+            else:
+                scope.append("workspace_id = toUUID(%(workspace_id)s)")
+
+        failure = (
+            "status = %(error_status)s "
+            "OR lowerUTF8(eval_output_str) IN ('failed', 'fail') "
+            "OR eval_score = 0"
+        )
+        query = f"""
+            SELECT
+                source_id,
+                toStartOfDay(created_at, 'UTC') AS bucket,
+                count() AS total,
+                countIf({failure}) AS failures
+            FROM (
+                SELECT
+                    source_id,
+                    created_at,
+                    status,
+                    eval_score,
+                    eval_output_str
+                FROM usage_apicalllog FINAL
+                WHERE {" AND ".join(scope)}
+            )
+            GROUP BY source_id, bucket
+            ORDER BY source_id, bucket
+        """
+
+        try:
+            rows, _column_types, _query_time_ms = get_clickhouse_client().execute_read(
+                query,
+                params,
+                timeout_ms=self._READ_TIMEOUT_MS,
+                settings={
+                    "max_threads": 2,
+                    "max_rows_to_read": 4_000_000,
+                    "read_overflow_mode": "throw",
+                    # Production's narrow 30-day aggregate reads ~205 MiB on
+                    # the current PeerDB table layout. A 64 MiB ceiling made
+                    # every cold-cache request fail deterministically even
+                    # though the query itself stays below the latency and
+                    # memory budgets. The 512 MiB / 4 M-row ceilings retain
+                    # growth headroom; the 750 ms wall-clock is still the
+                    # primary protection.
+                    "max_bytes_to_read": 512 * 1024 * 1024,
+                    "max_memory_usage": 128 * 1024 * 1024,
+                    "max_result_rows": self._MAX_TEMPLATE_IDS * 31,
+                    "max_result_bytes": 2 * 1024 * 1024,
+                    "result_overflow_mode": "throw",
+                    "timeout_overflow_mode": "throw",
+                },
+            )
+        except Exception as exc:
+            if not is_read_budget_error(exc):
+                raise
+            logger.warning(
+                "eval list chart ClickHouse read exceeded budget",
+                organization_id=str(organization.id),
+                template_count=len(template_ids),
+                error=str(exc)[:200],
+            )
+            stale = _eval_metric_cache_get(cache, stale_key)
+            if stale is not None:
+                return _result(
+                    stale,
+                    query_complete=False,
+                    query_status="stale",
+                    data_stale=True,
+                    query_error_code="read_budget_exceeded",
+                )
+            return _result(
+                empty,
+                query_complete=False,
+                query_status="degraded",
+                query_error_code="read_budget_exceeded",
+            )
+
+        by_template = defaultdict(dict)
+        for source_id, bucket, total, failures in rows:
+            bucket_day = bucket.date() if hasattr(bucket, "date") else bucket
+            by_template[str(source_id)][bucket_day] = (
+                int(total or 0),
+                int(failures or 0),
+            )
+
+        result = self._empty_charts(template_ids, start_day=start_day)
+        for template_id in template_ids:
+            run_count = 0
+            for day_offset in range(31):
+                day = start_day + timedelta(days=day_offset)
+                total, failures = by_template.get(template_id, {}).get(day, (0, 0))
+                run_count += total
+                result[template_id]["chart"][day_offset]["value"] = total
+                result[template_id]["error_rate"][day_offset]["value"] = (
+                    round(failures * 100.0 / total, 1) if total else 0
+                )
+            result[template_id]["run_count"] = run_count
+
+        _eval_metric_cache_set(
+            cache,
+            fresh_key,
+            result,
+            timeout=self._FRESH_CACHE_SECONDS,
+        )
+        _eval_metric_cache_set(
+            cache,
+            stale_key,
+            result,
+            timeout=self._STALE_CACHE_SECONDS,
+        )
+        return _result(
+            result,
+            query_complete=True,
+            query_status="complete",
+        )
 
 
 class EvalTemplateBulkDeleteView(APIView):
@@ -2444,7 +3092,10 @@ class EvalTemplateDetailView(APIView):
             logger.error(
                 f"Error in EvalTemplateDetailView: {str(e)}\n{traceback.format_exc()}"
             )
-            return self._gm.bad_request(str(e))
+            return _eval_query_error_response(
+                e,
+                "Evaluation template details could not be loaded. Please try again.",
+            )
 
 
 class EvalTemplateUpdateView(APIView):
@@ -2896,7 +3547,10 @@ class EvalTemplateVersionListView(APIView):
             logger.error(
                 f"Error in EvalTemplateVersionListView: {str(e)}\n{traceback.format_exc()}"
             )
-            return self._gm.bad_request(str(e))
+            return _eval_query_error_response(
+                e,
+                "Evaluation template versions could not be loaded. Please try again.",
+            )
 
 
 class EvalTemplateVersionCreateView(APIView):
@@ -3333,7 +3987,6 @@ def _get_accessible_eval_template_for_request(template_id, request, template_typ
 
 
 def _get_accessible_ground_truth(ground_truth_id, request):
-    from model_hub.models.evals_metric import EvalGroundTruth
 
     organization = _request_organization(request)
     return (
@@ -4436,7 +5089,6 @@ class GroundTruthListView(APIView):
         responses={200: GroundTruthListResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, template_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalGroundTruth
         from model_hub.types import GroundTruthItem, GroundTruthListResponse
 
         try:
@@ -4532,9 +5184,7 @@ class GroundTruthUploadView(APIView):
         )
 
         try:
-            template = _get_accessible_eval_template_for_request(
-                template_id, request
-            )
+            template = _get_accessible_eval_template_for_request(template_id, request)
         except EvalTemplate.DoesNotExist:
             return self._gm.not_found("Eval template not found.")
 
@@ -4555,9 +5205,7 @@ class GroundTruthUploadView(APIView):
                 )
             except ValueError as exc:
                 return self._gm.bad_request(str(exc))
-            name = (
-                request_data.get("name") or uploaded_file.name.rsplit(".", 1)[0]
-            )
+            name = request_data.get("name") or uploaded_file.name.rsplit(".", 1)[0]
             description = request_data.get("description", "")
             file_name = uploaded_file.name
             variable_mapping = request_data.get("variable_mapping")
@@ -4617,7 +5265,6 @@ class GroundTruthSetupView(APIView):
         reject_unknown_fields=True,
     )
     def put(self, request, ground_truth_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalGroundTruth
         from model_hub.services.ground_truth_service import (
             GroundTruthService,
             ServiceError,
@@ -4640,9 +5287,7 @@ class GroundTruthSetupView(APIView):
         )
         if isinstance(result, ServiceError):
             return self._gm.bad_request(result.message)
-        return self._gm.success_response(
-            GroundTruthSetupResult(**result).model_dump()
-        )
+        return self._gm.success_response(GroundTruthSetupResult(**result).model_dump())
 
 
 class GroundTruthDataView(APIView):
@@ -4655,7 +5300,6 @@ class GroundTruthDataView(APIView):
         responses={200: GroundTruthDataResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, ground_truth_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalGroundTruth
         from model_hub.types import GroundTruthDataResponse
 
         try:
@@ -4704,7 +5348,6 @@ class GroundTruthStatusView(APIView):
         }
     )
     def get(self, request, ground_truth_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalGroundTruth
         from model_hub.types import GroundTruthStatusResponse
 
         try:
@@ -4757,8 +5400,6 @@ class GroundTruthDeleteView(APIView):
     def delete(self, request, ground_truth_id, *args, **kwargs):
         from django.db import transaction
 
-        from model_hub.models.evals_metric import EvalGroundTruth
-
         try:
             try:
                 gt = _get_accessible_ground_truth(ground_truth_id, request)
@@ -4769,7 +5410,9 @@ class GroundTruthDeleteView(APIView):
                 gt.deleted = True
                 gt.deleted_at = timezone.now()
                 gt.is_active = False
-                gt.save(update_fields=["deleted", "deleted_at", "is_active", "updated_at"])
+                gt.save(
+                    update_fields=["deleted", "deleted_at", "is_active", "updated_at"]
+                )
 
             return self._gm.success_response({"deleted": True, "id": str(gt.id)})
 
@@ -4795,7 +5438,6 @@ class GroundTruthTriggerEmbeddingView(APIView):
         reject_unknown_fields=True,
     )
     def post(self, request, ground_truth_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalGroundTruth
 
         try:
             try:
@@ -4875,6 +5517,470 @@ def _round_to_usage_bucket(ts, bucket_minutes):
     return ts.replace(minute=rounded_minute, second=0, microsecond=0)
 
 
+def _eval_usage_bucket_minutes(period):
+    if period == "30m":
+        return 10
+    if period == "6h":
+        return 60
+    if period == "1d":
+        return 360
+    return 1440
+
+
+def _zero_fill_eval_usage_chart(
+    bucket_metrics, *, start_date, end_date, bucket_minutes
+):
+    """Render sparse aggregate buckets using the existing response semantics."""
+    if not bucket_metrics:
+        return []
+
+    normalized_metrics = {}
+    for bucket, values in bucket_metrics.items():
+        if isinstance(bucket, datetime) and timezone.is_naive(bucket):
+            bucket = bucket.replace(tzinfo=UTC)
+        normalized_metrics[_round_to_usage_bucket(bucket, bucket_minutes)] = values
+
+    chart_data = []
+    current_bucket = _round_to_usage_bucket(start_date, bucket_minutes)
+    while current_bucket <= end_date:
+        values = normalized_metrics.get(current_bucket, {})
+        avg_latency = values.get("avg_latency")
+        if avg_latency is None:
+            avg_latency_ms = 0
+        else:
+            avg_latency = float(avg_latency)
+            avg_latency_ms = round(
+                avg_latency * 1000 if avg_latency < 100 else avg_latency
+            )
+
+        avg_score = values.get("avg_score")
+        chart_data.append(
+            {
+                "timestamp": current_bucket.isoformat(),
+                "calls": int(values.get("calls", 0)),
+                "avg_latency_ms": avg_latency_ms,
+                "avg_score": (
+                    round(float(avg_score), 3) if avg_score is not None else None
+                ),
+                "pass_count": int(values.get("pass_count", 0)),
+                "fail_count": int(values.get("fail_count", 0)),
+            }
+        )
+        if bucket_minutes >= 1440:
+            current_bucket += timedelta(days=1)
+        else:
+            current_bucket += timedelta(minutes=bucket_minutes)
+
+    return chart_data
+
+
+def _bounded_eval_usage_chart(logs_page, *, start_date, end_date, period):
+    """Build a conservative chart from the already-bounded PG page."""
+    if not logs_page:
+        return []
+
+    bucket_minutes = _eval_usage_bucket_minutes(period)
+    buckets_calls = defaultdict(int)
+    buckets_latency = defaultdict(list)
+    buckets_scores = defaultdict(list)
+    buckets_pass = defaultdict(int)
+    buckets_fail = defaultdict(int)
+
+    for log in logs_page:
+        bucket = _round_to_usage_bucket(log.created_at, bucket_minutes)
+        buckets_calls[bucket] += 1
+
+        config = log.config
+        if isinstance(config, str):
+            try:
+                config = json.loads(config)
+            except Exception:
+                config = {}
+        if not isinstance(config, dict):
+            continue
+
+        duration = config.get("duration") or config.get("response_time")
+        if duration:
+            try:
+                buckets_latency[bucket].append(float(duration))
+            except (ValueError, TypeError):
+                pass
+
+        output = config.get("output", {})
+        if not isinstance(output, dict):
+            continue
+        score = output.get("output")
+        if isinstance(score, int | float):
+            buckets_scores[bucket].append(float(score))
+            if config.get("composite") is True:
+                aggregate_pass = output.get("aggregate_pass")
+                if aggregate_pass is True:
+                    buckets_pass[bucket] += 1
+                elif aggregate_pass is False:
+                    buckets_fail[bucket] += 1
+        elif isinstance(score, dict):
+            numeric = score.get("score")
+            if isinstance(numeric, int | float):
+                buckets_scores[bucket].append(float(numeric))
+            label = score.get("label", "")
+            if label in ("Passed", "Pass"):
+                buckets_pass[bucket] += 1
+            elif label in ("Failed", "Fail"):
+                buckets_fail[bucket] += 1
+        elif score in ("Passed", "Pass"):
+            buckets_pass[bucket] += 1
+            buckets_scores[bucket].append(1.0)
+        elif score in ("Failed", "Fail"):
+            buckets_fail[bucket] += 1
+            buckets_scores[bucket].append(0.0)
+
+    bucket_metrics = {}
+    for bucket, calls in buckets_calls.items():
+        latencies = buckets_latency.get(bucket, [])
+        scores = buckets_scores.get(bucket, [])
+        bucket_metrics[bucket] = {
+            "calls": calls,
+            "avg_latency": (sum(latencies) / len(latencies) if latencies else None),
+            "avg_score": sum(scores) / len(scores) if scores else None,
+            "pass_count": buckets_pass.get(bucket, 0),
+            "fail_count": buckets_fail.get(bucket, 0),
+        }
+    return _zero_fill_eval_usage_chart(
+        bucket_metrics,
+        start_date=start_date,
+        end_date=end_date,
+        bucket_minutes=bucket_minutes,
+    )
+
+
+_EVAL_USAGE_CH_TIMEOUT_MS = 750
+_EVAL_USAGE_FRESH_CACHE_SECONDS = 30
+_EVAL_USAGE_STALE_CACHE_SECONDS = 3600
+
+
+def _eval_usage_cache_keys(
+    *,
+    organization_id,
+    workspace_id,
+    template_id,
+    cache_scope,
+    workspace_is_default=False,
+):
+    identity = ":".join(
+        (
+            str(organization_id),
+            str(workspace_id or "all"),
+            "default-with-legacy-null" if workspace_is_default else "exact",
+            str(template_id),
+            cache_scope,
+        )
+    )
+    digest = hashlib.sha256(identity.encode()).hexdigest()[:32]
+    return (
+        f"eval-usage:v3:fresh:{digest}",
+        f"eval-usage:v3:stale:{digest}",
+    )
+
+
+def _safe_eval_usage_cache_get(key):
+    from django.core.cache import cache
+
+    try:
+        value = cache.get(key)
+        return value if isinstance(value, dict) else None
+    except Exception as exc:
+        logger.warning("eval_usage_cache_read_failed", error=str(exc)[:160])
+        return None
+
+
+def _safe_eval_usage_cache_set(key, value, timeout):
+    from django.core.cache import cache
+
+    try:
+        cache.set(key, value, timeout=timeout)
+    except Exception as exc:
+        logger.warning("eval_usage_cache_write_failed", error=str(exc)[:160])
+
+
+def _clickhouse_eval_usage_analytics(
+    *,
+    organization_id,
+    workspace_id,
+    template_id,
+    start_date,
+    end_date,
+    period,
+    cache_scope=None,
+    workspace_is_default=False,
+):
+    """Use fresh/stale cache around the strictly budgeted ClickHouse query."""
+    from django.conf import settings
+
+    from tracer.services.clickhouse.client import is_clickhouse_enabled
+
+    clickhouse_settings = getattr(settings, "CLICKHOUSE", {})
+    if not clickhouse_settings.get("CH_EVAL_USAGE_ANALYTICS", True):
+        return None
+
+    cache_scope = cache_scope or (
+        f"range:{start_date.isoformat()}:{end_date.isoformat()}:{period}"
+    )
+    fresh_key, stale_key = _eval_usage_cache_keys(
+        organization_id=organization_id,
+        workspace_id=workspace_id,
+        template_id=template_id,
+        cache_scope=cache_scope,
+        workspace_is_default=workspace_is_default,
+    )
+    fresh = _safe_eval_usage_cache_get(fresh_key)
+    if fresh is not None:
+        return {
+            **fresh,
+            "backend": "clickhouse_cache",
+            "stale": False,
+            "query_complete": True,
+            "query_status": "complete",
+            "as_of": fresh.get("as_of") or timezone.now(),
+            "total_is_lower_bound": False,
+        }
+
+    query_error = None
+    try:
+        if not is_clickhouse_enabled():
+            raise RuntimeError("ClickHouse analytics is not enabled")
+        result = _query_clickhouse_eval_usage_analytics(
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+            template_id=template_id,
+            start_date=start_date,
+            end_date=end_date,
+            period=period,
+            workspace_is_default=workspace_is_default,
+        )
+    except Exception as exc:
+        if not is_read_budget_error(exc):
+            raise
+        query_error = exc
+    else:
+        cached_result = {
+            **result,
+            "backend": "clickhouse",
+            "stale": False,
+            "query_complete": True,
+            "query_status": "complete",
+            "as_of": timezone.now(),
+            "total_is_lower_bound": False,
+        }
+        _safe_eval_usage_cache_set(
+            fresh_key,
+            cached_result,
+            timeout=_EVAL_USAGE_FRESH_CACHE_SECONDS,
+        )
+        _safe_eval_usage_cache_set(
+            stale_key,
+            cached_result,
+            timeout=_EVAL_USAGE_STALE_CACHE_SECONDS,
+        )
+        return cached_result
+
+    stale = _safe_eval_usage_cache_get(stale_key)
+    if stale is not None:
+        return {
+            **stale,
+            "backend": "clickhouse_stale",
+            "stale": True,
+            "query_complete": False,
+            "query_status": "stale",
+            "as_of": stale.get("as_of") or timezone.now(),
+            "total_is_lower_bound": stale.get("total_is_lower_bound", False),
+        }
+    raise query_error
+
+
+def _query_clickhouse_eval_usage_analytics(
+    *,
+    organization_id,
+    workspace_id,
+    template_id,
+    start_date,
+    end_date,
+    period,
+    workspace_is_default=False,
+):
+    """Return one read-only ClickHouse aggregate for eval usage analytics.
+
+    The all-time count is a scalar subquery scoped by the leading
+    ``(organization_id, source_id)`` sort-key columns. Chart work is strictly
+    bounded by the requested date range and returns at most one aggregate row.
+    """
+    from tracer.services.clickhouse.client import get_clickhouse_client
+
+    bucket_minutes = _eval_usage_bucket_minutes(period)
+    scope_clauses = [
+        "organization_id = toUUID(%(organization_id)s)",
+        "source_id = %(template_id)s",
+        "deleted = 0",
+        "_peerdb_is_deleted = 0",
+    ]
+    params = {
+        "organization_id": str(organization_id),
+        "template_id": str(template_id),
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+    if workspace_id is not None:
+        if workspace_is_default:
+            scope_clauses.append(
+                "(workspace_id = toUUID(%(workspace_id)s) OR workspace_id IS NULL)"
+            )
+        else:
+            scope_clauses.append("workspace_id = toUUID(%(workspace_id)s)")
+        params["workspace_id"] = str(workspace_id)
+    scope_sql = " AND ".join(scope_clauses)
+
+    # ``config`` is frequently a multi-kilobyte JSON document. Parsing it for
+    # every row forced this endpoint past 1 GiB read / ~230 MiB memory on the
+    # production table. The materialized columns are the ingestion-time,
+    # schema-supported projection for analytics and keep the exact two-scan
+    # response shape near 322 MiB / single-digit MiB memory. Duration is
+    # intentionally unavailable until it has its own materialized column;
+    # returning a zero chart latency is preferable to re-reading the unbounded
+    # JSON payload.
+    output_string = "lowerUTF8(eval_output_str)"
+    pass_labels = "('passed', 'pass', 'true', '1')"
+    score_value = (
+        "if(status = %(success_status)s, toNullable(eval_score), "
+        "CAST(NULL, 'Nullable(Float64)'))"
+    )
+    pass_value = (
+        "status = %(success_status)s AND "
+        f"(eval_score >= 1 OR {output_string} IN {pass_labels})"
+    )
+    fail_value = (
+        "status = %(success_status)s AND eval_score < 1 "
+        f"AND {output_string} NOT IN {pass_labels}"
+    )
+
+    query = f"""
+        WITH (
+            SELECT count()
+            FROM usage_apicalllog FINAL
+            WHERE {scope_sql}
+        ) AS total_runs
+        SELECT
+            total_runs,
+            sum(calls) AS runs_period,
+            sum(success_count) AS success_count,
+            sum(error_count) AS error_count,
+            groupArray(tuple(
+                bucket,
+                calls,
+                avg_latency,
+                avg_score,
+                pass_count,
+                fail_count
+            )) AS buckets
+        FROM (
+            SELECT
+                bucket,
+                count() AS calls,
+                countIf(status = %(success_status)s) AS success_count,
+                countIf(status = %(error_status)s) AS error_count,
+                CAST(NULL, 'Nullable(Float64)') AS avg_latency,
+                sum(ifNull(score_value, 0.0))
+                    / nullIf(countIf(isNotNull(score_value)), 0) AS avg_score,
+                countIf(pass_value) AS pass_count,
+                countIf(fail_value) AS fail_count
+            FROM (
+                SELECT
+                    toStartOfInterval(
+                        created_at,
+                        INTERVAL {bucket_minutes} MINUTE,
+                        'UTC'
+                    ) AS bucket,
+                    status,
+                    {score_value} AS score_value,
+                    {pass_value} AS pass_value,
+                    {fail_value} AS fail_value
+                FROM (
+                    SELECT
+                        created_at,
+                        status,
+                        eval_score,
+                        eval_output_str
+                    FROM usage_apicalllog FINAL
+                    WHERE {scope_sql}
+                      AND created_at >= %(start_date)s
+                      AND created_at <= %(end_date)s
+                )
+            )
+            GROUP BY bucket
+            ORDER BY bucket
+        )
+    """
+    params.update(
+        {
+            "success_status": APICallStatusChoices.SUCCESS.value,
+            "error_status": APICallStatusChoices.ERROR.value,
+        }
+    )
+    rows, _column_types, _query_time_ms = get_clickhouse_client().execute_read(
+        query,
+        params,
+        timeout_ms=_EVAL_USAGE_CH_TIMEOUT_MS,
+        settings={
+            "max_threads": 2,
+            # The exact response performs one all-time count plus one period
+            # aggregate. Production currently reads ~4.14 M narrow rows /
+            # 322 MiB for both scans combined, so these ceilings retain useful
+            # growth headroom while the 750 ms wall-clock and 128 MiB memory
+            # limits prevent runaway work.
+            "max_rows_to_read": 6_000_000,
+            "read_overflow_mode": "throw",
+            "max_bytes_to_read": 512 * 1024 * 1024,
+            "max_memory_usage": 128 * 1024 * 1024,
+            "max_result_rows": 1,
+            "max_result_bytes": 2 * 1024 * 1024,
+            "result_overflow_mode": "throw",
+            "timeout_overflow_mode": "throw",
+        },
+    )
+    if not rows:
+        raise RuntimeError("ClickHouse eval usage aggregate returned no row")
+
+    total_runs, runs_period, success_count, error_count, buckets = rows[0]
+    bucket_metrics = {
+        bucket: {
+            "calls": calls,
+            "avg_latency": avg_latency,
+            "avg_score": avg_score,
+            "pass_count": pass_count,
+            "fail_count": fail_count,
+        }
+        for (
+            bucket,
+            calls,
+            avg_latency,
+            avg_score,
+            pass_count,
+            fail_count,
+        ) in (buckets or [])
+    }
+    return {
+        "total_runs": int(total_runs or 0),
+        "runs_period": int(runs_period or 0),
+        "success_count": int(success_count or 0),
+        "error_count": int(error_count or 0),
+        "chart": _zero_fill_eval_usage_chart(
+            bucket_metrics,
+            start_date=start_date,
+            end_date=end_date,
+            bucket_minutes=bucket_minutes,
+        ),
+        "backend": "clickhouse",
+    }
+
+
 class EvalUsageStatsView(APIView):
     """
     GET /model-hub/eval-templates/<id>/usage/
@@ -4920,6 +6026,12 @@ class EvalUsageStatsView(APIView):
                 empty = {
                     "template_id": str(template_id),
                     "is_composite": False,
+                    "query_complete": True,
+                    "query_status": "complete",
+                    "backend": "not_configured",
+                    "stale": False,
+                    "as_of": timezone.now(),
+                    "total_is_lower_bound": False,
                     "stats": {
                         "total_runs": 0,
                         "runs_period": 0,
@@ -4938,7 +6050,7 @@ class EvalUsageStatsView(APIView):
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
-            workspace = getattr(request, "workspace", None)
+            workspace = getattr(request, "workspace", None) or get_current_workspace()
 
             # System templates are global (organization=NULL) and must stay
             # readable — only user-owned templates are org- and
@@ -4949,27 +6061,31 @@ class EvalUsageStatsView(APIView):
                 id=template_id, deleted=False
             ).filter(
                 Q(owner=OwnerChoices.SYSTEM.value)
-                | Q(owner=OwnerChoices.USER.value, organization=organization)
-            )
-            if workspace:
-                template_qs = template_qs.filter(
-                    Q(owner=OwnerChoices.SYSTEM.value)
-                    | Q(workspace=workspace)
-                    | Q(workspace__isnull=True)
+                | (
+                    Q(owner=OwnerChoices.USER.value, organization=organization)
+                    & _request_workspace_filter(request)
                 )
+            )
             template = template_qs.first()
             if template is None:
                 return self._gm.not_found("Eval template not found.")
 
             # Explicit date range wins over the period string. The query
             # serializer guarantees start/end are both present or both absent.
-            if query.get("start_date") and query.get("end_date"):
+            has_explicit_range = bool(query.get("start_date") and query.get("end_date"))
+            if has_explicit_range:
                 start_date = query["start_date"]
                 end_date = query["end_date"]
+                cache_scope = (
+                    f"range:{start_date.isoformat()}:{end_date.isoformat()}:{period}"
+                )
             else:
                 period_delta = self.PERIOD_MAP.get(period, timedelta(days=30))
                 end_date = timezone.now()
                 start_date = end_date - period_delta
+                # Stable across requests so a short-lived cache can absorb
+                # refresh bursts while the relative window moves forward.
+                cache_scope = f"period:{period}"
 
             # Base queryset — workspace-scoped so usage numbers don't leak
             # across workspaces of the same org.
@@ -4979,132 +6095,126 @@ class EvalUsageStatsView(APIView):
                 deleted=False,
             )
             if workspace:
-                base_qs = base_qs.filter(workspace=workspace)
-            total_runs = base_qs.count()
+                base_qs = base_qs.filter(_request_workspace_filter(request))
 
             # Period-filtered queryset
             period_qs = base_qs.filter(
                 created_at__gte=start_date, created_at__lte=end_date
             )
-            runs_period = period_qs.count()
+            analytics = None
+            try:
+                analytics = _clickhouse_eval_usage_analytics(
+                    organization_id=organization.id,
+                    workspace_id=workspace.id if workspace else None,
+                    template_id=template_id,
+                    start_date=start_date,
+                    end_date=end_date,
+                    period=period,
+                    cache_scope=cache_scope,
+                    workspace_is_default=bool(
+                        workspace and getattr(workspace, "is_default", False)
+                    ),
+                )
+            except Exception as exc:
+                if not is_read_budget_error(exc):
+                    raise
+                # Never follow a 750 ms analytics timeout with an unbounded PG
+                # aggregate/config scan. The bounded page below supplies a
+                # conservative lower bound when neither fresh nor stale cache
+                # is available.
+                logger.warning(
+                    "eval_usage_clickhouse_unavailable",
+                    template_id=str(template_id),
+                    error=str(exc)[:200],
+                )
 
-            success_count = period_qs.filter(
-                status=APICallStatusChoices.SUCCESS.value
-            ).count()
-            error_count = period_qs.filter(
-                status=APICallStatusChoices.ERROR.value
-            ).count()
-
-            # Chart data — aggregate by time bucket
-            from collections import defaultdict
-
-            chart_data = []
-            if runs_period > 0:
-                # Pick bucket size based on period
-                if period in ("30m", "6h", "1d"):
-                    bucket_minutes = (
-                        10 if period == "30m" else (60 if period == "6h" else 360)
-                    )
-                else:
-                    bucket_minutes = 1440  # 1 day
-
-                buckets_calls = defaultdict(int)
-                buckets_latency = defaultdict(list)
-                buckets_scores = defaultdict(list)
-                buckets_pass = defaultdict(int)
-                buckets_fail = defaultdict(int)
-
-                for log in period_qs.values("created_at", "config", "status"):
-                    bucket_key = _round_to_usage_bucket(
-                        log["created_at"], bucket_minutes
-                    ).isoformat()
-                    buckets_calls[bucket_key] += 1
-
-                    # Extract latency + score from config
-                    config = log.get("config")
-                    if isinstance(config, str):
-                        try:
-                            config = json.loads(config)
-                        except Exception:
-                            config = {}
-                    if isinstance(config, dict):
-                        duration = config.get("duration") or config.get("response_time")
-                        if duration:
-                            try:
-                                buckets_latency[bucket_key].append(float(duration))
-                            except (ValueError, TypeError):
-                                pass
-
-                        # Extract score/result from output
-                        output = config.get("output", {})
-                        if isinstance(output, dict):
-                            is_composite = config.get("composite") is True
-                            score = output.get("output")
-                            if isinstance(score, int | float):
-                                buckets_scores[bucket_key].append(float(score))
-                                # Composite logs carry aggregate_pass
-                                if is_composite:
-                                    agg_pass = output.get("aggregate_pass")
-                                    if agg_pass is True:
-                                        buckets_pass[bucket_key] += 1
-                                    elif agg_pass is False:
-                                        buckets_fail[bucket_key] += 1
-                            elif isinstance(score, dict):
-                                # Choice-format output {label, score} — was
-                                # previously skipped, leaving the chart empty
-                                # for choice evals even when logs exist.
-                                numeric = score.get("score")
-                                if isinstance(numeric, int | float):
-                                    buckets_scores[bucket_key].append(float(numeric))
-                                label = score.get("label", "")
-                                if label in ("Passed", "Pass"):
-                                    buckets_pass[bucket_key] += 1
-                                elif label in ("Failed", "Fail"):
-                                    buckets_fail[bucket_key] += 1
-                            elif score in ("Passed", "Pass"):
-                                buckets_pass[bucket_key] += 1
-                                buckets_scores[bucket_key].append(1.0)
-                            elif score in ("Failed", "Fail"):
-                                buckets_fail[bucket_key] += 1
-                                buckets_scores[bucket_key].append(0.0)
-
-                # Zero-fill: generate all buckets in the range, rounded with
-                # the SAME function as the per-log keys so they line up.
-                current_bucket = _round_to_usage_bucket(start_date, bucket_minutes)
-                all_bucket_keys = []
-                while current_bucket <= end_date:
-                    all_bucket_keys.append(current_bucket.isoformat())
-                    if bucket_minutes >= 1440:
-                        current_bucket += timedelta(days=1)
-                    else:
-                        current_bucket += timedelta(minutes=bucket_minutes)
-
-                for ts_key in all_bucket_keys:
-                    latencies = buckets_latency.get(ts_key, [])
-                    scores = buckets_scores.get(ts_key, [])
-                    avg_latency = sum(latencies) / len(latencies) if latencies else 0
-                    avg_score = sum(scores) / len(scores) if scores else None
-                    chart_data.append(
-                        {
-                            "timestamp": ts_key,
-                            "calls": buckets_calls.get(ts_key, 0),
-                            "avg_latency_ms": (
-                                round(avg_latency * 1000)
-                                if avg_latency < 100
-                                else round(avg_latency)
-                            ),
-                            "avg_score": (
-                                round(avg_score, 3) if avg_score is not None else None
-                            ),
-                            "pass_count": buckets_pass.get(ts_key, 0),
-                            "fail_count": buckets_fail.get(ts_key, 0),
-                        }
-                    )
-
-            # Paginated logs
+            # Paginated logs stay on PostgreSQL (the source of truth), but the
+            # read is hard-bounded to one page plus a lookahead row. The
+            # lookahead preserves "next page" behavior without COUNT(*).
             logs_qs = period_qs.order_by("-created_at")
-            total_logs = logs_qs.count()
-            logs_page = logs_qs[page * page_size : (page + 1) * page_size]
+            page_offset = page * page_size
+            logs_window = list(logs_qs[page_offset : page_offset + page_size + 1])
+            has_more = len(logs_window) > page_size
+            logs_page = logs_window[:page_size]
+            page_lower_bound = (
+                page_offset + len(logs_page) + (1 if has_more else 0)
+                if logs_page
+                else 0
+            )
+            page_success_count = sum(
+                log.status == APICallStatusChoices.SUCCESS.value for log in logs_page
+            )
+            page_error_count = sum(
+                log.status == APICallStatusChoices.ERROR.value for log in logs_page
+            )
+            page_chart = _bounded_eval_usage_chart(
+                logs_page,
+                start_date=start_date,
+                end_date=end_date,
+                period=period,
+            )
+
+            if analytics is None:
+                analytics = {
+                    "total_runs": page_lower_bound,
+                    "runs_period": page_lower_bound,
+                    "success_count": page_success_count,
+                    "error_count": page_error_count,
+                    "chart": page_chart,
+                    "backend": "postgres_page_lower_bound",
+                    "query_complete": False,
+                    "query_status": "degraded",
+                    "stale": False,
+                    "as_of": timezone.now(),
+                    "total_is_lower_bound": True,
+                }
+            else:
+                # CDC/cache can lag the PG page briefly. Never return totals
+                # lower than rows the endpoint has just observed.
+                observed_totals_exceed_analytics = (
+                    page_lower_bound > analytics["total_runs"]
+                    or page_lower_bound > analytics["runs_period"]
+                    or page_success_count > analytics["success_count"]
+                    or page_error_count > analytics["error_count"]
+                )
+                query_status = analytics.get("query_status", "complete")
+                if observed_totals_exceed_analytics and query_status != "stale":
+                    query_status = "degraded"
+                analytics = {
+                    **analytics,
+                    "total_runs": max(
+                        analytics["total_runs"],
+                        page_lower_bound,
+                    ),
+                    "runs_period": max(
+                        analytics["runs_period"],
+                        page_lower_bound,
+                    ),
+                    "success_count": max(
+                        analytics["success_count"],
+                        page_success_count,
+                    ),
+                    "error_count": max(
+                        analytics["error_count"],
+                        page_error_count,
+                    ),
+                    "chart": analytics["chart"] or page_chart,
+                    "query_complete": analytics.get("query_complete", True)
+                    and not observed_totals_exceed_analytics,
+                    "query_status": query_status,
+                    "backend": analytics.get("backend", "clickhouse"),
+                    "stale": analytics.get("stale", False),
+                    "as_of": analytics.get("as_of") or timezone.now(),
+                    "total_is_lower_bound": analytics.get("total_is_lower_bound", False)
+                    or observed_totals_exceed_analytics,
+                }
+
+            total_runs = analytics["total_runs"]
+            runs_period = analytics["runs_period"]
+            success_count = analytics["success_count"]
+            error_count = analytics["error_count"]
+            chart_data = analytics["chart"]
+            total_logs = runs_period
 
             # Batch-fetch feedbacks for this page's log IDs
             log_ids = [str(log.log_id) for log in logs_page]
@@ -5350,6 +6460,12 @@ class EvalUsageStatsView(APIView):
             response = {
                 "template_id": str(template_id),
                 "is_composite": template.template_type == "composite",
+                "query_complete": analytics["query_complete"],
+                "query_status": analytics["query_status"],
+                "backend": analytics["backend"],
+                "stale": analytics["stale"],
+                "as_of": analytics["as_of"],
+                "total_is_lower_bound": analytics["total_is_lower_bound"],
                 "stats": {
                     "total_runs": total_runs,
                     "runs_period": runs_period,
@@ -5378,7 +6494,9 @@ class EvalUsageStatsView(APIView):
             logger.error(
                 f"Error in EvalUsageStatsView: {str(e)}\n{traceback.format_exc()}"
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request(
+                "Unable to load evaluation usage. Please try again later."
+            )
 
 
 class EvalFeedbackListView(APIView):
@@ -5493,37 +6611,250 @@ class TraceEvalView(APIView):
 
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
+    _READ_TIMEOUT_MS = 750
 
+    @staticmethod
+    def _decode_clickhouse_json(value, default=None):
+        if value in (None, ""):
+            return default
+        if not isinstance(value, str):
+            return value
+        try:
+            return json.loads(value)
+        except (TypeError, ValueError):
+            return value
+
+    @staticmethod
+    def _scoped_project_ids(*, organization, workspace):
+        from tracer.models.project import Project
+
+        project_manager = getattr(Project, "no_workspace_objects", Project.objects)
+        project_scope = project_manager.filter(
+            organization=organization,
+            deleted=False,
+        )
+        if workspace is not None:
+            if getattr(workspace, "is_default", False):
+                project_scope = project_scope.filter(
+                    Q(workspace=workspace)
+                    | Q(
+                        workspace__is_default=True,
+                        workspace__organization=organization,
+                    )
+                    | Q(workspace__isnull=True)
+                )
+            else:
+                project_scope = project_scope.filter(workspace=workspace)
+
+        return tuple(
+            str(value)
+            for value in project_scope.values_list("id", flat=True).iterator(
+                chunk_size=1_000
+            )
+        )
+
+    @classmethod
+    def _read_trace_from_clickhouse(cls, *, trace_id, organization, workspace):
+        """Read one tenant-gated trace from CH without a PG Trace fallback."""
+        from tracer.services.clickhouse.client import get_clickhouse_client
+
+        project_ids = cls._scoped_project_ids(
+            organization=organization,
+            workspace=workspace,
+        )
+        if not project_ids:
+            return None
+
+        params = {
+            "trace_id": str(trace_id),
+            "project_ids": project_ids,
+        }
+        settings = {
+            "max_threads": 2,
+            "max_rows_to_read": 1_000_000,
+            "read_overflow_mode": "throw",
+            "max_bytes_to_read": 64 * 1024 * 1024,
+            "max_memory_usage": 128 * 1024 * 1024,
+            "max_result_rows": 1,
+            "max_result_bytes": 2 * 1024 * 1024,
+            "result_overflow_mode": "throw",
+            "timeout_overflow_mode": "throw",
+        }
+        trace_query = """
+            SELECT
+                toString(id),
+                toString(project_id),
+                name,
+                toString(session_id),
+                metadata,
+                tags,
+                input,
+                output,
+                error,
+                created_at
+            FROM traces FINAL
+            WHERE project_id IN %(project_ids)s
+              AND id = toUUID(%(trace_id)s)
+              AND is_deleted = 0
+            LIMIT 1
+        """
+        client = get_clickhouse_client()
+        rows, _column_types, _query_time_ms = client.execute_read(
+            trace_query,
+            params,
+            timeout_ms=cls._READ_TIMEOUT_MS,
+            settings=settings,
+        )
+        if rows:
+            (
+                row_id,
+                project_id,
+                name,
+                session_id,
+                metadata,
+                tags,
+                trace_input,
+                trace_output,
+                error,
+                created_at,
+            ) = rows[0]
+            return {
+                "id": str(row_id),
+                "project_id": str(project_id),
+                "name": name or "",
+                "session_id": str(session_id) if session_id else None,
+                "metadata": cls._decode_clickhouse_json(metadata, {}),
+                "tags": cls._decode_clickhouse_json(tags, []),
+                "input": cls._decode_clickhouse_json(trace_input, {}),
+                "output": cls._decode_clickhouse_json(trace_output, {}),
+                "error": cls._decode_clickhouse_json(error),
+                "created_at": created_at,
+            }
+
+        # Collector-direct traces can be observable before their compact trace
+        # row is present. The root span is the CH-only source of truth in that
+        # window; never fall back to the removed PG Trace row.
+        root_query = """
+            SELECT
+                trace_id,
+                toString(project_id),
+                name,
+                toString(trace_session_id),
+                toJSONString(metadata),
+                tags,
+                input,
+                output,
+                status,
+                start_time
+            FROM spans FINAL
+            WHERE project_id IN %(project_ids)s
+              AND trace_id = %(trace_id)s
+              AND parent_span_id = ''
+              AND is_deleted = 0
+            ORDER BY start_time
+            LIMIT 1
+        """
+        rows, _column_types, _query_time_ms = client.execute_read(
+            root_query,
+            params,
+            timeout_ms=cls._READ_TIMEOUT_MS,
+            settings={
+                **settings,
+                "use_skip_indexes_if_final": 1,
+            },
+        )
+        if not rows:
+            return None
+        (
+            row_id,
+            project_id,
+            name,
+            session_id,
+            metadata,
+            tags,
+            trace_input,
+            trace_output,
+            status,
+            created_at,
+        ) = rows[0]
+        return {
+            "id": str(row_id),
+            "project_id": str(project_id),
+            "name": name or "",
+            "session_id": str(session_id) if session_id else None,
+            "metadata": cls._decode_clickhouse_json(metadata, {}),
+            "tags": cls._decode_clickhouse_json(tags, []),
+            "input": cls._decode_clickhouse_json(trace_input, {}),
+            "output": cls._decode_clickhouse_json(trace_output, {}),
+            "error": str(status).upper() == "ERROR",
+            "created_at": created_at,
+        }
+
+    @validated_request(
+        request_serializer=TraceEvalRequestSerializer,
+        responses={200: TraceEvalResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    )
     def post(self, request, template_id, *args, **kwargs):
         from model_hub.types import TraceEvalRequest, TraceEvalResponse
         from model_hub.utils.scoring import determine_pass_fail, normalize_score
 
         try:
             try:
-                req = TraceEvalRequest(**request.data)
+                request_data = dict(request.validated_data)
+                request_data["trace_id"] = str(request_data["trace_id"])
+                req = TraceEvalRequest(**request_data)
             except Exception as e:
                 from tfc.utils.errors import format_request_error
 
                 return self._gm.bad_request(format_request_error(e))
 
+            organization = (
+                getattr(request, "organization", None) or request.user.organization
+            )
+            workspace = getattr(request, "workspace", None) or get_current_workspace()
+            template_scope = Q(owner=OwnerChoices.SYSTEM.value) | Q(
+                owner=OwnerChoices.USER.value,
+                organization=organization,
+            )
+            if workspace is not None:
+                template_scope &= (
+                    Q(owner=OwnerChoices.SYSTEM.value)
+                    | Q(workspace=workspace)
+                    | Q(workspace__isnull=True)
+                )
             try:
                 template = EvalTemplate.no_workspace_objects.get(
-                    id=template_id, deleted=False
+                    template_scope,
+                    id=template_id,
+                    deleted=False,
                 )
             except EvalTemplate.DoesNotExist:
                 return self._gm.not_found("Eval template not found.")
 
-            # Get trace data
-            from tracer.models.trace import Trace
-
             try:
-                trace = Trace.objects.get(id=req.trace_id, deleted=False)
-            except Trace.DoesNotExist:
+                trace = self._read_trace_from_clickhouse(
+                    trace_id=req.trace_id,
+                    organization=organization,
+                    workspace=workspace,
+                )
+            except Exception as exc:
+                logger.exception(
+                    "trace eval ClickHouse read failed",
+                    trace_id=str(req.trace_id),
+                    organization_id=str(organization.id),
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                )
+                return _eval_query_error_response(
+                    exc,
+                    _EVAL_CONTEXT_LOAD_FAILED_MESSAGE,
+                )
+            if trace is None:
                 return self._gm.not_found("Trace not found.")
 
             # Extract trace input/output for eval context
-            trace_input = trace.input if hasattr(trace, "input") else {}
-            trace_output = trace.output if hasattr(trace, "output") else {}
+            trace_input = trace.get("input") or {}
+            trace_output = trace.get("output") or {}
 
             # Build mapping from trace data
             config = template.config or {}
@@ -5535,7 +6866,7 @@ class TraceEvalView(APIView):
                 mapping = {
                     "input": str(trace_input) if trace_input else "",
                     "output": str(trace_output) if trace_output else "",
-                    "trace_id": str(trace.id),
+                    "trace_id": str(trace["id"]),
                 }
             else:
                 # Try to map required keys from trace input/output
@@ -5549,9 +6880,6 @@ class TraceEvalView(APIView):
             try:
                 from model_hub.views.utils.evals import run_eval_func
 
-                organization = (
-                    getattr(request, "organization", None) or request.user.organization
-                )
                 runtime_config = {"mapping": mapping}
 
                 result = run_eval_func(
@@ -5584,18 +6912,26 @@ class TraceEvalView(APIView):
                 )
 
             except Exception as eval_error:
-                response = TraceEvalResponse(
+                logger.exception(
+                    "trace evaluation execution failed",
                     template_id=str(template_id),
-                    trace_id=req.trace_id,
-                    status="failed",
-                    reason=str(eval_error),
+                    trace_id=str(req.trace_id),
+                    organization_id=str(organization.id),
+                    error_type=type(eval_error).__name__,
+                    error=str(eval_error),
                 )
+                return _eval_execution_error_response()
 
             return self._gm.success_response(response.model_dump())
 
         except Exception as e:
-            logger.error(f"Error in TraceEvalView: {str(e)}\n{traceback.format_exc()}")
-            return self._gm.bad_request(str(e))
+            logger.exception(
+                "trace evaluation request failed",
+                template_id=str(template_id),
+                error_type=type(e).__name__,
+                error=str(e),
+            )
+            return _eval_execution_error_response()
 
 
 class VersionCompareView(APIView):
@@ -5791,7 +7127,10 @@ def _build_span_context(span) -> dict:
     base["recording_url"] = (
         sa.get("recording_url")
         or sa.get("recordingUrl")
-        or (raw_log.get("artifact") or {}).get("recording", {}).get("mono", {}).get("combinedUrl")
+        or (raw_log.get("artifact") or {})
+        .get("recording", {})
+        .get("mono", {})
+        .get("combinedUrl")
         or raw_log.get("recordingUrl")
         or raw_log.get("recording_url")
     )
@@ -5882,6 +7221,282 @@ def _chspan_to_eval_playground_view(ch_span):
 class EvalPlayGroundAPIView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
+    _READ_TIMEOUT_MS = 750
+
+    @classmethod
+    def _analytics_settings(
+        cls,
+        *,
+        max_result_rows=1,
+        max_bytes_to_read=64 * 1024 * 1024,
+    ):
+        return {
+            "max_execution_time": cls._READ_TIMEOUT_MS / 1000,
+            "max_threads": 2,
+            "max_rows_to_read": 1_000_000,
+            "read_overflow_mode": "throw",
+            "max_bytes_to_read": max_bytes_to_read,
+            "max_memory_usage": 128 * 1024 * 1024,
+            "max_result_rows": max_result_rows,
+            "max_result_bytes": 4 * 1024 * 1024,
+            "result_overflow_mode": "throw",
+            "timeout_overflow_mode": "throw",
+            "use_skip_indexes_if_final": 1,
+        }
+
+    @classmethod
+    def _trace_context_from_clickhouse(
+        cls,
+        *,
+        trace_id,
+        organization,
+        workspace,
+    ):
+        from tracer.services.clickhouse.client import get_clickhouse_client
+
+        trace = TraceEvalView._read_trace_from_clickhouse(
+            trace_id=trace_id,
+            organization=organization,
+            workspace=workspace,
+        )
+        if trace is None:
+            return None
+
+        query = """
+            SELECT
+                count() AS span_count,
+                countIf(status = 'ERROR') AS error_count,
+                sum(total_tokens) AS total_tokens,
+                sum(cost) AS total_cost,
+                sum(latency_ms) AS total_latency,
+                min(start_time) AS first_seen,
+                max(end_time) AS last_seen,
+                groupArraySorted(200)(tuple(
+                    start_time,
+                    id,
+                    name,
+                    observation_type,
+                    status,
+                    status_message,
+                    latency_ms,
+                    model,
+                    total_tokens,
+                    cost,
+                    parent_span_id
+                )) AS span_summaries
+            FROM spans FINAL
+            WHERE project_id = toUUID(%(project_id)s)
+              AND trace_id = %(trace_id)s
+              AND is_deleted = 0
+        """
+        rows, _column_types, _query_time_ms = get_clickhouse_client().execute_read(
+            query,
+            {
+                "project_id": trace["project_id"],
+                "trace_id": str(trace_id),
+            },
+            timeout_ms=cls._READ_TIMEOUT_MS,
+            settings=cls._analytics_settings(),
+        )
+        if not rows:
+            return trace
+
+        (
+            span_count,
+            error_count,
+            total_tokens,
+            total_cost,
+            total_latency,
+            first_seen,
+            last_seen,
+            summaries,
+        ) = rows[0]
+        trace["span_count"] = int(span_count or 0)
+        trace["error_count"] = int(error_count or 0)
+        trace["total_tokens"] = int(total_tokens or 0)
+        trace["total_cost"] = float(round(total_cost or 0, 6))
+        trace["total_latency_ms"] = int(total_latency or 0)
+        trace["start_time"] = str(first_seen) if first_seen else None
+        trace["end_time"] = str(last_seen) if last_seen else None
+        trace["created_at"] = (
+            trace["created_at"].isoformat()
+            if hasattr(trace.get("created_at"), "isoformat")
+            else trace.get("created_at")
+        )
+        trace["spans"] = [
+            {
+                "id": str(span_id),
+                "name": name,
+                "observation_type": observation_type,
+                "status": status,
+                "status_message": status_message,
+                "latency_ms": latency_ms,
+                "model": model,
+                "total_tokens": span_tokens,
+                "cost": span_cost,
+                "parent_span_id": parent_span_id or None,
+            }
+            for (
+                _start_time,
+                span_id,
+                name,
+                observation_type,
+                status,
+                status_message,
+                latency_ms,
+                model,
+                span_tokens,
+                span_cost,
+                parent_span_id,
+            ) in (summaries or [])
+        ]
+        return trace
+
+    @classmethod
+    def _session_context_from_clickhouse(
+        cls,
+        *,
+        session_id,
+        organization,
+        workspace,
+    ):
+        from tracer.services.clickhouse.client import get_clickhouse_client
+
+        project_ids = TraceEvalView._scoped_project_ids(
+            organization=organization,
+            workspace=workspace,
+        )
+        if not project_ids:
+            return None
+
+        client = get_clickhouse_client()
+        params = {
+            "session_id": str(session_id),
+            "project_ids": project_ids,
+        }
+        session_query = """
+            SELECT
+                toString(trace_session_id),
+                toString(project_id),
+                external_session_id,
+                first_seen
+            FROM trace_sessions FINAL
+            WHERE project_id IN %(project_ids)s
+              AND trace_session_id = toUUID(%(session_id)s)
+              AND is_deleted = 0
+            LIMIT 1
+        """
+        rows, _column_types, _query_time_ms = client.execute_read(
+            session_query,
+            params,
+            timeout_ms=cls._READ_TIMEOUT_MS,
+            settings=cls._analytics_settings(),
+        )
+        if not rows:
+            return None
+        row_id, project_id, external_session_id, first_seen = rows[0]
+
+        aggregate_query = """
+            SELECT
+                count() AS trace_count,
+                sum(span_count) AS total_spans,
+                sum(error_count) AS error_count,
+                sum(total_tokens) AS total_tokens,
+                sum(total_cost) AS total_cost,
+                min(first_seen) AS first_seen,
+                max(last_seen) AS last_seen,
+                groupArraySorted(100)(tuple(
+                    first_seen,
+                    trace_id,
+                    trace_name,
+                    span_count,
+                    error_count,
+                    total_tokens,
+                    total_latency
+                )) AS trace_summaries
+            FROM (
+                SELECT
+                    trace_id,
+                    any(trace_name) AS trace_name,
+                    count() AS span_count,
+                    countIf(status = 'ERROR') AS error_count,
+                    sum(total_tokens) AS total_tokens,
+                    sum(cost) AS total_cost,
+                    sum(latency_ms) AS total_latency,
+                    min(start_time) AS first_seen,
+                    max(end_time) AS last_seen
+                FROM spans FINAL
+                WHERE project_id = toUUID(%(project_id)s)
+                  AND trace_session_id = toUUID(%(session_id)s)
+                  AND is_deleted = 0
+                GROUP BY trace_id
+            )
+        """
+        aggregate_rows, _column_types, _query_time_ms = client.execute_read(
+            aggregate_query,
+            {
+                "project_id": str(project_id),
+                "session_id": str(session_id),
+            },
+            timeout_ms=cls._READ_TIMEOUT_MS,
+            settings=cls._analytics_settings(),
+        )
+        if aggregate_rows:
+            (
+                trace_count,
+                total_spans,
+                error_count,
+                total_tokens,
+                total_cost,
+                start_time,
+                end_time,
+                summaries,
+            ) = aggregate_rows[0]
+        else:
+            trace_count = total_spans = error_count = total_tokens = 0
+            total_cost = 0.0
+            start_time = end_time = None
+            summaries = []
+
+        duration = (
+            (end_time - start_time).total_seconds() if start_time and end_time else None
+        )
+        return {
+            "id": str(row_id),
+            "name": external_session_id or "",
+            "project_id": str(project_id),
+            "bookmarked": False,
+            "created_at": first_seen.isoformat() if first_seen else None,
+            "trace_count": int(trace_count or 0),
+            "total_spans": int(total_spans or 0),
+            "error_count": int(error_count or 0),
+            "total_tokens": int(total_tokens or 0),
+            "total_cost": float(round(total_cost or 0, 6)),
+            "start_time": str(start_time) if start_time else None,
+            "end_time": str(end_time) if end_time else None,
+            "duration_seconds": duration,
+            "traces": [
+                {
+                    "id": str(trace_id),
+                    "name": trace_name,
+                    "created_at": trace_start.isoformat() if trace_start else None,
+                    "span_count": int(span_count or 0),
+                    "error_count": int(trace_errors or 0),
+                    "total_tokens": int(trace_tokens or 0),
+                    "total_latency_ms": int(trace_latency or 0),
+                    "has_error": bool(trace_errors),
+                }
+                for (
+                    trace_start,
+                    trace_id,
+                    trace_name,
+                    span_count,
+                    trace_errors,
+                    trace_tokens,
+                    trace_latency,
+                ) in (summaries or [])
+            ],
+        }
 
     @validated_request(
         request_serializer=EvalPlayGroundSerializer,
@@ -5930,291 +7545,103 @@ class EvalPlayGroundAPIView(APIView):
             _call_id = validated_data.get("call_id")
             if span_context is None and _span_id:
                 try:
-                    # Codex consolidated review P1 (2026-05-26): the legacy ORM
-                    # path was unscoped, but the eval playground accepts a
-                    # caller-supplied span_id and renders its content into a
-                    # template — that's a cross-org read surface. We now
-                    # require org-scope verification via a Project lookup on
-                    # the span's project_id (CH spans store project_id as a
-                    # UUID string).
-                    #
-                    # CHSpan attribute names differ from the Django model in
-                    # two places that _build_span_context reads:
-                    # `span_attributes` (typed maps + attributes_extra merge →
-                    # use to_django_dict) and `resource_attributes` (CH stores
-                    # as JSON string in `resource_attrs`). The shim namespace
-                    # below maps both.
-                    from tracer.models.project import Project
                     from tracer.services.clickhouse.v2 import get_reader
 
+                    _span_workspace = (
+                        getattr(request, "workspace", None) or get_current_workspace()
+                    )
+                    _allowed_project_ids = TraceEvalView._scoped_project_ids(
+                        organization=org,
+                        workspace=_span_workspace,
+                    )
+                    _span_settings = self._analytics_settings(
+                        max_bytes_to_read=256 * 1024 * 1024,
+                    )
                     with get_reader() as reader:
-                        _s = reader.get(str(_span_id))
-                    if (
-                        _s
-                        and Project.objects.filter(
-                            id=_s.project_id, organization=org
-                        ).exists()
-                    ):
+                        # Resolve tenant scope through a two-column read first.
+                        # A bare ``reader.get(id)`` selected every wide JSON
+                        # column before it knew the project and scanned the
+                        # entire US table. The scoped lookup prunes by the first
+                        # sort-key component; only then do we hydrate the one
+                        # requested span under the same 750 ms server budget.
+                        _span_scope = reader.scope_by_ids(
+                            [str(_span_id)],
+                            project_ids=_allowed_project_ids,
+                            settings=_span_settings,
+                        ).get(str(_span_id))
+                        _s = (
+                            reader.get(
+                                str(_span_id),
+                                project_id=_span_scope.project_id,
+                                settings=_span_settings,
+                            )
+                            if _span_scope is not None
+                            and _span_scope.project_id is not None
+                            else None
+                        )
+                    if _s:
                         span_context = _build_span_context(
                             _chspan_to_eval_playground_view(_s)
                         )
                 except Exception as _e:
-                    logger.warning(f"Failed to fetch span {_span_id}: {_e}")
+                    logger.exception(
+                        "eval playground span context load failed",
+                        span_id=str(_span_id),
+                        error_type=type(_e).__name__,
+                        error=str(_e),
+                    )
+                    return _eval_query_error_response(
+                        _e,
+                        _EVAL_CONTEXT_LOAD_FAILED_MESSAGE,
+                    )
+                if span_context is None:
+                    return self._gm.not_found("Span not found.")
             if trace_context is None and _trace_id:
                 try:
-                    from tracer.models.trace import Trace
-                    from tracer.services.clickhouse.v2 import get_reader
-
-                    # Codex P1: scope Trace lookup to org so a caller can't
-                    # feed another tenant's trace_id into the playground.
-                    _t = Trace.objects.filter(
-                        id=_trace_id, project__organization=org
-                    ).first()
-                    if _t:
-                        # CH read replaces two ObservationSpan ORM calls:
-                        #   1. .filter(trace=_t, deleted=False).aggregate(...)
-                        #   2. .filter(trace=_t, deleted=False)
-                        #        .order_by("start_time").values(...)[:200]
-                        # CHSpanReader doesn't expose an `error_count`/
-                        # `total_latency` aggregate, so we list spans once
-                        # (already filtered to is_deleted=0 + ordered by
-                        # start_time, id) and compute aggregates in Python.
-                        # A trace's span count is bounded (FutureAGI caps
-                        # writes via the OTLP ingest pipeline) so a single
-                        # in-process pass is cheaper than two CH round-trips.
-                        with get_reader() as reader:
-                            _ch_spans = reader.list_by_trace(str(_t.id))
-                        _span_count = len(_ch_spans)
-                        _error_count = sum(1 for s in _ch_spans if s.status == "ERROR")
-                        _total_tokens = sum((s.total_tokens or 0) for s in _ch_spans)
-                        _total_cost = sum((s.cost or 0.0) for s in _ch_spans)
-                        _total_latency = sum((s.latency_ms or 0) for s in _ch_spans)
-                        _start_times = [s.start_time for s in _ch_spans if s.start_time]
-                        _end_times = [s.end_time for s in _ch_spans if s.end_time]
-                        _agg_start = min(_start_times) if _start_times else None
-                        _agg_end = max(_end_times) if _end_times else None
-
-                        # Lightweight span summaries for the agent to browse
-                        # and decide which to drill into. Only fetch essential
-                        # fields, cap at 200 spans (matches the prior
-                        # ``.values(...)[:200]`` slice).
-                        _span_summaries = [
-                            {
-                                "id": s.id,
-                                "name": s.name,
-                                "observation_type": s.observation_type,
-                                "status": s.status,
-                                "status_message": s.status_message,
-                                "latency_ms": s.latency_ms,
-                                "model": s.model,
-                                "total_tokens": s.total_tokens,
-                                "cost": s.cost,
-                                "parent_span_id": s.parent_span_id or None,
-                            }
-                            for s in _ch_spans[:200]
-                        ]
-
-                        trace_context = {
-                            "id": str(_t.id),
-                            "project_id": (
-                                str(_t.project_id) if _t.project_id else None
-                            ),
-                            "name": _t.name,
-                            "session_id": (
-                                str(_t.session_id) if _t.session_id else None
-                            ),
-                            "metadata": _t.metadata or {},
-                            "tags": _t.tags or [],
-                            "input": _t.input,
-                            "output": _t.output,
-                            "error": _t.error,
-                            "created_at": (
-                                _t.created_at.isoformat() if _t.created_at else None
-                            ),
-                            "span_count": _span_count,
-                            "error_count": _error_count,
-                            "total_tokens": _total_tokens,
-                            "total_cost": (
-                                float(round(_total_cost, 6)) if _total_cost else 0
-                            ),
-                            "total_latency_ms": _total_latency,
-                            "start_time": (str(_agg_start) if _agg_start else None),
-                            "end_time": (str(_agg_end) if _agg_end else None),
-                            "spans": _span_summaries,
-                        }
+                    trace_context = self._trace_context_from_clickhouse(
+                        trace_id=_trace_id,
+                        organization=org,
+                        workspace=(
+                            getattr(request, "workspace", None)
+                            or get_current_workspace()
+                        ),
+                    )
                 except Exception as _e:
-                    logger.warning(f"Failed to fetch trace {_trace_id}: {_e}")
+                    logger.exception(
+                        "eval playground trace context load failed",
+                        trace_id=str(_trace_id),
+                        error_type=type(_e).__name__,
+                        error=str(_e),
+                    )
+                    return _eval_query_error_response(
+                        _e,
+                        _EVAL_CONTEXT_LOAD_FAILED_MESSAGE,
+                    )
+                if trace_context is None:
+                    return self._gm.not_found("Trace not found.")
             if session_context is None and _session_id:
                 try:
-                    from tracer.models.project import Project
-                    from tracer.models.trace import Trace
-                    from tracer.services.clickhouse.v2 import get_reader
-                    from tracer.services.clickhouse.v2.trace_session_dict_reader import (
-                        resolve_session_fields,
+                    session_context = self._session_context_from_clickhouse(
+                        session_id=_session_id,
+                        organization=org,
+                        workspace=(
+                            getattr(request, "workspace", None)
+                            or get_current_workspace()
+                        ),
                     )
-
-                    # Resolve the session identity from CH (Slice D, DESIGN §5 /
-                    # PG_ORM_READ_MIGRATION), NOT PG ``TraceSession``: a net-new
-                    # session (first seen post-flip) has no PG row, and a straddler
-                    # queried by its NEW deterministic id would 404 the old
-                    # ``.first()``. ``resolve_session_fields`` is remap-aware
-                    # (straddler old|new id → ONE survivor) and returns
-                    # external_session_id / first_seen / project_id / bookmarked /
-                    # display_name. Absent → ``_ss_fields`` is None → behave like
-                    # the old ``.first()`` returning None (session_context stays
-                    # None, no error). The org-scope the old ``project__organization
-                    # =org`` filter enforced is reproduced by validating the
-                    # CH-derived project_id belongs to ``org`` (mirrors the span_id
-                    # / Project.exists() guard above) — so a net-new session in
-                    # another tenant cannot leak.
-                    _ss_fields = resolve_session_fields([_session_id]).get(
-                        str(_session_id)
-                    )
-                    _ss_project_id = (
-                        _ss_fields.get("project_id") if _ss_fields else None
-                    )
-                    _ss_in_org = (
-                        bool(_ss_project_id)
-                        and Project.objects.filter(
-                            id=_ss_project_id, organization=org
-                        ).exists()
-                    )
-                    if _ss_fields and _ss_in_org:
-                        # Trace SET via CH spans, NOT the dead ``Trace.session`` FK
-                        # (None post-flip → empty for ALL sessions). Trace stays PG
-                        # → the CH-derived ids drive a PG ``id__in`` filter.
-                        with get_reader() as reader:
-                            _trace_id_list = reader.session_trace_ids(
-                                str(_ss_project_id), str(_session_id)
-                            )
-                        _trace_qs = Trace.objects.filter(
-                            id__in=_trace_id_list, deleted=False
-                        )
-
-                        # CH read replaces two ObservationSpan ORM queries:
-                        #   1. .filter(trace__in=_trace_qs, deleted=False).aggregate(...)
-                        #   2. .filter(trace_id__in=_trace_ids, deleted=False)
-                        #        .values("trace_id").annotate(...)
-                        # CHSpanReader doesn't expose `error_count` / per-trace
-                        # `error_count` or `total_latency` aggregates, so we
-                        # list session spans once (already filtered to
-                        # is_deleted=0) and compute both rollups in Python.
-                        # Sessions are bounded by product semantics (a single
-                        # conversation/workflow), so the in-process scan is
-                        # cheaper than two CH round-trips.
-                        # ``list_by_session`` matches the RAW ``_session_id``; the
-                        # ``session_trace_ids`` trace set above resolves the input
-                        # id. They agree because the eval-context ``session_id`` is
-                        # always a SURVIVOR (old) or NET-NEW id (the session
-                        # list/detail surfaces resolved/old ids), never a
-                        # straddler's raw NEW id — for those the input resolves to
-                        # itself, so both reads see the same session.
-                        with get_reader() as reader:
-                            _ch_session_spans = reader.list_by_session(str(_session_id))
-                        _total_spans = len(_ch_session_spans)
-                        _sess_error_count = sum(
-                            1 for s in _ch_session_spans if s.status == "ERROR"
-                        )
-                        _sess_total_tokens = sum(
-                            (s.total_tokens or 0) for s in _ch_session_spans
-                        )
-                        _sess_total_cost = sum(
-                            (s.cost or 0.0) for s in _ch_session_spans
-                        )
-                        _sess_start_times = [
-                            s.start_time for s in _ch_session_spans if s.start_time
-                        ]
-                        _sess_end_times = [
-                            s.end_time for s in _ch_session_spans if s.end_time
-                        ]
-                        _start = min(_sess_start_times) if _sess_start_times else None
-                        _end = max(_sess_end_times) if _sess_end_times else None
-
-                        # Lightweight trace summaries for the agent to browse
-                        # and decide which to drill into. Page-scoped (first
-                        # 100 traces by created_at) to match the prior PG path
-                        # which annotated only over `trace_id__in=_trace_ids`.
-                        _traces_page = list(_trace_qs.order_by("created_at")[:100])
-                        _trace_id_set = {str(_tr.id) for _tr in _traces_page}
-                        _per_trace: dict[str, dict] = {}
-                        for s in _ch_session_spans:
-                            if s.trace_id not in _trace_id_set:
-                                continue
-                            row = _per_trace.setdefault(
-                                s.trace_id,
-                                {
-                                    "span_count": 0,
-                                    "error_count": 0,
-                                    "total_tokens": 0,
-                                    "total_latency": 0,
-                                },
-                            )
-                            row["span_count"] += 1
-                            if s.status == "ERROR":
-                                row["error_count"] += 1
-                            row["total_tokens"] += s.total_tokens or 0
-                            row["total_latency"] += s.latency_ms or 0
-
-                        _trace_summaries = []
-                        for _tr in _traces_page:
-                            _agg = _per_trace.get(str(_tr.id), {})
-                            _err_count = _agg.get("error_count") or 0
-                            _trace_summaries.append(
-                                {
-                                    "id": str(_tr.id),
-                                    "name": _tr.name,
-                                    "created_at": (
-                                        _tr.created_at.isoformat()
-                                        if _tr.created_at
-                                        else None
-                                    ),
-                                    "span_count": _agg.get("span_count") or 0,
-                                    "error_count": _err_count,
-                                    "total_tokens": _agg.get("total_tokens") or 0,
-                                    "total_latency_ms": _agg.get("total_latency") or 0,
-                                    "has_error": bool(_tr.error or _err_count > 0),
-                                }
-                            )
-
-                        _duration = None
-                        if _start and _end:
-                            _duration = (_end - _start).total_seconds()
-
-                        # Session identity fields now come from the CH record +
-                        # PG overlay (``resolve_session_fields``), NOT a PG
-                        # TraceSession row: name = display_name override else the
-                        # external session id (DESIGN §5.2 COALESCE); created_at =
-                        # first_seen (the session's first observed activity).
-                        _ss_first_seen = _ss_fields["first_seen"]
-                        session_context = {
-                            "id": str(_session_id),
-                            "name": (
-                                _ss_fields["display_name"]
-                                or _ss_fields["external_session_id"]
-                            ),
-                            "project_id": (
-                                str(_ss_project_id) if _ss_project_id else None
-                            ),
-                            "bookmarked": bool(_ss_fields["bookmarked"]),
-                            "created_at": (
-                                _ss_first_seen.isoformat() if _ss_first_seen else None
-                            ),
-                            "trace_count": _trace_qs.count(),
-                            "total_spans": _total_spans,
-                            "error_count": _sess_error_count,
-                            "total_tokens": _sess_total_tokens,
-                            "total_cost": (
-                                float(round(_sess_total_cost, 6))
-                                if _sess_total_cost
-                                else 0
-                            ),
-                            "start_time": (str(_start) if _start else None),
-                            "end_time": (str(_end) if _end else None),
-                            "duration_seconds": _duration,
-                            "traces": _trace_summaries,
-                        }
                 except Exception as _e:
-                    logger.warning(f"Failed to fetch session {_session_id}: {_e}")
+                    logger.exception(
+                        "eval playground session context load failed",
+                        session_id=str(_session_id),
+                        error_type=type(_e).__name__,
+                        error=str(_e),
+                    )
+                    return _eval_query_error_response(
+                        _e,
+                        _EVAL_CONTEXT_LOAD_FAILED_MESSAGE,
+                    )
+                if session_context is None:
+                    return self._gm.not_found("Session not found.")
 
             # Resolve session-level dotted-path mapping server-side.
             # The TaskLivePreview session branch sends `mapping_paths`
@@ -6239,41 +7666,40 @@ class EvalPlayGroundAPIView(APIView):
             )
             if _session_id and isinstance(mapping_paths, dict) and mapping_paths:
                 from tracer.models.trace_session import TraceSession
-                from tracer.services.clickhouse.v2.trace_session_dict_reader import (
-                    resolve_session_fields,
+                from tracer.services.clickhouse.v2.eval_loader import (
+                    eval_read_source,
                 )
-                from tracer.utils.eval import _process_session_mapping
+                from tracer.utils.eval import (
+                    resolve_session_mapping_lean_first,
+                )
 
-                # Resolve the session identity from CH (Slice D, DESIGN §5 /
-                # PG_ORM_READ_MIGRATION) and build an UNSAVED ``TraceSession``
-                # vehicle, NOT ``TraceSession.objects.first()`` — the same shape
-                # ``evaluate_trace_session_observe`` uses (Slice C). A net-new
-                # session has no PG row (old ``.first()`` → None → 400) and a
-                # straddler-by-new-id would 404; CH resolves all three states.
-                # ``project_id`` is set on the vehicle so the downstream
-                # ``_resolve_session_path`` (``traces`` branch) can re-derive the
-                # session's trace set from CH spans (the dead ``Trace.session`` FK
-                # is None post-flip). Absent → 400, preserving the old contract.
-                _map_fields = resolve_session_fields([_session_id]).get(
-                    str(_session_id)
+                if not isinstance(session_context, dict):
+                    return self._gm.bad_request(f"Session {_session_id} not found")
+                _map_project_id = session_context.get("project_id")
+                _allowed_project_ids = TraceEvalView._scoped_project_ids(
+                    organization=org,
+                    workspace=(
+                        getattr(request, "workspace", None) or get_current_workspace()
+                    ),
                 )
-                if _map_fields is None:
+                if (
+                    not _map_project_id
+                    or str(_map_project_id) not in _allowed_project_ids
+                ):
                     return self._gm.bad_request(f"Session {_session_id} not found")
                 _ss_for_mapping = TraceSession(
                     id=_session_id,
-                    name=(
-                        _map_fields["display_name"]
-                        or _map_fields["external_session_id"]
-                    ),
-                    bookmarked=bool(_map_fields["bookmarked"]),
-                    project_id=_map_fields["project_id"],
+                    name=session_context.get("name") or "",
+                    bookmarked=bool(session_context.get("bookmarked")),
+                    project_id=_map_project_id,
                 )
                 try:
-                    resolved_session_mapping = _process_session_mapping(
-                        dict(mapping_paths),
-                        _ss_for_mapping,
-                        template_id,
-                    )
+                    with eval_read_source("clickhouse"):
+                        resolved_session_mapping = resolve_session_mapping_lean_first(
+                            dict(mapping_paths),
+                            _ss_for_mapping,
+                            template_id,
+                        )
                 except ValueError as ve:
                     return self._gm.bad_request(str(ve))
                 logger.info(
@@ -6309,13 +7735,10 @@ class EvalPlayGroundAPIView(APIView):
                         _conversational_roles = (
                             SpeakerRoleResolver.get_conversational_roles()
                         )
-                        _transcript_rows = (
-                            CallTranscript.objects.filter(
-                                call_execution_id=_ce.id,
-                                speaker_role__in=_conversational_roles,
-                            )
-                            .order_by("start_time_ms")[:200]
-                        )
+                        _transcript_rows = CallTranscript.objects.filter(
+                            call_execution_id=_ce.id,
+                            speaker_role__in=_conversational_roles,
+                        ).order_by("start_time_ms")[:200]
                         call_context = {
                             "id": str(_ce.id),
                             "status": _ce.status,
@@ -6407,16 +7830,28 @@ class EvalPlayGroundAPIView(APIView):
                 )
             except Exception as e:
                 if UsageLimitExceeded is not None and isinstance(e, UsageLimitExceeded):
-                    logger.warning(f"Eval playground usage limit: {str(e)}")
+                    logger.warning(
+                        "eval playground usage limit",
+                        error_type=type(e).__name__,
+                        error=str(e),
+                    )
                     return self._gm.usage_limit_response(e.check_result)
-                logger.error(f"Error in run_eval_func: {str(e)}")
-                return self._gm.bad_request(
-                    f"Failed to run Eval due to the reason: {str(e)}"
+                logger.exception(
+                    "eval playground execution failed",
+                    template_id=str(template_id),
+                    organization_id=str(org.id),
+                    error_type=type(e).__name__,
+                    error=str(e),
                 )
+                return _eval_execution_error_response()
 
         except Exception as e:
-            logger.exception(f"Error in EvalPlayGroundAPIView: {str(e)}")
-            return self._gm.bad_request(f"Error in EvalPlayGroundAPIView: {str(e)}")
+            logger.exception(
+                "eval playground request failed",
+                error_type=type(e).__name__,
+                error=str(e),
+            )
+            return _eval_execution_error_response()
 
 
 class EvalCodeSnippetAPIView(APIView):
@@ -7075,7 +8510,7 @@ def get_display_value(value):
     return ""
 
 
-def get_column_data(eval_template_id, source, user):
+def get_column_data(eval_template_id, source, user, *, request=None):
     try:
         with transaction.atomic():
             try:
@@ -7090,7 +8525,11 @@ def get_column_data(eval_template_id, source, user):
             column_data = setting.column_config if setting else []
 
             if not column_data or len(column_data) == 0:
-                column_data = create_column_config_playground(eval_template_id, source)
+                column_data = create_column_config_playground(
+                    eval_template_id,
+                    source,
+                    request=request,
+                )
 
             setting.column_config = column_data
             setting.save(update_fields=["column_config"])
@@ -7102,16 +8541,9 @@ def get_column_data(eval_template_id, source, user):
         return []
 
 
-def batch_queryset(queryset: QuerySet, batch_size: int):
-    start = 0
-    total = queryset.count()
-    while start < total:
-        yield queryset[start : start + batch_size]
-        start += batch_size
-
-
-def populate_log_row_data(eval_template, logs, key_map):
+def populate_log_row_data(eval_template, logs, key_map, feedback_by_log_id=None):
     try:
+        feedback_by_log_id = feedback_by_log_id or {}
         row_data = []
         for log in logs:
             config = parse_api_log_config(log.config)
@@ -7159,31 +8591,11 @@ def populate_log_row_data(eval_template, logs, key_map):
                                 )
                             )
                         case "Evaluation Feedback":
-                            if log.log_id:
-                                try:
-                                    feedback = Feedback.objects.get(
-                                        source_id=log.log_id,
-                                        source=SourceChoices.EVAL_PLAYGROUND.value,
-                                        organization=log.organization,
-                                    )
-                                    value = feedback.value
-                                except Feedback.DoesNotExist:
-                                    value = ""
-                            else:
-                                value = ""
+                            feedback = feedback_by_log_id.get(str(log.log_id))
+                            value = feedback.value if feedback else ""
                         case "Feedback Explanation":
-                            if log.log_id:
-                                try:
-                                    feedback = Feedback.objects.get(
-                                        source_id=log.log_id,
-                                        source=SourceChoices.EVAL_PLAYGROUND.value,
-                                        organization=log.organization,
-                                    )
-                                    value = feedback.explanation
-                                except Feedback.DoesNotExist:
-                                    value = ""
-                            else:
-                                value = ""
+                            feedback = feedback_by_log_id.get(str(log.log_id))
+                            value = feedback.explanation if feedback else ""
                         case _:
                             value = ""
                 column_config[col_key] = {
@@ -7247,7 +8659,7 @@ def apply_search(row_data, search_query, column_data):
     return filtered_rows
 
 
-def create_column_config_playground(eval_template_id, source):
+def create_column_config_playground(eval_template_id, source, *, request=None):
     default_config = {
         "is_frozen": None,
         "is_visible": True,
@@ -7262,7 +8674,13 @@ def create_column_config_playground(eval_template_id, source):
         "reason": "text",
         "datetime": "datetime",
     }
-    eval_template = get_object_or_404(EvalTemplate, id=eval_template_id)
+    if request is not None:
+        eval_template = _get_accessible_eval_template_for_request(
+            eval_template_id,
+            request,
+        )
+    else:
+        eval_template = get_object_or_404(EvalTemplate, id=eval_template_id)
     eval_config = eval_template.config
     output_type = eval_config.get("output", None)
     if not output_type:
@@ -7273,6 +8691,10 @@ def create_column_config_playground(eval_template_id, source):
             source_id=str(eval_template_id),
             deleted=False,
         )
+        if request is not None:
+            log_query = log_query.filter(
+                organization=_request_organization(request),
+            ).filter(_request_workspace_filter(request))
         if source in {"feedback", "eval_playground"}:
             log_query = log_query.filter(source=source)
         latest_log = log_query.order_by("-created_at").first()

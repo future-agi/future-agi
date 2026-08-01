@@ -22,6 +22,7 @@ The RECENT FIXES pinned here:
      the config/deleted/error guards scope ALL values (precedence fix).
   4. SCORE value/100 scaling; PASS_FAIL Passed/Failed -> output_bool.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -34,7 +35,6 @@ from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
     rewrite_v1_sql_to_v2,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fakes so the EVAL_METRIC path resolves config ids + output type without a DB.
@@ -195,9 +195,7 @@ class TestEvalLoggerSource:
         # engine's FINAL does not drop CDC tombstones.
         settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
         _, pred = eval_logger_source(include_cdc_tombstone_guard=True)
-        assert pred == (
-            "_peerdb_is_deleted = 0 AND (deleted = 0 OR deleted IS NULL)"
-        )
+        assert pred == ("_peerdb_is_deleted = 0 AND (deleted = 0 OR deleted IS NULL)")
 
     def test_cdc_tombstone_guard_flag_respects_alias(self, settings):
         settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
@@ -320,9 +318,7 @@ class TestEvalScoreCompilation:
 
     def test_score_is_null_checks_output_float_absence(self, monkeypatch):
         eval_id, _ = _patch_eval(monkeypatch, "SCORE")
-        where, _ = _translate(
-            ClickHouseFilterBuilder, _eval_filter(eval_id, "is_null")
-        )
+        where, _ = _translate(ClickHouseFilterBuilder, _eval_filter(eval_id, "is_null"))
         # is_null → NOT IN a subquery of rows that HAVE a value.
         assert "output_float IS NOT NULL" in where
         assert "NOT IN (" in where
@@ -386,9 +382,7 @@ class TestEvalPassFailCompilation:
 
     def test_pass_fail_is_null_uses_output_bool_presence(self, monkeypatch):
         eval_id, _ = _patch_eval(monkeypatch, "PASS_FAIL")
-        where, _ = _translate(
-            ClickHouseFilterBuilder, _eval_filter(eval_id, "is_null")
-        )
+        where, _ = _translate(ClickHouseFilterBuilder, _eval_filter(eval_id, "is_null"))
         assert "output_bool IS NOT NULL" in where
         assert "NOT IN (" in where
 
@@ -435,29 +429,29 @@ class TestEvalChoiceCompilation:
         assert "(deleted = 0 OR deleted IS NULL)" in where
         assert "_peerdb_is_deleted" not in where
 
-    def test_choice_contains_uses_ilike(self, monkeypatch):
+    def test_choice_contains_uses_literal_utf8_search(self, monkeypatch):
         eval_id, _ = _patch_eval(monkeypatch, "CHOICE")
         where, params = _translate(
             ClickHouseFilterBuilder, _eval_filter(eval_id, "contains", "part")
         )
-        assert "ILIKE" in where
-        assert "%part%" in params.values()
+        assert "positionUTF8(lowerUTF8" in where
+        assert "part" in params.values()
 
     def test_choice_starts_with(self, monkeypatch):
         eval_id, _ = _patch_eval(monkeypatch, "CHOICE")
         where, params = _translate(
             ClickHouseFilterBuilder, _eval_filter(eval_id, "starts_with", "pre")
         )
-        assert "ILIKE" in where
-        assert "pre%" in params.values()
+        assert "startsWith(lowerUTF8" in where
+        assert "pre" in params.values()
 
     def test_choice_ends_with(self, monkeypatch):
         eval_id, _ = _patch_eval(monkeypatch, "CHOICE")
         where, params = _translate(
             ClickHouseFilterBuilder, _eval_filter(eval_id, "ends_with", "suf")
         )
-        assert "ILIKE" in where
-        assert "%suf" in params.values()
+        assert "endsWith(lowerUTF8" in where
+        assert "suf" in params.values()
 
     def test_choice_not_in_uses_not_wrapped_group(self, monkeypatch):
         eval_id, _ = _patch_eval(monkeypatch, "CHOICE")
@@ -477,9 +471,7 @@ class TestEvalChoiceCompilation:
 
     def test_choice_is_null_checks_choice_presence(self, monkeypatch):
         eval_id, _ = _patch_eval(monkeypatch, "CHOICE")
-        where, _ = _translate(
-            ClickHouseFilterBuilder, _eval_filter(eval_id, "is_null")
-        )
+        where, _ = _translate(ClickHouseFilterBuilder, _eval_filter(eval_id, "is_null"))
         assert "notEmpty(" in where
         assert "output_str IS NOT NULL" in where
         assert "NOT IN (" in where
@@ -524,15 +516,12 @@ class TestEvalModeAndConfig:
     def test_no_matching_config_returns_impossible_sentinel(self, monkeypatch):
         # Empty config resolution → a filter that matches nothing (rather than
         # silently dropping the eval filter).
-        eval_id, _ = _patch_eval(
-            monkeypatch, "SCORE", config_ids=[], exists=False
-        )
+        eval_id, _ = _patch_eval(monkeypatch, "SCORE", config_ids=[], exists=False)
         where, _ = _translate(
             ClickHouseFilterBuilder, _eval_filter(eval_id, "greater_than", 50)
         )
         assert where == (
-            "trace_id IN "
-            "(SELECT toUUID('00000000-0000-0000-0000-000000000000'))"
+            "trace_id IN (SELECT toUUID('00000000-0000-0000-0000-000000000000'))"
         )
 
 
@@ -543,9 +532,7 @@ class TestEvalModeAndConfig:
 
 @pytest.mark.unit
 class TestEvalMetricThroughV2:
-    def test_v2_eval_metric_keeps_deleted_predicate_intact(
-        self, monkeypatch, settings
-    ):
+    def test_v2_eval_metric_keeps_deleted_predicate_intact(self, monkeypatch, settings):
         # The legacy tracer_eval_logger lacks is_deleted. When the eval filter
         # is compiled by the v2 builder, the rewriter must NOT turn the
         # `(deleted = 0 OR deleted IS NULL)` predicate into `is_deleted`.
@@ -562,9 +549,7 @@ class TestEvalMetricThroughV2:
         assert "is_deleted" not in where
         assert "_peerdb_is_deleted" not in where
 
-    def test_v2_choice_eval_metric_keeps_deleted_predicate(
-        self, monkeypatch, settings
-    ):
+    def test_v2_choice_eval_metric_keeps_deleted_predicate(self, monkeypatch, settings):
         settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
         eval_id, _ = _patch_eval(monkeypatch, "CHOICE")
         where, _ = _translate(
@@ -636,6 +621,27 @@ class TestHasEvalHasAnnotationShape:
             self._bool_filter("has_eval", False)
         )
         assert where == ""
+
+    @pytest.mark.parametrize(
+        ("value", "outer_operator"),
+        [(True, "trace_id IN"), (False, "trace_id NOT IN")],
+    )
+    def test_candidate_has_eval_is_latest_state_and_candidate_scoped(
+        self, settings, value, outer_operator
+    ):
+        settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger_v2"
+        where, _ = ClickHouseFilterBuilder(
+            project_id="p1",
+            candidate_entity_scope=True,
+            span_trace_id_scope=True,
+            span_latest_state=True,
+        ).translate(self._bool_filter("has_eval", value))
+
+        assert outer_operator in where
+        assert "FROM tracer_eval_logger_v2 AS el FINAL" in where
+        assert "INNER JOIN spans AS sp FINAL" in where
+        assert "toString(el.trace_id) IN %(candidate_trace_ids)s" in where
+        assert "sp.trace_id IN %(candidate_trace_ids)s" in where
 
     def test_has_annotation_true_generates_in_subquery(self):
         where, _ = ClickHouseFilterBuilder(project_id="p1").translate(

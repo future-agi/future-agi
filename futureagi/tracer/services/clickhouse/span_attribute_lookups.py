@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import datetime
 
 import structlog
 
@@ -43,7 +44,7 @@ class AttributeKey:
 
     key: str
     type: str  # "string" | "number" | "boolean"
-    count: int
+    count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,12 @@ def _ch_available() -> bool:
     return client is not None and client.is_configured
 
 
-def list_attribute_keys_for_project(project_id: str) -> list[AttributeKey]:
+def list_attribute_keys_for_project(
+    project_id: str,
+    *,
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
+) -> list[AttributeKey]:
     """Return every distinct span attribute key seen for the project.
 
     Walks the three shredded Map columns on the ``spans`` table
@@ -89,6 +95,8 @@ def list_attribute_keys_for_project(project_id: str) -> list[AttributeKey]:
         [project_id],
         include_counts=True,
         order_by_count_desc=True,
+        window_start=window_start,
+        window_end=window_end,
     )
 
     logger.info(
@@ -101,13 +109,45 @@ def list_attribute_keys_for_project(project_id: str) -> list[AttributeKey]:
         AttributeKey(
             key=row["key"],
             type=row["type"],
-            count=row["count"],
+            count=row.get("count"),
         )
         for row in result
     ]
 
 
-def list_attributes_for_trace(trace_id: str) -> list[TraceAttribute]:
+def find_attribute_key_for_project(
+    project_id: str,
+    key: str,
+    *,
+    window_start: datetime,
+    window_end: datetime,
+) -> AttributeKey | None:
+    """Find one exact attribute key without relying on sampled discovery."""
+    if not project_id or not key:
+        return None
+    if not is_clickhouse_enabled():
+        logger.info(
+            "ch_unavailable_for_exact_attribute_key_lookup",
+            project_id=project_id,
+        )
+        return None
+
+    row = AnalyticsQueryService().find_span_attribute_key_ch_for_project(
+        project_id,
+        key,
+        window_start=window_start,
+        window_end=window_end,
+    )
+    if not row:
+        return None
+    return AttributeKey(key=row["key"], type=row["type"])
+
+
+def list_attributes_for_trace(
+    trace_id: str,
+    *,
+    project_id: str | None = None,
+) -> list[TraceAttribute]:
     """Return distinct (key, type, values[]) per attribute on a single trace.
 
     Walks the three shredded Map columns (``attrs_string`` /
@@ -120,6 +160,15 @@ def list_attributes_for_trace(trace_id: str) -> list[TraceAttribute]:
     Returns an empty list (with a log) if ClickHouse is unavailable.
     """
     if not trace_id:
+        return []
+    if not project_id:
+        # The old trace-id-only query was the worst slow-success fingerprint
+        # in the US audit (minutes per call) because project_id is the primary
+        # key prefix. No current in-repo caller needs the unsafe behavior.
+        logger.warning(
+            "ch_trace_attributes_lookup_missing_project_scope",
+            trace_id=trace_id,
+        )
         return []
     if not is_clickhouse_enabled():
         logger.info(
@@ -134,40 +183,71 @@ def list_attributes_for_trace(trace_id: str) -> list[TraceAttribute]:
     query = """
         WITH attrs AS (
             SELECT pair.1 AS key, toString(pair.2) AS value, 'string' AS type
-            FROM spans
+            FROM (
+                SELECT attrs_string
+                FROM spans
+                PREWHERE project_id = %(project_id)s
+                  AND trace_id = %(trace_id)s
+                WHERE is_deleted = 0
+            )
             ARRAY JOIN arrayZip(
                 mapKeys(attrs_string), mapValues(attrs_string)
             ) AS pair
-            WHERE toString(trace_id) = %(trace_id)s
 
             UNION ALL
 
             SELECT pair.1 AS key, toString(pair.2) AS value, 'number' AS type
-            FROM spans
+            FROM (
+                SELECT attrs_number
+                FROM spans
+                PREWHERE project_id = %(project_id)s
+                  AND trace_id = %(trace_id)s
+                WHERE is_deleted = 0
+            )
             ARRAY JOIN arrayZip(
                 mapKeys(attrs_number), mapValues(attrs_number)
             ) AS pair
-            WHERE toString(trace_id) = %(trace_id)s
 
             UNION ALL
 
             SELECT pair.1 AS key, toString(pair.2) AS value, 'boolean' AS type
-            FROM spans
+            FROM (
+                SELECT attrs_bool
+                FROM spans
+                PREWHERE project_id = %(project_id)s
+                  AND trace_id = %(trace_id)s
+                WHERE is_deleted = 0
+            )
             ARRAY JOIN arrayZip(
                 mapKeys(attrs_bool), mapValues(attrs_bool)
             ) AS pair
-            WHERE toString(trace_id) = %(trace_id)s
         )
         SELECT key, any(type) AS type, groupUniqArray(value) AS values
         FROM attrs
         GROUP BY key
         ORDER BY key
     """
-    params = {"trace_id": str(trace_id)}
+    params = {
+        "trace_id": str(trace_id),
+        "project_id": str(project_id),
+    }
 
     try:
         client = ClickHouseClient()
-        rows, _column_types, query_time_ms = client.execute_read(query, params)
+        rows, _column_types, query_time_ms = client.execute_read(
+            query,
+            params,
+            timeout_ms=750,
+            settings={
+                "timeout_overflow_mode": "throw",
+                "max_threads": 2,
+                "max_memory_usage": 268_435_456,
+                "max_bytes_to_read": 1_073_741_824,
+                "read_overflow_mode": "throw",
+                "max_result_rows": 1000,
+                "result_overflow_mode": "throw",
+            },
+        )
     except Exception as e:
         logger.warning(
             "ch_trace_attributes_lookup_failed",

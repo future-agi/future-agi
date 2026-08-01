@@ -14,10 +14,12 @@ from datetime import datetime
 from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
-from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 from tracer.services.clickhouse.v2.id_remap_sql import (
     remap_left_join,
     resolved_id_expr,
+)
+from tracer.services.clickhouse.v2.query_builders.filters import (
+    ClickHouseFilterBuilderV2,
 )
 
 
@@ -49,7 +51,10 @@ class UserTimeSeriesQueryBuilder(BaseQueryBuilder):
         self.params["start_date"] = self.start_date
         self.params["end_date"] = self.end_date
 
-        filter_builder = ClickHouseFilterBuilder(table=self.TABLE)
+        filter_builder = ClickHouseFilterBuilderV2(
+            table=self.TABLE,
+            project_id=self.project_id,
+        )
         extra_where, extra_params = filter_builder.translate(self.filters)
         self.params.update(extra_params)
 

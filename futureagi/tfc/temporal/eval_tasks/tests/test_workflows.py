@@ -49,6 +49,19 @@ def _patch_failing_reconcile(monkeypatch):
     monkeypatch.setattr("tracer.services.eval_tasks.reconciler.reconcile", _boom)
 
 
+def _patch_read_budget_reconcile(monkeypatch, attempts):
+    from tracer.selectors.eval_tasks.row_resolver import (
+        _SAFE_READ_BUDGET_MESSAGE,
+        EvalTaskReadBudgetExceeded,
+    )
+
+    def _boom(task):
+        attempts.append(str(task.id))
+        raise EvalTaskReadBudgetExceeded(_SAFE_READ_BUDGET_MESSAGE)
+
+    monkeypatch.setattr("tracer.services.eval_tasks.reconciler.reconcile", _boom)
+
+
 def _patch_completing_run_entry(monkeypatch):
     def _complete(entry):
         EvalLogger.objects.filter(id=entry.id).update(
@@ -423,6 +436,22 @@ class TestHistoricalWorkflow:
                 workflow_environment, str(eval_task.id), batch_size=2, max_concurrent=4
             )
 
+        assert await _task_status(str(eval_task.id)) == EvalTaskStatus.FAILED
+
+    async def test_reconcile_read_budget_fails_once_without_retrying(
+        self, workflow_environment, eval_task, monkeypatch
+    ):
+        from temporalio.client import WorkflowFailureError
+
+        attempts = []
+        _patch_read_budget_reconcile(monkeypatch, attempts)
+
+        with pytest.raises(WorkflowFailureError):
+            await _run_historical(
+                workflow_environment, str(eval_task.id), batch_size=2, max_concurrent=4
+            )
+
+        assert attempts == [str(eval_task.id)]
         assert await _task_status(str(eval_task.id)) == EvalTaskStatus.FAILED
 
     async def test_entry_passes_through_running_mid_drain(

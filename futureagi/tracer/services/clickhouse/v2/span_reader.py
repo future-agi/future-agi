@@ -124,11 +124,16 @@ class CHSpan:
 
 @dataclass(frozen=True)
 class SpanScope:
-    """Minimal span fields for org/project/trace scope checks — read WITHOUT the
-    wide JSON columns. See ``CHSpanReader.scope_by_ids``."""
+    """Minimal span fields for request-facing relationship checks.
+
+    These fields are read without any wide JSON columns. ``trace_session_id``
+    lets annotation surfaces prove that a caller-supplied note span belongs to
+    the requested session instead of merely belonging to the same tenant.
+    """
 
     project_id: str | None
     trace_id: str | None
+    trace_session_id: str | None = None
 
 
 # Stable column ordering for the CH query. JSON columns wrapped in toJSONString
@@ -532,7 +537,13 @@ class CHSpanReader:
         return join, predicate
 
     # ─── Single-row by id ────────────────────────────────────────────────────
-    def get(self, span_id: str, *, project_id: str | None = None) -> CHSpan | None:
+    def get(
+        self,
+        span_id: str,
+        *,
+        project_id: str | None = None,
+        settings: dict[str, Any] | None = None,
+    ) -> CHSpan | None:
         """Equivalent to ObservationSpan.objects.get(id=span_id), returns None
         if absent (matches the pattern most callers wrap with try/except).
 
@@ -547,14 +558,19 @@ class CHSpanReader:
         # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
         where = ["id = %(span_id)s"]
         params: dict[str, Any] = {"span_id": span_id}
+        prewhere = ""
         if project_id:
-            where.append("project_id = %(pid)s")
             params["pid"] = str(project_id)
+            # ``project_id`` is the first spans ORDER BY component. Spell this
+            # as PREWHERE instead of relying on the optimizer to move it ahead
+            # of the wide JSON projection, especially under FINAL.
+            prewhere = "PREWHERE project_id = %(pid)s "
         rows = self._client.query(
             f"SELECT {_SELECT_SQL} FROM spans FINAL "
+            f"{prewhere}"
             f"WHERE {' AND '.join(where)} LIMIT 1",
             parameters=params,
-            settings=_FINAL_SKIP_INDEX_SETTINGS,
+            settings={**_FINAL_SKIP_INDEX_SETTINGS, **(settings or {})},
         ).result_rows
         if not rows:
             return None
@@ -1167,9 +1183,14 @@ class CHSpanReader:
         ).result_rows
         return [str(r[0]) for r in rows]
 
-    def scope_by_ids(self, span_ids: list[str]) -> dict[str, SpanScope]:
-        """Map ``span_id -> SpanScope(project_id, trace_id)``, reading ONLY those
-        two columns instead of the full span row.
+    def scope_by_ids(
+        self,
+        span_ids: list[str],
+        *,
+        project_ids: list[str] | tuple[str, ...] | None = None,
+        settings: dict[str, Any] | None = None,
+    ) -> dict[str, SpanScope]:
+        """Map ``span_id -> SpanScope``, reading only relationship columns.
 
         The full-row reads (``get`` / ``list_by_ids``) pull the wide JSON
         columns — ``attributes_extra`` / ``input`` / ``output`` / ``metadata`` /
@@ -1177,17 +1198,40 @@ class CHSpanReader:
         raw log) blow the shared ClickHouse memory limit (code 241). The
         annotation ``for-source`` scope checks only need each span's project
         (and, for the scores panel, its trace), so read just those: a single
-        panel-open must not OOM the shared cluster. ``FINAL`` is kept —
-        project/trace are stable across versions and a two-column ``FINAL`` read
-        stays well under the limit.
+        panel-open must not OOM the shared cluster. ``project_ids`` should be
+        supplied by request-facing callers: it moves the tenant key into
+        ``PREWHERE`` so ClickHouse can prune the first ORDER BY component rather
+        than scanning every customer's spans for one soft id. An explicitly
+        empty project scope fails closed; ``None`` retains the prior unscoped
+        behavior for migrations/internal callers. ``FINAL`` is kept because
+        these values gate tenant access.
         """
         if not span_ids:
             return {}
+        normalized_project_ids = (
+            tuple({str(project_id) for project_id in project_ids if project_id})
+            if project_ids is not None
+            else None
+        )
+        if project_ids is not None and not normalized_project_ids:
+            return {}
+
+        params: dict[str, Any] = {"ids": tuple(str(span_id) for span_id in span_ids)}
+        prewhere = ""
+        if normalized_project_ids is not None:
+            params["project_ids"] = normalized_project_ids
+            prewhere = "PREWHERE project_id IN %(project_ids)s "
+
+        query_settings = {**_FINAL_SKIP_INDEX_SETTINGS, **(settings or {})}
         rows = self._client.query(
-            "SELECT id, toString(project_id) AS project_id, "
-            "toString(trace_id) AS trace_id FROM spans FINAL "
-            "WHERE id IN %(ids)s AND is_deleted = 0",
-            parameters={"ids": tuple(span_ids)},
+            "SELECT id, toString(project_id) AS project_id_str, "
+            "toString(trace_id) AS trace_id_str, "
+            "toString(trace_session_id) AS trace_session_id_str "
+            "FROM spans FINAL "
+            f"{prewhere}"
+            "WHERE id IN %(ids)s",
+            parameters=params,
+            settings=query_settings,
         ).result_rows
 
         def _norm(v: Any) -> str | None:
@@ -1198,9 +1242,47 @@ class CHSpanReader:
             )
 
         return {
-            str(sid): SpanScope(project_id=_norm(pid), trace_id=_norm(tid))
-            for sid, pid, tid in rows
+            str(sid): SpanScope(
+                project_id=_norm(pid),
+                trace_id=_norm(tid),
+                trace_session_id=_norm(session_id),
+            )
+            for sid, pid, tid, session_id in rows
         }
+
+    def trace_projects_by_ids(
+        self,
+        trace_ids: list[str],
+        *,
+        project_ids: list[str] | tuple[str, ...],
+        settings: dict[str, Any] | None = None,
+    ) -> dict[str, str]:
+        """Return ``{trace_id: project_id}`` from the compact ``traces`` store.
+
+        This is the tenant-scope lookup used by request-facing annotation
+        surfaces. Reading a trace's root from the wide ``spans`` table solely to
+        discover its project scanned the whole multi-tenant table and caused
+        30-second gateway failures. ``traces`` is one compact row per trace and
+        is ordered by ``(project_id, id)``; requiring the caller's allowed
+        projects makes both predicates prefix-prunable and fails closed when the
+        caller has no project scope.
+        """
+        ids = tuple({str(trace_id) for trace_id in trace_ids if trace_id})
+        projects = tuple({str(project_id) for project_id in project_ids if project_id})
+        if not ids or not projects:
+            return {}
+
+        query_settings = {**_FINAL_SKIP_INDEX_SETTINGS, **(settings or {})}
+        rows = self._client.query(
+            "SELECT toString(id) AS trace_id_str, "
+            "toString(project_id) AS project_id_str "
+            "FROM traces FINAL "
+            "PREWHERE project_id IN %(project_ids)s "
+            "WHERE id IN %(trace_ids)s",
+            parameters={"trace_ids": ids, "project_ids": projects},
+            settings=query_settings,
+        ).result_rows
+        return {str(trace_id): str(project_id) for trace_id, project_id in rows}
 
     def root_ids_by_trace_ids(
         self, trace_ids: list[str], project_ids: list[str] | None = None
@@ -2150,13 +2232,14 @@ class CHSpanReader:
         params: dict[str, Any] | None = None,
         *,
         batch_size: int = 10_000,
+        settings: dict[str, Any] | None = None,
     ) -> Iterator[list[str]]:
         """Stream a query's first column as strings, re-chunked to ``batch_size``
         so neither the client nor the caller holds the full result in memory — a
         large historical scan can be consumed in waves."""
         batch: list[str] = []
         with self._client.query_row_block_stream(
-            sql, parameters=params or {}
+            sql, parameters=params or {}, settings=settings
         ) as stream:
             for block in stream:
                 for row in block:

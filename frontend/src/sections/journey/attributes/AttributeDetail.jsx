@@ -12,17 +12,22 @@ import {
   Paper,
   LinearProgress,
   Chip,
+  Alert,
 } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import AttributeValueChart from "./AttributeValueChart";
 
-const AttributeDetail = ({ projectId, attributeKey }) => {
+const AttributeDetail = ({ projectId, attributeKey, attributeType }) => {
   const { data: detail, isLoading } = useQuery({
-    queryKey: ["span-attribute-detail", projectId, attributeKey],
+    queryKey: ["span-attribute-detail", projectId, attributeKey, attributeType],
     queryFn: () =>
       axios.get(endpoints.project.spanAttributeDetail(), {
-        params: { project_id: projectId, key: attributeKey },
+        params: {
+          project_id: projectId,
+          key: attributeKey,
+          ...(attributeType ? { type: attributeType } : {}),
+        },
       }),
     select: (data) => data.data,
     enabled: Boolean(projectId) && Boolean(attributeKey),
@@ -65,27 +70,38 @@ const AttributeDetail = ({ projectId, attributeKey }) => {
 
   return (
     <Box sx={{ flex: 1, p: 2.5, overflow: "auto" }}>
+      {detail.query_complete === false && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          Attribute statistics are temporarily incomplete. No zero counts were
+          inferred; try again shortly.
+        </Alert>
+      )}
+
       <Box sx={{ mb: 3 }}>
         <Typography variant="h6" sx={{ mb: 0.5, wordBreak: "break-all" }}>
           {detail.key}
         </Typography>
         <Box sx={{ display: "flex", gap: 1.5, alignItems: "center" }}>
-          <Chip
-            label={detail.type}
-            size="small"
-            variant="outlined"
-            color={
-              detail.type === "string"
-                ? "info"
-                : detail.type === "number"
-                  ? "warning"
-                  : "success"
-            }
-          />
-          <Typography variant="body2" color="text.secondary">
-            {detail.count?.toLocaleString()} spans
-          </Typography>
-          {detail.unique_values && (
+          {detail.type && (
+            <Chip
+              label={detail.type}
+              size="small"
+              variant="outlined"
+              color={
+                detail.type === "string"
+                  ? "info"
+                  : detail.type === "number"
+                    ? "warning"
+                    : "success"
+              }
+            />
+          )}
+          {typeof detail.count === "number" && (
+            <Typography variant="body2" color="text.secondary">
+              {detail.count.toLocaleString()} spans
+            </Typography>
+          )}
+          {typeof detail.unique_values === "number" && (
             <Typography variant="body2" color="text.secondary">
               {detail.unique_values} unique values
             </Typography>
@@ -188,6 +204,7 @@ const AttributeDetail = ({ projectId, attributeKey }) => {
 AttributeDetail.propTypes = {
   projectId: PropTypes.string,
   attributeKey: PropTypes.string,
+  attributeType: PropTypes.oneOf(["string", "number", "boolean"]),
 };
 
 export default AttributeDetail;

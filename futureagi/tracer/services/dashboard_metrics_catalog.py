@@ -15,12 +15,10 @@ from django.core.cache import cache
 
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project, ProjectSourceChoices
-from tracer.services.clickhouse.client import (
-    get_clickhouse_client,
-    is_clickhouse_enabled,
+from tracer.services.clickhouse.query_service import (
+    AnalyticsQueryService,
+    merge_guaranteed_span_attribute_keys,
 )
-from tracer.services.clickhouse.query_service import AnalyticsQueryService
-from tracer.utils.sql_queries import SQL_query_handler
 
 logger = structlog.get_logger(__name__)
 
@@ -171,6 +169,7 @@ def build_metrics_catalog(
     project_ids_param: str = "",
     agent_definition_id: str = "",
     per_eval_config: bool = False,
+    _discovery_state: dict | None = None,
 ):
     """Assemble the full unified metrics catalog for the workspace.
 
@@ -552,31 +551,28 @@ def build_metrics_catalog(
     # 3-6: Eval metrics, annotations, and span attributes are independent.
     # Span attribute discovery (CH) runs concurrently with the PG lookups.
     def _discover_span_attributes():
-        attrs = []
+        # Keep rollup-supported root attributes visible even when the bounded
+        # sample misses them.  This is metadata only; values still come from CH.
+        attrs = merge_guaranteed_span_attribute_keys([]) if project_ids else []
+        seen_attr_keys = {attr["key"] for attr in attrs}
         try:
-            if is_clickhouse_enabled() and project_ids:
+            if project_ids:
                 analytics = AnalyticsQueryService()
                 rows = analytics.get_span_attribute_keys_ch_for_projects(
                     project_ids,
-                    recent_days=None,
-                    timeout_ms=15000,
-                    outer_limit=2000,
+                    recent_days=7,
+                    timeout_ms=750,
+                    outer_limit=1000,
                 )
-                for r in rows:
+                for r in merge_guaranteed_span_attribute_keys(rows):
                     k = r.get("key", "")
                     t = r.get("type", "string")
-                    if k:
+                    if k and k not in seen_attr_keys:
                         attrs.append({"key": k, "type": t})
-            elif project_ids:
-                for pid in project_ids:
-                    keys = SQL_query_handler.get_span_attributes_for_project(pid)
-                    for key in keys:
-                        k = key if isinstance(key, str) else str(key)
-                        if k not in [
-                            a.get("key") if isinstance(a, dict) else a for a in attrs
-                        ]:
-                            attrs.append({"key": k, "type": "string"})
+                        seen_attr_keys.add(k)
         except Exception as exc:
+            if _discovery_state is not None:
+                _discovery_state["span_attribute_discovery_complete"] = False
             logger.warning(
                 "dashboard_span_attribute_discovery_failed",
                 error=str(exc)[:200],
@@ -590,61 +586,20 @@ def build_metrics_catalog(
     try:
         from model_hub.models.evals_metric import EvalTemplate
 
-        used_template_ids = []
-        if is_clickhouse_enabled():
-            from tracer.services.clickhouse.client import (
-                get_clickhouse_client,
-            )
-
-            ch = get_clickhouse_client()
-
-            if filter_by_project:
-                result = ch.execute_read(
-                    "SELECT DISTINCT toString(custom_eval_config_id) AS tid "
-                    "FROM tracer_eval_logger "
-                    "WHERE _peerdb_is_deleted = 0 AND deleted = 0 "
-                    "AND custom_eval_config_id != toUUID('00000000-0000-0000-0000-000000000000') "
-                    "AND created_at >= now() - INTERVAL 90 DAY "
-                    "AND dictGet('trace_dict', 'project_id', trace_id) IN %(project_ids)s",
-                    {"project_ids": project_ids},
-                    timeout_ms=5000,
-                )
-            else:
-                ws_id = str(workspace.id)
-                result = ch.execute_read(
-                    "SELECT DISTINCT source_id FROM usage_apicalllog "
-                    "WHERE workspace_id = toUUID(%(ws_id)s) "
-                    "AND status = 'success' AND length(source_id) > 0 "
-                    "AND _peerdb_is_deleted = 0",
-                    {"ws_id": ws_id},
-                    timeout_ms=5000,
-                )
-
-            raw_rows = result[0] if isinstance(result, tuple) else result
-            used_template_ids = [
-                (
-                    r[0]
-                    if isinstance(r, (list, tuple))
-                    else r.get("tid", r.get("source_id", ""))
-                )
-                for r in raw_rows
-            ]
-
-        if not used_template_ids and filter_by_project:
-            used_template_ids = list(
-                CustomEvalConfig.objects.filter(
-                    project_id__in=project_ids,
-                    deleted=False,
-                )
-                .values_list("eval_template_id", flat=True)
-                .distinct()
-            )
-        elif used_template_ids and filter_by_project:
-            used_template_ids = list(
-                CustomEvalConfig.objects.filter(
-                    id__in=used_template_ids,
-                ).values_list("eval_template_id", flat=True)
-            )
+        # The picker needs configured evals, not evidence that they recently
+        # produced a log. Resolve them from the indexed PG configuration table
+        # instead of scanning eval/usage facts in ClickHouse on every cold
+        # catalog request.
+        configured_evals = CustomEvalConfig.objects.filter(deleted=False)
+        if filter_by_project:
+            configured_evals = configured_evals.filter(project_id__in=project_ids)
+        else:
+            configured_evals = configured_evals.filter(project__workspace=workspace)
+        used_template_ids = list(
+            configured_evals.order_by()
+            .values_list("eval_template_id", flat=True)
+            .distinct()
+        )
 
         if used_template_ids:
             eval_templates = EvalTemplate.no_workspace_objects.filter(
@@ -693,12 +648,14 @@ def build_metrics_catalog(
         from model_hub.models.develop_annotations import AnnotationsLabels
 
         if filter_by_project:
-            # Used-label ids via dispatched ANNOTATION_LABELS source (no dropped-table JOIN).
-            from tracer.services.clickhouse.v2.dispatch import (
-                get_query_builder_class,
+            # Trace/span rows no longer exist in PG. Scope Score through its
+            # indexed denormalized tracer-project id unconditionally; rollout
+            # dispatch can otherwise select the removed legacy relation joins.
+            from tracer.services.annotation_label_source import (
+                AnnotationLabelScoresProjectPG,
             )
 
-            source = get_query_builder_class("ANNOTATION_LABELS")()
+            source = AnnotationLabelScoresProjectPG()
             used_label_ids: set = set()
             for pid in project_ids:
                 used_label_ids.update(source.label_ids_for_project(pid))
@@ -1231,14 +1188,22 @@ def get_cached_metrics_catalog(
         logger.warning("metrics_catalog_cache_get_failed", exc_info=True)
         metrics = None
     if metrics is None:
+        discovery_state = {"span_attribute_discovery_complete": True}
         metrics = build_metrics_catalog(
             workspace,
             project_ids_param=project_ids_param,
             agent_definition_id=agent_definition_id,
             per_eval_config=per_eval_config,
+            _discovery_state=discovery_state,
         )
-        try:
-            cache.set(cache_key, metrics, timeout=ttl)
-        except Exception:
-            logger.warning("metrics_catalog_cache_set_failed", exc_info=True)
+        # A transient CH failure must not become an authoritative empty custom
+        # attribute catalog for the next minute.  Return the safe guaranteed
+        # keys now, but retry discovery on the next request.
+        if discovery_state["span_attribute_discovery_complete"]:
+            try:
+                cache.set(cache_key, metrics, timeout=ttl)
+            except Exception:
+                logger.warning("metrics_catalog_cache_set_failed", exc_info=True)
+        else:
+            logger.warning("metrics_catalog_not_cached_incomplete_attribute_discovery")
     return metrics

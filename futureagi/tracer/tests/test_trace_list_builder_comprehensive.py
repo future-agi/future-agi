@@ -16,6 +16,7 @@ Focus areas (gaps):
 """
 
 import uuid
+from datetime import datetime
 from unittest.mock import Mock
 
 import pytest
@@ -99,6 +100,55 @@ class TestBuildContentQuery:
         builder = TraceListQueryBuilder(project_id=project_id)
         query, _ = builder.build_content_query(trace_ids)
         assert "start_time" not in query
+
+    def test_v2_uses_compact_trace_table_for_heavy_content(self, project_id, trace_ids):
+        from tracer.services.clickhouse.v2.query_builders.trace_list import (
+            TraceListQueryBuilderV2,
+        )
+
+        builder = TraceListQueryBuilderV2(project_id=project_id)
+        builder.build()
+        query, params = builder.build_content_query(trace_ids)
+
+        assert "FROM traces FINAL" in query
+        assert "FROM spans" not in query
+        assert "attrs_string" not in query
+        assert "attributes_extra" not in query
+        assert "WHERE is_deleted = 0" in query
+        assert params["content_trace_ids"] == tuple(
+            uuid.UUID(trace_id) for trace_id in trace_ids
+        )
+
+
+@pytest.mark.unit
+class TestProgressivePageWindow:
+    def test_slice_only_narrows_page_not_count(self, project_id):
+        requested_start = datetime(2025, 1, 1)
+        end = datetime(2026, 1, 1)
+        since = datetime(2025, 12, 25)
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": [
+                        requested_start.isoformat(),
+                        end.isoformat(),
+                    ],
+                },
+            }
+        ]
+        builder = TraceListQueryBuilder(project_id=project_id, filters=filters)
+
+        page_query, page_params = builder.build(since=since)
+        count_query, count_params = builder.build_count_query()
+
+        assert page_params["start_date"] == since
+        assert count_params["start_date"] == requested_start
+        assert count_params["end_date"] == end
+        assert "ORDER BY start_time DESC, trace_id DESC" in page_query
+        assert "uniq(trace_id)" in count_query
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +331,8 @@ class TestResolveUserIds:
         analytics.execute_ch_query.return_value = Mock(data=[])
         builder.resolve_user_ids(trace_ids, analytics)
         _, kwargs = analytics.execute_ch_query.call_args
-        assert kwargs["timeout_ms"] == 10000
+        assert kwargs["timeout_ms"] == 750
+        assert kwargs["settings"]["max_threads"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -477,8 +528,8 @@ class TestBuildCountQuery:
         builder = TraceListQueryBuilder(project_id=project_id, search="boom")
         builder.build()
         query, params = builder.build_count_query()
-        assert "trace_name ILIKE %(search)s" in query
-        assert params["search"] == "%boom%"
+        assert "positionUTF8(lowerUTF8(" in query
+        assert params["search"] == "boom"
 
     def test_start_time_window_no_created_at_skew(self, project_id):
         builder = TraceListQueryBuilder(project_id=project_id)
@@ -527,9 +578,7 @@ class TestOuterWindowStartTime:
 @pytest.mark.unit
 class TestEvalQueryDeletionPredicate:
     def test_rewrite_safe_deleted_predicate(self, project_id):
-        builder = TraceListQueryBuilder(
-            project_id=project_id, eval_config_ids=["ec1"]
-        )
+        builder = TraceListQueryBuilder(project_id=project_id, eval_config_ids=["ec1"])
         query, _ = builder.build_eval_query(["t1"])
         # legacy tracer_eval_logger uses `deleted`, not `is_deleted` — the v2
         # rewriter must leave this form untouched.
@@ -538,9 +587,7 @@ class TestEvalQueryDeletionPredicate:
 
     def test_created_at_pruning_only_after_build(self, project_id):
         # build_eval_query guards the created_at fragment on self.start_date
-        builder = TraceListQueryBuilder(
-            project_id=project_id, eval_config_ids=["ec1"]
-        )
+        builder = TraceListQueryBuilder(project_id=project_id, eval_config_ids=["ec1"])
         # no prior build(): start_date is None → no created_at fragment
         query_no_build, _ = builder.build_eval_query(["t1"])
         assert "created_at >= %(start_date)s" not in query_no_build

@@ -14,10 +14,18 @@ from tracer.services.clickhouse.query_builders.monitor_metrics import (
     MonitorMetricsQueryBuilder,
 )
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
+from tracer.services.clickhouse.v2.query_builders.filters import (
+    ClickHouseFilterBuilderV2,
+)
 
 
 class MonitorMetricsQueryBuilderV2(V2RewriteMixin, MonitorMetricsQueryBuilder):
     """Drop-in v2 MonitorMetrics builder."""
+
+    _FILTER_BUILDER_CLS = ClickHouseFilterBuilderV2
+    _SPANS_TIME_COLUMN = "start_time"
+    _SESSION_ID_COLUMN = "trace_session_id"
+    _INCLUDE_CDC_TOMBSTONE_GUARD = False
 
 
 __all__ = ["MonitorMetricsQueryBuilderV2"]

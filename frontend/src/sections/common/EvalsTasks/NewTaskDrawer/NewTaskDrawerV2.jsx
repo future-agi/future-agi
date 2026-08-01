@@ -6,6 +6,7 @@ import {
   useFormState,
 } from "react-hook-form";
 import {
+  Alert,
   Box,
   Typography,
   Button,
@@ -32,13 +33,17 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { formatDate } from "src/utils/report-utils";
 import { endOfToday, sub } from "date-fns";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { getNewTaskFilters, NewTaskValidationSchema } from "./validation";
+import { NewTaskValidationSchema } from "./validation";
 import { enqueueSnackbar } from "src/components/snackbar";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import { useNavigate } from "react-router";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
 import { EvalPickerDrawer, serializeEvalConfig } from "../../EvalPicker";
+import {
+  fetchEvalAttributeList,
+  getEvalAttributeListQueryKey,
+} from "../evalAttributeListRequest";
 
 // ── Configured Eval Card ──
 
@@ -166,12 +171,6 @@ const NewTaskDrawerV2 = ({
   const { errors } = useFormState({ control });
 
   const evalsDetailsErrorMessage = _.get(errors, "evalsDetails")?.message || "";
-  const formValues = useWatch({ control });
-
-  const filtersWithoutDate = useMemo(() => {
-    return getNewTaskFilters(formValues, project, true).filters || [];
-  }, [formValues, project]);
-
   // Fetch pre-configured evals for the project
   const { data: configuredEvalList } = useQuery({
     queryKey: ["configured-evals", project],
@@ -246,19 +245,17 @@ const NewTaskDrawerV2 = ({
   };
 
   // Fetch eval attributes for variable mapping
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", project, rowType, filtersWithoutDate],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          project_id: project,
-          row_type: rowType,
-          filters: JSON.stringify(filtersWithoutDate),
-        },
-      }),
-    select: (data) => data.data?.result,
-    enabled: isProjectSelected,
-  });
+  const { data: evalAttributeResponse, isError: evalAttributesRequestFailed } =
+    useQuery({
+      queryKey: getEvalAttributeListQueryKey(project, rowType),
+      queryFn: () => fetchEvalAttributeList(project, rowType),
+      select: (data) => data.data,
+      enabled: isProjectSelected,
+    });
+  const evalAttributes = evalAttributeResponse?.result;
+  const evalAttributesDegraded =
+    evalAttributesRequestFailed ||
+    evalAttributeResponse?.query_status === "degraded";
 
   const { data: projectsList } = useQuery({
     queryKey: ["project-list"],
@@ -469,6 +466,18 @@ const NewTaskDrawerV2 = ({
                   />
                 )}
 
+                {(evalAttributesRequestFailed ||
+                  evalAttributeResponse?.query_complete === false) && (
+                  <Alert
+                    severity={evalAttributesDegraded ? "error" : "info"}
+                    data-testid="eval-attribute-query-status"
+                  >
+                    {evalAttributesDegraded
+                      ? "Attributes could not be loaded completely. Retry before configuring filters or evaluation mappings."
+                      : "Attributes are from a bounded recent sample; rare attributes may not appear in this list."}
+                  </Alert>
+                )}
+
                 {/* Filters */}
                 <FilterErrorBoundary>
                   <Accordion defaultExpanded>
@@ -514,7 +523,7 @@ const NewTaskDrawerV2 = ({
                       <Button
                         variant="outlined"
                         size="small"
-                        disabled={!isProjectSelected}
+                        disabled={!isProjectSelected || evalAttributesDegraded}
                         onClick={() => setEvalPickerOpen(true)}
                         startIcon={
                           <Iconify icon="mingcute:add-line" width={16} />
@@ -594,6 +603,7 @@ const NewTaskDrawerV2 = ({
                   type="submit"
                   variant="contained"
                   color="primary"
+                  disabled={evalAttributesDegraded}
                   sx={{ width: "200px" }}
                 >
                   Save Task

@@ -464,6 +464,17 @@ class ObserveGraphDataPointSerializer(serializers.Serializer):
 class ObserveGraphDataResultSerializer(serializers.Serializer):
     metric_name = serializers.CharField(allow_blank=True)
     data = ObserveGraphDataPointSerializer(many=True)
+    query_complete = serializers.BooleanField(required=False)
+    query_status = serializers.ChoiceField(
+        choices=("degraded", "adjusted"), required=False
+    )
+    query_error_code = serializers.ChoiceField(
+        choices=("read_budget_exceeded", "query_failed"),
+        required=False,
+    )
+    query_window_adjusted = serializers.BooleanField(required=False)
+    query_window_start = serializers.CharField(required=False)
+    query_window_end = serializers.CharField(required=False)
 
 
 class ObserveGraphDataResponseSerializer(serializers.Serializer):
@@ -522,6 +533,13 @@ class EvalTaskFiltersField(serializers.JSONField):
                 value[filter_list_key] = FilterListField().run_validation(
                     value[filter_list_key]
                 )
+
+        # The reconciler has one canonical list. Continue accepting the legacy
+        # key at the API boundary, but never persist it: a task written after
+        # the one-time data migration must not silently run unfiltered.
+        legacy_filters = value.pop("span_attributes_filters", [])
+        if legacy_filters:
+            value["filters"] = [*(value.get("filters") or []), *legacy_filters]
 
         return value
 

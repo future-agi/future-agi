@@ -229,6 +229,7 @@ from model_hub.views.separate_evals import (
     RestoreVersionView,
     SetDefaultVersionView,
     TestEvaluationTemplateAPIView,
+    TraceEvalView,
     UpdateEvalTemplateView,
 )
 from model_hub.views.tools import ToolsViewSet
@@ -1144,6 +1145,11 @@ urlpatterns = [
         "eval-templates/<uuid:template_id>/feedback-list/",
         EvalFeedbackListView.as_view(),
         name="eval-template-feedback-list",
+    ),
+    path(
+        "eval-templates/<uuid:template_id>/run-on-trace/",
+        TraceEvalView.as_view(),
+        name="eval-template-run-on-trace",
     ),
     path(
         "eval-templates/<uuid:template_id>/composite/",

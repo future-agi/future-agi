@@ -73,6 +73,7 @@ def _stamp_eval_version(source_config, eval_template):
             exc_info=True,
         )
 
+
 # Re-export for backward compat
 from tracer.utils.eval_helpers import resolve_eval_config_id  # noqa: F401, E402
 
@@ -354,60 +355,13 @@ def build_session_context(session) -> dict | None:
     if session is None:
         return None
     try:
-        from tracer.models.trace import Trace
         from tracer.services.clickhouse.v2 import get_reader
 
-        # Derive the session's trace set from CH spans, NOT the ``Trace.session``
-        # reverse FK (Slice D, DESIGN §5 / PG_ORM_READ_MIGRATION): post-flip that
-        # FK is ``None`` for EVERY trace (only spans carry ``trace_session_id``),
-        # so ``Trace.objects.filter(session=session)`` returns EMPTY for ALL
-        # sessions. ``session_trace_ids`` resolves the input id AND each span's id
-        # new→old (remap-aware), so a straddler yields its old∪new spans' traces as
-        # ONE set and a net-new session (no PG row) yields its real trace set.
-        # ``session`` here is either a saved PG ``TraceSession`` (span/trace-level
-        # callers) or the unsaved vehicle ``evaluate_trace_session_observe`` builds
-        # — both carry ``.id`` and ``.project_id`` (the vehicle's is the eval
-        # config's project). Trace itself is still PG, so the ids drive a PG
-        # ``id__in`` filter (Trace is never re-keyed; only the session surrogate).
+        # Span and trace telemetry is direct-to-ClickHouse. One remap-aware
+        # session read supplies both the full-session aggregates and the trace
+        # summaries; following the derived IDs through ``Trace.objects`` would
+        # empty every net-new session because no PG Trace row exists.
         session_id = getattr(session, "id", None)
-        project_id = getattr(session, "project_id", None)
-        if session_id is None or project_id is None:
-            _session_trace_ids: list[str] = []
-        else:
-            with get_reader() as reader:
-                _session_trace_ids = reader.session_trace_ids(
-                    str(project_id), str(session_id)
-                )
-        trace_qs = Trace.objects.filter(id__in=_session_trace_ids, deleted=False)
-        # Cap at 100 traces for the in-prompt summary; the agent uses
-        # explore_trace for deeper drill-down.
-        traces_page = list(trace_qs.order_by("created_at")[:100])
-        trace_ids = [t.id for t in traces_page]
-        # Stringified, as a set, so the per-trace bucket lookups below stay
-        # O(1) and match the str trace_id CH returns on each span row.
-        _page_trace_id_strs = {str(tid) for tid in trace_ids}
-
-        # Read from CH 25.3 (was three separate ObservationSpan.objects
-        # queries: session-wide aggregate, per-trace aggregate, per-trace
-        # span listing). list_by_session covers the same row set as the
-        # original ObservationSpan.objects.filter(trace__in=trace_qs,
-        # deleted=False) — soft-deleted traces cascade to spans (see
-        # _soft_delete_trace_tree in tracer/views/trace.py) and
-        # CHSpanReader filters is_deleted=0. The session aggregate is
-        # computed over the FULL row set (matching the original ORM
-        # aggregate which was not capped); the per-trace breakdown and
-        # the inline span list are only populated for traces in the
-        # 100-trace page so trace_summaries below still iterates the
-        # capped set. (``session_id`` resolved once at the top of the try.)
-        # ``list_by_session`` matches the RAW input ``session_id`` (it resolves
-        # each span new→old and compares to this id), whereas ``session_trace_ids``
-        # above resolves the INPUT id too. They agree because every caller of this
-        # path hands a SURVIVOR (old) or NET-NEW id, never a straddler's raw NEW id
-        # (the session list/detail surfaces resolved/old ids — trace_session.py — and
-        # the eval session vehicle is built with the survivor/net-new id); for those
-        # the input resolves to itself, so both reads see the same session. (A
-        # straddler's NEW id would split here — empty span-agg vs full trace set —
-        # but no entry point produces one.)
         if session_id is None:
             _ch_spans = []
         else:
@@ -421,11 +375,7 @@ def build_session_context(session) -> dict | None:
         _total_tokens = 0
         _total_cost = 0.0
         per_trace: dict = {}
-        spans_by_trace: dict = {}
         for s in _ch_spans:
-            # Session totals span every trace; this matches the original
-            # filter(trace__in=trace_qs).aggregate(...) which had no
-            # 100-trace cap.
             _total_spans += 1
             if s.status == "ERROR":
                 _error_count += 1
@@ -436,14 +386,15 @@ def build_session_context(session) -> dict | None:
             if s.end_time and (_end_time is None or s.end_time > _end_time):
                 _end_time = s.end_time
 
-            # Per-trace breakdown + inline span listing are scoped to the
-            # traces in the page so the payload size stays bounded.
-            if s.trace_id not in _page_trace_id_strs:
+            if not s.trace_id:
                 continue
+            trace_id = str(s.trace_id)
             agg = per_trace.setdefault(
-                s.trace_id,
+                trace_id,
                 {
-                    "trace_id": s.trace_id,
+                    "trace_id": trace_id,
+                    "name": None,
+                    "created_at": None,
                     "span_count": 0,
                     "error_count": 0,
                     "total_tokens": 0,
@@ -455,21 +406,46 @@ def build_session_context(session) -> dict | None:
                 agg["error_count"] += 1
             agg["total_tokens"] += s.total_tokens or 0
             agg["total_latency"] += s.latency_ms or 0
-
-            bucket = spans_by_trace.setdefault(s.trace_id, [])
-            if len(bucket) >= 50:
-                continue
-            bucket.append(
-                {
-                    "id": str(s.id),
-                    "name": s.name,
-                    "observation_type": s.observation_type,
-                    "status": s.status,
-                    "parent_span_id": (
-                        str(s.parent_span_id) if s.parent_span_id else None
-                    ),
-                }
+            if s.start_time and (
+                agg["created_at"] is None or s.start_time < agg["created_at"]
+            ):
+                agg["created_at"] = s.start_time
+            agg["name"] = (
+                agg["name"]
+                or s.trace_name
+                or (s.name if not s.parent_span_id else None)
             )
+
+        # Cap the in-prompt trace page at 100, ordered by the trace's earliest
+        # observed span. The full-session totals above remain uncapped.
+        trace_ids_page = sorted(
+            per_trace,
+            key=lambda trace_id: (
+                per_trace[trace_id]["created_at"] is None,
+                per_trace[trace_id]["created_at"],
+                trace_id,
+            ),
+        )[:100]
+        page_trace_ids = set(trace_ids_page)
+
+        spans_by_trace: dict = {}
+        for s in _ch_spans:
+            trace_id = str(s.trace_id) if s.trace_id else None
+            if trace_id not in page_trace_ids:
+                continue
+            bucket = spans_by_trace.setdefault(trace_id, [])
+            if len(bucket) < 50:
+                bucket.append(
+                    {
+                        "id": str(s.id),
+                        "name": s.name,
+                        "observation_type": s.observation_type,
+                        "status": s.status,
+                        "parent_span_id": (
+                            str(s.parent_span_id) if s.parent_span_id else None
+                        ),
+                    }
+                )
 
         sess_agg = {
             "total_spans": _total_spans,
@@ -481,31 +457,23 @@ def build_session_context(session) -> dict | None:
         }
 
         trace_summaries = []
-        for t in traces_page:
-            # getattr guards against incomplete Trace rows (None on nullable
-            # columns from in-flight ingests or older surfaces).
-            t_id = getattr(t, "id", None)
-            if t_id is None:
-                continue
-            # CH returns trace_id as a string, but Trace.id is a UUID — look
-            # up per_trace / spans_by_trace by the stringified id so the join
-            # works regardless of source type.
-            t_id_key = str(t_id)
-            t_created = getattr(t, "created_at", None)
-            t_error = getattr(t, "error", None)
-            agg = per_trace.get(t_id_key, {})
+        for trace_id in trace_ids_page:
+            agg = per_trace[trace_id]
+            trace_created = agg.get("created_at")
             err_count = agg.get("error_count") or 0
             trace_summaries.append(
                 {
-                    "id": str(t_id),
-                    "name": getattr(t, "name", None),
-                    "created_at": t_created.isoformat() if t_created else None,
+                    "id": trace_id,
+                    "name": agg.get("name"),
+                    "created_at": (
+                        trace_created.isoformat() if trace_created else None
+                    ),
                     "span_count": agg.get("span_count") or 0,
                     "error_count": err_count,
                     "total_tokens": agg.get("total_tokens") or 0,
                     "total_latency_ms": agg.get("total_latency") or 0,
-                    "has_error": bool(t_error or err_count > 0),
-                    "spans": spans_by_trace.get(t_id_key, []),
+                    "has_error": err_count > 0,
+                    "spans": spans_by_trace.get(trace_id, []),
                 }
             )
 
@@ -521,7 +489,7 @@ def build_session_context(session) -> dict | None:
             "created_at": (
                 session.created_at.isoformat() if session.created_at else None
             ),
-            "trace_count": trace_qs.count(),
+            "trace_count": len(per_trace),
             "total_spans": sess_agg["total_spans"] or 0,
             "error_count": sess_agg["error_count"] or 0,
             "total_tokens": sess_agg["total_tokens"] or 0,
@@ -609,8 +577,19 @@ def _process_mapping(
         # shorthands (``recording_url``, ``transcript``, …) resolve to
         # one of several provider-specific attribute names via the
         # ``_ATTRIBUTE_ALIASES`` table above — first hit wins.
-        candidates = [attribute, f"{attribute}.value"]
-        for alias in _ATTRIBUTE_ALIASES.get(attribute, []):
+        # New pickers soft-flatten ``span_attributes.<path>`` to ``<path>``,
+        # but existing task configs may still carry the explicit wrapper.
+        # Accept both forms against the already-unwrapped attribute bag so a
+        # previously saved mapping cannot become a false "missing attribute".
+        normalized_attribute = (
+            attribute[len("span_attributes.") :]
+            if isinstance(attribute, str)
+            and attribute.startswith("span_attributes.")
+            else attribute
+        )
+        candidates = [attribute, normalized_attribute]
+        candidates.extend(f"{candidate}.value" for candidate in list(candidates))
+        for alias in _ATTRIBUTE_ALIASES.get(normalized_attribute, []):
             candidates.append(alias)
             candidates.append(f"{alias}.value")
 
@@ -621,8 +600,11 @@ def _process_mapping(
                 resolved_value = value
                 break
 
-        if resolved_value is _MISSING and attribute in _SPAN_PUBLIC_FIELDS:
-            model_val = getattr(span, attribute, _MISSING)
+        if (
+            resolved_value is _MISSING
+            and normalized_attribute in _SPAN_PUBLIC_FIELDS
+        ):
+            model_val = getattr(span, normalized_attribute, _MISSING)
             if model_val is not _MISSING:
                 resolved_value = model_val
 
@@ -636,7 +618,7 @@ def _process_mapping(
         ):
             raw_log = span_attrs.get("raw_log")
             if isinstance(raw_log, dict):
-                walked = _walk_raw_log(raw_log, attribute)
+                walked = _walk_raw_log(raw_log, normalized_attribute)
                 if walked is not _MISSING:
                     resolved_value = walked
 

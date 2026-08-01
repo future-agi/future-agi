@@ -42,6 +42,12 @@ import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { formatDate } from "src/utils/report-utils";
 import { toBackendFilters } from "../common";
 import { combineGraphFilters } from "./graphFilterUtils";
+import {
+  GRAPH_QUERY_UNAVAILABLE_MESSAGE,
+  getGraphQueryAdjustedMessage,
+  isGraphQueryAdjusted,
+  isGraphQueryDegraded,
+} from "./graphQueryState";
 
 // ---------------------------------------------------------------------------
 // Map dashboard category → graph API type
@@ -314,7 +320,11 @@ const PrimaryGraph = ({
 
   // Fetch graph data
   const apiEndpoint = graphEndpoint || endpoints.project.getTraceGraphData();
-  const { data: graphData, isLoading } = useQuery({
+  const {
+    data: graphData,
+    isError: isGraphError,
+    isLoading,
+  } = useQuery({
     queryKey: [
       "primary-graph",
       effectiveObserveId,
@@ -339,6 +349,9 @@ const PrimaryGraph = ({
     enabled: !!effectiveObserveId && !!metricDef.id,
     staleTime: 30_000,
   });
+  const isGraphUnavailable = isGraphError || isGraphQueryDegraded(graphData);
+  const isGraphAdjusted = isGraphQueryAdjusted(graphData);
+  const graphAdjustedMessage = getGraphQueryAdjustedMessage(graphData);
 
   // Parse API data → [{timestamp, value, primary_traffic}, ...]
   const { metricData, trafficData } = useMemo(() => {
@@ -559,6 +572,15 @@ const PrimaryGraph = ({
           >
             {graphLabel}
           </Typography>
+          {isGraphAdjusted && (
+            <Typography
+              role="status"
+              title={`${graphData.query_window_start} – ${graphData.query_window_end}`}
+              sx={{ fontSize: 10, color: "text.secondary" }}
+            >
+              {graphAdjustedMessage}
+            </Typography>
+          )}
 
           {/* Metric picker trigger */}
           <ButtonBase
@@ -823,7 +845,24 @@ const PrimaryGraph = ({
       </Box>
 
       {/* Chart */}
-      {hasData ? (
+      {isGraphUnavailable ? (
+        <Box
+          sx={{
+            height: CHART_HEIGHT,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            px: 2,
+          }}
+        >
+          <Typography
+            role="alert"
+            sx={{ fontSize: 12, color: "text.secondary", textAlign: "center" }}
+          >
+            {GRAPH_QUERY_UNAVAILABLE_MESSAGE}
+          </Typography>
+        </Box>
+      ) : hasData ? (
         <Box sx={{ mx: -0.5 }}>
           <ReactApexChart
             options={chartOptions}

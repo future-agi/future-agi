@@ -63,6 +63,38 @@ class ProjectIdListResponseSerializer(serializers.Serializer):
     result = ProjectIdListResultSerializer()
 
 
+class ProjectListMetadataSerializer(serializers.Serializer):
+    total_rows = serializers.IntegerField(min_value=0)
+    page_number = serializers.IntegerField(min_value=0)
+    page_size = serializers.IntegerField(min_value=1)
+    total_pages = serializers.IntegerField(min_value=0)
+
+
+class ProjectListItemSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    last_30_days_vol = serializers.IntegerField(min_value=0)
+    daily_volume = serializers.ListField(child=serializers.IntegerField(min_value=0))
+    created_at = serializers.DateTimeField()
+    updated_at = serializers.DateTimeField()
+    last_active = serializers.DateTimeField(allow_null=True)
+    run_count = serializers.IntegerField(min_value=0)
+    issues = serializers.IntegerField(min_value=0)
+    tags = JsonValueField()
+
+
+class ProjectListResultSerializer(serializers.Serializer):
+    metadata = ProjectListMetadataSerializer()
+    table = ProjectListItemSerializer(many=True)
+
+
+class ProjectListResponseSerializer(serializers.Serializer):
+    """Wire contract for ``GET /tracer/project/list_projects/``."""
+
+    status = serializers.BooleanField()
+    result = ProjectListResultSerializer()
+
+
 class ProjectNameUpdateSerializer(serializers.Serializer):
     project_id = serializers.UUIDField(required=True)
     name = serializers.CharField(required=True)

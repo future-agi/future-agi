@@ -6,6 +6,16 @@ import axios, { endpoints } from "src/utils/axios";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useParams } from "react-router-dom";
 
+const selectSpanAttributeValueSuggestions = (response) => {
+  const payload = response?.data || {};
+  return {
+    options: Array.isArray(payload.result)
+      ? payload.result.map((item) => item.value)
+      : [],
+    queryComplete: payload.query_complete !== false,
+  };
+};
+
 const AutocompleteTextValueSelector = ({
   definition,
   filter,
@@ -17,7 +27,7 @@ const AutocompleteTextValueSelector = ({
   const debouncedInput = useDebounce(inputValue, 300);
   const { id: projectId } = useParams();
 
-  const { data: options = [], isLoading } = useQuery({
+  const { data: suggestions, isLoading } = useQuery({
     queryKey: [
       "span-attribute-values",
       projectId,
@@ -33,10 +43,12 @@ const AutocompleteTextValueSelector = ({
           limit: 20,
         },
       }),
-    select: (data) => data.data?.result?.map((item) => item.value) || [],
+    select: selectSpanAttributeValueSuggestions,
     enabled: Boolean(projectId) && Boolean(definition?.propertyId),
     staleTime: 30000,
   });
+  const options = suggestions?.options || [];
+  const suggestionsIncomplete = suggestions?.queryComplete === false;
 
   return (
     <Autocomplete
@@ -44,6 +56,9 @@ const AutocompleteTextValueSelector = ({
       size="small"
       options={options}
       loading={isLoading}
+      noOptionsText={
+        suggestionsIncomplete ? "Type the value manually" : "No matching values"
+      }
       inputValue={inputValue}
       onInputChange={(_, newInputValue) => {
         setInputValue(newInputValue);
@@ -75,6 +90,14 @@ const AutocompleteTextValueSelector = ({
           placeholder="Type or select a value..."
           variant="outlined"
           size="small"
+          helperText={
+            suggestionsIncomplete
+              ? "Value suggestions are incomplete. Type a value to continue."
+              : undefined
+          }
+          FormHelperTextProps={{
+            sx: suggestionsIncomplete ? { color: "warning.main" } : undefined,
+          }}
           sx={{ minWidth: 180 }}
           InputProps={{
             ...params.InputProps,

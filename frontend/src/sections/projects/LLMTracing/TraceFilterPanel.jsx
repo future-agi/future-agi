@@ -666,28 +666,98 @@ function PropertyPicker({
   onClose,
   properties,
   onSelect,
+  projectId,
   categories = CATEGORIES,
 }) {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const hasCategorySidebar = categories && categories.length > 0;
+  const debouncedSearch = useDebounce(search.trim(), 500);
+  const hasSampledExactMatch = useMemo(
+    () =>
+      (properties || []).some(
+        (property) => String(property.id) === debouncedSearch,
+      ),
+    [properties, debouncedSearch],
+  );
+  const shouldProbeExactAttribute =
+    open &&
+    Boolean(projectId) &&
+    Boolean(debouncedSearch) &&
+    !hasSampledExactMatch &&
+    (!hasCategorySidebar || category === "all" || category === "attribute");
+  const {
+    data: exactAttributeLookup,
+    isFetching: exactAttributeLoading,
+    isError: exactAttributeError,
+  } = useQuery({
+    queryKey: ["span-attribute-key-exact", projectId, debouncedSearch],
+    enabled: shouldProbeExactAttribute,
+    retry: false,
+    staleTime: 5 * 60_000,
+    gcTime: 15 * 60_000,
+    queryFn: async () => {
+      const { data } = await axios.get(endpoints.project.spanAttributeKeys(), {
+        params: {
+          project_id: projectId,
+          q: debouncedSearch,
+        },
+      });
+      return {
+        query: debouncedSearch,
+        queryComplete: data?.query_complete !== false,
+        result: data?.result || [],
+      };
+    },
+  });
+  const exactProperties = useMemo(() => {
+    if (
+      exactAttributeLookup?.query !== debouncedSearch ||
+      exactAttributeLookup?.queryComplete !== true
+    ) {
+      return [];
+    }
+    return (exactAttributeLookup.result || []).map((attribute) => ({
+      id: attribute.key,
+      name: attribute.key,
+      category: "attribute",
+      rawCategory: "custom_attribute",
+      type: normalizeFieldType(attribute.type),
+      apiColType: "SPAN_ATTRIBUTE",
+    }));
+  }, [exactAttributeLookup, debouncedSearch]);
+  const pickerProperties = useMemo(() => {
+    const merged = [...(properties || [])];
+    const seen = new Set(merged.map((property) => String(property.id)));
+    for (const property of exactProperties) {
+      if (!seen.has(String(property.id))) {
+        merged.push(property);
+        seen.add(String(property.id));
+      }
+    }
+    return merged;
+  }, [properties, exactProperties]);
 
   const filtered = useMemo(
     () =>
       filterPropertiesForPicker({
-        properties,
+        properties: pickerProperties,
         category,
         search,
         hasCategorySidebar,
       }),
-    [properties, category, search, hasCategorySidebar],
+    [pickerProperties, category, search, hasCategorySidebar],
   );
 
   const counts = useMemo(() => {
-    const c = { all: properties.length };
-    for (const p of properties) c[p.category] = (c[p.category] || 0) + 1;
+    const c = { all: pickerProperties.length };
+    for (const p of pickerProperties) c[p.category] = (c[p.category] || 0) + 1;
     return c;
-  }, [properties]);
+  }, [pickerProperties]);
+  const exactLookupIncomplete =
+    shouldProbeExactAttribute &&
+    !exactAttributeLoading &&
+    (exactAttributeError || exactAttributeLookup?.queryComplete === false);
   const visibleProperties = filtered.slice(0, PROPERTY_PICKER_RENDER_LIMIT);
   const hiddenCount = Math.max(
     filtered.length - PROPERTY_PICKER_RENDER_LIMIT,
@@ -734,7 +804,11 @@ function PropertyPicker({
                     />
                   </InputAdornment>
                 ),
-                endAdornment: filtered.length > 0 && (
+                endAdornment: exactAttributeLoading ? (
+                  <InputAdornment position="end">
+                    <CircularProgress size={14} />
+                  </InputAdornment>
+                ) : filtered.length > 0 ? (
                   <InputAdornment position="end">
                     <Typography
                       variant="caption"
@@ -743,7 +817,7 @@ function PropertyPicker({
                       {filtered.length}
                     </Typography>
                   </InputAdornment>
-                ),
+                ) : null,
                 sx: { fontSize: 13 },
               }}
             />
@@ -818,7 +892,7 @@ function PropertyPicker({
               </Box>
             )}
             <Box sx={{ flex: 1, overflow: "auto", maxHeight: 280 }}>
-              {filtered.length === 0 && (
+              {filtered.length === 0 && !exactAttributeLoading && (
                 <Typography
                   sx={{
                     p: 2,
@@ -827,7 +901,21 @@ function PropertyPicker({
                     color: "text.disabled",
                   }}
                 >
-                  No properties found
+                  {exactLookupIncomplete
+                    ? "Attribute lookup timed out. Try again."
+                    : "No properties found"}
+                </Typography>
+              )}
+              {filtered.length === 0 && exactAttributeLoading && (
+                <Typography
+                  sx={{
+                    p: 2,
+                    textAlign: "center",
+                    fontSize: 12,
+                    color: "text.disabled",
+                  }}
+                >
+                  Checking exact attribute...
                 </Typography>
               )}
               {visibleProperties.map((prop, idx) => (
@@ -979,8 +1067,7 @@ function ValuePicker({
   // page can only be found by the backend. Other field types keep
   // client-side filtering of the fetched page.
   const usesBackendSearch =
-    !hasStaticChoices &&
-    (isIdOnlyField || metricType === "custom_attribute");
+    !hasStaticChoices && (isIdOnlyField || metricType === "custom_attribute");
 
   // Primary: dashboard API values
   const {
@@ -1404,7 +1491,17 @@ function FilterRow({
   defaultOperatorForType,
 }) {
   const [pickerAnchor, setPickerAnchor] = useState(null);
-  const selectedProp = properties.find((p) => p.id === filter.field);
+  const selectedProp =
+    properties.find((p) => p.id === filter.field) ||
+    (filter.field
+      ? {
+          id: filter.field,
+          name: filter.fieldName || filter.field,
+          category: filter.fieldCategory,
+          type: filter.fieldType,
+          apiColType: filter.apiColType,
+        }
+      : undefined);
   const normalizedType = normalizeFieldType(filter.fieldType);
   const isNumber = normalizedType === "number";
   const isDate = normalizedType === "date";
@@ -1793,6 +1890,7 @@ function FilterRow({
         open={Boolean(pickerAnchor)}
         onClose={() => setPickerAnchor(null)}
         properties={properties}
+        projectId={projectId}
         categories={categories}
         onSelect={handlePropertySelect}
       />

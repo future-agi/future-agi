@@ -7,6 +7,7 @@ import pytest
 from tracer.services.clickhouse.span_attribute_lookups import (
     aggregate_attribute_over_traces,
     list_attribute_keys_for_traces,
+    list_attributes_for_trace,
 )
 
 
@@ -108,3 +109,28 @@ class TestListAttributeKeysForTraces:
         assert len(result) == 2
         assert result[0].key == "gen_ai.span.kind"
         assert result[0].count == 5
+
+
+class TestListAttributesForTrace:
+    def test_missing_project_scope_fails_closed_without_clickhouse(self, mock_ch):
+        assert list_attributes_for_trace("trace-1") == []
+        mock_ch.execute_read.assert_not_called()
+
+    def test_project_scope_is_applied_before_array_join(self, mock_ch):
+        mock_ch.execute_read.return_value = ([], [], 0)
+
+        list_attributes_for_trace("trace-1", project_id="project-1")
+
+        call = mock_ch.execute_read.call_args
+        query = call.args[0]
+        params = call.args[1]
+        assert query.count("PREWHERE project_id = %(project_id)s") == 3
+        assert query.count("trace_id = %(trace_id)s") == 3
+        assert "toString(trace_id)" not in query
+        assert params == {
+            "trace_id": "trace-1",
+            "project_id": "project-1",
+        }
+        assert call.kwargs["timeout_ms"] == 750
+        assert call.kwargs["settings"]["max_threads"] == 2
+        assert call.kwargs["settings"]["max_result_rows"] == 1000

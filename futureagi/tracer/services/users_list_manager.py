@@ -55,7 +55,16 @@ _SKIP_ATTR_PREFIXES = (
     "output.value",
 )
 
-_CH_TIMEOUT_MS = 30000
+_CH_TIMEOUT_MS = 750
+_CH_READ_SETTINGS = {
+    "timeout_overflow_mode": "throw",
+    "max_threads": 2,
+    "max_memory_usage": 268_435_456,
+    "max_bytes_to_read": 1_073_741_824,
+    "read_overflow_mode": "throw",
+    "max_result_rows": 2000,
+    "result_overflow_mode": "throw",
+}
 
 # Hard cap on export rows. Bounds worker memory + latency for the large-workspace
 # case this feature targets (matches agentcc's MAX_EXPORT_ROWS); a hit is logged
@@ -63,7 +72,7 @@ _CH_TIMEOUT_MS = 30000
 MAX_EXPORT_ROWS = 10_000
 
 
-def _users_attr_enrichment_query(project_id=None):
+def _users_attr_enrichment_query(project_ids):
     """Build the Observe-Users span-attribute enrichment query (DESIGN §3).
 
     P3b step1.5 DUAL id-remap so a cross-cutover straddler's attributes unify
@@ -79,11 +88,12 @@ def _users_attr_enrichment_query(project_id=None):
         resolved_id_expr,
     )
 
-    params: dict = {}
-    project_clause = ""
-    if project_id:
-        params["attr_pid"] = str(project_id)
-        project_clause = "AND project_id = toUUID(%(attr_pid)s)"
+    scoped_project_ids = tuple(
+        str(project_id) for project_id in project_ids if project_id
+    )
+    if not scoped_project_ids:
+        raise ValueError("user attribute enrichment requires a non-empty project scope")
+    params: dict = {"attr_project_ids": scoped_project_ids}
 
     remap_join = remap_left_join("end_user_id", "end_user_id_remap")
     resolved = resolved_id_expr("end_user_id")
@@ -102,7 +112,9 @@ def _users_attr_enrichment_query(project_id=None):
         FROM spans
         {remap_join}
         WHERE is_deleted = 0
-          {project_clause}
+          AND project_id IN %(attr_project_ids)s
+          AND start_time >= %(attr_start_date)s
+          AND start_time < %(attr_end_date)s
           AND (
             (attributes_extra != '{{}}' AND attributes_extra != '')
             OR length(mapKeys(attrs_string)) > 0
@@ -173,11 +185,26 @@ class UsersListManager:
             empty_scope=self.empty_scope,
         )
         query, params = builder.build()
-        result = analytics.execute_ch_query(query, params, timeout_ms=_CH_TIMEOUT_MS)
+        read_settings = _CH_READ_SETTINGS
+        if max_rows is not None:
+            # Export has its own explicit 10k+1 truncation sentinel. Keep the
+            # server result cap aligned with that existing contract.
+            read_settings = {
+                **_CH_READ_SETTINGS,
+                "max_result_rows": min(int(max_rows), MAX_EXPORT_ROWS + 1),
+            }
+        result = analytics.execute_ch_query(
+            query,
+            params,
+            timeout_ms=_CH_TIMEOUT_MS,
+            settings=read_settings,
+        )
         formatted = builder.format_rows(result.data)
         return formatted["table"], formatted["total_count"], builder
 
-    def _enrich_with_span_attributes(self, rows: list[dict]) -> None:
+    def _enrich_with_span_attributes(
+        self, rows: list[dict], builder: UserListQueryBuilderV2
+    ) -> None:
         """Fold aggregated span attributes into each user row, in place (fail-open).
 
         Mutates ``rows`` and returns nothing — callers read the same list they
@@ -189,11 +216,17 @@ class UsersListManager:
         try:
             analytics = AnalyticsQueryService()
             attr_query, attr_params = _users_attr_enrichment_query(
-                project_id=self.project_id
+                self.scoped_project_ids
             )
+            start_date, end_date = builder.parse_time_range(self.filters)
+            attr_params["attr_start_date"] = start_date
+            attr_params["attr_end_date"] = end_date
             attr_params["eu_ids"] = tuple(str(e) for e in end_user_ids)
             attr_result = analytics.execute_ch_query(
-                attr_query, attr_params, timeout_ms=_CH_TIMEOUT_MS
+                attr_query,
+                attr_params,
+                timeout_ms=_CH_TIMEOUT_MS,
+                settings=_CH_READ_SETTINGS,
             )
             user_attrs: dict = {}
             for attr_row in attr_result.data:
@@ -240,7 +273,9 @@ class UsersListManager:
         except Exception as e:
             logger.warning(f"User span attribute enrichment failed: {e}")
 
-    def _enrich_with_evals(self, rows: list[dict], builder: UserListQueryBuilderV2) -> None:
+    def _enrich_with_evals(
+        self, rows: list[dict], builder: UserListQueryBuilderV2
+    ) -> None:
         """Enrich rows with eval pass rate (post-pagination for perf). Fail-open."""
         end_user_ids = [r.get("end_user_id") for r in rows if r.get("end_user_id")]
         if not end_user_ids:
@@ -253,11 +288,12 @@ class UsersListManager:
                 return
             analytics = AnalyticsQueryService()
             eval_result = analytics.execute_ch_query(
-                eval_query, eval_params, timeout_ms=10000
+                eval_query,
+                eval_params,
+                timeout_ms=_CH_TIMEOUT_MS,
+                settings=_CH_READ_SETTINGS,
             )
-            eval_map = {
-                str(r.get("end_user_id", "")): r for r in eval_result.data
-            }
+            eval_map = {str(r.get("end_user_id", "")): r for r in eval_result.data}
             for entry in rows:
                 euid = str(entry.get("end_user_id", ""))
                 ev = eval_map.get(euid, {})
@@ -271,7 +307,7 @@ class UsersListManager:
         rows, count, builder = self._fetch_rows(
             limit=page_size, offset=current_page * page_size
         )
-        self._enrich_with_span_attributes(rows)
+        self._enrich_with_span_attributes(rows, builder)
         self._enrich_with_evals(rows, builder)
         total_pages = (count // page_size) + (1 if count % page_size > 0 else 0)
         return {"table": rows, "total_count": count, "total_pages": total_pages}

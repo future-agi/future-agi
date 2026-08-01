@@ -6,11 +6,12 @@ and the read-side filters that keep session rows off span/trace surfaces.
 Schema-only tests; PR4 introduces the writers.
 """
 
-import json
 import uuid
 from unittest.mock import patch
 
 import pytest
+from django.core.exceptions import ValidationError  # noqa: E402
+from django.db import IntegrityError, transaction  # noqa: E402
 
 # Break the same import cycle PR1's runtime tests broke: the chain
 # tracer.utils.eval_tasks -> tracer.utils.eval -> model_hub.tasks.__init__
@@ -19,10 +20,6 @@ import pytest
 # unwinds the cycle via the user_evaluation submodule (no tracer.utils.eval
 # dependency).
 import model_hub.tasks  # noqa: F401, E402
-
-from django.core.exceptions import ValidationError  # noqa: E402
-from django.db import IntegrityError, transaction  # noqa: E402
-
 from tracer.models.observation_span import EvalLogger, EvalTargetType  # noqa: E402
 
 # The per-target_type FK shape is enforced in two layers:
@@ -101,9 +98,7 @@ class TestEvalLoggerTargetTypeShape:
                 custom_eval_config=custom_eval_config,
             )
 
-    def test_rejects_trace_target_with_null_span(
-        self, trace, custom_eval_config
-    ):
+    def test_rejects_trace_target_with_null_span(self, trace, custom_eval_config):
         """target_type='trace' MUST anchor to a root span. NULL observation_span → rejected."""
         with pytest.raises(_REJECTION_ERRORS), transaction.atomic():
             EvalLogger.objects.create(
@@ -342,13 +337,13 @@ class TestEvalTaskViewsExposeRowTypeAndTargetType:
         observe_project,
         trace_session,
         custom_eval_config,
+        monkeypatch,
     ):
-        """Session-target rows surface session_id + session_name in detail; span/trace IDs NULL."""
-        from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
-
+        """Session-target rows hydrate names from CH; span/trace IDs stay NULL."""
         # Custom eval config tied to the observe project (test data must
         # match the project the trace_session belongs to)
         from tracer.models.custom_eval_config import CustomEvalConfig
+        from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 
         observe_config = CustomEvalConfig.objects.create(
             name="Observe Eval",
@@ -368,6 +363,16 @@ class TestEvalTaskViewsExposeRowTypeAndTargetType:
             row_type="sessions",
         )
         task.evals.add(observe_config)
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.v2.trace_session_dict_reader."
+            "resolve_session_fields",
+            lambda session_ids, *, project_id=None: {
+                str(trace_session.id): {
+                    "display_name": trace_session.name,
+                    "external_session_id": trace_session.name,
+                }
+            },
+        )
 
         EvalLogger.objects.create(
             target_type=EvalTargetType.SESSION,
@@ -400,3 +405,61 @@ class TestEvalTaskViewsExposeRowTypeAndTargetType:
         assert item["detail"]["session_name"] == trace_session.name
         assert item["detail"]["span_id"] is None
         assert item["detail"]["trace_id"] is None
+
+    def test_get_usage_ch_only_span_keeps_soft_ids_when_ch_unavailable(
+        self,
+        auth_client,
+        project,
+        custom_eval_config,
+        monkeypatch,
+    ):
+        """A missing PG span never blanks the EvalLogger's source identifiers."""
+        from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
+
+        task = EvalTask.objects.create(
+            project=project,
+            name="CH-only span task",
+            filters={},
+            sampling_rate=100,
+            run_type=RunType.CONTINUOUS,
+            status=EvalTaskStatus.PENDING,
+            spans_limit=100,
+            row_type="spans",
+        )
+        task.evals.add(custom_eval_config)
+
+        span_id = f"ch-only-{uuid.uuid4().hex}"
+        trace_id = uuid.uuid4()
+        EvalLogger.objects.create(
+            target_type=EvalTargetType.SPAN,
+            observation_span_id=span_id,
+            trace_id=trace_id,
+            custom_eval_config=custom_eval_config,
+            eval_task_id=str(task.id),
+            output_bool=True,
+        )
+
+        def unavailable_reader():
+            raise TimeoutError("ClickHouse unavailable")
+
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.v2.get_reader",
+            unavailable_reader,
+        )
+
+        response = auth_client.get(
+            "/tracer/eval-task/get_usage/",
+            {"eval_task_id": str(task.id), "page": 1, "page_size": 25, "period": "30d"},
+        )
+
+        assert response.status_code == 200
+        result = response.json()["result"]
+        assert result["query_complete"] is False
+        assert result["query_status"] == "degraded"
+        assert result["query_error_code"] == "read_budget_exceeded"
+        item = result["logs"]["results"][0]
+        assert item["span_id"] == span_id
+        assert item["trace_id"] == str(trace_id)
+        assert item["session_id"] is None
+        assert item["detail"]["span_id"] == span_id
+        assert item["detail"]["trace_id"] == str(trace_id)

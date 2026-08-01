@@ -286,11 +286,30 @@ export const getAttributesDefinition = (
   }, {});
 
   const tempDef = [];
+  const normalizedAttributes = Array.isArray(attributes) ? [...attributes] : [];
+  const knownAttributeKeys = new Set(
+    normalizedAttributes
+      .map((attr) =>
+        typeof attr === "object" && attr !== null ? attr.key : attr,
+      )
+      .filter(Boolean),
+  );
+
+  attrFilters.forEach((filter) => {
+    const key = filter?.column_id;
+    if (!key || knownAttributeKeys.has(key)) return;
+    normalizedAttributes.push({
+      key,
+      type: filter?.filter_config?.filter_type,
+    });
+    knownAttributeKeys.add(key);
+  });
 
   const obj = {
     propertyName: group,
     stringConnector: "is",
-    dependents: attributes?.map((attr) => {
+    allowCustomDependent: true,
+    dependents: normalizedAttributes.map((attr) => {
       // Support both enriched { key, type, count } and plain string formats
       const isEnriched = typeof attr === "object" && attr !== null;
       const attrKey = isEnriched ? attr.key : attr;

@@ -137,7 +137,6 @@ from model_hub.utils.annotation_queue_helpers import (
     is_source_available_for_annotation,
     preview_payload_for_source,
     resolve_source_content,
-    resolve_source_object,
     resolve_source_objects_bulk,
 )
 from model_hub.utils.utils import send_message_to_channel
@@ -173,6 +172,23 @@ ERROR_RESPONSES = {
 # path for selections exceeding this; until then, the endpoint errors with
 # ``selection_too_large`` so the UI can prompt the user to narrow the filter.
 MAX_SELECTION_CAP = 10_000
+
+# Interactive annotation lookups sit behind a 30-second load-balancer deadline.
+# Keep every ClickHouse scope probe independently bounded so an invalid soft id,
+# or a temporarily overloaded replica, returns a retryable application response
+# instead of occupying the full gateway window.
+_FOR_SOURCE_CH_SETTINGS = {
+    "max_execution_time": 0.75,
+    "timeout_overflow_mode": "throw",
+    "max_threads": 2,
+    "max_rows_to_read": 1_000_000,
+    "read_overflow_mode": "throw",
+    "max_bytes_to_read": 128 * 1024 * 1024,
+    "max_memory_usage": 256 * 1024 * 1024,
+    "max_result_rows": 256,
+    "max_result_bytes": 4 * 1024 * 1024,
+    "result_overflow_mode": "throw",
+}
 
 # Enumerated add-items is synchronous: the whole payload is resolved (one CH
 # IN-list per kind) and inserted in one request. The FE chunks at 500, so cap the
@@ -4162,7 +4178,11 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
     @validated_request(
         query_serializer=QueueForSourceQuerySerializer,
-        responses={200: QueueForSourceResponseSerializer, **ERROR_RESPONSES},
+        responses={
+            200: QueueForSourceResponseSerializer,
+            503: ApiTextErrorResponseSerializer,
+            **ERROR_RESPONSES,
+        },
     )
     @action(detail=False, methods=["get"], url_path="for-source")
     def for_source(self, request):
@@ -4179,25 +4199,17 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         query_params = request.validated_query_data
         sources = query_params["sources"]
 
-        # Validate all sources
+        # Record span-note targets now and validate them in the single,
+        # project-scoped CH batch below. The old per-source
+        # ``resolve_source_object`` hydrated every wide span column before it
+        # knew the project; on the US data set that read several GiB for one
+        # soft id and consumed the entire gateway deadline.
         span_notes_source_ids = {}
         for src in sources:
             st = src.get("source_type")
             sid = src.get("source_id")
             span_notes_source_id = src.get("span_notes_source_id")
             if span_notes_source_id:
-                # A collector root span lives only in CH (no PG row), so the PG
-                # resolve misses; fall back to the CH resolver (matches scores.py)
-                # so the trace-detail annotate panel loads instead of 404ing.
-                span_notes_source = resolve_source_object(
-                    "observation_span",
-                    span_notes_source_id,
-                    organization=request.organization,
-                )
-                if not span_notes_source:
-                    return self._gm.not_found(
-                        f"Span notes source not found: {span_notes_source_id}"
-                    )
                 span_notes_source_ids[(st, str(sid))] = span_notes_source_id
 
         # Get all queue IDs where the current user is an annotator
@@ -4387,82 +4399,179 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 "span_notes_source_id": span_notes_lookup_id,
             }
 
-        # Group by queue and include labels + source info
+        # Defer note serialization until every caller-supplied notes span has
+        # been project- and source-related below. Building entries here used to
+        # expose SpanNotes from another trace in the same organization.
+        items = list(items)
+        seen_queues = {item.queue_id for item in items}
+
+        # For default queues that DON'T have queue items for these sources,
+        # still return them so labels are available project-wide
+        missing_default_ids = default_queue_ids - seen_queues
+        missing_defaults = (
+            list(
+                AnnotationQueue.objects.filter(
+                    id__in=missing_default_ids,
+                ).select_related("project", "dataset", "agent_definition")
+            )
+            if missing_default_ids
+            else []
+        )
+
+        # Resolve every CH-backed scope needed by this response once, under the
+        # requester's organization projects and a hard sub-second read budget.
+        # The project constraint is the first ``spans`` / ``traces`` sort-key
+        # component; omitting it was the source of the production full-table
+        # scans. Span-note IDs join the same lean lookup so validation no longer
+        # hydrates a voice span's raw-log payload.
+        _org_project_ids = tuple(
+            str(project_id)
+            for project_id in Project.objects.filter(
+                organization=request.organization,
+                deleted=False,
+            ).values_list("id", flat=True)
+        )
+        _span_source_ids = [
+            str(src["source_id"])
+            for src in sources
+            if src["source_type"] == "observation_span"
+            and (
+                missing_defaults
+                or (src["source_type"], str(src["source_id"])) in span_notes_source_ids
+            )
+        ]
+        _span_lookup_ids = list(
+            {
+                *_span_source_ids,
+                *(str(span_id) for span_id in span_notes_source_ids.values()),
+            }
+        )
+        _trace_source_ids = (
+            [str(src["source_id"]) for src in sources if src["source_type"] == "trace"]
+            if missing_defaults
+            else []
+        )
+        _session_source_ids = (
+            [
+                str(src["source_id"])
+                for src in sources
+                if src["source_type"] == "trace_session"
+            ]
+            if missing_defaults
+            else []
+        )
+        _ch_scope_by_span: dict[str, object] = {}
+        _ch_project_by_trace: dict[str, str] = {}
+        _ch_fields_by_session: dict[str, dict] = {}
+        try:
+            if _span_lookup_ids or _trace_source_ids:
+                from tracer.services.clickhouse.v2 import get_reader as _gr_bulk
+
+                with _gr_bulk() as _reader_bulk:
+                    if _span_lookup_ids:
+                        _ch_scope_by_span = _reader_bulk.scope_by_ids(
+                            _span_lookup_ids,
+                            project_ids=_org_project_ids,
+                            settings=_FOR_SOURCE_CH_SETTINGS,
+                        )
+                    if _trace_source_ids:
+                        _ch_project_by_trace = _reader_bulk.trace_projects_by_ids(
+                            _trace_source_ids,
+                            project_ids=_org_project_ids,
+                            settings=_FOR_SOURCE_CH_SETTINGS,
+                        )
+
+            if _session_source_ids and _org_project_ids:
+                from tracer.services.clickhouse.v2.query_settings import (
+                    ch_query_settings,
+                )
+                from tracer.services.clickhouse.v2.trace_session_dict_reader import (
+                    resolve_session_fields,
+                )
+
+                with ch_query_settings(**_FOR_SOURCE_CH_SETTINGS):
+                    _scoped_session_fields = resolve_session_fields(
+                        _session_source_ids,
+                        project_ids=_org_project_ids,
+                    )
+                _allowed_project_ids = set(_org_project_ids)
+                _ch_fields_by_session = {
+                    str(session_id): fields
+                    for session_id, fields in _scoped_session_fields.items()
+                    if str(fields.get("project_id")) in _allowed_project_ids
+                }
+        except Exception as exc:  # CH drivers expose several timeout subclasses
+            logger.warning(
+                "annotation_for_source_scope_lookup_unavailable",
+                source_count=len(sources),
+                organization_id=str(request.organization.id),
+                error_type=type(exc).__name__,
+                error=str(exc)[:200],
+            )
+            return self._gm.custom_error_response(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                result=(
+                    "Annotation source data is temporarily unavailable. Please retry."
+                ),
+                code="source_resolve_unavailable",
+            )
+
+        for (
+            source_type,
+            source_id,
+        ), span_notes_source_id in span_notes_source_ids.items():
+            note_scope = _ch_scope_by_span.get(str(span_notes_source_id))
+            source_scope = _ch_scope_by_span.get(str(source_id))
+            related = False
+            if note_scope is not None:
+                if source_type == "trace":
+                    related = note_scope.trace_id == str(source_id)
+                elif source_type == "observation_span" and source_scope is not None:
+                    related = (
+                        note_scope.project_id == source_scope.project_id
+                        and note_scope.trace_id == source_scope.trace_id
+                    )
+                elif source_type == "trace_session":
+                    related = note_scope.trace_session_id == str(source_id)
+
+            if not related:
+                return self._gm.not_found(
+                    f"Span notes source not found: {span_notes_source_id}"
+                )
+
+        # Group by queue only after the relationship proof above. Also bind a
+        # note span to a project-scoped queue before loading its notes.
         results = []
-        seen_queues = set()
+        built_queue_ids = set()
         for item in items:
             queue = item.queue
-            if queue.id in seen_queues:
+            if queue.id in built_queue_ids:
                 continue
-            seen_queues.add(queue.id)
+            built_queue_ids.add(queue.id)
 
             source_fk_id = getattr(
                 item, f"{SOURCE_TYPE_FK_MAP[item.source_type]}_id", None
             )
+            span_notes_source_id = span_notes_source_ids.get(
+                (item.source_type, str(source_fk_id))
+            )
+            if span_notes_source_id and queue.project_id:
+                note_scope = _ch_scope_by_span.get(str(span_notes_source_id))
+                if note_scope is None or note_scope.project_id != str(queue.project_id):
+                    return self._gm.not_found(
+                        f"Span notes source not found: {span_notes_source_id}"
+                    )
             results.append(
                 _build_queue_entry(
                     queue,
                     item,
                     item.source_type,
                     source_fk_id,
-                    span_notes_source_id=span_notes_source_ids.get(
-                        (item.source_type, str(source_fk_id))
-                    ),
+                    span_notes_source_id=span_notes_source_id,
                 )
             )
 
-        # For default queues that DON'T have queue items for these sources,
-        # still return them so labels are available project-wide
-        missing_default_ids = default_queue_ids - seen_queues
         if missing_default_ids:
-            missing_defaults = AnnotationQueue.objects.filter(
-                id__in=missing_default_ids,
-            ).select_related("project", "dataset", "agent_definition")
-
-            # Codex consolidated review P2 (2026-05-26): the original loop
-            # called `get_reader().get(sid)` inside both the project- and
-            # agent-definition-scope branches for every queue × source
-            # combination, producing N×M CH round-trips. Precompute the
-            # span lookup once; the inner branches now consult an in-memory dict.
-            #
-            # These branches only need each span's project_id (a scope check),
-            # so read the lean ``scope_by_ids`` projection — pulling the full
-            # span row here blows the shared ClickHouse memory limit (code 241)
-            # on fat voice spans whose ``attributes_extra`` carries a whole raw
-            # log.
-            _ch_scope_by_span: dict[str, object] = {}
-            _span_source_ids = [
-                str(src["source_id"])
-                for src in sources
-                if src["source_type"] == "observation_span"
-            ]
-            # Same N×M / OOM rationale for traces: a trace's project is a lean CH
-            # read of its root span (``root_ids_by_trace_ids``), precomputed once so
-            # the scope branches below do an in-memory dict lookup instead of a PG
-            # ``Trace.objects`` join — the PG tracer tables are dropped.
-            _ch_project_by_trace: dict[str, str | None] = {}
-            _trace_source_ids = [
-                str(src["source_id"])
-                for src in sources
-                if src["source_type"] == "trace"
-            ]
-            if _span_source_ids or _trace_source_ids:
-                from tracer.services.clickhouse.v2 import get_reader as _gr_bulk
-
-                with _gr_bulk() as _reader_bulk:
-                    if _span_source_ids:
-                        _ch_scope_by_span = _reader_bulk.scope_by_ids(_span_source_ids)
-                    if _trace_source_ids:
-                        _ch_project_by_trace = {
-                            tid: pid
-                            for tid, (
-                                _root_id,
-                                pid,
-                            ) in _reader_bulk.root_ids_by_trace_ids(
-                                _trace_source_ids
-                            ).items()
-                        }
-
             for dq in missing_defaults:
                 if dq.id in seen_queues:
                     continue
@@ -4494,19 +4603,13 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                                 dq.project_id
                             )
                         elif st == "trace_session":
-                            # CH session existence (mirrors the obs_span branch
-                            # above): post-flip a net-new session has NO PG
-                            # ``TraceSession`` row, so a PG ``.exists()`` wrongly
-                            # rejects it. ``session_exists`` reads the CH
-                            # ``trace_sessions`` RMT (FINAL), is project-scoped,
-                            # remap-aware (straddler by old OR new id), and sees
-                            # the collector's net-new dual-write row. Its
-                            # ``is_deleted=0`` filter preserves ``deleted=False``.
-                            from tracer.services.clickhouse.v2.trace_session_dict_reader import (  # noqa: E501
-                                session_exists,
-                            )
-
-                            exists = session_exists(dq.project_id, sid)
+                            # Resolved once above (remap-aware) and org-gated by
+                            # the returned project; do not issue one CH query per
+                            # default queue.
+                            _session_fields = _ch_fields_by_session.get(str(sid))
+                            exists = _session_fields is not None and str(
+                                _session_fields.get("project_id")
+                            ) == str(dq.project_id)
                         else:
                             exists = False
 
@@ -4573,27 +4676,19 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                                 ).exists()
                             )
                         elif st == "trace_session":
-                            # CH session existence under an agent-definition scope.
-                            # ``session_exists`` is project-scoped, so — unlike the
-                            # obs_span branch above which reads the span's project
-                            # off the CH row then PG-verifies the agent-definition
-                            # link — we INVERT the order: resolve the
-                            # agent-definition's project(s) in PG first (the same
-                            # ``project__observability_providers__agent_definition``
-                            # traversal the old PG ``.exists()`` used), then ask CH
-                            # whether the session lives in any of them. (No shipped
-                            # helper returns a session's project_id, so the CH-first
-                            # order obs_span uses isn't available here.) Remap-aware
-                            # + net-new-aware + ``is_deleted=0`` == ``deleted=False``.
-                            from tracer.services.clickhouse.v2.trace_session_dict_reader import (  # noqa: E501
-                                session_exists,
+                            _session_fields = _ch_fields_by_session.get(str(sid))
+                            _session_project_id = (
+                                str(_session_fields.get("project_id"))
+                                if _session_fields and _session_fields.get("project_id")
+                                else None
                             )
-
-                            _ad_project_ids = Project.objects.filter(
-                                observability_providers__agent_definition=dq.agent_definition_id,
-                            ).values_list("id", flat=True)
-                            exists = any(
-                                session_exists(_pid, sid) for _pid in _ad_project_ids
+                            exists = bool(
+                                _session_project_id
+                                and Project.objects.filter(
+                                    id=_session_project_id,
+                                    organization=request.organization,
+                                    observability_providers__agent_definition=dq.agent_definition_id,
+                                ).exists()
                             )
                         else:
                             exists = False

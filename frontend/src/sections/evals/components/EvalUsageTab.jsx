@@ -25,7 +25,7 @@ import AddEvalsFeedbackDrawer from "src/sections/evals/EvalDetails/EvalsFeedback
 
 import PartialInputWarningDetails from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
 
-import { useEvalUsageChart, useEvalUsageLogs } from "../hooks/useEvalUsage";
+import { useEvalUsageLogs } from "../hooks/useEvalUsage";
 import { isEditableElement } from "src/utils/keyboardUtils";
 import { getStorage, setStorage } from "src/hooks/use-local-storage";
 import UsageChart from "./UsageChart";
@@ -76,21 +76,23 @@ const EvalUsageTab = ({
     return DATE_OPTION_TO_PERIOD[dateOption] || "30d";
   }, [dateOption, dateFilter]);
 
-  // Split queries
-  const { data: chartData, isLoading: chartLoading } = useEvalUsageChart(
-    templateId,
-    period,
-    dateOption,
-    dateFilter,
-  );
+  // The usage endpoint returns stats, chart data, and the paginated table.
+  // Keep one request so the backend does not repeat its full aggregation.
   const {
     data: logsData,
     isLoading: logsLoading,
     isFetching: logsFetching,
-  } = useEvalUsageLogs(templateId, { page, pageSize, period, dateOption, dateFilter });
+  } = useEvalUsageLogs(templateId, {
+    page,
+    pageSize,
+    period,
+    dateOption,
+    dateFilter,
+  });
 
-  const stats = chartData?.stats || {};
-  const chart = chartData?.chart || [];
+  const chartLoading = logsLoading;
+  const stats = logsData?.stats || {};
+  const chart = logsData?.chart || [];
   const totalLogs = logsData?.pagination?.total || 0;
 
   const logItems = useMemo(
@@ -126,7 +128,10 @@ const EvalUsageTab = ({
     const fromUrl = searchParams.get(COLUMN_CONFIG_URL_PARAM);
     const decodedUrl = decodeColumnConfig(fromUrl, baseColumnConfig);
     if (decodedUrl) return decodedUrl;
-    const decodedStorage = decodeColumnConfig(getStorage(storageKey), baseColumnConfig);
+    const decodedStorage = decodeColumnConfig(
+      getStorage(storageKey),
+      baseColumnConfig,
+    );
     if (decodedStorage) return decodedStorage;
     return baseColumnConfig;
   }, [searchParams, baseColumnConfig, storageKey]);
@@ -352,7 +357,8 @@ const EvalUsageTab = ({
               }}
             >
               <Typography variant="caption" color="text.disabled">
-              No data to show for selected period, update filters to view graph/data when no data is available.
+                No data to show for selected period, update filters to view
+                graph/data when no data is available.
               </Typography>
             </Box>
           )}
@@ -389,9 +395,10 @@ const EvalUsageTab = ({
                 </Typography>
               )}
             </Typography>
-            <Box sx={{ width: 200, display: "flex", alignItems: "center", gap: 1, }}>
+            <Box
+              sx={{ width: 200, display: "flex", alignItems: "center", gap: 1 }}
+            >
               <CustomTooltip
-
                 show={true}
                 title={"View Column"}
                 placement="bottom"
@@ -419,7 +426,6 @@ const EvalUsageTab = ({
                   minWidth: "120px",
                   "& .MuiOutlinedInput-root": { height: "30px" },
                 }}
-
               />
             </Box>
           </Box>
@@ -604,7 +610,7 @@ const DetailPanelContent = ({
 }) => {
   const { role } = useAuthContext();
   const canEditEvals = Boolean(
-    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role]
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role],
   );
   const [viewMode, setViewMode] = useState("formatted");
   const [feedbackOpen, setFeedbackOpen] = useState(false);
@@ -645,9 +651,9 @@ const DetailPanelContent = ({
               backgroundColor:
                 viewMode === m
                   ? (t) =>
-                    t.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.08)"
-                      : "action.hover"
+                      t.palette.mode === "dark"
+                        ? "rgba(255,255,255,0.08)"
+                        : "action.hover"
                   : "transparent",
               "&:hover": {
                 backgroundColor: (t) =>
@@ -781,7 +787,7 @@ const DetailPanelContent = ({
                   label="Version"
                   value={
                     typeof row.version === "number" ||
-                      !String(row.version).startsWith("v")
+                    !String(row.version).startsWith("v")
                       ? `v${row.version}`
                       : String(row.version)
                   }
@@ -1194,7 +1200,6 @@ const CompositeChildrenSection = ({ row }) => {
     </Box>
   );
 };
-
 
 const DetailRow = ({ label, value, color, chip, chipColor, mono }) => (
   <Box

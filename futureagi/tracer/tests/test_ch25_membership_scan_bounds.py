@@ -21,8 +21,13 @@ Two distinct emitters were at fault:
 
 from __future__ import annotations
 
+import pytest
+
 from tracer.services.clickhouse.query_builders.time_series import (
     TimeSeriesQueryBuilder,
+)
+from tracer.services.clickhouse.v2.query_builders.span_list import (
+    SpanListQueryBuilderV2,
 )
 from tracer.services.clickhouse.v2.query_builders.trace_list import (
     TraceListQueryBuilderV2,
@@ -46,6 +51,16 @@ SPAN_ATTR_FILTER = {
         "filter_type": "number",
         "filter_op": "equals",
         "filter_value": 26065846,
+    },
+}
+
+FINAL_STATUS_FILTER = {
+    "column_id": "final_status",
+    "filter_config": {
+        "col_type": "SPAN_ATTRIBUTE",
+        "filter_type": "text",
+        "filter_op": "equals",
+        "filter_value": "completed",
     },
 }
 
@@ -113,22 +128,156 @@ class TestV2MembershipSubqueryBounds:
         assert "start_time < %(end_date)s + INTERVAL 1 DAY" in sub
         assert "created_at >=" not in sub
 
+    def test_candidate_trace_ids_bound_outer_and_membership_reads(self):
+        candidate_ids = [
+            "22222222-2222-2222-2222-222222222222",
+            "33333333-3333-3333-3333-333333333333",
+        ]
+        builder = TraceListQueryBuilderV2(
+            project_id=PROJECT_ID,
+            page_number=0,
+            page_size=10,
+            filters=[DATETIME_FILTER, STR_EQ_FILTER],
+            candidate_trace_ids=candidate_ids,
+        )
+
+        sql, params = builder.build()
+        sub = _membership_subquery(sql)
+
+        assert "trace_id IN %(candidate_trace_ids)s" in sub
+        # The same fixed-size set also bounds the outer root lookup.
+        assert sql.count("trace_id IN %(candidate_trace_ids)s") == 2
+        assert "LIMIT 1 BY trace_id" in sql
+        assert params["candidate_trace_ids"] == tuple(candidate_ids)
+
+
+class TestTraceRootAttributeFastPath:
+    @pytest.mark.parametrize(
+        ("column_id", "physical_column"),
+        [
+            ("latency", "latency_ms"),
+            ("name", "name"),
+        ],
+    )
+    def test_root_system_metrics_apply_to_outer_root(self, column_id, physical_column):
+        metric_filter = {
+            "column_id": column_id,
+            "filter_config": {
+                "col_type": "SYSTEM_METRIC",
+                "filter_type": "text" if column_id != "latency" else "number",
+                "filter_op": "equals",
+                "filter_value": "ERROR" if column_id != "latency" else 100,
+            },
+        }
+        sql, _ = TraceListQueryBuilderV2(
+            project_id=PROJECT_ID,
+            page_number=0,
+            page_size=10,
+            filters=[DATETIME_FILTER, metric_filter],
+        ).build()
+        compact_sql = " ".join(sql.split())
+
+        expected_predicate = (
+            f"lower({physical_column}) ="
+            if column_id == "name"
+            else f"{physical_column} ="
+        )
+        assert expected_predicate in compact_sql
+        assert "trace_id IN (SELECT trace_id FROM spans" not in compact_sql
+
+    def test_final_status_predicates_scoped_root_row_directly(self):
+        sql, params = TraceListQueryBuilderV2(
+            project_id=PROJECT_ID,
+            page_number=0,
+            page_size=10,
+            filters=[DATETIME_FILTER, FINAL_STATUS_FILTER],
+        ).build()
+        compact_sql = " ".join(sql.split())
+
+        assert "trace_id IN (SELECT trace_id FROM spans" not in compact_sql
+        assert "(parent_span_id IS NULL OR parent_span_id = '')" in compact_sql
+        assert "mapContains(attrs_string, 'final_status')" in compact_sql
+        assert "attrs_string['final_status']" in compact_sql
+        assert "mapValues(attrs_string)" not in compact_sql
+        assert "project_id = %(project_id)s" in compact_sql
+        assert "start_time >= %(start_date)s" in compact_sql
+        assert "start_time < %(end_date)s" in compact_sql
+        assert params["project_id"] == PROJECT_ID
+
+    def test_unverified_country_keeps_bounded_membership_fallback(self):
+        country_filter = {
+            "column_id": "country",
+            "filter_config": {
+                "col_type": "SPAN_ATTRIBUTE",
+                "filter_type": "text",
+                "filter_op": "equals",
+                "filter_value": "US",
+            },
+        }
+        sql, _ = TraceListQueryBuilderV2(
+            project_id=PROJECT_ID,
+            page_number=0,
+            page_size=10,
+            filters=[DATETIME_FILTER, country_filter],
+        ).build()
+        sub = _membership_subquery(sql)
+
+        assert "mapContains(attrs_string, 'country')" in sub
+        assert "start_time >= %(start_date)s - INTERVAL 1 DAY" in sub
+        assert "start_time < %(end_date)s + INTERVAL 1 DAY" in sub
+
+    def test_span_final_status_keeps_row_semantics_and_index_companion(self):
+        sql, params = SpanListQueryBuilderV2(
+            project_id=PROJECT_ID,
+            page_number=0,
+            page_size=10,
+            filters=[DATETIME_FILTER, FINAL_STATUS_FILTER],
+        ).build()
+        compact_sql = " ".join(sql.split())
+
+        assert "trace_id IN (SELECT trace_id FROM spans" not in compact_sql
+        assert "(parent_span_id IS NULL OR parent_span_id = '')" not in compact_sql
+        assert "mapContains(attrs_string, 'final_status')" in compact_sql
+        assert "has(arrayMap(x -> lower(x), mapValues(attrs_string))" in compact_sql
+        assert "project_id = %(project_id)s" in compact_sql
+        assert "start_time >= %(start_date)s" in compact_sql
+        assert "start_time < %(end_date)s" in compact_sql
+        assert params["project_id"] == PROJECT_ID
+
+    def test_non_root_attribute_keeps_bounded_membership_fallback(self):
+        sql, _ = TraceListQueryBuilderV2(
+            project_id=PROJECT_ID,
+            page_number=0,
+            page_size=10,
+            filters=[DATETIME_FILTER, STR_EQ_FILTER],
+        ).build()
+        sub = _membership_subquery(sql)
+
+        assert "start_time >= %(start_date)s - INTERVAL 1 DAY" in sub
+        assert "start_time < %(end_date)s + INTERVAL 1 DAY" in sub
+        assert "mapContains(attrs_string, 'session_name')" in sub
+
 
 class TestTimeSeriesAttrFilterScope:
-    def test_attr_subquery_is_project_scoped_and_time_bounded(self):
+    def test_attr_candidate_discovery_is_project_scoped_time_bounded_and_capped(self):
         builder = TimeSeriesQueryBuilder(
             project_id=PROJECT_ID,
             filters=[DATETIME_FILTER, SPAN_ATTR_FILTER],
             interval="day",
         )
         sql, params = builder.build()
-        sub = _membership_subquery(sql)
-        assert "project_id = %(project_id)s" in sub
-        assert "start_time >= %(start_date)s - INTERVAL 1 DAY" in sub
-        assert "start_time < %(end_date)s + INTERVAL 1 DAY" in sub
-        assert "1 = 1" not in sub
+        assert builder.query_source == "trace_candidate_plan"
+        assert "FROM spans FINAL" in sql
+        assert "project_id = %(project_id)s" in sql
+        assert "start_time >= %(start_date)s" in sql
+        assert "start_time < %(end_date)s" in sql
+        assert "graph_candidate_attr_0_attr_1" in sql
+        assert params["graph_candidate_attr_0_attr_1"] == 26065846.0
+        assert "LIMIT %(graph_trace_candidate_limit)s" in sql
+        assert "trace_id IN (" not in sql
         assert params["project_id"] == PROJECT_ID
         assert "start_date" in params
+        assert params["graph_trace_candidate_limit"] == 1
 
 
 STR_EQ_FILTER = {
@@ -166,11 +315,12 @@ def _with_op(op, value):
 
 
 class TestLoweredStringValueCompanion:
-    """Text equality/IN must emit a companion predicate matching
+    """ASCII text equality/IN may emit a companion predicate matching
     idx_attrs_str_values (bloom over arrayMap(x -> lower(x),
     mapValues(attrs_string))) — the lower()-wrapped comparison alone can
     never engage a skip index. The companion is implied by the real
-    predicate, so result sets are unchanged."""
+    predicate, so result sets are unchanged. Unicode-aware substring
+    predicates cannot use the ASCII-lowered ngram companion safely."""
 
     def test_equals_emits_lowered_has_companion(self):
         sql, params = _v2_sql(STR_EQ_FILTER)
@@ -191,10 +341,10 @@ class TestLoweredStringValueCompanion:
         sql, _ = _v2_sql(_with_op("not_equals", "Checkout Flow"))
         assert "arrayMap(x -> lower(x)" not in sql
 
-    def test_contains_has_no_companion(self):
-        # plain bloom does exact membership; substring ops get no companion
+    def test_contains_omits_ascii_only_ngram_companion(self):
         sql, _ = _v2_sql(_with_op("contains", "heckout"))
-        assert "arrayMap(x -> lower(x)" not in sql
+        assert "positionUTF8(lowerUTF8" in sql
+        assert "arrayStringConcat" not in sql
 
     def test_number_equality_unchanged(self):
         sql, _ = _v2_sql(SPAN_ATTR_FILTER)

@@ -62,6 +62,18 @@ _LABEL_ATTR = "user_id"
 _TYPE_ATTR = "user_id_type"
 _HASH_ATTR = "user_id_hash"
 
+_DICT_READ_SETTINGS = {
+    "readonly": 2,
+    "max_execution_time": 0.75,
+    "timeout_overflow_mode": "throw",
+    "max_threads": 2,
+    "max_memory_usage": 268_435_456,
+    "max_bytes_to_read": 1_073_741_824,
+    "read_overflow_mode": "throw",
+    "max_result_rows": 2000,
+    "result_overflow_mode": "throw",
+}
+
 # Sentinel distinguishing "user_id_type filter omitted" (match on user_id alone)
 # from an explicit ``user_id_type=None`` (match the NULL/'' type). A bare default
 # of ``None`` could not tell the two apart — and they mean different SQL.
@@ -145,6 +157,7 @@ def resolve_user_ids(end_user_ids: Iterable[object]) -> dict[str, str | None]:
                 f"{remap_join}"
             ),
             parameters={"ids": list(ids)},
+            settings=_DICT_READ_SETTINGS,
         )
     except Exception:
         # A read error is real (parity must not silently degrade). Reset the
@@ -213,6 +226,7 @@ def resolve_end_user_fields(
                 f"{remap_join}"
             ),
             parameters={"ids": list(ids)},
+            settings=_DICT_READ_SETTINGS,
         )
     except Exception:
         _reset_client()
@@ -317,6 +331,7 @@ def resolve_end_user_ids_by_user_id(
         result = client.query(
             f"SELECT DISTINCT toString(end_user_id) FROM end_users FINAL WHERE {where}",
             parameters=params,
+            settings=_DICT_READ_SETTINGS,
         )
     except Exception:
         _reset_client()

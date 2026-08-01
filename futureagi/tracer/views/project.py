@@ -31,6 +31,7 @@ from tracer.serializers.project import (
     ProjectDetailResponseSerializer,
     ProjectGraphDataQuerySerializer,
     ProjectIdListResponseSerializer,
+    ProjectListResponseSerializer,
     ProjectNameUpdateSerializer,
     ProjectSerializer,
     ProjectUserGraphDataQuerySerializer,
@@ -39,15 +40,21 @@ from tracer.serializers.project import (
     ProjectUsersAggregateGraphDataRequestSerializer,
 )
 from tracer.services.clickhouse.graph_dispatch import (
+    GRAPH_READ_SETTINGS,
+    GRAPH_READ_TIMEOUT_MS,
+    degraded_graph_response,
     fetch_annotation_graph_ch,
     fetch_eval_graph_ch,
 )
 from tracer.services.clickhouse.query_builders import (
     ClickHouseFilterBuilder,
     TimeSeriesQueryBuilder,
-    UserListQueryBuilder,
 )
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.clickhouse.read_budget import is_read_budget_error
+from tracer.services.clickhouse.v2.query_builders.filters import (
+    ClickHouseFilterBuilderV2,
+)
 from tracer.services.clickhouse.v2.query_builders.user_list import (
     UserListQueryBuilderV2,
 )
@@ -111,7 +118,9 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 TraceSession.objects.filter(project__in=projects).update(
                     deleted=True, deleted_at=now
                 )
-            Trace.objects.filter(project__in=projects).update(deleted=True, deleted_at=now)
+            Trace.objects.filter(project__in=projects).update(
+                deleted=True, deleted_at=now
+            )
             ObservationSpan.objects.filter(project__in=projects).update(
                 deleted=True, deleted_at=now
             )
@@ -421,6 +430,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 get_error_message("FAILED_TO_UPDATE_PROJECT_CONFIG")
             )
 
+    @validated_request(responses={200: ProjectListResponseSerializer})
     @action(detail=False, methods=["get"])
     @db_connection_required
     @monitor_query_performance
@@ -487,6 +497,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             # Get 30-day volume from ClickHouse for just this page of projects
             volume_map = {}
             daily_volume_map = {}
+            last_active_map = {}
             project_ids = [str(p["id"]) for p in projects_data]
             if project_ids:
                 try:
@@ -500,17 +511,26 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                         thirty_days_ago = (
                             datetime.now() - timedelta(days=30)
                         ).strftime("%Y-%m-%d")
+                        project_read_settings = {
+                            "timeout_overflow_mode": "throw",
+                            "max_threads": 2,
+                            "max_memory_usage": 268_435_456,
+                            "max_bytes_to_read": 1_073_741_824,
+                            "read_overflow_mode": "throw",
+                            "max_result_rows": 2000,
+                            "result_overflow_mode": "throw",
+                        }
                         vol_result = ch.execute_read(
-                            "SELECT project_id, count() AS vol "
-                            "FROM spans "
-                            "WHERE project_id IN %(pids)s "
-                            "AND is_deleted = 0 "
-                            "AND (parent_span_id IS NULL OR parent_span_id = %(e)s) "
-                            "AND start_time >= %(since)s "
-                            "AND created_at >= %(since)s "
+                            "SELECT project_id, "
+                            "countIf(created_at >= %(since)s) AS vol, "
+                            "max(created_at) AS last_active "
+                            "FROM traces "
+                            "PREWHERE project_id IN %(pids)s "
+                            "WHERE is_deleted = 0 "
                             "GROUP BY project_id",
-                            {"pids": project_ids, "e": "", "since": thirty_days_ago},
-                            timeout_ms=5000,
+                            {"pids": project_ids, "since": thirty_days_ago},
+                            timeout_ms=750,
+                            settings=project_read_settings,
                         )
                         raw = (
                             vol_result[0]
@@ -518,20 +538,23 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                             else vol_result
                         )
                         volume_map = {str(r[0]): r[1] for r in raw}
+                        last_active_map = {
+                            str(r[0]): r[2].isoformat() if r[2] else None for r in raw
+                        }
 
                         # Daily volume for sparkline charts
                         daily_result = ch.execute_read(
-                            "SELECT project_id, toDate(start_time) AS day, count() AS vol "
-                            "FROM spans "
-                            "WHERE project_id IN %(pids)s "
-                            "AND is_deleted = 0 "
-                            "AND (parent_span_id IS NULL OR parent_span_id = %(e)s) "
-                            "AND start_time >= %(since)s "
+                            "SELECT project_id, toDate(created_at) AS day, "
+                            "count() AS vol "
+                            "FROM traces "
+                            "PREWHERE project_id IN %(pids)s "
+                            "WHERE is_deleted = 0 "
                             "AND created_at >= %(since)s "
                             "GROUP BY project_id, day "
                             "ORDER BY project_id, day",
-                            {"pids": project_ids, "e": "", "since": thirty_days_ago},
-                            timeout_ms=5000,
+                            {"pids": project_ids, "since": thirty_days_ago},
+                            timeout_ms=750,
+                            settings=project_read_settings,
                         )
                         daily_raw = (
                             daily_result[0]
@@ -561,30 +584,8 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                                     daily_map_raw.get(pid_str, {}).get(day, 0)
                                 )
                             daily_volume_map[pid_str] = days_data
-
-                        # Last active — most recent span ingested per project
-                        last_active_result = ch.execute_read(
-                            "SELECT project_id, max(start_time) AS last_active "
-                            "FROM spans "
-                            "WHERE project_id IN %(pids)s "
-                            "AND is_deleted = 0 "
-                            "GROUP BY project_id",
-                            {"pids": project_ids},
-                            timeout_ms=5000,
-                        )
-                        la_raw = (
-                            last_active_result[0]
-                            if isinstance(last_active_result, tuple)
-                            else last_active_result
-                        )
-                        last_active_map = {
-                            str(r[0]): r[1].isoformat() if r[1] else None
-                            for r in la_raw
-                        }
                 except Exception as e:
                     logger.warning(f"CH volume query failed, falling back to 0: {e}")
-
-            last_active_map = locals().get("last_active_map", {})
 
             # Run counts — count ProjectVersions per project
             run_count_map = {}
@@ -728,7 +729,12 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 ),
             )
             query, params = builder.build()
-            result = analytics.execute_ch_query(query, params, timeout_ms=30000)
+            result = analytics.execute_ch_query(
+                query,
+                params,
+                timeout_ms=GRAPH_READ_TIMEOUT_MS,
+                settings=GRAPH_READ_SETTINGS,
+            )
             output = []
             for row in builder.format_rows(result.data)["table"]:
                 output.append(
@@ -793,7 +799,12 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                         interval=interval,
                     )
                     query, params = builder.build()
-                    result = analytics.execute_ch_query(query, params, timeout_ms=10000)
+                    result = analytics.execute_ch_query(
+                        query,
+                        params,
+                        timeout_ms=GRAPH_READ_TIMEOUT_MS,
+                        settings=GRAPH_READ_SETTINGS,
+                    )
                     ch_data = builder.format_result(result.data, result.columns or [])
 
                     metric_key = metric_id if metric_id in ch_data else "active_users"
@@ -817,8 +828,13 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     }
                     return self._gm.success_response(graph_data)
                 except Exception as e:
-                    logger.warning("CH user time-series failed", error=str(e))
-                    return self._gm.bad_request("ClickHouse user graph failed")
+                    logger.warning(
+                        "CH user time-series failed; returning degraded graph",
+                        error=str(e)[:200],
+                    )
+                    return self._gm.success_response(
+                        degraded_graph_response(metric_id, e)
+                    )
 
             elif metric_type in ("EVAL", "ANNOTATION"):
                 user_filters = [
@@ -845,11 +861,13 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                             )
                         )
                     except Exception as e:
-                        logger.exception(
-                            "ClickHouse user eval graph failed",
-                            error=str(e),
+                        logger.warning(
+                            "ClickHouse user eval graph failed; returning degraded graph",
+                            error=str(e)[:200],
                         )
-                        return self._gm.bad_request("ClickHouse user graph failed")
+                        return self._gm.success_response(
+                            degraded_graph_response(metric_id, e)
+                        )
 
                 if metric_type == "ANNOTATION":
                     try:
@@ -864,11 +882,14 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                             )
                         )
                     except Exception as e:
-                        logger.exception(
-                            "ClickHouse user annotation graph failed",
-                            error=str(e),
+                        logger.warning(
+                            "ClickHouse user annotation graph failed; "
+                            "returning degraded graph",
+                            error=str(e)[:200],
                         )
-                        return self._gm.bad_request("ClickHouse user graph failed")
+                        return self._gm.success_response(
+                            degraded_graph_response(metric_id, e)
+                        )
 
                 from tracer.models.trace import Trace
                 from tracer.utils.graphs_optimized import (
@@ -912,7 +933,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             return self._gm.success_response({"metric_name": metric_id, "data": []})
         except Exception as e:
             logger.exception(f"Error in get_users_aggregate_graph_data: {str(e)}")
-            return self._gm.bad_request(f"Error fetching user graph data: {str(e)}")
+            return self._gm.bad_request("Error fetching user graph data")
 
     @validated_request(
         query_serializer=ProjectUserGraphDataQuerySerializer,
@@ -940,7 +961,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 _org = get_request_organization(request) or request.user.organization
                 start_date, end_date = builder.parse_time_range(filters)
                 bucket_fn = builder.time_bucket_expr(interval)
-                fb = ClickHouseFilterBuilder(
+                fb = ClickHouseFilterBuilderV2(
                     table="spans",
                     project_id=project_id,
                     query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
@@ -1039,7 +1060,12 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 GROUP BY time_bucket
                 ORDER BY time_bucket
                 """
-                result = analytics.execute_ch_query(query, params, timeout_ms=10000)
+                result = analytics.execute_ch_query(
+                    query,
+                    params,
+                    timeout_ms=GRAPH_READ_TIMEOUT_MS,
+                    settings=GRAPH_READ_SETTINGS,
+                )
                 rows = result.data or []
 
                 def _series(source_key, output_key):
@@ -1072,7 +1098,20 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 return self._gm.bad_request("Project not found.")
             except Exception as e:
                 logger.exception(f"Error in get_graph_data: {str(e)}")
-                return self._gm.internal_server_error_response(str(e))
+                if is_read_budget_error(e):
+                    return self._gm.success_response(
+                        {
+                            "session": [],
+                            "trace": [],
+                            "cost": [],
+                            "input_tokens": [],
+                            "output_tokens": [],
+                            "query_complete": False,
+                            "query_status": "degraded",
+                            "query_error_code": "read_budget_exceeded",
+                        }
+                    )
+                return self._gm.internal_server_error_response()
         except Exception as e:
             logger.exception(f"ERROR IN RETRIEVING USER DATA GRAPH: {e}")
             return self._gm.internal_server_error_response()

@@ -21,9 +21,7 @@ def test_packaged_filter_contract_matches_repo_contract():
         None,
     )
     packaged_contract = (
-        Path(__file__).resolve().parents[1]
-        / "contracts"
-        / "filter_contract.json"
+        Path(__file__).resolve().parents[1] / "contracts" / "filter_contract.json"
     )
 
     if repo_contract is None:
@@ -189,12 +187,10 @@ class TestClickHouseFilterOperatorMatrix:
         )
 
         _assert_sql_shape(where)
-        if filter_op == "contains":
-            assert "%alpha%" in params.values()
-        if filter_op == "starts_with":
-            assert "alpha%" in params.values()
-        if filter_op == "ends_with":
-            assert "%alpha" in params.values()
+        if filter_op in ("contains", "starts_with", "ends_with"):
+            # Text operators bind the literal needle. The SQL expression, not
+            # wildcard characters in the parameter, controls match position.
+            assert "alpha" in params.values()
 
     @pytest.mark.parametrize("filter_op", sorted(FILTER_TYPE_ALLOWED_OPS["number"]))
     def test_voice_numeric_expression_metrics_accept_every_number_operator(

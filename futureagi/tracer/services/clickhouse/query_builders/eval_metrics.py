@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 
 # Eval output type constants (mirrors EvalOutputType from Django models)
 SCORE = "SCORE"
@@ -60,6 +61,10 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
 
     AGG_TABLE = "eval_metrics_hourly"
     RAW_TABLE = "tracer_eval_logger"
+    _FILTER_BUILDER_CLS = ClickHouseFilterBuilder
+    _SPANS_TIME_COLUMN = "created_at"
+    _SPANS_NOT_DELETED = "_peerdb_is_deleted = 0"
+    _INCLUDE_CDC_TOMBSTONE_GUARD = True
 
     def __init__(
         self,
@@ -73,6 +78,7 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         choices: Optional[List[str]] = None,
         use_preaggregated: bool = True,
         filters: Optional[List[dict]] = None,
+        observe_type: str = "trace",
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id, **kwargs)
@@ -90,6 +96,7 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         self.eval_name = eval_name or "Unknown"
         self.choices = choices or []
         self.filters = filters or []
+        self.observe_type = "span" if observe_type == "span" else "trace"
         # Pre-aggregated eval rows do not carry arbitrary trace/span filter
         # dimensions. If filters are present, force the raw logger path so the
         # graph reflects the filtered result set.
@@ -114,25 +121,65 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         self.params["end_date"] = self.end_date
         self.params["eval_config_id"] = self.custom_eval_config_id
 
+        from tracer.services.clickhouse.eval_logger_table import eval_logger_source
+
+        self.raw_table, self.raw_not_deleted = eval_logger_source(
+            include_cdc_tombstone_guard=self._INCLUDE_CDC_TOMBSTONE_GUARD
+        )
+
     def _filter_fragment(self) -> str:
         """Build a trace_id IN subquery from filters, if any."""
         if not self.filters:
             return ""
-        from tracer.services.clickhouse.query_builders.filters import (
-            ClickHouseFilterBuilder,
-        )
 
-        fb = ClickHouseFilterBuilder(project_id=self.project_id)
+        fb = self._FILTER_BUILDER_CLS(
+            table="spans",
+            query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+            tag_query_mode=self.observe_type,
+        )
         extra_where, extra_params = fb.translate(self.filters)
         if extra_where:
             self.params.update(extra_params)
+            eval_id_column = (
+                "observation_span_id" if self.observe_type == "span" else "trace_id"
+            )
+            span_id_column = "id" if self.observe_type == "span" else "trace_id"
             return (
-                f"AND trace_id IN ("
-                f"SELECT DISTINCT trace_id FROM spans "
-                f"WHERE project_id = %(project_id)s AND is_deleted = 0 "
+                f"AND {eval_id_column} IN ("
+                f"SELECT DISTINCT {span_id_column} FROM spans "
+                f"WHERE {self.project_filter_sql()} "
+                f"AND {self._SPANS_NOT_DELETED} "
+                f"AND {self._SPANS_TIME_COLUMN} "
+                f">= %(start_date)s - INTERVAL 1 DAY "
+                f"AND {self._SPANS_TIME_COLUMN} "
+                f"< %(end_date)s + INTERVAL 1 DAY "
                 f"AND {extra_where})"
             )
         return ""
+
+    def _raw_project_filter_sql(self) -> str:
+        """Scope eval rows through the trace/session dictionaries.
+
+        Neither eval-logger schema stores ``project_id``. The hourly rollup
+        derives it from the row's target identity; raw queries must use the
+        same expression or ClickHouse raises UNKNOWN_IDENTIFIER.
+        """
+        project_expr = (
+            "if("
+            "target_type = 'session', "
+            "dictGetOrDefault('trace_session_dict', 'project_id', "
+            "toUUID(trace_session_id), "
+            "toUUID('00000000-0000-0000-0000-000000000000')), "
+            "dictGetOrDefault('trace_dict', 'project_id', "
+            "toUUID(trace_id), "
+            "toUUID('00000000-0000-0000-0000-000000000000'))"
+            ")"
+        )
+        if self.project_ids is not None:
+            return f"{project_expr} IN %(project_ids)s"
+        return f"{project_expr} = %(project_id)s"
 
     # ------------------------------------------------------------------
     # Public API
@@ -196,7 +243,7 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
             (sum(float_sum) / greatest(sum(float_count), 1)) * 100
                 AS value
         FROM {self.AGG_TABLE}
-        WHERE project_id = %(project_id)s
+        WHERE {self.project_filter_sql()}
           AND custom_eval_config_id = toUUID(%(eval_config_id)s)
           AND hour >= %(start_date)s
           AND hour < %(end_date)s
@@ -213,9 +260,9 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         SELECT
             {bucket_fn}(created_at) AS time_bucket,
             ifNotFinite(avg(output_float) * 100, NULL) AS value
-        FROM {self.RAW_TABLE} FINAL
-        WHERE project_id = %(project_id)s
-          AND (deleted = 0 OR deleted IS NULL)
+        FROM {self.raw_table} FINAL
+        WHERE {self._raw_project_filter_sql()}
+          AND {self.raw_not_deleted}
           AND custom_eval_config_id = toUUID(%(eval_config_id)s)
           AND created_at >= %(start_date)s
           AND created_at < %(end_date)s
@@ -244,7 +291,7 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
             (sum(bool_pass) * 100.0)
                 / greatest(sum(bool_pass) + sum(bool_fail), 1) AS value
         FROM {self.AGG_TABLE}
-        WHERE project_id = %(project_id)s
+        WHERE {self.project_filter_sql()}
           AND custom_eval_config_id = toUUID(%(eval_config_id)s)
           AND hour >= %(start_date)s
           AND hour < %(end_date)s
@@ -262,9 +309,9 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
             {bucket_fn}(created_at) AS time_bucket,
             ifNotFinite(avg(CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END), NULL)
                 AS value
-        FROM {self.RAW_TABLE} FINAL
-        WHERE project_id = %(project_id)s
-          AND (deleted = 0 OR deleted IS NULL)
+        FROM {self.raw_table} FINAL
+        WHERE {self._raw_project_filter_sql()}
+          AND {self.raw_not_deleted}
           AND custom_eval_config_id = toUUID(%(eval_config_id)s)
           AND created_at >= %(start_date)s
           AND created_at < %(end_date)s
@@ -312,9 +359,9 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
             {bucket_fn}(created_at) AS time_bucket,
             count() AS total_count,
             {choice_select}
-        FROM {self.RAW_TABLE} FINAL
-        WHERE project_id = %(project_id)s
-          AND (deleted = 0 OR deleted IS NULL)
+        FROM {self.raw_table} FINAL
+        WHERE {self._raw_project_filter_sql()}
+          AND {self.raw_not_deleted}
           AND custom_eval_config_id = toUUID(%(eval_config_id)s)
           AND created_at >= %(start_date)s
           AND created_at < %(end_date)s

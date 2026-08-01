@@ -163,6 +163,43 @@ class TestBuild:
         assert "resolved_end_user_id" not in sql
         assert "end_user_id_remap" not in sql
 
+    def test_keyset_continuation_uses_canonical_descending_tiebreak(self):
+        marker_time = "2026-07-30T12:00:00Z"
+        sql, params = _make_builder().build(
+            since="2026-07-30T11:59:00Z",
+            slice_end="2026-07-30T12:01:00Z",
+            limit=2000,
+            before_start_time=marker_time,
+            before_id="span-001001",
+        )
+
+        assert "start_time < %(keyset_start_time)s" in sql
+        assert "start_time = %(keyset_start_time)s" in sql
+        assert "id < %(keyset_id)s" in sql
+        assert "ORDER BY start_time DESC, id DESC" in sql
+        assert params["keyset_start_time"] == marker_time
+        assert params["keyset_id"] == "span-001001"
+        assert params["limit"] == 2000
+
+    @pytest.mark.parametrize(
+        ("before_start_time", "before_id"),
+        [
+            ("2026-07-30T12:00:00Z", None),
+            (None, "span-001001"),
+        ],
+    )
+    def test_keyset_continuation_requires_both_marker_fields(
+        self, before_start_time, before_id
+    ):
+        with pytest.raises(
+            ValueError,
+            match="before_start_time and before_id must be provided together",
+        ):
+            _make_builder().build(
+                before_start_time=before_start_time,
+                before_id=before_id,
+            )
+
 
 # --------------------------------------------------------------------------- #
 # build_count_query()
@@ -212,7 +249,9 @@ class TestBuildIdQuery:
         sql, _ = _make_builder().build_id_query()
         assert "SELECT id" in sql
         assert "FROM spans" in sql
-        assert "LIMIT 1 BY id" in sql
+        # No full-window de-dup sort. Streaming callers handle the rare
+        # ReplacingMergeTree duplicate id without materializing the window.
+        assert "LIMIT 1 BY id" not in sql
         # No page LIMIT / OFFSET / ORDER — it mirrors the filter window only.
         assert "LIMIT %(limit)s" not in sql
         assert "OFFSET %(offset)s" not in sql
@@ -231,15 +270,31 @@ class TestBuildIdQuery:
 
     def test_limit_adds_ordered_cap(self):
         sql, params = _make_builder().build_id_query(limit=5)
-        # Capped resolve orders newest-first and caps via a bound param, on top
-        # of the existing per-id dedup.
-        assert "ORDER BY start_time DESC, id DESC" in sql
-        assert "LIMIT 1 BY id" in sql
+        # Capped resolve is a bounded id-ordered top-K. De-duplication happens
+        # in the task resolver after a bounded duplicate margin is fetched.
+        assert "ORDER BY id" in sql
+        assert "LIMIT 1 BY id" not in sql
         assert "LIMIT %(id_limit)s" in sql
         assert params["id_limit"] == 5
-        # Clause order: ORDER BY, then LIMIT n BY, then the plain LIMIT.
-        assert sql.index("ORDER BY") < sql.index("LIMIT 1 BY id")
-        assert sql.index("LIMIT 1 BY id") < sql.index("LIMIT %(id_limit)s")
+        assert sql.index("ORDER BY id") < sql.index("LIMIT %(id_limit)s")
+
+    def test_sampling_is_applied_before_the_bounded_top_k(self):
+        sql, params = _make_builder().build_id_query(
+            limit=200,
+            sampling_salt="task-1",
+            sampling_rate=50,
+        )
+
+        sampling = (
+            "modulo(cityHash64(%(id_sampling_salt)s, toString(id)), 100) "
+            "< %(id_sampling_rate)s"
+        )
+        assert sampling in " ".join(sql.split())
+        assert sql.index("id_sampling_rate") < sql.index("ORDER BY")
+        assert sql.index("ORDER BY") < sql.index("LIMIT %(id_limit)s")
+        assert params["id_sampling_salt"] == "task-1"
+        assert params["id_sampling_rate"] == 50.0
+        assert params["id_limit"] == 200
 
     def test_default_limit_is_unbounded_and_unordered(self):
         # The eval-resolver caller passes no limit — behaviour must be unchanged.
@@ -258,10 +313,13 @@ class TestBuildContentQuery:
         assert sql == ""
         assert params == {}
 
-    def test_prewhere_id_list_and_soft_delete(self):
+    def test_prewhere_scopes_content_read_before_fat_columns(self):
         sql, params = _make_builder().build_content_query(span_ids=["s1", "s2"])
-        assert "PREWHERE id IN %(content_span_ids)s" in sql
-        assert "is_deleted = 0" in sql
+        assert "PREWHERE project_id = %(project_id)s" in sql
+        assert "AND id IN %(content_span_ids)s" in sql
+        assert sql.index("start_time >= %(start_date)s") < sql.index("GROUP BY id")
+        assert "HAVING argMax(is_deleted, _peerdb_version) = 0" in sql
+        assert "FINAL" not in sql
         assert params["content_span_ids"] == ("s1", "s2")
 
     def test_bounds_start_time_window(self):

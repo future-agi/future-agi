@@ -329,6 +329,8 @@ CLICKHOUSE = {
     "CH_DATABASE": os.getenv("CH_DATABASE", "futureagi"),
     # Phase 6: ClickHouse Analytics Backend
     "CH_ENABLED": os.getenv("CH_ENABLED", "false").lower() in ("true", "1", "yes"),
+    "CH_EVAL_USAGE_ANALYTICS": os.getenv("CH_EVAL_USAGE_ANALYTICS", "true").lower()
+    in ("true", "1", "yes"),
     "CH_DUAL_WRITE": os.getenv("CH_DUAL_WRITE", "false").lower()
     in ("true", "1", "yes"),
     "CH_BATCH_SIZE": int(os.getenv("CH_BATCH_SIZE", "1000")),
@@ -458,9 +460,11 @@ ANYMAIL = {
 }
 EMAIL_BACKEND = os.getenv(
     "EMAIL_BACKEND",
-    "anymail.backends.mailgun.EmailBackend"
-    if os.getenv("MAILGUN_API_KEY")
-    else "django.core.mail.backends.console.EmailBackend",
+    (
+        "anymail.backends.mailgun.EmailBackend"
+        if os.getenv("MAILGUN_API_KEY")
+        else "django.core.mail.backends.console.EmailBackend"
+    ),
 )
 DEFAULT_FROM_EMAIL = os.getenv(
     "DEFAULT_FROM_EMAIL"
@@ -801,25 +805,33 @@ WEBAUTHN_CHALLENGE_TTL = 120  # 2 minutes
 # to the legacy CLICKHOUSE dict above for connection details if not set
 # explicitly — see tracer/services/clickhouse/v2/__init__.py:get_v2_config().
 CLICKHOUSE_V2 = {
-    "CH25_HOST":      os.getenv("CH25_HOST"),
+    "CH25_HOST": os.getenv("CH25_HOST"),
     "CH25_HTTP_PORT": os.getenv("CH25_HTTP_PORT", "8123"),
-    "CH25_TCP_PORT":  os.getenv("CH25_TCP_PORT", "9000"),
-    "CH25_USER":      os.getenv("CH25_USER", "default"),
-    "CH25_PASSWORD":  os.getenv("CH25_PASSWORD", ""),
-    "CH25_DATABASE":  os.getenv("CH25_DATABASE", "default"),
+    "CH25_TCP_PORT": os.getenv("CH25_TCP_PORT", "9000"),
+    "CH25_USER": os.getenv("CH25_USER", "default"),
+    "CH25_PASSWORD": os.getenv("CH25_PASSWORD", ""),
+    "CH25_DATABASE": os.getenv("CH25_DATABASE", "default"),
     # ─── Per-query-type routing for the shadow-mode rollout ──────────────────
     # Comma-separated query type names. See tracer/services/clickhouse/v2/shadow.py
     # for RoutingMode definitions. Anything not listed defaults to V1_ONLY.
     "QUERY_TYPES_V2_PRIMARY": os.getenv("CH25_QUERY_TYPES_V2_PRIMARY", ""),
-    "QUERY_TYPES_V2_ONLY":    os.getenv("CH25_QUERY_TYPES_V2_ONLY", ""),
-    "QUERY_TYPES_SHADOW":     os.getenv("CH25_QUERY_TYPES_SHADOW", ""),
-    "QUERY_TYPES_DISABLED":   os.getenv("CH25_QUERY_TYPES_DISABLED", ""),
+    "QUERY_TYPES_V2_ONLY": os.getenv("CH25_QUERY_TYPES_V2_ONLY", ""),
+    "QUERY_TYPES_SHADOW": os.getenv("CH25_QUERY_TYPES_SHADOW", ""),
+    "QUERY_TYPES_DISABLED": os.getenv("CH25_QUERY_TYPES_DISABLED", ""),
 }
 
 # Fail-closed: rollup routing requires both flag=on and window >= coverage date.
 # Set COVERED_SINCE (ISO-8601) after running rebuild_dashboard_attr_rollup.
 DASHBOARD_ATTR_ROLLUP_ENABLED = (
     os.getenv("DASHBOARD_ATTR_ROLLUP_ENABLED", "false").lower() == "true"
+)
+# Incident-scoped readers use separate gates so enabling graph/value-picker
+# acceleration cannot implicitly change saved dashboard widget semantics.
+TRACE_GRAPH_ATTR_ROLLUP_ENABLED = (
+    os.getenv("TRACE_GRAPH_ATTR_ROLLUP_ENABLED", "false").lower() == "true"
+)
+TRACE_FILTER_VALUES_ATTR_ROLLUP_ENABLED = (
+    os.getenv("TRACE_FILTER_VALUES_ATTR_ROLLUP_ENABLED", "false").lower() == "true"
 )
 _dashboard_attr_rollup_covered_since = os.getenv("DASHBOARD_ATTR_ROLLUP_COVERED_SINCE")
 DASHBOARD_ATTR_ROLLUP_COVERED_SINCE = (
@@ -844,4 +856,6 @@ CH25_EVAL_LOGGER_TABLE = os.getenv("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger
 #                  navigation (project, trace, end_user, …) still hits PG.
 # Default is "postgres" so cutover is opt-in. Flip to "clickhouse" only after
 # the backfill + validator pass and a soak period.
-EVAL_SPAN_READ_SOURCE = os.getenv("EVAL_SPAN_READ_SOURCE", "postgres").lower()
+# Telemetry is written directly to ClickHouse. PostgreSQL is configuration/task
+# state only; defaulting eval input back to PG silently evaluates missing rows.
+EVAL_SPAN_READ_SOURCE = os.getenv("EVAL_SPAN_READ_SOURCE", "clickhouse").lower()

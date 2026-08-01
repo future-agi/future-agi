@@ -1,38 +1,14 @@
-"""
-EvalSpanLoader — read the eval runner's span input from CH 25.3 when the
-`EVAL_SPAN_READ_SOURCE=clickhouse` flag is set; fall back to PG otherwise.
+"""ClickHouse-backed source vehicles for eval execution.
 
-The hard constraint: the eval runner uses Django ORM heavily — it calls
-`observation_span.save()` to write `eval_status` back, navigates
-`observation_span.project.organization`, etc. A pure CH dataclass can't
-replace ObservationSpan without rewriting hundreds of lines of eval-runner
-code that depend on those Django patterns.
+The eval-task engine forces ``eval_read_source("clickhouse")``: span, trace,
+and session telemetry is loaded only from ClickHouse, and a miss/error never
+falls back to PostgreSQL. Legacy non-task callers can still explicitly select
+the PostgreSQL mode while that path remains supported.
 
-Pragmatic design:
-
-  v1 mode (`EVAL_SPAN_READ_SOURCE=postgres`):
-      Pure Django: `ObservationSpan.objects.get(id=span_id)`.
-      Current behavior. Default during rollout.
-
-  v2 mode (`EVAL_SPAN_READ_SOURCE=clickhouse`):
-      1. Read span DATA (id, observation_type, attrs, input, output, model,
-         eval_status, cost, project_id, trace_id, ...) from CH — cheap, no
-         JSONB select on tracer_observation_span.
-      2. Construct a Django ObservationSpan INSTANCE from that data.
-         Project, trace, end_user etc. FK descriptors lazy-load from PG on
-         attribute access (standard Django behavior, fast targeted FK
-         queries instead of the heavy span select).
-      3. `.save()` writes eval_status back to PG as today AND emits a
-         versioned CH UPDATE so the new CH stays current. Dual-write
-         during the cutover window keeps both surfaces in sync.
-
-Real win: the biggest single read in the eval hot path — `SELECT *` on
-tracer_observation_span with its multi-MB JSONB columns — moves from PG
-to CH point-read. The relational metadata stays where it already is.
-
-When EvalLogger itself moves to CH (separate future migration), this
-hybrid collapses to a pure-CH path; until then, the bridge buys us most
-of the perf and PG-load relief without rewriting downstream eval code.
+ClickHouse rows are adapted into unsaved Django model instances so the existing
+evaluation core can keep using attribute access without implying that a source
+row exists in PostgreSQL. ``save()`` is a no-op on those vehicles; task state
+and results are persisted on the materialized EvalLogger entry instead.
 """
 
 from __future__ import annotations
@@ -55,9 +31,8 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 # Per-execution override of the read source. The new eval engine sets this to
-# "clickhouse" for the duration of one entry's run (see run_entry); the legacy
-# cron path never sets it, so it stays on the settings/env default ("postgres")
-# and its behavior is unchanged.
+# "clickhouse" for the duration of one entry's run (see run_entry). Production
+# defaults to ClickHouse because telemetry is no longer written to PostgreSQL.
 _forced_source: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "eval_read_source_override", default=None
 )
@@ -73,22 +48,30 @@ def eval_read_source(source: str):
         _forced_source.reset(token)
 
 
-def _forced_clickhouse() -> bool:
-    return _forced_source.get() == "clickhouse"
-
-
 def _read_source() -> str:
     """Resolve the active read source: per-execution override first, else
-    settings, env, or default."""
-    forced = _forced_source.get()
-    if forced:
-        return forced
+    settings, env, or the ClickHouse-only production default.
+
+    PostgreSQL telemetry reads remain available only under Django's test
+    settings so legacy unit fixtures can create model rows without seeding CH.
+    A production override back to PostgreSQL fails closed: direct ingestion no
+    longer writes those rows, so a fallback would silently evaluate stale or
+    missing telemetry.
+    """
     src = (
-        getattr(settings, "EVAL_SPAN_READ_SOURCE", None)
+        _forced_source.get()
+        or getattr(settings, "EVAL_SPAN_READ_SOURCE", None)
         or os.environ.get("EVAL_SPAN_READ_SOURCE")
-        or "postgres"
+        or "clickhouse"
+    ).lower()
+    if src == "clickhouse":
+        return src
+    if src == "postgres" and getattr(settings, "TESTING", False):
+        return src
+    raise RuntimeError(
+        "Eval telemetry must be read from ClickHouse; PostgreSQL telemetry "
+        f"source {src!r} is not supported in production"
     )
-    return src.lower()
 
 
 def get_observation_span(
@@ -119,13 +102,6 @@ def get_observation_span(
             qs = qs.select_related(*select_related)
         return qs.get(id=span_id)
 
-    if src != "clickhouse":
-        logger.warning("eval_span_read_source_unknown_fallback_to_pg", value=src)
-        qs = ObservationSpan.objects
-        if select_related:
-            qs = qs.select_related(*select_related)
-        return qs.get(id=span_id)
-
     # ── v2 path: read span data from CH, construct partial Django model,
     # let FK descriptors lazy-load from PG on attribute access.
     return _hybrid_load_from_ch(span_id, select_related, project_id=project_id)
@@ -140,31 +116,29 @@ def _hybrid_load_from_ch(
     """Reads the span row from CH and returns a partially-hydrated Django
     ObservationSpan whose FK descriptors will lazy-load from PG on access.
 
-    If the CH read fails or the row isn't there, falls back to PG so the
-    eval runner never sees a transient CH failure.
+    If the CH read fails or the row isn't there, fail closed. PostgreSQL has no
+    authoritative telemetry row after the direct-to-CH cutover.
     """
     from tracer.models.observation_span import ObservationSpan
     from tracer.services.clickhouse.v2 import get_reader
 
     try:
-        reader = get_reader()
-        ch_row = reader.get(span_id, project_id=project_id)
-    except Exception as e:  # noqa: BLE001 — CH transient errors → fall back to PG
+        # One eval-task entry opens one point reader. Close it immediately after
+        # the read; historical tasks can contain millions of entries and leaking
+        # one clickhouse-connect HTTP client per entry eventually exhausts the
+        # worker's sockets/file descriptors.
+        with get_reader() as reader:
+            ch_row = reader.get(span_id, project_id=project_id)
+    except Exception as e:  # noqa: BLE001
         logger.warning(
-            "eval_span_ch_read_fallback_to_pg", span_id=span_id, err=repr(e)[:200]
+            "eval_span_ch_read_failed", span_id=span_id, err=repr(e)[:200]
         )
-        ch_row = None
+        raise
 
     if ch_row is None:
-        if _forced_clickhouse():
-            raise ObservationSpan.DoesNotExist(
-                f"Span {span_id} not in ClickHouse (CH-direct; PG fallback disabled)"
-            )
-        # Non-forced clickhouse mode — fall back to PG with the requested FKs.
-        qs = ObservationSpan.objects
-        if select_related:
-            qs = qs.select_related(*select_related)
-        return qs.get(id=span_id)
+        raise ObservationSpan.DoesNotExist(
+            f"Span {span_id} not in ClickHouse (CH-direct; PG fallback disabled)"
+        )
 
     return _construct_from_chspan(ch_row)
 
@@ -201,28 +175,26 @@ def filter_observation_spans_by_trace(
     try:
         from tracer.services.clickhouse.v2 import get_reader
 
-        reader = get_reader()
-        ch_rows = reader.list_by_trace(
-            trace_id, include_heavy=False, project_id=project_id
-        )
+        with get_reader() as reader:
+            ch_rows = reader.list_by_trace(
+                trace_id, include_heavy=False, project_id=project_id
+            )
 
-        # Second pass: replace lean rows for the requested heavy span ids.
-        wanted = set(heavy_span_ids or ()) & {r.id for r in ch_rows}
-        if wanted:
-            heavy_map = {
-                r.id: r
-                for r in reader.list_by_ids(
-                    list(wanted), include_heavy=True, project_id=project_id
-                )
-            }
-            ch_rows = [heavy_map.get(r.id, r) for r in ch_rows]
+            # Second pass: replace lean rows for the requested heavy span ids.
+            wanted = set(heavy_span_ids or ()) & {r.id for r in ch_rows}
+            if wanted:
+                heavy_map = {
+                    r.id: r
+                    for r in reader.list_by_ids(
+                        list(wanted), include_heavy=True, project_id=project_id
+                    )
+                }
+                ch_rows = [heavy_map.get(r.id, r) for r in ch_rows]
     except Exception as e:  # noqa: BLE001
-        if _forced_clickhouse():
-            raise
         logger.warning(
-            "eval_span_filter_ch_fallback_to_pg", trace_id=trace_id, err=repr(e)[:200]
+            "eval_span_filter_ch_failed", trace_id=trace_id, err=repr(e)[:200]
         )
-        return list(ObservationSpan.objects.filter(trace_id=trace_id, deleted=deleted))
+        raise
 
     out = []
     for ch_row in ch_rows:
@@ -344,17 +316,15 @@ def get_trace(
         else:
             with get_reader() as _reader:
                 row = _reader.get_trace_row(str(trace_id), project_id=project_id)
-    except Exception as e:  # noqa: BLE001 — CH transient errors → fall back to PG
+    except Exception as e:  # noqa: BLE001
         logger.warning(
-            "eval_trace_ch_read_fallback", trace_id=str(trace_id), err=repr(e)[:200]
+            "eval_trace_ch_read_failed", trace_id=str(trace_id), err=repr(e)[:200]
         )
-        row = None
+        raise
     if row is None:
-        if _forced_clickhouse():
-            raise Trace.DoesNotExist(
-                f"Trace {trace_id} not in ClickHouse (CH-direct; PG fallback disabled)"
-            )
-        return Trace.objects.get(id=trace_id)
+        raise Trace.DoesNotExist(
+            f"Trace {trace_id} not in ClickHouse (CH-direct; PG fallback disabled)"
+        )
 
     def _decode(v):
         if not v:
@@ -403,12 +373,10 @@ def get_trace_session(session_id: str, *, project: Project) -> TraceSession:
         str(session_id)
     )
     if not fields:
-        if _forced_clickhouse():
-            raise TraceSession.DoesNotExist(
-                f"TraceSession {session_id} not in ClickHouse "
-                "(CH-direct; PG fallback disabled)"
-            )
-        return TraceSession.objects.get(id=session_id)
+        raise TraceSession.DoesNotExist(
+            f"TraceSession {session_id} not in ClickHouse "
+            "(CH-direct; PG fallback disabled)"
+        )
 
     obj = TraceSession(
         id=session_id,

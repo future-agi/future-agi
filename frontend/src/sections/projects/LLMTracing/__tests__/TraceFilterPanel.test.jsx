@@ -12,6 +12,7 @@ import {
   getPickerOptionSearchText,
   getPickerOptionSecondaryLabel,
 } from "../filterValuePickerUtils";
+import axios, { endpoints } from "src/utils/axios";
 
 const parseQueryMock = vi.fn();
 
@@ -34,6 +35,7 @@ vi.mock("src/hooks/useDashboards", () => ({
 function renderPanel({
   currentFilters = [],
   properties,
+  projectId,
   onApply = vi.fn(),
   onClose = vi.fn(),
   open = true,
@@ -52,12 +54,98 @@ function renderPanel({
         onApply={onApply}
         currentFilters={currentFilters}
         properties={properties}
+        projectId={projectId}
         showQueryTab={false}
       />
     </QueryClientProvider>,
   );
   return { anchorEl, onApply, onClose, ...utils };
 }
+
+describe("TraceFilterPanel exact rare-attribute search", () => {
+  it("probes a typed exact key and keeps it selected outside the sampled catalog", async () => {
+    const getSpy = vi.spyOn(axios, "get").mockResolvedValue({
+      data: {
+        result: [{ key: "rare_feature_flag", type: "string" }],
+        query_complete: true,
+        query_status: "complete",
+      },
+    });
+    const projectId = "11111111-2222-4333-8444-555555555555";
+
+    renderPanel({
+      projectId,
+      properties: [
+        {
+          id: "status",
+          name: "Status",
+          category: "system",
+          type: "string",
+        },
+      ],
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Property" }));
+    fireEvent.change(screen.getByPlaceholderText("Search properties..."), {
+      target: { value: "rare_feature_flag" },
+    });
+
+    const option = await screen.findByText("rare_feature_flag", undefined, {
+      timeout: 2_000,
+    });
+    expect(getSpy).toHaveBeenCalledWith(endpoints.project.spanAttributeKeys(), {
+      params: {
+        project_id: projectId,
+        q: "rare_feature_flag",
+      },
+    });
+
+    fireEvent.click(option);
+    expect(
+      screen.getByRole("button", { name: /rare_feature_flag/i }),
+    ).toBeInTheDocument();
+    getSpy.mockRestore();
+  });
+
+  it("does not offer a partial key when the exact probe is incomplete", async () => {
+    const getSpy = vi.spyOn(axios, "get").mockResolvedValue({
+      data: {
+        result: [{ key: "unsafe_partial_key", type: "string" }],
+        query_complete: false,
+        query_status: "degraded",
+      },
+    });
+
+    renderPanel({
+      projectId: "11111111-2222-4333-8444-555555555555",
+      properties: [],
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Property" }));
+    fireEvent.change(screen.getByPlaceholderText("Search properties..."), {
+      target: { value: "unsafe_partial_key" },
+    });
+
+    expect(
+      await screen.findByText(
+        "Attribute lookup timed out. Try again.",
+        undefined,
+        {
+          timeout: 2_000,
+        },
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("filter-property-option-unsafe_partial_key"),
+    ).not.toBeInTheDocument();
+    expect(
+      document.querySelector(
+        '[data-filter-property-option="unsafe_partial_key"]',
+      ),
+    ).toBeNull();
+    getSpy.mockRestore();
+  });
+});
 
 describe("TraceFilterPanel AI apply (#577)", () => {
   beforeEach(() => {

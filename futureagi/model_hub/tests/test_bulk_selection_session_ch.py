@@ -14,6 +14,7 @@ from structlog.testing import capture_logs
 
 from model_hub.models.ai_model import AIModel
 from model_hub.services.bulk_selection import (
+    BulkSelectionIncomplete,
     ResolveResult,
     _resolve_session_ids_clickhouse,
     resolve_filtered_session_ids,
@@ -31,11 +32,15 @@ def _install_fake_session_builder(monkeypatch, *, rows, capture):
         def __init__(self, *, filters, **kwargs):
             capture["filters"] = filters
 
-        def build(self):
+        def build_id_query(self, *, limit=None):
+            capture["limit"] = limit
             return "SELECT session_id FROM spans", {}
 
     class _FakeAnalytics:
-        def execute_ch_query(self, query, params, timeout_ms=None):
+        def execute_ch_query(self, query, params, timeout_ms=None, settings=None):
+            capture["query"] = query
+            capture["timeout_ms"] = timeout_ms
+            capture["settings"] = settings
             return _FakeResult(rows)
 
     monkeypatch.setattr(
@@ -60,30 +65,104 @@ def test_injects_all_history_1971_when_no_time_filter(monkeypatch):
     _install_fake_session_builder(monkeypatch, rows=_rows("s1"), capture=capture)
 
     _resolve_session_ids_clickhouse(
-        project_id="p1", non_score_filters=[], score_filters=[],
-        exclude_ids=set(), organization=None, cap=10,
+        project_id="p1",
+        non_score_filters=[],
+        score_filters=[],
+        exclude_ids=set(),
+        organization=None,
+        cap=10,
     )
 
     injected = [f for f in capture["filters"] if f.get("column_id") == "start_time"]
     assert len(injected) == 1
     # 1970 would underflow the score subqueries' `- INTERVAL 1 DAY`.
     assert injected[0]["filter_config"]["filter_value"][0].startswith("1971")
+    assert capture["limit"] == 11
+    assert "FROM spans FINAL" in capture["query"]
+    assert capture["timeout_ms"] <= 750
+    assert capture["settings"]["timeout_overflow_mode"] == "throw"
 
 
 def test_excludes_and_cap_plus_one(monkeypatch):
-    _install_fake_session_builder(monkeypatch, rows=_rows("a", "b", "c"), capture={})
+    capture: dict = {}
+    _install_fake_session_builder(monkeypatch, rows=_rows("a", "c"), capture=capture)
     res = _resolve_session_ids_clickhouse(
-        project_id="p1", non_score_filters=[], score_filters=[],
-        exclude_ids={"b"}, organization=None, cap=10,
+        project_id="p1",
+        non_score_filters=[],
+        score_filters=[],
+        exclude_ids={"b"},
+        organization=None,
+        cap=10,
     )
     assert res.ids == ["a", "c"]
+    exclusion = next(
+        item for item in capture["filters"] if item.get("column_id") == "session_id"
+    )
+    assert exclusion["filter_config"]["filter_op"] == "not_in"
+    assert exclusion["filter_config"]["filter_value"] == ["b"]
 
+    _install_fake_session_builder(monkeypatch, rows=_rows("a", "b", "c"), capture={})
     res2 = _resolve_session_ids_clickhouse(
-        project_id="p1", non_score_filters=[], score_filters=[],
-        exclude_ids=set(), organization=None, cap=2,
+        project_id="p1",
+        non_score_filters=[],
+        score_filters=[],
+        exclude_ids=set(),
+        organization=None,
+        cap=2,
     )
     assert res2.truncated is True
     assert res2.total_matching == 3
+
+
+def test_exclusion_concentrated_first_page_is_refilled_before_limit(monkeypatch):
+    capture: dict = {}
+    universe = ["a", "b", "c", "d", "e", "f"]
+
+    class _Builder:
+        def __init__(self, *, filters, **kwargs):
+            capture["filters"] = filters
+
+        def build_id_query(self, *, limit=None):
+            skip = next(
+                item["filter_config"]["filter_value"]
+                for item in capture["filters"]
+                if item.get("column_id") == "session_id"
+            )
+            return "SELECT session_id FROM spans", {
+                "skip": tuple(skip),
+                "limit": limit,
+            }
+
+    class _Analytics:
+        def execute_ch_query(self, query, params, timeout_ms=None, settings=None):
+            rows = [
+                {"session_id": session_id}
+                for session_id in universe
+                if session_id not in params["skip"]
+            ][: params["limit"]]
+            return _FakeResult(rows)
+
+    monkeypatch.setattr(
+        "tracer.services.clickhouse.v2.dispatch.get_query_builder_class",
+        lambda name: _Builder,
+    )
+    monkeypatch.setattr(
+        "tracer.services.clickhouse.query_service.AnalyticsQueryService",
+        _Analytics,
+    )
+
+    result = _resolve_session_ids_clickhouse(
+        project_id="p1",
+        non_score_filters=[],
+        score_filters=[],
+        exclude_ids={"a", "b", "c"},
+        organization=None,
+        cap=2,
+    )
+
+    assert result.ids == ["d", "e"]
+    assert result.truncated is True
+    assert result.total_matching == 3
 
 
 def test_score_filters_intersected_via_annotation_score_table(monkeypatch):
@@ -95,11 +174,71 @@ def test_score_filters_intersected_via_annotation_score_table(monkeypatch):
         lambda ids, score_filters: ["a"],
     )
     res = _resolve_session_ids_clickhouse(
-        project_id="p1", non_score_filters=[],
+        project_id="p1",
+        non_score_filters=[],
         score_filters=[{"column_id": "label-1", "filter_config": {}}],
-        exclude_ids=set(), organization=None, cap=10,
+        exclude_ids=set(),
+        organization=None,
+        cap=10,
     )
     assert res.ids == ["a"]
+
+
+def test_score_rejections_refill_until_cap(monkeypatch):
+    capture: dict = {}
+    universe = ["a", "b", "c", "d", "e", "f"]
+
+    class _Builder:
+        def __init__(self, *, filters, **kwargs):
+            capture["filters"] = filters
+
+        def build_id_query(self, *, limit=None):
+            skip = next(
+                item["filter_config"]["filter_value"]
+                for item in capture["filters"]
+                if item.get("column_id") == "session_id"
+            )
+            return "SELECT session_id FROM spans", {
+                "skip": tuple(skip),
+                "limit": limit,
+            }
+
+    class _Analytics:
+        def execute_ch_query(self, query, params, timeout_ms=None, settings=None):
+            rows = [
+                {"session_id": session_id}
+                for session_id in universe
+                if session_id not in params["skip"]
+            ][: params["limit"]]
+            return _FakeResult(rows)
+
+    monkeypatch.setattr(
+        "tracer.services.clickhouse.v2.dispatch.get_query_builder_class",
+        lambda name: _Builder,
+    )
+    monkeypatch.setattr(
+        "tracer.services.clickhouse.query_service.AnalyticsQueryService",
+        _Analytics,
+    )
+    monkeypatch.setattr(
+        "model_hub.services.bulk_selection._apply_session_score_filters_pg",
+        lambda ids, score_filters: [
+            session_id for session_id in ids if session_id in {"a", "d", "e"}
+        ],
+    )
+
+    result = _resolve_session_ids_clickhouse(
+        project_id="p1",
+        non_score_filters=[],
+        score_filters=[{"column_id": "label-1", "filter_config": {}}],
+        exclude_ids=set(),
+        organization=None,
+        cap=2,
+    )
+
+    assert result.ids == ["a", "d"]
+    assert result.truncated is True
+    assert result.total_matching == 3
 
 
 def test_ch_failure_propagates(monkeypatch):
@@ -107,7 +246,7 @@ def test_ch_failure_propagates(monkeypatch):
         def __init__(self, **kwargs):
             pass
 
-        def build(self):
+        def build_id_query(self, *, limit=None):
             raise RuntimeError("CH down")
 
     monkeypatch.setattr(
@@ -117,8 +256,12 @@ def test_ch_failure_propagates(monkeypatch):
     with capture_logs() as logs:
         with pytest.raises(RuntimeError, match="CH down"):
             _resolve_session_ids_clickhouse(
-                project_id="p1", non_score_filters=[], score_filters=[],
-                exclude_ids=set(), organization=None, cap=10,
+                project_id="p1",
+                non_score_filters=[],
+                score_filters=[],
+                exclude_ids=set(),
+                organization=None,
+                cap=10,
             )
     # The failure must leave a breadcrumb for log-based alerting before it raises.
     assert any(
@@ -126,6 +269,41 @@ def test_ch_failure_propagates(monkeypatch):
         and e["log_level"] == "warning"
         for e in logs
     )
+
+
+def test_read_budget_failure_never_returns_partial_or_empty(monkeypatch):
+    class _Builder:
+        def __init__(self, **kwargs):
+            pass
+
+        def build_id_query(self, *, limit=None):
+            return "SELECT session_id FROM spans", {}
+
+    class _TimeoutAnalytics:
+        def execute_ch_query(self, *args, **kwargs):
+            raise TimeoutError("bounded read")
+
+    monkeypatch.setattr(
+        "tracer.services.clickhouse.v2.dispatch.get_query_builder_class",
+        lambda name: _Builder,
+    )
+    monkeypatch.setattr(
+        "tracer.services.clickhouse.query_service.AnalyticsQueryService",
+        _TimeoutAnalytics,
+    )
+
+    with pytest.raises(
+        BulkSelectionIncomplete,
+        match="Could not prove the complete session selection",
+    ):
+        _resolve_session_ids_clickhouse(
+            project_id="p1",
+            non_score_filters=[],
+            score_filters=[],
+            exclude_ids=set(),
+            organization=None,
+            cap=10,
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -416,7 +416,9 @@ const ObserveToolbar = ({
                 ? "sessions"
                 : mode === "users"
                   ? "users"
-                  : "traces"
+                  : isSpansView
+                    ? "spans"
+                    : "traces"
             }
             onApply={(newFilters) => {
               setPanelFilters(newFilters);

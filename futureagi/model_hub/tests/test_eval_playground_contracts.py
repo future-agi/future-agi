@@ -1,6 +1,10 @@
 import json
+from datetime import timedelta
 
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 from rest_framework import status
 
 from accounts.models import Organization, User
@@ -13,7 +17,10 @@ from model_hub.models.error_localizer_model import (
     ErrorLocalizerTask,
 )
 from model_hub.models.evals_metric import EvalSettings, EvalTemplate, Feedback
-from model_hub.serializers.contracts import EvalApiLogTableQuerySerializer
+from model_hub.serializers.contracts import (
+    EvalApiLogIncompleteResponseSerializer,
+    EvalApiLogTableQuerySerializer,
+)
 from model_hub.views.separate_evals import create_column_config_playground
 
 
@@ -46,6 +53,51 @@ def _create_code_eval_template(organization, workspace=None, name="playground-co
     )
 
 
+def _create_eval_log(organization, workspace, template, value):
+    return APICallLog.objects.create(
+        organization=organization,
+        workspace=workspace,
+        status=APICallStatusChoices.SUCCESS.value,
+        cost=0,
+        source=SourceChoices.EVAL_PLAYGROUND.value,
+        source_id=str(template.id),
+        config={
+            "required_keys": ["output"],
+            "mappings": {"output": value},
+            "output": {"output": True, "reason": value},
+        },
+    )
+
+
+def _eval_log_table_columns(template):
+    return [
+        {
+            "id": "evaluation_id",
+            "name": "Evaluation ID",
+            "is_visible": True,
+        },
+        {
+            "id": "output",
+            "name": "output",
+            "data_type": "text",
+            "is_visible": True,
+        },
+        {
+            "id": "eval_result",
+            "name": template.name,
+            "data_type": "boolean",
+            "origin_type": SourceChoices.EVALUATION.value,
+            "is_visible": True,
+        },
+        {
+            "id": "created_at",
+            "name": "Created At",
+            "data_type": "datetime",
+            "is_visible": False,
+        },
+    ]
+
+
 def _create_other_org_template(user, name="other-playground-code"):
     other_org = Organization.objects.create(name=f"{name}-org")
     other_user = User.objects.create_user(
@@ -59,9 +111,7 @@ def _create_other_org_template(user, name="other-playground-code"):
 
 
 @pytest.mark.django_db
-def test_eval_playground_rejects_template_from_another_organization(
-    auth_client, user
-):
+def test_eval_playground_rejects_template_from_another_organization(auth_client, user):
     template = _create_other_org_template(user)
 
     response = auth_client.post(
@@ -232,6 +282,150 @@ def test_eval_log_detail_rejects_other_org_log(auth_client, user):
     )
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.django_db
+def test_eval_logs_table_rejects_template_from_another_workspace(
+    auth_client,
+    user,
+):
+    other_workspace = Workspace.objects.create(
+        name="other-eval-log-table-workspace",
+        organization=user.organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    template = _create_code_eval_template(
+        user.organization,
+        other_workspace,
+        name="other-workspace-log-table",
+    )
+
+    response = auth_client.get(
+        "/model-hub/get-eval-logs-details",
+        {
+            "eval_template_id": str(template.id),
+            "source": "eval_playground",
+            "current_page_index": 0,
+            "page_size": 10,
+        },
+    )
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert not EvalSettings.objects.filter(
+        eval_id=template.id,
+        user=user,
+        deleted=False,
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_eval_log_list_and_detail_scope_global_template_logs_to_workspace(
+    auth_client,
+    user,
+    workspace,
+):
+    system_template = EvalTemplate.no_workspace_objects.create(
+        name="workspace-scoped-system-eval-logs",
+        organization=None,
+        workspace=None,
+        owner=OwnerChoices.SYSTEM.value,
+        config={"output": "Pass/Fail", "required_keys": ["output"]},
+        visible_ui=True,
+    )
+    other_workspace = Workspace.objects.create(
+        name="other-system-eval-log-workspace",
+        organization=user.organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+
+    def create_log(log_workspace, value):
+        return APICallLog.objects.create(
+            organization=user.organization,
+            workspace=log_workspace,
+            status=APICallStatusChoices.SUCCESS.value,
+            cost=0,
+            source=SourceChoices.EVAL_PLAYGROUND.value,
+            source_id=str(system_template.id),
+            config={
+                "required_keys": ["output"],
+                "mappings": {"output": value},
+                "output": {"output": True},
+            },
+        )
+
+    own_log = create_log(workspace, "own")
+    legacy_log = create_log(None, "legacy")
+    other_log = create_log(other_workspace, "other")
+
+    list_response = auth_client.get(
+        "/model-hub/get-eval-logs-details",
+        {
+            "eval_template_id": str(system_template.id),
+            "source": "eval_playground",
+            "current_page_index": 0,
+            "page_size": 10,
+        },
+    )
+
+    assert list_response.status_code == status.HTTP_200_OK
+    visible_ids = {str(row["log_id"]) for row in list_response.data["result"]["table"]}
+    assert visible_ids == {str(own_log.log_id), str(legacy_log.log_id)}
+
+    hidden_detail = auth_client.get(
+        "/model-hub/get-eval-logs",
+        {"log_id": str(other_log.log_id)},
+    )
+    own_detail = auth_client.get(
+        "/model-hub/get-eval-logs",
+        {"log_id": str(own_log.log_id)},
+    )
+    legacy_detail = auth_client.get(
+        "/model-hub/get-eval-logs",
+        {"log_id": str(legacy_log.log_id)},
+    )
+
+    assert hidden_detail.status_code == status.HTTP_400_BAD_REQUEST
+    assert own_detail.status_code == status.HTTP_200_OK
+    assert legacy_detail.status_code == status.HTTP_200_OK
+
+    from conftest import WorkspaceAwareAPIClient
+
+    other_client = WorkspaceAwareAPIClient()
+    other_client.force_authenticate(user=user)
+    other_client.set_workspace(other_workspace)
+    other_list = other_client.get(
+        "/model-hub/get-eval-logs-details",
+        {
+            "eval_template_id": str(system_template.id),
+            "source": "eval_playground",
+            "current_page_index": 0,
+            "page_size": 10,
+        },
+    )
+    other_visible_ids = {
+        str(row["log_id"]) for row in other_list.data["result"]["table"]
+    }
+    assert other_list.status_code == status.HTTP_200_OK
+    assert other_visible_ids == {str(other_log.log_id)}
+    assert (
+        other_client.get(
+            "/model-hub/get-eval-logs",
+            {"log_id": str(own_log.log_id)},
+        ).status_code
+        == status.HTTP_400_BAD_REQUEST
+    )
+    assert (
+        other_client.get(
+            "/model-hub/get-eval-logs",
+            {"log_id": str(other_log.log_id)},
+        ).status_code
+        == status.HTTP_200_OK
+    )
+    other_client.stop_workspace_injection()
 
 
 @pytest.mark.django_db
@@ -515,8 +709,40 @@ def test_eval_template_name_picker_excludes_deleted_and_other_org_sources(
     deleted.deleted = True
     deleted.save(update_fields=["deleted"])
     other_org = _create_other_org_template(user, name="other-eval-name-picker")
+    hidden = _create_code_eval_template(
+        user.organization, workspace, name="hidden-eval-name-picker"
+    )
+    hidden.visible_ui = False
+    hidden.save(update_fields=["visible_ui"])
+    other_workspace = Workspace.objects.create(
+        name="other-eval-name-picker-workspace",
+        organization=user.organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    other_workspace_template = _create_code_eval_template(
+        user.organization,
+        other_workspace,
+        name="other-workspace-eval-name-picker",
+    )
+    unused_system = EvalTemplate.no_workspace_objects.create(
+        name="unused-system-eval-name-picker",
+        description=None,
+        organization=None,
+        workspace=None,
+        owner=OwnerChoices.SYSTEM.value,
+        config={"output": "Pass/Fail"},
+        visible_ui=True,
+    )
 
-    for template in (active, deleted, other_org):
+    for template in (
+        active,
+        deleted,
+        other_org,
+        hidden,
+        other_workspace_template,
+    ):
         APICallLog.objects.create(
             organization=user.organization,
             workspace=workspace,
@@ -538,6 +764,33 @@ def test_eval_template_name_picker_excludes_deleted_and_other_org_sources(
     assert "active-eval-name-picker" in names
     assert "deleted-eval-name-picker" not in names
     assert "other-eval-name-picker" not in names
+    assert "hidden-eval-name-picker" not in names
+    assert "other-workspace-eval-name-picker" not in names
+    assert "unused-system-eval-name-picker" in names
+    system_result = next(
+        row for row in response.data["result"] if row["id"] == str(unused_system.id)
+    )
+    assert system_result["description"] == ""
+
+
+@pytest.mark.django_db
+def test_eval_template_name_picker_does_not_query_api_call_logs(
+    auth_client, user, workspace
+):
+    _create_code_eval_template(
+        user.organization, workspace, name="no-usage-query-eval-name-picker"
+    )
+
+    with CaptureQueriesContext(connection) as queries:
+        response = auth_client.post(
+            "/model-hub/get-eval-template-names",
+            {"search_text": "no-usage-query-eval-name-picker"},
+            format="json",
+        )
+
+    assert response.status_code == status.HTTP_200_OK
+    usage_table = APICallLog._meta.db_table.lower()
+    assert all(usage_table not in query["sql"].lower() for query in queries)
 
 
 @pytest.mark.django_db
@@ -600,6 +853,352 @@ def test_eval_logs_table_query_serializer_parses_search_object():
         "key": "needle",
         "type": ["text"],
     }
+
+
+@pytest.mark.django_db
+def test_eval_logs_table_caps_candidates_without_counting_full_history(
+    auth_client, user, workspace, monkeypatch
+):
+    from model_hub.views import separate_evals
+
+    template = _create_code_eval_template(
+        user.organization, workspace, name="bounded-eval-log-table"
+    )
+    EvalSettings.objects.create(
+        eval_id=template.id,
+        user=user,
+        source="eval_playground",
+        column_config=[
+            {"id": "column1", "name": "Evaluation ID"},
+            {"id": "column2", "name": "Created At"},
+        ],
+    )
+    APICallLog.objects.bulk_create(
+        [
+            APICallLog(
+                organization=user.organization,
+                workspace=workspace,
+                status=APICallStatusChoices.SUCCESS.value,
+                cost=0,
+                source=SourceChoices.EVAL_PLAYGROUND.value,
+                source_id=str(template.id),
+                config={"output": {"output": True}},
+            )
+            for _ in range(3)
+        ]
+    )
+    monkeypatch.setattr(separate_evals, "_EVAL_LOG_CANDIDATE_LIMIT", 2)
+
+    with CaptureQueriesContext(connection) as queries:
+        response = auth_client.get(
+            "/model-hub/get-eval-logs-details",
+            {
+                "eval_template_id": str(template.id),
+                "source": "eval_playground",
+                "current_page_index": 0,
+                "page_size": 2,
+            },
+        )
+
+    assert response.status_code == status.HTTP_200_OK
+    result = response.data["result"]
+    assert len(result["table"]) == 2
+    assert result["metadata"] == {
+        "total_rows": 2,
+        "total_pages": 1,
+        "total_rows_is_lower_bound": True,
+        "query_complete": False,
+        "query_status": "bounded",
+        "query_error_code": "candidate_limit_reached",
+        "candidate_limit": 2,
+        "candidate_rows_scanned": 2,
+    }
+    log_selects = [
+        query["sql"]
+        for query in queries
+        if "usage_apicalllog" in query["sql"].lower()
+        and query["sql"].lstrip().lower().startswith("select")
+    ]
+    assert len(log_selects) == 1
+    assert "COUNT(" not in log_selects[0].upper()
+    assert "LIMIT 3" in log_selects[0].upper()
+
+
+@pytest.mark.django_db
+def test_eval_logs_table_pushes_supported_sort_before_candidate_limit(
+    auth_client,
+    user,
+    workspace,
+    monkeypatch,
+):
+    from model_hub.views import separate_evals
+
+    template = _create_code_eval_template(
+        user.organization,
+        workspace,
+        name="pre-limit-sort-eval-logs",
+    )
+    EvalSettings.objects.create(
+        eval_id=template.id,
+        user=user,
+        source="eval_playground",
+        column_config=_eval_log_table_columns(template),
+    )
+    now = timezone.now()
+    newest = _create_eval_log(user.organization, workspace, template, "newest")
+    middle = _create_eval_log(user.organization, workspace, template, "middle")
+    oldest = _create_eval_log(user.organization, workspace, template, "oldest")
+    APICallLog.objects.filter(pk=newest.pk).update(created_at=now)
+    APICallLog.objects.filter(pk=middle.pk).update(created_at=now - timedelta(hours=1))
+    APICallLog.objects.filter(pk=oldest.pk).update(created_at=now - timedelta(hours=2))
+    monkeypatch.setattr(separate_evals, "_EVAL_LOG_CANDIDATE_LIMIT", 2)
+
+    response = auth_client.get(
+        "/model-hub/get-eval-logs-details",
+        {
+            "eval_template_id": str(template.id),
+            "source": "eval_playground",
+            "current_page_index": 0,
+            "page_size": 2,
+            "sort": json.dumps([{"column_id": "created_at", "type": "ascending"}]),
+        },
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    result = response.data["result"]
+    assert [str(row["log_id"]) for row in result["table"]] == [
+        str(oldest.log_id),
+        str(middle.log_id),
+    ]
+    assert result["metadata"]["query_status"] == "bounded"
+
+
+@pytest.mark.django_db
+def test_eval_logs_table_pushes_created_at_filter_before_candidate_limit(
+    auth_client,
+    user,
+    workspace,
+    monkeypatch,
+):
+    from model_hub.views import separate_evals
+
+    template = _create_code_eval_template(
+        user.organization,
+        workspace,
+        name="pre-limit-filter-eval-logs",
+    )
+    EvalSettings.objects.create(
+        eval_id=template.id,
+        user=user,
+        source="eval_playground",
+        column_config=_eval_log_table_columns(template),
+    )
+    now = timezone.now()
+    newest = _create_eval_log(user.organization, workspace, template, "newest")
+    middle = _create_eval_log(user.organization, workspace, template, "middle")
+    oldest = _create_eval_log(user.organization, workspace, template, "oldest")
+    APICallLog.objects.filter(pk=newest.pk).update(created_at=now)
+    APICallLog.objects.filter(pk=middle.pk).update(created_at=now - timedelta(hours=1))
+    APICallLog.objects.filter(pk=oldest.pk).update(created_at=now - timedelta(hours=2))
+    monkeypatch.setattr(separate_evals, "_EVAL_LOG_CANDIDATE_LIMIT", 2)
+
+    response = auth_client.get(
+        "/model-hub/get-eval-logs-details",
+        {
+            "eval_template_id": str(template.id),
+            "source": "eval_playground",
+            "current_page_index": 0,
+            "page_size": 2,
+            "filters": json.dumps(
+                [
+                    {
+                        "column_id": "created_at",
+                        "filter_config": {
+                            "filter_type": "datetime",
+                            "filter_op": "less_than",
+                            "filter_value": (
+                                now - timedelta(hours=1, minutes=30)
+                            ).isoformat(),
+                        },
+                    }
+                ]
+            ),
+        },
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    result = response.data["result"]
+    assert [str(row["log_id"]) for row in result["table"]] == [str(oldest.log_id)]
+    assert result["metadata"]["query_complete"] is True
+
+
+@pytest.mark.django_db
+def test_eval_logs_table_returns_retryable_incomplete_for_large_search(
+    auth_client,
+    user,
+    workspace,
+    monkeypatch,
+):
+    from model_hub.views import separate_evals
+
+    template = _create_code_eval_template(
+        user.organization,
+        workspace,
+        name="bounded-search-eval-logs",
+    )
+    EvalSettings.objects.create(
+        eval_id=template.id,
+        user=user,
+        source="eval_playground",
+        column_config=_eval_log_table_columns(template),
+    )
+    for value in ("needle-a", "other", "needle-b"):
+        _create_eval_log(user.organization, workspace, template, value)
+    monkeypatch.setattr(separate_evals, "_EVAL_LOG_CANDIDATE_LIMIT", 2)
+
+    response = auth_client.get(
+        "/model-hub/get-eval-logs-details",
+        {
+            "eval_template_id": str(template.id),
+            "source": "eval_playground",
+            "current_page_index": 0,
+            "page_size": 2,
+            "search": json.dumps({"key": "needle", "type": ["text"]}),
+        },
+    )
+
+    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    error = response.data["result"]
+    assert error["error_code"] == "eval_log_query_incomplete"
+    assert error["retryable"] is True
+    assert error["query_complete"] is False
+    assert error["query_status"] == "incomplete"
+    assert error["reason"] == "post_processing_exceeds_candidate_limit"
+    assert error["unsupported_operations"] == ["search"]
+    assert error["candidate_limit"] == 2
+    serializer = EvalApiLogIncompleteResponseSerializer(data=response.data)
+    assert serializer.is_valid(), serializer.errors
+
+
+@pytest.mark.django_db
+def test_eval_logs_table_applies_dynamic_search_when_scoped_set_is_complete(
+    auth_client,
+    user,
+    workspace,
+    monkeypatch,
+):
+    from model_hub.views import separate_evals
+
+    template = _create_code_eval_template(
+        user.organization,
+        workspace,
+        name="complete-search-eval-logs",
+    )
+    EvalSettings.objects.create(
+        eval_id=template.id,
+        user=user,
+        source="eval_playground",
+        column_config=_eval_log_table_columns(template),
+    )
+    matching = _create_eval_log(
+        user.organization,
+        workspace,
+        template,
+        "needle",
+    )
+    _create_eval_log(user.organization, workspace, template, "other")
+    monkeypatch.setattr(separate_evals, "_EVAL_LOG_CANDIDATE_LIMIT", 2)
+
+    response = auth_client.get(
+        "/model-hub/get-eval-logs-details",
+        {
+            "eval_template_id": str(template.id),
+            "source": "eval_playground",
+            "current_page_index": 0,
+            "page_size": 2,
+            "search": json.dumps({"key": "needle", "type": ["text"]}),
+        },
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    result = response.data["result"]
+    assert [str(row["log_id"]) for row in result["table"]] == [str(matching.log_id)]
+    assert result["metadata"]["query_complete"] is True
+
+
+@pytest.mark.django_db
+def test_eval_logs_table_returns_retryable_incomplete_for_unproven_deep_page(
+    auth_client,
+    user,
+    workspace,
+    monkeypatch,
+):
+    from model_hub.views import separate_evals
+
+    template = _create_code_eval_template(
+        user.organization,
+        workspace,
+        name="bounded-deep-page-eval-logs",
+    )
+    EvalSettings.objects.create(
+        eval_id=template.id,
+        user=user,
+        source="eval_playground",
+        column_config=_eval_log_table_columns(template),
+    )
+    for value in ("a", "b", "c"):
+        _create_eval_log(user.organization, workspace, template, value)
+    monkeypatch.setattr(separate_evals, "_EVAL_LOG_CANDIDATE_LIMIT", 2)
+
+    response = auth_client.get(
+        "/model-hub/get-eval-logs-details",
+        {
+            "eval_template_id": str(template.id),
+            "source": "eval_playground",
+            "current_page_index": 1,
+            "page_size": 2,
+        },
+    )
+
+    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    error = response.data["result"]
+    assert error["error_code"] == "eval_log_query_incomplete"
+    assert error["retryable"] is True
+    assert error["reason"] == "page_exceeds_candidate_limit"
+    assert error["requested_page"] == 1
+
+
+@pytest.mark.django_db
+def test_eval_logs_table_sanitizes_internal_exception_text(
+    auth_client, user, workspace, monkeypatch
+):
+    from model_hub.views import separate_evals
+
+    template = _create_code_eval_template(
+        user.organization, workspace, name="sanitized-eval-log-table"
+    )
+    monkeypatch.setattr(
+        separate_evals,
+        "get_column_data",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("secret eval log implementation detail")
+        ),
+    )
+
+    response = auth_client.get(
+        "/model-hub/get-eval-logs-details",
+        {
+            "eval_template_id": str(template.id),
+            "source": "eval_playground",
+            "current_page_index": 0,
+            "page_size": 10,
+        },
+    )
+
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    body = json.dumps(response.data)
+    assert "secret eval log implementation detail" not in body
+    assert "Unable to load evaluation logs" in body
 
 
 @pytest.mark.django_db

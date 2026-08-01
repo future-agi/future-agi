@@ -16,13 +16,14 @@ from typing import Any
 from tracer.services.clickhouse.query_builders.session_list import (
     SessionListQueryBuilder,
 )
-from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.id_remap_sql import (
     remap_left_join,
     resolved_id_expr,
 )
+from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.query_builders.filters import (
     _append_v2_settings,
+    rewrite_v1_sql_to_v2,
 )
 
 
@@ -31,7 +32,31 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
 
     # This method already emits native CH25 SQL. The generic rewrite would
     # reinterpret the compatibility alias `span_attributes_raw`.
-    _v2_rewrite_exclude = frozenset({"build_span_attributes_query"})
+    _v2_rewrite_exclude = frozenset(
+        {
+            "build",
+            "build_span_attributes_query",
+        }
+    )
+
+    def build(self) -> tuple[str, dict[str, Any]]:
+        """Rewrite the list query, keeping candidate FINAL filters exact.
+
+        The generic v2 wrapper appends ``use_skip_indexes_if_final = 1``.
+        That is safe for immutable trace/session-id point lookups, but not for
+        this candidate query because ``final_status`` and other root fields can
+        change between ReplacingMergeTree versions. A mutable Map skip index
+        can prune the newest clear/non-match and resurrect an older match.
+        """
+
+        sql, params = super().build()
+        sql = _append_v2_settings(rewrite_v1_sql_to_v2(sql))
+        if self.candidate_session_ids:
+            sql = sql.replace(
+                "use_skip_indexes_if_final = 1",
+                "use_skip_indexes_if_final = 0",
+            )
+        return sql, params
 
     def build_span_attributes_query(
         self, session_ids: list[str]

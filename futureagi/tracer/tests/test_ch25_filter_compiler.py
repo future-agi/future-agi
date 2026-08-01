@@ -11,6 +11,7 @@ If the v1 base ever emits a new pattern the rewriter doesn't anticipate,
 the shadow harness will catch it in production — but a test failure here
 catches it in CI before any of that.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -28,27 +29,41 @@ class TestRewriteV1SqlToV2:
 
     # ─── Simple column renames ───────────────────────────────────────────────
     def test_soft_delete_column_renamed(self):
-        assert rewrite_v1_sql_to_v2("WHERE _peerdb_is_deleted = 0") == "WHERE is_deleted = 0"
+        assert (
+            rewrite_v1_sql_to_v2("WHERE _peerdb_is_deleted = 0")
+            == "WHERE is_deleted = 0"
+        )
 
     def test_version_column_renamed(self):
-        assert rewrite_v1_sql_to_v2("ORDER BY _peerdb_version DESC") == "ORDER BY _version DESC"
+        assert (
+            rewrite_v1_sql_to_v2("ORDER BY _peerdb_version DESC")
+            == "ORDER BY _version DESC"
+        )
 
     def test_span_attr_str_renamed(self):
         assert rewrite_v1_sql_to_v2("span_attr_str['key']") == "attrs_string['key']"
 
     def test_span_attr_num_renamed(self):
-        assert rewrite_v1_sql_to_v2("mapContains(span_attr_num, 'k')") == \
-               "mapContains(attrs_number, 'k')"
+        assert (
+            rewrite_v1_sql_to_v2("mapContains(span_attr_num, 'k')")
+            == "mapContains(attrs_number, 'k')"
+        )
 
     def test_span_attr_bool_renamed(self):
-        assert rewrite_v1_sql_to_v2("span_attr_bool['streaming'] = 1") == \
-               "attrs_bool['streaming'] = 1"
+        assert (
+            rewrite_v1_sql_to_v2("span_attr_bool['streaming'] = 1")
+            == "attrs_bool['streaming'] = 1"
+        )
 
     def test_multiple_column_renames_in_one_string(self):
-        v1 = ("SELECT span_attr_str['a'], span_attr_num['b'] "
-              "FROM spans WHERE is_deleted = 0")
-        v2 = ("SELECT attrs_string['a'], attrs_number['b'] "
-              "FROM spans WHERE is_deleted = 0")
+        v1 = (
+            "SELECT span_attr_str['a'], span_attr_num['b'] "
+            "FROM spans WHERE is_deleted = 0"
+        )
+        v2 = (
+            "SELECT attrs_string['a'], attrs_number['b'] "
+            "FROM spans WHERE is_deleted = 0"
+        )
         assert rewrite_v1_sql_to_v2(v1) == v2
 
     # ─── Dictionary-name renames ─────────────────────────────────────────────
@@ -73,8 +88,9 @@ class TestRewriteV1SqlToV2:
     def test_does_not_rewrite_substring_of_another_identifier(self):
         # `is_deleted_extra` should NOT be rewritten — only the
         # exact word `is_deleted` is the column we target.
-        assert "is_deleted_extra" in \
-               rewrite_v1_sql_to_v2("SELECT is_deleted_extra FROM x")
+        assert "is_deleted_extra" in rewrite_v1_sql_to_v2(
+            "SELECT is_deleted_extra FROM x"
+        )
 
     def test_does_not_rewrite_quoted_string_literal_token(self):
         # If a v1 query contained the LITERAL STRING "span_attr_str" inside
@@ -194,9 +210,149 @@ class TestClickHouseFilterBuilderV2:
         b = ClickHouseFilterBuilderV2(table="spans")
         # The instance-level constant we override
         meta = b.SPAN_ATTR_TYPE_META
-        assert meta["text"][0]    == cols.ATTRS_STRING
-        assert meta["number"][0]  == cols.ATTRS_NUMBER
+        assert meta["text"][0] == cols.ATTRS_STRING
+        assert meta["number"][0] == cols.ATTRS_NUMBER
         assert meta["boolean"][0] == cols.ATTRS_BOOL
+
+
+class TestV2IndexedTextAndSystemFilters:
+    @staticmethod
+    def _translate(
+        column_id: str,
+        filter_op: str,
+        filter_value=None,
+        *,
+        col_type: str = "SPAN_ATTRIBUTE",
+        query_mode: str = ClickHouseFilterBuilderV2.QUERY_MODE_SPAN,
+    ):
+        config = {
+            "col_type": col_type,
+            "filter_type": "text",
+            "filter_op": filter_op,
+        }
+        if filter_value is not None:
+            config["filter_value"] = filter_value
+        return ClickHouseFilterBuilderV2(
+            table="spans",
+            query_mode=query_mode,
+        ).translate([{"column_id": column_id, "filter_config": config}])
+
+    @pytest.mark.parametrize("filter_op", ["contains", "starts_with", "ends_with"])
+    def test_positive_attribute_substring_uses_only_unicode_safe_predicate(
+        self, filter_op
+    ):
+        sql, params = self._translate("customer.tier", filter_op, "PrEmIuM")
+
+        assert "arrayStringConcat" not in sql
+        assert "arrayMap(x -> lower(x), mapValues(attrs_string))" not in sql
+        assert not any(key.startswith("attr_ngram") for key in params)
+
+    def test_short_attribute_substring_has_no_ngram_companion(self):
+        sql, params = self._translate("customer.tier", "contains", "pro")
+
+        assert "arrayStringConcat" not in sql
+        assert not any(key.startswith("attr_ngram") for key in params)
+
+    @pytest.mark.parametrize(
+        ("filter_op", "filter_value"),
+        [
+            ("equals", "ÉLITE"),
+            ("in", ["premium", "ÉLITE"]),
+            ("contains", "ÉLITE"),
+        ],
+    )
+    def test_non_ascii_text_has_no_ascii_lower_index_companion(
+        self, filter_op, filter_value
+    ):
+        sql, params = self._translate("customer.tier", filter_op, filter_value)
+
+        assert "arrayMap(x -> lower(x), mapValues(attrs_string))" not in sql
+        assert "arrayStringConcat" not in sql
+        if filter_op in ("equals", "in"):
+            assert "lowerUTF8(attrs_string['customer.tier'])" in sql
+        assert not any(key.startswith(("attrv", "attr_ngram")) for key in params)
+
+    def test_negative_attribute_substring_has_no_positive_companion(self):
+        sql, params = self._translate("customer.tier", "not_contains", "premium")
+
+        assert "positionUTF8(lowerUTF8" in sql
+        assert "= 0" in sql
+        assert "arrayStringConcat" not in sql
+        assert not any(key.startswith("attr_ngram") for key in params)
+
+    def test_service_name_targets_physical_column(self):
+        sql, params = self._translate(
+            "service_name",
+            "in",
+            ["Checkout", "Billing"],
+            col_type="SYSTEM_METRIC",
+        )
+
+        assert "lower(service_name) IN" in sql
+        assert "attrs_string['service_name']" not in sql
+        assert ("checkout", "billing") in params.values()
+
+    def test_tag_exact_filter_reads_json_array_elements(self):
+        sql, params = self._translate(
+            "tag", "in", ["Production", "Canary"], col_type="SYSTEM_METRIC"
+        )
+
+        assert "JSONExtract(tags, 'Array(String)')" in sql
+        assert "arrayExists(x -> lowerUTF8(x) IN" in sql
+        assert "attrs_string['tag']" not in sql
+        assert ("production", "canary") in params.values()
+
+    def test_tag_exact_filter_uses_unicode_aware_casefold(self):
+        sql, params = self._translate(
+            "tag", "equals", "ÉLITE", col_type="SYSTEM_METRIC"
+        )
+
+        assert "arrayExists(x -> lowerUTF8(x) =" in sql
+        assert "élite" in params.values()
+
+    def test_trace_tag_filter_reads_trace_dictionary_without_span_membership_set(self):
+        sql, params = self._translate(
+            "tag",
+            "equals",
+            "Production",
+            col_type="SYSTEM_METRIC",
+            query_mode=ClickHouseFilterBuilderV2.QUERY_MODE_TRACE,
+        )
+
+        assert "dictGetOrDefault('trace_dict', 'tags', toUUID(trace_id), '[]')" in sql
+        assert "JSONExtract(tags, 'Array(String)')" not in sql
+        assert "trace_id IN (SELECT" not in sql
+        assert "production" in params.values()
+
+    def test_tag_contains_and_negation_apply_per_array_element(self):
+        contains_sql, _ = self._translate(
+            "tag", "contains", "prod", col_type="SYSTEM_METRIC"
+        )
+        negated_sql, _ = self._translate(
+            "tag", "not_contains", "prod", col_type="SYSTEM_METRIC"
+        )
+
+        assert "arrayExists(x -> positionUTF8(lowerUTF8" in contains_sql
+        assert "JSONExtract(tags, 'Array(String)')" in contains_sql
+        assert "notEmpty(JSONExtract(tags, 'Array(String)'))" in negated_sql
+        assert "NOT (arrayExists(x -> positionUTF8(lowerUTF8" in negated_sql
+
+    @pytest.mark.parametrize(
+        ("filter_op", "filter_value"),
+        [
+            ("not_equals", "production"),
+            ("not_in", ["production", "canary"]),
+        ],
+    )
+    def test_negative_tag_filters_require_a_non_empty_array(
+        self, filter_op, filter_value
+    ):
+        sql, _ = self._translate(
+            "tag", filter_op, filter_value, col_type="SYSTEM_METRIC"
+        )
+
+        assert "notEmpty(JSONExtract(tags, 'Array(String)'))" in sql
+        assert "AND NOT (arrayExists(" in sql
 
 
 class TestEndUserDimensionSource:
@@ -374,7 +530,9 @@ class TestFilterBuilderWiring:
             SpanListQueryBuilderV2,
         )
 
-        sql, _ = SpanListQueryBuilderV2(project_id="p1", filters=self.USER_FILTER).build()
+        sql, _ = SpanListQueryBuilderV2(
+            project_id="p1", filters=self.USER_FILTER
+        ).build()
         assert "end_users" in sql
         assert "tracer_enduser" not in sql
 
@@ -383,6 +541,8 @@ class TestFilterBuilderWiring:
             TraceListQueryBuilderV2,
         )
 
-        sql, _ = TraceListQueryBuilderV2(project_id="p1", filters=self.USER_FILTER).build()
+        sql, _ = TraceListQueryBuilderV2(
+            project_id="p1", filters=self.USER_FILTER
+        ).build()
         assert "end_users" in sql
         assert "tracer_enduser" not in sql

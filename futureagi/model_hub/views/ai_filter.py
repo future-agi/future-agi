@@ -23,8 +23,10 @@ Three modes:
 
 import json
 import traceback
+from datetime import timedelta
 
 import structlog
+from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -174,12 +176,26 @@ _TRACE_SYSTEM_COL_MAP = {
     "observation_type": "observation_type",
     "span_kind": "observation_type",
     "service_name": "name",
-    "session": "trace_session_id",
+    "session": "toString(trace_session_id)",
     "user": "toString(end_user_id)",
-    "tag": "arrayJoin(trace_tags)",
+    "tag": "arrayJoin(JSONExtract(tags, 'Array(String)'))",
     "prompt_name": "dictGet('prompt_dict', 'prompt_name', prompt_version_id)",
     "prompt_version": "dictGet('prompt_dict', 'template_version', prompt_version_id)",
     "prompt_label": "dictGet('prompt_label_dict', 'name', prompt_label_id)",
+}
+
+_TRACE_FIELD_VALUE_LOOKBACK = timedelta(days=7)
+_TRACE_FIELD_VALUE_SAMPLE_LIMIT = 1000
+_TRACE_FIELD_VALUE_RESULT_LIMIT = 100
+_TRACE_FIELD_VALUE_TIMEOUT_MS = 750
+_TRACE_FIELD_VALUE_SETTINGS = {
+    "timeout_overflow_mode": "throw",
+    "max_threads": 2,
+    "max_memory_usage": 268_435_456,
+    "max_bytes_to_read": 1_073_741_824,
+    "read_overflow_mode": "throw",
+    "max_result_rows": _TRACE_FIELD_VALUE_SAMPLE_LIMIT,
+    "result_overflow_mode": "throw",
 }
 
 
@@ -203,42 +219,78 @@ def _fetch_trace_field_values(project_ids, metric_name, metric_type):
             col_expr = _TRACE_SYSTEM_COL_MAP.get(metric_name)
             if not col_expr:
                 return []
+            window_end = timezone.now()
+            window_start = window_end - _TRACE_FIELD_VALUE_LOOKBACK
+            table = "traces FINAL" if metric_name == "tag" else "spans"
+            time_column = "created_at" if metric_name == "tag" else "start_time"
             sql = (
-                f"SELECT DISTINCT {col_expr} AS val "
-                f"FROM spans "
-                f"WHERE project_id IN %(project_ids)s "
-                f"AND _peerdb_is_deleted = 0 "
-                f"AND {col_expr} != '' "
-                f"ORDER BY val "
-                f"LIMIT 100"
-            )
-            result = analytics.execute_ch_query(
-                sql, {"project_ids": project_ids}, timeout_ms=5000
-            )
-        elif metric_type == "custom_attribute":
-            sql = (
-                "SELECT DISTINCT span_attr_str[%(attr_key)s] AS val "
-                "FROM spans "
-                "WHERE project_id IN %(project_ids)s "
-                "AND _peerdb_is_deleted = 0 "
-                "AND span_attr_str[%(attr_key)s] != '' "
-                "ORDER BY val "
-                "LIMIT 100"
+                f"SELECT toString({col_expr}) AS val "
+                f"FROM {table} "
+                "PREWHERE project_id IN %(project_ids)s "
+                f"AND {time_column} >= %(window_start)s "
+                f"AND {time_column} < %(window_end)s "
+                "WHERE is_deleted = 0 "
+                f"AND toString({col_expr}) NOT IN ('', "
+                "'00000000-0000-0000-0000-000000000000') "
+                "LIMIT %(sample_limit)s"
             )
             result = analytics.execute_ch_query(
                 sql,
-                {"project_ids": project_ids, "attr_key": metric_name},
-                timeout_ms=5000,
+                {
+                    "project_ids": tuple(str(project_id) for project_id in project_ids),
+                    "window_start": window_start,
+                    "window_end": window_end,
+                    "sample_limit": _TRACE_FIELD_VALUE_SAMPLE_LIMIT,
+                },
+                timeout_ms=_TRACE_FIELD_VALUE_TIMEOUT_MS,
+                settings=_TRACE_FIELD_VALUE_SETTINGS,
+            )
+        elif metric_type == "custom_attribute":
+            window_end = timezone.now()
+            window_start = window_end - _TRACE_FIELD_VALUE_LOOKBACK
+            sql = (
+                "SELECT attrs_string[%(attr_key)s] AS val "
+                "FROM spans "
+                "PREWHERE project_id IN %(project_ids)s "
+                "AND start_time >= %(window_start)s "
+                "AND start_time < %(window_end)s "
+                "WHERE is_deleted = 0 "
+                "AND mapContains(attrs_string, %(attr_key)s) "
+                "AND attrs_string[%(attr_key)s] != '' "
+                "LIMIT %(sample_limit)s"
+            )
+            result = analytics.execute_ch_query(
+                sql,
+                {
+                    "project_ids": tuple(str(project_id) for project_id in project_ids),
+                    "attr_key": metric_name,
+                    "window_start": window_start,
+                    "window_end": window_end,
+                    "sample_limit": _TRACE_FIELD_VALUE_SAMPLE_LIMIT,
+                },
+                timeout_ms=_TRACE_FIELD_VALUE_TIMEOUT_MS,
+                settings=_TRACE_FIELD_VALUE_SETTINGS,
             )
         else:
             return []
-        return [row["val"] for row in result.data if row.get("val")]
+        # The smart-filter tool needs representative suggestions, not an
+        # exhaustive inventory. Deduplicate the bounded stream in Python so
+        # ClickHouse can stop at LIMIT instead of sorting a whale tenant's
+        # entire seven-day history for DISTINCT + ORDER BY.
+        return sorted(
+            {
+                str(row["val"])
+                for row in result.data
+                if row.get("val") not in (None, "")
+            },
+            key=str.casefold,
+        )[:_TRACE_FIELD_VALUE_RESULT_LIMIT]
     except Exception as e:
         logger.warning(
             "smart_filter_values_failed",
             metric_name=metric_name,
             metric_type=metric_type,
-            error=str(e)[:200],
+            error_type=type(e).__name__,
         )
         return []
 

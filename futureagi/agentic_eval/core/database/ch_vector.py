@@ -1,14 +1,87 @@
+import math
 import os
 import re
 import uuid
 from datetime import datetime
+from numbers import Number
 from pprint import pprint
 
 import clickhouse_driver
-
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+_MAX_VECTOR_SEARCH_TOP_K = 1000
+
+
+def _canonical_uuid(value: object) -> str | None:
+    """Return a canonical UUID string, or None when ``value`` is not a UUID."""
+    try:
+        return str(uuid.UUID(str(value)))
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _canonical_uuid_collection(value: object) -> tuple[str, ...] | None:
+    """Canonicalize a UUID or a collection of UUIDs; reject malformed members."""
+    if isinstance(value, (str, uuid.UUID)):
+        raw_values = [value]
+    else:
+        try:
+            raw_values = list(value)  # type: ignore[arg-type]
+        except TypeError:
+            return None
+    if not raw_values:
+        return None
+
+    canonical_values = [_canonical_uuid(item) for item in raw_values]
+    if any(item is None for item in canonical_values):
+        return None
+    return tuple(item for item in canonical_values if item is not None)
+
+
+def _validated_query_vector(query_vector: object) -> list[float] | None:
+    """Normalize a non-empty, finite numeric vector for ClickHouse."""
+    if isinstance(query_vector, (str, bytes, bytearray)):
+        return None
+    try:
+        values = list(query_vector)  # type: ignore[arg-type]
+    except TypeError:
+        return None
+    if not values:
+        return None
+
+    normalized = []
+    for value in values:
+        if isinstance(value, bool) or not isinstance(value, Number):
+            return None
+        try:
+            number = float(value)
+        except (OverflowError, TypeError, ValueError):
+            return None
+        if not math.isfinite(number):
+            return None
+        normalized.append(number)
+    return normalized
+
+
+def _validated_top_k(top_k: object, *, optional: bool) -> int | None:
+    """Validate and bound LIMIT values; None is retained for unlimited searches."""
+    if top_k is None:
+        return None if optional else 0
+    if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k <= 0:
+        return 0
+    return min(top_k, _MAX_VECTOR_SEARCH_TOP_K)
+
+
+def _validated_threshold(threshold: object) -> float | None:
+    if isinstance(threshold, bool) or not isinstance(threshold, Number):
+        return None
+    try:
+        value = float(threshold)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
 
 
 def get_clickhouse_client_kwargs() -> dict[str, str | int]:
@@ -92,7 +165,7 @@ def sanitize_sql_value(value: str) -> str:
     - Wrapping reserved SQL keywords in backticks (`` ` ``).
     - Handling null characters and any unexpected special characters.
     """
-    value=str(value)
+    value = str(value)
     # Escape single quotes
     value = value.replace("'", "''")
 
@@ -118,7 +191,7 @@ def sanitize_sql_value(value: str) -> str:
         "GROUP",
         "ORDER",
         "HAVING",
-        "DISTINCT"
+        "DISTINCT",
         # Add more SQL reserved keywords as needed
     ]
     if value.upper() in reserved_keywords:
@@ -203,7 +276,7 @@ class ClickHouseVectorDB:
     def _is_clustered(self) -> bool:
         return self.is_clustered(self.client)
 
-    def drop_table(self,table_name: str) -> None:
+    def drop_table(self, table_name: str) -> None:
         """
         DROPS a table after use is over. DO NOT USE if not required.
         """
@@ -275,7 +348,9 @@ class ClickHouseVectorDB:
         logger.info(
             "ch_vector_create_table_done",
             table=qualified,
-            engine="ReplicatedReplacingMergeTree" if clustered else "ReplacingMergeTree",
+            engine="ReplicatedReplacingMergeTree"
+            if clustered
+            else "ReplacingMergeTree",
             cluster=cluster_name if clustered else None,
             elapsed_sec=round(elapsed_time, 3),
         )
@@ -293,9 +368,6 @@ class ClickHouseVectorDB:
         logger.info(f"create query took {elapsed_time:.2f} seconds to execute")
         if not table_exists:
             self.create_table(table_name)
-
-
-
 
     def upsert_vector(
         self,
@@ -432,7 +504,7 @@ class ClickHouseVectorDB:
         metadata_column_not_null: str | None = None,
         dataset_id: str | None = None,
         top_k: int | None = None,
-        threshold: float = 0.75
+        threshold: float = 0.75,
     ):
         """
         tracebacka similarity search against vectors in the specified table using cosine distance.
@@ -450,11 +522,29 @@ class ClickHouseVectorDB:
         Returns:
             List of tuples containing (id, vector, metadata, similarity)
         """
+        normalized_vector = _validated_query_vector(query_vector)
+        if normalized_vector is None:
+            return []
+
+        normalized_top_k = _validated_top_k(top_k, optional=True)
+        if normalized_top_k == 0:
+            return []
+
+        normalized_threshold = None
+        if threshold is not None:
+            normalized_threshold = _validated_threshold(threshold)
+            if normalized_threshold is None:
+                return []
+
+        canonical_dataset_id = None
+        if dataset_id is not None:
+            canonical_dataset_id = _canonical_uuid(dataset_id)
+            if canonical_dataset_id is None:
+                return []
+
         if filter_by is None:
             filter_by = {}
         filter_by = sanitize_metadata(filter_by)
-
-        query_vector_str = "[" + ",".join(map(str, query_vector)) + "]"
 
         metadata_filter_query = ""
         if filter_by:
@@ -465,7 +555,9 @@ class ClickHouseVectorDB:
             metadata_filter_query += " AND " + " AND ".join(metadata_filter)
 
         # Here the column is named eval_id but we are storing the dataset id there in this case
-        dataset_id_filter = f" AND eval_id = '{dataset_id}'" if dataset_id else ""
+        dataset_id_filter = (
+            " AND eval_id = %(dataset_id)s" if canonical_dataset_id is not None else ""
+        )
 
         metadata_not_null_filter = ""
         if metadata_column_not_null:
@@ -476,47 +568,70 @@ class ClickHouseVectorDB:
 
         # Add threshold filtering
         threshold_filter = ""
-        if threshold is not None:
-            threshold_filter = f" AND distance <= {threshold}"
+        if normalized_threshold is not None:
+            threshold_filter = " AND distance <= %(threshold)s"
 
         # Determine limit clause
-        limit_clause = f"LIMIT {top_k}" if top_k is not None else ""
+        limit_clause = "LIMIT %(top_k)s" if normalized_top_k is not None else ""
 
         query = f"""
         SELECT
             *,
-            cosineDistance(vector, {query_vector_str}) AS distance
-        FROM {table_name}
-        WHERE deleted = 0
-        {dataset_id_filter}
-        {metadata_not_null_filter}
-        {metadata_filter_query}
+            cosineDistance(
+                vector,
+                CAST(%(query_vector)s AS Array(Float32))
+            ) AS distance
+        FROM (
+            SELECT *
+            FROM {table_name}
+            WHERE deleted = 0
+            AND length(vector) = %(vector_dim)s
+            {dataset_id_filter}
+            {metadata_not_null_filter}
+            {metadata_filter_query}
+        ) AS candidates
+        WHERE 1 = 1
         {threshold_filter}
         ORDER BY distance ASC
         {limit_clause}
         """
+        query_params: dict[str, object] = {
+            "query_vector": normalized_vector,
+            "vector_dim": len(normalized_vector),
+        }
+        if canonical_dataset_id is not None:
+            query_params["dataset_id"] = canonical_dataset_id
+        if normalized_threshold is not None:
+            query_params["threshold"] = normalized_threshold
+        if normalized_top_k is not None:
+            query_params["top_k"] = normalized_top_k
+
         # Execute the query
         try:
-            results = self.client.execute(query)
+            results = self.client.execute(query, query_params)
         except clickhouse_driver.errors.PartiallyConsumedQueryError as e:
             logger.error(f"PartiallyConsumedQueryError: {e}")
             self.close()
             raise
         except Exception as e:
-            logger.info(f"Error executing query vector_similarity_search_with_threshold: {e}")
-            return None
+            logger.info(
+                f"Error executing query vector_similarity_search_with_threshold: {e}"
+            )
+            return []
 
         similarities = []
         for row in results:
             id, dataset_id, vector, keys, values, _, similarity = row
             metadata = dict(zip(keys, values, strict=False))
-            similarities.append({
-                "id": id,
-                "dataset_id": dataset_id,
-                "vector": vector,
-                "metadata": metadata,
-                "similarity": similarity
-            })
+            similarities.append(
+                {
+                    "id": id,
+                    "dataset_id": dataset_id,
+                    "vector": vector,
+                    "metadata": metadata,
+                    "similarity": similarity,
+                }
+            )
 
         return similarities
 
@@ -528,17 +643,29 @@ class ClickHouseVectorDB:
         metadata_column_not_null: str | None = None,
         eval_id: str | None = None,
         top_k: int = 5,
-        syn_data_flag=False
+        syn_data_flag=False,
     ):
         """
         Performs a similarity search against vectors in the specified table using cosine distance.
         Returns the top_k vectors sorted by similarity to the query vector.
         """
+        normalized_vector = _validated_query_vector(query_vector)
+        if normalized_vector is None:
+            return []
+
+        normalized_top_k = _validated_top_k(top_k, optional=False)
+        if not normalized_top_k:
+            return []
+
+        query_params: dict[str, object] = {
+            "query_vector": normalized_vector,
+            "vector_dim": len(normalized_vector),
+            "top_k": normalized_top_k,
+        }
+
         if filter_by is None:
             filter_by = {}
         filter_by = sanitize_metadata(filter_by)
-        # Convert query_vector to a string representation
-        query_vector_str = "[" + ",".join(map(str, query_vector)) + "]"
 
         # Construct the WHERE clause for metadata filtering
         metadata_filter_query = ""
@@ -550,12 +677,24 @@ class ClickHouseVectorDB:
             metadata_filter_query += " AND " + " AND ".join(metadata_filter)
         if syn_data_flag:
             if eval_id is not None:
-                ids_sql = ", ".join(f"'{u}'" for u in eval_id)  # type: ignore[union-attr]
-                eval_id_filter = f" AND id IN ({ids_sql})"
+                canonical_ids = _canonical_uuid_collection(eval_id)
+                if canonical_ids is None:
+                    return []
+                query_params["eval_ids"] = canonical_ids
+                eval_id_filter = " AND id IN %(eval_ids)s"
             else:
                 eval_id_filter = ""
         else:
-            eval_id_filter = f" AND eval_id = '{eval_id}'" if eval_id else ""
+            canonical_eval_id = None
+            if eval_id is not None:
+                canonical_eval_id = _canonical_uuid(eval_id)
+                if canonical_eval_id is None:
+                    return []
+            if canonical_eval_id is not None:
+                query_params["eval_id"] = canonical_eval_id
+                eval_id_filter = " AND eval_id = %(eval_id)s"
+            else:
+                eval_id_filter = ""
 
         metadata_not_null_filter = ""
         if metadata_column_not_null:
@@ -567,22 +706,30 @@ class ClickHouseVectorDB:
         query = f"""
         SELECT
             *,
-            cosineDistance(vector, {query_vector_str}) AS distance
-        FROM {table_name}
-        WHERE deleted = 0
-        {eval_id_filter}
-        {metadata_not_null_filter}
-        {metadata_filter_query}
+            cosineDistance(
+                vector,
+                CAST(%(query_vector)s AS Array(Float32))
+            ) AS distance
+        FROM (
+            SELECT *
+            FROM {table_name}
+            WHERE deleted = 0
+            AND length(vector) = %(vector_dim)s
+            {eval_id_filter}
+            {metadata_not_null_filter}
+            {metadata_filter_query}
+        ) AS candidates
         ORDER BY distance ASC
-        LIMIT {top_k}
+        LIMIT %(top_k)s
         """
         start_time = datetime.now()
         results = None
         # Execute the query
         try:
-            results = self.client.execute(query)
+            results = self.client.execute(query, query_params)
         except Exception:
             import traceback
+
             traceback.print_exc()
         end_time = datetime.now()
         elapsed_time = (end_time - start_time).total_seconds()
@@ -601,7 +748,7 @@ class ClickHouseVectorDB:
         Closes the ClickHouse connection and releases resources.
         Should be called when the database connection is no longer needed.
         """
-        if hasattr(self, 'client') and self.client is not None:
+        if hasattr(self, "client") and self.client is not None:
             self.client.disconnect()
             self.client = None
 
@@ -611,7 +758,9 @@ class ClickHouseVectorDB:
         query = f"SELECT COUNT(*) FROM {table_name} WHERE id IN ({ids_sql})"
         return self.client.execute(query)
 
-    def get_random_examples(self, doc_ids: list[str], table_name: str, limit: int) -> list:
+    def get_random_examples(
+        self, doc_ids: list[str], table_name: str, limit: int
+    ) -> list:
         """
         Get random examples from the table for a specific doc_id.
 
@@ -654,30 +803,45 @@ class ClickHouseVectorDB:
             List of IDs for the newly inserted vectors
         """
         if len(vectors) != len(metadata_list):
-            raise ValueError("Number of vectors must match number of metadata dictionaries")
+            raise ValueError(
+                "Number of vectors must match number of metadata dictionaries"
+            )
 
         # Generate IDs for all vectors
         new_ids = [str(uuid.uuid4()) for _ in range(len(vectors))]
 
         # Sanitize all metadata and keys
-        sanitized_metadata_list = [sanitize_metadata(metadata) for metadata in metadata_list]
+        sanitized_metadata_list = [
+            sanitize_metadata(metadata) for metadata in metadata_list
+        ]
         unique_keys = sanitize_keys(unique_keys)
         if exclude_keys:
             exclude_keys = sanitize_keys(exclude_keys)
 
         # Build the update query to mark existing entries as deleted
-        update_query = f"ALTER TABLE {table_name} UPDATE deleted = 1 WHERE deleted = 0 AND "
+        update_query = (
+            f"ALTER TABLE {table_name} UPDATE deleted = 1 WHERE deleted = 0 AND "
+        )
 
         # For bulk operations, we need to handle the uniqueness check differently
         # We'll create a condition that checks if any of the new entries would match
         metadata_filter = []
         for unique_key in unique_keys:
             # Get all unique values for this key across all metadata dictionaries
-            unique_values = {metadata[unique_key] for metadata in sanitized_metadata_list if unique_key in metadata}
+            unique_values = {
+                metadata[unique_key]
+                for metadata in sanitized_metadata_list
+                if unique_key in metadata
+            }
 
             # Create a condition that checks if any of these values match
-            value_conditions = [f"metadata.value[indexOf(metadata.key, '{unique_key}')] = '{value}'" for value in unique_values]
-            metadata_filter.append(f"has(metadata.key, '{unique_key}') AND ({' OR '.join(value_conditions)})")
+            value_conditions = [
+                f"metadata.value[indexOf(metadata.key, '{unique_key}')] = '{value}'"
+                for value in unique_values
+            ]
+            metadata_filter.append(
+                f"has(metadata.key, '{unique_key}') AND ({' OR '.join(value_conditions)})"
+            )
 
         if exclude_keys:
             for exclude_key in exclude_keys:
@@ -698,10 +862,14 @@ class ClickHouseVectorDB:
 
         # Prepare the data for bulk insert
         insert_data = []
-        for i, (vector, metadata) in enumerate(zip(vectors, sanitized_metadata_list, strict=False)):
+        for i, (vector, metadata) in enumerate(
+            zip(vectors, sanitized_metadata_list, strict=False)
+        ):
             metadata_keys = list(metadata.keys())
             metadata_values = list(metadata.values())
-            insert_data.append((new_ids[i], eval_id, vector, metadata_keys, metadata_values))
+            insert_data.append(
+                (new_ids[i], eval_id, vector, metadata_keys, metadata_values)
+            )
 
         # Execute the bulk insert
         start_time = datetime.now()

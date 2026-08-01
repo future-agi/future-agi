@@ -37,7 +37,7 @@ def _task(
     evals=(),
     sampling_rate=100.0,
     run_type=RunType.HISTORICAL,
-    spans_limit=1_000_000,
+    spans_limit=100_000,
     filters=None,
 ):
     task = EvalTask.objects.create(

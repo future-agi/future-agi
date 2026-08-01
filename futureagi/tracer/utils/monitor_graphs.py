@@ -4,41 +4,56 @@ from datetime import datetime as dt_datetime
 from datetime import timedelta
 
 import structlog
-from django.db.models import (
-    Avg,
-    Case,
-    Count,
-    DateTimeField,
-    ExpressionWrapper,
-    F,
-    FloatField,
-    Func,
-    IntegerField,
-    Q,
-    Sum,
-    Value,
-    When,
-)
-from django.db.models.functions import Extract
 from django.utils import timezone
 
-logger = structlog.get_logger(__name__)
-from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
+from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.monitor import (
     ComparisonOperatorChoices,
     MonitorMetricTypeChoices,
     ThresholdCalculationMethodChoices,
 )
-from tracer.models.observation_span import EvalLogger, ObservationSpan
-from tracer.services.clickhouse.query_builders.monitor_metrics import (
-    MonitorMetricsQueryBuilder,
-)
-from tracer.services.clickhouse.query_service import AnalyticsQueryService, QueryType
-from tracer.utils.eval_tasks import parsing_monitor_filters
+from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.clickhouse.read_budget import is_read_budget_error
+
+logger = structlog.get_logger(__name__)
+
+_MONITOR_GRAPH_CH_TIMEOUT_MS = 750
+# Returning an empty graph is safer than presenting a partial aggregation as
+# complete, so all ClickHouse overflow modes throw into the fail-closed path.
+_MONITOR_GRAPH_CH_SETTINGS = {
+    "timeout_overflow_mode": "throw",
+    "max_threads": 2,
+    "max_memory_usage": 268_435_456,
+    "max_bytes_to_read": 1_073_741_824,
+    "read_overflow_mode": "throw",
+    "max_result_rows": 2000,
+    "result_overflow_mode": "throw",
+}
+
+
+def _degraded_graph_response(exc, *, include_alert_bar=False):
+    """Return an explicit, safe failure state instead of false no-data."""
+    result = {
+        "graph_data": [],
+        "query_complete": False,
+        "query_status": "degraded",
+        "query_error_code": (
+            "read_budget_exceeded" if is_read_budget_error(exc) else "query_failed"
+        ),
+    }
+    if include_alert_bar:
+        result["alert_bar_data"] = []
+    return result
 
 
 def _build_monitor_graph_ch_builder(monitor):
     """Construct a MonitorMetricsQueryBuilder from a monitor instance."""
+    project_id = getattr(monitor, "project_id", None)
+    if not project_id:
+        # Do not turn a legacy NULL project into the invalid UUID literal
+        # "None". Graph callers already fail closed to an empty series.
+        raise ValueError("Monitor has no project scope")
+
     eval_config_id = None
     eval_output_type = None
     if (
@@ -52,12 +67,15 @@ def _build_monitor_graph_ch_builder(monitor):
         except CustomEvalConfig.DoesNotExist:
             pass
 
-    # v1↔v2 dispatch — flips with CH25_QUERY_TYPES_V2_PRIMARY=MONITOR_METRICS
-    from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
+    from tracer.services.clickhouse.v2.query_builders.monitor_metrics import (
+        MonitorMetricsQueryBuilderV2,
+    )
 
-    BuilderCls = get_query_builder_class("MONITOR_METRICS")
-    return BuilderCls(
-        project_id=str(monitor.project_id),
+    # This CH path is authoritative for the CH25 spans store; routing through
+    # the opt-in V1/V2 flag leaves production on the legacy timestamp/compiler
+    # when the flag is absent.
+    return MonitorMetricsQueryBuilderV2(
+        project_id=str(project_id),
         filters=monitor.filters,
         eval_config_id=eval_config_id,
         eval_output_type=eval_output_type,
@@ -82,29 +100,20 @@ def _format_ch_time_series(data):
     return result
 
 
-# Helper class to use PostgreSQL's to_timestamp function in the ORM.
-class ToTimestamp(Func):
-    function = "TO_TIMESTAMP"
-    output_field = DateTimeField()
-
-
-def _apply_time_window_filter(queryset, start_time=None, end_time=None):
-    """Applies time window filters to a queryset based on the created_at field."""
-    if start_time:
-        queryset = queryset.filter(created_at__gte=start_time)
-    if end_time:
-        queryset = queryset.filter(created_at__lte=end_time)
-    return queryset
-
-
-def _get_frequency_seconds(monitor):
-    """Returns the frequency in seconds for a given monitor."""
+def _get_frequency_seconds(monitor, start_time=None, end_time=None):
+    """Return a bucket width that keeps ClickHouse graph results bounded."""
     if monitor.metric_type == MonitorMetricTypeChoices.DAILY_TOKENS_SPENT:
         frequency_seconds = 24 * 60 * 60  # 1 day
     elif monitor.metric_type == MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT:
         frequency_seconds = 30 * 24 * 60 * 60  # 30 days
     else:
-        frequency_seconds = monitor.alert_frequency * 60
+        frequency_seconds = max(int(monitor.alert_frequency or 1) * 60, 60)
+
+    if start_time is not None and end_time is not None:
+        window_seconds = max((end_time - start_time).total_seconds(), 0)
+        minimum_minutes = max(1, math.ceil(window_seconds / (1000 * 60)))
+        frequency_seconds = max(frequency_seconds, minimum_minutes * 60)
+
     return frequency_seconds
 
 
@@ -141,12 +150,11 @@ def get_static_metric_graph_data(monitor, time_window_start=None, time_window_en
     # --- ClickHouse dispatch ---
     analytics = AnalyticsQueryService()
     try:
-        frequency_seconds = _get_frequency_seconds(monitor)
-        if not frequency_seconds:
-            return []
-
         effective_end = time_window_end or timezone.now()
         effective_start = time_window_start or (effective_end - timedelta(days=7))
+        frequency_seconds = _get_frequency_seconds(
+            monitor, effective_start, effective_end
+        )
 
         builder = _build_monitor_graph_ch_builder(monitor)
         query, params = builder.build_time_series_query(
@@ -155,304 +163,20 @@ def get_static_metric_graph_data(monitor, time_window_start=None, time_window_en
             effective_end,
             frequency_seconds,
         )
-        result = analytics.execute_ch_query(query, params, timeout_ms=10000)
+        result = analytics.execute_ch_query(
+            query,
+            params,
+            timeout_ms=_MONITOR_GRAPH_CH_TIMEOUT_MS,
+            settings=_MONITOR_GRAPH_CH_SETTINGS,
+        )
         return _format_ch_time_series(result.data)
     except Exception as e:
         logger.warning(
-            "CH static graph data failed, falling back to PG",
-            error=str(e),
+            "CH static graph query failed; returning degraded result",
+            error_type=type(e).__name__,
             monitor_id=str(monitor.id),
         )
-
-    # --- PostgreSQL fallback ---
-    # CH25-TODO(blocked-on-reader-extension): the CH primary branch above
-    # uses MonitorMetricsQueryBuilder.build_time_series_query which fully
-    # supports span_attributes_filters (via FilterEngine v2),
-    # status-stratified Count/Avg(Case), and group-by-session/provider
-    # error-free rates. The new time_bucket_aggregate reader from
-    # 46153d310 only accepts observation_type as a filter; it cannot
-    # consume the full parsing_evaltask_filters Q-object that
-    # monitor.filters produces nor emit the status / group-stratified
-    # columns this graph path needs. Fallback intentionally left as ORM
-    # for resilience; remove only when time_bucket_aggregate_with_filters
-    # + group_by_*_window helpers exist on CHSpanReader.
-    try:
-        metric_type = monitor.metric_type
-
-        frequency_seconds = _get_frequency_seconds(monitor)
-
-        if not frequency_seconds:
-            logger.warning(
-                f"Monitor {monitor.id} has no alert_frequency. Cannot generate graph."
-            )
-            return []
-
-        # Handle evaluation metrics separately as they use a different model
-        if metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS:
-            return _get_eval_metric_graph_data(
-                monitor, time_window_start, time_window_end, frequency_seconds
-            )
-
-        # Handle group-based error-free rate metrics separately
-        if metric_type in [
-            MonitorMetricTypeChoices.ERROR_FREE_SESSION_RATES,
-            MonitorMetricTypeChoices.SERVICE_PROVIDER_ERROR_RATES,
-        ]:
-            return _get_group_error_free_rate_data(
-                monitor, time_window_start, time_window_end, frequency_seconds
-            )
-
-        filters = parsing_monitor_filters(monitor.filters)
-
-        base_queryset = ObservationSpan.objects.filter(project=monitor.project)
-
-        base_queryset = _apply_time_window_filter(
-            base_queryset, time_window_start, time_window_end
-        )
-        base_queryset = base_queryset.filter(filters)
-
-        bucket_annotation = ToTimestamp(F("epoch") - (F("epoch") % frequency_seconds))
-        queryset = base_queryset.annotate(
-            epoch=Extract("created_at", "epoch")
-        ).annotate(timestamp=bucket_annotation)
-
-        # Get the correct aggregation expression for the metric type
-        aggregation, queryset = _get_aggregation_expression(metric_type, queryset)
-
-        if aggregation is None:
-            logger.warning(f"Graphing for metric type {metric_type} is not supported.")
-            return []
-
-        # Group by the calculated timestamp bucket and apply the aggregation
-        graph_queryset = (
-            queryset.values("timestamp")
-            .annotate(value=aggregation)
-            .values("timestamp", "value")
-            .order_by("timestamp")
-        )
-
-        result = [
-            {
-                "timestamp": item["timestamp"].isoformat(),
-                "value": item["value"] if item["value"] is not None else 0,
-            }
-            for item in graph_queryset
-        ]
-
-        return result
-
-    except Exception as e:
-        logger.error(f"Error generating graph data: {e}", exc_info=True)
-        return []
-
-
-def _get_aggregation_expression(metric_type, queryset):
-    """Returns the correct Django ORM aggregation expression for a given metric type."""
-    if metric_type in [
-        MonitorMetricTypeChoices.TOKEN_USAGE,
-        MonitorMetricTypeChoices.DAILY_TOKENS_SPENT,
-        MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT,
-    ]:
-        return Sum("total_tokens"), queryset
-
-    if metric_type == MonitorMetricTypeChoices.COUNT_OF_ERRORS:
-        return Count("id", filter=Q(status="ERROR")), queryset
-
-    if metric_type in [
-        MonitorMetricTypeChoices.SPAN_RESPONSE_TIME,
-        MonitorMetricTypeChoices.LLM_RESPONSE_TIME,
-    ]:
-        if metric_type == MonitorMetricTypeChoices.LLM_RESPONSE_TIME:
-            queryset = queryset.filter(observation_type="llm")
-        return Avg("latency_ms"), queryset
-
-    rate_aggregation = Avg(
-        Case(
-            When(status="ERROR", then=Value(1.0)),
-            default=Value(0.0),
-            output_field=FloatField(),
-        )
-    )
-
-    if metric_type in [
-        MonitorMetricTypeChoices.ERROR_RATES_FOR_FUNCTION_CALLING,
-        MonitorMetricTypeChoices.LLM_API_FAILURE_RATES,
-    ]:
-        obs_type = (
-            "tool"
-            if metric_type == MonitorMetricTypeChoices.ERROR_RATES_FOR_FUNCTION_CALLING
-            else "llm"
-        )
-        queryset = queryset.filter(observation_type=obs_type)
-        return rate_aggregation, queryset
-
-    return None, queryset
-
-
-def _get_eval_metric_graph_data(
-    monitor, time_window_start=None, time_window_end=None, frequency_seconds=None
-):
-    """Handles graph data generation for evaluation metrics."""
-    try:
-        custom_eval_config = CustomEvalConfig.objects.get(id=monitor.metric)
-        eval_output_type = custom_eval_config.eval_template.config.get("output")
-    except CustomEvalConfig.DoesNotExist:
-        logger.error(
-            f"CustomEvalConfig {monitor.metric} not found for monitor {monitor.id}"
-        )
-        return []
-
-    filters = parsing_monitor_filters(monitor.filters)
-
-    # CH25-TODO(PG-fallback / Django-subquery-shape): this is the PG
-    # fallback for evaluation-metric monitor graphs. The CH primary path
-    # at L142 routes through MonitorMetricsQueryBuilder which already
-    # reads the CH-side tracer_eval_logger CDC table (EVAL_TABLE) for
-    # eval-metric time series (see monitor_metrics.py:48, 677). This
-    # ORM path uses Django subquery shape `observation_span__in=
-    # ObservationSpan.objects.filter(filters)` against EvalLogger; the
-    # inner subquery isn't naturally replaceable by `time_bucket_
-    # aggregate` since the downstream aggregation is on EvalLogger
-    # output_float / output_bool, not span columns. Defer.
-    base_queryset = EvalLogger.objects.filter(
-        custom_eval_config=custom_eval_config,
-        target_type="span",
-        observation_span__in=ObservationSpan.objects.filter(filters),
-    )
-
-    base_queryset = _apply_time_window_filter(
-        base_queryset, time_window_start, time_window_end
-    )
-
-    aggregation = None
-    if eval_output_type == EvalOutputType.SCORE:
-        aggregation = Avg("output_float")
-    elif eval_output_type == EvalOutputType.PASS_FAIL:
-        output_bool = monitor.threshold_metric_value == "Passed"
-        aggregation = Avg(
-            Case(
-                When(output_bool=output_bool, then=Value(1.0)),
-                default=Value(0.0),
-                output_field=FloatField(),
-            )
-        )
-    elif eval_output_type == EvalOutputType.CHOICES:
-        choice = monitor.threshold_metric_value
-        if not choice:
-            return []
-        aggregation = Avg(
-            Case(
-                When(output_str_list__contains=[choice], then=Value(1.0)),
-                default=Value(0.0),
-                output_field=FloatField(),
-            )
-        )
-
-    if not aggregation:
-        return []
-
-    bucket_annotation = ToTimestamp(F("epoch") - (F("epoch") % frequency_seconds))
-    queryset = base_queryset.annotate(epoch=Extract("created_at", "epoch")).annotate(
-        timestamp=bucket_annotation
-    )
-
-    graph_queryset = (
-        queryset.values("timestamp")
-        .annotate(value=aggregation)
-        .values("timestamp", "value")
-        .order_by("timestamp")
-    )
-
-    result = [
-        {
-            "timestamp": item["timestamp"].isoformat(),
-            "value": item["value"] if item["value"] is not None else 0,
-        }
-        for item in graph_queryset
-    ]
-
-    return result
-
-
-def _get_group_error_free_rate_data(
-    monitor, time_window_start=None, time_window_end=None, frequency_seconds=None
-):
-    """Handles graph data generation for group-based error-free rate metrics.
-
-    CH25-TODO(blocked-on-reader-extension): bucket + group_by(session OR
-    provider) + per-bucket error_count + ratio derivation. Needs
-    group_by_session_window / group_by_provider_window readers that emit
-    `{bucket, session_id|provider, total, error_count}` rows. PG fallback
-    stays as ORM until the CH primary path covers all branches.
-    """
-    metric_type = monitor.metric_type
-    filters = parsing_monitor_filters(monitor.filters)
-
-    # Build the base queryset with optional time filtering
-    base_queryset = ObservationSpan.objects.filter(project=monitor.project)
-
-    base_queryset = _apply_time_window_filter(
-        base_queryset, time_window_start, time_window_end
-    )
-
-    base_queryset = base_queryset.filter(filters)
-
-    # Filter based on metric type
-    if metric_type == MonitorMetricTypeChoices.ERROR_FREE_SESSION_RATES:
-        base_queryset = base_queryset.exclude(trace__session__isnull=True)
-        group_field = "trace__session"
-    elif metric_type == MonitorMetricTypeChoices.SERVICE_PROVIDER_ERROR_RATES:
-        base_queryset = base_queryset.exclude(provider__isnull=True)
-        group_field = "provider"
-    else:
-        return []
-
-    # Add timestamp buckets
-    bucket_annotation = ToTimestamp(F("epoch") - (F("epoch") % frequency_seconds))
-    queryset = base_queryset.annotate(epoch=Extract("created_at", "epoch")).annotate(
-        timestamp=bucket_annotation
-    )
-
-    # Single query to calculate error-free rate per timestamp
-    timestamp_stats = (
-        queryset.values("timestamp", group_field)
-        .annotate(
-            has_error=Case(
-                When(status="ERROR", then=Value(1)),
-                default=Value(0),
-                output_field=IntegerField(),
-            )
-        )
-        .values("timestamp")
-        .annotate(
-            total_groups=Count(group_field, distinct=True),
-            error_free_groups=Count(group_field, distinct=True, filter=Q(has_error=0)),
-        )
-        .annotate(
-            error_free_rate=Case(
-                When(total_groups=0, then=Value(0.0)),
-                default=ExpressionWrapper(
-                    F("error_free_groups") * 1.0 / F("total_groups"),
-                    output_field=FloatField(),
-                ),
-            )
-        )
-        .values("timestamp", "error_free_rate")
-        .order_by("timestamp")
-    )
-
-    # Format the result to match expected structure
-    result = [
-        {
-            "timestamp": item["timestamp"].isoformat(),
-            "value": (
-                item["error_free_rate"] if item["error_free_rate"] is not None else 0
-            ),
-        }
-        for item in timestamp_stats
-    ]
-
-    return result
+        return _degraded_graph_response(e)
 
 
 def _calculate_std_dev(data):
@@ -463,197 +187,6 @@ def _calculate_std_dev(data):
     mean = sum(data) / n
     variance = sum((x - mean) ** 2 for x in data) / (n - 1)
     return math.sqrt(variance)
-
-
-def _get_eval_metric_buckets(
-    monitor, extended_start, time_window_end, bucket_annotation, filters
-):
-    """Handles bucket creation for EVALUATION_METRICS.
-
-    CH25-TODO(PG-fallback / Django-subquery-shape): same pattern as
-    _get_eval_metric_graph_data above. CH already has the
-    tracer_eval_logger CDC table (see schema.py:258) and
-    MonitorMetricsQueryBuilder reads it on the CH primary path —
-    EvalLogger is not "stuck in PG". The blocker is the Django subquery
-    inside EvalLogger.objects.filter(observation_span__in=...) which
-    can't be replaced by a CH bucket aggregate without rewriting the
-    surrounding EvalLogger aggregation. Defer.
-    """
-    try:
-        custom_eval_config = CustomEvalConfig.objects.get(id=monitor.metric)
-        eval_output_type = custom_eval_config.eval_template.config.get("output")
-    except CustomEvalConfig.DoesNotExist:
-        logger.error(
-            f"CustomEvalConfig {monitor.metric} not found for monitor {monitor.id}"
-        )
-        return None
-
-    base_queryset = EvalLogger.objects.filter(
-        custom_eval_config=custom_eval_config,
-        target_type="span",
-        observation_span__in=ObservationSpan.objects.filter(filters),
-    )
-    base_queryset = _apply_time_window_filter(
-        base_queryset, extended_start, time_window_end
-    )
-
-    aggregation = None
-    if eval_output_type == EvalOutputType.SCORE:
-        aggregation = Avg("output_float")
-    elif eval_output_type == EvalOutputType.PASS_FAIL:
-        output_bool = monitor.threshold_metric_value == "Passed"
-        aggregation = Avg(
-            Case(
-                When(output_bool=output_bool, then=Value(1.0)),
-                default=Value(0.0),
-                output_field=FloatField(),
-            )
-        )
-    elif eval_output_type == EvalOutputType.CHOICES:
-        choice = monitor.threshold_metric_value
-        if not choice:
-            return None
-        aggregation = Avg(
-            Case(
-                When(output_str_list__contains=[choice], then=Value(1.0)),
-                default=Value(0.0),
-                output_field=FloatField(),
-            )
-        )
-
-    if not aggregation:
-        return None
-
-    bucket_queryset = (
-        base_queryset.annotate(epoch=Extract("created_at", "epoch"))
-        .annotate(timestamp=bucket_annotation)
-        .values("timestamp")
-        .annotate(value=aggregation)
-        .order_by("timestamp")
-    )
-    return list(bucket_queryset)
-
-
-def _get_group_error_rate_buckets(
-    monitor, extended_start, time_window_end, bucket_annotation, filters
-):
-    """Handles bucket creation for group-based error rate metrics.
-
-    CH25-TODO(blocked-on-reader-extension): same shape as
-    _get_group_error_free_rate_data above. Needs group_by_session_window /
-    group_by_provider_window readers that emit per-bucket per-group
-    {total, error_count} pairs.
-    """
-    metric_type = monitor.metric_type
-    base_queryset = ObservationSpan.objects.filter(project=monitor.project)
-    base_queryset = _apply_time_window_filter(
-        base_queryset, extended_start, time_window_end
-    )
-    base_queryset = base_queryset.filter(filters)
-
-    if metric_type == MonitorMetricTypeChoices.ERROR_FREE_SESSION_RATES:
-        base_queryset = base_queryset.exclude(trace__session__isnull=True)
-        group_field = "trace__session"
-    elif metric_type == MonitorMetricTypeChoices.SERVICE_PROVIDER_ERROR_RATES:
-        base_queryset = base_queryset.exclude(provider__isnull=True)
-        group_field = "provider"
-    else:
-        return None
-
-    queryset = base_queryset.annotate(epoch=Extract("created_at", "epoch")).annotate(
-        timestamp=bucket_annotation
-    )
-
-    timestamp_stats = (
-        queryset.values("timestamp", group_field)
-        .annotate(
-            has_error=Case(
-                When(status="ERROR", then=Value(1)),
-                default=Value(0),
-                output_field=IntegerField(),
-            )
-        )
-        .values("timestamp")
-        .annotate(
-            total_groups=Count(group_field, distinct=True),
-            error_free_groups=Count(group_field, distinct=True, filter=Q(has_error=0)),
-        )
-        .annotate(
-            value=Case(
-                When(total_groups=0, then=Value(0.0)),
-                default=ExpressionWrapper(
-                    F("error_free_groups") * 1.0 / F("total_groups"),
-                    output_field=FloatField(),
-                ),
-            )
-        )
-        .values("timestamp", "value")
-        .order_by("timestamp")
-    )
-
-    return list(timestamp_stats)
-
-
-def _get_default_observation_span_buckets(
-    monitor, extended_start, time_window_end, bucket_annotation, filters
-):
-    """Handles bucket creation for default ObservationSpan metrics.
-
-    CH25-TODO(blocked-on-reader-extension): _get_aggregation_expression
-    below selects between Sum("total_tokens"), Count("id", filter=Q(
-    status="ERROR")), Avg("latency_ms"), and Avg(Case(...status=ERROR...))
-    based on metric_type. time_bucket_aggregate covers the Sum/Avg
-    branches but not the status-stratified Count(filter=Q) or the
-    Avg(Case) error-rate branch. Defer until the reader emits
-    `error_count` alongside `span_count`.
-    """
-    metric_type = monitor.metric_type
-    base_queryset = ObservationSpan.objects.filter(project=monitor.project)
-    base_queryset = _apply_time_window_filter(
-        base_queryset, extended_start, time_window_end
-    )
-    base_queryset = base_queryset.filter(filters)
-
-    aggregation, queryset = _get_aggregation_expression(metric_type, base_queryset)
-
-    if aggregation is None:
-        logger.warning(f"Graphing for metric type {metric_type} is not supported.")
-        return None
-
-    bucket_queryset = (
-        queryset.annotate(epoch=Extract("created_at", "epoch"))
-        .annotate(timestamp=bucket_annotation)
-        .values("timestamp")
-        .annotate(value=aggregation)
-        .order_by("timestamp")
-    )
-    return list(bucket_queryset)
-
-
-def _get_buckets_for_percentage_change(
-    monitor, extended_start, time_window_end, frequency_seconds, filters
-):
-    """Fetches and aggregates data into time buckets for percentage change analysis."""
-    metric_type = monitor.metric_type
-    bucket_annotation = ToTimestamp(F("epoch") - (F("epoch") % frequency_seconds))
-
-    if metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS:
-        return _get_eval_metric_buckets(
-            monitor, extended_start, time_window_end, bucket_annotation, filters
-        )
-
-    elif metric_type in [
-        MonitorMetricTypeChoices.ERROR_FREE_SESSION_RATES,
-        MonitorMetricTypeChoices.SERVICE_PROVIDER_ERROR_RATES,
-    ]:
-        return _get_group_error_rate_buckets(
-            monitor, extended_start, time_window_end, bucket_annotation, filters
-        )
-
-    else:
-        return _get_default_observation_span_buckets(
-            monitor, extended_start, time_window_end, bucket_annotation, filters
-        )
 
 
 def _process_percentage_change_buckets(
@@ -752,10 +285,6 @@ def get_percentage_change_metric_graph_data(
     # --- ClickHouse dispatch ---
     analytics = AnalyticsQueryService()
     try:
-        frequency_seconds = _get_frequency_seconds(monitor)
-        if not frequency_seconds:
-            return {"graph_data": [], "alert_bar_data": []}
-
         auto_threshold_time_window = timedelta(
             minutes=monitor.auto_threshold_time_window
         )
@@ -764,15 +293,24 @@ def get_percentage_change_metric_graph_data(
         extended_start = None
         if time_window_start:
             extended_start = time_window_start - auto_threshold_time_window
+        effective_start = extended_start or (effective_end - timedelta(days=30))
+        frequency_seconds = _get_frequency_seconds(
+            monitor, effective_start, effective_end
+        )
 
         builder = _build_monitor_graph_ch_builder(monitor)
         query, params = builder.build_time_series_query(
             monitor.metric_type,
-            extended_start or (effective_end - timedelta(days=30)),
+            effective_start,
             effective_end,
             frequency_seconds,
         )
-        result = analytics.execute_ch_query(query, params, timeout_ms=10000)
+        result = analytics.execute_ch_query(
+            query,
+            params,
+            timeout_ms=_MONITOR_GRAPH_CH_TIMEOUT_MS,
+            settings=_MONITOR_GRAPH_CH_SETTINGS,
+        )
 
         # Convert CH results to bucket format expected by _process_percentage_change_buckets
         all_buckets = []
@@ -802,49 +340,11 @@ def get_percentage_change_metric_graph_data(
         )
     except Exception as e:
         logger.warning(
-            "CH percentage change graph data failed, falling back to PG",
-            error=str(e),
+            "CH percentage change graph query failed; returning degraded result",
+            error_type=type(e).__name__,
             monitor_id=str(monitor.id),
         )
-
-    # --- PostgreSQL fallback ---
-    try:
-        frequency_seconds = _get_frequency_seconds(monitor)
-        if not frequency_seconds:
-            logger.warning(
-                f"Monitor {monitor.id} has no alert_frequency. Cannot generate graph."
-            )
-            return {"graph_data": [], "alert_bar_data": []}
-
-        auto_threshold_time_window = timedelta(
-            minutes=monitor.auto_threshold_time_window
-        )
-        filters = parsing_monitor_filters(monitor.filters)
-
-        # Extend time window backwards for historical data
-        extended_start = None
-        if time_window_start:
-            extended_start = time_window_start - auto_threshold_time_window
-
-        all_buckets = _get_buckets_for_percentage_change(
-            monitor, extended_start, time_window_end, frequency_seconds, filters
-        )
-
-        if all_buckets is None:
-            return {"graph_data": [], "alert_bar_data": []}
-
-        frequency_delta = timedelta(seconds=frequency_seconds)
-
-        return _process_percentage_change_buckets(
-            all_buckets,
-            monitor,
-            time_window_start,
-            frequency_delta,
-            auto_threshold_time_window,
-        )
-    except Exception as e:
-        logger.error(f"Error generating graph data: {e}", exc_info=True)
-        return {"graph_data": [], "alert_bar_data": []}
+        return _degraded_graph_response(e, include_alert_bar=True)
 
 
 def _compare(value, op, threshold):
@@ -854,17 +354,6 @@ def _compare(value, op, threshold):
     if op == ComparisonOperatorChoices.LESS_THAN:
         return value < threshold
     return False
-
-
-class Coalesce(Func):
-    """Helper to use COALESCE function in Django ORM."""
-
-    function = "COALESCE"
-
-    def __init__(self, *expressions, **extra):
-        if len(expressions) < 2:
-            raise ValueError("Coalesce must take at least two expressions")
-        super().__init__(*expressions, **extra)
 
 
 def _ensure_timezone_aware(dt):

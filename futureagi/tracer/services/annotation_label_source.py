@@ -87,6 +87,53 @@ class AnnotationLabelScoresProjectPG:
             if lid
         ]
 
+    def annotator_ids_for_projects(self, project_ids: list[str]) -> list[str]:
+        """Return a bounded distinct annotator set from the indexed PG scope."""
+        if not project_ids:
+            return []
+
+        from django.db.models import Q
+
+        from model_hub.models.score import Score
+
+        rows = (
+            Score.no_workspace_objects.filter(
+                Q(trace_id__isnull=False) | Q(observation_span_id__isnull=False),
+                tracer_project_id__in=project_ids,
+                annotator_id__isnull=False,
+            )
+            .order_by()
+            .values_list("annotator_id", flat=True)
+            .distinct()[:500]
+        )
+        return [str(annotator_id) for annotator_id in rows if annotator_id]
+
+    def categorical_values_for_label(
+        self, label_id, project_ids: list[str]
+    ) -> list[object]:
+        """Return only the newest bounded score payloads for one label.
+
+        ``(tracer_project_id, label)`` is indexed, so this avoids the two
+        all-history ``spans`` membership scans used by the legacy CH reader.
+        """
+        if not project_ids:
+            return []
+
+        from django.db.models import Q
+
+        from model_hub.models.score import Score
+
+        rows = (
+            Score.no_workspace_objects.filter(
+                Q(trace_id__isnull=False) | Q(observation_span_id__isnull=False),
+                tracer_project_id__in=project_ids,
+                label_id=label_id,
+            )
+            .order_by("-updated_at")
+            .values_list("value", flat=True)[:500]
+        )
+        return [value for value in rows if value not in (None, "")]
+
 
 class AnnotationLabelScoresCH:
     """label ids + filter-value reads over ``model_hub_score``, scoped by ``spans``.

@@ -18,11 +18,9 @@ and ``call_execution``.
 
 ClickHouse migration status:
 
-  Each resolver mirrors its grid's list view by instantiating the SAME v2
-  ``query_builders`` list builder (``TraceListQueryBuilder`` /
-  ``VoiceCallListQueryBuilder`` / ``SpanListQueryBuilder`` /
-  ``SessionListQueryBuilder``) through the ``ClickHouseFilterBuilder`` translator,
-  so filter semantics match the grid exactly.
+  Each resolver mirrors its grid's list view through the same v2 query builders
+  (or, for the bounded trace resolver, their ``ClickHouseFilterBuilder``), so
+  filter semantics match the grid exactly.
 
   - trace, voice, span, session: ClickHouse ONLY. No PG tracer-table read — rows
     come only from CH. When the payload sends no time bound, an all-history
@@ -39,8 +37,11 @@ ClickHouse migration status:
 
 from __future__ import annotations
 
+import re
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from uuid import UUID
 
 import structlog
@@ -73,7 +74,49 @@ class ResolveResult:
     truncated: bool
 
 
+class BulkSelectionIncomplete(RuntimeError):
+    """A bounded ClickHouse read could not prove the requested source set."""
+
+
+class BulkTraceSelectionIncomplete(BulkSelectionIncomplete):
+    """The bounded ClickHouse read could not prove the requested trace set."""
+
+
 _USER_SCOPED_COLUMN_IDS = {"my_annotations", "annotator"}
+
+_BULK_TRACE_MAX_CAP = 10_000
+_BULK_TRACE_TOTAL_READ_MS = 5_000
+_BULK_TRACE_FAST_ATTEMPT_MS = 250
+_BULK_TRACE_QUERY_MAX_MS = 750
+_BULK_TRACE_MIN_QUERY_MS = 25
+_BULK_TRACE_CANDIDATE_BATCH = 1_000
+_BULK_TRACE_MIN_SLICE = timedelta(minutes=1)
+_BULK_TRACE_INITIAL_SLICE = timedelta(minutes=5)
+_BULK_TRACE_MAX_SLICE = timedelta(days=7)
+_BULK_TRACE_MAX_FUTURE_SKEW = timedelta(minutes=5)
+_BULK_TRACE_INCOMPLETE_MESSAGE = (
+    "Could not prove the complete trace selection within the read budget. "
+    "Narrow the time range or filters and retry."
+)
+_BULK_SPAN_INCOMPLETE_MESSAGE = (
+    "Could not prove the complete span selection within the read budget. "
+    "Narrow the time range or filters and retry."
+)
+_BULK_SESSION_INCOMPLETE_MESSAGE = (
+    "Could not prove the complete session selection within the read budget. "
+    "Narrow the time range or filters and retry."
+)
+_BULK_TRACE_READ_SETTINGS = {
+    "timeout_overflow_mode": "throw",
+    "max_threads": 2,
+    "max_memory_usage": 256 * 1024 * 1024,
+    "max_bytes_to_read": 1024 * 1024 * 1024,
+    "max_rows_to_read": 10_000_000,
+    "read_overflow_mode": "throw",
+    "result_overflow_mode": "throw",
+    "use_skip_indexes_if_final": 1,
+    "optimize_use_projections": 1,
+}
 
 
 def _filter_column_id(filter_item: dict) -> str:
@@ -139,39 +182,40 @@ def _resolve_voice_call_ids_clickhouse(
 ) -> ResolveResult:
     """Resolve voice-call trace IDs via ClickHouse, mirroring ``list_voice_calls``.
 
-    Uses ``VoiceCallListQueryBuilder`` so filter semantics — SPAN_ATTRIBUTE
-    filters translated through ``ClickHouseFilterBuilder``, voice system
-    metrics, simulator exclusion — match the voice grid exactly.
+    Voice calls use the trace resolver's bounded candidate-scoped filter path,
+    with an explicit root ``conversation`` predicate. This preserves the voice
+    grid's filter compiler semantics without running the wide
+    ``VoiceCallListQueryBuilderV2.build()`` query that repeatedly scanned
+    all-history Map membership subqueries. Exclusions and simulator candidates
+    are removed before refill, under the trace resolver's single read deadline.
 
     ClickHouse is the sole backend for voice-call rows (the PG tracer tables
     are being dropped), so a ClickHouse failure propagates rather than silently
     resolving to a partial/empty set.
     """
-    from tracer.services.clickhouse.query_builders import VoiceCallListQueryBuilder
-    from tracer.services.clickhouse.query_service import AnalyticsQueryService
+    candidate_post_filter = None
+    if remove_simulation_calls:
 
-    analytics = AnalyticsQueryService()
-    builder = VoiceCallListQueryBuilder(
-        project_id=str(project_id),
-        page_number=0,
-        page_size=cap,
-        filters=filters or [],
-        annotation_label_ids=annotation_label_ids,
-        remove_simulation_calls=remove_simulation_calls,
-    )
-    # Skip the separate `uniqExact(trace_id)` count query — on large filter
-    # results it was the dominant /preview timeout. ``build()`` already adds
-    # ``LIMIT cap + 1`` (voice_call_list.py:97), so the cap+1 sentinel gives
-    # us "≥ cap" without a second scan.
+        def candidate_post_filter(ids, analytics, timeout_ms, settings):
+            return _filter_out_simulator_calls_ch(
+                ids,
+                project_id,
+                analytics,
+                timeout_ms=timeout_ms,
+                settings=settings,
+            )
+
     try:
-        ids_query, ids_params = builder.build()
-        ids_result = analytics.execute_ch_query(
-            ids_query, ids_params, timeout_ms=15_000
+        result = _resolve_trace_ids_clickhouse(
+            project_id=project_id,
+            filters=list(filters or []),
+            exclude_ids=exclude_ids,
+            cap=cap,
+            annotation_label_ids=annotation_label_ids,
+            candidate_post_filter=candidate_post_filter,
+            root_observation_type="conversation",
         )
     except Exception as exc:
-        # CH is the sole voice backend (PG tracer tables dropped); fail closed.
-        # Breadcrumb for log-based alerting; the re-raise carries the Sentry
-        # error, so this stays WARNING to avoid a duplicate event.
         logger.warning(
             "bulk_selection_resolve_voice_ch_query_failed",
             project_id=str(project_id),
@@ -179,76 +223,85 @@ def _resolve_voice_call_ids_clickhouse(
             error_type=type(exc).__name__,
         )
         raise
-    ids = [str(r.get("trace_id", "")) for r in ids_result.data if r.get("trace_id")]
-    raw_truncated = len(ids) > cap
-
-    # VoiceCallListQueryBuilder's SQL simulation filter is a no-op (the
-    # phone numbers live in the heavy span_attributes_raw blob). The list
-    # view filters in Python after Phase 1b; we do the same here when the
-    # toggle is on.
-    if remove_simulation_calls and ids:
-        ids = _filter_out_simulator_calls_ch(ids, project_id, analytics)
-
-    if exclude_ids:
-        excl = {str(i) for i in exclude_ids}
-        ids = [i for i in ids if i not in excl]
-
-    # Preserve the cap+1 sentinel from before exclusion. If an excluded row
-    # occupied the sentinel slot there may still be more non-excluded rows
-    # just beyond the fetched window, so do not under-report truncation.
-    truncated = raw_truncated or len(ids) > cap
-    ids = ids[:cap]
-    total_matching = len(ids) + (1 if truncated else 0)
-
     logger.info(
-        "bulk_selection_resolve_trace_ch",
+        "bulk_selection_resolve_voice_ch",
         project_id=str(project_id),
         filter_count=len(filters or []),
         exclude_count=len(exclude_ids or set()),
-        total_matching=total_matching,
-        returned=len(ids),
-        truncated=truncated,
+        total_matching=result.total_matching,
+        returned=len(result.ids),
+        truncated=result.truncated,
     )
+    return result
 
-    return ResolveResult(ids=ids, total_matching=total_matching, truncated=truncated)
 
-
-def _filter_out_simulator_calls_ch(trace_ids, project_id, analytics):
+def _filter_out_simulator_calls_ch(
+    trace_ids,
+    project_id,
+    analytics,
+    *,
+    timeout_ms: int = _BULK_TRACE_QUERY_MAX_MS,
+    settings: dict | None = None,
+):
     """Post-filter the given trace_ids to drop VAPI simulator calls.
 
     Mirrors ``_list_voice_calls_clickhouse``'s Python-side simulation
     filter: fetch span_attributes_raw + provider for the root conversation
     span of each trace, then apply ``is_simulator_call``.
     """
-    from tracer.services.clickhouse.query_builders import VoiceCallListQueryBuilder
+    from tracer.services.clickhouse.v2.query_builders.voice_call_list import (
+        VoiceCallListQueryBuilderV2,
+    )
 
     if not trace_ids:
         return trace_ids
 
     import json as _json
 
-    # Get root conversation span IDs and attributes in CH.
+    # Get root conversation span IDs and attributes in CH25. Resolve the
+    # latest version only for the bounded trace-id set and reconstruct the
+    # raw attribute dict from the canonical JSON/typed-map columns.
     query = """
-    SELECT trace_id, id AS span_id, provider, span_attributes_raw
+    SELECT
+        trace_id,
+        id AS span_id,
+        argMax(provider, _version) AS provider,
+        argMax(attributes_extra, _version) AS attributes_extra,
+        argMax(attrs_string, _version) AS attrs_string
     FROM spans
-    WHERE project_id = %(project_id)s AND _peerdb_is_deleted = 0
-      AND (parent_span_id IS NULL OR parent_span_id = '')
-      AND observation_type = 'conversation'
+    PREWHERE project_id = %(project_id)s
       AND trace_id IN %(trace_ids)s
+    WHERE (parent_span_id IS NULL OR parent_span_id = '')
+      AND observation_type = 'conversation'
+    GROUP BY trace_id, id
+    HAVING argMax(is_deleted, _version) = 0
     """
     params = {
         "project_id": str(project_id),
         "trace_ids": tuple(str(t) for t in trace_ids),
     }
-    result = analytics.execute_ch_query(query, params, timeout_ms=15_000)
+    result = analytics.execute_ch_query(
+        query,
+        params,
+        timeout_ms=timeout_ms,
+        settings=settings
+        or {
+            **_BULK_TRACE_READ_SETTINGS,
+            "max_result_rows": max(len(trace_ids), 1),
+        },
+    )
     sim_trace_ids = set()
     for row in result.data:
-        raw = row.get("span_attributes_raw") or "{}"
+        raw = row.get("attributes_extra") or "{}"
         try:
             attrs = _json.loads(raw) if isinstance(raw, str) else (raw or {})
         except (_json.JSONDecodeError, TypeError):
             attrs = {}
-        if VoiceCallListQueryBuilder.is_simulator_call(
+        if not isinstance(attrs, dict):
+            attrs = {}
+        for key, value in (row.get("attrs_string") or {}).items():
+            attrs.setdefault(key, value)
+        if VoiceCallListQueryBuilderV2.is_simulator_call(
             attrs, row.get("provider") or ""
         ):
             sim_trace_ids.add(str(row.get("trace_id", "")))
@@ -262,80 +315,491 @@ def _resolve_trace_ids_clickhouse(
     exclude_ids: set,
     cap: int,
     annotation_label_ids: list[str],
+    candidate_post_filter=None,
+    root_observation_type: str | None = None,
 ) -> ResolveResult:
     """Resolve regular trace IDs via ClickHouse, mirroring ``list_traces_of_session``.
 
-    Uses ``TraceListQueryBuilder`` so filter semantics (especially
-    SPAN_ATTRIBUTE filters translated through ``ClickHouseFilterBuilder``)
-    match the non-voice grid exactly.
+    The old implementation ran one all-history raw root query, then treated
+    ``cap + 1`` *rows* as ``cap + 1`` traces. ReplacingMergeTree versions and
+    multi-root traces could consume that limit, while exclusions applied after
+    the limit could leave matching rows undiscovered.
+
+    This resolver gives the exact whole-window query a 250 ms healthy-path
+    attempt. If that bounded attempt cannot finish, it walks adjacent root-time
+    slices newest-first, resolves unique current root IDs, and applies the same
+    CH25 filter compiler as the trace list to small candidate sets. User
+    exclusions and already-seen candidates are removed before each SQL LIMIT,
+    so neither duplicates nor exclusions consume the selection cap.
 
     ClickHouse is the sole backend for trace rows (the PG tracer tables are
     being dropped), so a ClickHouse failure propagates rather than silently
-    resolving to a partial/empty set.
+    resolving to a partial/empty set. In particular, exhausting the shared read
+    deadline raises :class:`BulkTraceSelectionIncomplete`; the API maps that to
+    its retryable source-store response instead of creating a partial queue.
     """
-    from tracer.services.clickhouse.query_builders.trace_list import (
-        TraceListQueryBuilder,
-    )
+    from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
     from tracer.services.clickhouse.query_service import AnalyticsQueryService
+    from tracer.services.clickhouse.read_budget import (
+        FUTURE_TAIL_PROBE_SETTINGS,
+        FUTURE_TAIL_PROBE_TIMEOUT_MS,
+        build_future_tail_probe,
+        is_read_budget_error,
+    )
+    from tracer.services.clickhouse.v2.query_builders.filters import (
+        ClickHouseFilterBuilderV2,
+    )
+    from tracer.services.clickhouse.v2.query_builders.trace_list import (
+        TraceListQueryBuilderV2,
+    )
+
+    if cap <= 0:
+        return ResolveResult(ids=[], total_matching=0, truncated=False)
+    if cap > _BULK_TRACE_MAX_CAP:
+        raise ValueError(
+            f"Trace selection cap cannot exceed {_BULK_TRACE_MAX_CAP} items."
+        )
 
     analytics = AnalyticsQueryService()
-    builder = TraceListQueryBuilder(
+    requested_start, requested_end = BaseQueryBuilder.parse_time_range(filters or [])
+    if requested_start >= requested_end:
+        return ResolveResult(ids=[], total_matching=0, truncated=False)
+
+    target = cap + 1
+    excluded = {str(value) for value in exclude_ids if value}
+    deadline = time.monotonic() + (_BULK_TRACE_TOTAL_READ_MS / 1000)
+
+    # The task-creation failure reported in production is a canonical-root
+    # ``final_status`` filter. Route only that fully-supported scalar shape to
+    # the no-FINAL latest-state builder. Mixed/unsupported filter shapes keep
+    # the established bounded path below instead of being approximated.
+    scalar_root_builder = TraceListQueryBuilderV2(
         project_id=str(project_id),
-        page_number=0,
-        # Fetch cap+1 as the page size so a >cap result trips the truncation
-        # sentinel below. Unlike the voice builder, the trace ``build()`` LIMIT
-        # is exactly page_size (no internal +1), so request the extra row here.
-        page_size=cap + 1,
-        filters=filters or [],
-        annotation_label_ids=annotation_label_ids,
-        # Phase 1 light columns are all we need — we only want trace_id.
-        columns=["trace_id"],
+        filters=list(filters or []),
     )
-    # Skip the separate count query — the cap+1 page gives the "≥ cap" sentinel
-    # without a second uniqExact scan (the dominant /preview timeout source).
-    # ``build()`` dedups per trace (``LIMIT 1 BY trace_id``) so ``len > cap`` is
-    # an honest distinct-trace count.
+    scalar_root_supported = (
+        any(_filter_column_id(item) == "final_status" for item in filters or [])
+        and scalar_root_builder.supports_latest_root_id_page()
+        and root_observation_type is None
+    )
+
+    def _remaining_timeout_ms(*, maximum: int = _BULK_TRACE_QUERY_MAX_MS) -> int:
+        remaining = int((deadline - time.monotonic()) * 1000)
+        if remaining < _BULK_TRACE_MIN_QUERY_MS:
+            raise BulkTraceSelectionIncomplete(_BULK_TRACE_INCOMPLETE_MESSAGE)
+        return min(maximum, remaining)
+
+    def _settings(result_limit: int) -> dict:
+        return {
+            **_BULK_TRACE_READ_SETTINGS,
+            "max_result_rows": max(int(result_limit), 1),
+        }
+
+    def _finalize_spans_sources(sql: str) -> str:
+        """Make every filter-side spans read observe current RMT state."""
+
+        # ClickHouse places FINAL after an alias (``spans AS sp FINAL``).
+        sql = re.sub(
+            r"\b(FROM|JOIN)\s+spans\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\b"
+            r"(?!\s+FINAL\b)",
+            r"\1 spans AS \2 FINAL",
+            sql,
+            flags=re.IGNORECASE,
+        )
+        return re.sub(
+            r"\b(FROM|JOIN)\s+spans\b(?!\s+(?:AS\b|FINAL\b))",
+            r"\1 spans FINAL",
+            sql,
+            flags=re.IGNORECASE,
+        )
+
+    def _compile_filter(*, candidate_scoped: bool) -> tuple[str, dict]:
+        filter_builder = ClickHouseFilterBuilderV2(
+            table="spans",
+            annotation_label_ids=annotation_label_ids,
+            project_id=str(project_id),
+            span_date_scope=True,
+            span_trace_id_scope=candidate_scoped,
+        )
+        where, params = filter_builder.translate(filters or [])
+        return _finalize_spans_sources(where), params
+
+    def _ordered_unique_ids(rows: Iterable[dict]) -> list[str]:
+        unique: list[str] = []
+        seen: set[str] = set()
+        for row in rows:
+            trace_id = str(row.get("trace_id", ""))
+            if not trace_id or trace_id in seen or trace_id in excluded:
+                continue
+            seen.add(trace_id)
+            unique.append(trace_id)
+        return unique
+
+    def _result(ids: list[str], *, truncated: bool) -> ResolveResult:
+        returned = ids[:cap]
+        total_matching = len(returned) + (1 if truncated else 0)
+        logger.info(
+            "bulk_selection_resolve_trace_ch",
+            project_id=str(project_id),
+            filter_count=len(filters or []),
+            exclude_count=len(excluded),
+            total_matching=total_matching,
+            returned=len(returned),
+            truncated=truncated,
+        )
+        return ResolveResult(
+            ids=returned,
+            total_matching=total_matching,
+            truncated=truncated,
+        )
+
+    def _apply_candidate_post_filter(ids: list[str]) -> list[str]:
+        if not ids or candidate_post_filter is None:
+            return ids
+        try:
+            return candidate_post_filter(
+                ids,
+                analytics,
+                _remaining_timeout_ms(),
+                _settings(len(ids)),
+            )
+        except Exception as exc:
+            if not is_read_budget_error(exc):
+                raise
+            raise BulkTraceSelectionIncomplete(_BULK_TRACE_INCOMPLETE_MESSAGE) from None
+
+    fast_where, fast_filter_params = _compile_filter(candidate_scoped=False)
+    fast_filter_fragment = f"AND {fast_where}" if fast_where else ""
+    fast_exclude_fragment = (
+        "AND trace_id NOT IN %(bulk_excluded_trace_ids)s" if excluded else ""
+    )
+    root_observation_fragment = (
+        "AND observation_type = %(bulk_root_observation_type)s"
+        if root_observation_type
+        else ""
+    )
+    if scalar_root_supported:
+        fast_query, fast_params = scalar_root_builder.build_latest_root_id_page(
+            slice_start=requested_start,
+            slice_end=requested_end,
+            limit=target,
+            exclude_trace_ids=excluded,
+            trace_id_desc=True,
+            order_by_recent_minute=False,
+        )
+    else:
+        fast_query = f"""
+        SELECT trace_id
+        FROM spans FINAL
+        PREWHERE project_id = %(project_id)s
+          AND start_time >= %(start_date)s
+          AND start_time < %(end_date)s
+        WHERE is_deleted = 0
+          AND (parent_span_id IS NULL OR parent_span_id = '')
+          {fast_exclude_fragment}
+          {root_observation_fragment}
+          {fast_filter_fragment}
+        GROUP BY trace_id
+        ORDER BY max(start_time) DESC, trace_id DESC
+        LIMIT %(bulk_target)s
+        """
+        fast_params = {
+            "project_id": str(project_id),
+            "start_date": requested_start,
+            "end_date": requested_end,
+            "bulk_target": target,
+            **fast_filter_params,
+        }
+        if excluded:
+            fast_params["bulk_excluded_trace_ids"] = tuple(sorted(excluded))
+        if root_observation_type:
+            fast_params["bulk_root_observation_type"] = root_observation_type
+
+    fast_ids: list[str] = []
+    filtered_fast_ids: list[str] = []
     try:
-        ids_query, ids_params = builder.build()
-        ids_result = analytics.execute_ch_query(
-            ids_query, ids_params, timeout_ms=15_000
+        fast_result = analytics.execute_ch_query(
+            fast_query,
+            fast_params,
+            timeout_ms=_remaining_timeout_ms(maximum=_BULK_TRACE_FAST_ATTEMPT_MS),
+            settings=_settings(target),
         )
     except Exception as exc:
-        # CH is the sole trace backend (PG tracer tables dropped); fail closed.
-        # Breadcrumb for log-based alerting; the re-raise carries the Sentry
-        # error, so this stays WARNING to avoid a duplicate event.
-        logger.warning(
-            "bulk_selection_resolve_trace_ch_query_failed",
+        if not is_read_budget_error(exc):
+            logger.warning(
+                "bulk_selection_resolve_trace_ch_query_failed",
+                project_id=str(project_id),
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            raise
+        logger.info(
+            "bulk_selection_resolve_trace_ch_fast_path_exceeded_budget",
             project_id=str(project_id),
-            error=str(exc),
-            error_type=type(exc).__name__,
         )
-        raise
-    ids = [str(r.get("trace_id", "")) for r in ids_result.data if r.get("trace_id")]
-    raw_truncated = len(ids) > cap
+    else:
+        fast_ids = _ordered_unique_ids(fast_result.data)
+        filtered_fast_ids = _apply_candidate_post_filter(fast_ids)
+        if len(filtered_fast_ids) >= target:
+            return _result(filtered_fast_ids, truncated=True)
+        # GROUP BY guarantees one row per trace. A short result proves that
+        # the complete filtered window (after exclusions) was exhausted.
+        if len(fast_result.data) < target:
+            return _result(filtered_fast_ids, truncated=False)
 
-    if exclude_ids:
-        excl = {str(i) for i in exclude_ids}
-        ids = [i for i in ids if i not in excl]
-
-    # Preserve the cap+1 sentinel from before exclusion. If an excluded row
-    # occupied the sentinel slot there may still be more non-excluded rows
-    # just beyond the fetched window, so do not under-report truncation.
-    truncated = raw_truncated or len(ids) > cap
-    ids = ids[:cap]
-    total_matching = len(ids) + (1 if truncated else 0)
-
-    logger.info(
-        "bulk_selection_resolve_trace_ch",
-        project_id=str(project_id),
-        filter_count=len(filters or []),
-        exclude_count=len(exclude_ids or set()),
-        total_matching=total_matching,
-        returned=len(ids),
-        truncated=truncated,
+    probe_where, probe_filter_params = _compile_filter(candidate_scoped=True)
+    probe_filter_fragment = f"AND {probe_where}" if probe_where else ""
+    # Root-only filters (notably final_status) do not need the two-query
+    # candidate/probe path. Applying them directly to each narrow root slice
+    # lets ClickHouse use the root attribute indexes and avoids scanning every
+    # unmatched trace merely to prove a sub-cap result. Use a candidate probe
+    # only when the shared filter compiler actually emitted its candidate
+    # placeholder; a spans/eval join that cannot consume that scope would cost
+    # the same on every split and belongs on the direct sliced path instead.
+    candidate_probe_needed = (
+        scalar_root_supported or "%(candidate_trace_ids)s" in probe_where
     )
+    slice_filter_fragment = "" if candidate_probe_needed else fast_filter_fragment
+    probe_query = f"""
+    SELECT DISTINCT trace_id
+    FROM spans FINAL
+    PREWHERE project_id = %(project_id)s
+      AND trace_id IN %(candidate_trace_ids)s
+    WHERE is_deleted = 0
+      AND (parent_span_id IS NULL OR parent_span_id = '')
+      AND start_time >= %(start_date)s
+      AND start_time < %(end_date)s
+      {root_observation_fragment}
+      {probe_filter_fragment}
+    ORDER BY trace_id
+    LIMIT %(probe_limit)s
+    """
 
-    return ResolveResult(ids=ids, total_matching=total_matching, truncated=truncated)
+    def _probe_candidates(candidate_ids: list[str]) -> set[str]:
+        if not candidate_ids:
+            return set()
+        if not probe_where and not scalar_root_supported:
+            return set(candidate_ids)
+
+        if scalar_root_supported:
+            query, params = scalar_root_builder.build_latest_filter_match_query(
+                candidate_ids
+            )
+        else:
+            query = probe_query
+            params = {
+                "project_id": str(project_id),
+                "start_date": requested_start,
+                "end_date": requested_end,
+                "candidate_trace_ids": tuple(candidate_ids),
+                "probe_limit": len(candidate_ids),
+                **probe_filter_params,
+            }
+            if root_observation_type:
+                params["bulk_root_observation_type"] = root_observation_type
+        try:
+            result = analytics.execute_ch_query(
+                query,
+                params,
+                timeout_ms=_remaining_timeout_ms(),
+                settings=_settings(len(candidate_ids)),
+            )
+        except Exception as exc:
+            if not is_read_budget_error(exc):
+                raise
+            # A large IN set can exceed the point-probe budget even though two
+            # smaller disjoint probes finish. Split without changing candidate
+            # order or accepting a partial result.
+            if len(candidate_ids) > 1:
+                midpoint = len(candidate_ids) // 2
+                return _probe_candidates(candidate_ids[:midpoint]) | _probe_candidates(
+                    candidate_ids[midpoint:]
+                )
+            raise BulkTraceSelectionIncomplete(_BULK_TRACE_INCOMPLETE_MESSAGE) from None
+        return set(_ordered_unique_ids(result.data))
+
+    seed_query = f"""
+    SELECT trace_id, max(start_time) AS bulk_order_start_time
+    FROM spans FINAL
+    PREWHERE project_id = %(project_id)s
+      AND start_time >= %(slice_start)s
+      AND start_time < %(slice_end)s
+    WHERE is_deleted = 0
+      AND (parent_span_id IS NULL OR parent_span_id = '')
+      AND trace_id NOT IN %(skip_trace_ids)s
+      {root_observation_fragment}
+      {slice_filter_fragment}
+    GROUP BY trace_id
+    ORDER BY bulk_order_start_time DESC, trace_id DESC
+    LIMIT %(candidate_limit)s
+    """
+
+    # A voice-only post-filter (simulator exclusion) can reject candidates
+    # returned by the whole-window attempt. Retain its accepted canonical
+    # prefix and skip every candidate already classified when fallback slices
+    # refill the result. The normal trace path has no post-filter and retains
+    # its existing empty fallback state.
+    matched_ids: list[str] = (
+        filtered_fast_ids if candidate_post_filter is not None else []
+    )
+    matched_set: set[str] = set(matched_ids)
+    seen_candidates: set[str] = (
+        set(fast_ids) if candidate_post_filter is not None else set()
+    )
+    scan_now = datetime.utcnow()
+    cursor = min(
+        requested_end,
+        scan_now + _BULK_TRACE_MAX_FUTURE_SKEW,
+    )
+    slice_width = _BULK_TRACE_INITIAL_SLICE
+
+    try:
+        if cursor < requested_end:
+            tail_query, tail_params = build_future_tail_probe(
+                start=cursor,
+                end=requested_end,
+                root_only=True,
+                project_id=str(project_id),
+            )
+            try:
+                tail_result = analytics.execute_ch_query(
+                    tail_query,
+                    tail_params,
+                    timeout_ms=_remaining_timeout_ms(
+                        maximum=FUTURE_TAIL_PROBE_TIMEOUT_MS
+                    ),
+                    settings=FUTURE_TAIL_PROBE_SETTINGS,
+                )
+            except Exception:
+                raise BulkTraceSelectionIncomplete(
+                    _BULK_TRACE_INCOMPLETE_MESSAGE
+                ) from None
+            tail_data = getattr(tail_result, "data", None)
+            if not isinstance(tail_data, list) or tail_data:
+                raise BulkTraceSelectionIncomplete(_BULK_TRACE_INCOMPLETE_MESSAGE)
+
+        while cursor > requested_start and len(matched_ids) < target:
+            slice_start = max(requested_start, cursor - slice_width)
+            candidate_limit = min(
+                _BULK_TRACE_CANDIDATE_BATCH,
+                max(target - len(matched_ids), 1),
+            )
+            skip_ids = excluded | seen_candidates
+            seed_params = {
+                "project_id": str(project_id),
+                "slice_start": slice_start,
+                "slice_end": cursor,
+                # Keep the tuple non-empty: clickhouse-driver renders an empty
+                # tuple as ``()``, which is not valid in every CH version.
+                "skip_trace_ids": tuple(sorted(skip_ids)) or ("",),
+                "candidate_limit": candidate_limit,
+                "start_date": requested_start,
+                "end_date": requested_end,
+                **fast_filter_params,
+            }
+            if root_observation_type:
+                seed_params["bulk_root_observation_type"] = root_observation_type
+            query = seed_query
+            if scalar_root_supported:
+                seed_builder = TraceListQueryBuilderV2(
+                    project_id=str(project_id),
+                    filters=[
+                        {
+                            "column_id": "start_time",
+                            "filter_config": {
+                                "col_type": "SYSTEM_METRIC",
+                                "filter_type": "datetime",
+                                "filter_op": "between",
+                                "filter_value": [requested_start, requested_end],
+                            },
+                        }
+                    ],
+                )
+                query, seed_params = seed_builder.build_latest_root_id_page(
+                    slice_start=slice_start,
+                    slice_end=cursor,
+                    limit=candidate_limit,
+                    exclude_trace_ids=skip_ids,
+                    trace_id_desc=True,
+                    order_by_recent_minute=False,
+                )
+            try:
+                seed_result = analytics.execute_ch_query(
+                    query,
+                    seed_params,
+                    timeout_ms=_remaining_timeout_ms(),
+                    settings=_settings(candidate_limit),
+                )
+            except Exception as exc:
+                if not is_read_budget_error(exc):
+                    raise
+                if slice_width > _BULK_TRACE_MIN_SLICE:
+                    slice_width = max(
+                        _BULK_TRACE_MIN_SLICE,
+                        slice_width / 2,
+                    )
+                    continue
+                raise BulkTraceSelectionIncomplete(
+                    _BULK_TRACE_INCOMPLETE_MESSAGE
+                ) from None
+
+            candidate_ids = _ordered_unique_ids(seed_result.data)
+            fresh_candidates = [
+                trace_id
+                for trace_id in candidate_ids
+                if trace_id not in seen_candidates
+            ]
+            seen_candidates.update(fresh_candidates)
+
+            matching = (
+                _probe_candidates(fresh_candidates)
+                if candidate_probe_needed
+                else set(fresh_candidates)
+            )
+            ordered_matching = [
+                trace_id for trace_id in fresh_candidates if trace_id in matching
+            ]
+            accepted_matching = set(_apply_candidate_post_filter(ordered_matching))
+            for trace_id in fresh_candidates:
+                if trace_id in accepted_matching and trace_id not in matched_set:
+                    matched_set.add(trace_id)
+                    matched_ids.append(trace_id)
+                    if len(matched_ids) >= target:
+                        return _result(matched_ids, truncated=True)
+
+            # A short grouped result proves this exact slice is exhausted.
+            # Move to its adjacent predecessor; widen empty/sparse intervals
+            # geometrically so all-history low-volume selections do not issue
+            # one query for every five-minute gap.
+            if len(seed_result.data) < candidate_limit:
+                cursor = slice_start
+                if len(fresh_candidates) < max(candidate_limit // 4, 1):
+                    slice_width = min(slice_width * 2, _BULK_TRACE_MAX_SLICE)
+                else:
+                    slice_width = _BULK_TRACE_INITIAL_SLICE
+            elif not fresh_candidates:
+                # Defensive: GROUP BY should prevent this. Failing closed
+                # avoids looping forever if a driver or future query rewrite
+                # violates the unique-row contract.
+                raise BulkTraceSelectionIncomplete(_BULK_TRACE_INCOMPLETE_MESSAGE)
+    except Exception as exc:
+        if not isinstance(exc, BulkTraceSelectionIncomplete):
+            logger.warning(
+                "bulk_selection_resolve_trace_ch_query_failed",
+                project_id=str(project_id),
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+        else:
+            logger.warning(
+                "bulk_selection_resolve_trace_ch_incomplete",
+                project_id=str(project_id),
+            )
+        raise
+
+    if cursor <= requested_start:
+        return _result(matched_ids, truncated=False)
+    raise BulkTraceSelectionIncomplete(_BULK_TRACE_INCOMPLETE_MESSAGE)
 
 
 def resolve_filtered_trace_ids(
@@ -476,62 +940,258 @@ def _resolve_span_ids_clickhouse(
     dropped), so a ClickHouse failure propagates rather than silently resolving
     to a partial/empty set.
     """
+    from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
     from tracer.services.clickhouse.query_service import AnalyticsQueryService
+    from tracer.services.clickhouse.read_budget import (
+        FUTURE_TAIL_PROBE_SETTINGS,
+        FUTURE_TAIL_PROBE_TIMEOUT_MS,
+        build_future_tail_probe,
+        is_read_budget_error,
+    )
     from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
+
+    if cap <= 0:
+        return ResolveResult(ids=[], total_matching=0, truncated=False)
+    if cap > _BULK_TRACE_MAX_CAP:
+        raise ValueError(
+            f"Span selection cap cannot exceed {_BULK_TRACE_MAX_CAP} items."
+        )
 
     ch_filters = list(filters or [])
     if not _has_explicit_time_filter(ch_filters):
         ch_filters.append(_all_history_time_filter())
 
     BuilderCls = get_query_builder_class("SPAN_LIST")  # noqa: N806
-    builder = BuilderCls(
+    requested_start, requested_end = BaseQueryBuilder.parse_time_range(ch_filters)
+    if requested_start >= requested_end:
+        return ResolveResult(ids=[], total_matching=0, truncated=False)
+
+    analytics = AnalyticsQueryService()
+    target = cap + 1
+    excluded = {str(value) for value in exclude_ids if value}
+    deadline = time.monotonic() + (_BULK_TRACE_TOTAL_READ_MS / 1000)
+    scalar_span_builder = BuilderCls(
         project_id=str(project_id),
         filters=ch_filters,
         annotation_label_ids=annotation_label_ids,
     )
-    # build_id_query(limit=cap+1) gives the LIMIT cap+1 truncation sentinel
-    # without a separate COUNT scan (same trick as the trace/voice/session CH
-    # paths).
-    try:
-        query, params = builder.build_id_query(limit=cap + 1)
-        result = AnalyticsQueryService().execute_ch_query(
-            query, params, timeout_ms=15_000
+    scalar_span_supported = (
+        any(_filter_column_id(item) == "final_status" for item in ch_filters)
+        and scalar_span_builder.supports_latest_attribute_page()
+    )
+
+    def _remaining_timeout_ms(*, maximum: int = _BULK_TRACE_QUERY_MAX_MS) -> int:
+        remaining = int((deadline - time.monotonic()) * 1000)
+        if remaining < _BULK_TRACE_MIN_QUERY_MS:
+            raise BulkSelectionIncomplete(_BULK_SPAN_INCOMPLETE_MESSAGE)
+        return min(maximum, remaining)
+
+    def _settings(result_limit: int) -> dict:
+        return {
+            **_BULK_TRACE_READ_SETTINGS,
+            "max_result_rows": max(int(result_limit), 1),
+        }
+
+    def _exclusion_filter(skip_ids: set[str]) -> dict:
+        return {
+            "column_id": "span_id",
+            "filter_config": {
+                "col_type": "SYSTEM_METRIC",
+                "filter_type": "text",
+                "filter_op": "not_in",
+                "filter_value": sorted(skip_ids),
+            },
+        }
+
+    def _query_ids(
+        *,
+        skip_ids: set[str],
+        limit: int,
+        timeout_max: int = _BULK_TRACE_QUERY_MAX_MS,
+        slice_bounds: tuple[datetime, datetime] | None = None,
+    ) -> tuple[list[str], int]:
+        if scalar_span_supported:
+            scalar_start, scalar_end = slice_bounds or (
+                requested_start,
+                requested_end,
+            )
+            query, params = scalar_span_builder.build_latest_attribute_id_page(
+                slice_start=scalar_start,
+                slice_end=scalar_end,
+                limit=limit,
+                exclude_span_ids=skip_ids,
+            )
+        else:
+            builder = BuilderCls(
+                project_id=str(project_id),
+                filters=[*ch_filters, _exclusion_filter(skip_ids)],
+                annotation_label_ids=annotation_label_ids,
+            )
+            query, params = builder.build_id_query(
+                # Keep the saved whole-window params in annotation/eval membership
+                # subqueries. A fallback slice is an additional outer span-time
+                # predicate, not a replacement UI time filter.
+                limit=None if slice_bounds is not None else limit,
+                order_by_recent_minute=True,
+                latest_state=True,
+            )
+            if slice_bounds is not None:
+                params = {
+                    **params,
+                    "bulk_slice_start": slice_bounds[0],
+                    "bulk_slice_end": slice_bounds[1],
+                    "bulk_slice_limit": limit,
+                }
+                slice_clause = """
+                  AND start_time >= %(bulk_slice_start)s
+                  AND start_time < %(bulk_slice_end)s
+                ORDER BY toStartOfMinute(start_time) DESC, id
+                LIMIT %(bulk_slice_limit)s
+                """
+                head, marker, tail = query.rpartition("\nSETTINGS ")
+                if marker:
+                    query = f"{head.rstrip()}{slice_clause}\nSETTINGS {tail}"
+                else:
+                    query = f"{query.rstrip()}{slice_clause}"
+        result = analytics.execute_ch_query(
+            query,
+            params,
+            timeout_ms=_remaining_timeout_ms(maximum=timeout_max),
+            settings=_settings(limit),
         )
-    except Exception as exc:
-        # CH is the sole span backend (PG tracer tables dropped); fail closed.
-        # Breadcrumb the outage for log-based alerting — the re-raise carries the
-        # Sentry error, so this stays WARNING to avoid a duplicate event.
-        logger.warning(
-            "bulk_selection_resolve_span_ch_query_failed",
+        unique: list[str] = []
+        seen: set[str] = set()
+        for row in result.data:
+            span_id = str(row.get("id", ""))
+            if not span_id or span_id in seen or span_id in skip_ids:
+                continue
+            seen.add(span_id)
+            unique.append(span_id)
+        return unique, len(result.data)
+
+    def _result(ids: list[str], *, truncated: bool) -> ResolveResult:
+        returned = ids[:cap]
+        total_matching = len(returned) + (1 if truncated else 0)
+        logger.info(
+            "bulk_selection_resolve_span_ch",
             project_id=str(project_id),
-            error=str(exc),
+            filter_count=len(filters or []),
+            exclude_count=len(excluded),
+            total_matching=total_matching,
+            returned=len(returned),
+            truncated=truncated,
+        )
+        return ResolveResult(
+            ids=returned,
+            total_matching=total_matching,
+            truncated=truncated,
+        )
+
+    try:
+        try:
+            fast_ids, fast_raw_count = _query_ids(
+                skip_ids=excluded,
+                limit=target,
+                timeout_max=_BULK_TRACE_FAST_ATTEMPT_MS,
+            )
+        except Exception as exc:
+            if not is_read_budget_error(exc):
+                raise
+        else:
+            if len(fast_ids) >= target:
+                return _result(fast_ids, truncated=True)
+            if fast_raw_count < target:
+                return _result(fast_ids, truncated=False)
+
+        selected: list[str] = []
+        selected_set: set[str] = set()
+        seen_candidates: set[str] = set()
+        cursor = min(
+            requested_end,
+            datetime.utcnow() + _BULK_TRACE_MAX_FUTURE_SKEW,
+        )
+        slice_width = _BULK_TRACE_INITIAL_SLICE
+
+        if cursor < requested_end:
+            tail_query, tail_params = build_future_tail_probe(
+                start=cursor,
+                end=requested_end,
+                root_only=False,
+                project_id=str(project_id),
+            )
+            try:
+                tail_result = analytics.execute_ch_query(
+                    tail_query,
+                    tail_params,
+                    timeout_ms=_remaining_timeout_ms(
+                        maximum=FUTURE_TAIL_PROBE_TIMEOUT_MS
+                    ),
+                    settings=FUTURE_TAIL_PROBE_SETTINGS,
+                )
+            except Exception:
+                raise BulkSelectionIncomplete(_BULK_SPAN_INCOMPLETE_MESSAGE) from None
+            tail_data = getattr(tail_result, "data", None)
+            if not isinstance(tail_data, list) or tail_data:
+                raise BulkSelectionIncomplete(_BULK_SPAN_INCOMPLETE_MESSAGE)
+
+        while cursor > requested_start and len(selected) < target:
+            slice_start = max(requested_start, cursor - slice_width)
+            candidate_limit = max(target - len(selected), 1)
+            skip_ids = excluded | seen_candidates
+            try:
+                candidate_ids, raw_count = _query_ids(
+                    skip_ids=skip_ids,
+                    limit=candidate_limit,
+                    slice_bounds=(slice_start, cursor),
+                )
+            except Exception as exc:
+                if not is_read_budget_error(exc):
+                    raise
+                if slice_width > _BULK_TRACE_MIN_SLICE:
+                    slice_width = max(
+                        _BULK_TRACE_MIN_SLICE,
+                        slice_width / 2,
+                    )
+                    continue
+                raise BulkSelectionIncomplete(_BULK_SPAN_INCOMPLETE_MESSAGE) from None
+
+            fresh = [
+                span_id for span_id in candidate_ids if span_id not in seen_candidates
+            ]
+            seen_candidates.update(fresh)
+            for span_id in fresh:
+                if span_id in selected_set:
+                    continue
+                selected_set.add(span_id)
+                selected.append(span_id)
+                if len(selected) >= target:
+                    return _result(selected, truncated=True)
+
+            # Exclusions live in the builder predicate, before its LIMIT.
+            # A short result proves this adjacent time slice is exhausted.
+            if raw_count < candidate_limit:
+                cursor = slice_start
+                if len(fresh) < max(candidate_limit // 4, 1):
+                    slice_width = min(slice_width * 2, _BULK_TRACE_MAX_SLICE)
+                else:
+                    slice_width = _BULK_TRACE_INITIAL_SLICE
+            elif not fresh:
+                raise BulkSelectionIncomplete(_BULK_SPAN_INCOMPLETE_MESSAGE)
+
+        if cursor <= requested_start:
+            return _result(selected, truncated=False)
+        raise BulkSelectionIncomplete(_BULK_SPAN_INCOMPLETE_MESSAGE)
+    except Exception as exc:
+        logger.warning(
+            (
+                "bulk_selection_resolve_span_ch_incomplete"
+                if isinstance(exc, BulkSelectionIncomplete)
+                else "bulk_selection_resolve_span_ch_query_failed"
+            ),
+            project_id=str(project_id),
             error_type=type(exc).__name__,
         )
         raise
-
-    ids = [str(r.get("id", "")) for r in result.data if r.get("id")]
-    raw_truncated = len(ids) > cap
-
-    if exclude_ids:
-        excl = {str(i) for i in exclude_ids}
-        ids = [i for i in ids if i not in excl]
-
-    # Preserve the cap+1 sentinel from before exclusion — an excluded row in the
-    # sentinel slot may still hide more non-excluded rows beyond the window.
-    truncated = raw_truncated or len(ids) > cap
-    ids = ids[:cap]
-    total_matching = len(ids) + (1 if truncated else 0)
-
-    logger.info(
-        "bulk_selection_resolve_span_ch",
-        project_id=str(project_id),
-        filter_count=len(filters or []),
-        exclude_count=len(exclude_ids or set()),
-        total_matching=total_matching,
-        returned=len(ids),
-        truncated=truncated,
-    )
-    return ResolveResult(ids=ids, total_matching=total_matching, truncated=truncated)
 
 
 def resolve_filtered_span_ids(
@@ -779,7 +1439,15 @@ def _resolve_session_ids_clickhouse(
     resolving to a partial/empty set.
     """
     from tracer.services.clickhouse.query_service import AnalyticsQueryService
+    from tracer.services.clickhouse.read_budget import is_read_budget_error
     from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
+
+    if cap <= 0:
+        return ResolveResult(ids=[], total_matching=0, truncated=False)
+    if cap > _BULK_TRACE_MAX_CAP:
+        raise ValueError(
+            f"Session selection cap cannot exceed {_BULK_TRACE_MAX_CAP} items."
+        )
 
     BuilderCls = get_query_builder_class("SESSION_LIST")  # noqa: N806
     ch_filters = _prepare_session_ch_filters(
@@ -816,60 +1484,141 @@ def _resolve_session_ids_clickhouse(
         )
 
     analytics = AnalyticsQueryService()
-    # page_size=cap → the builder's LIMIT cap+1 gives the truncation sentinel
-    # without a separate COUNT scan (same trick as the voice/ trace CH paths).
-    # When score filters are present we must over-fetch so the post-PG-intersect
-    # set can still reach the cap — fetch the full page (no extra +k heuristic;
-    # the cap is already the hard ceiling and truncation is reported honestly).
-    builder = BuilderCls(
-        project_id=str(project_id),
-        page_number=0,
-        page_size=cap,
-        filters=ch_filters,
-        sort_params=[],
-    )
-    try:
-        query, params = builder.build()
-        result = analytics.execute_ch_query(query, params, timeout_ms=15_000)
-    except Exception as exc:
-        # CH is the sole session backend (PG aggregate fallback removed); fail
-        # closed. Breadcrumb for log-based alerting; the re-raise carries the
-        # Sentry error, so this stays WARNING to avoid a duplicate event.
-        logger.warning(
-            "bulk_selection_resolve_session_ch_query_failed",
+    target = cap + 1
+    excluded = {str(value) for value in exclude_ids if value}
+    deadline = time.monotonic() + (_BULK_TRACE_TOTAL_READ_MS / 1000)
+
+    def _remaining_timeout_ms() -> int:
+        remaining = int((deadline - time.monotonic()) * 1000)
+        if remaining < _BULK_TRACE_MIN_QUERY_MS:
+            raise BulkSelectionIncomplete(_BULK_SESSION_INCOMPLETE_MESSAGE)
+        return min(_BULK_TRACE_QUERY_MAX_MS, remaining)
+
+    def _finalize_spans_sources(sql: str) -> str:
+        # Current session membership and aggregates must ignore stale/deleted
+        # ReplacingMergeTree versions. Alias placement follows CH syntax:
+        # ``FROM spans AS rs FINAL``.
+        sql = re.sub(
+            r"\b(FROM|JOIN)\s+spans\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\b"
+            r"(?!\s+FINAL\b)",
+            r"\1 spans AS \2 FINAL",
+            sql,
+            flags=re.IGNORECASE,
+        )
+        return re.sub(
+            r"\b(FROM|JOIN)\s+spans\b(?!\s+(?:AS\b|FINAL\b))",
+            r"\1 spans FINAL",
+            sql,
+            flags=re.IGNORECASE,
+        )
+
+    def _session_exclusion_filter(skip_ids: set[str]) -> dict:
+        return {
+            "column_id": "session_id",
+            "filter_config": {
+                "col_type": "SYSTEM_METRIC",
+                "filter_type": "text",
+                "filter_op": "not_in",
+                "filter_value": sorted(skip_ids),
+            },
+        }
+
+    def _query_candidates(*, skip_ids: set[str], limit: int) -> tuple[list[str], int]:
+        builder = BuilderCls(
             project_id=str(project_id),
-            error=str(exc),
+            filters=[*ch_filters, _session_exclusion_filter(skip_ids)],
+            sort_params=[],
+        )
+        query, params = builder.build_id_query(limit=limit)
+        query = _finalize_spans_sources(query)
+        result = analytics.execute_ch_query(
+            query,
+            params,
+            timeout_ms=_remaining_timeout_ms(),
+            settings={
+                **_BULK_TRACE_READ_SETTINGS,
+                "max_result_rows": max(limit, 1),
+            },
+        )
+        unique: list[str] = []
+        seen: set[str] = set()
+        for row in result.data:
+            session_id = str(row.get("session_id", ""))
+            if not session_id or session_id in seen or session_id in skip_ids:
+                continue
+            seen.add(session_id)
+            unique.append(session_id)
+        return unique, len(result.data)
+
+    def _result(ids: list[str], *, truncated: bool) -> ResolveResult:
+        returned = ids[:cap]
+        total_matching = len(returned) + (1 if truncated else 0)
+        logger.info(
+            "bulk_selection_resolve_session_ch",
+            project_id=str(project_id),
+            filter_count=len(non_score_filters or []) + len(score_filters or []),
+            score_filter_count=len(score_filters or []),
+            exclude_count=len(excluded),
+            total_matching=total_matching,
+            returned=len(returned),
+            truncated=truncated,
+        )
+        return ResolveResult(
+            ids=returned,
+            total_matching=total_matching,
+            truncated=truncated,
+        )
+
+    selected: list[str] = []
+    selected_set: set[str] = set()
+    seen_candidates: set[str] = set()
+    try:
+        while len(selected) < target:
+            candidate_limit = max(target - len(selected), 1)
+            candidates, raw_count = _query_candidates(
+                skip_ids=excluded | seen_candidates,
+                limit=candidate_limit,
+            )
+            fresh = [
+                session_id
+                for session_id in candidates
+                if session_id not in seen_candidates
+            ]
+            seen_candidates.update(fresh)
+            surviving = (
+                _apply_session_score_filters_pg(fresh, score_filters)
+                if score_filters
+                else fresh
+            )
+            for session_id in surviving:
+                if session_id in selected_set:
+                    continue
+                selected_set.add(session_id)
+                selected.append(session_id)
+                if len(selected) >= target:
+                    return _result(selected, truncated=True)
+
+            # build_id_query applies the remap-resolved NOT IN before its LIMIT.
+            # A short page therefore proves the complete CH candidate set is
+            # exhausted, including the rows rejected by score filters.
+            if raw_count < candidate_limit:
+                return _result(selected, truncated=False)
+            if not fresh:
+                raise BulkSelectionIncomplete(_BULK_SESSION_INCOMPLETE_MESSAGE)
+            _remaining_timeout_ms()
+    except Exception as exc:
+        if is_read_budget_error(exc):
+            exc = BulkSelectionIncomplete(_BULK_SESSION_INCOMPLETE_MESSAGE)
+        logger.warning(
+            (
+                "bulk_selection_resolve_session_ch_incomplete"
+                if isinstance(exc, BulkSelectionIncomplete)
+                else "bulk_selection_resolve_session_ch_query_failed"
+            ),
+            project_id=str(project_id),
             error_type=type(exc).__name__,
         )
-        raise
-    ids = [
-        str(row.get("session_id", "")) for row in result.data if row.get("session_id")
-    ]
-    raw_truncated = len(ids) > cap
-
-    if score_filters:
-        ids = _apply_session_score_filters_pg(ids, score_filters)
-
-    if exclude_ids:
-        excl = {str(i) for i in exclude_ids}
-        ids = [i for i in ids if i not in excl]
-
-    truncated = raw_truncated or len(ids) > cap
-    ids = ids[:cap]
-    total_matching = len(ids) + (1 if truncated else 0)
-
-    logger.info(
-        "bulk_selection_resolve_session_ch",
-        project_id=str(project_id),
-        filter_count=len(non_score_filters or []) + len(score_filters or []),
-        score_filter_count=len(score_filters or []),
-        exclude_count=len(exclude_ids or set()),
-        total_matching=total_matching,
-        returned=len(ids),
-        truncated=truncated,
-    )
-
-    return ResolveResult(ids=ids, total_matching=total_matching, truncated=truncated)
+        raise exc
 
 
 def resolve_filtered_session_ids(

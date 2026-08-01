@@ -97,6 +97,23 @@ const CATEGORIES = [
     normalize: () => "Usage limit exceeded",
   },
   {
+    id: "rate_limit",
+    // Keep this before api_not_allowed. The billing guard currently raises
+    // `ValueError("API call not allowed : ", "rate_limited")`; matching the
+    // generic API-call prefix first incorrectly tells users to rotate provider
+    // credentials even though authentication was never attempted.
+    match: /rate[\s_-]?limit|\b429\b|too many requests/i,
+    title: "Evaluation rate limit reached",
+    icon: "solar:speedometer-max-linear",
+    severity: "error",
+    hints: () => [
+      "The evaluation request was throttled before it could complete.",
+      "Wait for the rate-limit window to reset, then rerun the failed rows.",
+      "If this keeps happening on a paid plan, contact support with the task ID so the organization limit and task concurrency can be checked.",
+    ],
+    normalize: () => "Evaluation rate limit reached",
+  },
+  {
     id: "api_not_allowed",
     // eval.py:146, 149, 348, 350 — "API call not allowed : ..."
     match: /API call not allowed/i,
@@ -136,21 +153,6 @@ const CATEGORIES = [
       "Open the Details tab, remove the missing eval, add a replacement, and save the task to continue.",
     ],
     normalize: () => "Custom eval config not found",
-  },
-  {
-    id: "rate_limit",
-    match: /rate[\s-]?limit|\b429\b|too many requests/i,
-    title: "Rate-limited by model provider",
-    icon: "solar:speedometer-max-linear",
-    severity: "error",
-    hints: () => [
-      "The evaluator's LLM call was rate-limited by the model provider.",
-      "This is almost always transient — rerun the task in a few minutes.",
-      "If it's happening consistently, check your provider's rate-limit quotas, or switch this eval to a model with higher throughput.",
-    ],
-    // Keep the matched message as-is (minus any trailing identifiers) so
-    // users can see which provider rate-limited them.
-    normalize: (stripped) => stripped.replace(/ req.{0,20}[a-f0-9-]{8,}$/i, ""),
   },
   {
     id: "llm_auth",

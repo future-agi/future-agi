@@ -341,6 +341,57 @@ class TestTraceSessionListAPI:
         )
         assert response.status_code == status.HTTP_200_OK
 
+    def test_list_sessions_marks_read_budget_failure_as_degraded(
+        self, auth_client, observe_project, monkeypatch
+    ):
+        """A timeout is not a valid empty session list."""
+        from clickhouse_driver.errors import ErrorCodes, ServerException
+
+        def fail_clickhouse(self, *args, **kwargs):
+            raise ServerException(
+                "ClickHouse query exceeded execution time",
+                code=ErrorCodes.TIMEOUT_EXCEEDED,
+            )
+
+        monkeypatch.setattr(
+            TraceSessionView,
+            "_list_sessions_clickhouse",
+            fail_clickhouse,
+        )
+
+        response = auth_client.get(
+            "/tracer/trace-session/list_sessions/",
+            {"project_id": str(observe_project.id)},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = get_result(response)
+        assert result["table"] == []
+        assert result["metadata"]["total_rows_is_lower_bound"] is True
+        assert result["metadata"]["query_complete"] is False
+        assert result["metadata"]["query_status"] == "degraded"
+        assert result["metadata"]["query_error_code"] == "read_budget_exceeded"
+
+    def test_list_sessions_does_not_hide_programming_error_as_empty_page(
+        self, auth_client, observe_project, monkeypatch
+    ):
+        """Only bounded-read failures qualify for the degraded 200 contract."""
+
+        def fail_clickhouse(self, *args, **kwargs):
+            raise RuntimeError("session query contract bug")
+
+        monkeypatch.setattr(
+            TraceSessionView,
+            "_list_sessions_clickhouse",
+            fail_clickhouse,
+        )
+
+        with pytest.raises(RuntimeError, match="session query contract bug"):
+            auth_client.get(
+                "/tracer/trace-session/list_sessions/",
+                {"project_id": str(observe_project.id)},
+            )
+
     def test_list_sessions_filter_bookmarked(self, auth_client, observe_project):
         """Filter sessions by bookmarked status."""
         # Create bookmarked session
@@ -399,9 +450,7 @@ class TestTraceSessionExportAPI:
 class TestTraceSessionGraphAPI:
     """Tests for POST /tracer/trace-session/get_session_graph_data/ endpoint."""
 
-    def test_session_filter_uses_clickhouse_graph(
-        self, auth_client, observe_project
-    ):
+    def test_session_filter_uses_clickhouse_graph(self, auth_client, observe_project):
         session_id = "003b76f1-2b4a-4af5-b0dc-224d687374d4"
         analytics = mock.Mock()
         analytics.execute_ch_query.return_value = mock.Mock(data=[], columns=[])
@@ -569,6 +618,53 @@ class TestTraceSessionWorkspaceScopeAPI:
         assert "FROM end_users FINAL" in query
         assert "user_id AS val" in query
 
+    @pytest.mark.parametrize(
+        "column",
+        ["session_id", "user_id", "first_message", "last_message"],
+    )
+    @pytest.mark.parametrize(
+        "needle",
+        ["%", "_", "\\", "O'Reilly", "café東京"],
+    )
+    def test_session_filter_value_search_is_literal(
+        self,
+        auth_client,
+        observe_project,
+        column,
+        needle,
+    ):
+        analytics = mock.Mock()
+        analytics.execute_ch_query.return_value = mock.Mock(data=[])
+
+        with (
+            mock.patch(
+                "tracer.services.clickhouse.query_service.AnalyticsQueryService",
+                return_value=analytics,
+            ),
+            mock.patch(
+                "tracer.services.clickhouse.v2.trace_session_dict_reader."
+                "resolve_session_fields",
+                return_value={},
+            ),
+        ):
+            response = auth_client.get(
+                "/tracer/trace-session/get_session_filter_values/",
+                {
+                    "project_id": str(observe_project.id),
+                    "column": column,
+                    "search": needle,
+                },
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        query = analytics.execute_ch_query.call_args.args[0]
+        params = analytics.execute_ch_query.call_args.args[1]
+        assert "positionUTF8(lowerUTF8(" in query
+        assert "ILIKE" not in query
+        assert params["search"] == needle
+        if needle not in {"%", "_"}:
+            assert needle not in query
+
     def test_session_filter_values_use_external_id_as_label(
         self, auth_client, observe_project
     ):
@@ -630,6 +726,34 @@ class TestTraceSessionWorkspaceScopeAPI:
         assert "trace_session_id_remap" in query
         assert "GROUP BY val_id" in query
         assert "toString(val_id) AS val" in query
+
+    @pytest.mark.parametrize("column", ["session_id", "user_id"])
+    def test_session_filter_values_timeout_is_explicitly_degraded(
+        self, auth_client, observe_project, column
+    ):
+        analytics = mock.Mock()
+        analytics.execute_ch_query.side_effect = TimeoutError(
+            "Code 159 private ClickHouse details"
+        )
+
+        with mock.patch(
+            "tracer.services.clickhouse.query_service.AnalyticsQueryService",
+            return_value=analytics,
+        ):
+            response = auth_client.get(
+                "/tracer/trace-session/get_session_filter_values/",
+                {"project_id": str(observe_project.id), "column": column},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        payload = get_result(response)
+        assert payload == {
+            "values": [],
+            "query_complete": False,
+            "query_status": "degraded",
+            "query_error_code": "read_budget_exceeded",
+        }
+        assert b"private ClickHouse" not in response.content
 
     def test_generic_delete_cascades_session_traces_spans_and_eval_logs(
         self, auth_client, observe_project
@@ -833,8 +957,9 @@ class TestTraceSessionOverlayWritePath:
         bound_session_ids = []
         analytics = mock.Mock()
 
-        def execute_ch_query(query, params, timeout_ms):
+        def execute_ch_query(query, params, timeout_ms, settings=None):
             if "WHERE any_id IN %(ids)s" in query:
+                assert settings["timeout_overflow_mode"] == "throw"
                 return mock.Mock(
                     data=[{"any_id": requested_id, "survivor_id": survivor_id}]
                 )
@@ -887,8 +1012,9 @@ class TestTraceSessionOverlayWritePath:
         captured_span_scan_params = []
         analytics = mock.Mock()
 
-        def execute_ch_query(query, params, timeout_ms):
+        def execute_ch_query(query, params, timeout_ms, settings=None):
             if "WHERE any_id IN %(ids)s" in query:
+                assert settings["timeout_overflow_mode"] == "throw"
                 return mock.Mock(data=[])
             # Session-id canonicalization scan (_expand_session_group): no
             # aliases, so the requested id stands alone.
@@ -1044,18 +1170,21 @@ class TestTraceSessionCHOnlyDestroyPath:
         session_id = uuid.uuid4()
         assert not TraceSession.objects.filter(id=session_id).exists()
 
-        with mock.patch(
-            "tracer.views.trace_session._resolve_ch_session_fields",
-            return_value={
-                "project_id": observe_project.id,
-                "external_session_id": "ext-session-1",
-                "first_seen": timezone.now(),
-                "bookmarked": False,
-                "display_name": None,
-            },
-        ), mock.patch(
-            "tracer.services.clickhouse.v2.curated_writer._get_client"
-        ) as mock_ch_client:
+        with (
+            mock.patch(
+                "tracer.views.trace_session._resolve_ch_session_fields",
+                return_value={
+                    "project_id": observe_project.id,
+                    "external_session_id": "ext-session-1",
+                    "first_seen": timezone.now(),
+                    "bookmarked": False,
+                    "display_name": None,
+                },
+            ),
+            mock.patch(
+                "tracer.services.clickhouse.v2.curated_writer._get_client"
+            ) as mock_ch_client,
+        ):
             mock_ch_client.return_value = mock.Mock()
             response = auth_client.delete(
                 f"/tracer/trace-session/{session_id}/",
@@ -1063,9 +1192,7 @@ class TestTraceSessionCHOnlyDestroyPath:
 
         assert response.status_code == status.HTTP_204_NO_CONTENT
 
-    def test_delete_ch_only_session_removes_overlay(
-        self, auth_client, observe_project
-    ):
+    def test_delete_ch_only_session_removes_overlay(self, auth_client, observe_project):
         session_id = uuid.uuid4()
         TraceSessionOverlay.objects.create(
             trace_session_id=session_id,
@@ -1074,18 +1201,21 @@ class TestTraceSessionCHOnlyDestroyPath:
             display_name="bookmarked-session",
         )
 
-        with mock.patch(
-            "tracer.views.trace_session._resolve_ch_session_fields",
-            return_value={
-                "project_id": observe_project.id,
-                "external_session_id": "ext-session-1",
-                "first_seen": timezone.now(),
-                "bookmarked": True,
-                "display_name": "bookmarked-session",
-            },
-        ), mock.patch(
-            "tracer.services.clickhouse.v2.curated_writer._get_client"
-        ) as mock_ch_client:
+        with (
+            mock.patch(
+                "tracer.views.trace_session._resolve_ch_session_fields",
+                return_value={
+                    "project_id": observe_project.id,
+                    "external_session_id": "ext-session-1",
+                    "first_seen": timezone.now(),
+                    "bookmarked": True,
+                    "display_name": "bookmarked-session",
+                },
+            ),
+            mock.patch(
+                "tracer.services.clickhouse.v2.curated_writer._get_client"
+            ) as mock_ch_client,
+        ):
             mock_ch_client.return_value = mock.Mock()
             response = auth_client.delete(
                 f"/tracer/trace-session/{session_id}/",
@@ -1101,18 +1231,21 @@ class TestTraceSessionCHOnlyDestroyPath:
     ):
         session_id = uuid.uuid4()
 
-        with mock.patch(
-            "tracer.views.trace_session._resolve_ch_session_fields",
-            return_value={
-                "project_id": observe_project.id,
-                "external_session_id": "ext-session-1",
-                "first_seen": timezone.now(),
-                "bookmarked": False,
-                "display_name": None,
-            },
-        ), mock.patch(
-            "tracer.services.clickhouse.v2.curated_writer._get_client"
-        ) as mock_ch_client:
+        with (
+            mock.patch(
+                "tracer.views.trace_session._resolve_ch_session_fields",
+                return_value={
+                    "project_id": observe_project.id,
+                    "external_session_id": "ext-session-1",
+                    "first_seen": timezone.now(),
+                    "bookmarked": False,
+                    "display_name": None,
+                },
+            ),
+            mock.patch(
+                "tracer.services.clickhouse.v2.curated_writer._get_client"
+            ) as mock_ch_client,
+        ):
             ch_client = mock.Mock()
             mock_ch_client.return_value = ch_client
             auth_client.delete(f"/tracer/trace-session/{session_id}/")
@@ -1233,17 +1366,19 @@ class TestTraceSessionUserIdFilterValidation:
     def test_contains_op_rejected(self, auth_client, observe_project):
         import json
 
-        filters = json.dumps([
-            {
-                "column_id": "user_id",
-                "filter_config": {
-                    "col_type": "SYSTEM_METRIC",
-                    "filter_type": "text",
-                    "filter_op": "contains",
-                    "filter_value": "alice",
-                },
-            }
-        ])
+        filters = json.dumps(
+            [
+                {
+                    "column_id": "user_id",
+                    "filter_config": {
+                        "col_type": "SYSTEM_METRIC",
+                        "filter_type": "text",
+                        "filter_op": "contains",
+                        "filter_value": "alice",
+                    },
+                }
+            ]
+        )
         response = auth_client.get(
             "/tracer/trace-session/list_sessions/",
             {"project_id": str(observe_project.id), "filters": filters},
@@ -1253,17 +1388,19 @@ class TestTraceSessionUserIdFilterValidation:
     def test_starts_with_op_rejected(self, auth_client, observe_project):
         import json
 
-        filters = json.dumps([
-            {
-                "column_id": "user_id",
-                "filter_config": {
-                    "col_type": "SYSTEM_METRIC",
-                    "filter_type": "text",
-                    "filter_op": "starts_with",
-                    "filter_value": "ali",
-                },
-            }
-        ])
+        filters = json.dumps(
+            [
+                {
+                    "column_id": "user_id",
+                    "filter_config": {
+                        "col_type": "SYSTEM_METRIC",
+                        "filter_type": "text",
+                        "filter_op": "starts_with",
+                        "filter_value": "ali",
+                    },
+                }
+            ]
+        )
         response = auth_client.get(
             "/tracer/trace-session/list_sessions/",
             {"project_id": str(observe_project.id), "filters": filters},
@@ -1273,17 +1410,19 @@ class TestTraceSessionUserIdFilterValidation:
     def test_equals_op_accepted(self, auth_client, observe_project):
         import json
 
-        filters = json.dumps([
-            {
-                "column_id": "user_id",
-                "filter_config": {
-                    "col_type": "SYSTEM_METRIC",
-                    "filter_type": "text",
-                    "filter_op": "equals",
-                    "filter_value": "alice",
-                },
-            }
-        ])
+        filters = json.dumps(
+            [
+                {
+                    "column_id": "user_id",
+                    "filter_config": {
+                        "col_type": "SYSTEM_METRIC",
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "alice",
+                    },
+                }
+            ]
+        )
         with mock.patch(
             "tracer.views.trace_session._resolve_end_user_ids_for_user_id",
             return_value=([], None),
@@ -1339,7 +1478,11 @@ class TestSessionListLatency:
             {},
         )
         if rows:
-            return rows[0][0] if isinstance(rows[0], (list, tuple)) else rows[0].get("project_id")
+            return (
+                rows[0][0]
+                if isinstance(rows[0], (list, tuple))
+                else rows[0].get("project_id")
+            )
         return None
 
     @pytest.fixture(autouse=True)
@@ -1365,22 +1508,33 @@ class TestSessionListLatency:
             "AND (parent_span_id IS NULL OR parent_span_id = '')",
             {"pid": self.project_id},
         )
-        row_count = rows[0][0] if rows and isinstance(rows[0], (list, tuple)) else (rows[0].get("count()", 0) if rows else 0)
+        row_count = (
+            rows[0][0]
+            if rows and isinstance(rows[0], (list, tuple))
+            else (rows[0].get("count()", 0) if rows else 0)
+        )
 
         eu_rows, _, _ = client.execute_read(
             "SELECT count() FROM end_users WHERE project_id = %(pid)s AND is_deleted = 0",
             {"pid": self.project_id},
         )
-        eu_count = eu_rows[0][0] if eu_rows and isinstance(eu_rows[0], (list, tuple)) else (eu_rows[0].get("count()", 0) if eu_rows else 0)
+        eu_count = (
+            eu_rows[0][0]
+            if eu_rows and isinstance(eu_rows[0], (list, tuple))
+            else (eu_rows[0].get("count()", 0) if eu_rows else 0)
+        )
 
         if row_count >= 1000 and eu_count >= 100:
             return
 
-        now = datetime.now(timezone.utc) if hasattr(timezone, 'utc') else datetime.utcnow()
+        now = (
+            datetime.now(timezone.utc)
+            if hasattr(timezone, "utc")
+            else datetime.utcnow()
+        )
         import os
 
         import clickhouse_connect
-
         from django.conf import settings
 
         ch_settings = getattr(settings, "CLICKHOUSE", {})
@@ -1459,7 +1613,9 @@ class TestSessionListLatency:
             "VALUES " + ", ".join(eu_values)
         )
 
-    def _run_session_list_query(self, filters, project_id=None, sort_params=None, page_number=0, page_size=30):
+    def _run_session_list_query(
+        self, filters, project_id=None, sort_params=None, page_number=0, page_size=30
+    ):
         import time
 
         from tracer.services.clickhouse.query_service import AnalyticsQueryService
@@ -1511,15 +1667,24 @@ class TestSessionListLatency:
                 "filter_config": {
                     "filter_type": "datetime",
                     "filter_op": "between",
-                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                    "filter_value": [
+                        "2025-01-01T00:00:00.000Z",
+                        "2026-12-31T23:59:59.000Z",
+                    ],
                 },
             }
         ]
         main_ms, enrich_ms, count = self._run_session_list_query(filters)
         total = main_ms + enrich_ms
-        print(f"\n  [BENCHMARK] project_id + time: main={main_ms:.0f}ms enrich={enrich_ms:.0f}ms total={total:.0f}ms sessions={count}")
-        assert count >= 30, f"Benchmark should find seeded sessions (got {count}, expected >=30)"
-        assert total < 3000, f"Session list with project_id took {total:.0f}ms (threshold: 3000ms)"
+        print(
+            f"\n  [BENCHMARK] project_id + time: main={main_ms:.0f}ms enrich={enrich_ms:.0f}ms total={total:.0f}ms sessions={count}"
+        )
+        assert count >= 30, (
+            f"Benchmark should find seeded sessions (got {count}, expected >=30)"
+        )
+        assert total < 3000, (
+            f"Session list with project_id took {total:.0f}ms (threshold: 3000ms)"
+        )
 
     def test_latency_with_project_id_and_cost_filter(self):
         filters = [
@@ -1528,7 +1693,10 @@ class TestSessionListLatency:
                 "filter_config": {
                     "filter_type": "datetime",
                     "filter_op": "between",
-                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                    "filter_value": [
+                        "2025-01-01T00:00:00.000Z",
+                        "2026-12-31T23:59:59.000Z",
+                    ],
                 },
             },
             {
@@ -1542,8 +1710,12 @@ class TestSessionListLatency:
         ]
         main_ms, enrich_ms, count = self._run_session_list_query(filters)
         total = main_ms + enrich_ms
-        print(f"\n  [BENCHMARK] project_id + time + cost>0: main={main_ms:.0f}ms enrich={enrich_ms:.0f}ms total={total:.0f}ms sessions={count}")
-        assert total < 3000, f"Session list with cost filter took {total:.0f}ms (threshold: 3000ms)"
+        print(
+            f"\n  [BENCHMARK] project_id + time + cost>0: main={main_ms:.0f}ms enrich={enrich_ms:.0f}ms total={total:.0f}ms sessions={count}"
+        )
+        assert total < 3000, (
+            f"Session list with cost filter took {total:.0f}ms (threshold: 3000ms)"
+        )
 
     def test_latency_without_project_id(self):
         filters = [
@@ -1552,14 +1724,23 @@ class TestSessionListLatency:
                 "filter_config": {
                     "filter_type": "datetime",
                     "filter_op": "between",
-                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                    "filter_value": [
+                        "2025-01-01T00:00:00.000Z",
+                        "2026-12-31T23:59:59.000Z",
+                    ],
                 },
             }
         ]
-        main_ms, enrich_ms, count = self._run_session_list_query(filters, project_id=None)
+        main_ms, enrich_ms, count = self._run_session_list_query(
+            filters, project_id=None
+        )
         total = main_ms + enrich_ms
-        print(f"\n  [BENCHMARK] no project_id + time: main={main_ms:.0f}ms enrich={enrich_ms:.0f}ms total={total:.0f}ms sessions={count}")
-        assert total < 3000, f"Session list without project_id took {total:.0f}ms (threshold: 3000ms)"
+        print(
+            f"\n  [BENCHMARK] no project_id + time: main={main_ms:.0f}ms enrich={enrich_ms:.0f}ms total={total:.0f}ms sessions={count}"
+        )
+        assert total < 3000, (
+            f"Session list without project_id took {total:.0f}ms (threshold: 3000ms)"
+        )
 
     def test_latency_with_sort_by_duration(self):
         filters = [
@@ -1568,7 +1749,10 @@ class TestSessionListLatency:
                 "filter_config": {
                     "filter_type": "datetime",
                     "filter_op": "between",
-                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                    "filter_value": [
+                        "2025-01-01T00:00:00.000Z",
+                        "2026-12-31T23:59:59.000Z",
+                    ],
                 },
             }
         ]
@@ -1577,7 +1761,9 @@ class TestSessionListLatency:
         )
         total = main_ms + enrich_ms
         print(f"\n  [BENCHMARK] sort by duration DESC: {total:.0f}ms sessions={count}")
-        assert total < 2000, f"Session list sorted by duration took {total:.0f}ms (threshold: 2000ms)"
+        assert total < 2000, (
+            f"Session list sorted by duration took {total:.0f}ms (threshold: 2000ms)"
+        )
 
     def test_latency_with_tokens_having_filter(self):
         filters = [
@@ -1586,7 +1772,10 @@ class TestSessionListLatency:
                 "filter_config": {
                     "filter_type": "datetime",
                     "filter_op": "between",
-                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                    "filter_value": [
+                        "2025-01-01T00:00:00.000Z",
+                        "2026-12-31T23:59:59.000Z",
+                    ],
                 },
             },
             {
@@ -1600,8 +1789,12 @@ class TestSessionListLatency:
         ]
         main_ms, enrich_ms, count = self._run_session_list_query(filters)
         total = main_ms + enrich_ms
-        print(f"\n  [BENCHMARK] tokens>0 HAVING: main={main_ms:.0f}ms enrich={enrich_ms:.0f}ms total={total:.0f}ms sessions={count}")
-        assert total < 3000, f"Session list with tokens HAVING took {total:.0f}ms (threshold: 3000ms)"
+        print(
+            f"\n  [BENCHMARK] tokens>0 HAVING: main={main_ms:.0f}ms enrich={enrich_ms:.0f}ms total={total:.0f}ms sessions={count}"
+        )
+        assert total < 3000, (
+            f"Session list with tokens HAVING took {total:.0f}ms (threshold: 3000ms)"
+        )
 
     def test_latency_with_traces_count_filter(self):
         filters = [
@@ -1610,7 +1803,10 @@ class TestSessionListLatency:
                 "filter_config": {
                     "filter_type": "datetime",
                     "filter_op": "between",
-                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                    "filter_value": [
+                        "2025-01-01T00:00:00.000Z",
+                        "2026-12-31T23:59:59.000Z",
+                    ],
                 },
             },
             {
@@ -1624,8 +1820,12 @@ class TestSessionListLatency:
         ]
         main_ms, enrich_ms, count = self._run_session_list_query(filters)
         total = main_ms + enrich_ms
-        print(f"\n  [BENCHMARK] traces_count>=1 HAVING: main={main_ms:.0f}ms enrich={enrich_ms:.0f}ms total={total:.0f}ms sessions={count}")
-        assert total < 3000, f"Session list with traces_count HAVING took {total:.0f}ms (threshold: 3000ms)"
+        print(
+            f"\n  [BENCHMARK] traces_count>=1 HAVING: main={main_ms:.0f}ms enrich={enrich_ms:.0f}ms total={total:.0f}ms sessions={count}"
+        )
+        assert total < 3000, (
+            f"Session list with traces_count HAVING took {total:.0f}ms (threshold: 3000ms)"
+        )
 
     def test_latency_sort_by_cost_asc(self):
         filters = [
@@ -1634,7 +1834,10 @@ class TestSessionListLatency:
                 "filter_config": {
                     "filter_type": "datetime",
                     "filter_op": "between",
-                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                    "filter_value": [
+                        "2025-01-01T00:00:00.000Z",
+                        "2026-12-31T23:59:59.000Z",
+                    ],
                 },
             }
         ]
@@ -1643,7 +1846,9 @@ class TestSessionListLatency:
         )
         total = main_ms + enrich_ms
         print(f"\n  [BENCHMARK] sort by cost ASC: {total:.0f}ms sessions={count}")
-        assert total < 2000, f"Session list sorted by cost took {total:.0f}ms (threshold: 2000ms)"
+        assert total < 2000, (
+            f"Session list sorted by cost took {total:.0f}ms (threshold: 2000ms)"
+        )
 
     def test_latency_narrow_time_range_24h(self):
         from datetime import timedelta
@@ -1663,8 +1868,12 @@ class TestSessionListLatency:
         ]
         main_ms, enrich_ms, count = self._run_session_list_query(filters)
         total = main_ms + enrich_ms
-        print(f"\n  [BENCHMARK] 24h window: main={main_ms:.0f}ms enrich={enrich_ms:.0f}ms total={total:.0f}ms sessions={count}")
-        assert total < 1500, f"Session list with 24h window took {total:.0f}ms (threshold: 1500ms)"
+        print(
+            f"\n  [BENCHMARK] 24h window: main={main_ms:.0f}ms enrich={enrich_ms:.0f}ms total={total:.0f}ms sessions={count}"
+        )
+        assert total < 1500, (
+            f"Session list with 24h window took {total:.0f}ms (threshold: 1500ms)"
+        )
 
     def test_latency_combined_filters_and_sort(self):
         filters = [
@@ -1673,7 +1882,10 @@ class TestSessionListLatency:
                 "filter_config": {
                     "filter_type": "datetime",
                     "filter_op": "between",
-                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                    "filter_value": [
+                        "2025-01-01T00:00:00.000Z",
+                        "2026-12-31T23:59:59.000Z",
+                    ],
                 },
             },
             {
@@ -1697,8 +1909,12 @@ class TestSessionListLatency:
             filters, sort_params=[{"column_id": "duration", "direction": "desc"}]
         )
         total = main_ms + enrich_ms
-        print(f"\n  [BENCHMARK] tokens+cost+sort_duration: {total:.0f}ms sessions={count}")
-        assert total < 3000, f"Combined filters + sort took {total:.0f}ms (threshold: 3000ms)"
+        print(
+            f"\n  [BENCHMARK] tokens+cost+sort_duration: {total:.0f}ms sessions={count}"
+        )
+        assert total < 3000, (
+            f"Combined filters + sort took {total:.0f}ms (threshold: 3000ms)"
+        )
 
     def test_latency_page_2(self):
         filters = [
@@ -1707,7 +1923,10 @@ class TestSessionListLatency:
                 "filter_config": {
                     "filter_type": "datetime",
                     "filter_op": "between",
-                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                    "filter_value": [
+                        "2025-01-01T00:00:00.000Z",
+                        "2026-12-31T23:59:59.000Z",
+                    ],
                 },
             }
         ]
@@ -1716,11 +1935,12 @@ class TestSessionListLatency:
         )
         total = main_ms + enrich_ms
         print(f"\n  [BENCHMARK] page 2 (offset 10): {total:.0f}ms sessions={count}")
-        assert total < 2000, f"Session list page 2 took {total:.0f}ms (threshold: 2000ms)"
+        assert total < 2000, (
+            f"Session list page 2 took {total:.0f}ms (threshold: 2000ms)"
+        )
 
 
 class TestUserListLatency:
-
     @staticmethod
     def _ch_available():
         try:
@@ -1750,7 +1970,11 @@ class TestUserListLatency:
             {},
         )
         if rows:
-            return rows[0][0] if isinstance(rows[0], (list, tuple)) else rows[0].get("project_id")
+            return (
+                rows[0][0]
+                if isinstance(rows[0], (list, tuple))
+                else rows[0].get("project_id")
+            )
         return None
 
     @pytest.fixture(autouse=True)
@@ -1793,7 +2017,10 @@ class TestUserListLatency:
                 "filter_config": {
                     "filter_type": "datetime",
                     "filter_op": "between",
-                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                    "filter_value": [
+                        "2025-01-01T00:00:00.000Z",
+                        "2026-12-31T23:59:59.000Z",
+                    ],
                 },
             }
         ]
@@ -1809,7 +2036,10 @@ class TestUserListLatency:
                 "filter_config": {
                     "filter_type": "datetime",
                     "filter_op": "between",
-                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                    "filter_value": [
+                        "2025-01-01T00:00:00.000Z",
+                        "2026-12-31T23:59:59.000Z",
+                    ],
                 },
             }
         ]
@@ -1817,7 +2047,9 @@ class TestUserListLatency:
             filters, sort_params=[{"column_id": "total_cost", "direction": "desc"}]
         )
         print(f"\n  [BENCHMARK] users sort by cost: {ms:.0f}ms users={count}")
-        assert ms < 3000, f"User list sorted by cost took {ms:.0f}ms (threshold: 3000ms)"
+        assert ms < 3000, (
+            f"User list sorted by cost took {ms:.0f}ms (threshold: 3000ms)"
+        )
 
     def test_latency_sort_by_tokens(self):
         filters = [
@@ -1826,7 +2058,10 @@ class TestUserListLatency:
                 "filter_config": {
                     "filter_type": "datetime",
                     "filter_op": "between",
-                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                    "filter_value": [
+                        "2025-01-01T00:00:00.000Z",
+                        "2026-12-31T23:59:59.000Z",
+                    ],
                 },
             }
         ]
@@ -1834,7 +2069,9 @@ class TestUserListLatency:
             filters, sort_params=[{"column_id": "total_tokens", "direction": "desc"}]
         )
         print(f"\n  [BENCHMARK] users sort by tokens: {ms:.0f}ms users={count}")
-        assert ms < 3000, f"User list sorted by tokens took {ms:.0f}ms (threshold: 3000ms)"
+        assert ms < 3000, (
+            f"User list sorted by tokens took {ms:.0f}ms (threshold: 3000ms)"
+        )
 
     def test_latency_sort_by_trace_count(self):
         filters = [
@@ -1843,7 +2080,10 @@ class TestUserListLatency:
                 "filter_config": {
                     "filter_type": "datetime",
                     "filter_op": "between",
-                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                    "filter_value": [
+                        "2025-01-01T00:00:00.000Z",
+                        "2026-12-31T23:59:59.000Z",
+                    ],
                 },
             }
         ]
@@ -1851,7 +2091,9 @@ class TestUserListLatency:
             filters, sort_params=[{"column_id": "trace_count", "direction": "desc"}]
         )
         print(f"\n  [BENCHMARK] users sort by trace_count: {ms:.0f}ms users={count}")
-        assert ms < 3000, f"User list sorted by trace_count took {ms:.0f}ms (threshold: 3000ms)"
+        assert ms < 3000, (
+            f"User list sorted by trace_count took {ms:.0f}ms (threshold: 3000ms)"
+        )
 
     def test_latency_narrow_24h_window(self):
         from datetime import timedelta
@@ -1887,7 +2129,10 @@ class TestUserListLatency:
                 "filter_config": {
                     "filter_type": "datetime",
                     "filter_op": "between",
-                    "filter_value": ["2025-01-01T00:00:00.000Z", "2026-12-31T23:59:59.000Z"],
+                    "filter_value": [
+                        "2025-01-01T00:00:00.000Z",
+                        "2026-12-31T23:59:59.000Z",
+                    ],
                 },
             }
         ]
@@ -1915,7 +2160,10 @@ class TestUserListLatency:
                 "filter_config": {
                     "filter_type": "datetime",
                     "filter_op": "between",
-                    "filter_value": ["2025-12-01T00:00:00.000Z", "2026-06-30T23:59:59.000Z"],
+                    "filter_value": [
+                        "2025-12-01T00:00:00.000Z",
+                        "2026-06-30T23:59:59.000Z",
+                    ],
                 },
             }
         ]

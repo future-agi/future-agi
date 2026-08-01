@@ -166,10 +166,23 @@ class TraceObserveListQuerySerializer(StrictInputSerializer):
         required=False, default=30, min_value=1, max_value=500
     )
     interval = serializers.CharField(required=False, allow_blank=True)
+    preview = serializers.BooleanField(required=False, default=False)
 
 
 class TraceObserveListMetadataSerializer(serializers.Serializer):
     total_rows = serializers.IntegerField()
+    total_rows_is_lower_bound = serializers.BooleanField(required=False)
+    has_more = serializers.BooleanField(required=False)
+    query_complete = serializers.BooleanField(required=False)
+    query_status = serializers.ChoiceField(choices=("degraded",), required=False)
+    query_error_code = serializers.ChoiceField(
+        choices=(
+            "read_budget_exceeded",
+            "query_failed",
+            "unsupported_filter_shape",
+        ),
+        required=False,
+    )
 
 
 class TraceObserveColumnConfigSerializer(serializers.Serializer):

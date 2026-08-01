@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import _ from "lodash";
 import {
+  Alert,
   Box,
   Button,
   Chip,
@@ -40,8 +41,6 @@ import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
 import { red } from "src/theme/palette";
 import {
-  extractAttributeFilters,
-  getTaskFilterApiKey,
   getNewTaskFilters,
   NewTaskValidationSchema,
 } from "../NewTaskDrawer/validation";
@@ -51,6 +50,11 @@ import { getDefaultTaskValues, useGetTaskData } from "../common";
 import TaskConfirmDialog from "./TaskConfirmBox";
 import TaskLogsView from "../TaskLogsView";
 import { EvalPickerDrawer, serializeEvalConfig } from "../../EvalPicker";
+import { buildEvalTaskEditFilters } from "./editTaskFilters";
+import {
+  fetchEvalAttributeList,
+  getEvalAttributeListQueryKey,
+} from "../evalAttributeListRequest";
 
 // ── Configured Eval Card ──
 
@@ -211,17 +215,17 @@ const EditTaskDrawerV2Content = ({
   }, [configuredEvalList, replace]);
 
   // Fetch eval attributes for variable mapping
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", rowType, filters],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          row_type: rowType,
-          filters: JSON.stringify(filters),
-        },
-      }),
-    select: (d) => d.data?.result,
-  });
+  const { data: evalAttributeResponse, isError: evalAttributesRequestFailed } =
+    useQuery({
+      queryKey: getEvalAttributeListQueryKey(project, rowType),
+      queryFn: () => fetchEvalAttributeList(project, rowType),
+      select: (d) => d.data,
+      enabled: !!project,
+    });
+  const evalAttributes = evalAttributeResponse?.result;
+  const evalAttributesDegraded =
+    evalAttributesRequestFailed ||
+    evalAttributeResponse?.query_status === "degraded";
 
   const sourceColumns = useMemo(() => {
     if (!evalAttributes) return [];
@@ -264,42 +268,14 @@ const EditTaskDrawerV2Content = ({
   const onUpdateSubmit = useCallback(
     (editType) => {
       const data = formValues;
-      const attributeFilters = extractAttributeFilters(data?.filters);
-
-      // Task system filter aggregation. Keep the update payload aligned with
-      // the backend-supported task filter contract instead of saving fields
-      // that the dispatcher would ignore.
-      const systemFilters = {};
-      (data.filters || []).forEach((f) => {
-        if (!f?.property || f.property === "attributes") return;
-        const apiKey = getTaskFilterApiKey(f.property);
-        const v = f?.filterConfig?.filterValue;
-        const values = Array.isArray(v)
-          ? v
-          : v !== undefined && v !== null && v !== ""
-            ? [v]
-            : [];
-        if (!values.length) return;
-        if (systemFilters[apiKey]) {
-          systemFilters[apiKey].push(...values);
-        } else {
-          systemFilters[apiKey] = [...values];
-        }
-      });
 
       const transformedData = {
         evals: data.evalsDetails?.map((item) => item.id) || [],
-        filters: {
-          project_id: data.project,
-          date_range: [
-            new Date(startDateField.value).toISOString(),
-            new Date(endDateField.value).toISOString(),
-          ],
-          ...systemFilters,
-          ...(attributeFilters?.length > 0
-            ? { span_attributes_filters: attributeFilters }
-            : {}),
-        },
+        filters: buildEvalTaskEditFilters(
+          data,
+          startDateField.value,
+          endDateField.value,
+        ),
         project_id: data.project,
         name: data.name,
         project: data.project,
@@ -536,6 +512,18 @@ const EditTaskDrawerV2Content = ({
                 />
               )}
 
+              {(evalAttributesRequestFailed ||
+                evalAttributeResponse?.query_complete === false) && (
+                <Alert
+                  severity={evalAttributesDegraded ? "error" : "info"}
+                  data-testid="eval-attribute-query-status"
+                >
+                  {evalAttributesDegraded
+                    ? "Attributes could not be loaded completely. Retry before configuring filters or evaluation mappings."
+                    : "Attributes are from a bounded recent sample; rare attributes may not appear in this list."}
+                </Alert>
+              )}
+
               {/* Filters */}
               <FilterErrorBoundary>
                 <Accordion defaultExpanded>
@@ -577,7 +565,7 @@ const EditTaskDrawerV2Content = ({
                       <Button
                         variant="outlined"
                         size="small"
-                        disabled={!project}
+                        disabled={!project || evalAttributesDegraded}
                         onClick={() => setEvalPickerOpen(true)}
                         startIcon={
                           <Iconify icon="mingcute:add-line" width={16} />
@@ -647,7 +635,7 @@ const EditTaskDrawerV2Content = ({
                   type="submit"
                   variant="contained"
                   color="primary"
-                  disabled={!canEdit}
+                  disabled={!canEdit || evalAttributesDegraded}
                   sx={{ width: "200px" }}
                 >
                   Update Task

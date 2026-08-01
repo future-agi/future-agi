@@ -80,6 +80,7 @@ const TaskDetailPage = () => {
   const [testState, setTestState] = useState({
     canTest: false,
     isTesting: false,
+    isPreviewDegraded: false,
   });
   const handleTestStateChange = useCallback((next) => {
     setTestState(next);
@@ -517,7 +518,7 @@ const TaskDetailPage = () => {
             size="small"
             onClick={handleSave}
             loading={isUpdating}
-            disabled={!canEditTask}
+            disabled={!canEditTask || testState.isPreviewDegraded}
             sx={{ textTransform: "none", fontWeight: 500, minWidth: 140 }}
           >
             Save

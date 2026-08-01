@@ -1,7 +1,7 @@
 import React from "react";
 import PropTypes from "prop-types";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const mocks = vi.hoisted(() => ({ get: vi.fn() }));
@@ -13,7 +13,7 @@ vi.mock("src/utils/axios", () => ({
   },
 }));
 
-import { useEvalUsageChart, useEvalUsageLogs } from "../useEvalUsage";
+import { useEvalUsageLogs } from "../useEvalUsage";
 
 function createQueryWrapper() {
   const queryClient = new QueryClient({
@@ -45,23 +45,32 @@ describe("useEvalUsage date params", () => {
     // query key — the upper bound is floored to the minute, so a fresh-
     // millisecond `new Date()` can't mint a new key and re-fetch forever.
     const wrapper = createQueryWrapper();
-    renderHook(() => useEvalUsageChart("t1", "1d", "Today", null), { wrapper });
+    renderHook(
+      () => useEvalUsageLogs("t1", { period: "1d", dateOption: "Today" }),
+      { wrapper },
+    );
     await waitFor(() => expect(mocks.get).toHaveBeenCalledTimes(1));
 
-    renderHook(() => useEvalUsageChart("t1", "1d", "Today", null), { wrapper });
-    await flush();
+    renderHook(
+      () => useEvalUsageLogs("t1", { period: "1d", dateOption: "Today" }),
+      { wrapper },
+    );
+    await act(flush);
     // Second hook hit the cache under the identical key — still one request.
     expect(mocks.get).toHaveBeenCalledTimes(1);
   });
 
   it("does not fetch for an incomplete Custom range", async () => {
     const wrapper = createQueryWrapper();
-    renderHook(() => useEvalUsageChart("t1", "30d", "Custom", null), { wrapper });
     renderHook(
-      () => useEvalUsageLogs("t1", { dateOption: "Custom", dateFilter: [null, null] }),
+      () =>
+        useEvalUsageLogs("t1", {
+          dateOption: "Custom",
+          dateFilter: [null, null],
+        }),
       { wrapper },
     );
-    await flush();
+    await act(flush);
     expect(mocks.get).not.toHaveBeenCalled();
   });
 
@@ -85,9 +94,16 @@ describe("useEvalUsage date params", () => {
 describe("useEvalUsageLogs response mapping", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("maps result.table → table and result.logs → pagination", async () => {
+  it("maps the complete usage payload with one request", async () => {
     mocks.get.mockResolvedValue({
-      data: { result: { table: [{ row_id: "a" }], logs: { total: 5, page: 0 } } },
+      data: {
+        result: {
+          stats: { total_runs: 5 },
+          chart: [{ timestamp: "2026-01-01T00:00:00Z", calls: 2 }],
+          table: [{ row_id: "a" }],
+          logs: { total: 5, page: 0 },
+        },
+      },
     });
     const wrapper = createQueryWrapper();
     const { result } = renderHook(
@@ -95,6 +111,9 @@ describe("useEvalUsageLogs response mapping", () => {
       { wrapper },
     );
     await waitFor(() => expect(result.current.data).toBeTruthy());
+    expect(mocks.get).toHaveBeenCalledTimes(1);
+    expect(result.current.data.stats).toEqual({ total_runs: 5 });
+    expect(result.current.data.chart).toHaveLength(1);
     expect(result.current.data.table).toHaveLength(1);
     expect(result.current.data.pagination).toEqual({ total: 5, page: 0 });
   });

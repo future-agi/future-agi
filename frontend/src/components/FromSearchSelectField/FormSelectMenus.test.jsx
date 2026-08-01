@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "src/utils/test-utils";
+import { fireEvent, render, screen } from "src/utils/test-utils";
 import FormSelectMenus from "./FormSelectMenus";
 
 const defaultProps = {
@@ -35,5 +35,22 @@ describe("FormSelectMenus", () => {
     // MUI Dialog uses z-index 1300. The dropdown must not exceed it,
     // otherwise it renders above modal dialogs and their backdrops.
     expect(zIndex).toBeLessThanOrEqual(1300);
+  });
+
+  it("offers an explicitly enabled typed value without pretending it was discovered", () => {
+    const onChange = vi.fn();
+    render(
+      <FormSelectMenus
+        {...defaultProps}
+        searchedValue="custom.status"
+        allowCreateFromSearch
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByText('Use "custom.status"'));
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange.mock.calls[0][0].target.value).toBe("custom.status");
   });
 });

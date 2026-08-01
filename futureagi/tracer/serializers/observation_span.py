@@ -55,6 +55,19 @@ class ObservationAttributeListQuerySerializer(serializers.Serializer):
 class ObservationAttributeListResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
     result = serializers.ListField(child=serializers.CharField())
+    # Legacy callers still receive ``result`` as the same flat array. These
+    # optional top-level fields make bounded sampling and failed discovery
+    # distinguishable from an exhaustive healthy result.
+    query_complete = serializers.BooleanField(required=False)
+    query_status = serializers.ChoiceField(
+        choices=["complete", "sampled", "degraded"],
+        required=False,
+    )
+    query_error_code = serializers.ChoiceField(
+        choices=["sample_limit", "read_budget_exceeded", "query_failed"],
+        required=False,
+    )
+    query_sampled = serializers.BooleanField(required=False)
 
 
 class RootSpansQuerySerializer(serializers.Serializer):
@@ -234,6 +247,7 @@ class SpanObserveListQuerySerializer(StrictInputSerializer):
     project_id = serializers.UUIDField(required=False, allow_null=True)
     user_id = serializers.CharField(required=False, allow_blank=True)
     filters = filter_list_query_param_field(required=False, default=list)
+    preview = serializers.BooleanField(required=False, default=False)
     page_number = serializers.IntegerField(required=False, default=0, min_value=0)
     page_size = serializers.IntegerField(
         required=False, default=30, min_value=1, max_value=500

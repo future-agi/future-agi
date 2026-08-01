@@ -1,11 +1,6 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import {
-  startOfDay,
-  endOfDay,
-  startOfMinute,
-  subDays,
-} from "date-fns";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { startOfDay, endOfDay, startOfMinute, subDays } from "date-fns";
 import axios, { endpoints } from "src/utils/axios";
 
 /**
@@ -38,32 +33,9 @@ function getDateParams(dateOption, dateFilter) {
 }
 
 /**
- * Fetch chart + stats for a period. Does NOT depend on page/pageSize.
- */
-export function useEvalUsageChart(templateId, period = "30d", dateOption, dateFilter) {
-  const dateParams = useMemo(
-    () => getDateParams(dateOption, dateFilter),
-    [dateOption, dateFilter],
-  );
-  return useQuery({
-    queryKey: ["evals", "usage-chart", templateId, period, dateParams],
-    queryFn: async () => {
-      const { data } = await axios.get(
-        endpoints.develop.eval.getEvalUsage(templateId),
-        { params: { page: 0, page_size: 1, period, ...dateParams } },
-      );
-      const result = data?.result;
-      return { stats: result?.stats, chart: result?.chart };
-    },
-    enabled:
-      !!templateId &&
-      !(dateOption === "Custom" && !(dateFilter?.[0] && dateFilter?.[1])),
-    staleTime: 30_000, // cache chart for 30s
-  });
-}
-
-/**
- * Fetch paginated logs. Keeps previous data while loading next page.
+ * Fetch the complete usage payload once. The backend response already contains
+ * stats, chart data, and paginated logs, so separate chart/log queries would
+ * repeat the same expensive backend aggregation.
  */
 export function useEvalUsageLogs(
   templateId,
@@ -74,7 +46,15 @@ export function useEvalUsageLogs(
     [dateOption, dateFilter],
   );
   return useQuery({
-    queryKey: ["evals", "usage-logs", templateId, period, page, pageSize, dateParams],
+    queryKey: [
+      "evals",
+      "usage-logs",
+      templateId,
+      period,
+      page,
+      pageSize,
+      dateParams,
+    ],
     queryFn: async () => {
       const { data } = await axios.get(
         endpoints.develop.eval.getEvalUsage(templateId),
@@ -82,6 +62,8 @@ export function useEvalUsageLogs(
       );
       const result = data?.result || {};
       return {
+        stats: result.stats || {},
+        chart: result.chart || [],
         table: result.table || [],
         pagination: result.logs || {},
       };
@@ -89,6 +71,7 @@ export function useEvalUsageLogs(
     enabled:
       !!templateId &&
       !(dateOption === "Custom" && !(dateFilter?.[0] && dateFilter?.[1])),
-    keepPreviousData: true,
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
   });
 }

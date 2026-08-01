@@ -123,16 +123,21 @@ const TotalRowsStatusBar = ({ api }) => {
 
   // Handle edge cases for display
   const getDisplayText = () => {
-    // Cap visibleRange.end to totalCount to prevent showing invalid ranges
-    const end = Math.min(visibleRange.end, totalCount);
+    const isLowerBound = api?.totalRowCountIsLowerBound === true;
+    // Only an exact total may cap the visible range. A proven lower bound can
+    // legitimately be smaller than rows already loaded on a later page.
+    const end = isLowerBound
+      ? visibleRange.end
+      : Math.min(visibleRange.end, totalCount);
+    const totalLabel = `${totalCount.toLocaleString()}${isLowerBound ? "+" : ""}`;
 
     // All rows visible (small dataset or no virtualization)
-    if (visibleRange.start === 1 && end === totalCount) {
+    if (!isLowerBound && visibleRange.start === 1 && end === totalCount) {
       return `Viewing: ${totalCount}/${totalCount} ${totalCount === 1 ? "row" : "rows"}`;
     }
 
     // Viewing a range of rows (typical case with scrolling)
-    return `Viewing: ${end}/${totalCount.toLocaleString()} rows`;
+    return `Viewing: ${end}/${totalLabel} rows`;
   };
   if (isLoading) {
     return;

@@ -42,6 +42,7 @@ import { APP_CONSTANTS } from "src/utils/constants";
 import { useShallowToggleAnnotationsStore } from "../../agents/store";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { enqueueSnackbar } from "notistack";
 
 const ROWS_LIMIT = 25;
 
@@ -215,6 +216,7 @@ const SpanGrid = React.forwardRef(
 
     // Prefetch cache: stores next page data so scroll feels instant
     const prefetchCache = useRef(new Map());
+    const degradedRequestKeyRef = useRef(null);
 
     const refreshGrid = useCallback(() => {
       gridRef?.current?.api?.refreshServerSide({ purge: true });
@@ -425,6 +427,22 @@ const SpanGrid = React.forwardRef(
                 ));
 
               const res = results?.data?.result;
+              const isDegraded =
+                res?.metadata?.query_complete === false ||
+                res?.metadata?.query_status === "degraded" ||
+                res?.metadata?.query_error_code === "read_budget_exceeded";
+              if (
+                isDegraded &&
+                degradedRequestKeyRef.current !== filterRequestKey
+              ) {
+                degradedRequestKeyRef.current = filterRequestKey;
+                enqueueSnackbar(
+                  "Some matching spans could not be loaded. Narrow the time range and retry.",
+                  { variant: "warning" },
+                );
+              } else if (!isDegraded && pageNumber === 0) {
+                degradedRequestKeyRef.current = null;
+              }
               const newCols = normalizeConfigKeys(res?.config);
 
               // Use ref to get latest columns for comparison without triggering dataSource recreation
@@ -483,12 +501,17 @@ const SpanGrid = React.forwardRef(
               }
 
               const rows = res?.table || [];
-              const totalRows = res?.metadata?.total_rows;
+              const metadata = res?.metadata || {};
+              const totalRows = metadata.total_rows;
               params.api.totalRowCount = totalRows;
+              params.api.totalRowCountIsLowerBound =
+                metadata.total_rows_is_lower_bound === true;
               useSpanGridStore.setState({ totalRowCount: totalRows || 0 });
 
               // Infinite-scroll: don't expose total upfront → scrollbar grows as you scroll
-              const isLastPage = rows.length < ROWS_LIMIT;
+              const isLastPage =
+                metadata.has_more === false ||
+                (metadata.has_more == null && rows.length < ROWS_LIMIT);
               const lastRow = isLastPage ? request.startRow + rows.length : -1;
 
               params.success({
@@ -526,6 +549,7 @@ const SpanGrid = React.forwardRef(
         setLoading,
         hasEvalFilter,
         enabled,
+        filterRequestKey,
       ],
     );
 

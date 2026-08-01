@@ -12,8 +12,10 @@ Run with: bin/test -k "test_session_list_performance" --no-services unit
 """
 
 import json
+import os
 import time
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -81,9 +83,9 @@ class TestSessionListQueryPerformance:
             builder._build_simple_count_query()
         elapsed = time.monotonic() - start
 
-        assert (
-            elapsed < 0.5
-        ), f"Simple count query too slow: {elapsed:.2f}s for 100 iter"
+        assert elapsed < 0.5, (
+            f"Simple count query too slow: {elapsed:.2f}s for 100 iter"
+        )
 
     def test_count_query_generation_speed_aggregated_path(self):
         """Aggregated count query (with HAVING) should be fast to generate."""
@@ -382,3 +384,208 @@ class TestQueryTimeoutBudget:
         # assert the resolved session filter is applied in the WHERE.
         assert "WHERE" in query
         assert "IN %(attr_session_ids)s" in query
+
+
+@pytest.fixture(scope="module")
+def stopped_merges_session_ch():
+    """Loopback-only CH25 table retaining every mutable span version."""
+    if os.environ.get("FUTUREAGI_TEST_ALLOW_LOCAL_CH_DDL") != "1":
+        pytest.skip("local ClickHouse DDL integration test requires explicit opt-in")
+    clickhouse_connect = pytest.importorskip("clickhouse_connect")
+    host = os.environ.get("CH25_HOST") or "127.0.0.1"
+    if host not in {"localhost", "127.0.0.1", "::1"}:
+        pytest.fail("local ClickHouse DDL test refuses a non-loopback host")
+    port = int(os.environ.get("CH25_HTTP_PORT") or 18124)
+    database = f"test_session_prefix_{uuid.uuid4().hex[:8]}"
+    try:
+        admin = clickhouse_connect.get_client(
+            host=host,
+            port=port,
+            username=os.environ.get("CH_USER", "default"),
+            password=os.environ.get("CH_PASSWORD", ""),
+        )
+        admin.command("SELECT 1")
+    except Exception as exc:  # pragma: no cover - environment dependent
+        pytest.skip(f"ClickHouse not available: {exc!r}")
+    admin.command(f"CREATE DATABASE {database}")
+    client = clickhouse_connect.get_client(
+        host=host,
+        port=port,
+        username=os.environ.get("CH_USER", "default"),
+        password=os.environ.get("CH_PASSWORD", ""),
+        database=database,
+    )
+    client.command(
+        """
+        CREATE TABLE spans (
+            project_id UUID,
+            id String,
+            trace_id String,
+            trace_session_id Nullable(UUID),
+            parent_span_id String DEFAULT '',
+            start_time DateTime64(6, 'UTC'),
+            end_time Nullable(DateTime64(6, 'UTC')),
+            cost Float64 DEFAULT 0,
+            total_tokens Int32 DEFAULT 0,
+            input String DEFAULT '',
+            attrs_string Map(String, String),
+            attrs_number Map(String, Float64),
+            attrs_bool Map(String, UInt8),
+            is_deleted UInt8 DEFAULT 0,
+            _version UInt64
+        ) ENGINE = ReplacingMergeTree(_version, is_deleted)
+        PARTITION BY toDate(start_time)
+        ORDER BY (project_id, trace_id, id)
+        """
+    )
+    client.command(
+        """
+        CREATE TABLE trace_session_id_remap (
+            old_id UUID,
+            new_id UUID,
+            version DateTime64(6, 'UTC') DEFAULT now64(6, 'UTC')
+        ) ENGINE = ReplacingMergeTree(version)
+        ORDER BY old_id
+        """
+    )
+    client.command("SYSTEM STOP MERGES spans")
+    try:
+        yield client
+    finally:
+        client.command("SYSTEM START MERGES spans")
+        client.close()
+        admin.command(f"DROP DATABASE IF EXISTS {database}")
+        admin.close()
+
+
+@pytest.mark.integration
+def test_candidate_session_any_span_filter_is_latest_exact_with_merges_stopped(
+    stopped_merges_session_ch,
+):
+    """A stale matching child cannot resurrect its session candidate."""
+    from tracer.services.clickhouse.v2.query_builders.session_list import (
+        SessionListQueryBuilderV2,
+    )
+
+    client = stopped_merges_session_ch
+    project = uuid.uuid4()
+    valid_session = uuid.uuid4()
+    stale_session = uuid.uuid4()
+    started = datetime(2026, 7, 30, 12, tzinfo=UTC)
+
+    def span_row(
+        span_id,
+        trace_id,
+        session_id,
+        parent_span_id,
+        attrs,
+        *,
+        version=1,
+    ):
+        return [
+            project,
+            span_id,
+            trace_id,
+            session_id,
+            parent_span_id,
+            started,
+            started + timedelta(seconds=1),
+            0.25,
+            7,
+            "hello",
+            attrs,
+            {},
+            {},
+            0,
+            version,
+        ]
+
+    client.insert(
+        "spans",
+        [
+            span_row("valid-root", "valid-trace", valid_session, "", {}),
+            span_row(
+                "valid-child",
+                "valid-trace",
+                valid_session,
+                "valid-root",
+                {"customer.segment": "enterprise"},
+            ),
+            span_row("stale-root", "stale-trace", stale_session, "", {}),
+            span_row(
+                "stale-child",
+                "stale-trace",
+                stale_session,
+                "stale-root",
+                {"customer.segment": "enterprise"},
+            ),
+            span_row(
+                "stale-child",
+                "stale-trace",
+                stale_session,
+                "stale-root",
+                {"customer.segment": "self-serve"},
+                version=2,
+            ),
+        ],
+        column_names=[
+            "project_id",
+            "id",
+            "trace_id",
+            "trace_session_id",
+            "parent_span_id",
+            "start_time",
+            "end_time",
+            "cost",
+            "total_tokens",
+            "input",
+            "attrs_string",
+            "attrs_number",
+            "attrs_bool",
+            "is_deleted",
+            "_version",
+        ],
+    )
+    builder = SessionListQueryBuilderV2(
+        project_id=str(project),
+        filters=[
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": [
+                        started - timedelta(minutes=1),
+                        started + timedelta(minutes=1),
+                    ],
+                },
+            },
+            {
+                "column_id": "customer.segment",
+                "filter_config": {
+                    "col_type": "SPAN_ATTRIBUTE",
+                    "filter_type": "text",
+                    "filter_op": "equals",
+                    "filter_value": "enterprise",
+                },
+            },
+        ],
+        candidate_session_ids=[str(valid_session), str(stale_session)],
+        page_size=2,
+    )
+    sql, params = builder.build()
+    result = client.query(
+        sql,
+        parameters=params,
+        settings={
+            "max_threads": 1,
+            "max_execution_time": 2,
+            "use_skip_indexes_if_final": 0,
+        },
+    )
+
+    assert [str(row[0]) for row in result.result_rows] == [str(valid_session)]
+    compact = " ".join(sql.split())
+    assert "trace_id IN (SELECT trace_id FROM spans FINAL" in compact
+    assert "trace_session_id IN %(candidate_session_ids)s" in compact
+    assert "use_skip_indexes_if_final = 0" in compact

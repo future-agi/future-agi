@@ -1,36 +1,23 @@
+import math
 import statistics
 from datetime import timedelta
 
-import pandas as pd
 import structlog
 from django.db.models import (
-    Avg,
-    Case,
-    Count,
-    DateTimeField,
     DurationField,
     ExpressionWrapper,
     F,
-    FloatField,
-    Max,
     Q,
-    StdDev,
-    Sum,
-    Value,
-    When,
 )
-from django.db.models.functions import Now, Trunc
+from django.db.models.functions import Now
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from slack_sdk.errors import SlackApiError
-
-# from prophet import Prophet
 from slack_sdk.webhook import WebhookClient
 
-logger = structlog.get_logger(__name__)
 from tfc.temporal import temporal_activity
 from tfc.utils.email import email_helper
-from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
+from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.monitor import (
     AlertTypeChoices,
     ComparisonOperatorChoices,
@@ -39,16 +26,33 @@ from tracer.models.monitor import (
     UserAlertMonitor,
     UserAlertMonitorLog,
 )
-from tracer.models.observation_span import EvalLogger, ObservationSpan
-from tracer.services.clickhouse.query_builders.monitor_metrics import (
-    MonitorMetricsQueryBuilder,
-)
-from tracer.services.clickhouse.query_service import AnalyticsQueryService, QueryType
-from tracer.utils.eval_tasks import parsing_monitor_filters
+from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+logger = structlog.get_logger(__name__)
+
+_MONITOR_CH_TIMEOUT_MS = 750
+# Monitor values can trigger alerts, so overflow must throw and be caught
+# rather than returning a partial aggregate that could generate a false alert.
+_MONITOR_CH_SETTINGS = {
+    "timeout_overflow_mode": "throw",
+    "max_threads": 2,
+    "max_memory_usage": 268_435_456,
+    "max_bytes_to_read": 1_073_741_824,
+    "read_overflow_mode": "throw",
+    "max_result_rows": 2000,
+    "result_overflow_mode": "throw",
+}
 
 
 def _build_monitor_ch_builder(monitor):
     """Construct a MonitorMetricsQueryBuilder from a monitor instance."""
+    project_id = getattr(monitor, "project_id", None)
+    if not project_id:
+        # Legacy rows can predate the now-required project field. Converting
+        # None to the string "None" sends an invalid UUID to ClickHouse every
+        # time the monitor scheduler runs. Fail closed before constructing SQL.
+        raise ValueError("Monitor has no project scope")
+
     eval_config_id = None
     eval_output_type = None
     if (
@@ -62,12 +66,15 @@ def _build_monitor_ch_builder(monitor):
         except CustomEvalConfig.DoesNotExist:
             pass
 
-    # v1↔v2 dispatch — flips with CH25_QUERY_TYPES_V2_PRIMARY=MONITOR_METRICS
-    from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
+    from tracer.services.clickhouse.v2.query_builders.monitor_metrics import (
+        MonitorMetricsQueryBuilderV2,
+    )
 
-    BuilderCls = get_query_builder_class("MONITOR_METRICS")
-    return BuilderCls(
-        project_id=str(monitor.project_id),
+    # The monitor ClickHouse route reads the CH25 spans table. Selecting the
+    # legacy compiler when rollout flags are absent emits non-pruning
+    # created_at predicates and legacy attribute columns against that table.
+    return MonitorMetricsQueryBuilderV2(
+        project_id=str(project_id),
         filters=monitor.filters,
         eval_config_id=eval_config_id,
         eval_output_type=eval_output_type,
@@ -75,33 +82,21 @@ def _build_monitor_ch_builder(monitor):
     )
 
 
-def _mute_monitor(monitor):
-    """Mutes a monitor."""
-    monitor.is_mute = True
-    monitor.save(update_fields=["is_mute"])
-
-
-def _get_interval_kind(monitor):
-    """Gets the interval kind for the monitor."""
-    interval = timedelta(minutes=monitor.alert_frequency)
-
+def _get_frequency_seconds(monitor, start_time=None, end_time=None):
+    """Return a bucket width that keeps historical results below 1,000 rows."""
     if monitor.metric_type == MonitorMetricTypeChoices.DAILY_TOKENS_SPENT:
-        interval = timedelta(days=1)
+        frequency_seconds = 24 * 60 * 60
     elif monitor.metric_type == MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT:
-        interval = timedelta(days=30)
-
-    # Django's Trunc function requires a string literal. We convert the
-    # timedelta to the most appropriate 'kind' string.
-    if interval.days >= 30:
-        interval_kind = "month"
-    elif interval.days >= 1:
-        interval_kind = "day"
-    elif interval.total_seconds() >= 3600:
-        interval_kind = "hour"
+        frequency_seconds = 30 * 24 * 60 * 60
     else:
-        interval_kind = "minute"
+        frequency_seconds = max(int(monitor.alert_frequency or 1) * 60, 60)
 
-    return interval_kind
+    if start_time is not None and end_time is not None:
+        window_seconds = max((end_time - start_time).total_seconds(), 0)
+        minimum_minutes = max(1, math.ceil(window_seconds / (1000 * 60)))
+        frequency_seconds = max(frequency_seconds, minimum_minutes * 60)
+
+    return frequency_seconds
 
 
 def _send_alert_email(monitor, message, alert_type):
@@ -225,8 +220,7 @@ def process_monitor_task(monitor_id, now_iso):
     try:
         _process_monitor(monitor, now)
     except Exception as e:
-        # _mute_monitor(monitor)
-        raise Exception(f"Error processing monitor {monitor.id}: {e}")
+        raise Exception(f"Error processing monitor {monitor.id}: {e}") from e
 
 
 def _process_monitor(monitor, now):
@@ -241,9 +235,7 @@ def _process_monitor(monitor, now):
 
 
 def _get_metric_value(monitor, start_time, end_time):
-    """Calculates the value of the metric for the given time window."""
-
-    # --- ClickHouse dispatch ---
+    """Calculate a monitor metric from the authoritative ClickHouse store."""
     analytics = AnalyticsQueryService()
     try:
         builder = _build_monitor_ch_builder(monitor)
@@ -259,266 +251,22 @@ def _get_metric_value(monitor, start_time, end_time):
         query, params = builder.build_metric_value_query(
             metric_type, ch_start, end_time
         )
-        result = analytics.execute_ch_query(query, params, timeout_ms=5000)
+        result = analytics.execute_ch_query(
+            query,
+            params,
+            timeout_ms=_MONITOR_CH_TIMEOUT_MS,
+            settings=_MONITOR_CH_SETTINGS,
+        )
         if result.data:
             return result.data[0].get("value")
         return None
     except Exception as e:
         logger.warning(
-            "CH monitor metric failed, falling back to PG",
+            "CH monitor metric exceeded read budget; skipping monitor evaluation",
             error=str(e),
             monitor_id=str(monitor.id),
         )
-
-    # --- PostgreSQL fallback ---
-    filters = parsing_monitor_filters(monitor.filters)
-    base_queryset = ObservationSpan.objects.filter(
-        project=monitor.project, created_at__range=(start_time, end_time)
-    )
-
-    base_queryset = base_queryset.filter(filters)
-
-    metric_type = monitor.metric_type
-    value = None
-
-    match metric_type:
-        case MonitorMetricTypeChoices.COUNT_OF_ERRORS:
-            value = base_queryset.filter(status="ERROR").count()
-
-        case MonitorMetricTypeChoices.ERROR_RATES_FOR_FUNCTION_CALLING:
-            result = base_queryset.filter(observation_type="tool").aggregate(
-                total_calls=Count("id"),
-                error_calls=Count("id", filter=Q(status="ERROR")),
-            )
-            if result["total_calls"] == 0:
-                value = None
-            else:
-                value = result["error_calls"] / result["total_calls"]
-
-        case MonitorMetricTypeChoices.ERROR_FREE_SESSION_RATES:
-            result = (
-                base_queryset.exclude(trace__session__isnull=True)
-                .values("trace__session")
-                .annotate(error_count=Count("id", filter=Q(status="ERROR")))
-                .aggregate(
-                    total_sessions=Count("trace__session"),
-                    error_free_sessions=Count(
-                        "trace__session", filter=Q(error_count=0)
-                    ),
-                )
-            )
-            total_sessions = result["total_sessions"]
-            error_free_sessions = result["error_free_sessions"]
-
-            if not total_sessions:
-                value = None
-            else:
-                value = error_free_sessions / total_sessions
-
-        case (
-            MonitorMetricTypeChoices.SERVICE_PROVIDER_ERROR_RATES
-        ):  # here are we doing error free rate or error rate ?
-            result = (
-                base_queryset.exclude(provider__isnull=True)
-                .values("provider")
-                .annotate(error_count=Count("id", filter=Q(status="ERROR")))
-                .aggregate(
-                    total_providers=Count("provider"),
-                    error_free_providers=Count("provider", filter=Q(error_count=0)),
-                )
-            )
-            total_providers = result["total_providers"]
-            error_free_providers = result["error_free_providers"]
-
-            if not total_providers:
-                value = None
-            else:
-                value = error_free_providers / total_providers
-
-        case MonitorMetricTypeChoices.LLM_API_FAILURE_RATES:
-            result = base_queryset.filter(observation_type="llm").aggregate(
-                total_calls=Count("id"),
-                error_calls=Count("id", filter=Q(status="ERROR")),
-            )
-            if result["total_calls"] == 0:
-                value = None
-            else:
-                value = result["error_calls"] / result["total_calls"]
-
-        case MonitorMetricTypeChoices.SPAN_RESPONSE_TIME:
-            value = base_queryset.aggregate(avg_latency=Avg("latency_ms"))[
-                "avg_latency"
-            ]
-
-        case MonitorMetricTypeChoices.LLM_RESPONSE_TIME:
-            value = base_queryset.filter(observation_type="llm").aggregate(
-                avg_latency=Avg("latency_ms")
-            )["avg_latency"]
-
-        case MonitorMetricTypeChoices.TOKEN_USAGE:
-            value = base_queryset.aggregate(total=Sum("total_tokens"))["total"]
-
-        case MonitorMetricTypeChoices.DAILY_TOKENS_SPENT:
-            daily_start_time = end_time - timedelta(days=1)
-            value = (
-                ObservationSpan.objects.filter(
-                    project=monitor.project, created_at__gte=daily_start_time
-                )
-                .filter(filters)
-                .aggregate(total=Sum("total_tokens"))["total"]
-            )
-
-        case MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT:
-            monthly_start_time = end_time - timedelta(days=30)
-            value = (
-                ObservationSpan.objects.filter(
-                    project=monitor.project, created_at__gte=monthly_start_time
-                )
-                .filter(filters)
-                .aggregate(total=Sum("total_tokens"))["total"]
-            )
-
-        case MonitorMetricTypeChoices.EVALUATION_METRICS:
-            value, _ = _get_evaluation_metric_stats(monitor, start_time, end_time)
-
-        case _:
-            value = None
-
-    return value
-
-
-def _get_evaluation_metric_stats(monitor, start_time, end_time):
-    try:
-        custom_eval_config = CustomEvalConfig.objects.get(id=monitor.metric)
-        eval_output_type = custom_eval_config.eval_template.config.get("output")
-    except CustomEvalConfig.DoesNotExist:
-        logger.error(
-            f"CustomEvalConfig {monitor.metric} not found for monitor {monitor.id}"
-        )
-        _mute_monitor(monitor)
-        return None, None
-
-    filters = parsing_monitor_filters(monitor.filters)
-
-    eval_results = EvalLogger.objects.filter(
-        custom_eval_config=custom_eval_config,
-        target_type="span",
-        created_at__range=(start_time, end_time),
-        observation_span__in=ObservationSpan.objects.filter(filters),
-    )
-    if not eval_results.exists():
-        return None, None
-
-    stats = None
-    if eval_output_type == EvalOutputType.SCORE:
-        stats = eval_results.aggregate(
-            mean=Avg("output_float"), stddev=StdDev("output_float")
-        )
-    elif eval_output_type == EvalOutputType.PASS_FAIL:
-        output_bool = True if monitor.threshold_metric_value == "Passed" else False
-        annotated_results = eval_results.annotate(
-            pass_value=Case(
-                When(output_bool=output_bool, then=Value(1.0)),
-                default=Value(0.0),
-                output_field=FloatField(),
-            )
-        )
-        stats = annotated_results.aggregate(
-            mean=Avg("pass_value"), stddev=StdDev("pass_value")
-        )
-    elif eval_output_type == EvalOutputType.CHOICES:
-        choice = monitor.threshold_metric_value
-        if not choice:
-            logger.error(f"Choice is not set for monitor {monitor.id}")
-            return None, None
-        annotated_results = eval_results.annotate(
-            choice_value=Case(
-                When(output_str_list__contains=[choice], then=Value(1.0)),
-                default=Value(0.0),
-                output_field=FloatField(),
-            )
-        )
-        stats = annotated_results.aggregate(
-            mean=Avg("choice_value"), stddev=StdDev("choice_value")
-        )
-
-    if stats:
-        return stats.get("mean"), stats.get("stddev")
-
-    return None, None
-
-
-def _get_stats_for_time_aggregated_metrics(monitor, start_time, end_time):
-    """
-    Orchestrates statistics calculation for time-aggregated metrics.
-    It determines the interval, fetches data, and calculates stats.
-    """
-    interval_kind = _get_interval_kind(monitor)
-
-    time_series_data = _get_time_series_data_for_time_aggregated_metrics(
-        monitor, interval_kind, start_time, end_time
-    )
-    return _calculate_stats_from_time_series(time_series_data)
-
-
-def _get_time_series_data_for_time_aggregated_metrics(
-    monitor, interval_kind, start_time=None, end_time=None
-):  # TODO: do we need to make the buckets dynamic (refer to the code in monitor_graphs.py)
-    """
-    Groups spans in certain intervals and returns a dictionary of {timestamp: value}.
-    `interval_kind` must be one of 'minute', 'hour', 'day', 'week', 'month', 'year'.
-
-    CH25-TODO(blocked-on-reader-extension): this helper is reached from both
-    the CH primary branch (via _get_stats_for_time_aggregated_metrics, when
-    metric_type is COUNT_OF_ERRORS / TOKEN_USAGE / DAILY_TOKENS_SPENT /
-    MONTHLY_TOKENS_SPENT) and the PG fallback branch. The new
-    time_bucket_aggregate(project_id, interval=, since=, until=,
-    observation_type=) reader covers TOKEN_USAGE but cannot serve
-    COUNT_OF_ERRORS (needs status-stratified count) and cannot consume the
-    full parsing_evaltask_filters Q-object (which can include
-    span_attributes_filters → FilterEngine territory). Migrating requires
-    a new reader signature roughly
-    `time_bucket_aggregate_with_filters(project_id, *, interval, since,
-    until, **parsing_evaltask_filters_for_ch_output)` that also emits a
-    status-stratified count column.
-    """
-
-    filters = parsing_monitor_filters(monitor.filters)
-    base_queryset = ObservationSpan.objects.filter(project=monitor.project).filter(
-        filters
-    )
-    if start_time:
-        base_queryset = base_queryset.filter(created_at__gte=start_time)
-    if end_time:
-        base_queryset = base_queryset.filter(created_at__lte=end_time)
-
-    metric_type = monitor.metric_type
-
-    queryset = base_queryset.annotate(
-        timestamp=Trunc("created_at", interval_kind, output_field=DateTimeField())
-    ).values("timestamp")
-
-    annotation = None
-    if metric_type in [
-        MonitorMetricTypeChoices.TOKEN_USAGE,
-        MonitorMetricTypeChoices.DAILY_TOKENS_SPENT,
-        MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT,
-    ]:
-        annotation = Sum("total_tokens")
-    elif metric_type == MonitorMetricTypeChoices.COUNT_OF_ERRORS:
-        annotation = Count("id", filter=Q(status="ERROR"))
-
-    if not annotation:
-        return {}
-
-    queryset = queryset.annotate(value=annotation).values("timestamp", "value")
-
-    result = {
-        item["timestamp"].strftime("%Y-%m-%d %H:%M:%S"): item["value"]
-        for item in queryset
-        if item["value"] is not None
-    }
-    return result
+        return None
 
 
 def _calculate_stats_from_time_series(time_series_data: dict):
@@ -538,143 +286,61 @@ def _calculate_stats_from_time_series(time_series_data: dict):
 
 
 def _get_historical_stats(monitor, start_time, end_time):
-    """Calculates the historical stats for the given time window."""
-
-    # --- ClickHouse dispatch ---
+    """Calculate historical monitor statistics from ClickHouse only."""
     analytics = AnalyticsQueryService()
     try:
         metric_type = monitor.metric_type
+        builder = _build_monitor_ch_builder(monitor)
 
-        # For time-aggregated metrics, compute stats from time-series buckets
         if metric_type in (
             MonitorMetricTypeChoices.COUNT_OF_ERRORS,
             MonitorMetricTypeChoices.TOKEN_USAGE,
             MonitorMetricTypeChoices.DAILY_TOKENS_SPENT,
             MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT,
         ):
-            return _get_stats_for_time_aggregated_metrics(monitor, start_time, end_time)
+            query, params = builder.build_time_series_query(
+                metric_type,
+                start_time,
+                end_time,
+                _get_frequency_seconds(monitor, start_time, end_time),
+            )
+        else:
+            query, params = builder.build_historical_stats_query(
+                metric_type, start_time, end_time
+            )
 
-        builder = _build_monitor_ch_builder(monitor)
-        query, params = builder.build_historical_stats_query(
-            metric_type, start_time, end_time
+        result = analytics.execute_ch_query(
+            query,
+            params,
+            timeout_ms=_MONITOR_CH_TIMEOUT_MS,
+            settings=_MONITOR_CH_SETTINGS,
         )
-        result = analytics.execute_ch_query(query, params, timeout_ms=5000)
+        if metric_type in (
+            MonitorMetricTypeChoices.COUNT_OF_ERRORS,
+            MonitorMetricTypeChoices.TOKEN_USAGE,
+            MonitorMetricTypeChoices.DAILY_TOKENS_SPENT,
+            MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT,
+        ):
+            values = {
+                str(row.get("timestamp")): row.get("value")
+                for row in result.data
+                if row.get("value") is not None
+            }
+            if not values:
+                return None, None
+            return _calculate_stats_from_time_series(values)
+
         if result.data:
             row = result.data[0]
             return row.get("mean"), row.get("stddev")
         return None, None
     except Exception as e:
         logger.warning(
-            "CH historical stats failed, falling back to PG",
+            "CH historical stats exceeded read budget; skipping percentage check",
             error=str(e),
             monitor_id=str(monitor.id),
         )
-
-    # --- PostgreSQL fallback ---
-    filters = parsing_monitor_filters(monitor.filters)
-    base_queryset = ObservationSpan.objects.filter(
-        project=monitor.project, created_at__range=(start_time, end_time)
-    ).filter(filters)
-
-    metric_type = monitor.metric_type
-    historical_mean = None
-    historical_stddev = None
-
-    stats = None
-
-    match metric_type:
-        case (
-            MonitorMetricTypeChoices.COUNT_OF_ERRORS
-            | MonitorMetricTypeChoices.TOKEN_USAGE
-            | MonitorMetricTypeChoices.DAILY_TOKENS_SPENT
-            | MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT
-        ):
-            historical_mean, historical_stddev = _get_stats_for_time_aggregated_metrics(
-                monitor, start_time, end_time
-            )
-
-        case MonitorMetricTypeChoices.ERROR_RATES_FOR_FUNCTION_CALLING:
-            stats = (
-                base_queryset.filter(observation_type="tool")
-                .annotate(
-                    is_error=Case(
-                        When(status="ERROR", then=Value(1.0)),
-                        default=Value(0.0),
-                        output_field=FloatField(),
-                    )
-                )
-                .aggregate(mean=Avg("is_error"), stddev=StdDev("is_error"))
-            )
-
-        case MonitorMetricTypeChoices.ERROR_FREE_SESSION_RATES:
-            session_values = (
-                base_queryset.exclude(trace__session__isnull=True)
-                .values("trace__session")
-                .annotate(error_count=Count("id", filter=Q(status="ERROR")))
-                .annotate(
-                    is_error_free=Case(
-                        When(error_count__gt=0, then=Value(0.0)),
-                        default=Value(1.0),
-                        output_field=FloatField(),
-                    )
-                )
-            )
-            stats = session_values.aggregate(
-                mean=Avg("is_error_free"), stddev=StdDev("is_error_free")
-            )
-
-        case (
-            MonitorMetricTypeChoices.SERVICE_PROVIDER_ERROR_RATES
-        ):  # here are we doing error free rate or error rate ?
-            provider_values = (
-                base_queryset.exclude(provider__isnull=True)
-                .values("provider")
-                .annotate(error_count=Count("id", filter=Q(status="ERROR")))
-                .annotate(
-                    is_error_free=Case(
-                        When(error_count__gt=0, then=Value(0.0)),
-                        default=Value(1.0),
-                        output_field=FloatField(),
-                    )
-                )
-            )
-            stats = provider_values.aggregate(
-                mean=Avg("is_error_free"), stddev=StdDev("is_error_free")
-            )
-
-        case MonitorMetricTypeChoices.LLM_API_FAILURE_RATES:
-            stats = (
-                base_queryset.filter(observation_type="llm")
-                .annotate(
-                    is_error=Case(
-                        When(status="ERROR", then=Value(1.0)),
-                        default=Value(0.0),
-                        output_field=FloatField(),
-                    )
-                )
-                .aggregate(mean=Avg("is_error"), stddev=StdDev("is_error"))
-            )
-
-        case MonitorMetricTypeChoices.SPAN_RESPONSE_TIME:
-            stats = base_queryset.aggregate(
-                mean=Avg("latency_ms"), stddev=StdDev("latency_ms")
-            )
-
-        case MonitorMetricTypeChoices.LLM_RESPONSE_TIME:
-            stats = base_queryset.filter(observation_type="llm").aggregate(
-                mean=Avg("latency_ms"), stddev=StdDev("latency_ms")
-            )
-
-        case MonitorMetricTypeChoices.EVALUATION_METRICS:
-            historical_mean, historical_stddev = _get_evaluation_metric_stats(
-                monitor, start_time, end_time
-            )
-
-    if stats:
-        historical_mean = stats.get("mean")
-        historical_stddev = stats.get("stddev")
-
-    return historical_mean, historical_stddev
+        return None, None
 
 
 def _check_thresholds_and_alert(monitor, current_value, time_window_start, now):
@@ -715,217 +381,6 @@ def _check_static_threshold(monitor, current_value, time_window_start, now):
             f"({monitor.threshold_operator} {threshold_val})."
         )
         _handle_alert_trigger(monitor, message, alert_type, time_window_start, now)
-
-
-def _get_time_series_df_for_aggregated_metrics(monitor, now):
-    """
-    For aggregated metrics, gets time series data and returns it as a Prophet-ready DataFrame.
-    """
-    interval_kind = _get_interval_kind(monitor)
-
-    time_series_dict = _get_time_series_data_for_time_aggregated_metrics(
-        monitor, interval_kind, None, now
-    )
-    if not time_series_dict:
-        return None
-
-    df = pd.DataFrame(list(time_series_dict.items()), columns=["ds", "y"])
-    df["ds"] = pd.to_datetime(df["ds"])
-    return df
-
-
-def _get_time_series_df_for_other_metrics(monitor, now):
-    """
-    For non-aggregated metrics, fetches individual data points and returns a
-    Prophet-ready DataFrame, averaging values for duplicate timestamps.
-
-    CH25-TODO(dead-code; revisit when Prophet anomaly detection re-enabled):
-    only consumed by _check_anomaly_detection_threshold (currently fully
-    commented out at line 898+ in this file). Returns raw (created_at, y)
-    row pairs rather than bucket aggregates — would need a new reader
-    signature closer to `iter_rows_with_filters(project_id, ..., **filters)`
-    than a bucket aggregate. Defer until anomaly detection is re-enabled.
-    """
-    filters = parsing_monitor_filters(monitor.filters)
-    base_queryset = ObservationSpan.objects.filter(
-        project=monitor.project, created_at__lte=now
-    ).filter(filters)
-    metric_type = monitor.metric_type
-    queryset = None
-
-    match metric_type:
-        case (
-            MonitorMetricTypeChoices.ERROR_RATES_FOR_FUNCTION_CALLING
-            | MonitorMetricTypeChoices.LLM_API_FAILURE_RATES
-        ):
-            observation_type = (
-                "tool"
-                if metric_type
-                == MonitorMetricTypeChoices.ERROR_RATES_FOR_FUNCTION_CALLING
-                else "llm"
-            )
-            queryset = (
-                base_queryset.filter(observation_type=observation_type)
-                .annotate(
-                    y=Case(
-                        When(status="ERROR", then=Value(1.0)),
-                        default=Value(0.0),
-                        output_field=FloatField(),
-                    )
-                )
-                .values("created_at", "y")
-            )
-
-        case (
-            MonitorMetricTypeChoices.SERVICE_PROVIDER_ERROR_RATES
-        ):  # here are we doing error free rate or error rate ? this query itself might be incorrect check this
-            queryset = (
-                base_queryset.exclude(provider__isnull=True)
-                .annotate(
-                    y=Case(
-                        When(status="ERROR", then=Value(1.0)),
-                        default=Value(0.0),
-                        output_field=FloatField(),
-                    )
-                )
-                .values("created_at", "y")
-            )
-
-        case MonitorMetricTypeChoices.ERROR_FREE_SESSION_RATES:
-            queryset = (
-                base_queryset.exclude(trace__session__isnull=True)
-                .values("trace__session")
-                .annotate(error_count=Count("id", filter=Q(status="ERROR")))
-                .annotate(
-                    y=Case(
-                        When(error_count__gt=0, then=Value(0.0)),
-                        default=Value(1.0),
-                        output_field=FloatField(),
-                    ),
-                    created_at=Max("created_at"),
-                )
-                .values("created_at", "y")
-            )
-
-        case (
-            MonitorMetricTypeChoices.SPAN_RESPONSE_TIME
-            | MonitorMetricTypeChoices.LLM_RESPONSE_TIME
-        ):
-            if metric_type == MonitorMetricTypeChoices.LLM_RESPONSE_TIME:
-                base_queryset = base_queryset.filter(observation_type="llm")
-            queryset = base_queryset.values("created_at").annotate(y=F("latency_ms"))
-
-        case MonitorMetricTypeChoices.EVALUATION_METRICS:
-            try:
-                custom_eval_config = CustomEvalConfig.objects.get(id=monitor.metric)
-                eval_output_type = custom_eval_config.eval_template.config.get("output")
-            except CustomEvalConfig.DoesNotExist:
-                return None
-
-            eval_results = EvalLogger.objects.filter(
-                custom_eval_config=custom_eval_config,
-                target_type="span",
-                created_at__lte=now,
-                observation_span__in=ObservationSpan.objects.filter(filters),
-            )
-
-            if eval_output_type == EvalOutputType.SCORE:
-                queryset = eval_results.values("created_at").annotate(
-                    y=F("output_float")
-                )
-            elif eval_output_type == EvalOutputType.PASS_FAIL:
-                output_bool = (
-                    True if monitor.threshold_metric_value == "Passed" else False
-                )
-                queryset = eval_results.annotate(
-                    y=Case(
-                        When(output_bool=output_bool, then=Value(1.0)),
-                        default=Value(0.0),
-                        output_field=FloatField(),
-                    )
-                ).values("created_at", "y")
-            elif eval_output_type == EvalOutputType.CHOICES:
-                choice = monitor.threshold_metric_value
-                if not choice:
-                    return None
-                queryset = eval_results.annotate(
-                    y=Case(
-                        When(output_str_list__contains=[choice], then=Value(1.0)),
-                        default=Value(0.0),
-                        output_field=FloatField(),
-                    )
-                ).values("created_at", "y")
-
-    if queryset is None:
-        return None
-
-    df = pd.DataFrame(list(queryset))
-    if df.empty:
-        return None
-
-    df = df.rename(columns={"created_at": "ds"})
-    df["ds"] = pd.to_datetime(df["ds"])
-
-    # Average values for duplicate timestamps
-    df = df.groupby("ds")["y"].mean().reset_index()
-
-    return df
-
-
-# def _check_anomaly_detection_threshold(monitor, current_value, now):
-#     """Checks for alerts based on anomaly detection using Prophet."""
-
-#     metric_type = monitor.metric_type
-#     df = None
-
-#     if metric_type in [
-#         MonitorMetricTypeChoices.COUNT_OF_ERRORS,
-#         MonitorMetricTypeChoices.TOKEN_USAGE,
-#         MonitorMetricTypeChoices.DAILY_TOKENS_SPENT,
-#         MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT,
-#     ]:
-#         df = _get_time_series_df_for_aggregated_metrics(
-#             monitor, now
-#         )
-#     else:
-#         df = _get_time_series_df_for_other_metrics(
-#             monitor, now
-#         )
-#     # df = pd.read_csv('https://raw.githubusercontent.com/facebook/prophet/main/examples/example_wp_log_peyton_manning.csv')
-
-#     if df is None or len(df) < 2:
-#         logger.warning(
-#             f"Not enough historical data to perform anomaly detection for monitor {monitor.id}."
-#         )
-#         return
-
-#     # Use a standard 95% confidence interval for anomaly detection.
-#     m = Prophet(interval_width=0.95)
-#     m.fit(df)
-#     future = m.make_future_dataframe(periods=1, freq="min")  # Predict for 'now'
-#     forecast = m.predict(future)
-
-#     yhat_lower = forecast["yhat_lower"].iloc[-1]
-#     yhat_upper = forecast["yhat_upper"].iloc[-1]
-
-#     op = monitor.threshold_operator
-#     alert_type = None
-#     threshold_bound = None
-
-#     if op == ComparisonOperatorChoices.GREATER_THAN and current_value > yhat_upper:
-#         alert_type = AlertTypeChoices.WARNING
-#         threshold_bound = yhat_upper
-#     elif op == ComparisonOperatorChoices.LESS_THAN and current_value < yhat_lower:
-#         alert_type = AlertTypeChoices.WARNING
-#         threshold_bound = yhat_lower
-
-#     if alert_type:
-#         message = (
-#             f"Metric '{monitor.name}' for project '{monitor.project.name}' "
-#             f"({current_value:.2f}) was detected as an anomaly. It breached the expected "
-#             f"bound of {threshold_bound:.2f} (operator: {op})."
-#         )
-#         _handle_alert_trigger(monitor, message, alert_type)
 
 
 def _check_percentage_change_threshold(monitor, current_value, time_window_start, now):

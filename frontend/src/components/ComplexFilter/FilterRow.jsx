@@ -74,6 +74,26 @@ const FilterRow = ({
       const currentDependent = dependents.find(
         (d) => d?.propertyId === filter?._meta?.[property],
       );
+      const resolveDependent = (value, label = value) => {
+        let dependent = dependents.find(
+          (item) => item.propertyId === value || item.propertyName === value,
+        );
+        if (!dependent && ogDefinition?.allowCustomDependent) {
+          const customKey = String(value || label || "").trim();
+          if (!customKey) return null;
+          dependent = {
+            propertyName: customKey,
+            propertyId: customKey,
+            maxUsage: 1,
+            allowTypeChange: true,
+            showOperator: true,
+            filterType: { type: "text" },
+            asyncOptions: true,
+          };
+          ogDefinition.dependents.push(dependent);
+        }
+        return dependent;
+      };
 
       return (
         <>
@@ -93,11 +113,11 @@ const FilterRow = ({
             }))}
             value={filter?._meta?.[property] || ""}
             sx={{ maxWidth: "280px", width: "280px" }}
+            allowCreateFromSearch={ogDefinition?.allowCustomDependent}
             onChange={(e) => {
-              const dependentOgDefinition = dependents.find(
-                (item) =>
-                  item.propertyId === e.target.value ||
-                  item.propertyName === e.target.value,
+              const dependentOgDefinition = resolveDependent(
+                e.target.value,
+                e.target.option?.label,
               );
 
               if (dependentOgDefinition?.propertyId) {
@@ -143,10 +163,9 @@ const FilterRow = ({
                   value: item?.propertyId || item?.propertyName,
                 }))}
                 onSelect={(e) => {
-                  const dependentOgDefinition = dependents.find(
-                    (item) =>
-                      item.propertyId === e.value ||
-                      item.propertyName === e.label,
+                  const dependentOgDefinition = resolveDependent(
+                    e.value,
+                    e.label,
                   );
 
                   if (dependentOgDefinition?.propertyId) {

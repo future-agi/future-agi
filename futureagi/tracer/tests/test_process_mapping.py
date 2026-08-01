@@ -40,6 +40,18 @@ def test_dot_value_fallback_resolves(_span_with_attrs, missing_eval_template_id)
     assert out == {"prompt": "hello"}
 
 
+def test_legacy_span_attributes_prefix_resolves(
+    _span_with_attrs, missing_eval_template_id
+):
+    span = _span_with_attrs({"prompt_slug": "synthetic_prompt_v2"})
+    out = _process_mapping(
+        {"prompt": "span_attributes.prompt_slug"},
+        span,
+        eval_template_id=missing_eval_template_id,
+    )
+    assert out == {"prompt": "synthetic_prompt_v2"}
+
+
 def test_alias_literal_resolves(_span_with_attrs, missing_eval_template_id):
     # `recording_url` shorthand → resolves via alias entry `stereo_recording_url`.
     span = _span_with_attrs({"stereo_recording_url": "https://x/y.wav"})

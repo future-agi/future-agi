@@ -140,6 +140,26 @@ class ModelHubStringResultResponseSerializer(serializers.Serializer):
     result = serializers.CharField()
 
 
+class TraceEvalRequestSerializer(StrictInputSerializer):
+    trace_id = serializers.UUIDField()
+    model = serializers.CharField(required=False, default="turing_large")
+    pass_context = serializers.BooleanField(required=False, default=False)
+
+
+class TraceEvalResponseResultSerializer(serializers.Serializer):
+    template_id = serializers.UUIDField()
+    trace_id = serializers.UUIDField()
+    score = serializers.FloatField(allow_null=True)
+    passed = serializers.BooleanField(allow_null=True)
+    reason = serializers.CharField(allow_null=True, allow_blank=True)
+    status = serializers.CharField()
+
+
+class TraceEvalResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = TraceEvalResponseResultSerializer()
+
+
 class ModelHubSuccessMessageResultSerializer(serializers.Serializer):
     success = serializers.CharField()
 
@@ -1487,7 +1507,10 @@ class SingleRowEvaluationRequestSerializer(serializers.Serializer):
 
 
 class EvalTemplateListChartsRequestSerializer(serializers.Serializer):
-    template_ids = serializers.ListField(child=serializers.UUIDField())
+    template_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        max_length=100,
+    )
 
 
 class DatasetSortParamField(SortParamField):
@@ -1585,6 +1608,13 @@ class EvalTemplateListChartsItemSerializer(serializers.Serializer):
 
 class EvalTemplateListChartsResponseResultSerializer(serializers.Serializer):
     charts = serializers.DictField(child=EvalTemplateListChartsItemSerializer())
+    query_complete = serializers.BooleanField()
+    query_status = serializers.ChoiceField(choices=["complete", "stale", "degraded"])
+    query_error_code = serializers.ChoiceField(
+        choices=["read_budget_exceeded"],
+        required=False,
+    )
+    data_stale = serializers.BooleanField()
 
 
 class EvalTemplateListChartsResponseSerializer(serializers.Serializer):
@@ -1721,7 +1751,9 @@ class EvalUsageQuerySerializer(serializers.Serializer):
     # Optional explicit date range — when provided, overrides the period
     # string. Sent by the frontend for Today, Yesterday, and Custom date
     # picker selections.
-    start_date = serializers.DateTimeField(required=False, allow_null=True, default=None)
+    start_date = serializers.DateTimeField(
+        required=False, allow_null=True, default=None
+    )
     end_date = serializers.DateTimeField(required=False, allow_null=True, default=None)
 
     def validate(self, attrs):
@@ -1876,6 +1908,12 @@ class EvalUsageTableRowSerializer(_ExtraFieldsMixin, serializers.Serializer):
 class EvalUsageStatsResponseResultSerializer(serializers.Serializer):
     template_id = serializers.UUIDField()
     is_composite = serializers.BooleanField()
+    query_complete = serializers.BooleanField()
+    query_status = serializers.ChoiceField(choices=("complete", "stale", "degraded"))
+    backend = serializers.CharField()
+    stale = serializers.BooleanField()
+    as_of = serializers.DateTimeField()
+    total_is_lower_bound = serializers.BooleanField()
     stats = EvalUsageStatsSerializer()
     chart = EvalUsageChartPointSerializer(many=True)
     table = serializers.ListField(child=EvalUsageTableRowSerializer())
@@ -1960,6 +1998,12 @@ class EvalApiLogRowResponseSerializer(serializers.Serializer):
 class EvalApiLogTableMetadataSerializer(serializers.Serializer):
     total_rows = serializers.IntegerField()
     total_pages = serializers.IntegerField()
+    total_rows_is_lower_bound = serializers.BooleanField(required=False)
+    query_complete = serializers.BooleanField(required=False)
+    query_status = serializers.CharField(required=False)
+    query_error_code = serializers.CharField(required=False)
+    candidate_limit = serializers.IntegerField(required=False)
+    candidate_rows_scanned = serializers.IntegerField(required=False)
 
 
 class EvalApiLogTableResponseResultSerializer(serializers.Serializer):
@@ -1971,6 +2015,35 @@ class EvalApiLogTableResponseResultSerializer(serializers.Serializer):
 class EvalApiLogTableResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = EvalApiLogTableResponseResultSerializer()
+
+
+class EvalApiLogIncompleteResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    error_code = serializers.CharField()
+    retryable = serializers.BooleanField()
+    query_complete = serializers.BooleanField()
+    query_status = serializers.ChoiceField(choices=("incomplete",))
+    reason = serializers.ChoiceField(
+        choices=(
+            "post_processing_exceeds_candidate_limit",
+            "page_exceeds_candidate_limit",
+        )
+    )
+    unsupported_operations = serializers.ListField(
+        child=serializers.ChoiceField(choices=("filters", "sort", "search"))
+    )
+    candidate_limit = serializers.IntegerField()
+    requested_page = serializers.IntegerField()
+
+
+class EvalApiLogIncompleteResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    type = serializers.CharField()
+    code = serializers.CharField()
+    detail = serializers.CharField()
+    message = serializers.CharField()
+    error = serializers.CharField()
+    result = EvalApiLogIncompleteResultSerializer()
 
 
 class EvalMetricCountSerializer(serializers.Serializer):
@@ -1988,6 +2061,9 @@ class EvalMetricResponseResultSerializer(serializers.Serializer):
     api_call_count = EvalMetricCountSerializer()
     average = EvalMetricAverageSerializer()
     error_rate = serializers.JSONField(required=False, allow_null=True)
+    query_complete = serializers.BooleanField(required=False)
+    query_status = serializers.CharField(required=False)
+    query_error_code = serializers.CharField(required=False)
 
 
 class EvalMetricResponseSerializer(serializers.Serializer):
@@ -2025,6 +2101,15 @@ class LegacyEvalTemplatesResponseResultSerializer(serializers.Serializer):
     row_data = LegacyEvalTemplateItemSerializer(many=True)
     total_rows = serializers.IntegerField()
     data_available = serializers.BooleanField()
+    chart_query_complete = serializers.BooleanField()
+    chart_query_status = serializers.ChoiceField(
+        choices=["complete", "stale", "degraded"]
+    )
+    chart_query_error_code = serializers.ChoiceField(
+        choices=["read_budget_exceeded"],
+        required=False,
+    )
+    chart_data_stale = serializers.BooleanField()
 
 
 class LegacyEvalTemplatesResponseSerializer(serializers.Serializer):
@@ -2764,8 +2849,17 @@ class EvalTemplateNamesRequestSerializer(serializers.Serializer):
 
 
 class LegacyEvalTemplatesRequestSerializer(serializers.Serializer):
-    page_size = serializers.IntegerField(required=False, default=10)
-    current_page_index = serializers.IntegerField(required=False, default=0)
+    page_size = serializers.IntegerField(
+        required=False,
+        default=10,
+        min_value=1,
+        max_value=100,
+    )
+    current_page_index = serializers.IntegerField(
+        required=False,
+        default=0,
+        min_value=0,
+    )
     search_text = serializers.CharField(required=False, allow_blank=True, default="")
     sort = serializers.ListField(
         child=serializers.JSONField(),

@@ -11,7 +11,6 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.utils.constants import (
     LIST_OPS,
     NO_VALUE_OPS,
@@ -22,6 +21,11 @@ from tracer.utils.constants import (
 
 _SAFE_ATTR_KEY_RE = re.compile(r"^[a-zA-Z0-9._\-]+$")
 
+
+class UnsupportedFilterShapeError(ValueError):
+    """Sanitized signal that a bounded list cannot represent a filter shape."""
+
+
 _LEGACY_OP_ALIAS = {"is": "equals", "is_not": "not_equals"}
 
 
@@ -29,6 +33,51 @@ def normalize_filter_op(op: str | None) -> str | None:
     if op is None:
         return None
     return _LEGACY_OP_ALIAS.get(op, op)
+
+
+_LITERAL_TEXT_MATCH_OPS = frozenset(
+    {"contains", "not_contains", "starts_with", "ends_with"}
+)
+
+
+def build_literal_text_predicate(
+    expression: str,
+    param: str,
+    filter_op: str,
+    *,
+    case_insensitive: bool,
+) -> str:
+    """Compile a literal substring/prefix/suffix comparison.
+
+    Frontend text operators accept literal user text; they do not expose SQL
+    ``LIKE`` wildcard syntax.  Building a pattern as ``%{value}%`` therefore
+    changes the meaning of ``%``, ``_`` and ``\\`` in user input.  ClickHouse
+    string-search functions take a literal needle and keep the value in a
+    bound parameter, avoiding both wildcard interpretation and SQL injection.
+
+    Case-insensitive operations apply ClickHouse ``lowerUTF8`` to both
+    operands and then use literal string functions. This gives contains,
+    prefix, and suffix one consistent simple-Unicode-lower contract while
+    preserving valid UTF-8 character boundaries.
+    """
+
+    if filter_op not in _LITERAL_TEXT_MATCH_OPS:
+        raise ValueError(f"unsupported literal text operation: {filter_op!r}")
+
+    haystack = f"toString({expression})"
+    needle = f"toString(%({param})s)"
+    if filter_op in {"contains", "not_contains"}:
+        if case_insensitive:
+            haystack = f"lowerUTF8({haystack})"
+            needle = f"lowerUTF8({needle})"
+        comparison = "= 0" if filter_op == "not_contains" else "> 0"
+        return f"positionUTF8({haystack}, {needle}) {comparison}"
+
+    if case_insensitive:
+        haystack = f"lowerUTF8({haystack})"
+        needle = f"lowerUTF8({needle})"
+    function = "startsWith" if filter_op == "starts_with" else "endsWith"
+    return f"{function}({haystack}, {needle})"
 
 
 def _sanitize_key(key: str) -> str:
@@ -308,7 +357,10 @@ class ClickHouseFilterBuilder:
         "user_id_type": "user_id_type",
     }
 
-    # Filter operation -> SQL operator
+    # Scalar comparison operation -> SQL operator. Literal text-search ops are
+    # deliberately absent: callers must use ``build_literal_text_predicate``
+    # so user input can never acquire LIKE wildcard semantics by falling
+    # through this generic map.
     OP_MAP: dict[str, str] = {
         "equals": "=",
         "not_equals": "!=",
@@ -316,10 +368,6 @@ class ClickHouseFilterBuilder:
         "less_than": "<",
         "greater_than_or_equal": ">=",
         "less_than_or_equal": "<=",
-        "contains": "LIKE",
-        "not_contains": "NOT LIKE",
-        "starts_with": "LIKE",
-        "ends_with": "LIKE",
         "is_null": "IS NULL",
         "is_not_null": "IS NOT NULL",
     }
@@ -333,6 +381,11 @@ class ClickHouseFilterBuilder:
         project_ids: list[str] | None = None,
         score_date_scope: bool = True,
         span_date_scope: bool = False,
+        span_trace_id_scope: bool = False,
+        span_session_id_scope: bool = False,
+        span_latest_state: bool = False,
+        candidate_entity_scope: bool = False,
+        tag_query_mode: str | None = None,
     ) -> None:
         self.table = table
         self.annotation_label_ids = annotation_label_ids or []
@@ -367,15 +420,52 @@ class ClickHouseFilterBuilder:
         # legitimately-matching trace is dropped. Opt-in (default False) so
         # builders that don't bind ``%(start_date)s`` keep byte-identical SQL.
         self.span_date_scope = span_date_scope
+        # Candidate-batched trace lists bind a small tuple of trace IDs before
+        # compiling their any-span membership predicates.  Keeping the same
+        # bound inside every ``trace_id IN (SELECT … FROM spans)`` subquery is
+        # what turns an unbounded raw-Map scan into a point lookup that can use
+        # the trace-id bloom index.  The outer TraceListQueryBuilder owns and
+        # validates the ``candidate_trace_ids`` parameter; this flag only emits
+        # the fixed placeholder name.
+        self.span_trace_id_scope = span_trace_id_scope
+        # Session candidate aggregation has the same need, but its bounded
+        # identity is a raw old/new session-id alias set rather than trace IDs.
+        # Scope every any-span membership subquery to those aliases so custom
+        # Map/system filters never fall back to a project-wide scan.
+        self.span_session_id_scope = span_session_id_scope
+        # FINAL is prohibitively expensive on an unbounded ReplacingMergeTree
+        # scan, but candidate/slice callers can request it after reducing the
+        # read to a small trace-id set or time interval. This prevents an older
+        # live version (or a pre-tombstone attribute value) from matching after
+        # the latest version changed or was deleted.
+        self.span_latest_state = span_latest_state
+        # Candidate classifiers bind a small identity tuple before evaluating
+        # eval/annotation membership.  Keep score/eval subqueries on that same
+        # tuple so an otherwise point-scoped page cannot expand back into a
+        # tenant-wide secondary-table scan.
+        self.candidate_entity_scope = candidate_entity_scope
+        # Some callers filter a span relation to obtain trace IDs. In that
+        # shape, ordinary predicates must stay in SPAN mode while the `tag`
+        # dimension still follows the outer entity's semantics (Trace.tags
+        # versus ObservationSpan.tags).
+        self.tag_query_mode = tag_query_mode or query_mode
         self._param_counter: int = 0
         self._params: dict[str, Any] = {}
+
+    def _span_table_source(self) -> str:
+        return f"{self.table} FINAL" if self.span_latest_state else self.table
 
     def _span_membership_date_filter(self) -> str:
         """Lower-bound ``created_at`` fragment for trace-membership span
         subqueries; empty unless the caller opted in via ``span_date_scope``."""
-        if not self.span_date_scope:
-            return ""
-        return " AND created_at >= %(start_date)s - INTERVAL 1 DAY"
+        fragments = []
+        if self.span_date_scope:
+            fragments.append(" AND created_at >= %(start_date)s - INTERVAL 1 DAY")
+        if self.span_trace_id_scope:
+            fragments.append(" AND trace_id IN %(candidate_trace_ids)s")
+        if self.span_session_id_scope:
+            fragments.append(" AND trace_session_id IN %(candidate_session_ids)s")
+        return "".join(fragments)
 
     def _score_date_filter(self, alias: str = "s") -> str:
         """Return a lower-bound ``created_at`` filter for ``model_hub_score``.
@@ -391,6 +481,18 @@ class ClickHouseFilterBuilder:
         if not self.score_date_scope:
             return ""
         return f" AND {alias}.created_at >= %(start_date)s - INTERVAL 1 DAY"
+
+    def _candidate_entity_filter(self, expression: str) -> str:
+        """Bound a secondary-table membership query to classifier identities."""
+
+        if not self.candidate_entity_scope:
+            return ""
+        parameter = (
+            "candidate_span_ids"
+            if self.query_mode == self.QUERY_MODE_SPAN
+            else "candidate_trace_ids"
+        )
+        return f" AND toString({expression}) IN %({parameter})s"
 
     def _scoped_spans_subquery(
         self,
@@ -434,6 +536,12 @@ class ClickHouseFilterBuilder:
             else ""
         )
         extra = f" AND {extra_where}" if extra_where else ""
+        candidate_filter = ""
+        if self.candidate_entity_scope:
+            if self.query_mode == self.QUERY_MODE_SPAN:
+                candidate_filter = " AND id IN %(candidate_span_ids)s"
+            else:
+                candidate_filter = " AND trace_id IN %(candidate_trace_ids)s"
         if score_side_where:
             score_date = self._score_date_filter()
             id_filter = (
@@ -449,11 +557,19 @@ class ClickHouseFilterBuilder:
             )
         else:
             id_filter = ""
+        # A two-argument ReplacingMergeTree resolves the newest tombstone while
+        # applying FINAL.  Do not also push the mutable delete predicate into a
+        # FINAL scan: with FINAL skip indexes it can prune the newest version
+        # and expose an older live match.  Non-FINAL broad reads retain the
+        # ordinary physical-row predicate.
+        live_filter = "" if self.span_latest_state else "AND is_deleted = 0"
         return (
-            f"(SELECT {select_cols} FROM spans "
+            f"(SELECT {select_cols} FROM "
+            f"{'spans FINAL' if self.span_latest_state else 'spans'} "
             f"WHERE {project_pred} "
             f"{date_pred} "
-            f"AND is_deleted = 0"
+            f"{live_filter}"
+            f"{candidate_filter}"
             f"{extra}"
             f"{id_filter})"
         )
@@ -514,6 +630,7 @@ class ClickHouseFilterBuilder:
         select_keyword = "SELECT DISTINCT" if distinct else "SELECT"
         extra_clause = f" {extra_where}" if extra_where else ""
         date_clause = self._score_date_filter("s")
+        candidate_clause = self._candidate_entity_filter(score_trace_expr)
         # Wrap spans in a project + date-scoped subquery, also gated by
         # ``id IN (score rows matching extra_where)`` — see
         # ``_scoped_spans_subquery``. For trace-only scoring (100% empty
@@ -532,6 +649,7 @@ class ClickHouseFilterBuilder:
             f"AND isNotNull({score_trace_expr}) "
             f"AND {score_trace_expr} != ''"
             f"{date_clause}"
+            f"{candidate_clause}"
             f"{extra_clause}"
         )
 
@@ -586,6 +704,7 @@ class ClickHouseFilterBuilder:
         select_keyword = "SELECT DISTINCT" if distinct else "SELECT"
         extra_clause = f" {extra_where}" if extra_where else ""
         date_clause = self._score_date_filter("s")
+        candidate_clause = self._candidate_entity_filter(score_span_expr)
         # Same rationale as ``_score_trace_select``: pre-filter spans via a
         # subquery so the root-span lookup actually prunes partitions.
         # Restrict to root spans (parent_span_id IS NULL/'') inside the
@@ -605,6 +724,7 @@ class ClickHouseFilterBuilder:
             f"AND isNotNull({score_span_expr}) "
             f"AND {score_span_expr} != ''"
             f"{date_clause}"
+            f"{candidate_clause}"
             f"{extra_clause}"
         )
 
@@ -833,7 +953,7 @@ class ClickHouseFilterBuilder:
             comparison_op = "=" if filter_op == "is_null" else "!="
             return (
                 f"trace_id IN ("
-                f"SELECT trace_id FROM {self.table} "
+                f"SELECT trace_id FROM {self._span_table_source()} "
                 f"WHERE end_user_id {comparison_op} toUUID('00000000-0000-0000-0000-000000000000') "
                 f"AND _peerdb_is_deleted = 0{self._span_membership_date_filter()})"
             )
@@ -865,7 +985,7 @@ class ClickHouseFilterBuilder:
         # Curated EndUser dimension is the ``end_users`` RMT.
         return (
             f"trace_id {outer_op} ("
-            f"SELECT trace_id FROM {self.table} "
+            f"SELECT trace_id FROM {self._span_table_source()} "
             f"WHERE end_user_id IN ("
             f"SELECT {self._ENDUSER_DIM_ID_COL} FROM {self._ENDUSER_DIM_TABLE} FINAL "
             f"WHERE {inner} "
@@ -947,7 +1067,7 @@ class ClickHouseFilterBuilder:
         )
         return (
             f"trace_id IN ("
-            f"SELECT trace_id FROM {self.table} "
+            f"SELECT trace_id FROM {self._span_table_source()} "
             f"WHERE {project_pred} AND _peerdb_is_deleted = 0"
             f"{self._span_membership_date_filter()} "
             f"{root_clause}"
@@ -989,11 +1109,12 @@ class ClickHouseFilterBuilder:
 
         if self.query_mode == self.QUERY_MODE_SPAN:
             return inner_predicate
+        live_filter = "" if self.span_latest_state else "AND is_deleted = 0"
         return (
             f"trace_id IN ("
-            f"SELECT trace_id FROM {self.table} "
+            f"SELECT trace_id FROM {self._span_table_source()} "
             f"WHERE {self._project_scope_predicate()} "
-            f"AND is_deleted = 0"
+            f"{live_filter}"
             f"{self._span_membership_date_filter()} "
             f"AND {inner_predicate})"
         )
@@ -1064,13 +1185,11 @@ class ClickHouseFilterBuilder:
         """Emit the row-level predicate; negation ops require key present.
 
         ``case_insensitive`` is set for text-typed span attributes:
-        equality/in collapse both sides via ``lower(...)``; LIKE-family ops
-        switch to ``ILIKE``.
+        equality/in collapse both sides via ``lower(...)``; substring and
+        boundary operators use literal UTF-8-aware string functions.
         """
         column_access = f"{map_column}['{attribute_key}']"
         eq_lhs = f"lower({column_access})" if case_insensitive else column_access
-        like_op = "ILIKE" if case_insensitive else "LIKE"
-        not_like_op = "NOT ILIKE" if case_insensitive else "NOT LIKE"
 
         def fold_case(value: Any) -> Any:
             """Lowercase string values when the column is case-insensitive."""
@@ -1101,22 +1220,16 @@ class ClickHouseFilterBuilder:
             self._params[param] = tuple(fold_case(v) for v in normalized_value)
             return f"{exists_predicate} AND {eq_lhs} NOT IN %({param})s"
 
-        if filter_op == "contains":
+        if filter_op in _LITERAL_TEXT_MATCH_OPS:
             param = self._next_param("attr")
-            self._params[param] = f"%{normalized_value}%"
-            return f"{exists_predicate} AND {column_access} {like_op} %({param})s"
-        if filter_op == "not_contains":
-            param = self._next_param("attr")
-            self._params[param] = f"%{normalized_value}%"
-            return f"{exists_predicate} AND {column_access} {not_like_op} %({param})s"
-        if filter_op == "starts_with":
-            param = self._next_param("attr")
-            self._params[param] = f"{normalized_value}%"
-            return f"{exists_predicate} AND {column_access} {like_op} %({param})s"
-        if filter_op == "ends_with":
-            param = self._next_param("attr")
-            self._params[param] = f"%{normalized_value}"
-            return f"{exists_predicate} AND {column_access} {like_op} %({param})s"
+            self._params[param] = str(normalized_value)
+            comparison = build_literal_text_predicate(
+                column_access,
+                param,
+                filter_op,
+                case_insensitive=case_insensitive,
+            )
+            return f"{exists_predicate} AND {comparison}"
 
         if filter_op == "between":
             param_lo = self._next_param("lo")
@@ -1233,22 +1346,14 @@ class ClickHouseFilterBuilder:
             if filter_type == FilterType.TEXT.value:
                 return f"({column} IS NOT NULL AND {column} != '')"
             return f"{column} IS NOT NULL"
-        elif filter_op == "contains":
-            self._params[param] = f"%{filter_value}%"
-            like_op = "ILIKE" if case_insensitive else "LIKE"
-            return f"{comparison_column} {like_op} %({param})s"
-        elif filter_op == "not_contains":
-            self._params[param] = f"%{filter_value}%"
-            like_op = "NOT ILIKE" if case_insensitive else "NOT LIKE"
-            return f"{comparison_column} {like_op} %({param})s"
-        elif filter_op == "starts_with":
-            self._params[param] = f"{filter_value}%"
-            like_op = "ILIKE" if case_insensitive else "LIKE"
-            return f"{comparison_column} {like_op} %({param})s"
-        elif filter_op == "ends_with":
-            self._params[param] = f"%{filter_value}"
-            like_op = "ILIKE" if case_insensitive else "LIKE"
-            return f"{comparison_column} {like_op} %({param})s"
+        elif filter_op in _LITERAL_TEXT_MATCH_OPS:
+            self._params[param] = str(filter_value)
+            return build_literal_text_predicate(
+                comparison_column,
+                param,
+                filter_op,
+                case_insensitive=case_insensitive,
+            )
         elif filter_op == "between" and isinstance(filter_value, list):
             p_lo = self._next_param("lo")
             p_hi = self._next_param("hi")
@@ -1316,18 +1421,14 @@ class ClickHouseFilterBuilder:
             return f"({expr}) IS NULL"
         if filter_op == "is_not_null":
             return f"({expr}) IS NOT NULL"
-        if filter_op == "contains":
-            self._params[param] = f"%{filter_value}%"
-            return f"({expr}) LIKE %({param})s"
-        if filter_op == "not_contains":
-            self._params[param] = f"%{filter_value}%"
-            return f"({expr}) NOT LIKE %({param})s"
-        if filter_op == "starts_with":
-            self._params[param] = f"{filter_value}%"
-            return f"({expr}) LIKE %({param})s"
-        if filter_op == "ends_with":
-            self._params[param] = f"%{filter_value}"
-            return f"({expr}) LIKE %({param})s"
+        if filter_op in _LITERAL_TEXT_MATCH_OPS:
+            self._params[param] = str(filter_value)
+            return build_literal_text_predicate(
+                f"({expr})",
+                param,
+                filter_op,
+                case_insensitive=False,
+            )
         if filter_op == "in":
             values = (
                 list(filter_value) if isinstance(filter_value, list) else [filter_value]
@@ -1460,6 +1561,9 @@ class ClickHouseFilterBuilder:
         from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 
         eval_table, eval_not_deleted = eval_logger_source()
+        eval_source = (
+            f"{eval_table} FINAL" if self.candidate_entity_scope else eval_table
+        )
 
         # PERF: no table-level FINAL — same OOM class the span-list Phase-2
         # rewrite removed: FINAL merged the WHOLE eval table before the config
@@ -1475,6 +1579,14 @@ class ClickHouseFilterBuilder:
             if self.score_date_scope
             else ""
         )
+        if self.candidate_entity_scope:
+            eval_candidate_clause = (
+                "AND observation_span_id IN %(candidate_span_ids)s "
+                if self.query_mode == self.QUERY_MODE_SPAN
+                else "AND toString(trace_id) IN %(candidate_trace_ids)s "
+            )
+        else:
+            eval_candidate_clause = ""
 
         def eval_value_subquery(
             match_condition: str,
@@ -1484,10 +1596,11 @@ class ClickHouseFilterBuilder:
             outer_operator = "NOT IN" if negate_outer else "IN"
             return (
                 f"{outer_col} {outer_operator} ("
-                f"SELECT {inner_col} FROM {eval_table} "
+                f"SELECT {inner_col} FROM {eval_source} "
                 f"WHERE custom_eval_config_id IN %({param_cfg})s "
                 f"AND {eval_not_deleted} "
                 f"{eval_date_clause}"
+                f"{eval_candidate_clause}"
                 f"{error_clause} "
                 f"AND {match_condition}"
                 f")"
@@ -1547,23 +1660,26 @@ class ClickHouseFilterBuilder:
             choice_conditions = []
             for value in values:
                 param = self._next_param("eval_choice")
-                if filter_op in ("contains", "not_contains"):
-                    self._params[param] = f"%{value}%"
-                    choice_conditions.append(
-                        f"(arrayExists(x -> x ILIKE %({param})s, {choice_array}) "
-                        f"OR output_str ILIKE %({param})s)"
+                if filter_op in _LITERAL_TEXT_MATCH_OPS:
+                    self._params[param] = str(value)
+                    # ``not_contains`` negates the complete any-choice match
+                    # below, so build its positive literal predicate here.
+                    match_op = "contains" if filter_op == "not_contains" else filter_op
+                    array_match = build_literal_text_predicate(
+                        "x",
+                        param,
+                        match_op,
+                        case_insensitive=True,
                     )
-                elif filter_op == "starts_with":
-                    self._params[param] = f"{value}%"
-                    choice_conditions.append(
-                        f"(arrayExists(x -> x ILIKE %({param})s, {choice_array}) "
-                        f"OR output_str ILIKE %({param})s)"
+                    scalar_match = build_literal_text_predicate(
+                        "output_str",
+                        param,
+                        match_op,
+                        case_insensitive=True,
                     )
-                elif filter_op == "ends_with":
-                    self._params[param] = f"%{value}"
                     choice_conditions.append(
-                        f"(arrayExists(x -> x ILIKE %({param})s, {choice_array}) "
-                        f"OR output_str ILIKE %({param})s)"
+                        f"(arrayExists(x -> {array_match}, {choice_array}) "
+                        f"OR {scalar_match})"
                     )
                 else:
                     self._params[param] = str(value)
@@ -1781,19 +1897,18 @@ class ClickHouseFilterBuilder:
         elif filter_type == "text":
             param = self._next_param("ann")
             text_expr = f"JSONExtractString({score_value}, 'text')"
-            if filter_op == "contains":
-                self._params[param] = f"%{filter_value}%"
-                return (
-                    f"{target_column} IN ({base_where} "
-                    f"AND {text_expr} != '' "
-                    f"AND {text_expr} ILIKE %({param})s)"
+            if filter_op in _LITERAL_TEXT_MATCH_OPS:
+                self._params[param] = str(filter_value)
+                comparison = build_literal_text_predicate(
+                    text_expr,
+                    param,
+                    filter_op,
+                    case_insensitive=True,
                 )
-            elif filter_op == "not_contains":
-                self._params[param] = f"%{filter_value}%"
                 return (
                     f"{target_column} IN ({base_where} "
                     f"AND {text_expr} != '' "
-                    f"AND {text_expr} NOT ILIKE %({param})s)"
+                    f"AND {comparison})"
                 )
             elif filter_op == "equals":
                 self._params[param] = filter_value
@@ -1808,20 +1923,6 @@ class ClickHouseFilterBuilder:
                     f"{target_column} IN ({base_where} "
                     f"AND {text_expr} != '' "
                     f"AND lower({text_expr}) != lower(%({param})s))"
-                )
-            elif filter_op == "starts_with":
-                self._params[param] = f"{filter_value}%"
-                return (
-                    f"{target_column} IN ({base_where} "
-                    f"AND {text_expr} != '' "
-                    f"AND {text_expr} ILIKE %({param})s)"
-                )
-            elif filter_op == "ends_with":
-                self._params[param] = f"%{filter_value}"
-                return (
-                    f"{target_column} IN ({base_where} "
-                    f"AND {text_expr} != '' "
-                    f"AND {text_expr} ILIKE %({param})s)"
                 )
             elif filter_op in ("in", "not_in"):
                 raw_values = (
@@ -1939,8 +2040,12 @@ class ClickHouseFilterBuilder:
         """
         if isinstance(filter_value, str):
             filter_value = filter_value.lower() == "true"
-        if not filter_value:
+        if not filter_value and not self.candidate_entity_scope:
+            # Preserve the historical broad-query contract. Candidate
+            # classifiers can safely implement the negative form because the
+            # outer identity set is already finite.
             return None
+        outer_operator = "IN" if filter_value else "NOT IN"
         # The eval table has no ``project_id`` column, so scope the subquery by
         # INNER JOIN to the spans table (which does) — otherwise we would match
         # trace_ids from *every* project. Table + not-deleted predicate resolve
@@ -1953,18 +2058,41 @@ class ClickHouseFilterBuilder:
         from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 
         eval_table, eval_not_deleted = eval_logger_source("el")
+        eval_source = (
+            f"{eval_table} AS el FINAL"
+            if self.candidate_entity_scope
+            else f"{eval_table} AS el"
+        )
+        span_source = (
+            f"{self.table} AS sp FINAL"
+            if self.span_latest_state
+            else f"{self.table} AS sp"
+        )
         eval_date_clause = (
             "AND el.created_at >= %(start_date)s - INTERVAL 7 DAY "
             if self.score_date_scope
             else ""
         )
+        candidate_clause = (
+            "AND toString(el.trace_id) IN %(candidate_trace_ids)s "
+            if self.candidate_entity_scope
+            else ""
+        )
+        span_candidate_clause = (
+            "AND sp.trace_id IN %(candidate_trace_ids)s "
+            if self.candidate_entity_scope
+            else ""
+        )
         return (
-            "trace_id IN ("
-            f"SELECT DISTINCT toString(el.trace_id) FROM {eval_table} AS el "
-            f"INNER JOIN {self.table} AS sp ON sp.trace_id = toString(el.trace_id) "
+            f"trace_id {outer_operator} ("
+            f"SELECT DISTINCT toString(el.trace_id) FROM {eval_source} "
+            f"INNER JOIN {span_source} "
+            "ON sp.trace_id = toString(el.trace_id) "
             f"WHERE {eval_not_deleted} AND el.trace_id IS NOT NULL "
             f"{eval_date_clause}"
+            f"{candidate_clause}"
             "AND sp.is_deleted = 0 "
+            f"{span_candidate_clause}"
             f"AND {self._project_scope_predicate('sp')})"
         )
 

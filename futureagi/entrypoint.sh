@@ -9,6 +9,14 @@ DJANGO_SETTINGS_MODULE=${DJANGO_SETTINGS_MODULE:-tfc.settings.settings}
 ENV_PROJECT_ROOT=${ENV_PROJECT_ROOT:-/app/backend}
 # Fast startup mode - skip non-essential checks for faster local dev
 FAST_STARTUP=${FAST_STARTUP:-false}
+NO_STARTUP_DB_MUTATIONS=${NO_STARTUP_DB_MUTATIONS:-false}
+
+NO_STARTUP_DB_MUTATIONS=${NO_STARTUP_DB_MUTATIONS,,}
+if [ "$NO_STARTUP_DB_MUTATIONS" != "true" ] && [ "$NO_STARTUP_DB_MUTATIONS" != "false" ]; then
+    echo "ERROR: NO_STARTUP_DB_MUTATIONS must be exactly 'true' or 'false'"
+    exit 1
+fi
+export NO_STARTUP_DB_MUTATIONS
 
 # Disable bytecode compilation to speed up imports (optional)
 # export PYTHONDONTWRITEBYTECODE=1
@@ -229,16 +237,22 @@ if [ "$FAST_STARTUP" != "true" ]; then
             ;;
     esac
 
-    # Create cache table for services that need it
-    case "$SERVICE_TYPE" in
-        "backend"|"worker")
-            create_cache_table
-            ;;
-    esac
+    if [ "$NO_STARTUP_DB_MUTATIONS" = "true" ]; then
+        echo "Startup database mutations disabled: skipping cache-table creation and migrations"
+    else
+        # Create cache table for services that need it
+        case "$SERVICE_TYPE" in
+            "backend"|"worker")
+                create_cache_table
+                ;;
+        esac
+    fi
 
     # Run backend-specific setup
     if [ "$SERVICE_TYPE" = "backend" ]; then
-        run_migrations
+        if [ "$NO_STARTUP_DB_MUTATIONS" != "true" ]; then
+            run_migrations
+        fi
         collect_static
         if [ "$ENV_TYPE" = "prod" ] || [ "$ENV_TYPE" = "staging" ]; then
             validate_django
@@ -248,7 +262,11 @@ else
     echo "FAST_STARTUP mode: skipping DB checks, migrations, and static collection"
 fi
 
-python manage.py register_temporal_schedules || echo "WARNING: Temporal schedule registration failed (non-fatal), continuing startup..."
+if [ "$NO_STARTUP_DB_MUTATIONS" = "true" ]; then
+    echo "Startup mutations disabled: skipping Temporal schedule registration"
+else
+    python manage.py register_temporal_schedules || echo "WARNING: Temporal schedule registration failed (non-fatal), continuing startup..."
+fi
 
 # Start the appropriate service based on SERVICE_TYPE
 case "$SERVICE_TYPE" in

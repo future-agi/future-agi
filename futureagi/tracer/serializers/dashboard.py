@@ -8,7 +8,6 @@ from tracer.serializers.filters import (
     filter_list_field,
 )
 
-
 DASHBOARD_METRIC_TYPES = (
     "system_metric",
     "eval_metric",
@@ -296,9 +295,7 @@ class DashboardQuerySerializer(StrictInputSerializer):
     )
     metrics = DashboardMetricSerializer(many=True)
     filters = filter_list_field(required=False, default=list)
-    breakdowns = DashboardBreakdownSerializer(
-        many=True, required=False, default=list
-    )
+    breakdowns = DashboardBreakdownSerializer(many=True, required=False, default=list)
 
     class Meta:
         swagger_schema_fields = {"additionalProperties": False}
@@ -334,6 +331,16 @@ class DashboardQueryMetricResultSerializer(serializers.Serializer):
     aggregation = serializers.ChoiceField(choices=DASHBOARD_AGGREGATIONS)
     unit = serializers.CharField(allow_blank=True)
     series = DashboardQuerySeriesSerializer(many=True)
+    error = serializers.CharField(required=False)
+    query_complete = serializers.BooleanField(required=False)
+    query_status = serializers.ChoiceField(
+        choices=["complete", "degraded"],
+        required=False,
+    )
+    query_error_code = serializers.ChoiceField(
+        choices=["read_budget_exceeded", "query_failed"],
+        required=False,
+    )
 
 
 class DashboardQueryTimeRangeResultSerializer(serializers.Serializer):
@@ -413,6 +420,7 @@ class DashboardFilterValuesQuerySerializer(serializers.Serializer):
     source = serializers.ChoiceField(
         choices=[
             "traces",
+            "spans",
             "sessions",
             "datasets",
             "dataset_column",
@@ -424,3 +432,23 @@ class DashboardFilterValuesQuerySerializer(serializers.Serializer):
     project_ids = CommaSeparatedListField(required=False, default=list)
     dataset_id = serializers.UUIDField(required=False)
     search = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class DashboardFilterValuesResultSerializer(serializers.Serializer):
+    # Values are intentionally polymorphic: most metrics return
+    # {value, label}, while a few legacy consumers still accept scalar values.
+    values = serializers.ListField(child=serializers.JSONField())
+    query_complete = serializers.BooleanField(required=False)
+    query_status = serializers.ChoiceField(
+        choices=["complete", "sampled", "degraded"],
+        required=False,
+    )
+    query_error_code = serializers.ChoiceField(
+        choices=["sample_limit", "read_budget_exceeded", "query_failed"],
+        required=False,
+    )
+
+
+class DashboardFilterValuesResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = DashboardFilterValuesResultSerializer()

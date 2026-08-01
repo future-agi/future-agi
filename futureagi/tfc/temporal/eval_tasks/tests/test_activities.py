@@ -12,6 +12,45 @@ from tracer.models.eval_task import EvalTask, EvalTaskStatus
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger
 
 
+@pytest.mark.asyncio
+async def test_reconcile_read_budget_is_non_retryable(monkeypatch):
+    from temporalio.exceptions import ApplicationError
+
+    import tfc.temporal.eval_tasks.activities as activities
+    from tfc.temporal.eval_tasks.types import ReconcileActivityInput
+    from tracer.selectors.eval_tasks.row_resolver import (
+        _SAFE_READ_BUDGET_MESSAGE,
+        EvalTaskReadBudgetExceeded,
+    )
+
+    class _NoopHeartbeater:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+    async def _raise_budget(_task_id):
+        raise EvalTaskReadBudgetExceeded(_SAFE_READ_BUDGET_MESSAGE)
+
+    monkeypatch.setattr(activities, "Heartbeater", _NoopHeartbeater)
+    monkeypatch.setattr(
+        activities,
+        "otel_sync_to_async",
+        lambda *_args, **_kwargs: _raise_budget,
+    )
+
+    with pytest.raises(ApplicationError) as exc_info:
+        await activities.reconcile_eval_task_activity(
+            ReconcileActivityInput(task_id="11111111-1111-1111-1111-111111111111")
+        )
+
+    assert exc_info.value.non_retryable is True
+    assert exc_info.value.type == "EvalTaskReadBudgetExceeded"
+    assert _SAFE_READ_BUDGET_MESSAGE in str(exc_info.value)
+    assert "DB::Exception" not in str(exc_info.value)
+
+
 @pytest.mark.integration
 @pytest.mark.django_db(transaction=True)
 class TestReconcileActivitySync:

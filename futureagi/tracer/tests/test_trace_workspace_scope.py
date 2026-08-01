@@ -240,9 +240,12 @@ class TestTraceWorkspaceScopeAPI:
         # Stays robust against tracer.views.trace circular-import path at
         # test setup time that defeated a runtime-sentinel approach.
         import inspect
+
         from django.urls import get_resolver
-        get_resolver().reverse_dict  # forces URL conf + view imports
+
+        _ = get_resolver().reverse_dict  # forces URL conf + view imports
         import sys
+
         trace_module = sys.modules["tracer.views.trace"]
         agent_graph_fn = trace_module.TraceView.agent_graph
         src = inspect.getsource(agent_graph_fn)
@@ -252,6 +255,7 @@ class TestTraceWorkspaceScopeAPI:
         # caught equally — re.search rather than substring to allow word-
         # boundary detection.
         import re
+
         forbidden = [
             r"\b_build_agent_graph_pg\b",
             r"\b_agent_graph_pg\b",

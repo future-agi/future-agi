@@ -1,5 +1,7 @@
-import structlog
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
+
+import structlog
 from django.conf import settings
 from django.http import Http404
 from django.utils import timezone
@@ -23,6 +25,7 @@ from tracer.serializers.dashboard import (
     DashboardCreateUpdateSerializer,
     DashboardDetailSerializer,
     DashboardFilterValuesQuerySerializer,
+    DashboardFilterValuesResponseSerializer,
     DashboardMetricsCatalogResponseSerializer,
     DashboardPreviewQuerySerializer,
     DashboardQueryApiResponseSerializer,
@@ -34,7 +37,6 @@ from tracer.services.clickhouse.client import (
     get_clickhouse_client,
     is_clickhouse_enabled,
 )
-from tracer.services.dashboard_metrics_catalog import get_cached_metrics_catalog
 from tracer.services.clickhouse.query_builders.dashboard import (
     METRIC_UNITS,
     DashboardQueryBuilder,
@@ -52,13 +54,31 @@ from tracer.services.clickhouse.query_builders.simulation_dashboard import (
     SimulationQueryBuilder,
 )
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.clickhouse.read_budget import is_read_budget_error
 from tracer.services.clickhouse.v2.id_remap_sql import (
     remap_left_join,
     resolved_id_expr,
 )
+from tracer.services.dashboard_metrics_catalog import get_cached_metrics_catalog
+from tracer.utils.helper import get_annotation_labels_for_project
 from tracer.utils.sql_queries import SQL_query_handler
 
 logger = structlog.get_logger(__name__)
+
+DASHBOARD_CH_SETTINGS = {
+    "timeout_overflow_mode": "throw",
+    "max_threads": 2,
+    "max_memory_usage": 268_435_456,
+    "max_bytes_to_read": 1_073_741_824,
+    "read_overflow_mode": "throw",
+    "max_result_rows": 10_000,
+    "result_overflow_mode": "throw",
+}
+
+# Only attributes with a verified trace-root contract may use the root-span
+# rollup for trace filter values.  The table also stores ``country``, but that
+# key can live on child spans, so routing it here would silently omit values.
+TRACE_FILTER_VALUES_ATTR_ROLLUP_KEYS = frozenset({"final_status"})
 
 DASHBOARD_FILTER_COL_TYPE_TO_METRIC_TYPE = {
     "SYSTEM_METRIC": "system_metric",
@@ -125,12 +145,12 @@ def _normalize_dashboard_query_filters(query_config):
     return query_config
 
 
-
 class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
     serializer_class = DashboardSerializer
     lookup_value_regex = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    _DASHBOARD_CH_SETTINGS = DASHBOARD_CH_SETTINGS
 
     def get_queryset(self):
         return super().get_queryset().select_related("created_by", "updated_by")
@@ -143,26 +163,17 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         return DashboardSerializer
 
     def _get_trace_query_timeout_ms(self, trace_config):
-        """Use a longer timeout for high-cardinality or wide trace queries."""
-        has_eval_metrics = any(
-            m.get("type") == "eval_metric" for m in trace_config.get("metrics", [])
-        )
-        has_project_breakdown = any(
-            bd.get("name") == "project"
-            for bd in trace_config.get("breakdowns", [])
-            if bd.get("source", "traces") in ("traces", "both", "all", "")
-        )
-        return 30000 if has_eval_metrics or has_project_breakdown else 10000
+        """Hard request budget; individual metrics fail open to an empty series."""
+        return 750
 
     @staticmethod
     def _run_metric_queries(builder, source, fetch_rows):
         """Build + execute each metric in parallel; return [(metric_info, rows)].
 
-        Only ``InvalidMetricCombinationError`` is caught per-metric (the metric
-        is non-sensical and a user-facing message is attached). All other
-        exceptions (connection, timeout, programming bugs) propagate so they
-        surface as real errors instead of being silently masked as per-widget
-        "could not be computed" text.
+        Each metric is isolated so one bad widget does not blank unrelated
+        series. Resource overruns use throw-mode settings and become explicit,
+        sanitized degraded metadata; partial ClickHouse rows are never rendered
+        as a healthy result.
         """
         metrics = builder.metrics
         if not metrics:
@@ -178,7 +189,29 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 metric_info["error"] = str(e)
                 return (metric_info, [])
             except Exception as e:
-                logger.warning("metric_query_failed", metric=metric_info.get("name"), error=str(e)[:200])
+                read_budget_error = is_read_budget_error(e)
+                logger.warning(
+                    "metric_query_failed",
+                    metric=metric_info.get("name"),
+                    error=str(e)[:200],
+                )
+                metric_info.update(
+                    {
+                        "error": (
+                            "Metric query exceeded its read budget. "
+                            "Narrow the time range or filters and retry."
+                            if read_budget_error
+                            else "Metric query could not be completed."
+                        ),
+                        "query_complete": False,
+                        "query_status": "degraded",
+                        "query_error_code": (
+                            "read_budget_exceeded"
+                            if read_budget_error
+                            else "query_failed"
+                        ),
+                    }
+                )
                 return (metric_info, [])
 
         if len(metrics) == 1:
@@ -224,13 +257,23 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             builder,
             "simulation",
             lambda sql, params: (
-                analytics.execute_ch_query(sql, params, timeout_ms=10000).data
+                analytics.execute_ch_query(
+                    sql,
+                    params,
+                    timeout_ms=750,
+                    settings=self._DASHBOARD_CH_SETTINGS,
+                ).data
             ),
         )
 
     def _run_simulation_clickhouse_queries(self, ch_client, simulation_config):
         def _fetch_rows(sql, params):
-            rows, column_types, _ = ch_client.execute_read(sql, params)
+            rows, column_types, _ = ch_client.execute_read(
+                sql,
+                params,
+                timeout_ms=750,
+                settings=self._DASHBOARD_CH_SETTINGS,
+            )
             col_names = [ct[0] for ct in column_types]
             return [dict(zip(col_names, row, strict=True)) for row in rows]
 
@@ -457,9 +500,14 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     self._run_metric_queries(
                         builder,
                         "traces",
-                        lambda sql, params: analytics.execute_ch_query(
-                            sql, params, timeout_ms=query_timeout
-                        ).data,
+                        lambda sql, params: (
+                            analytics.execute_ch_query(
+                                sql,
+                                params,
+                                timeout_ms=query_timeout,
+                                settings=self._DASHBOARD_CH_SETTINGS,
+                            ).data
+                        ),
                     )
                 )
 
@@ -488,9 +536,14 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     self._run_metric_queries(
                         builder,
                         "datasets",
-                        lambda sql, params: analytics.execute_ch_query(
-                            sql, params, timeout_ms=10000
-                        ).data,
+                        lambda sql, params: (
+                            analytics.execute_ch_query(
+                                sql,
+                                params,
+                                timeout_ms=750,
+                                settings=self._DASHBOARD_CH_SETTINGS,
+                            ).data
+                        ),
                     )
                 )
 
@@ -601,9 +654,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 agent_definition_id=(
                     request.query_params.get("agent_definition_id", "") or ""
                 ),
-                per_eval_config=(
-                    request.query_params.get("per_eval_config") == "true"
-                ),
+                per_eval_config=(request.query_params.get("per_eval_config") == "true"),
             )
 
             # --- Optional server-side filtering & pagination ---
@@ -952,9 +1003,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
     def _filter_values_window(self, column="start_time"):
         """Fixed `start_time` lookback; returns `(clause, params)`.
 
-        Unconditional — no unbounded fallback: break-mode does not convert
-        memory (241) or byte-guard (307) errors, and this endpoint must never
-        fail. Keys with only older values list/search as empty.
+        Unconditional — no unbounded fallback. Budget errors become structured
+        degraded metadata, while keys with only older values legitimately
+        list/search as empty for this documented recent window.
         """
         lookback_days = getattr(
             settings,
@@ -966,21 +1017,96 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             {"win_lookback_days": lookback_days},
         )
 
+    @classmethod
+    def _attr_rollup_filter_values_window(cls):
+        """Return a covered whole-hour window, or ``None`` to use spans.
+
+        The rollup is fail-closed: merely having the table is insufficient.
+        Ops must enable it and declare a coverage boundary that contains the
+        entire fixed picker lookback.
+        """
+        if not getattr(settings, "TRACE_FILTER_VALUES_ATTR_ROLLUP_ENABLED", False):
+            return None
+        covered_since = getattr(settings, "DASHBOARD_ATTR_ROLLUP_COVERED_SINCE", None)
+        if not isinstance(covered_since, datetime):
+            return None
+        if covered_since.tzinfo is None:
+            covered_since = covered_since.replace(tzinfo=UTC)
+
+        try:
+            lookback_days = int(
+                getattr(
+                    settings,
+                    "FILTER_VALUES_DEFAULT_LOOKBACK_DAYS",
+                    cls.FILTER_VALUES_DEFAULT_LOOKBACK_DAYS,
+                )
+            )
+        except (TypeError, ValueError):
+            return None
+        if lookback_days <= 0:
+            return None
+
+        now = timezone.now()
+        # Include both partial boundary hours. Attribute suggestions must not
+        # disappear merely because the exact seven-day cutoff falls mid-hour.
+        window_end = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        window_start = (now - timedelta(days=lookback_days)).replace(
+            minute=0, second=0, microsecond=0
+        )
+        if window_start < covered_since:
+            return None
+        return window_start, window_end
+
     @staticmethod
     def _like_pattern(search):
         """`%search%` with the user's LIKE metacharacters escaped."""
         escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         return f"%{escaped}%"
 
-    # On budget overrun, return instead of raising Code 159 (-> HTTP 400).
-    # With ORDER BY in the SQL a truncated scan returns ZERO rows (measured),
-    # not a partial list — the picker renders empty and the user searches.
-    _FILTER_VALUES_CH_SETTINGS = {"timeout_overflow_mode": "break"}
+    @staticmethod
+    def _can_use_ascii_attr_ngram_companion(search):
+        """Whether the ASCII value-index predicate is Unicode-equivalent.
 
-    # Searches at least this long may scan unbounded — MUST equal the ngram
-    # size of idx_attrs_str_ngram (023), the length at which the index can
-    # prune. Shorter needles get no index help and stay windowed.
-    _FILTER_VALUES_SEARCH_UNBOUNDED_MIN_CHARS = 4
+        ``idx_attrs_str_ngram`` indexes ``lower(...)`` while the authoritative
+        predicate uses ``lowerUTF8(...)``.  The companion is therefore only a
+        safe necessary condition for an ASCII needle of at least one index
+        ngram whose characters cannot be introduced by Unicode lowercasing.
+        In ClickHouse's supported Unicode mapping, U+212A KELVIN SIGN lowers to
+        the ASCII ``k``; adding the companion for such a needle would reject a
+        real Unicode match.  U+0130 lowers to ``i`` plus a combining mark, so it
+        cannot produce a matching four-character ASCII substring containing
+        that ``i``.  Needles shorter than four characters cannot prune this
+        ngram index and do not justify the extra predicate.
+        """
+        return len(search) >= 4 and search.isascii() and "k" not in search.casefold()
+
+    # Throw on budget overrun so callers can distinguish an unavailable,
+    # incomplete suggestion query from a legitimate empty value set. The API
+    # converts the exception to safe structured 200 metadata; raw ClickHouse
+    # errors never reach the browser.
+    _FILTER_VALUES_CH_SETTINGS = {
+        "timeout_overflow_mode": "throw",
+        "max_threads": 2,
+        "max_memory_usage": 268_435_456,
+        "max_bytes_to_read": 1_073_741_824,
+        "read_overflow_mode": "throw",
+        "max_result_rows": 1000,
+        "result_overflow_mode": "throw",
+    }
+
+    def _degraded_filter_values_response(self, exc):
+        return self._gm.success_response(
+            {
+                "values": [],
+                "query_complete": False,
+                "query_status": "degraded",
+                "query_error_code": (
+                    "read_budget_exceeded"
+                    if is_read_budget_error(exc)
+                    else "query_failed"
+                ),
+            }
+        )
 
     @classmethod
     def _run_windowed_filter_values(
@@ -995,16 +1121,17 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             settings=cls._FILTER_VALUES_CH_SETTINGS,
         )
 
+    @validated_request(
+        query_serializer=DashboardFilterValuesQuerySerializer,
+        responses={
+            200: DashboardFilterValuesResponseSerializer,
+            400: ApiErrorResponseSerializer,
+        },
+    )
     @action(detail=False, methods=["get"])
     def filter_values(self, request):
         """Return distinct values for a given metric/attribute, for filter value picker."""
-        query_serializer = DashboardFilterValuesQuerySerializer(
-            data=request.query_params
-        )
-        if not query_serializer.is_valid():
-            return self._gm.bad_request(query_serializer.errors)
-
-        query_params = query_serializer.validated_data
+        query_params = request.validated_query_data
         metric_name = query_params["metric_name"]
         metric_type = query_params["metric_type"]
         source = query_params["source"]
@@ -1042,9 +1169,15 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         try:
             if metric_type == "annotation_metric" and metric_name == "annotator":
                 from accounts.models.user import User
-                from tracer.services.annotation_label_source import AnnotationLabelScoresCH
+                from tracer.services.annotation_label_source import (
+                    AnnotationLabelScoresProjectPG,
+                )
 
-                annotator_ids = AnnotationLabelScoresCH().annotator_ids_for_projects(project_ids)
+                annotator_ids = (
+                    AnnotationLabelScoresProjectPG().annotator_ids_for_projects(
+                        project_ids
+                    )
+                )
                 users = (
                     User.objects.filter(id__in=annotator_ids)
                     .values("id", "name", "email")
@@ -1088,7 +1221,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "name": "name",
                     "span_name": "name",
                     "session": "toString(trace_session_id)",
-                    "tag": "arrayJoin(trace_tags)",
+                    "tag": "arrayJoin(JSONExtract(tags, 'Array(String)'))",
                     "prompt_name": "dictGet('prompt_dict', 'prompt_name', prompt_version_id)",
                     "prompt_version": "dictGet('prompt_dict', 'template_version', prompt_version_id)",
                     "prompt_label": "dictGet('prompt_label_dict', 'name', prompt_label_id)",
@@ -1112,7 +1245,10 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             f"LIMIT 500"
                         )
                         result = analytics.execute_ch_query(
-                            sql, {"project_ids": project_ids}, timeout_ms=5000
+                            sql,
+                            {"project_ids": project_ids},
+                            timeout_ms=750,
+                            settings=self._FILTER_VALUES_CH_SETTINGS,
                         )
                         values = [
                             {"value": row["val"], "label": row["val"]}
@@ -1124,7 +1260,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             metric_name=metric_name,
                             error=str(e)[:200],
                         )
-                        values = []
+                        return self._degraded_filter_values_response(e)
                     return self._gm.success_response({"values": values})
 
                 col_expr = col_map.get(metric_name)
@@ -1179,6 +1315,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                                 f"ORDER BY val "
                                 f"LIMIT {limit}"
                             )
+
                     else:
                         limit = 20 if search else 500
                         if search:
@@ -1188,12 +1325,16 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             if search
                             else ""
                         )
-                        window = self._filter_values_window()
+                        trace_tag = metric_name == "tag" and source != "spans"
+                        table_expr = "traces FINAL" if trace_tag else "spans"
+                        window = self._filter_values_window(
+                            "created_at" if trace_tag else "start_time"
+                        )
 
                         def build_sql(win):
                             return (
                                 f"SELECT DISTINCT {col_expr} AS val "
-                                f"FROM spans "
+                                f"FROM {table_expr} "
                                 f"WHERE project_id IN %(project_ids)s "
                                 f"AND is_deleted = 0 "
                                 f"{win}"
@@ -1205,7 +1346,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             )
 
                     result = self._run_windowed_filter_values(
-                        analytics, build_sql, ch_params, window, timeout_ms=5000
+                        analytics, build_sql, ch_params, window, timeout_ms=750
                     )
                     values = [row["val"] for row in result.data]
                 except Exception as e:
@@ -1214,7 +1355,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         metric_name=metric_name,
                         error=str(e)[:200],
                     )
-                    values = []
+                    return self._degraded_filter_values_response(e)
 
                 if metric_name == "session" and source == "sessions":
                     from tracer.services.clickhouse.v2.trace_session_dict_reader import (
@@ -1257,8 +1398,17 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 from model_hub.models.develop_annotations import AnnotationsLabels
 
                 try:
-                    label = AnnotationsLabels.no_workspace_objects.get(
-                        pk=metric_name, deleted=False
+                    organization = (
+                        getattr(request, "organization", None)
+                        or request.user.organization
+                    )
+                    label = get_annotation_labels_for_project(
+                        project_id=None,
+                        organization=organization,
+                        project_ids=project_ids,
+                    ).get(
+                        pk=metric_name,
+                        organization=organization,
                     )
                 except AnnotationsLabels.DoesNotExist:
                     return self._gm.success_response({"values": []})
@@ -1297,12 +1447,18 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         else:
                             add_value_option(values, seen_values, opt)
 
-                    # CH-backed stored categorical choices (Score.value), scoped via spans.
+                    # Score.value is already denormalized with tracer_project_id
+                    # and indexed by (tracer_project_id, label). Reading it from
+                    # PG avoids two all-history spans membership scans.
                     import json
 
-                    from tracer.services.annotation_label_source import AnnotationLabelScoresCH
+                    from tracer.services.annotation_label_source import (
+                        AnnotationLabelScoresProjectPG,
+                    )
 
-                    for payload_str in AnnotationLabelScoresCH().categorical_values_for_label(
+                    for (
+                        payload_str
+                    ) in AnnotationLabelScoresProjectPG().categorical_values_for_label(
                         label.id, project_ids
                     ):
                         try:
@@ -1342,6 +1498,74 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     values = []
 
             elif metric_type == "custom_attribute":
+                rollup_window = (
+                    self._attr_rollup_filter_values_window()
+                    if (
+                        source == "traces"
+                        and metric_name in TRACE_FILTER_VALUES_ATTR_ROLLUP_KEYS
+                    )
+                    else None
+                )
+                if rollup_window is not None:
+                    attr_limit = 20 if search else 500
+                    rollup_start, rollup_end = rollup_window
+                    attr_params = {
+                        "project_ids": project_ids,
+                        "attr_key": metric_name,
+                        "rollup_start": rollup_start,
+                        "rollup_end": rollup_end,
+                    }
+                    attr_search_clause = ""
+                    if search:
+                        attr_params["search_pattern"] = self._like_pattern(search)
+                        attr_search_clause = "AND attr_value ILIKE %(search_pattern)s "
+                    sql = (
+                        "SELECT attr_value AS val "
+                        "FROM dashboard_attr_rollup "
+                        "WHERE project_id IN %(project_ids)s "
+                        "AND attr_key = %(attr_key)s "
+                        "AND hour >= %(rollup_start)s "
+                        "AND hour < %(rollup_end)s "
+                        "AND attr_value != '' "
+                        f"{attr_search_clause}"
+                        "GROUP BY attr_value "
+                        "ORDER BY val "
+                        f"LIMIT {attr_limit}"
+                    )
+                    try:
+                        result = analytics.execute_ch_query(
+                            sql,
+                            attr_params,
+                            timeout_ms=750,
+                            settings=self._FILTER_VALUES_CH_SETTINGS,
+                        )
+                        values = [
+                            {"value": row["val"], "label": row["val"]}
+                            for row in result.data
+                        ]
+                    except Exception as e:
+                        # Do not retry against raw spans: the rollup route was
+                        # selected specifically to protect the cluster from
+                        # that high-amplification fallback.
+                        logger.warning(
+                            "filter_values_attr_rollup_query_failed",
+                            metric_name=metric_name,
+                            error=str(e)[:200],
+                        )
+                        return self._gm.success_response(
+                            {
+                                "values": [],
+                                "query_complete": False,
+                                "query_status": "degraded",
+                                "query_error_code": (
+                                    "read_budget_exceeded"
+                                    if is_read_budget_error(e)
+                                    else "query_failed"
+                                ),
+                            }
+                        )
+                    return self._gm.success_response({"values": values})
+
                 # Use mapContains() so the `idx_attrs_string_keys` bloom
                 # filter index prunes granules that don't have the key.
                 # Without this, wide-attribute projects can blow past
@@ -1353,63 +1577,67 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 attr_params: dict = {
                     "project_ids": project_ids,
                     "attr_key": metric_name,
+                    # The picker needs representative values, not every
+                    # matching span. Streaming a bounded sample lets LIMIT
+                    # stop the read early; DISTINCT + ORDER BY forced a full
+                    # seven-day scan (29 GB / 15 s for prompt_slug in prod).
+                    "sample_limit": 1000,
                 }
                 attr_search_clause = ""
                 if search:
                     attr_params["search_pattern"] = self._like_pattern(search)
-                    # Companion for idx_attrs_str_ngram (023): the ILIKE on a
-                    # map element alone never engages the index. Implied by
-                    # the ILIKE, so results are unchanged. Must stay
-                    # byte-identical to the index DDL expression.
-                    attr_params["search_pattern_lower"] = self._like_pattern(
-                        search
-                    ).lower()
                     attr_search_clause = (
-                        "AND attrs_string[%(attr_key)s] ILIKE %(search_pattern)s "
-                        "AND arrayStringConcat(arrayMap(x -> lower(x), "
-                        "mapValues(attrs_string))) LIKE %(search_pattern_lower)s "
+                        "AND lowerUTF8(attrs_string[%(attr_key)s]) "
+                        "LIKE lowerUTF8(%(search_pattern)s) "
                     )
+                    if self._can_use_ascii_attr_ngram_companion(search):
+                        # Companion for idx_attrs_str_ngram (023): the Unicode
+                        # predicate on one map element does not engage the index.
+                        # Only append the ASCII lower() condition when it is a
+                        # necessary condition of the authoritative predicate.
+                        attr_params["search_pattern_lower"] = self._like_pattern(
+                            search
+                        ).lower()
+                        attr_search_clause += (
+                            "AND arrayStringConcat(arrayMap(x -> lower(x), "
+                            "mapValues(attrs_string))) LIKE "
+                            "%(search_pattern_lower)s "
+                        )
 
                 def build_sql(win):
                     return (
-                        "SELECT DISTINCT attrs_string[%(attr_key)s] AS val "
+                        "SELECT attrs_string[%(attr_key)s] AS val "
                         "FROM spans "
-                        "WHERE project_id IN %(project_ids)s "
-                        "AND is_deleted = 0 "
+                        "PREWHERE project_id IN %(project_ids)s "
                         f"{win}"
+                        "WHERE is_deleted = 0 "
                         "AND mapContains(attrs_string, %(attr_key)s) "
                         "AND attrs_string[%(attr_key)s] != '' "
                         f"{attr_search_clause}"
-                        "ORDER BY val "
-                        f"LIMIT {attr_limit}"
+                        "LIMIT %(sample_limit)s"
                     )
 
-                # A search of >= ngram-size chars runs UNBOUNDED: values older
-                # than the lookback stay findable, and idx_attrs_str_ngram can
-                # prune the scan (its 4-gram bloom needs a >=4-char needle).
-                # Common needles that don't prune are still capped by break +
-                # the catch below — slow-then-empty, never an error. Shorter
-                # searches keep the window: the index cannot help them.
-                unbounded_search = (
-                    len(search) >= self._FILTER_VALUES_SEARCH_UNBOUNDED_MIN_CHARS
-                    if search
-                    else False
-                )
-
-                # Never 400: break absorbs timeouts; residual CH errors
-                # (241/307/connectivity) degrade to an empty list, matching
-                # the system_metric path.
+                # Keep every search windowed. The ngram companion can prune
+                # distinctive needles, while LIMIT guarantees the picker never
+                # pays to globally sort/deduplicate a whale tenant's history.
                 try:
                     result = self._run_windowed_filter_values(
                         analytics,
                         build_sql,
                         attr_params,
-                        ("", {}) if unbounded_search else self._filter_values_window(),
-                        timeout_ms=15000,
+                        self._filter_values_window(),
+                        timeout_ms=750,
                     )
+                    unique_values = sorted(
+                        {
+                            str(row["val"])
+                            for row in result.data
+                            if row.get("val") not in (None, "")
+                        },
+                        key=str.casefold,
+                    )[:attr_limit]
                     values = [
-                        {"value": row["val"], "label": row["val"]}
-                        for row in result.data
+                        {"value": value, "label": value} for value in unique_values
                     ]
                 except Exception as e:
                     logger.warning(
@@ -1417,16 +1645,25 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         metric_name=metric_name,
                         error=str(e)[:200],
                     )
-                    values = []
+                    return self._degraded_filter_values_response(e)
+                sampled = len(result.data) >= attr_params["sample_limit"]
+                response_payload = {
+                    "values": values,
+                    # Keep the established completeness signal: a bounded
+                    # sample is usable for suggestions but is not exhaustive.
+                    "query_complete": not sampled,
+                    "query_status": "sampled" if sampled else "complete",
+                }
+                if sampled:
+                    response_payload["query_error_code"] = "sample_limit"
+                return self._gm.success_response(response_payload)
             else:
                 values = []
 
             return self._gm.success_response({"values": values})
         except Exception as e:
-            logger.error("fetch_filter_values_failed", error=str(e))
-            return self._gm.bad_request(
-                "Failed to fetch filter values. Please try again later."
-            )
+            logger.warning("fetch_filter_values_failed_open", error=str(e)[:200])
+            return self._degraded_filter_values_response(e)
 
     def _filter_values_dataset(self, request, metric_name, metric_type):
         """Return distinct filter values for dataset source."""
@@ -1691,6 +1928,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
     serializer_class = DashboardWidgetSerializer
+    _DASHBOARD_CH_SETTINGS = DASHBOARD_CH_SETTINGS
 
     def get_queryset(self):
         dashboard_id = self.kwargs.get("dashboard_pk") or self.kwargs.get(
@@ -1912,13 +2150,18 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
 
             def _fetch_trace_rows(sql, params):
                 rows, column_types, _ = ch_client.execute_read(
-                    sql, params, timeout_ms=query_timeout
+                    sql,
+                    params,
+                    timeout_ms=query_timeout,
+                    settings=self._DASHBOARD_CH_SETTINGS,
                 )
                 col_names = [ct[0] for ct in column_types]
                 return [dict(zip(col_names, row, strict=True)) for row in rows]
 
             metric_results.extend(
-                DashboardViewSet._run_metric_queries(builder, "traces", _fetch_trace_rows)
+                DashboardViewSet._run_metric_queries(
+                    builder, "traces", _fetch_trace_rows
+                )
             )
 
         if dataset_metrics:
@@ -1927,12 +2170,19 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             builder = DatasetQueryBuilder(ds_config)
 
             def _fetch_ds_rows(sql, params):
-                rows, column_types, _ = ch_client.execute_read(sql, params)
+                rows, column_types, _ = ch_client.execute_read(
+                    sql,
+                    params,
+                    timeout_ms=750,
+                    settings=self._DASHBOARD_CH_SETTINGS,
+                )
                 col_names = [ct[0] for ct in column_types]
                 return [dict(zip(col_names, row, strict=True)) for row in rows]
 
             metric_results.extend(
-                DashboardViewSet._run_metric_queries(builder, "datasets", _fetch_ds_rows)
+                DashboardViewSet._run_metric_queries(
+                    builder, "datasets", _fetch_ds_rows
+                )
             )
 
         if simulation_metrics:
@@ -1987,7 +2237,13 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             return self._execute_ch_query_config(query_config, request.workspace)
         except Exception as e:
             logger.error("widget_query_execution_failed", error=str(e), exc_info=True)
-            return self._gm.bad_request(f"Query execution failed: {str(e)}")
+            response = self._gm.bad_request(
+                "Dashboard query could not be completed. Please try again."
+            )
+            response.data["code"] = (
+                "read_budget_exceeded" if is_read_budget_error(e) else "query_failed"
+            )
+            return response
 
     @validated_request(
         request_serializer=DashboardPreviewQuerySerializer,
@@ -2009,4 +2265,10 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             return self._execute_ch_query_config(query_config, request.workspace)
         except Exception as e:
             logger.error("query_preview_failed", error=str(e), exc_info=True)
-            return self._gm.bad_request(f"Query preview failed: {str(e)}")
+            response = self._gm.bad_request(
+                "Dashboard query could not be completed. Please try again."
+            )
+            response.data["code"] = (
+                "read_budget_exceeded" if is_read_budget_error(e) else "query_failed"
+            )
+            return response

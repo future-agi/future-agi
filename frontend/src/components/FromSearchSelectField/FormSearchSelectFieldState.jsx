@@ -29,6 +29,7 @@ const FormSearchSelectFieldState = React.forwardRef(
       onScrollEnd,
       isFetchingNextPage,
       selectAll,
+      allowCreateFromSearch,
       // Filter ``shrink`` out of ``rest`` — see rhf-text-field.jsx note.
       // eslint-disable-next-line no-unused-vars
       shrink: _shrink,
@@ -296,6 +297,7 @@ const FormSearchSelectFieldState = React.forwardRef(
           onScrollEnd={onScrollEnd}
           isFetchingNextPage={isFetchingNextPage}
           selectAll={selectAll}
+          allowCreateFromSearch={allowCreateFromSearch}
           {...rest}
         />
       </>
@@ -329,5 +331,6 @@ FormSearchSelectFieldState.propTypes = {
   onScrollEnd: PropTypes.func,
   isFetchingNextPage: PropTypes.bool,
   selectAll: PropTypes.bool,
+  allowCreateFromSearch: PropTypes.bool,
   shrink: PropTypes.bool,
 };

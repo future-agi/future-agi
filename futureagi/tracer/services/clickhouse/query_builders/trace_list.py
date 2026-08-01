@@ -21,12 +21,61 @@ from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.eval_status import (
     non_terminal_eval_marker,
 )
-from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
+from tracer.services.clickhouse.query_builders.filters import (
+    ClickHouseFilterBuilder,
+    UnsupportedFilterShapeError,
+    build_literal_text_predicate,
+)
+from tracer.services.clickhouse.query_builders.latest_attributes import (
+    build_latest_trace_probe_predicate,
+    is_latest_trace_probe_filter,
+    is_latest_trace_root_probe_filter,
+)
 
 # On the v2 schema (PARTITION BY toDate(start_time), PK on toStartOfHour(
 # start_time)) start_time prunes partitions and the PK; created_at prunes
 # nothing and scans the whole project.
 TIME_FILTER_COLUMN = "start_time"  # Options: "created_at" | "start_time"
+
+_CANDIDATE_EXTERNAL_TRACE_COLUMNS = frozenset(
+    {
+        "tag",
+        "tags",
+        "my_annotations",
+        "annotator",
+        "has_annotation",
+        "has_eval",
+    }
+)
+
+
+def _is_candidate_external_trace_filter(item: dict[str, Any]) -> bool:
+    """Whether a non-scalar filter is exact after trace-id candidate scoping."""
+
+    column_id = str(item.get("column_id") or item.get("columnId") or "")
+    config = item.get("filter_config") or item.get("filterConfig") or {}
+    col_type = str(config.get("col_type") or config.get("colType") or "").upper()
+    return column_id in _CANDIDATE_EXTERNAL_TRACE_COLUMNS or col_type in {
+        "EVAL_METRIC",
+        "ANNOTATION",
+        "SYSTEM_METRIC",
+        "TRACE_END_USER",
+    }
+
+
+def _literal_trace_name_search(params: dict[str, Any], search: str | None) -> str:
+    """Return a bound literal contains predicate for trace-name search."""
+
+    if not search:
+        return ""
+    params["search"] = str(search)
+    predicate = build_literal_text_predicate(
+        "trace_name",
+        "search",
+        "contains",
+        case_insensitive=True,
+    )
+    return f"AND {predicate}"
 
 
 class TraceListQueryBuilder(BaseQueryBuilder):
@@ -44,6 +93,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
     TABLE = "spans"
     EVAL_TABLE = "tracer_eval_logger"
+    # The legacy table admitted both NULL and the empty string for a root.
+    # CH25 overrides this with the physical, non-nullable representation.  The
+    # candidate seed deliberately reads only this predicate plus project/time:
+    # it is a cheap superset whose mutable/deleted rows are revalidated by the
+    # point-scoped latest-state query before anything reaches the response.
+    ROOT_SEED_PARENT_PREDICATE = "(parent_span_id IS NULL OR parent_span_id = '')"
     # Filter compiler class; the v2 list builder overrides this to the v2
     # builder so it reads the v2 dimension tables (end_users, etc.).
     _FILTER_BUILDER_CLS = ClickHouseFilterBuilder
@@ -95,6 +150,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         search: str | None = None,
         columns: list[str] | None = None,
         annotation_label_ids: list[str] | None = None,
+        candidate_trace_ids: list[str] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id=project_id, project_ids=project_ids, **kwargs)
@@ -107,6 +163,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         self.search = search.strip() if search else None
         self.columns = columns
         self.annotation_label_ids = annotation_label_ids or []
+        self.candidate_trace_ids = [
+            str(trace_id) for trace_id in (candidate_trace_ids or []) if trace_id
+        ]
         self.start_date: datetime | None = None
         self.end_date: datetime | None = None
 
@@ -132,14 +191,29 @@ class TraceListQueryBuilder(BaseQueryBuilder):
     # Phase 1: Paginated trace list
     # ------------------------------------------------------------------
 
-    def build(self) -> tuple[str, dict[str, Any]]:
+    def build(
+        self,
+        since: datetime | None = None,
+        *,
+        before_start_time: datetime | None = None,
+        before_trace_id: str | None = None,
+    ) -> tuple[str, dict[str, Any]]:
         """Build the Phase-1 query for paginated root-span trace data.
+
+        ``since`` narrows only the page read to a recent prefix. Because the
+        default order is newest-first, a slice that fills the requested prefix
+        is also the exact global prefix; the caller can avoid scanning older
+        partitions. Attribute-membership subqueries share ``start_date``, so
+        they are narrowed with the outer root-span scan as well.
 
         Returns:
             A ``(query_string, params)`` tuple.  The query returns one row
             per trace with root-span metadata.
         """
-        self.start_date, self.end_date = self.parse_time_range(self.filters)
+        requested_start, self.end_date = self.parse_time_range(self.filters)
+        self.start_date = (
+            max(requested_start, since) if since is not None else requested_start
+        )
         self.params["start_date"] = self.start_date
         self.params["end_date"] = self.end_date
 
@@ -155,6 +229,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             # span history. Safe here: this builder always binds
             # %(start_date)s before translate(). See filters.py.
             span_date_scope=True,
+            # Candidate-batched filtered pages must apply the same trace-id
+            # bound inside any-span membership subqueries. Without this, the
+            # outer page is small but ClickHouse still builds a project-wide
+            # raw attribute set before intersecting it.
+            span_trace_id_scope=bool(self.candidate_trace_ids),
+            span_latest_state=bool(self.candidate_trace_ids),
         )
         extra_where, extra_params = fb.translate(self.filters)
         self.params.update(extra_params)
@@ -164,7 +244,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             self.sort_params, field_map=self.SORT_FIELD_MAP
         )
         if not order_clause:
-            order_clause = "ORDER BY start_time DESC"
+            order_clause = "ORDER BY start_time DESC, trace_id DESC"
 
         # Prefix-fetch pagination: read the sorted prefix [0, offset +
         # 2*page_size) in ONE bounded top-K pass and let the view dedup by
@@ -179,6 +259,35 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         # Build optional filter fragment
         filter_fragment = f"AND {extra_where}" if extra_where else ""
 
+        candidate_fragment = ""
+        candidate_dedup_fragment = ""
+        if self.candidate_trace_ids:
+            self.params["candidate_trace_ids"] = tuple(self.candidate_trace_ids)
+            candidate_fragment = "AND trace_id IN %(candidate_trace_ids)s"
+            # Candidate probes contain at most 50 point-scoped trace IDs. It is
+            # therefore safe to deduplicate root versions here, and necessary:
+            # otherwise duplicate versions for one trace can consume the
+            # bounded LIMIT and hide another matching candidate.
+            candidate_dedup_fragment = "LIMIT 1 BY trace_id"
+
+        if (before_start_time is None) != (before_trace_id is None):
+            raise ValueError(
+                "before_start_time and before_trace_id must be provided together"
+            )
+        keyset_fragment = ""
+        if before_start_time is not None:
+            self.params["keyset_start_time"] = before_start_time
+            self.params["keyset_trace_id"] = str(before_trace_id)
+            keyset_fragment = """
+              AND (
+                  start_time < %(keyset_start_time)s
+                  OR (
+                      start_time = %(keyset_start_time)s
+                      AND trace_id < %(keyset_trace_id)s
+                  )
+              )
+            """
+
         # Optional project_version_id filter (used by prototype tab)
         pv_fragment = ""
         if self.project_version_id:
@@ -186,10 +295,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             self.params["project_version_id"] = self.project_version_id
 
         # Search filter on trace_name
-        search_fragment = ""
-        if self.search:
-            search_fragment = "AND trace_name ILIKE %(search)s"
-            self.params["search"] = f"%{self.search}%"
+        search_fragment = _literal_trace_name_search(self.params, self.search)
 
         # Configurable columns — only SELECT requested columns.
         # trace_id is always included.
@@ -236,26 +342,788 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         # (multi-root traces, un-merged ReplacingMergeTree versions) are
         # rare; the view dedups the returned page by trace_id in Python,
         # keeping the first occurrence — the same row `LIMIT 1 BY` kept.
+        span_source = f"{self.TABLE} FINAL" if self.candidate_trace_ids else self.TABLE
         query = f"""
         SELECT
             {select_clause}
-        FROM {self.TABLE}
+        FROM {span_source}
         {self.project_where()}
           AND (parent_span_id IS NULL OR parent_span_id = '')
           AND {TIME_FILTER_COLUMN} >= %(start_date)s
           AND {TIME_FILTER_COLUMN} < %(end_date)s
+          {candidate_fragment}
+          {keyset_fragment}
           {pv_fragment}
           {search_fragment}
           {filter_fragment}
         {order_clause}
+        {candidate_dedup_fragment}
         LIMIT %(limit)s
         """
         return query, self.params
 
-    def build_id_query(self) -> tuple[str, dict[str, Any]]:
+    def build_root_candidate_seed_page(
+        self,
+        *,
+        slice_start: datetime,
+        slice_end: datetime,
+        limit: int,
+        before_start_time: datetime | None = None,
+        before_trace_id: str | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Build a skinny, bounded root-candidate page.
+
+        This is an ordering/identity seed, not a latest-state result.  It must
+        remain compatible with the root projection, so it intentionally reads
+        only physical project/root/delete/time columns and returns only
+        ``trace_id`` plus ``start_time``.  ReplacingMergeTree versions can make
+        the result a superset; callers must point-verify every candidate across
+        the complete request window before returning it.
+
+        Adjacent slices are traversed newest first.  A saturated slice resumes
+        with the exact ``(start_time, trace_id)`` descending keyset, including a
+        deterministic trace-id tie breaker.
+        """
+
+        if int(limit) <= 0:
+            raise ValueError("limit must be greater than zero")
+        if (before_start_time is None) != (before_trace_id is None):
+            raise ValueError(
+                "before_start_time and before_trace_id must be provided together"
+            )
+
+        def _without_timezone(value: datetime) -> datetime:
+            return value.replace(tzinfo=None) if value.tzinfo is not None else value
+
+        slice_start = _without_timezone(slice_start)
+        slice_end = _without_timezone(slice_end)
+        if slice_start >= slice_end:
+            raise ValueError("slice_start must be before slice_end")
+
+        if self.start_date is not None and self.end_date is not None:
+            request_start, request_end = self.start_date, self.end_date
+        else:
+            request_start, request_end = self.parse_time_range(self.filters)
+        if slice_start < request_start or slice_end > request_end:
+            raise ValueError("root candidate slice must stay inside request window")
+
+        self.start_date = request_start
+        self.end_date = request_end
+        self.params["start_date"] = request_start
+        self.params["end_date"] = request_end
+        params: dict[str, Any] = {
+            **self.params,
+            "root_seed_slice_start": slice_start,
+            "root_seed_slice_end": slice_end,
+            "root_seed_limit": int(limit),
+        }
+
+        keyset_fragment = ""
+        if before_start_time is not None:
+            before_start_time = _without_timezone(before_start_time)
+            if not slice_start <= before_start_time < slice_end:
+                raise ValueError("root candidate keyset must stay inside its slice")
+            params["root_seed_before_start_time"] = before_start_time
+            params["root_seed_before_trace_id"] = str(before_trace_id)
+            keyset_fragment = """
+              AND (
+                  start_time < %(root_seed_before_start_time)s
+                  OR (
+                      start_time = %(root_seed_before_start_time)s
+                      AND trace_id < %(root_seed_before_trace_id)s
+                  )
+              )
+            """
+
+        query = f"""
+        SELECT
+            trace_id,
+            start_time
+        FROM {self.TABLE}
+        PREWHERE {self.project_filter_sql()}
+          AND is_deleted = 0
+          AND {self.ROOT_SEED_PARENT_PREDICATE}
+        WHERE start_time >= %(root_seed_slice_start)s
+          AND start_time < %(root_seed_slice_end)s
+          {keyset_fragment}
+        ORDER BY start_time DESC, trace_id DESC
+        LIMIT %(root_seed_limit)s
+        """
+        return query, params
+
+    def build_filtered_root_candidate_seed_page(
+        self,
+        *,
+        slice_start: datetime,
+        slice_end: datetime,
+        limit: int,
+        filters: list[dict[str, Any]] | None = None,
+        before_start_time: datetime | None = None,
+        before_trace_id: str | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Build a bounded physical-row seed for canonical-root filters.
+
+        This is deliberately a *superset* seed.  Predicates are evaluated on
+        physical live root versions so a latest matching canonical root is
+        guaranteed to appear, while stale matching versions may also appear.
+        The caller must therefore reclassify every returned trace id across the
+        complete request window before exposing it.  Applying the predicate at
+        this cheap stage is nevertheless important for selective and no-match
+        filters: the unfiltered root stream would otherwise have to classify
+        every trace in the project merely to prove that no match exists.
+
+        Only canonical-root predicates are accepted.  Any-span filters require
+        the ordinary unfiltered root-order seed because child-span time is not
+        a safe frontier for trace ordering.
+        """
+
+        if int(limit) <= 0:
+            raise ValueError("limit must be greater than zero")
+        if (before_start_time is None) != (before_trace_id is None):
+            raise ValueError(
+                "before_start_time and before_trace_id must be provided together"
+            )
+
+        active_filters = [
+            item
+            for item in (filters if filters is not None else self.filters)
+            if (item.get("column_id") or item.get("columnId"))
+            not in {"created_at", "start_time"}
+        ]
+        if not active_filters or not all(
+            is_latest_trace_root_probe_filter(item) for item in active_filters
+        ):
+            raise ValueError("filtered root seed requires root-only predicates")
+
+        def _without_timezone(value: datetime) -> datetime:
+            return value.replace(tzinfo=None) if value.tzinfo is not None else value
+
+        slice_start = _without_timezone(slice_start)
+        slice_end = _without_timezone(slice_end)
+        if slice_start >= slice_end:
+            raise ValueError("slice_start must be before slice_end")
+
+        # Reuse the request bounds parsed by the enclosing bounded-list
+        # protocol.  Re-parsing an implicit ``now`` window here can advance the
+        # lower bound by a few microseconds between the seed calculation and
+        # this validation, incorrectly rejecting the first slice as outside
+        # the request window.
+        if self.start_date is not None and self.end_date is not None:
+            request_start, request_end = self.start_date, self.end_date
+        else:
+            request_start, request_end = self.parse_time_range(self.filters)
+        if slice_start < request_start or slice_end > request_end:
+            raise ValueError("filtered root seed slice must stay inside request window")
+
+        self.start_date = request_start
+        self.end_date = request_end
+        self.params["start_date"] = request_start
+        self.params["end_date"] = request_end
+
+        filter_builder = self._FILTER_BUILDER_CLS(
+            table=self.TABLE,
+            annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+            span_date_scope=True,
+        )
+        predicate, predicate_params = filter_builder.translate(active_filters)
+        if not predicate:
+            raise ValueError("filtered root seed requires a compiled predicate")
+
+        params: dict[str, Any] = {
+            **self.params,
+            **predicate_params,
+            "root_seed_slice_start": slice_start,
+            "root_seed_slice_end": slice_end,
+            "root_seed_limit": int(limit),
+        }
+        keyset_fragment = ""
+        if before_start_time is not None:
+            before_start_time = _without_timezone(before_start_time)
+            if not slice_start <= before_start_time < slice_end:
+                raise ValueError("filtered root keyset must stay inside its slice")
+            params["root_seed_before_start_time"] = before_start_time
+            params["root_seed_before_trace_id"] = str(before_trace_id)
+            keyset_fragment = """
+              AND (
+                  start_time < %(root_seed_before_start_time)s
+                  OR (
+                      start_time = %(root_seed_before_start_time)s
+                      AND trace_id < %(root_seed_before_trace_id)s
+                  )
+              )
+            """
+
+        query = f"""
+        SELECT
+            trace_id,
+            start_time
+        FROM {self.TABLE}
+        PREWHERE {self.project_filter_sql()}
+          AND is_deleted = 0
+          AND {self.ROOT_SEED_PARENT_PREDICATE}
+          AND start_time >= %(root_seed_slice_start)s
+          AND start_time < %(root_seed_slice_end)s
+        WHERE {predicate}
+          {keyset_fragment}
+        ORDER BY start_time DESC, trace_id DESC
+        LIMIT %(root_seed_limit)s
+        """
+        return query, params
+
+    def build_latest_filter_match_query(
+        self,
+        candidate_trace_ids: list[str],
+        *,
+        filters: list[dict[str, Any]] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Match point-scoped trace candidates against latest span versions.
+
+        One scalar ``argMax`` state is retained for the requested Map element;
+        no table-level ``FINAL`` and no full Map aggregation is involved. Each
+        attribute filter is evaluated independently and the resulting trace-id
+        sets are intersected, preserving the existing any-span semantics when
+        several attributes may live on different child spans.
+        """
+        trace_ids = [str(trace_id) for trace_id in candidate_trace_ids if trace_id]
+        if not trace_ids:
+            return "", {}
+
+        active_filters = [
+            item
+            for item in (filters if filters is not None else self.filters)
+            if (item.get("column_id") or item.get("columnId"))
+            not in {"created_at", "start_time"}
+        ]
+        if not active_filters:
+            return "", {}
+        if not self.supports_latest_filter_match(active_filters):
+            raise ValueError("unsupported latest-state trace probe filter")
+
+        start_date, end_date = self.parse_time_range(self.filters)
+        params: dict[str, Any] = {
+            **self.params,
+            "candidate_trace_ids": tuple(trace_ids),
+            "candidate_start_date": start_date,
+            "candidate_end_date": end_date,
+        }
+        scalar_filters = [
+            item for item in active_filters if is_latest_trace_probe_filter(item)
+        ]
+        external_filters = [
+            item
+            for item in active_filters
+            if not is_latest_trace_probe_filter(item)
+            and _is_candidate_external_trace_filter(item)
+        ]
+        indexed_plans = []
+        for index, item in enumerate(scalar_filters):
+            plan = build_latest_trace_probe_predicate(item, index=index)
+            params.update(plan.params)
+            indexed_plans.append((index, item, plan))
+
+        root_plans = [
+            (index, plan)
+            for index, item, plan in indexed_plans
+            if is_latest_trace_root_probe_filter(item)
+        ]
+        any_span_plans = [
+            (index, plan)
+            for index, item, plan in indexed_plans
+            if not is_latest_trace_root_probe_filter(item)
+        ]
+
+        def _any_span_branch(index, plan):
+            aggregates = ",\n                        ".join(plan.aggregates)
+            return f"""
+                SELECT trace_id
+                FROM (
+                    SELECT
+                        trace_id,
+                        id,
+                        argMax(is_deleted, _peerdb_version)
+                            AS latest_is_deleted,
+                        {aggregates}
+                    FROM {self.TABLE}
+                    PREWHERE {self.project_filter_sql()}
+                      AND trace_id IN %(candidate_trace_ids)s
+                      AND created_at >= %(candidate_start_date)s - INTERVAL 1 DAY
+                      AND start_time >= %(candidate_start_date)s - INTERVAL 1 DAY
+                      AND start_time < %(candidate_end_date)s + INTERVAL 1 DAY
+                    GROUP BY trace_id, id
+                )
+                WHERE latest_is_deleted = 0
+                  AND {plan.predicate}
+                GROUP BY trace_id
+            """
+
+        any_span_branches = [
+            _any_span_branch(index, plan) for index, plan in any_span_plans
+        ]
+        scalar_query = ""
+        if root_plans:
+            # A trace row is defined by its canonical root: the newest live
+            # in-window root after resolving each root span's latest version.
+            # final_status is evaluated only after that canonical root is
+            # selected, so an older matching root cannot make a newer
+            # non-matching trace row pass.
+            root_aggregates = ",\n                        ".join(
+                aggregate for _, plan in root_plans for aggregate in plan.aggregates
+            )
+            root_predicate = " AND ".join(plan.predicate for _, plan in root_plans)
+            root_query = f"""
+                SELECT grouped_trace_id AS trace_id
+                FROM (
+                    SELECT *
+                    FROM (
+                        SELECT
+                            trace_id AS grouped_trace_id,
+                            id AS grouped_id,
+                            argMax(tuple(parent_span_id), _peerdb_version).1
+                                AS latest_parent_span_id,
+                            argMax(start_time, _peerdb_version)
+                                AS latest_start_time,
+                            argMax(is_deleted, _peerdb_version)
+                                AS latest_is_deleted,
+                            {root_aggregates}
+                        FROM {self.TABLE}
+                        PREWHERE {self.project_filter_sql()}
+                          AND trace_id IN %(candidate_trace_ids)s
+                          AND start_time >= %(candidate_start_date)s
+                          AND start_time < %(candidate_end_date)s
+                        GROUP BY trace_id, id
+                    )
+                    WHERE latest_is_deleted = 0
+                      AND (
+                          latest_parent_span_id IS NULL
+                          OR latest_parent_span_id = ''
+                      )
+                    ORDER BY latest_start_time DESC, grouped_id DESC
+                    LIMIT 1 BY grouped_trace_id
+                )
+                WHERE {root_predicate}
+            """
+            membership = "".join(
+                f" AND trace_id IN ({branch})" for branch in any_span_branches
+            )
+            scalar_query = f"""
+            SELECT trace_id
+            FROM ({root_query})
+            WHERE 1 = 1 {membership}
+            LIMIT {len(trace_ids)}
+            """
+        elif any_span_branches:
+            params["candidate_filter_count"] = len(any_span_branches)
+            tagged_branches = [
+                f"SELECT trace_id, toUInt16({index}) AS filter_index FROM ({branch})"
+                for (index, _), branch in zip(
+                    any_span_plans, any_span_branches, strict=True
+                )
+            ]
+            scalar_query = f"""
+            SELECT trace_id
+            FROM ({" UNION ALL ".join(tagged_branches)})
+            GROUP BY trace_id
+            HAVING uniqExact(filter_index) = %(candidate_filter_count)s
+            LIMIT {len(trace_ids)}
+            """
+        else:
+            # External-only filters still need to discard candidates whose
+            # latest root was tombstoned. The set is already point-scoped, so
+            # FINAL remains bounded and never expands into a tenant-wide merge.
+            scalar_query = f"""
+            SELECT trace_id
+            FROM {self.TABLE} FINAL
+            PREWHERE {self.project_filter_sql()}
+              AND trace_id IN %(candidate_trace_ids)s
+              AND start_time >= %(candidate_start_date)s
+              AND start_time < %(candidate_end_date)s
+            WHERE is_deleted = 0
+              AND {self.ROOT_SEED_PARENT_PREDICATE}
+            GROUP BY trace_id
+            """
+
+        if external_filters:
+            filter_builder = self._FILTER_BUILDER_CLS(
+                table=self.TABLE,
+                annotation_label_ids=self.annotation_label_ids,
+                query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_TRACE,
+                project_id=self.project_id,
+                project_ids=self.project_ids,
+                score_date_scope=True,
+                span_date_scope=True,
+                span_trace_id_scope=True,
+                span_latest_state=True,
+                candidate_entity_scope=True,
+                tag_query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_TRACE,
+            )
+            try:
+                external_predicate, external_params = filter_builder.translate(
+                    external_filters
+                )
+            except (TypeError, ValueError) as exc:
+                raise UnsupportedFilterShapeError(
+                    "unsupported trace filter shape"
+                ) from exc
+            params.update(external_params)
+            if not external_predicate:
+                raise ValueError("unsupported empty trace filter predicate")
+            query = f"""
+            SELECT trace_id
+            FROM ({scalar_query})
+            WHERE {external_predicate}
+            LIMIT {len(trace_ids)}
+            """
+        else:
+            query = scalar_query
+        return query, params
+
+    def supports_latest_filter_match(
+        self,
+        filters: list[dict[str, Any]] | None = None,
+    ) -> bool:
+        """Whether the bounded classifier can represent every active filter."""
+
+        active_filters = [
+            item
+            for item in (filters if filters is not None else self.filters)
+            if (item.get("column_id") or item.get("columnId"))
+            not in {"created_at", "start_time"}
+        ]
+        return not self.sort_params and all(
+            is_latest_trace_probe_filter(item)
+            or _is_candidate_external_trace_filter(item)
+            for item in active_filters
+        )
+
+    # Compatibility name retained for internal callers added during the SOS
+    # rollout. The implementation now covers both attribute Maps and the common
+    # physical any-span columns.
+    def build_latest_attribute_match_query(
+        self,
+        candidate_trace_ids: list[str],
+        *,
+        filters: list[dict[str, Any]] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        return self.build_latest_filter_match_query(
+            candidate_trace_ids,
+            filters=filters,
+        )
+
+    def supports_latest_root_id_page(self) -> bool:
+        """Whether the trace-id set can be read as scalar canonical roots.
+
+        This deliberately accepts only time filters plus predicates that are
+        evaluated on the canonical trace root.  Any-span, eval, annotation,
+        tag, search, project-version, and custom-sort shapes stay on their
+        established bounded paths; silently approximating one of those here
+        would create the wrong evaluation/annotation task.
+        """
+
+        active_filters = [
+            item
+            for item in self.filters
+            if (item.get("column_id") or item.get("columnId"))
+            not in {"created_at", "start_time"}
+        ]
+        return (
+            not self.sort_params
+            and self.search is None
+            and self.project_version_id is None
+            and not self.candidate_trace_ids
+            and all(is_latest_trace_root_probe_filter(item) for item in active_filters)
+        )
+
+    def build_latest_root_id_page(
+        self,
+        *,
+        slice_start: datetime,
+        slice_end: datetime,
+        limit: int | None,
+        sampling_salt: str | None = None,
+        sampling_rate: float | None = None,
+        exclude_trace_ids: list[str] | tuple[str, ...] | set[str] | None = None,
+        after_trace_id: str | None = None,
+        trace_id_desc: bool = False,
+        order_by_recent_minute: bool = True,
+        changed_since_version: int | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Return a bounded canonical-root trace-id page without ``FINAL``.
+
+        Each root span is first reduced to its newest version with scalar
+        ``argMax`` states, including the tombstone.  The newest live root is
+        then chosen for each trace *before* root predicates such as
+        ``final_status`` are evaluated.  That order is important: an older
+        matching root must not make a newer non-matching trace pass.
+
+        The explicit slice bounds keep the aggregation partition-prunable.
+        Callers that scan adjacent slices must remember every candidate they
+        classify (including non-matches), or use this method only as a seed and
+        verify candidates against the full requested window.
+        """
+
+        if not self.supports_latest_root_id_page():
+            raise ValueError("latest scalar root page does not support this request")
+        if limit is None and changed_since_version is None:
+            raise ValueError(
+                "unbounded latest scalar root ids require a version watermark"
+            )
+        if limit is not None and int(limit) <= 0:
+            raise ValueError("limit must be greater than zero")
+        if getattr(slice_start, "tzinfo", None) is not None:
+            slice_start = slice_start.replace(tzinfo=None)
+        if getattr(slice_end, "tzinfo", None) is not None:
+            slice_end = slice_end.replace(tzinfo=None)
+        if slice_start >= slice_end:
+            raise ValueError("slice_start must be before slice_end")
+        if (sampling_salt is None) != (sampling_rate is None):
+            raise ValueError(
+                "sampling_salt and sampling_rate must be provided together"
+            )
+
+        request_start, request_end = self.parse_time_range(self.filters)
+        if slice_start < request_start or slice_end > request_end:
+            raise ValueError("latest scalar root page must stay inside request window")
+
+        params: dict[str, Any] = {
+            **self.params,
+            # Compatibility aliases for bounded eval callers that use the
+            # original request window to drive adjacent-slice traversal.
+            "start_date": request_start,
+            "end_date": request_end,
+            "latest_root_slice_start": slice_start,
+            "latest_root_slice_end": slice_end,
+        }
+        if limit is not None:
+            params["latest_root_limit"] = int(limit)
+        active_filters = [
+            item
+            for item in self.filters
+            if (item.get("column_id") or item.get("columnId"))
+            not in {"created_at", "start_time"}
+        ]
+        plans = [
+            build_latest_trace_probe_predicate(item, index=index)
+            for index, item in enumerate(active_filters)
+        ]
+        for plan in plans:
+            params.update(plan.params)
+
+        aggregates = [aggregate for plan in plans for aggregate in plan.aggregates]
+        aggregate_fragment = (
+            ",\n                            "
+            + ",\n                            ".join(aggregates)
+            if aggregates
+            else ""
+        )
+        predicate_fragment = (
+            " AND " + " AND ".join(plan.predicate for plan in plans) if plans else ""
+        )
+
+        sampling_fragment = ""
+        if sampling_rate is not None:
+            rate = float(sampling_rate)
+            if not 0 <= rate <= 100:
+                raise ValueError("sampling_rate must be between 0 and 100")
+            params["latest_root_sampling_salt"] = str(sampling_salt)
+            params["latest_root_sampling_rate"] = rate
+            sampling_fragment = (
+                " AND modulo(cityHash64(%(latest_root_sampling_salt)s, "
+                "toString(grouped_trace_id)), 100) "
+                "< %(latest_root_sampling_rate)s"
+            )
+
+        excluded = tuple(
+            sorted(str(value) for value in (exclude_trace_ids or ()) if value)
+        )
+        exclusion_fragment = ""
+        if excluded:
+            params["latest_root_excluded_trace_ids"] = excluded
+            exclusion_fragment = (
+                " AND grouped_trace_id NOT IN %(latest_root_excluded_trace_ids)s"
+            )
+
+        keyset_fragment = ""
+        if after_trace_id is not None:
+            if limit is None:
+                raise ValueError("trace-id keyset requires a bounded page")
+            if trace_id_desc or not order_by_recent_minute:
+                raise ValueError("ascending trace-id keyset requires ascending order")
+            if (slice_end - slice_start).total_seconds() > 60:
+                raise ValueError("trace-id-only keyset requires a one-minute slice")
+            params["latest_root_after_trace_id"] = str(after_trace_id)
+            keyset_fragment = " AND grouped_trace_id > %(latest_root_after_trace_id)s"
+
+        changed_candidate_fragment = ""
+        if changed_since_version is not None:
+            if int(changed_since_version) < 0:
+                raise ValueError("changed_since_version must be non-negative")
+            params["latest_root_changed_since_version"] = int(changed_since_version)
+            # The cursor follows physical direct-write versions, while trace
+            # identity follows the canonical root. Seed changed trace ids from
+            # root writes, then reclassify every root for those traces across the
+            # complete task-time window. An updated older root therefore cannot
+            # displace a newer canonical root.
+            changed_candidate_fragment = f"""
+                  AND trace_id IN (
+                      SELECT trace_id
+                      FROM {self.TABLE}
+                      PREWHERE {self.project_filter_sql()}
+                        AND start_time >= %(latest_root_slice_start)s
+                        AND start_time < %(latest_root_slice_end)s
+                        AND _peerdb_version >= %(latest_root_changed_since_version)s
+                      WHERE parent_span_id IS NULL OR parent_span_id = ''
+                      GROUP BY trace_id
+                  )
+            """
+
+        id_direction = "DESC" if trace_id_desc else "ASC"
+        order_time = (
+            "toStartOfMinute(latest_start_time)"
+            if order_by_recent_minute
+            else "latest_start_time"
+        )
+        order_limit_fragment = ""
+        if limit is not None:
+            order_limit_fragment = f"""
+        ORDER BY
+            {order_time} DESC,
+            grouped_trace_id {id_direction}
+        LIMIT %(latest_root_limit)s
+            """
+        query = f"""
+        SELECT
+            grouped_trace_id AS trace_id,
+            latest_start_time AS eval_order_start_time
+        FROM (
+            SELECT *
+            FROM (
+                SELECT
+                    trace_id AS grouped_trace_id,
+                    id AS grouped_id,
+                    argMax(tuple(parent_span_id), _peerdb_version).1
+                        AS latest_parent_span_id,
+                    argMax(tuple(start_time), _peerdb_version).1
+                        AS latest_start_time,
+                    argMax(_peerdb_is_deleted, _peerdb_version)
+                        AS latest_is_deleted
+                    {aggregate_fragment}
+                FROM {self.TABLE}
+                PREWHERE {self.project_filter_sql()}
+                  AND start_time >= %(latest_root_slice_start)s
+                  AND start_time < %(latest_root_slice_end)s
+                  {changed_candidate_fragment}
+                GROUP BY trace_id, id
+            )
+            WHERE latest_is_deleted = 0
+              AND (
+                  latest_parent_span_id IS NULL
+                  OR latest_parent_span_id = ''
+              )
+            ORDER BY latest_start_time DESC, grouped_id DESC
+            LIMIT 1 BY grouped_trace_id
+        )
+        WHERE 1 = 1
+          {predicate_fragment}
+          {sampling_fragment}
+          {exclusion_fragment}
+          {keyset_fragment}
+        {order_limit_fragment}
+        """
+        return query, params
+
+    def build_candidate_hydration_query(
+        self,
+        trace_ids: list[str],
+    ) -> tuple[str, dict[str, Any]]:
+        """Hydrate only matched roots using scalar latest-version states."""
+        bounded_ids = [str(trace_id) for trace_id in trace_ids if trace_id]
+        if not bounded_ids:
+            return "", {}
+        start_date, end_date = self.parse_time_range(self.filters)
+        params: dict[str, Any] = {
+            **self.params,
+            "candidate_trace_ids": tuple(bounded_ids),
+            "candidate_start_date": start_date,
+            "candidate_end_date": end_date,
+        }
+        query = f"""
+        SELECT
+            grouped_trace_id AS trace_id,
+            latest_trace_name AS trace_name,
+            latest_name AS span_name,
+            latest_observation_type AS observation_type,
+            latest_status AS status,
+            latest_start_time AS start_time,
+            latest_end_time AS end_time,
+            latest_latency_ms AS latency_ms,
+            latest_cost AS cost,
+            latest_total_tokens AS total_tokens,
+            latest_prompt_tokens AS prompt_tokens,
+            latest_completion_tokens AS completion_tokens,
+            latest_model AS model,
+            latest_provider AS provider,
+            latest_trace_session_id AS trace_session_id,
+            latest_project_id AS project_id,
+            latest_attrs_string AS attrs_string,
+            latest_attrs_number AS attrs_number,
+            latest_attrs_bool AS attrs_bool
+        FROM (
+            SELECT
+                trace_id AS grouped_trace_id,
+                id AS grouped_id,
+                argMax(tuple(parent_span_id), _peerdb_version).1
+                    AS latest_parent_span_id,
+                argMax(trace_name, _peerdb_version) AS latest_trace_name,
+                argMax(name, _peerdb_version) AS latest_name,
+                argMax(observation_type, _peerdb_version)
+                    AS latest_observation_type,
+                argMax(status, _peerdb_version) AS latest_status,
+                argMax(start_time, _peerdb_version) AS latest_start_time,
+                argMax(tuple(end_time), _peerdb_version).1 AS latest_end_time,
+                argMax(latency_ms, _peerdb_version) AS latest_latency_ms,
+                argMax(cost, _peerdb_version) AS latest_cost,
+                argMax(total_tokens, _peerdb_version) AS latest_total_tokens,
+                argMax(prompt_tokens, _peerdb_version) AS latest_prompt_tokens,
+                argMax(completion_tokens, _peerdb_version)
+                    AS latest_completion_tokens,
+                argMax(model, _peerdb_version) AS latest_model,
+                argMax(provider, _peerdb_version) AS latest_provider,
+                argMax(tuple(trace_session_id), _peerdb_version).1
+                    AS latest_trace_session_id,
+                argMax(project_id, _peerdb_version) AS latest_project_id,
+                argMax(span_attr_str, _peerdb_version) AS latest_attrs_string,
+                argMax(span_attr_num, _peerdb_version) AS latest_attrs_number,
+                argMax(span_attr_bool, _peerdb_version) AS latest_attrs_bool,
+                argMax(is_deleted, _peerdb_version) AS latest_is_deleted
+            FROM {self.TABLE}
+            PREWHERE {self.project_filter_sql()}
+              AND trace_id IN %(candidate_trace_ids)s
+              AND start_time >= %(candidate_start_date)s
+              AND start_time < %(candidate_end_date)s
+            GROUP BY trace_id, id
+        )
+        WHERE latest_is_deleted = 0
+          AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
+        ORDER BY latest_start_time DESC, grouped_trace_id DESC, grouped_id DESC
+        LIMIT 1 BY grouped_trace_id
+        """
+        return query, params
+
+    def build_id_query(
+        self,
+        *,
+        limit: int | None = None,
+        sampling_salt: str | None = None,
+        sampling_rate: float | None = None,
+        order_by_recent_minute: bool = False,
+        latest_state: bool = False,
+    ) -> tuple[str, dict[str, Any]]:
         """Filtered trace ids only — same root-span predicate/window as build(),
-        no pagination/order. Lets the eval resolver select the same traces this
-        list endpoint returns."""
+        no pagination/order by default. The eval resolver can request a sampled,
+        bounded newest-minute top-K so a historical task never materializes
+        every matching trace id before applying its row limit."""
         self.start_date, self.end_date = self.parse_time_range(self.filters)
         self.params["start_date"] = self.start_date
         self.params["end_date"] = self.end_date
@@ -271,32 +1139,86 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             # span history. Safe here: this builder always binds
             # %(start_date)s before translate(). See filters.py.
             span_date_scope=True,
+            # Eval-task fallback probes pass a bounded trace-id candidate set.
+            # Apply that same bound inside any-span membership subqueries.
+            span_trace_id_scope=bool(self.candidate_trace_ids),
+            span_latest_state=latest_state or bool(self.candidate_trace_ids),
         )
         extra_where, extra_params = fb.translate(self.filters)
         self.params.update(extra_params)
         filter_fragment = f"AND {extra_where}" if extra_where else ""
+
+        candidate_fragment = ""
+        if self.candidate_trace_ids:
+            self.params["candidate_trace_ids"] = tuple(self.candidate_trace_ids)
+            candidate_fragment = "AND trace_id IN %(candidate_trace_ids)s"
 
         pv_fragment = ""
         if self.project_version_id:
             pv_fragment = "AND project_version_id = %(project_version_id)s"
             self.params["project_version_id"] = self.project_version_id
 
-        search_fragment = ""
-        if self.search:
-            search_fragment = "AND trace_name ILIKE %(search)s"
-            self.params["search"] = f"%{self.search}%"
+        search_fragment = _literal_trace_name_search(self.params, self.search)
 
+        if (sampling_salt is None) != (sampling_rate is None):
+            raise ValueError(
+                "sampling_salt and sampling_rate must be provided together"
+            )
+        sampling_fragment = ""
+        if sampling_rate is not None:
+            rate = float(sampling_rate)
+            if not 0 <= rate <= 100:
+                raise ValueError("sampling_rate must be between 0 and 100")
+            self.params["id_sampling_salt"] = str(sampling_salt)
+            self.params["id_sampling_rate"] = rate
+            sampling_fragment = (
+                "AND modulo("
+                "cityHash64(%(id_sampling_salt)s, toString(trace_id)), 100"
+                ") < %(id_sampling_rate)s"
+            )
+
+        if limit is not None:
+            if int(limit) <= 0:
+                raise ValueError("limit must be greater than zero")
+            self.params["id_limit"] = int(limit)
+            # Avoid LIMIT 1 BY for the bounded path: it retains a key for every
+            # matching trace before applying LIMIT. A small duplicate margin is
+            # fetched and de-duplicated by the eval row resolver instead.
+            dedup_fragment = ""
+            order_fragment = (
+                "ORDER BY toStartOfMinute(start_time) DESC, trace_id"
+                if order_by_recent_minute
+                else "ORDER BY trace_id"
+            )
+            order_limit_fragment = f"{order_fragment}\n        LIMIT %(id_limit)s"
+        else:
+            dedup_fragment = "LIMIT 1 BY trace_id"
+            order_limit_fragment = ""
+
+        select_fragment = (
+            "trace_id, start_time AS eval_order_start_time"
+            if order_by_recent_minute
+            else "trace_id"
+        )
+        span_source = (
+            f"{self.TABLE} FINAL"
+            if latest_state or self.candidate_trace_ids
+            else self.TABLE
+        )
         query = f"""
-        SELECT trace_id
-        FROM {self.TABLE}
+        SELECT {select_fragment}
+        FROM {span_source}
         {self.project_where()}
           AND (parent_span_id IS NULL OR parent_span_id = '')
           AND {TIME_FILTER_COLUMN} >= %(start_date)s
           AND {TIME_FILTER_COLUMN} < %(end_date)s
+          {candidate_fragment}
           {pv_fragment}
           {search_fragment}
           {filter_fragment}
-        LIMIT 1 BY trace_id
+          {sampling_fragment}
+        {dedup_fragment}
+        {order_limit_fragment}
         """
         return query, self.params
 
@@ -326,7 +1248,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             attributes_extra,
             toJSONString(metadata) AS metadata,
             dictGetOrDefault('trace_dict', 'tags', toUUID(trace_id), '[]') AS trace_tags
-        FROM {self.TABLE}
+        FROM {self.TABLE} FINAL
         PREWHERE trace_id IN %(content_trace_ids)s
         WHERE {self.project_filter_sql()}
           AND is_deleted = 0
@@ -353,7 +1275,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         SELECT
             trace_id,
             attributes_extra
-        FROM {self.TABLE}
+        FROM {self.TABLE} FINAL
         PREWHERE trace_id IN %(attr_trace_ids)s
         WHERE {self.project_filter_sql()}
           AND is_deleted = 0
@@ -369,6 +1291,11 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         Returns:
             A ``(query_string, params)`` tuple returning a single count.
         """
+        # ``build(since=...)`` may have narrowed ``self.params`` for
+        # progressive page lookup. Counts always cover the user's original
+        # requested range, so re-parse and overwrite those bindings here.
+        count_start, count_end = self.parse_time_range(self.filters)
+
         fb = self._FILTER_BUILDER_CLS(
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
@@ -384,6 +1311,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         extra_where, extra_params = fb.translate(self.filters)
         # Merge params -- reuse the same start/end dates
         params = dict(self.params)
+        params["start_date"] = count_start
+        params["end_date"] = count_end
         params.update(extra_params)
 
         filter_fragment = f"AND {extra_where}" if extra_where else ""
@@ -395,10 +1324,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             params["project_version_id"] = self.project_version_id
 
         # Search filter (reuse from build())
-        search_fragment = ""
-        if self.search:
-            search_fragment = "AND trace_name ILIKE %(search)s"
-            params["search"] = f"%{self.search}%"
+        search_fragment = _literal_trace_name_search(params, self.search)
 
         query = f"""
         SELECT uniq(trace_id) AS total
@@ -690,7 +1616,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         if not user_query:
             return {}
 
-        result = analytics.execute_ch_query(user_query, user_params, timeout_ms=10000)
+        result = analytics.execute_ch_query(
+            user_query,
+            user_params,
+            timeout_ms=750,
+            settings={"max_threads": 2, "max_result_rows": 2000},
+        )
 
         # Build trace_id → user_id mapping (filter already applied in query)
         user_id_map = {

@@ -61,7 +61,7 @@ from model_hub.models.score import Score
 from model_hub.utils import annotation_queue_helpers as helpers
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project, ProjectSourceChoices
-from tracer.services.clickhouse.v2.span_reader import CHSpan
+from tracer.services.clickhouse.v2.span_reader import CHSpan, SpanScope
 
 CH_READER_PATH = "tracer.services.clickhouse.v2.get_reader"
 SESSION_FIELDS_PATH = (
@@ -131,6 +131,8 @@ class _ReaderCM:
     def __init__(self, span):
         self._span = span
         self.get_calls = []
+        self.scope_calls = []
+        self.trace_project_calls = []
 
     def __enter__(self):
         return self
@@ -143,6 +145,52 @@ class _ReaderCM:
         if self._span is None:
             return None
         return self._span if str(span_id) == str(self._span.id) else None
+
+    def scope_by_ids(self, span_ids, *, project_ids=None, settings=None):
+        self.scope_calls.append(
+            {
+                "span_ids": [str(span_id) for span_id in span_ids],
+                "project_ids": tuple(str(pid) for pid in (project_ids or ())),
+                "settings": settings,
+            }
+        )
+        if self._span is None or str(self._span.id) not in {
+            str(span_id) for span_id in span_ids
+        }:
+            return {}
+        if project_ids is not None and str(self._span.project_id) not in {
+            str(project_id) for project_id in project_ids
+        }:
+            return {}
+        return {
+            str(self._span.id): SpanScope(
+                project_id=str(self._span.project_id),
+                trace_id=str(self._span.trace_id),
+                trace_session_id=(
+                    str(self._span.trace_session_id)
+                    if self._span.trace_session_id
+                    else None
+                ),
+            )
+        }
+
+    def trace_projects_by_ids(self, trace_ids, *, project_ids, settings=None):
+        self.trace_project_calls.append(
+            {
+                "trace_ids": [str(trace_id) for trace_id in trace_ids],
+                "project_ids": tuple(str(pid) for pid in project_ids),
+                "settings": settings,
+            }
+        )
+        if self._span is None or str(self._span.trace_id) not in {
+            str(trace_id) for trace_id in trace_ids
+        }:
+            return {}
+        if str(self._span.project_id) not in {
+            str(project_id) for project_id in project_ids
+        }:
+            return {}
+        return {str(self._span.trace_id): str(self._span.project_id)}
 
     def root_ids_by_trace_ids(self, trace_ids, project_ids=None):
         """Lean stub: ``{trace_id: (root_span_id, project_id)}``, roots only."""
@@ -772,7 +820,7 @@ def test_for_source_collector_trace_span_notes_resolves_via_ch(
                     [
                         {
                             "source_type": "trace",
-                            "source_id": str(uuid.uuid4()),
+                            "source_id": str(span.trace_id),
                             "span_notes_source_id": span.id,
                         }
                     ]
@@ -781,8 +829,12 @@ def test_for_source_collector_trace_span_notes_resolves_via_ch(
         )
 
     assert resp.status_code == 200, resp.data
-    # The CH fallback actually ran (proves it's not a lucky PG hit)...
-    assert str(span.id) in reader.get_calls
+    # The project-scoped lean CH fallback actually ran (proves it's not a lucky
+    # PG hit) without hydrating the span's raw-log payload.
+    assert reader.scope_calls[0]["span_ids"] == [str(span.id)]
+    assert reader.scope_calls[0]["project_ids"] == (str(project.id),)
+    assert reader.scope_calls[0]["settings"]["max_execution_time"] == 0.75
+    assert reader.get_calls == []
     # ...and no PG ObservationSpan backs the collector root span.
     assert not ObservationSpan.objects.filter(id=span.id).exists()
 
@@ -807,7 +859,7 @@ def test_for_source_collector_span_notes_cross_org_denied(
                     [
                         {
                             "source_type": "trace",
-                            "source_id": str(uuid.uuid4()),
+                            "source_id": str(span.trace_id),
                             "span_notes_source_id": span.id,
                         }
                     ]
@@ -816,6 +868,114 @@ def test_for_source_collector_span_notes_cross_org_denied(
         )
 
     assert resp.status_code == 404, resp.data
+
+
+@pytest.mark.django_db
+def test_for_source_rejects_same_project_span_notes_from_another_trace(
+    auth_client, organization, workspace
+):
+    """Tenant membership alone is insufficient: note context must belong to
+    the requested trace, or an arbitrary same-project span could disclose its
+    notes in another trace's panel."""
+    project = _make_project(organization=organization, workspace=workspace)
+    notes_span = _make_chspan(project_id=project.id, org_id=organization.pk)
+    requested_trace_id = str(uuid.uuid4())
+    assert requested_trace_id != str(notes_span.trace_id)
+
+    with mock.patch(CH_READER_PATH, return_value=_ReaderCM(notes_span)):
+        resp = auth_client.get(
+            "/model-hub/annotation-queues/for-source/",
+            {
+                "sources": json.dumps(
+                    [
+                        {
+                            "source_type": "trace",
+                            "source_id": requested_trace_id,
+                            "span_notes_source_id": notes_span.id,
+                        }
+                    ]
+                ),
+            },
+        )
+
+    assert resp.status_code == 404, resp.data
+    assert str(notes_span.id) not in json.dumps(resp.data).replace(
+        f"Span notes source not found: {notes_span.id}",
+        "",
+    )
+
+
+@pytest.mark.django_db
+def test_for_source_missing_default_uses_compact_trace_project_lookup(
+    auth_client, organization, workspace
+):
+    project = _make_project(organization=organization, workspace=workspace)
+    span = _make_chspan(project_id=project.id, org_id=organization.pk)
+    queue = AnnotationQueue.objects.create(
+        name="compact trace scope queue",
+        organization=organization,
+        workspace=workspace,
+        project=project,
+        is_default=True,
+        status=AnnotationQueueStatusChoices.ACTIVE.value,
+    )
+    reader = _ReaderCM(span)
+
+    with mock.patch(CH_READER_PATH, return_value=reader):
+        resp = auth_client.get(
+            "/model-hub/annotation-queues/for-source/",
+            {
+                "sources": json.dumps(
+                    [
+                        {
+                            "source_type": "trace",
+                            "source_id": str(span.trace_id),
+                        }
+                    ]
+                ),
+            },
+        )
+
+    assert resp.status_code == 200, resp.data
+    assert [entry["queue"]["id"] for entry in resp.data["result"]] == [str(queue.id)]
+    assert reader.trace_project_calls[0]["trace_ids"] == [str(span.trace_id)]
+    assert reader.trace_project_calls[0]["project_ids"] == (str(project.id),)
+    assert reader.trace_project_calls[0]["settings"]["max_execution_time"] == 0.75
+
+
+@pytest.mark.django_db
+def test_for_source_clickhouse_budget_failure_is_sanitized_retryable_503(
+    auth_client, organization, workspace
+):
+    project = _make_project(organization=organization, workspace=workspace)
+    AnnotationQueue.objects.create(
+        name="bounded span scope queue",
+        organization=organization,
+        workspace=workspace,
+        project=project,
+        is_default=True,
+        status=AnnotationQueueStatusChoices.ACTIVE.value,
+    )
+    reader = mock.MagicMock()
+    reader.__enter__.return_value = reader
+    reader.__exit__.return_value = False
+    reader.scope_by_ids.side_effect = TimeoutError("Code: 159 secret ClickHouse stack")
+
+    with mock.patch(CH_READER_PATH, return_value=reader):
+        resp = auth_client.get(
+            "/model-hub/annotation-queues/for-source/",
+            {
+                "source_type": "observation_span",
+                "source_id": "span-timeout",
+            },
+        )
+
+    assert resp.status_code == 503
+    assert resp.data["code"] == "source_resolve_unavailable"
+    assert "secret ClickHouse stack" not in json.dumps(resp.data)
+    call = reader.scope_by_ids.call_args
+    assert call.kwargs["project_ids"] == (str(project.id),)
+    assert call.kwargs["settings"]["max_execution_time"] == 0.75
 
 
 # ───────────────────── N+1 batch (CollectorSourceCache) ───────────────────────

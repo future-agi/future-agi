@@ -3782,6 +3782,24 @@ export const SpanAttributeDetailResponseApiType = {
   boolean: 'boolean',
 } as const;
 
+export type SpanAttributeDetailResponseApiQueryStatus = typeof SpanAttributeDetailResponseApiQueryStatus[keyof typeof SpanAttributeDetailResponseApiQueryStatus];
+
+
+export const SpanAttributeDetailResponseApiQueryStatus = {
+  complete: 'complete',
+  sampled: 'sampled',
+  degraded: 'degraded',
+} as const;
+
+export type SpanAttributeDetailResponseApiQueryErrorCode = typeof SpanAttributeDetailResponseApiQueryErrorCode[keyof typeof SpanAttributeDetailResponseApiQueryErrorCode];
+
+
+export const SpanAttributeDetailResponseApiQueryErrorCode = {
+  sample_limit: 'sample_limit',
+  read_budget_exceeded: 'read_budget_exceeded',
+  query_failed: 'query_failed',
+} as const;
+
 export type SpanAttributeTopValueApiValue = { [key: string]: unknown };
 
 export interface SpanAttributeTopValueApi {
@@ -3793,8 +3811,8 @@ export interface SpanAttributeTopValueApi {
 export interface SpanAttributeDetailResponseApi {
   /** @minLength 1 */
   key: string;
-  type: SpanAttributeDetailResponseApiType;
-  count: number;
+  type?: SpanAttributeDetailResponseApiType;
+  count?: number;
   unique_values?: number;
   top_values?: SpanAttributeTopValueApi[];
   min?: number;
@@ -3802,7 +3820,30 @@ export interface SpanAttributeDetailResponseApi {
   avg?: number;
   p50?: number;
   p95?: number;
+  query_complete: boolean;
+  query_status: SpanAttributeDetailResponseApiQueryStatus;
+  query_error_code?: SpanAttributeDetailResponseApiQueryErrorCode;
+  query_window_start: string;
+  query_window_end: string;
 }
+
+export type SpanAttributeKeysResponseApiQueryStatus = typeof SpanAttributeKeysResponseApiQueryStatus[keyof typeof SpanAttributeKeysResponseApiQueryStatus];
+
+
+export const SpanAttributeKeysResponseApiQueryStatus = {
+  complete: 'complete',
+  sampled: 'sampled',
+  degraded: 'degraded',
+} as const;
+
+export type SpanAttributeKeysResponseApiQueryErrorCode = typeof SpanAttributeKeysResponseApiQueryErrorCode[keyof typeof SpanAttributeKeysResponseApiQueryErrorCode];
+
+
+export const SpanAttributeKeysResponseApiQueryErrorCode = {
+  sample_limit: 'sample_limit',
+  read_budget_exceeded: 'read_budget_exceeded',
+  query_failed: 'query_failed',
+} as const;
 
 export type SpanAttributeKeyApiType = typeof SpanAttributeKeyApiType[keyof typeof SpanAttributeKeyApiType];
 
@@ -3817,12 +3858,35 @@ export interface SpanAttributeKeyApi {
   /** @minLength 1 */
   key: string;
   type: SpanAttributeKeyApiType;
-  count: number;
+  count?: number;
 }
 
 export interface SpanAttributeKeysResponseApi {
   result: SpanAttributeKeyApi[];
+  query_complete: boolean;
+  query_status: SpanAttributeKeysResponseApiQueryStatus;
+  query_error_code?: SpanAttributeKeysResponseApiQueryErrorCode;
+  query_window_start: string;
+  query_window_end: string;
 }
+
+export type SpanAttributeValuesResponseApiQueryStatus = typeof SpanAttributeValuesResponseApiQueryStatus[keyof typeof SpanAttributeValuesResponseApiQueryStatus];
+
+
+export const SpanAttributeValuesResponseApiQueryStatus = {
+  complete: 'complete',
+  sampled: 'sampled',
+  degraded: 'degraded',
+} as const;
+
+export type SpanAttributeValuesResponseApiQueryErrorCode = typeof SpanAttributeValuesResponseApiQueryErrorCode[keyof typeof SpanAttributeValuesResponseApiQueryErrorCode];
+
+
+export const SpanAttributeValuesResponseApiQueryErrorCode = {
+  sample_limit: 'sample_limit',
+  read_budget_exceeded: 'read_budget_exceeded',
+  query_failed: 'query_failed',
+} as const;
 
 export type SpanAttributeValueApiValue = { [key: string]: unknown };
 
@@ -3833,6 +3897,11 @@ export interface SpanAttributeValueApi {
 
 export interface SpanAttributeValuesResponseApi {
   result: SpanAttributeValueApi[];
+  query_complete: boolean;
+  query_status: SpanAttributeValuesResponseApiQueryStatus;
+  query_error_code?: SpanAttributeValuesResponseApiQueryErrorCode;
+  query_window_start: string;
+  query_window_end: string;
 }
 
 export interface CallWebsocketRequestApi {
@@ -9760,6 +9829,7 @@ export interface EvalTemplateCreateResponseApi {
 }
 
 export interface EvalTemplateListChartsRequestApi {
+  /** @maxItems 100 */
   template_ids: string[];
 }
 
@@ -9775,10 +9845,30 @@ export interface EvalTemplateListChartsItemApi {
   run_count: number;
 }
 
+export type EvalTemplateListChartsResponseResultApiQueryStatus = typeof EvalTemplateListChartsResponseResultApiQueryStatus[keyof typeof EvalTemplateListChartsResponseResultApiQueryStatus];
+
+
+export const EvalTemplateListChartsResponseResultApiQueryStatus = {
+  complete: 'complete',
+  stale: 'stale',
+  degraded: 'degraded',
+} as const;
+
+export type EvalTemplateListChartsResponseResultApiQueryErrorCode = typeof EvalTemplateListChartsResponseResultApiQueryErrorCode[keyof typeof EvalTemplateListChartsResponseResultApiQueryErrorCode];
+
+
+export const EvalTemplateListChartsResponseResultApiQueryErrorCode = {
+  read_budget_exceeded: 'read_budget_exceeded',
+} as const;
+
 export type EvalTemplateListChartsResponseResultApiCharts = {[key: string]: EvalTemplateListChartsItemApi};
 
 export interface EvalTemplateListChartsResponseResultApi {
   charts: EvalTemplateListChartsResponseResultApiCharts;
+  query_complete: boolean;
+  query_status: EvalTemplateListChartsResponseResultApiQueryStatus;
+  query_error_code?: EvalTemplateListChartsResponseResultApiQueryErrorCode;
+  data_stale: boolean;
 }
 
 export interface EvalTemplateListChartsResponseApi {
@@ -10205,6 +10295,28 @@ export interface GroundTruthUploadResponseApi {
   result: GroundTruthUploadResponseResultApi;
 }
 
+export interface TraceEvalRequestApi {
+  trace_id: string;
+  /** @minLength 1 */
+  model?: string;
+  pass_context?: boolean;
+}
+
+export interface TraceEvalResponseResultApi {
+  template_id: string;
+  trace_id: string;
+  score: number;
+  passed: boolean;
+  reason: string;
+  /** @minLength 1 */
+  status: string;
+}
+
+export interface TraceEvalResponseApi {
+  status: boolean;
+  result: TraceEvalResponseResultApi;
+}
+
 export type EvalTemplateUpdateV2RequestApiEvalType = typeof EvalTemplateUpdateV2RequestApiEvalType[keyof typeof EvalTemplateUpdateV2RequestApiEvalType];
 
 
@@ -10308,6 +10420,15 @@ export interface EvalTemplateUpdateResponseApi {
   result: EvalTemplateUpdateResponseResultApi;
 }
 
+export type EvalUsageStatsResponseResultApiQueryStatus = typeof EvalUsageStatsResponseResultApiQueryStatus[keyof typeof EvalUsageStatsResponseResultApiQueryStatus];
+
+
+export const EvalUsageStatsResponseResultApiQueryStatus = {
+  complete: 'complete',
+  stale: 'stale',
+  degraded: 'degraded',
+} as const;
+
 export interface EvalUsageStatsApi {
   total_runs: number;
   runs_period: number;
@@ -10409,6 +10530,13 @@ export interface EvalUsagePaginationApi {
 export interface EvalUsageStatsResponseResultApi {
   template_id: string;
   is_composite: boolean;
+  query_complete: boolean;
+  query_status: EvalUsageStatsResponseResultApiQueryStatus;
+  /** @minLength 1 */
+  backend: string;
+  stale: boolean;
+  as_of: string;
+  total_is_lower_bound: boolean;
   stats: EvalUsageStatsApi;
   chart: EvalUsageChartPointApi[];
   table: EvalUsageTableRowApi[];
@@ -11495,6 +11623,14 @@ export interface UpdateColumnConfigApi {
 export interface EvalApiLogTableMetadataApi {
   total_rows: number;
   total_pages: number;
+  total_rows_is_lower_bound?: boolean;
+  query_complete?: boolean;
+  /** @minLength 1 */
+  query_status?: string;
+  /** @minLength 1 */
+  query_error_code?: string;
+  candidate_limit?: number;
+  candidate_rows_scanned?: number;
 }
 
 export type EvalApiLogTableResponseResultApiTableItem = { [key: string]: unknown };
@@ -11510,6 +11646,59 @@ export interface EvalApiLogTableResponseResultApi {
 export interface EvalApiLogTableResponseApi {
   status: boolean;
   result: EvalApiLogTableResponseResultApi;
+}
+
+export type EvalApiLogIncompleteResultApiQueryStatus = typeof EvalApiLogIncompleteResultApiQueryStatus[keyof typeof EvalApiLogIncompleteResultApiQueryStatus];
+
+
+export const EvalApiLogIncompleteResultApiQueryStatus = {
+  incomplete: 'incomplete',
+} as const;
+
+export type EvalApiLogIncompleteResultApiReason = typeof EvalApiLogIncompleteResultApiReason[keyof typeof EvalApiLogIncompleteResultApiReason];
+
+
+export const EvalApiLogIncompleteResultApiReason = {
+  post_processing_exceeds_candidate_limit: 'post_processing_exceeds_candidate_limit',
+  page_exceeds_candidate_limit: 'page_exceeds_candidate_limit',
+} as const;
+
+export type EvalApiLogIncompleteResultApiUnsupportedOperationsItem = typeof EvalApiLogIncompleteResultApiUnsupportedOperationsItem[keyof typeof EvalApiLogIncompleteResultApiUnsupportedOperationsItem];
+
+
+export const EvalApiLogIncompleteResultApiUnsupportedOperationsItem = {
+  filters: 'filters',
+  sort: 'sort',
+  search: 'search',
+} as const;
+
+export interface EvalApiLogIncompleteResultApi {
+  /** @minLength 1 */
+  message: string;
+  /** @minLength 1 */
+  error_code: string;
+  retryable: boolean;
+  query_complete: boolean;
+  query_status: EvalApiLogIncompleteResultApiQueryStatus;
+  reason: EvalApiLogIncompleteResultApiReason;
+  unsupported_operations: EvalApiLogIncompleteResultApiUnsupportedOperationsItem[];
+  candidate_limit: number;
+  requested_page: number;
+}
+
+export interface EvalApiLogIncompleteResponseApi {
+  status: boolean;
+  /** @minLength 1 */
+  type: string;
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  detail: string;
+  /** @minLength 1 */
+  message: string;
+  /** @minLength 1 */
+  error: string;
+  result: EvalApiLogIncompleteResultApi;
 }
 
 export type EvalMetricCountApiCountGraphData = { [key: string]: unknown };
@@ -11535,6 +11724,11 @@ export interface EvalMetricResponseResultApi {
   api_call_count: EvalMetricCountApi;
   average: EvalMetricAverageApi;
   error_rate?: EvalMetricResponseResultApiErrorRate;
+  query_complete?: boolean;
+  /** @minLength 1 */
+  query_status?: string;
+  /** @minLength 1 */
+  query_error_code?: string;
 }
 
 export interface EvalMetricResponseApi {
@@ -11589,7 +11783,12 @@ export interface EvalTemplateNamesResponseApi {
 export type LegacyEvalTemplatesRequestApiSortItem = { [key: string]: unknown };
 
 export interface LegacyEvalTemplatesRequestApi {
+  /**
+     * @minimum 1
+     * @maximum 100
+     */
   page_size?: number;
+  /** @minimum 0 */
   current_page_index?: number;
   search_text?: string;
   sort?: LegacyEvalTemplatesRequestApiSortItem[];
@@ -11618,10 +11817,30 @@ export interface LegacyEvalTemplateItemApi {
   updated_at: string;
 }
 
+export type LegacyEvalTemplatesResponseResultApiChartQueryStatus = typeof LegacyEvalTemplatesResponseResultApiChartQueryStatus[keyof typeof LegacyEvalTemplatesResponseResultApiChartQueryStatus];
+
+
+export const LegacyEvalTemplatesResponseResultApiChartQueryStatus = {
+  complete: 'complete',
+  stale: 'stale',
+  degraded: 'degraded',
+} as const;
+
+export type LegacyEvalTemplatesResponseResultApiChartQueryErrorCode = typeof LegacyEvalTemplatesResponseResultApiChartQueryErrorCode[keyof typeof LegacyEvalTemplatesResponseResultApiChartQueryErrorCode];
+
+
+export const LegacyEvalTemplatesResponseResultApiChartQueryErrorCode = {
+  read_budget_exceeded: 'read_budget_exceeded',
+} as const;
+
 export interface LegacyEvalTemplatesResponseResultApi {
   row_data: LegacyEvalTemplateItemApi[];
   total_rows: number;
   data_available: boolean;
+  chart_query_complete: boolean;
+  chart_query_status: LegacyEvalTemplatesResponseResultApiChartQueryStatus;
+  chart_query_error_code?: LegacyEvalTemplatesResponseResultApiChartQueryErrorCode;
+  chart_data_stale: boolean;
 }
 
 export interface LegacyEvalTemplatesResponseApi {
@@ -18428,6 +18647,38 @@ export interface DashboardCreateUpdateApi {
   description?: string;
 }
 
+export type DashboardFilterValuesResultApiQueryStatus = typeof DashboardFilterValuesResultApiQueryStatus[keyof typeof DashboardFilterValuesResultApiQueryStatus];
+
+
+export const DashboardFilterValuesResultApiQueryStatus = {
+  complete: 'complete',
+  sampled: 'sampled',
+  degraded: 'degraded',
+} as const;
+
+export type DashboardFilterValuesResultApiQueryErrorCode = typeof DashboardFilterValuesResultApiQueryErrorCode[keyof typeof DashboardFilterValuesResultApiQueryErrorCode];
+
+
+export const DashboardFilterValuesResultApiQueryErrorCode = {
+  sample_limit: 'sample_limit',
+  read_budget_exceeded: 'read_budget_exceeded',
+  query_failed: 'query_failed',
+} as const;
+
+export type DashboardFilterValuesResultApiValuesItem = { [key: string]: unknown };
+
+export interface DashboardFilterValuesResultApi {
+  values: DashboardFilterValuesResultApiValuesItem[];
+  query_complete?: boolean;
+  query_status?: DashboardFilterValuesResultApiQueryStatus;
+  query_error_code?: DashboardFilterValuesResultApiQueryErrorCode;
+}
+
+export interface DashboardFilterValuesResponseApi {
+  status?: boolean;
+  result: DashboardFilterValuesResultApi;
+}
+
 /**
  * Any valid JSON value.
  */
@@ -18750,12 +19001,33 @@ export interface DashboardQuerySeriesApi {
   data: DashboardQuerySeriesPointApi[];
 }
 
+export type DashboardQueryMetricResultApiQueryStatus = typeof DashboardQueryMetricResultApiQueryStatus[keyof typeof DashboardQueryMetricResultApiQueryStatus];
+
+
+export const DashboardQueryMetricResultApiQueryStatus = {
+  complete: 'complete',
+  degraded: 'degraded',
+} as const;
+
+export type DashboardQueryMetricResultApiQueryErrorCode = typeof DashboardQueryMetricResultApiQueryErrorCode[keyof typeof DashboardQueryMetricResultApiQueryErrorCode];
+
+
+export const DashboardQueryMetricResultApiQueryErrorCode = {
+  read_budget_exceeded: 'read_budget_exceeded',
+  query_failed: 'query_failed',
+} as const;
+
 export interface DashboardQueryMetricResultApi {
   id: string;
   name: string;
   aggregation: DashboardQueryMetricResultApiAggregation;
   unit: string;
   series: DashboardQuerySeriesApi[];
+  /** @minLength 1 */
+  error?: string;
+  query_complete?: boolean;
+  query_status?: DashboardQueryMetricResultApiQueryStatus;
+  query_error_code?: DashboardQueryMetricResultApiQueryErrorCode;
 }
 
 export interface DashboardQueryTimeRangeResultApi {
@@ -19030,6 +19302,83 @@ export interface EvalTaskCreateResultApi {
 export interface EvalTaskCreateResponseApi {
   status?: boolean;
   result: EvalTaskCreateResultApi;
+}
+
+export interface EvalTaskListMetadataApi {
+  /** @minimum 0 */
+  total_rows: number;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalTaskListItemApiFiltersApplied = { [key: string]: unknown };
+
+export interface EvalTaskListItemApi {
+  id: string;
+  name: string;
+  status: string;
+  run_type: string;
+  /** Any valid JSON value. */
+  filters_applied: EvalTaskListItemApiFiltersApplied;
+  created_at: string;
+  evals_applied: string[];
+  sampling_rate: number;
+  last_run: string;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalTaskListColumnConfigApiSettings = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalTaskListColumnConfigApiChoicesMap = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalTaskListColumnConfigApiAnnotators = { [key: string]: unknown };
+
+export interface EvalTaskListColumnConfigApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  is_visible: boolean;
+  /** @minLength 1 */
+  group_by: string;
+  /** @minLength 1 */
+  output_type?: string;
+  reverse_output?: boolean;
+  /** @minLength 1 */
+  annotation_label_type?: string;
+  choices?: string[];
+  /** Any valid JSON value. */
+  settings?: EvalTaskListColumnConfigApiSettings;
+  /** Any valid JSON value. */
+  choices_map?: EvalTaskListColumnConfigApiChoicesMap;
+  /** @minLength 1 */
+  eval_template_id?: string;
+  /** Any valid JSON value. */
+  annotators?: EvalTaskListColumnConfigApiAnnotators;
+  /** @minLength 1 */
+  source_field?: string;
+  /** @minLength 1 */
+  parent_eval_id?: string;
+}
+
+export interface EvalTaskListResultApi {
+  metadata: EvalTaskListMetadataApi;
+  table: EvalTaskListItemApi[];
+  config: EvalTaskListColumnConfigApi[];
+}
+
+export interface EvalTaskListResponseApi {
+  status: boolean;
+  result: EvalTaskListResultApi;
 }
 
 export interface EvalTaskDeleteRequestApi {
@@ -19971,9 +20320,31 @@ export interface AddObservationSpanAnnotationsApi {
   notes?: string;
 }
 
+export type ObservationAttributeListResponseApiQueryStatus = typeof ObservationAttributeListResponseApiQueryStatus[keyof typeof ObservationAttributeListResponseApiQueryStatus];
+
+
+export const ObservationAttributeListResponseApiQueryStatus = {
+  complete: 'complete',
+  sampled: 'sampled',
+  degraded: 'degraded',
+} as const;
+
+export type ObservationAttributeListResponseApiQueryErrorCode = typeof ObservationAttributeListResponseApiQueryErrorCode[keyof typeof ObservationAttributeListResponseApiQueryErrorCode];
+
+
+export const ObservationAttributeListResponseApiQueryErrorCode = {
+  sample_limit: 'sample_limit',
+  read_budget_exceeded: 'read_budget_exceeded',
+  query_failed: 'query_failed',
+} as const;
+
 export interface ObservationAttributeListResponseApi {
   status?: boolean;
   result: string[];
+  query_complete?: boolean;
+  query_status?: ObservationAttributeListResponseApiQueryStatus;
+  query_error_code?: ObservationAttributeListResponseApiQueryErrorCode;
+  query_sampled?: boolean;
 }
 
 export type ObserveGraphDataRequestApiFiltersItemFilterConfig = {
@@ -20044,9 +20415,33 @@ export interface ObserveGraphDataPointApi {
   primary_traffic?: number;
 }
 
+export type ObserveGraphDataResultApiQueryStatus = typeof ObserveGraphDataResultApiQueryStatus[keyof typeof ObserveGraphDataResultApiQueryStatus];
+
+
+export const ObserveGraphDataResultApiQueryStatus = {
+  degraded: 'degraded',
+  adjusted: 'adjusted',
+} as const;
+
+export type ObserveGraphDataResultApiQueryErrorCode = typeof ObserveGraphDataResultApiQueryErrorCode[keyof typeof ObserveGraphDataResultApiQueryErrorCode];
+
+
+export const ObserveGraphDataResultApiQueryErrorCode = {
+  read_budget_exceeded: 'read_budget_exceeded',
+  query_failed: 'query_failed',
+} as const;
+
 export interface ObserveGraphDataResultApi {
   metric_name: string;
   data: ObserveGraphDataPointApi[];
+  query_complete?: boolean;
+  query_status?: ObserveGraphDataResultApiQueryStatus;
+  query_error_code?: ObserveGraphDataResultApiQueryErrorCode;
+  query_window_adjusted?: boolean;
+  /** @minLength 1 */
+  query_window_start?: string;
+  /** @minLength 1 */
+  query_window_end?: string;
 }
 
 export interface ObserveGraphDataResponseApi {
@@ -20290,6 +20685,50 @@ export interface ProjectIdListResultApi {
 export interface ProjectIdListResponseApi {
   status?: boolean;
   result: ProjectIdListResultApi;
+}
+
+export interface ProjectListMetadataApi {
+  /** @minimum 0 */
+  total_rows: number;
+  /** @minimum 0 */
+  page_number: number;
+  /** @minimum 1 */
+  page_size: number;
+  /** @minimum 0 */
+  total_pages: number;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type ProjectListItemApiTags = { [key: string]: unknown };
+
+export interface ProjectListItemApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minimum 0 */
+  last_30_days_vol: number;
+  daily_volume: number[];
+  created_at: string;
+  updated_at: string;
+  last_active: string;
+  /** @minimum 0 */
+  run_count: number;
+  /** @minimum 0 */
+  issues: number;
+  /** Any valid JSON value. */
+  tags: ProjectListItemApiTags;
+}
+
+export interface ProjectListResultApi {
+  metadata: ProjectListMetadataApi;
+  table: ProjectListItemApi[];
+}
+
+export interface ProjectListResponseApi {
+  status: boolean;
+  result: ProjectListResultApi;
 }
 
 export type ProjectDetailResultApiModelType = typeof ProjectDetailResultApiModelType[keyof typeof ProjectDetailResultApiModelType];
@@ -21205,8 +21644,29 @@ export interface TraceApi {
   tags?: TraceApiTags;
 }
 
+export type TraceObserveListMetadataApiQueryStatus = typeof TraceObserveListMetadataApiQueryStatus[keyof typeof TraceObserveListMetadataApiQueryStatus];
+
+
+export const TraceObserveListMetadataApiQueryStatus = {
+  degraded: 'degraded',
+} as const;
+
+export type TraceObserveListMetadataApiQueryErrorCode = typeof TraceObserveListMetadataApiQueryErrorCode[keyof typeof TraceObserveListMetadataApiQueryErrorCode];
+
+
+export const TraceObserveListMetadataApiQueryErrorCode = {
+  read_budget_exceeded: 'read_budget_exceeded',
+  query_failed: 'query_failed',
+  unsupported_filter_shape: 'unsupported_filter_shape',
+} as const;
+
 export interface TraceObserveListMetadataApi {
   total_rows: number;
+  total_rows_is_lower_bound?: boolean;
+  has_more?: boolean;
+  query_complete?: boolean;
+  query_status?: TraceObserveListMetadataApiQueryStatus;
+  query_error_code?: TraceObserveListMetadataApiQueryErrorCode;
 }
 
 /**
@@ -23908,10 +24368,25 @@ project_id: string;
  * @minLength 1
  */
 key: string;
+type?: ApiTracesSpanAttributeDetailListType;
 };
+
+export type ApiTracesSpanAttributeDetailListType = typeof ApiTracesSpanAttributeDetailListType[keyof typeof ApiTracesSpanAttributeDetailListType];
+
+
+export const ApiTracesSpanAttributeDetailListType = {
+  string: 'string',
+  number: 'number',
+  boolean: 'boolean',
+} as const;
 
 export type ApiTracesSpanAttributeKeysListParams = {
 project_id: string;
+/**
+ * @minLength 1
+ * @maxLength 512
+ */
+q?: string;
 };
 
 export type ApiTracesSpanAttributeValuesListParams = {
@@ -25662,14 +26137,39 @@ page?: number;
  * Number of results to return per page.
  */
 limit?: number;
+/**
+ * @minLength 1
+ */
+metric_name: string;
+metric_type?: TracerDashboardFilterValuesMetricType;
+source?: TracerDashboardFilterValuesSource;
+project_ids?: string;
+dataset_id?: string;
+search?: string;
 };
 
-export type TracerDashboardFilterValues200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: DashboardApi[];
-};
+export type TracerDashboardFilterValuesMetricType = typeof TracerDashboardFilterValuesMetricType[keyof typeof TracerDashboardFilterValuesMetricType];
+
+
+export const TracerDashboardFilterValuesMetricType = {
+  system_metric: 'system_metric',
+  eval_metric: 'eval_metric',
+  annotation_metric: 'annotation_metric',
+  custom_attribute: 'custom_attribute',
+  custom_column: 'custom_column',
+} as const;
+
+export type TracerDashboardFilterValuesSource = typeof TracerDashboardFilterValuesSource[keyof typeof TracerDashboardFilterValuesSource];
+
+
+export const TracerDashboardFilterValuesSource = {
+  traces: 'traces',
+  spans: 'spans',
+  sessions: 'sessions',
+  datasets: 'datasets',
+  dataset_column: 'dataset_column',
+  simulation: 'simulation',
+} as const;
 
 export type TracerDashboardMetricsParams = {
 /**
@@ -26229,6 +26729,7 @@ user_id?: string;
  * @minLength 1
  */
 filters?: string;
+preview?: boolean;
 /**
  * @minimum 0
  */
@@ -26440,13 +26941,6 @@ page?: number;
 limit?: number;
 };
 
-export type TracerProjectListProjects200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: ProjectApi[];
-};
-
 export type TracerProjectProjectSdkCodeParams = {
 /**
  * A page number within the paginated result set.
@@ -26597,6 +27091,7 @@ page_number?: number;
  */
 page_size?: number;
 interval?: string;
+preview?: boolean;
 };
 
 export type TracerTraceSessionListSessions200 = {
@@ -26812,6 +27307,7 @@ page_number?: number;
  */
 page_size?: number;
 interval?: string;
+preview?: boolean;
 };
 
 export type TracerTraceListVoiceCallsParams = {

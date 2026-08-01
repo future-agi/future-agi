@@ -2,7 +2,7 @@ import json
 from collections.abc import MutableMapping
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
-from typing import Any, TypedDict, Union
+from typing import Any, TypedDict
 
 import pandas as pd
 from rest_framework import serializers
@@ -356,9 +356,7 @@ class EvalNumericScore(TypedDict):
 
 
 # Closed set of shapes emitted by ``pivot_eval_results`` per (trace, config).
-PivotEvalScore = Union[
-    EvalErrorScore, EvalChoicesScore, EvalMarkerScore, EvalNumericScore
-]
+PivotEvalScore = EvalErrorScore | EvalChoicesScore | EvalMarkerScore | EvalNumericScore
 
 
 def flatten_eval_score_into_entry(
@@ -486,7 +484,7 @@ def _validate_span_attribute_filter(column_id, filter_config):
                 raise serializers.ValidationError(
                     f"Filter {column_id!r}: numeric filter_value must be "
                     f"coercible to float, got {v!r}."
-                )
+                ) from None
     elif ftype == "boolean":
         # Strict native bool only.
         for v in values_to_check:
@@ -610,23 +608,25 @@ def get_annotation_labels_for_project(project_id, organization=None, project_ids
     Pass ``project_ids`` (a list) instead of ``project_id`` to scope across
     multiple projects (org-scoped span listing).
 
-    The score→project lookup is routed via ``_REGISTRY["ANNOTATION_LABELS"]``:
-    V1_ONLY reads PG (Score joins legacy trace/observation_span), V2_ONLY reads
-    CH (model_hub_score scoped via spans). See ``annotation_label_source``.
+    Trace/span rows are ClickHouse-only, so the legacy PG relation joins are no
+    longer a valid fallback. Score keeps an indexed denormalized
+    ``tracer_project_id``; always use that source instead of rollout dispatch.
     """
     from django.db.models import Q
 
-    from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
+    from tracer.services.annotation_label_source import (
+        AnnotationLabelScoresProjectPG,
+    )
 
-    SourceCls = get_query_builder_class("ANNOTATION_LABELS")  # noqa: N806
+    source = AnnotationLabelScoresProjectPG()
 
     if project_ids is not None:
         score_label_ids = set()
         for pid in project_ids:
-            score_label_ids.update(SourceCls().label_ids_for_project(pid))
+            score_label_ids.update(source.label_ids_for_project(pid))
         owner_q = Q(project_id__in=project_ids)
     else:
-        score_label_ids = SourceCls().label_ids_for_project(project_id)
+        score_label_ids = source.label_ids_for_project(project_id)
         owner_q = Q(project_id=project_id)
 
     return AnnotationsLabels.objects.filter(
@@ -768,6 +768,9 @@ def format_datetime_to_iso(val):
     """Convert a single datetime value to an ISO 8601 UTC string with 'Z' suffix."""
     if not val:
         return None
+    # Use strftime to produce a consistent UTC format, avoiding double-offset
+    # when val is already timezone-aware (e.g. "2024-01-01T00:00:00+00:00Z").
+    return val.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def flatten_dict(
@@ -794,9 +797,6 @@ def flatten_dict(
         else:
             items.append((new_key, v))
     return dict(items)
-    # Use strftime to produce a consistent UTC format, avoiding double-offset
-    # when val is already timezone-aware (e.g. "2024-01-01T00:00:00+00:00Z").
-    return val.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def format_datetime_fields_to_iso(rows, fields):

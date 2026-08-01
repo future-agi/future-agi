@@ -55,6 +55,12 @@ import {
 } from "../utils/rowPathWalker";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
+import {
+  buildTracingPreviewListParams,
+  fetchExactSpanPreview,
+  fetchTracingPreviewList,
+  getTracingReadyState,
+} from "./tracingTestModeUtils";
 
 const ROW_TYPE_OPTIONS = [
   { value: "Span", label: "Spans", icon: "solar:layers-outline" },
@@ -110,20 +116,6 @@ function sortEntries(entries) {
     if (bi !== -1) return 1;
     return 0;
   });
-}
-
-// Recursively find a span by ID in the observation spans tree.
-function findSpanInTree(spans, spanId) {
-  if (!spans) return null;
-  for (const item of spans) {
-    const span = item.observation_span;
-    if (span?.id === spanId) return span;
-    if (item.children?.length) {
-      const found = findSpanInTree(item.children, spanId);
-      if (found) return found;
-    }
-  }
-  return null;
 }
 
 // Flatten span tree into an ordered list (depth-first, like the graph)
@@ -207,16 +199,6 @@ const normalizeRowType = (value) => {
   }
   return "Span";
 };
-
-export const buildTracingPreviewListParams = ({
-  selectedProjectId,
-  effectiveFilters,
-}) => ({
-  project_id: selectedProjectId,
-  page_number: 0,
-  page_size: 50,
-  filters: JSON.stringify(effectiveFilters || []),
-});
 
 const TracingTestMode = React.forwardRef(
   (
@@ -334,6 +316,8 @@ const TracingTestMode = React.forwardRef(
     const [totalRows, setTotalRows] = useState(0);
     const [currentRowIndex, setCurrentRowIndex] = useState(0);
     const [loading, setLoading] = useState(false);
+    const [listQueryDegraded, setListQueryDegraded] = useState(false);
+    const [listQueryUnavailable, setListQueryUnavailable] = useState(false);
     // Key the last-completed fetch so we can derive "is the current
     // selection stale w.r.t. the last fetch" at render time. React
     // effects run *after* paint, so tracking a `hasFetched` boolean
@@ -361,6 +345,7 @@ const TracingTestMode = React.forwardRef(
     // Span/trace detail (full attributes)
     const [spanDetail, setSpanDetail] = useState(null);
     const [loadingDetail, setLoadingDetail] = useState(false);
+    const [spanDetailError, setSpanDetailError] = useState(null);
 
     // Per-row cache so toggling rows doesn't refetch the trace or re-walk
     // the response. Keyed by `${rowType}:${traceId}[:${spanId}]`. Each entry
@@ -448,11 +433,15 @@ const TracingTestMode = React.forwardRef(
         setRows([]);
         setTotalRows(0);
         setCurrentRowIndex(0);
+        setListQueryDegraded(false);
+        setListQueryUnavailable(false);
         setLastFetchedKey(null);
         return;
       }
 
       setLoading(true);
+      setListQueryDegraded(false);
+      setListQueryUnavailable(false);
       let cancelled = false;
       const fetchKey = `${selectedProjectId}:${rowType}`;
 
@@ -492,20 +481,23 @@ const TracingTestMode = React.forwardRef(
             endpoint = endpoints.project.projectSessionList();
           }
 
-          const { data } = await axios.get(endpoint, { params });
+          const listState = await fetchTracingPreviewList({
+            httpGet: axios.get,
+            endpoint,
+            params,
+          });
           if (cancelled) return;
-          const res = data?.result || {};
 
-          const cols = res.config || [];
-          const tableRows = res.table || [];
-          const total = res.metadata?.total_rows || tableRows.length;
-
-          setColumns(cols);
-          setRows(tableRows);
-          setTotalRows(total);
+          setColumns(listState.columns);
+          setListQueryDegraded(listState.queryDegraded);
+          setListQueryUnavailable(listState.queryUnavailable);
+          setRows(listState.rows);
+          setTotalRows(listState.totalRows);
           setCurrentRowIndex(0);
         } catch {
           if (cancelled) return;
+          setListQueryDegraded(false);
+          setListQueryUnavailable(true);
           setColumns([]);
           setRows([]);
           setTotalRows(0);
@@ -574,9 +566,16 @@ const TracingTestMode = React.forwardRef(
     useEffect(() => {
       if (!currentRow) {
         setSpanDetail(null);
+        setSpanDetailError(null);
         return;
       }
 
+      // Never expose the previous row's detail while the selected row is being
+      // resolved. In particular, a stale span must not inherit mapping fields
+      // from the row the user just navigated away from.
+      setSpanDetail(null);
+      setSpanDetailError(null);
+      let cancelled = false;
       const spanId = currentRow.span_id;
       const traceId = currentRow.trace_id;
       const cacheKey =
@@ -589,6 +588,7 @@ const TracingTestMode = React.forwardRef(
       const cached = detailCacheRef.current.get(cacheKey);
       if (cached) {
         setSpanDetail(cached.detail);
+        setSpanDetailError(cached.error || null);
         setLoadingDetail(false);
         return;
       }
@@ -597,6 +597,7 @@ const TracingTestMode = React.forwardRef(
         setLoadingDetail(true);
         try {
           let detailData = null;
+          let detailError = null;
 
           // Voice → dedicated voice_call_detail endpoint (transcript,
           // recording URLs, scenario info, customer info, latency, etc.)
@@ -606,6 +607,7 @@ const TracingTestMode = React.forwardRef(
                 endpoints.project.getVoiceCallDetail,
                 { params: { trace_id: traceId } },
               );
+              if (cancelled) return;
               const voiceResult = data?.result || data?.data || data || {};
               // Spread row-list fields first as a fallback so we never
               // lose data that was only present on the list row.
@@ -613,29 +615,33 @@ const TracingTestMode = React.forwardRef(
             } catch {
               detailData = { ...currentRow };
             }
-          } else if ((rowType === "Span" || rowType === "Trace") && traceId) {
-            // Fetch the TRACE detail — same API as the drawer uses.
-            // This returns all observation spans with full attributes (including spanAttributes).
+          } else if (rowType === "Span" && spanId) {
+            // Mapping must be derived from exactly the row the user selected.
+            // The preview contract is one bounded ClickHouse point read; loading
+            // the whole trace here was both expensive and allowed stale rows to
+            // silently fall back to another span's attributes.
+            const exactSpan = await fetchExactSpanPreview({
+              spanId,
+              httpGet: axios.get,
+              getObservationSpanUrl: endpoints.project.getObservationSpan,
+            });
+            if (cancelled) return;
+            detailData = exactSpan.detail;
+            detailError = exactSpan.error;
+          } else if (rowType === "Trace" && traceId) {
             const { data } = await axios.get(
               endpoints.project.getTrace(traceId),
             );
+            if (cancelled) return;
             const traceResult = data?.result;
 
             const spans = traceResult?.observation_spans;
-            if (rowType === "Span" && spanId && spans) {
-              detailData = findSpanInTree(spans, spanId);
-              if (!detailData) {
-                const firstSpan = spans?.[0];
-                detailData = firstSpan?.observation_span || traceResult?.trace;
-              }
-            } else {
-              const traceInfo = traceResult?.trace || {};
-              const allSpans = sortSpansForMapping(flattenSpanTree(spans));
-              detailData = {
-                ...traceInfo,
-                spans: allSpans,
-              };
-            }
+            const traceInfo = traceResult?.trace || {};
+            const allSpans = sortSpansForMapping(flattenSpanTree(spans));
+            detailData = {
+              ...traceInfo,
+              spans: allSpans,
+            };
           } else if (rowType === "Session") {
             // Sessions are assembled via React Query at the top of the
             // component (sessionDetailQuery + sessionFirstTraceSpansQuery)
@@ -650,16 +656,31 @@ const TracingTestMode = React.forwardRef(
             detailData = { ...currentRow };
           }
 
-          detailCacheRef.current.set(cacheKey, { detail: detailData });
+          if (cancelled) return;
+          detailCacheRef.current.set(cacheKey, {
+            detail: detailData,
+            error: detailError,
+          });
           setSpanDetail(detailData);
+          setSpanDetailError(detailError);
         } catch {
-          setSpanDetail(null);
+          if (!cancelled) {
+            setSpanDetail(null);
+            setSpanDetailError(
+              rowType === "Span"
+                ? "Unable to load the selected span. Choose another span or retry before mapping variables."
+                : null,
+            );
+          }
         } finally {
-          setLoadingDetail(false);
+          if (!cancelled) setLoadingDetail(false);
         }
       };
 
       fetchDetail();
+      return () => {
+        cancelled = true;
+      };
     }, [currentRow, currentRowIndex, rowType, columns]);
 
     // ── Session detail watcher ──
@@ -794,10 +815,11 @@ const TracingTestMode = React.forwardRef(
     // depth) plus any type-to-deepen additions. Falls back to the row's
     // column keys before the detail has loaded.
     const fieldNames = useMemo(() => {
+      if (spanDetailError) return [];
       const base = walkedFromDetail?.paths;
       if (base?.length) return [...base, ...deepenedPaths];
       return rowFields.map((f) => f?.colId || f?.key);
-    }, [walkedFromDetail, deepenedPaths, rowFields]);
+    }, [spanDetailError, walkedFromDetail, deepenedPaths, rowFields]);
 
     const truncatedSet = useMemo(() => {
       const merged = new Set(walkedFromDetail?.truncated || []);
@@ -832,7 +854,10 @@ const TracingTestMode = React.forwardRef(
 
     // Notify parent of available fields for autocomplete
     useEffect(() => {
-      if (fieldNames.length > 0 && onColumnsLoaded) {
+      if (!onColumnsLoaded) return;
+      if (spanDetailError) {
+        onColumnsLoaded([], {});
+      } else if (fieldNames.length > 0) {
         const cols = fieldNames.map((k) => ({
           id: k,
           name: k,
@@ -840,7 +865,7 @@ const TracingTestMode = React.forwardRef(
         }));
         onColumnsLoaded(cols, {});
       }
-    }, [fieldNames.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [fieldNames.join(","), spanDetailError]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Auto-map variables to fields when names match
     useEffect(() => {
@@ -884,19 +909,50 @@ const TracingTestMode = React.forwardRef(
     // mapping is optional; otherwise require all variables mapped + a sample row.
     useEffect(() => {
       if (!onReadyChange) return;
-      const allMapped =
-        variables.length === 0 ||
-        variables.every((v) => mapping[v] && String(mapping[v]).length > 0);
-      const hasRow = !!currentRow;
-      const ready = hasDataInjection || (allMapped && hasRow);
-      onReadyChange(ready, mapping);
-    }, [variables, mapping, currentRow, hasDataInjection, onReadyChange]);
+      const readyState = getTracingReadyState({
+        variables,
+        mapping,
+        currentRow,
+        spanDetail,
+        rowType,
+        hasDataInjection,
+        spanDetailError,
+        listQueryDegraded,
+        listQueryUnavailable,
+      });
+      onReadyChange(readyState.ready, readyState.mapping);
+    }, [
+      variables,
+      mapping,
+      currentRow,
+      spanDetail,
+      rowType,
+      hasDataInjection,
+      spanDetailError,
+      listQueryDegraded,
+      listQueryUnavailable,
+      onReadyChange,
+    ]);
 
     // ── Run test ──
     const handleRunTest = useCallback(async () => {
       const tid = templateIdRef.current;
       if (!tid) {
         onTestResult?.(false, "No template ID — save the eval first");
+        return;
+      }
+      if (listQueryUnavailable) {
+        onTestResult?.(
+          false,
+          "Preview data is temporarily unavailable. Change the date range or filters to retry.",
+        );
+        return;
+      }
+      if (listQueryDegraded) {
+        onTestResult?.(
+          false,
+          "Preview reached the query safety limit. Narrow the date range or filters, then retry.",
+        );
         return;
       }
       setIsRunning(true);
@@ -1048,6 +1104,8 @@ const TracingTestMode = React.forwardRef(
       startErrorLocalizerPoll,
       codeParams,
       model,
+      listQueryDegraded,
+      listQueryUnavailable,
     ]);
 
     useImperativeHandle(
@@ -1261,6 +1319,72 @@ const TracingTestMode = React.forwardRef(
           </Box>
         )}
 
+        {selectedProjectId &&
+          listQueryUnavailable &&
+          !loading &&
+          !isPendingNewFetch && (
+            <Box
+              role="alert"
+              sx={(theme) => ({
+                border: "1px solid",
+                borderColor: "warning.main",
+                bgcolor: alpha(theme.palette.warning.main, 0.08),
+                borderRadius: "6px",
+                px: 1.5,
+                py: 1.25,
+              })}
+            >
+              <Typography
+                variant="body2"
+                color="warning.main"
+                sx={{ fontSize: "12px", fontWeight: 600 }}
+              >
+                Preview data is temporarily unavailable
+              </Typography>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ display: "block", fontSize: "11px", mt: 0.5 }}
+              >
+                Change the date range or filters to retry. Mapping and testing
+                stay disabled until a complete preview loads.
+              </Typography>
+            </Box>
+          )}
+
+        {selectedProjectId &&
+          listQueryDegraded &&
+          !loading &&
+          !isPendingNewFetch && (
+            <Box
+              role="alert"
+              sx={(theme) => ({
+                border: "1px solid",
+                borderColor: "warning.main",
+                bgcolor: alpha(theme.palette.warning.main, 0.08),
+                borderRadius: "6px",
+                px: 1.5,
+                py: 1.25,
+              })}
+            >
+              <Typography
+                variant="body2"
+                color="warning.main"
+                sx={{ fontSize: "12px", fontWeight: 600 }}
+              >
+                Preview reached the query safety limit
+              </Typography>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ display: "block", fontSize: "11px", mt: 0.5 }}
+              >
+                Narrow the date range or filters, then retry. Mapping and
+                testing stay disabled until a complete preview loads.
+              </Typography>
+            </Box>
+          )}
+
         {/* Row navigator */}
         {selectedProjectId &&
           (rows?.length ?? 0) > 0 &&
@@ -1331,6 +1455,24 @@ const TracingTestMode = React.forwardRef(
         {loadingDetail && (
           <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
             <CircularProgress size={18} />
+          </Box>
+        )}
+
+        {spanDetailError && !loadingDetail && (
+          <Box
+            role="alert"
+            sx={{
+              px: 1.5,
+              py: 1,
+              border: "1px solid",
+              borderColor: "warning.main",
+              borderRadius: "6px",
+              bgcolor: "warning.lighter",
+            }}
+          >
+            <Typography variant="caption" color="warning.dark">
+              {spanDetailError}
+            </Typography>
           </Box>
         )}
 
@@ -1592,6 +1734,8 @@ const TracingTestMode = React.forwardRef(
         {selectedProjectId &&
           !loading &&
           !isPendingNewFetch &&
+          !listQueryDegraded &&
+          !listQueryUnavailable &&
           totalRows === 0 && (
             <Box
               sx={{
@@ -1630,9 +1774,13 @@ const TracingTestMode = React.forwardRef(
             const isFetchingColumns =
               !!selectedProjectId &&
               (loading || isPendingNewFetch || loadingDetail);
-            const mappingDisabledTooltip = isFetchingColumns
-              ? "Columns are being fetched"
-              : "";
+            const mappingUnavailable = Boolean(spanDetailError);
+            const mappingDisabled = isFetchingColumns || mappingUnavailable;
+            const mappingDisabledTooltip = mappingUnavailable
+              ? spanDetailError
+              : isFetchingColumns
+                ? "Columns are being fetched"
+                : "";
             return (
               <Box>
                 <Typography
@@ -1650,14 +1798,19 @@ const TracingTestMode = React.forwardRef(
                       <Autocomplete
                         size="small"
                         freeSolo={allowCustomFieldPath}
-                        disabled={isFetchingColumns}
+                        disabled={mappingDisabled}
                         options={
+                          !mappingUnavailable &&
                           mapping[variable] &&
                           !fieldNames.includes(mapping[variable])
                             ? [mapping[variable], ...fieldNames]
-                            : fieldNames
+                            : mappingUnavailable
+                              ? []
+                              : fieldNames
                         }
-                        value={mapping[variable] || null}
+                        value={
+                          mappingUnavailable ? null : mapping[variable] || null
+                        }
                         onChange={(_, val) =>
                           setMapping((prev) => ({
                             ...prev,
@@ -1688,11 +1841,13 @@ const TracingTestMode = React.forwardRef(
                           <TextField
                             {...params}
                             placeholder={
-                              isFetchingColumns
-                                ? "Loading columns..."
-                                : allowCustomFieldPath
-                                  ? "Search or type a path (e.g. attributes.input.value)"
-                                  : "Search column..."
+                              mappingUnavailable
+                                ? "Choose another span to map variables"
+                                : isFetchingColumns
+                                  ? "Loading columns..."
+                                  : allowCustomFieldPath
+                                    ? "Search or type a path (e.g. attributes.input.value)"
+                                    : "Search column..."
                             }
                             InputProps={{
                               ...params.InputProps,

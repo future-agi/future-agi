@@ -1,4 +1,4 @@
-import { Box, Collapse } from "@mui/material";
+import { Alert, Box, Collapse } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import React, { useMemo, useState, useEffect } from "react";
@@ -86,7 +86,7 @@ const TraceTab = React.forwardRef(
       { ...defaultFilter, id: getRandomId() },
     ]);
 
-    const { data: evalAttributes } = useQuery({
+    const { data: attributeDiscovery } = useQuery({
       queryKey: ["span-attribute-keys", projectId],
       queryFn: async () => {
         try {
@@ -103,8 +103,14 @@ const TraceTab = React.forwardRef(
           });
         }
       },
-      select: (data) => data.data?.result,
+      select: (data) => ({
+        attributes: data.data?.result || [],
+        queryComplete: data.data?.query_complete !== false,
+      }),
     });
+    const evalAttributes = attributeDiscovery?.attributes;
+    const attributeDiscoveryIncomplete =
+      attributeDiscovery?.queryComplete === false;
 
     const [filterDefinition, setFilterDefinition] = useState(() => {
       return generateTraceFilterDefinition(columns, evalAttributes, filters);
@@ -336,6 +342,12 @@ const TraceTab = React.forwardRef(
       <>
         <Collapse in={filterOpen}>
           <Box sx={{ paddingX: "12px", paddingTop: "16px" }}>
+            {attributeDiscoveryIncomplete && (
+              <Alert severity="warning" sx={{ mb: 1.5 }}>
+                Attribute suggestions are incomplete. Type an attribute key to
+                continue.
+              </Alert>
+            )}
             <ComplexFilter
               filters={filters}
               defaultFilter={defaultFilter}

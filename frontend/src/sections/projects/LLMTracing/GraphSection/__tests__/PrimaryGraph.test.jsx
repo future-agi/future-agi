@@ -1,7 +1,7 @@
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, waitFor } from "src/utils/test-utils";
+import { render, screen, waitFor } from "src/utils/test-utils";
 import axios from "src/utils/axios";
 import PrimaryGraph from "../PrimaryGraph";
 
@@ -100,6 +100,83 @@ describe("PrimaryGraph", () => {
         project_id: "project-override",
       }),
     );
+  });
+
+  it("shows a safe message for degraded graph responses", async () => {
+    axios.post.mockResolvedValueOnce({
+      data: {
+        result: {
+          metric_name: "latency",
+          data: [],
+          query_complete: false,
+          query_status: "degraded",
+          message: "Code: 159. DB::Exception: internal stack trace",
+        },
+      },
+    });
+
+    renderWithQueryClient(
+      <PrimaryGraph observeIdOverride="project-override" />,
+    );
+
+    expect(
+      await screen.findByText(
+        "Graph data is temporarily unavailable. Narrow the time range or filters and try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/DB::Exception/i)).not.toBeInTheDocument();
+  });
+
+  it("shows the same safe message when the graph request fails", async () => {
+    axios.post.mockRejectedValueOnce({
+      message: "Error fetching graph data: Code: 159. DB::Exception",
+    });
+
+    renderWithQueryClient(
+      <PrimaryGraph observeIdOverride="project-override" />,
+    );
+
+    expect(
+      await screen.findByText(
+        "Graph data is temporarily unavailable. Narrow the time range or filters and try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/DB::Exception/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps adjusted rollup data usable and discloses the bucket window", async () => {
+    axios.post.mockResolvedValueOnce({
+      data: {
+        result: {
+          metric_name: "latency",
+          data: [
+            {
+              timestamp: "2026-07-24T00:00:00",
+              value: 42,
+              primary_traffic: 3,
+            },
+          ],
+          query_complete: true,
+          query_status: "adjusted",
+          query_window_adjusted: true,
+          query_window_start: "2026-07-23T13:00:00Z",
+          query_window_end: "2026-07-30T18:00:00Z",
+        },
+      },
+    });
+
+    renderWithQueryClient(
+      <PrimaryGraph observeIdOverride="project-override" />,
+    );
+
+    expect(
+      await screen.findByText(
+        "Complete UTC hours shown: 2026-07-23 13:00 to 2026-07-30 18:00 (end exclusive); partial boundary hours excluded.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/temporarily unavailable/i),
+    ).not.toBeInTheDocument();
   });
 
   const statusFilter = {

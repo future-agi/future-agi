@@ -140,3 +140,14 @@ class TestEvalTaskFiltersFieldContract:
         field = eval_task_filters_field()
         with pytest.raises(serializers.ValidationError):
             field.run_validation({"filters": [CAMEL_ITEM]})
+
+    def test_legacy_filter_key_is_accepted_but_normalized(self):
+        field = eval_task_filters_field()
+        value = field.run_validation(
+            {
+                "filters": [],
+                "span_attributes_filters": [SNAKE_ITEM],
+            }
+        )
+        assert value["filters"] == [SNAKE_ITEM]
+        assert "span_attributes_filters" not in value

@@ -35,6 +35,24 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+TRACE_DETAIL_READ_TIMEOUT_MS = 750
+TRACE_DETAIL_MAX_SPANS = 5000
+TRACE_DETAIL_READ_SETTINGS = {
+    "max_threads": 2,
+    "max_memory_usage": 256 * 1024 * 1024,
+    "max_bytes_to_read": 1024 * 1024 * 1024,
+    "read_overflow_mode": "throw",
+    # One sentinel row lets the caller distinguish exactly-at-cap from a trace
+    # that would otherwise be silently truncated by LIMIT.
+    "max_result_rows": TRACE_DETAIL_MAX_SPANS + 1,
+    "result_overflow_mode": "throw",
+    "timeout_overflow_mode": "throw",
+}
+
+
+class TraceDetailIncompleteError(RuntimeError):
+    """The bounded trace read could not prove it returned the complete tree."""
+
 
 class TraceDetailHandlerV2(V2RewriteMixin, TraceDetailHandler):
     """V2 / ClickHouse trace-detail handler."""
@@ -60,58 +78,102 @@ def retrieve_trace_detail_ch(
 ) -> TraceDetail:
     """V2 trace detail from ClickHouse.
 
-    The trace's project is resolved from the CH ``spans`` table (the trace
-    may have no PG ``Trace`` row — collector ingest writes spans to CH only)
-    and tenant-gated against PG ``Project`` (Project stays in PG). Trace
-    metadata is taken from the PG ``Trace`` row when present and otherwise
-    synthesized from the root span. Returns the response dict.
+    The trace's project is resolved through the CH ``trace_dict`` and
+    tenant-gated against PG ``Project`` (Project stays in PG) before any span
+    payload is read. A compact ``traces`` lookup is the bounded fallback while
+    the dictionary refreshes after a brand-new trace. Trace metadata is
+    synthesized from the root span. PostgreSQL remains the
+    authorization/configuration store, but no telemetry is read from it.
+    Returns the response dict.
     """
-    from django.db.utils import ProgrammingError
-
     from tracer.constants.provider_logos import PROVIDER_LOGOS
     from tracer.models.custom_eval_config import CustomEvalConfig
-    from tracer.models.observation_span import ObservationSpan
     from tracer.models.project import Project
     from tracer.models.trace import Trace
     from tracer.services.clickhouse.eval_logger_table import eval_logger_source
     from tracer.views.trace import _project_workspace_scope_q
 
-    # Cross-store tenant gate, CH-sourced: the trace's project comes from CH
-    # spans; a CH-only trace has no PG Trace row. Tenancy is still enforced
-    # in PG (Project stays in PG).
-    proj_rows = analytics.execute_ch_query(
-        "SELECT toString(project_id) AS project_id FROM spans "
-        "WHERE trace_id = %(tid)s AND is_deleted = 0 LIMIT 1",
-        {"tid": str(trace_id)},
-        timeout_ms=5000,
-    ).data
-    project_id = proj_rows[0]["project_id"] if proj_rows else None
+    # ``spans`` is ordered with project_id first. Looking up a trace's project
+    # by scanning that table without the project prefix was one of the hottest
+    # production trace-detail fingerprints (p95 ~1.6 s before any hydration).
+    # The in-memory dictionary is keyed by trace UUID and resolves the same
+    # tenant in O(1). ``traces`` is a compact direct-write table and covers the
+    # short dictionary-refresh window for a newly ingested trace.
+    zero_uuid = "00000000-0000-0000-0000-000000000000"
+    project_lookup_query = """
+        SELECT toString(
+            dictGetOrDefault(
+                'trace_dict',
+                'project_id',
+                toUUID(%(trace_id)s),
+                toUUID(%(zero_uuid)s)
+            )
+        ) AS project_id
+    """
+    try:
+        project_result = analytics.execute_ch_query(
+            project_lookup_query,
+            {"trace_id": str(trace_id), "zero_uuid": zero_uuid},
+            timeout_ms=TRACE_DETAIL_READ_TIMEOUT_MS,
+            settings=TRACE_DETAIL_READ_SETTINGS,
+        )
+    except Exception as exc:
+        # The compact direct-write table remains an authoritative bounded
+        # fallback if the dictionary is warming or temporarily unavailable.
+        logger.warning(
+            "trace detail dictionary lookup failed; using compact fallback",
+            error=str(exc)[:200],
+        )
+        project_result = None
+    project_id = (
+        str(project_result.data[0].get("project_id"))
+        if project_result
+        and project_result.data
+        and project_result.data[0].get("project_id") not in (None, "", zero_uuid)
+        else None
+    )
+    if not project_id:
+        compact_lookup_query = """
+            SELECT toString(project_id) AS project_id
+            FROM traces FINAL
+            WHERE id = toUUID(%(trace_id)s)
+              AND is_deleted = 0
+            ORDER BY updated_at DESC
+            LIMIT 1
+        """
+        compact_result = analytics.execute_ch_query(
+            compact_lookup_query,
+            {"trace_id": str(trace_id)},
+            timeout_ms=TRACE_DETAIL_READ_TIMEOUT_MS,
+            settings=TRACE_DETAIL_READ_SETTINGS,
+        )
+        project_id = (
+            str(compact_result.data[0].get("project_id"))
+            if compact_result.data
+            and compact_result.data[0].get("project_id") not in (None, "")
+            else None
+        )
+
     project_manager = getattr(Project, "no_workspace_objects", Project.objects)
-    if (
-        not project_id
-        or not project_manager.filter(
+    authorized_project_id = (
+        project_manager.filter(
             _project_workspace_scope_q(request, project_prefix=""),
             id=project_id,
-        ).exists()
-    ):
+        )
+        .values_list("id", flat=True)
+        .first()
+        if project_id
+        else None
+    )
+    if not authorized_project_id:
         raise Trace.DoesNotExist
+    project_id = str(authorized_project_id)
 
-    # Trace metadata: PG row when present (full fidelity), else synthesized
-    # from the root span below (CH-only trace, or `tracer_trace` dropped
-    # post-cutover — the query then raises, treated the same as "no PG row").
-    try:
-        trace = Trace.objects.filter(id=trace_id, project_id=project_id).first()
-    except ProgrammingError:
-        trace = None  # tracer_trace dropped post-cutover — expected on CH25
-    except Exception:
-        logger.exception("trace_detail: PG Trace lookup failed")
-        trace = None
-    trace_data = view.get_serializer(trace).data if trace is not None else None
-
-    # Fetch all spans for this trace from CH — use the denormalized `spans`
-    # table which has renamed columns vs PG. Map them back to expected names.
+    # Hydrate only after authorization, with the project prefix that matches
+    # the production spans table's leading sort key.
     query = """
         SELECT
+            toString(project_id) AS project_id,
             id, trace_id, parent_span_id, name, observation_type,
             start_time, end_time, input, output, model,
             '' AS model_parameters, latency_ms, prompt_tokens,
@@ -123,17 +185,30 @@ def retrieve_trace_detail_ch(
             toJSONString(metadata) AS metadata_json,
             attrs_string, attrs_number, attrs_bool
         FROM spans
-        WHERE project_id = %(project_id)s
+        PREWHERE project_id = toUUID(%(project_id)s)
           AND trace_id = %(trace_id)s
-          AND is_deleted = 0
+        WHERE is_deleted = 0
         ORDER BY start_time
         LIMIT 1 BY id
+        LIMIT %(trace_detail_limit)s
     """
     result = analytics.execute_ch_query(
         query,
-        {"project_id": project_id, "trace_id": str(trace_id)},
-        timeout_ms=10000,
+        {
+            "project_id": project_id,
+            "trace_id": str(trace_id),
+            "trace_detail_limit": TRACE_DETAIL_MAX_SPANS + 1,
+        },
+        timeout_ms=TRACE_DETAIL_READ_TIMEOUT_MS,
+        settings=TRACE_DETAIL_READ_SETTINGS,
     )
+    if len(result.data) > TRACE_DETAIL_MAX_SPANS:
+        raise TraceDetailIncompleteError(
+            f"Trace {trace_id} exceeds the {TRACE_DETAIL_MAX_SPANS}-span detail cap"
+        )
+    span_rows = [row for row in result.data if str(row.get("project_id")) == project_id]
+    if not span_rows:
+        raise Trace.DoesNotExist
 
     # Build span tree
     span_map = {}  # id -> span data
@@ -152,7 +227,7 @@ def retrieve_trace_detail_ch(
         except (ValueError, TypeError):
             return default
 
-    for row in result.data:
+    for row in span_rows:
         span_id = str(row.get("id", ""))
         parent_id = row.get("parent_span_id")
         parent_id_str = str(parent_id) if parent_id else None
@@ -165,21 +240,6 @@ def retrieve_trace_detail_ch(
             row.get("attrs_bool"),
             row.get("span_attributes"),
         )
-        # Fallback: if CH has no span_attributes, try PG (skipped on a CH-only
-        # deployment where `tracer_observation_span` is dropped — the query
-        # raises and we fall through to the empty attrs).
-        if not span_attrs:
-            try:
-                pg_span = ObservationSpan.objects.only(
-                    "span_attributes", "eval_attributes"
-                ).get(id=span_id)
-                span_attrs = pg_span.span_attributes or pg_span.eval_attributes or {}
-            except (ObservationSpan.DoesNotExist, ProgrammingError):
-                pass  # no PG row / table dropped — expected
-            except Exception:
-                logger.exception(
-                    "trace_detail: PG span-attrs fallback failed", span_id=span_id
-                )
 
         # Build metadata from CH JSON column
         metadata_raw = row.get("metadata_json") or "{}"
@@ -258,10 +318,17 @@ def retrieve_trace_detail_ch(
             skipped_reason
         FROM {eval_table} FINAL
         WHERE trace_id = %(trace_id)s
+          AND observation_span_id IN %(span_ids)s
           AND {eval_nd}
         """
         eval_result = analytics.execute_ch_query(
-            eval_query, {"trace_id": str(trace_id)}, timeout_ms=30000
+            eval_query,
+            {
+                "trace_id": str(trace_id),
+                "span_ids": tuple(span_map),
+            },
+            timeout_ms=TRACE_DETAIL_READ_TIMEOUT_MS,
+            settings=TRACE_DETAIL_READ_SETTINGS,
         )
         # Collect unique config IDs for name lookup
         config_ids_set = set()
@@ -399,22 +466,6 @@ def retrieve_trace_detail_ch(
     except Exception:
         logger.exception("Failed to fetch trace annotations")
 
-    # ----- Fetch fresh span tags from PG (CH has sync delay) -----
-    if span_map:
-        try:
-            pg_tags = dict(
-                ObservationSpan.objects.filter(id__in=list(span_map.keys()))
-                .exclude(tags=[])
-                .values_list("id", "tags")
-            )
-            for sid, tags in pg_tags.items():
-                if sid in span_map:
-                    span_map[sid]["observation_span"]["tags"] = tags
-        except ProgrammingError:
-            pass  # tracer_observation_span dropped post-cutover — expected
-        except Exception:
-            logger.exception("Failed to fetch span tags from PG")
-
     # ----- Attach evals + annotations to each span -----
     for sid, entry in span_map.items():
         entry["eval_scores"] = eval_map.get(sid, [])
@@ -448,27 +499,26 @@ def retrieve_trace_detail_ch(
     # drift in the totals or graph shape.
     summary, graph = compute_trace_summary_and_graph(observation_spans_response)
 
-    # CH-only trace (no PG row): synthesize the trace metadata from the root
-    # span so the response shape matches the PG serializer.
-    if trace_data is None:
-        root_obs = (root_spans[0].get("observation_span") if root_spans else {}) or {}
-        session_id = None
-        if result.data:
-            _sid = result.data[0].get("trace_session_id")
-            session_id = str(_sid) if _sid else None
-        trace_data = {
-            "id": str(trace_id),
-            "project": str(project_id),
-            "project_version": root_obs.get("project_version"),
-            "name": root_obs.get("name"),
-            "metadata": root_obs.get("metadata") or {},
-            "input": root_obs.get("input"),
-            "output": root_obs.get("output"),
-            "error": summary["error_count"] > 0,
-            "session": session_id,
-            "external_id": None,
-            "tags": root_obs.get("tags") or [],
-        }
+    # Trace metadata is synthesized from the CH root span. Direct ingestion no
+    # longer writes a PostgreSQL Trace row, so consulting one would be stale.
+    root_obs = (root_spans[0].get("observation_span") if root_spans else {}) or {}
+    session_id = None
+    if span_rows:
+        _sid = span_rows[0].get("trace_session_id")
+        session_id = str(_sid) if _sid else None
+    trace_data = {
+        "id": str(trace_id),
+        "project": str(project_id),
+        "project_version": root_obs.get("project_version"),
+        "name": root_obs.get("name"),
+        "metadata": root_obs.get("metadata") or {},
+        "input": root_obs.get("input"),
+        "output": root_obs.get("output"),
+        "error": summary["error_count"] > 0,
+        "session": session_id,
+        "external_id": None,
+        "tags": root_obs.get("tags") or [],
+    }
 
     return {
         "trace": trace_data,

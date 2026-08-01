@@ -101,6 +101,34 @@ class TestEvalTaskCreateAPI:
         data = get_result(response)
         assert "id" in data
 
+    def test_create_eval_task_does_not_leak_workflow_error(
+        self, auth_client, project, custom_eval_config, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "tracer.views.eval_task.start_eval_task_workflow_sync",
+            lambda _task: (_ for _ in ()).throw(
+                RuntimeError("Code: 159. DB::Exception: private cluster detail")
+            ),
+        )
+
+        response = auth_client.post(
+            "/tracer/eval-task/",
+            {
+                "project": str(project.id),
+                "name": "Safe failure task",
+                "run_type": "continuous",
+                "sampling_rate": 100,
+                "evals": [str(custom_eval_config.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        body = str(response.json())
+        assert "DB::Exception" not in body
+        assert "Code: 159" not in body
+        assert "Unable to save the evaluation task" in body
+
     def test_create_eval_task_missing_project(self, auth_client):
         """Create eval task fails without project."""
         response = auth_client.post(
@@ -695,6 +723,32 @@ class TestEvalTaskUpdateAPI:
         )
         assert response.status_code == status.HTTP_200_OK
 
+    def test_update_eval_task_does_not_leak_workflow_error(
+        self, auth_client, eval_task, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "tracer.views.eval_task.start_eval_task_workflow_sync",
+            lambda _task: (_ for _ in ()).throw(
+                RuntimeError("Code: 159. DB::Exception: private cluster detail")
+            ),
+        )
+
+        response = auth_client.patch(
+            "/tracer/eval-task/update_eval_task/",
+            {
+                "eval_task_id": str(eval_task.id),
+                "name": "Safe failed update",
+                "edit_type": "fresh_run",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        body = str(response.json())
+        assert "DB::Exception" not in body
+        assert "Code: 159" not in body
+        assert "Unable to save the evaluation task" in body
+
     def test_update_eval_task_not_found(self, auth_client):
         """Update non-existent eval task fails."""
         response = auth_client.patch(
@@ -903,9 +957,7 @@ class TestEvalTaskRowTypePersistence:
         data = get_result(response)
         assert data["row_type"] == "traces"
 
-    def test_update_eval_task_rejects_row_type_change(
-        self, auth_client, eval_task
-    ):
+    def test_update_eval_task_rejects_row_type_change(self, auth_client, eval_task):
         """row_type is immutable after task creation.
 
         Pins the API contract: clients can't change row_type on an
@@ -970,7 +1022,9 @@ class TestCompositeEvalAcrossRowTypes:
             config={"type": "pass_fail", "criteria": "ok"},
             pass_threshold=0.5,
         )
-        CompositeEvalChild.objects.create(parent=parent, child=child, order=0, weight=1.0)
+        CompositeEvalChild.objects.create(
+            parent=parent, child=child, order=0, weight=1.0
+        )
         return CustomEvalConfig.objects.create(
             name="Composite custom config",
             project=project,

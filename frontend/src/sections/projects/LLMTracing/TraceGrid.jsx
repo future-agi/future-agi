@@ -37,6 +37,7 @@ import { REPLAY_MODULES } from "../SessionsView/ReplaySessions/configurations";
 import { useShallowToggleAnnotationsStore } from "../../agents/store";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { enqueueSnackbar } from "notistack";
 
 const ROWS_LIMIT = 25;
 const EMPTY_EXTRA_FILTERS = [];
@@ -94,6 +95,7 @@ const TraceGrid = React.forwardRef(
 
     // Prefetch cache: stores next page data so scroll feels instant
     const prefetchCache = useRef(new Map());
+    const degradedRequestKeyRef = useRef(null);
     const { showMetricsIds, reset: resetMetricIds } =
       useShallowToggleAnnotationsStore((state) => ({
         showMetricsIds: state.showMetricsIds,
@@ -248,6 +250,22 @@ const TraceGrid = React.forwardRef(
                 ));
 
               const res = results?.data?.result;
+              const isDegraded =
+                res?.metadata?.query_complete === false ||
+                res?.metadata?.query_status === "degraded" ||
+                res?.metadata?.query_error_code === "read_budget_exceeded";
+              if (
+                isDegraded &&
+                degradedRequestKeyRef.current !== filterRequestKey
+              ) {
+                degradedRequestKeyRef.current = filterRequestKey;
+                enqueueSnackbar(
+                  "Some matching traces could not be loaded. Narrow the time range and retry.",
+                  { variant: "warning" },
+                );
+              } else if (!isDegraded && pageNumber === 0) {
+                degradedRequestKeyRef.current = null;
+              }
               const newCols = normalizeConfigKeys(res?.config);
 
               // Use ref to get latest columns for comparison without triggering dataSource recreation
@@ -306,14 +324,20 @@ const TraceGrid = React.forwardRef(
               }
 
               const rows = res?.table || [];
-              const totalRows = res?.metadata?.total_rows;
+              const metadata = res?.metadata || {};
+              const totalRows = metadata.total_rows;
               params.api.totalRowCount = totalRows;
+              params.api.totalRowCountIsLowerBound =
+                metadata.total_rows_is_lower_bound === true;
               useTraceGridStore.setState({ totalRowCount: totalRows || 0 });
 
               // Infinite-scroll behavior: don't tell AG Grid the total upfront.
               // Use -1 (unknown) so it only extends the scrollbar as pages load.
-              // When we get fewer rows than requested, that's the last page.
-              const isLastPage = rows.length < ROWS_LIMIT;
+              // Prefer the backend's proven sentinel. The row count may be an
+              // honest lower bound and must never truncate infinite scrolling.
+              const isLastPage =
+                metadata.has_more === false ||
+                (metadata.has_more == null && rows.length < ROWS_LIMIT);
               const lastRow = isLastPage ? request.startRow + rows.length : -1;
 
               params.success({
@@ -368,6 +392,7 @@ const TraceGrid = React.forwardRef(
         hasEvalFilter,
         enabled,
         dateInterval,
+        filterRequestKey,
       ],
     );
 

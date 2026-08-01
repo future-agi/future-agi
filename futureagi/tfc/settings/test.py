@@ -22,6 +22,11 @@ from .settings import INSTALLED_APPS  # noqa: E402
 TESTING = True
 DEBUG = False
 
+# Most legacy Django tests build telemetry with ORM fixtures rather than seeding
+# ClickHouse. eval_loader permits this source only while TESTING is true;
+# production defaults to and enforces ClickHouse.
+EVAL_SPAN_READ_SOURCE = os.environ.get("EVAL_SPAN_READ_SOURCE", "postgres").lower()
+
 # Test database configuration
 # Use different ports than dev (5432/9000) to avoid collisions
 # Dev: PG=5432, CH=9000 | Test: PG=15432, CH=19000
@@ -46,6 +51,12 @@ CLICKHOUSE = {
     "CH_PASSWORD": os.environ.get("CH_PASSWORD", ""),
     "CH_DATABASE": os.environ.get("CH_DATABASE", "test_tfc"),
     "CH_ENABLED": os.environ.get("CH_ENABLED", "true").lower() in ("true", "1", "yes"),
+    # Unit tests write APICallLog rows to PostgreSQL without running PeerDB.
+    # Focused ClickHouse analytics tests opt this on with override_settings.
+    "CH_EVAL_USAGE_ANALYTICS": os.environ.get(
+        "CH_EVAL_USAGE_ANALYTICS", "false"
+    ).lower()
+    in ("true", "1", "yes"),
 }
 
 # Point Redis-using code at the test compose sidecar at localhost:16379

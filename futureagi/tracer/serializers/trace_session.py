@@ -77,6 +77,7 @@ class TraceSessionListQuerySerializer(StrictInputSerializer):
         required=False, default=30, min_value=1, max_value=500
     )
     interval = serializers.CharField(required=False, allow_blank=True)
+    preview = serializers.BooleanField(required=False, default=False)
 
 
 class TraceSessionExportQuerySerializer(TraceSessionListQuerySerializer):
