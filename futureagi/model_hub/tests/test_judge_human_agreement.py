@@ -397,3 +397,49 @@ class TestCalculateJudgeHumanAgreement(unittest.TestCase):
         assert result["overall_agreement"] is None
         assert result["total_comparisons"] == 0
         assert result["labels"] == {}
+
+    @patch("tracer.models.observation_span.EvalLogger.objects")
+    @patch("model_hub.models.score.Score.objects")
+    def test_returns_none_when_output_type_missing(
+        self, mock_score_objects, mock_eval_objects
+    ):
+        """A linked evaluator without a normalized output type should short
+        circuit instead of returning a partial judge-vs-human payload."""
+        queue = MagicMock()
+        queue.custom_eval_config_id = "eval-config-1"
+        queue.custom_eval_config.eval_template.output_type_normalized = None
+        queue.custom_eval_config.name = "Missing Output Type Eval"
+
+        queue.items.filter.return_value.values_list.return_value = [
+            ("item-1", "span-1"),
+        ]
+
+        result = _calculate_judge_human_agreement(queue)
+
+        assert result is None
+        mock_eval_objects.filter.assert_not_called()
+        mock_score_objects.filter.assert_not_called()
+
+    @patch("tracer.models.observation_span.EvalLogger.objects")
+    @patch("model_hub.models.score.Score.objects")
+    def test_uses_config_id_as_final_evaluator_name_fallback(
+        self, mock_score_objects, mock_eval_objects
+    ):
+        """If both config.name and template.name are empty, the config id
+        keeps the UI from rendering a blank evaluator label."""
+        queue = MagicMock()
+        queue.custom_eval_config_id = "eval-config-1"
+        queue.custom_eval_config.eval_template.output_type_normalized = "pass_fail"
+        queue.custom_eval_config.name = ""
+        queue.custom_eval_config.eval_template.name = ""
+
+        queue.items.filter.return_value.values_list.return_value = [
+            ("item-1", "span-1"),
+        ]
+
+        mock_eval_objects.filter.return_value.values.return_value = []
+        mock_score_objects.filter.return_value.values.return_value = []
+
+        result = _calculate_judge_human_agreement(queue)
+
+        assert result["evaluator_name"] == "eval-config-1"

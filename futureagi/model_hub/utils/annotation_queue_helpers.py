@@ -12,6 +12,7 @@ from model_hub.models.choices import (
     AnnotatorRole,
     AutomationRuleTriggerFrequency,
     QueueItemSourceType,
+    ScoreSource,
 )
 from simulate.serializers import CallTranscriptSerializer
 from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
@@ -1828,6 +1829,8 @@ def _normalize_eval_output(row, output_type):
     ``output_type`` is the ``output_type_normalized`` value from the evaluator's
     template (``pass_fail``, ``percentage``, or ``deterministic``).
     """
+    if not output_type:
+        return None
     if output_type == "pass_fail":
         val = row.get("output_bool")
         if val is None:
@@ -1873,7 +1876,7 @@ def _majority_value(values):
         return None
     # Map the winning normalised value back to its first original.
     winner = top_two[0][0]
-    for orig_val, norm_val in zip(values, normalized):
+    for orig_val, norm_val in zip(values, normalized, strict=True):
         if norm_val == winner:
             return orig_val
     return values[0]
@@ -1962,6 +1965,7 @@ def _calculate_judge_human_agreement(queue):
     human_scores = Score.objects.filter(
         queue_item_id__in=list(item_span_map.keys()),
         deleted=False,
+        score_source=ScoreSource.HUMAN.value,
     ).values(
         "queue_item_id",
         "label_id",
