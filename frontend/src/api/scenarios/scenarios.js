@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { isScenarioInProgress } from "src/utils/scenarioStatus";
 
 export const useGetScenarioDetail = (scenarioId, options = {}) => {
   return useQuery({
@@ -8,7 +9,7 @@ export const useGetScenarioDetail = (scenarioId, options = {}) => {
     select: (d) => d.data,
     enabled: !!scenarioId,
     refetchInterval: ({ state }) => {
-      return state?.data?.data?.status === "Processing" ? 5000 : false;
+      return isScenarioInProgress(state?.data?.data?.status) ? 5000 : false;
     },
     ...options,
   });

@@ -35,7 +35,9 @@ import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { useCreateEval } from "src/sections/evals/hooks/useCreateEval";
 import { useUpdateEval } from "src/sections/evals/hooks/useEvalDetail";
 import { useCreateCompositeEval } from "src/sections/evals/hooks/useCompositeEval";
-import ModelSelector, { FAGI_MODEL_VALUES } from "src/sections/evals/components/ModelSelector";
+import ModelSelector, {
+  FAGI_MODEL_VALUES,
+} from "src/sections/evals/components/ModelSelector";
 import InstructionEditor from "src/sections/evals/components/InstructionEditor";
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import LLMPromptEditor from "src/sections/evals/components/LLMPromptEditor";
@@ -120,18 +122,19 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     setSelectedEval,
     setStep,
     onFiltersChange,
+    sourceTimeWindow,
     filterForm: localFilterForm,
   } = useEvalPickerContext();
   const { enqueueSnackbar } = useSnackbar();
-  const { isOSS } = useDeploymentMode();
+  const { isOSS, isLoading: deploymentModeLoading } = useDeploymentMode();
   const createEval = useCreateEval();
   const createComposite = useCreateCompositeEval();
   const sourceRef = useRef(null);
-  const {testId,executionId} = useParams();
+  const { testId, executionId } = useParams();
   // Form state (same as EvalCreatePage)
   const [name, setName] = useState("");
   const [mode, setMode] = useState("single");
-  const [evalType, setEvalType] = useState("agent");
+  const [evalType, setEvalType] = useState(isOSS ? "llm" : "agent");
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState(PYTHON_CODE_TEMPLATE);
   const [codeLanguage, setCodeLanguage] = useState("python");
@@ -150,9 +153,15 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     () => contextOptionsForRowType(sourceRowType) || ["variables_only"],
   );
 
+  const evalTypeDefaulted = useRef(false);
+  useEffect(() => {
+    if (deploymentModeLoading || evalTypeDefaulted.current) return;
+    evalTypeDefaulted.current = true;
+    setEvalType(isOSS ? "llm" : "agent");
+  }, [deploymentModeLoading, isOSS]);
 
   const handleSourceRowTypeChange = useCallback((rt) => {
-    const map =  TRACING_ROW_TYPE_TO_KEY;
+    const map = TRACING_ROW_TYPE_TO_KEY;
     const key = map[rt];
     const seeded = key ? contextOptionsForRowType(key) : null;
     if (seeded) setContextOptions(seeded);
@@ -163,8 +172,13 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     name: "filters",
   });
   const localApiFilters = useMemo(
-    () => buildApiFilterArray(localFormFilters),
-    [localFormFilters],
+    () =>
+      buildApiFilterArray(
+        localFormFilters,
+        sourceTimeWindow?.startDate,
+        sourceTimeWindow?.endDate,
+      ),
+    [localFormFilters, sourceTimeWindow?.startDate, sourceTimeWindow?.endDate],
   );
 
   // Composite eval state (only used when evalType === "composite")
@@ -279,7 +293,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const buildPayload = useCallback(
     () => ({
       eval_type: evalType,
-      instructions: evalType === "code" ? "" : instructions,
+      instructions: evalType === "code" ? undefined : instructions || undefined,
       code: evalType === "code" ? code : undefined,
       code_language: evalType === "code" ? codeLanguage : undefined,
       model,
@@ -394,7 +408,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       }
     }
 
-    if (!sourceReady && source !== "composite") {
+    if (!sourceReady && source !== "composite" && !hasDataInjection) {
       next.mapping = "Map all variables before saving";
     }
 
@@ -486,6 +500,10 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         "Turing models are not available in OSS. Please select your own model.",
         { variant: "error" },
       );
+      return;
+    }
+    if (isOSS && evalType !== "code" && !model) {
+      enqueueSnackbar("Please select a model.", { variant: "error" });
       return;
     }
     if (!validate()) return;
@@ -597,6 +615,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         evalType: result?.eval_type || "llm",
         outputType:
           compositeChildAxis === "percentage" ? "percentage" : "pass_fail",
+        // EvalPickerConfigFull seeds its mapping panel from this.
+        mapping: sourceMapping,
       });
       setStep("config");
     } catch (error) {
@@ -621,6 +641,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     setSelectedEval,
     setStep,
     enqueueSnackbar,
+    sourceMapping,
   ]);
 
   const isComposite = mode === "composite";
@@ -641,7 +662,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       (evalType === "code"
         ? code.trim()
         : instructions.trim() && !needsTemplateVariable) &&
-      (source === "composite" || sourceReady);
+      (source === "composite" || sourceReady || hasDataInjection);
 
   const getDisabledReason = () => {
     if (!name.trim()) return "Name is required";
@@ -684,6 +705,10 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     }
     return [...new Set(vars)];
   }, [instructions, evalType, templateFormat, code, codeLanguage]);
+
+  if (deploymentModeLoading) {
+    return null;
+  }
 
   return (
     <Box
@@ -885,7 +910,16 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
               {!isComposite && (
                 <Tabs
                   value={evalType}
-                  onChange={(_, val) => setEvalType(val)}
+                  onChange={(_, val) => {
+                    if (isOSS && val === "agent") {
+                      enqueueSnackbar(
+                        "Agent evaluations require an Enterprise (EE) license. Upgrade to EE license key to enable.",
+                        { variant: "info" },
+                      );
+                      return;
+                    }
+                    setEvalType(val);
+                  }}
                   variant="standard"
                   TabIndicatorProps={{ style: { display: "none" } }}
                   sx={{
@@ -913,35 +947,61 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                         : "background.neutral",
                   }}
                 >
-                  {EVAL_TYPE_TABS.map((tab) => (
-                    <Tab
-                      key={tab.value}
-                      value={tab.value}
-                      label={tab.label}
-                      sx={{
-                        bgcolor:
-                          evalType === tab.value
-                            ? (theme) =>
-                                theme.palette.mode === "dark"
-                                  ? "rgba(255,255,255,0.12)"
-                                  : "background.paper"
-                            : "transparent",
-                        boxShadow:
-                          evalType === tab.value
-                            ? (theme) =>
-                                theme.palette.mode === "dark"
-                                  ? "none"
-                                  : "0 1px 3px rgba(0,0,0,0.08)"
-                            : "none",
-                        borderRadius: "6px",
-                        fontWeight: evalType === tab.value ? 600 : 400,
-                        color:
-                          evalType === tab.value
-                            ? "text.primary"
-                            : "text.disabled",
-                      }}
-                    />
-                  ))}
+                  {EVAL_TYPE_TABS.map((tab) => {
+                    const locked = isOSS && tab.value === "agent";
+                    return (
+                      <Tab
+                        key={tab.value}
+                        value={tab.value}
+                        label={
+                          locked ? (
+                            <CustomTooltip
+                              show
+                              type=""
+                              arrow
+                              title="Agent evaluations require an Enterprise (EE) license. Upgrade to EE license key to enable."
+                            >
+                              <Box
+                                sx={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 0.5,
+                                }}
+                              >
+                                {tab.label}
+                                <Iconify icon="mdi:lock-outline" width={14} />
+                              </Box>
+                            </CustomTooltip>
+                          ) : (
+                            tab.label
+                          )
+                        }
+                        sx={{
+                          bgcolor:
+                            evalType === tab.value
+                              ? (theme) =>
+                                  theme.palette.mode === "dark"
+                                    ? "rgba(255,255,255,0.12)"
+                                    : "background.paper"
+                              : "transparent",
+                          boxShadow:
+                            evalType === tab.value
+                              ? (theme) =>
+                                  theme.palette.mode === "dark"
+                                    ? "none"
+                                    : "0 1px 3px rgba(0,0,0,0.08)"
+                              : "none",
+                          borderRadius: "6px",
+                          fontWeight: evalType === tab.value ? 600 : 400,
+                          opacity: locked ? 0.6 : 1,
+                          color:
+                            evalType === tab.value
+                              ? "text.primary"
+                              : "text.disabled",
+                        }}
+                      />
+                    );
+                  })}
                 </Tabs>
               )}
 
@@ -1100,7 +1160,6 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   />
                 </Box>
               )}
-
             </Box>
           }
           rightPanel={
@@ -1168,7 +1227,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                 {(source === "dataset" ||
                   source === "workbench" ||
                   source === "custom" ||
-                  source === "run-experiment" ||
+                  source === "experiment" ||
                   source === "run-optimization") && (
                   <DatasetTestMode
                     ref={sourceRef}
@@ -1250,6 +1309,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     <TestPlayground
                       ref={sourceRef}
                       templateId={draftId}
+                      evalName={name || ""}
                       instructions=""
                       evalType="llm"
                       requiredKeys={compositeUnionKeys}
@@ -1308,7 +1368,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
             </Typography>
           </Box>
         )}
-        {!sourceReady && !testError && !testPassed && (
+        {!sourceReady && !hasDataInjection && !testError && !testPassed && (
           <Typography
             variant="caption"
             color="text.secondary"
@@ -1319,9 +1379,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
           </Typography>
         )}
 
-        <ShowComponent
-          condition={!hasDataInjection }
-        >
+        <ShowComponent condition={!hasDataInjection}>
           <CustomTooltip
             show={!!disabledReason}
             title={disabledReason || ""}
@@ -1372,7 +1430,9 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
               size="small"
               loading={isSaving}
               disabled={!canSave}
-              onClick={isComposite ? handleSaveAndAddComposite : handleSaveAndAdd}
+              onClick={
+                isComposite ? handleSaveAndAddComposite : handleSaveAndAdd
+              }
               sx={{ textTransform: "none" }}
             >
               {isComposite ? "Create & Configure" : "Save & Add Evaluation"}

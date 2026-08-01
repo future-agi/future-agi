@@ -6,7 +6,6 @@ import {
   Button,
   Chip,
   FormControlLabel,
-  IconButton,
   LinearProgress,
   Stack,
   Switch,
@@ -88,6 +87,11 @@ function commentBadgeSx(hasOpenFeedback) {
   return (theme) => {
     const tone = theme.palette[hasOpenFeedback ? "warning" : "info"];
     const isDark = theme.palette.mode === "dark";
+    const badgeBg = isDark
+      ? hasOpenFeedback
+        ? tone.light || tone.main
+        : tone.main
+      : tone.main;
 
     return {
       "& .MuiBadge-badge": {
@@ -97,13 +101,11 @@ function commentBadgeSx(hasOpenFeedback) {
         fontWeight: 800,
         border: `1px solid ${
           isDark
-            ? alpha(tone.light || tone.main, 0.46)
+            ? alpha(badgeBg, 0.82)
             : alpha(theme.palette.background.paper, 0.94)
         }`,
-        bgcolor: isDark ? alpha(tone.main, 0.24) : tone.main,
-        color: isDark
-          ? tone.light || theme.palette.common.white
-          : theme.palette.common.white,
+        bgcolor: badgeBg,
+        color: theme.palette.getContrastText(badgeBg),
         boxShadow: `0 0 0 2px ${
           isDark ? theme.palette.grey[900] : theme.palette.background.paper
         }`,
@@ -213,9 +215,22 @@ export default function AnnotateHeader({
         spacing={1}
         sx={{ minWidth: 0, flex: "1 1 260px" }}
       >
-        <IconButton onClick={onBack} size="small">
-          <Iconify icon="eva:arrow-back-fill" />
-        </IconButton>
+        <Button
+          size="small"
+          color="inherit"
+          onClick={onBack}
+          startIcon={<Iconify icon="eva:arrow-back-fill" width={16} />}
+          sx={{
+            minHeight: 30,
+            borderRadius: 0.75,
+            px: 1,
+            fontWeight: 700,
+            color: "text.primary",
+            flexShrink: 0,
+          }}
+        >
+          Back to Queue
+        </Button>
         <Typography variant="h6" noWrap sx={{ minWidth: 0, flexShrink: 1 }}>
           {queueName || "Queue"}
         </Typography>
@@ -445,14 +460,25 @@ export default function AnnotateHeader({
           />
         </Box>
         {!isReviewMode && (
-          <Tooltip title="Press S to skip">
+          <Tooltip
+            title={
+              isItemCompleted
+                ? "Completed items cannot be skipped"
+                : "Press S to skip"
+            }
+          >
             <span>
               <Button
                 variant="outlined"
                 color="inherit"
                 size="small"
                 onClick={onSkip}
-                disabled={isSkipping || isAssignedToOther || isSkipDisabled}
+                disabled={
+                  isSkipping ||
+                  isAssignedToOther ||
+                  isSkipDisabled ||
+                  isItemCompleted
+                }
                 startIcon={<Iconify icon="eva:skip-forward-fill" width={16} />}
                 sx={{
                   borderRadius: 0.75,

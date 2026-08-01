@@ -2,13 +2,18 @@ import hmac
 import os
 
 import structlog
-from django.conf import settings
 from django.db.models import F
 from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 
 from agentcc.models.shadow_experiment import AgentccShadowExperiment
 from agentcc.models.shadow_result import AgentccShadowResult
+from agentcc.serializers.contracts import (
+    AgentccErrorResponseSerializer,
+    ShadowResultsWebhookRequestSerializer,
+    WebhookIngestResponseSerializer,
+)
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -26,6 +31,14 @@ class ShadowResultWebhookView(APIView):
     authentication_classes = []
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=ShadowResultsWebhookRequestSerializer,
+        responses={
+            200: WebhookIngestResponseSerializer,
+            400: AgentccErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         expected_secret = AGENTCC_WEBHOOK_SECRET
         if not expected_secret:
@@ -34,7 +47,7 @@ class ShadowResultWebhookView(APIView):
         if not hmac.compare_digest(provided, expected_secret):
             return self._gm.bad_request("Invalid webhook secret")
 
-        results = request.data.get("results", [])
+        results = request.validated_data.get("results", [])
         if not results:
             return self._gm.success_response({"ingested": 0})
 

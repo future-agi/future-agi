@@ -588,6 +588,8 @@ class TestDashboardEdgeCases:
                         }
                     ],
                     "project_ids": [],
+                    "granularity": "day",
+                    "time_range": {"preset": "7D"},
                 },
                 "chart_config": {
                     "chart_type": "pie",

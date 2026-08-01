@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Future AGI — self-hosted installer for Windows / PowerShell.
+  Future AGI - self-hosted installer for Windows / PowerShell.
 
 .DESCRIPTION
   PowerShell counterpart of bin/install. Sets up .env (with rotated
@@ -51,7 +51,7 @@ function Append-Log {
 }
 
 Append-Log @(
-  "# Future AGI install log — $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))",
+  "# Future AGI install log - $((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))",
   "# host: $(hostname), ps: $($PSVersionTable.PSVersion)",
   ""
 )
@@ -299,7 +299,7 @@ function Read-Plain {
 if (-not $SkipUserCreation -and -not $NonInteractive) {
   Step "Create your first account"
   Say "  Press Enter on email to skip and create the user later via:"
-  Say "    docker compose exec backend python manage.py create_user"
+  Say "    docker exec -it futureagi-backend-1 python manage.py create_user"
   Say ""
 
   while ($true) {
@@ -402,7 +402,7 @@ if ($UserEmail) {
     Warn "create_user failed (exit $cuRc). Last 6 lines:"
     ($cuOut | Out-String).Split([char]10) | Select-Object -Last 6 | ForEach-Object { Say "      $_" }
     Warn "Run it manually after the stack settles:"
-    Warn "  $DcCmd $($DcArgs -join ' ') exec -it backend python manage.py create_user"
+    Warn "  docker exec -it futureagi-backend-1 python manage.py create_user"
   }
 }
 

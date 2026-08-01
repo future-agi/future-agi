@@ -37,6 +37,7 @@ futureagi/agentcc-gateway/config.*.yaml
 # Private compose overlays (workspace-specific, internal testing, etc.)
 docker-compose.ws*.yml
 docker-compose.local.yml
+docker-compose.recover*.yml
 docker-compose.*.override.yml
 
 # License keys & related (Future AGI Enterprise License artifacts)
@@ -64,6 +65,7 @@ pip-wheel-metadata/
 
 # uv / virtualenvs / pyenv
 .venv/
+**/.venv*/
 venv/
 **/venv/
 env.bak/
@@ -192,6 +194,10 @@ media/
 # and should be force-added with `git add -f .mcp.json`.
 .mcp.json
 **/.mcp.json
+.codex-tmp/
+**/.codex-tmp/
+.playwright-mcp/
+**/.playwright-mcp/
 *.swp
 *.swo
 *~
@@ -222,3 +228,4 @@ frontend/scripts/.artifacts/
 # bin/install timestamped logs
 install-*.log
 uninstall-*.log
+*.core

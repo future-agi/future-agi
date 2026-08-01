@@ -104,6 +104,12 @@ export const yellow = {
   o30: "#E6B8004D",
 };
 
+export const amber = {
+  500: "#EAB308",
+  600: "#CA8A04",
+  700: "#A16207",
+};
+
 export const purple = {
   50: "#ECE8FF",
   100: "#D7D0FF",
@@ -267,6 +273,7 @@ const base = {
   action,
   cyan,
   yellow,
+  amber,
   // New Colours
   purple,
   pink,
@@ -331,6 +338,9 @@ export function palette(mode) {
       neutral: "#F8F8F8",
       subtle: "#F8F8F8",
       accent: grey[100],
+      // Falcon AI surfaces (inline AI bar background + AI-action hover)
+      aiSurface: "#fafafe",
+      aiHover: "rgba(124, 77, 255, 0.06)",
     },
     action: {
       ...base.action,
@@ -371,6 +381,9 @@ export function palette(mode) {
       neutral: darkSpace.asteroid,
       subtle: darkSpace.dust,
       accent: darkSpace.shadow,
+      // Falcon AI surfaces (inline AI bar background + AI-action hover)
+      aiSurface: "#1a1a2e",
+      aiHover: "rgba(124, 77, 255, 0.12)",
     },
     divider: darkBorder.default,
     action: {

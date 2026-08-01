@@ -14,6 +14,7 @@ import {
 } from "@mui/material";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
+import { ConfirmDialog } from "src/components/custom-dialog";
 import { useEvaluationContext } from "./context/EvaluationContext";
 import { formatDistanceToNow } from "date-fns";
 import { canonicalEntries, canonicalValues } from "src/utils/utils";
@@ -303,7 +304,9 @@ const EvalRow = ({
           )}
           <Tooltip
             title={
-              disableDelete ? disableDeleteReason || "Delete disabled" : "Delete"
+              disableDelete
+                ? disableDeleteReason || "Delete disabled"
+                : "Delete"
             }
             arrow
           >
@@ -752,6 +755,7 @@ const SavedEvalsList = ({
     setVisibleSection("config");
   };
   const [sel, setSel] = useState(new Set());
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const toggle = (item) =>
     setSel((p) => {
       const n = new Set(p);
@@ -764,6 +768,16 @@ const SavedEvalsList = ({
     );
   const selected = evals.filter((e) => sel.has(e.id));
   const hasSel = sel.size > 0;
+
+  const handleBulkDelete = async () => {
+    try {
+      await Promise.all(selected.map((e) => onDeleteEvalClick?.(e)));
+    } finally {
+      setConfirmBulkDelete(false);
+      setSel(new Set());
+      onClose?.();
+    }
+  };
 
   return (
     <Box
@@ -880,13 +894,7 @@ const SavedEvalsList = ({
                 variant="outlined"
                 color="error"
                 startIcon={<Iconify icon="mdi:trash-can-outline" width={14} />}
-                onClick={async () => {
-                  await Promise.all(
-                    selected.map((e) => onDeleteEvalClick?.(e)),
-                  );
-                  setSel(new Set());
-                  onClose?.();
-                }}
+                onClick={() => setConfirmBulkDelete(true)}
                 sx={{
                   textTransform: "none",
                   fontSize: "12px",
@@ -918,6 +926,26 @@ const SavedEvalsList = ({
           </Button>
         </Box>
       )}
+
+      <ConfirmDialog
+        open={confirmBulkDelete}
+        onClose={() => setConfirmBulkDelete(false)}
+        title="Delete evaluations"
+        content={`Delete ${sel.size} selected evaluation${
+          sel.size === 1 ? "" : "s"
+        } and their results? This action cannot be undone.`}
+        action={
+          <Button
+            variant="contained"
+            color="error"
+            size="small"
+            onClick={handleBulkDelete}
+            sx={{ paddingX: "24px" }}
+          >
+            Delete
+          </Button>
+        }
+      />
     </Box>
   );
 };

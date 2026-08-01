@@ -1,5 +1,5 @@
-import React, { useEffect } from "react";
-import { useLocation } from "react-router-dom";
+import React, { useCallback, useEffect } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import Fab from "@mui/material/Fab";
 import SvgIcon from "@mui/material/SvgIcon";
 import CustomTooltip from "src/components/tooltip";
@@ -61,24 +61,33 @@ function FalconIcon(props) {
 
 export default function FalconAIFab() {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   const { isOSS } = useDeploymentMode();
   const isSidebarOpen = useFalconStore((s) => s.isSidebarOpen);
   const toggleSidebar = useFalconStore((s) => s.toggleSidebar);
 
+
+  const openFalconAI = useCallback(() => {
+    if (isOSS) {
+      navigate("/dashboard/falcon-ai");
+      return;
+    }
+    toggleSidebar();
+  }, [isOSS, navigate, toggleSidebar]);
+
   // Global keyboard shortcut: Cmd+K (Mac) / Ctrl+K (Windows)
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (isOSS) return;
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
         e.stopPropagation();
-        toggleSidebar();
+        openFalconAI();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [isOSS, toggleSidebar]);
+  }, [openFalconAI]);
 
   // Hide FAB on Falcon AI full-page view
   if (pathname.startsWith("/dashboard/falcon-ai")) return null;
@@ -87,18 +96,9 @@ export default function FalconAIFab() {
   if (isSidebarOpen) return null;
 
   return (
-    <CustomTooltip
-      title={isOSS ? "Not available on self-hosted" : "Falcon AI (⌘K)"}
-      show={true}
-      placement="left"
-      arrow
-    >
+    <CustomTooltip title="Falcon AI (⌘K)" show={true} placement="left" arrow>
       <Fab
-        onClick={() => {
-          if (!isOSS) {
-            toggleSidebar();
-          }
-        }}
+        onClick={openFalconAI}
         size="medium"
         sx={{
           position: "fixed",

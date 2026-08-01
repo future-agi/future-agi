@@ -34,7 +34,9 @@ import SvgColor from "src/components/svg-color";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { useSnackbar } from "src/components/snackbar";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { formatDistanceToNowStrict, format } from "date-fns";
+import useCanEditDashboard from "./hooks/useCanEditDashboard";
 
 const AVATAR_COLORS = [
   "#7C4DFF",
@@ -319,6 +321,8 @@ export default function DashboardsListView() {
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
 
+  const { canCreate, canDelete } = useCanEditDashboard();
+
   const { data: dashboards = [], isLoading } = useDashboardList();
   const createMutation = useCreateDashboard();
   const deleteMutation = useDeleteDashboard();
@@ -548,22 +552,32 @@ export default function DashboardsListView() {
               View Docs
             </Typography>
           </Button>
-          <Button
-            variant="contained"
-            color="primary"
-            startIcon={
-              createMutation.isPending ? (
-                <CircularProgress size={16} color="inherit" />
-              ) : (
-                <Iconify icon="mdi:plus" />
-              )
-            }
-            onClick={handleCreate}
-            disabled={createMutation.isPending}
-            sx={{ height: "38px" }}
+          <CustomTooltip
+            show={!canCreate}
+            type=""
+            title="You don't have permission to create dashboards."
+            size="small"
+            arrow
           >
-            {createMutation.isPending ? "Creating..." : "Create Dashboard"}
-          </Button>
+            <span>
+              <Button
+                variant="contained"
+                color="primary"
+                startIcon={
+                  createMutation.isPending ? (
+                    <CircularProgress size={16} color="inherit" />
+                  ) : (
+                    <Iconify icon="mdi:plus" />
+                  )
+                }
+                onClick={handleCreate}
+                disabled={createMutation.isPending || !canCreate}
+                sx={{ height: "38px" }}
+              >
+                {createMutation.isPending ? "Creating..." : "Create Dashboard"}
+              </Button>
+            </span>
+          </CustomTooltip>
         </Stack>
       </Stack>
 
@@ -661,18 +675,20 @@ export default function DashboardsListView() {
                   <ViewerAvatars db={db} />
                 </Box>
 
-                <IconButton
-                  className="row-actions"
-                  size="small"
-                  onClick={(e) => handleDelete(e, db)}
-                  sx={{
-                    opacity: 0,
-                    transition: "opacity 0.15s",
-                    flexShrink: 0,
-                  }}
-                >
-                  <Iconify icon="mdi:delete-outline" width={18} />
-                </IconButton>
+                {canDelete && (
+                  <IconButton
+                    className="row-actions"
+                    size="small"
+                    onClick={(e) => handleDelete(e, db)}
+                    sx={{
+                      opacity: 0,
+                      transition: "opacity 0.15s",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Iconify icon="mdi:delete-outline" width={18} />
+                  </IconButton>
+                )}
               </Stack>
             ))}
           </Stack>
@@ -763,7 +779,7 @@ export default function DashboardsListView() {
           <Button
             variant="contained"
             onClick={handleCreate}
-            disabled={!newName.trim() || createMutation.isPending}
+            disabled={!newName.trim() || createMutation.isPending || !canCreate}
           >
             {createMutation.isPending ? "Creating..." : "Create"}
           </Button>

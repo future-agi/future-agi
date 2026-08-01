@@ -53,15 +53,18 @@ def _span_attr_item(column_id="ended_reason", value="completed"):
 
 
 def _annotator_item(user_uuid="c65a0f3c-8a72-432a-987f-ddbd8391df29"):
-    """Mirrors the prod bug task's annotator filter shape (camelCase, top-level
-    col_type-by-config). The dispatcher tolerates either case."""
+    """Global `annotator` filter in the canonical snake_case contract.
+
+    `normalize_filter_item` intentionally rejects camelCase aliases, so the
+    filter must use `column_id`/`filter_config` to reach the annotator handler.
+    """
     return {
-        "columnId": "annotator",
-        "filterConfig": {
-            "colType": "ANNOTATION",
-            "filterOp": "equals",
-            "filterType": "text",
-            "filterValue": user_uuid,
+        "column_id": "annotator",
+        "filter_config": {
+            "col_type": "ANNOTATION",
+            "filter_op": "equals",
+            "filter_type": "text",
+            "filter_value": user_uuid,
         },
     }
 
@@ -261,11 +264,13 @@ class TestMixed:
         ]
         q, anns = parsing_evaltask_filters(_wrap(items), row_type=RowType.SPANS)
         assert q != Q()
-        # Each handler contributes its own clause; combined Q should reference
-        # all the underlying mechanisms.
+        # Each handler contributes its own clause; the combined Q should
+        # reference all four underlying mechanisms.
         rep = repr(q)
-        assert "span_attributes" in rep   # SPAN_ATTRIBUTE
-        assert "Exists" in rep             # ANNOTATION (annotator) Exists subquery
+        assert "span_attributes" in rep       # SPAN_ATTRIBUTE
+        assert "row_avg_cost" in rep          # SYSTEM_METRIC (cost)
+        assert "__score__gt" in rep           # EVAL_METRIC (per-eval score)
+        assert "Exists" in rep                # ANNOTATION (annotator) Exists
 
 
 # ---------------------------------------------------------------------------

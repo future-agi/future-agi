@@ -162,8 +162,9 @@ export default function StepSyncSettings({
           <FormControlLabel
             value="all"
             control={<Radio size="small" />}
+            sx={{ ml: 0, alignItems: "flex-start" }}
             label={
-              <Box>
+              <Box sx={{ pt: 0.25 }}>
                 <Typography sx={{ typography: "s1", color: "text.primary" }}>
                   Import all traces
                 </Typography>
@@ -178,6 +179,7 @@ export default function StepSyncSettings({
           <FormControlLabel
             value="from_date"
             control={<Radio size="small" />}
+            sx={{ ml: 0 }}
             label={
               <Typography sx={{ typography: "s1", color: "text.primary" }}>
                 Import from a specific date
@@ -187,6 +189,7 @@ export default function StepSyncSettings({
           <FormControlLabel
             value="new_only"
             control={<Radio size="small" />}
+            sx={{ ml: 0 }}
             label={
               <Typography sx={{ typography: "s1", color: "text.primary" }}>
                 Only import new traces going forward

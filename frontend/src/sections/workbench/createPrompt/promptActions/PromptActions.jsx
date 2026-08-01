@@ -114,10 +114,10 @@ const PromptActions = () => {
       reset();
       trackEvent(Events.promptTemplateCreated, {
         [PropertyName.click]: true,
-        [PropertyName.promptId]: data?.data?.result?.rootTemplate,
+        [PropertyName.promptId]: data?.data?.result?.root_template,
       });
       navigate(
-        `/dashboard/workbench/create/${data?.data?.result?.rootTemplate}`,
+        `/dashboard/workbench/create/${data?.data?.result?.root_template}`,
         { replace: true },
       );
     },
@@ -140,13 +140,20 @@ const PromptActions = () => {
   //   filledPlaceholderLabels.includes(label),
   // );
 
-  const isVariablesDefined = useIsVariablesDefined(prompts, variableData, templateFormat);
+  const isVariablesDefined = useIsVariablesDefined(
+    prompts,
+    variableData,
+    templateFormat,
+  );
 
   const isSingleVersion = selectedVersions.length === 1;
 
   const noModelIndex = modelConfig?.findIndex((m) => !m?.model);
 
   const buttonTooltip = useMemo(() => {
+    if (!RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole]) {
+      return "You don't have permission to run prompts.";
+    }
     if (isAddingDraft) {
       return "Creating new version...";
     }
@@ -166,6 +173,7 @@ const PromptActions = () => {
     isVariablesDefined,
     noModelIndex,
     isAddingDraft,
+    userRole,
     // areAllPlaceholdersPresent,
   ]);
 
@@ -466,6 +474,9 @@ const PromptActions = () => {
               </ShowComponent>
 
               {(() => {
+                if (!isSingleVersion) {
+                  return null;
+                }
                 const versionLabels =
                   baseVersion?.labels?.length > 0
                     ? baseVersion.labels
@@ -490,7 +501,7 @@ const PromptActions = () => {
                           height: 24,
                           "&:hover": {
                             backgroundColor: getTagColorMap(label?.name, theme)
-                              ?.backgroundColor,
+                              ?.hoverBackgroundColor,
                             cursor: "default",
                           },
                         }}
@@ -678,66 +689,68 @@ const PromptActions = () => {
               title={buttonTooltip || ""}
               arrow
             >
-              <ShowComponent condition={isGenerating}>
-                <StopGeneratingButton
-                  disabled={loadingPrompt}
-                  onClick={onStopGenerating}
-                  loading={isStoppingGenerating}
-                >
-                  <Typography variant="s1" fontWeight={"fontWeightMedium"}>
-                    Stop Generating
-                  </Typography>
-                </StopGeneratingButton>
-              </ShowComponent>
-              <ShowComponent condition={!isGenerating}>
-                <RunPromptButton
-                  disabled={
-                    loadingPrompt ||
-                    currentTab === "Evaluation" ||
-                    currentTab === "Metrics" ||
-                    !RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole]
-                  }
-                  onClick={() => {
-                    if (buttonTooltip) {
-                      if (noModelIndex !== -1) {
-                        setOpenSelectModel(noModelIndex);
-                        trackEvent(Events.promptSelectModelClicked, {
-                          [PropertyName.promptId]: id,
-                          [PropertyName.type]: "system",
-                          [PropertyName.version]: selectedVersions?.map(
-                            (item) => item?.version,
-                          ),
-                        });
-                      } else if (!isVariablesDefined) {
-                        setVariableDrawerOpen(true);
+              <span style={{ display: "inline-flex" }}>
+                <ShowComponent condition={isGenerating}>
+                  <StopGeneratingButton
+                    disabled={loadingPrompt}
+                    onClick={onStopGenerating}
+                    loading={isStoppingGenerating}
+                  >
+                    <Typography variant="s1" fontWeight={"fontWeightMedium"}>
+                      Stop Generating
+                    </Typography>
+                  </StopGeneratingButton>
+                </ShowComponent>
+                <ShowComponent condition={!isGenerating}>
+                  <RunPromptButton
+                    disabled={
+                      loadingPrompt ||
+                      currentTab === "Evaluation" ||
+                      currentTab === "Metrics" ||
+                      !RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole]
+                    }
+                    onClick={() => {
+                      if (buttonTooltip) {
+                        if (noModelIndex !== -1) {
+                          setOpenSelectModel(noModelIndex);
+                          trackEvent(Events.promptSelectModelClicked, {
+                            [PropertyName.promptId]: id,
+                            [PropertyName.type]: "system",
+                            [PropertyName.version]: selectedVersions?.map(
+                              (item) => item?.version,
+                            ),
+                          });
+                        } else if (!isVariablesDefined) {
+                          setVariableDrawerOpen(true);
+                        }
+                        return;
                       }
-                      return;
-                    }
-                    trackEvent(Events.promptRunPromptClicked, {
-                      [PropertyName.promptId]: id,
-                      [PropertyName.type]: "overall",
-                      [PropertyName.version]: selectedVersions?.map(
-                        (item) => item?.version,
-                      ),
-                    });
-                    if (
-                      !checkIfAudioModelHasAudioContent(modelConfig, prompts)
-                    ) {
-                      enqueueSnackbar(
-                        "Audio input is missing. Please add audio before running the prompt.",
-                        { variant: "error" },
-                      );
-                      return;
-                    }
-                    saveAndRun();
-                  }}
-                >
-                  {" "}
-                  <Typography variant="s1" fontWeight={"fontWeightMedium"}>
-                    Run Prompt
-                  </Typography>
-                </RunPromptButton>
-              </ShowComponent>
+                      trackEvent(Events.promptRunPromptClicked, {
+                        [PropertyName.promptId]: id,
+                        [PropertyName.type]: "overall",
+                        [PropertyName.version]: selectedVersions?.map(
+                          (item) => item?.version,
+                        ),
+                      });
+                      if (
+                        !checkIfAudioModelHasAudioContent(modelConfig, prompts)
+                      ) {
+                        enqueueSnackbar(
+                          "Audio input is missing. Please add audio before running the prompt.",
+                          { variant: "error" },
+                        );
+                        return;
+                      }
+                      saveAndRun();
+                    }}
+                  >
+                    {" "}
+                    <Typography variant="s1" fontWeight={"fontWeightMedium"}>
+                      Run Prompt
+                    </Typography>
+                  </RunPromptButton>
+                </ShowComponent>
+              </span>
             </CustomTooltip>
           </ShowComponent>
         </Box>

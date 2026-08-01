@@ -35,7 +35,7 @@ const AgentConfigurationView = () => {
     setValue,
     getValues,
     trigger,
-  } = useAgentConfigForm(createAgentDefinitionSchema(), agentDetails);
+  } = useAgentConfigForm(createAgentDefinitionSchema({ agentDefinitionId }), agentDetails);
 
   const { errors, isSubmitting, isDirty } = formState;
   const [error, setError] = useState("");

@@ -71,8 +71,7 @@ class AgentccBlocklistViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            instance.deleted = True
-            instance.save(update_fields=["deleted", "updated_at"])
+            instance.delete()
             return self._gm.success_response({"deleted": True})
         except Exception as e:
             logger.exception("blocklist_delete_error", error=str(e))
@@ -86,11 +85,15 @@ class AgentccBlocklistViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             new_words = request.data.get("words", [])
             if not isinstance(new_words, list):
                 return self._gm.bad_request("words must be a list")
+            for index, word in enumerate(new_words):
+                if not isinstance(word, str):
+                    return self._gm.bad_request(
+                        f"Word at index {index} must be a string"
+                    )
 
             existing = set(instance.words)
             for word in new_words:
-                if isinstance(word, str):
-                    existing.add(word)
+                existing.add(word)
             instance.words = sorted(existing)
             instance.save(update_fields=["words", "updated_at"])
 
@@ -107,6 +110,11 @@ class AgentccBlocklistViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             remove = request.data.get("words", [])
             if not isinstance(remove, list):
                 return self._gm.bad_request("words must be a list")
+            for index, word in enumerate(remove):
+                if not isinstance(word, str):
+                    return self._gm.bad_request(
+                        f"Word at index {index} must be a string"
+                    )
 
             remove_set = set(remove)
             instance.words = [w for w in instance.words if w not in remove_set]

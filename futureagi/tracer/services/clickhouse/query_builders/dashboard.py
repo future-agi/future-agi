@@ -15,11 +15,15 @@ Supports four metric types:
 
 import logging
 import re
-from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 from tracer.services.clickhouse.query_builders.expressions import (
     annotation_numeric_value_expr,
+)
+from tracer.services.clickhouse.v2.id_remap_sql import (
+    remap_left_join,
+    resolved_id_expr,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,11 +39,16 @@ def _sanitize_attr_key(key: str) -> str:
     return key
 
 
+def _snap_to_hour(dt: datetime) -> datetime:
+    """Truncate a datetime to the hour (ClickHouse ``toStartOfHour``)."""
+    return dt.replace(minute=0, second=0, microsecond=0)
+
+
 # ---------------------------------------------------------------------------
 # Metric resolution tables
 # ---------------------------------------------------------------------------
 
-SYSTEM_METRICS: Dict[str, Tuple[str, str]] = {
+SYSTEM_METRICS: dict[str, tuple[str, str]] = {
     "project": ("spans", "project_id"),
     "latency": ("spans", "latency_ms"),
     "error_rate": ("spans", "CASE WHEN status='ERROR' THEN 1.0 ELSE 0.0 END"),
@@ -51,15 +60,27 @@ SYSTEM_METRICS: Dict[str, Tuple[str, str]] = {
         "span_attr_num['gen_ai.server.time_to_first_token']",
     ),
     "cost": ("spans", "cost"),
-    # Count metrics
-    "session_count": ("spans", "trace_session_id"),
-    "user_count": ("spans", "end_user_id"),
+    "session_count": (
+        "spans",
+        "nullIf(trace_session_id, toUUID('00000000-0000-0000-0000-000000000000'))",
+    ),
+    "user_count": (
+        "spans",
+        # dictGetOrDefault cannot take NULL keys; keep both branches as String.
+        "if(end_user_id IS NULL "
+        "OR end_user_id = toUUID('00000000-0000-0000-0000-000000000000'), "
+        "NULL, "
+        "dictGetOrDefault("
+        "'end_users_dict', 'user_id', "
+        "assumeNotNull(end_user_id), "
+        "toString(assumeNotNull(end_user_id))))",
+    ),
     "trace_count": ("spans", "trace_id"),
     "span_count": ("spans", "id"),
     # String dimensions (for breakdown/filter)
     "model": ("spans", "model"),
     "status": ("spans", "status"),
-    "service_name": ("spans", "trace_name"),
+    "service_name": ("spans", "service_name"),
     "span_kind": ("spans", "observation_type"),
     "provider": ("spans", "provider"),
     "session": ("spans", "trace_session_id"),
@@ -73,7 +94,7 @@ SYSTEM_METRICS: Dict[str, Tuple[str, str]] = {
     "tag": ("spans", "tags"),
 }
 
-METRIC_UNITS: Dict[str, str] = {
+METRIC_UNITS: dict[str, str] = {
     "latency": "ms",
     "error_rate": "%",
     "tokens": "tokens",
@@ -103,6 +124,12 @@ METRIC_UNITS: Dict[str, str] = {
 # averaging aggregations get rescaled to a percentage at query time via
 # ``rescale_rate_to_percent`` so the result matches the ``%`` unit.
 _RATE_INDICATOR_METRICS = frozenset({"error_rate"})
+
+# Covered by dashboard_attr_rollup. Adding one: extend the MV's ARRAY JOIN list too.
+_ROLLUP_COVERED_ATTRS = frozenset({"final_status", "country"})
+
+# Rollup is hour-resolution; sub-hour granularities keep the spans scan.
+_ROLLUP_GRANULARITIES = frozenset({"hour", "day", "week", "month", "year"})
 
 # Metrics that are non-numeric identifiers — force count_distinct aggregation
 _COUNT_DISTINCT_METRICS = frozenset(
@@ -138,6 +165,44 @@ AVERAGING_AGGREGATIONS = frozenset(
 )
 
 
+def _eval_source_bucket_expr(exclude: str) -> str:
+    """Map eval source values to fallback labels for project/dataset breakdowns."""
+    buckets: list[tuple[str, str]] = [
+        ("tracer", "(trace)"),
+        ("feedback", "(feedback)"),
+        ("tracer_composite", "(composite)"),
+        ("dataset_evaluation", "(dataset)"),
+        ("experiment", "(experiment)"),
+        ("prompt_template", "(prompt)"),
+        ("eval_playground", "(playground)"),
+        ("eval_playground_test", "(playground)"),
+        ("standalone_v2", "(sdk)"),
+        ("simulate", "(simulation)"),
+        ("simulate_tool_evaluation", "(simulation)"),
+        ("voice_call", "(simulation)"),
+        ("text_call", "(simulation)"),
+        ("fix_your_agent", "(fix-your-agent)"),
+        ("trace_error_analysis", "(error-analysis)"),
+        ("error_localizer", "(error-analysis)"),
+        ("run_prompt_improve", "(prompt-improve)"),
+        ("composite_eval", "(composite)"),
+        ("composite_eval_adhoc", "(composite)"),
+        ("composite_eval_dataset", "(composite)"),
+    ]
+    excluded_self = {
+        "project": {"tracer"},
+        "dataset": {"dataset_evaluation"},
+    }.get(exclude, set())
+    parts = ["multiIf("]
+    for source, label in buckets:
+        if source in excluded_self:
+            continue
+        parts.append(f"e.source = '{source}', '{label}', ")
+    parts.append("e.source = '', '(unknown)', ")
+    parts.append(f"'(no {exclude})')")
+    return "".join(parts)
+
+
 def rescale_rate_to_percent(agg_expr: str, aggregation: str) -> str:
     """Wrap *agg_expr* in ``(... ) * 100`` for averaging aggregations.
 
@@ -153,7 +218,7 @@ def rescale_rate_to_percent(agg_expr: str, aggregation: str) -> str:
     return agg_expr
 
 
-AGGREGATIONS: Dict[str, str] = {
+AGGREGATIONS: dict[str, str] = {
     "avg": "avg({col})",
     "median": "quantile(0.5)({col})",
     "max": "max({col})",
@@ -169,7 +234,25 @@ AGGREGATIONS: Dict[str, str] = {
     "sum": "sum({col})",
 }
 
-FILTER_OPERATORS: Dict[str, str] = {
+# Aggregations that require a numeric operand. ClickHouse raises "Illegal type
+# String of argument for aggregate function ..." when these are applied to a
+# text column (e.g. a string custom attribute). ``count`` / ``count_distinct``
+# work on any type, so they are NOT listed here.
+_NUMERIC_ONLY_AGGREGATIONS = frozenset(
+    {"avg", "sum", "median", "p25", "p50", "p75", "p90", "p95", "p99"}
+)
+
+
+class InvalidMetricCombinationError(ValueError):
+    """A metric's aggregation cannot be applied to its value type.
+
+    e.g. averaging a text custom attribute. The message is user-facing — callers
+    surface it per-widget so one nonsensical metric does not fail the whole
+    dashboard query.
+    """
+
+
+FILTER_OPERATORS: dict[str, str] = {
     "less_than": "< %({prefix}{idx}_val)s",
     "greater_than": "> %({prefix}{idx}_val)s",
     "equal_to": "= %({prefix}{idx}_val)s",
@@ -186,7 +269,7 @@ FILTER_OPERATORS: Dict[str, str] = {
     "is_not_numeric": "= 0",
 }
 
-PRESET_RANGES: Dict[str, Optional[timedelta]] = {
+PRESET_RANGES: dict[str, timedelta | None] = {
     "30m": timedelta(minutes=30),
     "6h": timedelta(hours=6),
     "today": None,
@@ -198,7 +281,7 @@ PRESET_RANGES: Dict[str, Optional[timedelta]] = {
     "12M": timedelta(days=365),
 }
 
-GRANULARITY_TO_CH: Dict[str, str] = {
+GRANULARITY_TO_CH: dict[str, str] = {
     "minute": "toStartOfMinute",
     "hour": "toStartOfHour",
     "day": "toStartOfDay",
@@ -225,12 +308,51 @@ def _prefix_spans_columns(clause: str) -> str:
     return clause
 
 
+_ID_RESOLVED_NAMES = frozenset(
+    {
+        "user_count",
+        "session_count",
+        "user",
+        "session",
+        "user_id_type",
+    }
+)
+
+
+# ClickHouse omits materialized columns from sp.*. The current dashboard
+# dimensions only use stored columns, so no re-projection is needed.
+_MATERIALIZED_DASHBOARD_COLS: tuple[str, ...] = ()
+
+
+def _resolved_spans_source(alias: str | None = None) -> str:
+    """Return a spans source with user/session ids resolved through id_remap."""
+    out_alias = alias or "spans"
+    eu_join = remap_left_join("sp.end_user_id", "end_user_id_remap", "eu_remap")
+    ts_join = remap_left_join(
+        "sp.trace_session_id", "trace_session_id_remap", "ts_remap"
+    )
+    resolved_eu = resolved_id_expr("sp.end_user_id", "eu_remap")
+    resolved_ts = resolved_id_expr("sp.trace_session_id", "ts_remap")
+    materialized = "".join(f"sp.{c} AS {c}, " for c in _MATERIALIZED_DASHBOARD_COLS)
+    return (
+        "(SELECT sp.* EXCEPT (end_user_id, trace_session_id), "
+        f"{materialized}"
+        f"{resolved_eu} AS end_user_id, "
+        f"{resolved_ts} AS trace_session_id "
+        f"FROM spans AS sp {eu_join} {ts_join}) AS {out_alias}"
+    )
+
+
 class DashboardQueryBuilder:
     """Translates a widget query_config into ClickHouse SQL.
 
     Does NOT extend BaseQueryBuilder because it operates on multiple
     project_ids and builds multiple queries (one per metric).
     """
+
+    # dashboard_attr_rollup lives only in the v2 schema; the v2 subclass flips
+    # this True. Base/v1 never routes to the rollup (fail-closed: missing table).
+    _attr_rollup_available: bool = False
 
     def __init__(self, query_config: dict) -> None:
         self.config = query_config
@@ -246,14 +368,14 @@ class DashboardQueryBuilder:
     # Time range
     # ------------------------------------------------------------------
 
-    def parse_time_range(self) -> Tuple[datetime, datetime]:
+    def parse_time_range(self) -> tuple[datetime, datetime]:
         """Parse time range from preset or custom start/end."""
         tr = self.config.get("time_range") or self.config.get("timeRange") or {}
         preset = tr.get("preset")
         custom_start = tr.get("custom_start")
         custom_end = tr.get("custom_end")
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         if custom_start and custom_end:
             return _parse_dt(custom_start), _parse_dt(custom_end)
@@ -278,7 +400,7 @@ class DashboardQueryBuilder:
     # Single-metric query
     # ------------------------------------------------------------------
 
-    def build_metric_query(self, metric: dict) -> Tuple[str, dict]:
+    def build_metric_query(self, metric: dict) -> tuple[str, dict]:
         """Build ClickHouse SQL for a single metric.
 
         Returns:
@@ -292,7 +414,7 @@ class DashboardQueryBuilder:
         start_date, end_date = self.parse_time_range()
         bucket_fn = GRANULARITY_TO_CH.get(self.granularity, "toStartOfDay")
 
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "project_ids": self.project_ids,
             "start_date": start_date,
             "end_date": end_date,
@@ -321,20 +443,129 @@ class DashboardQueryBuilder:
         else:
             raise ValueError(f"Unknown metric type: {metric_type}")
 
+    def _names_reference_id(self, *names: str | None) -> bool:
+        return any(
+            (n or "").lower() in _ID_RESOLVED_NAMES for n in names if n is not None
+        )
+
+    def _query_references_id(
+        self, metric_name: str | None, per_metric_filters: list[dict]
+    ) -> bool:
+        if self._names_reference_id(metric_name):
+            return True
+        for bd in self.breakdowns:
+            if bd.get("type", "system_metric") != "system_metric":
+                continue
+            if self._names_reference_id(bd.get("name"), bd.get("id")):
+                return True
+        for f in self.global_filters + (per_metric_filters or []):
+            f_type = f.get("metric_type") or f.get("type", "")
+            if f_type and f_type != "system_metric":
+                continue
+            if self._names_reference_id(
+                f.get("metric_name"), f.get("name"), f.get("id")
+            ):
+                return True
+        return False
+
+    def _spans_source(
+        self, metric_name: str | None, per_metric_filters: list[dict], alias: str
+    ) -> str:
+        """Return the spans FROM/JOIN source for the given alias — the id-remap
+        resolved derived table when the query references an id, else the bare
+        table (so id-free metrics stay byte-identical with zero added joins).
+
+        ``alias`` is ``"spans"`` for the flat ``FROM spans`` shapes (the derived
+        table is aliased back to ``spans``) or ``"s"`` for the JOINed shapes.
+        """
+        if self._query_references_id(metric_name, per_metric_filters):
+            return _resolved_spans_source(None if alias == "spans" else alias)
+        return "spans" if alias == "spans" else f"spans AS {alias}"
+
     # ------------------------------------------------------------------
     # System metric
     # ------------------------------------------------------------------
+
+    def _attr_rollup_window_covered(self, start_date: datetime) -> bool:
+        """True only when the rollup flag is on AND the requested window starts
+        within the backfilled-and-covered range — fail-closed on a fresh deploy
+        (off until ops backfills the rollup and sets the coverage date)."""
+        from django.conf import settings
+
+        if not getattr(settings, "DASHBOARD_ATTR_ROLLUP_ENABLED", False):
+            return False
+        covered_since = getattr(settings, "DASHBOARD_ATTR_ROLLUP_COVERED_SINCE", None)
+        if covered_since is None:
+            return False
+        if covered_since.tzinfo is None:
+            covered_since = covered_since.replace(tzinfo=UTC)
+        if start_date.tzinfo is None:
+            start_date = start_date.replace(tzinfo=UTC)
+        return start_date >= covered_since
+
+    def _should_use_rollup(
+        self,
+        metric_name: str,
+        aggregation: str,
+        single_bd: dict | None,
+        per_metric_filters: list[dict],
+        start_date: datetime,
+    ) -> bool:
+        """True only for the covered latency-breakdown shape on a v2 build with the
+        rollup enabled and the window inside coverage — fail-closed everywhere else."""
+        return (
+            self._attr_rollup_available
+            and metric_name == "latency"
+            and aggregation == "avg"
+            and self.granularity in _ROLLUP_GRANULARITIES
+            and single_bd is not None
+            and single_bd.get("type") == "custom_attribute"
+            and single_bd.get("name") in _ROLLUP_COVERED_ATTRS
+            and not per_metric_filters
+            and not self.global_filters
+            and self._attr_rollup_window_covered(start_date)
+        )
 
     def _build_system_metric_query(
         self,
         metric_name: str,
         aggregation: str,
         bucket_fn: str,
-        per_metric_filters: List[dict],
+        per_metric_filters: list[dict],
         params: dict,
-    ) -> Tuple[str, dict]:
+    ) -> tuple[str, dict]:
         # Normalize: saved widgets may have capitalized names (e.g. "Latency")
         metric_name = metric_name.lower() if metric_name else metric_name
+
+        # Covered latency-breakdown shape → the pre-aggregated rollup; anything
+        # else falls through to the spans scan (fail-closed, see _should_use_rollup).
+        single_bd = self.breakdowns[0] if len(self.breakdowns) == 1 else None
+        if self._should_use_rollup(
+            metric_name,
+            aggregation,
+            single_bd,
+            per_metric_filters,
+            params["start_date"],
+        ):
+            params = dict(params)
+            params["attr_key"] = _sanitize_attr_key(single_bd["name"])
+            # Rollup is hourly — snap the window to whole hours so no partial bucket.
+            params["start_date"] = _snap_to_hour(params["start_date"])
+            params["end_date"] = _snap_to_hour(params["end_date"])
+            rollup_query = (
+                f"SELECT {bucket_fn}(hour) AS time_bucket,\n"
+                "       attr_value AS breakdown_value,\n"
+                "       sumMerge(latency_sum) / countMerge(n) AS value\n"
+                "FROM dashboard_attr_rollup\n"
+                "WHERE project_id IN %(project_ids)s\n"
+                "  AND attr_key = %(attr_key)s\n"
+                "  AND hour >= %(start_date)s\n"
+                "  AND hour < %(end_date)s\n"
+                "GROUP BY time_bucket, breakdown_value\n"
+                "ORDER BY time_bucket, breakdown_value"
+            )
+            return rollup_query, params
+
         if metric_name not in SYSTEM_METRICS:
             # Fallback: treat unknown system metrics as custom span attributes
             # (handles widgets saved with wrong type, e.g. span attribute saved as system_metric)
@@ -350,14 +581,8 @@ class DashboardQueryBuilder:
                 params,
             )
         _, col_expr = SYSTEM_METRICS[metric_name]
-        # Project count should count distinct projects, not raw span rows.
-        if metric_name == "project" and aggregation == "count":
-            aggregation = "count_distinct"
-        # Force count-based aggregation for non-numeric / identity metrics.
-        if metric_name in _COUNT_DISTINCT_METRICS and aggregation not in (
-            "count",
-            "count_distinct",
-        ):
+        # Identifier metrics should count unique identities, not raw span rows.
+        if metric_name in _COUNT_DISTINCT_METRICS and aggregation != "count_distinct":
             aggregation = "count_distinct"
         agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
 
@@ -387,12 +612,13 @@ class DashboardQueryBuilder:
         if subquery_clauses[0]:
             all_where += subquery_clauses[0]
 
-        # Resolve all breakdowns (supports multiple, including annotation JOINs)
+        spans_flat = self._spans_source(metric_name, per_metric_filters, "spans")
+        spans_joined = self._spans_source(metric_name, per_metric_filters, "s")
+
         bd_infos = self._resolve_all_breakdowns(params)
         has_annotation_bd = any(b["type"] == "annotation" for b in bd_infos)
 
         if bd_infos:
-            # Build composite breakdown_value from all breakdowns
             bd_exprs = []
             join_clauses = []
             for b in bd_infos:
@@ -403,11 +629,9 @@ class DashboardQueryBuilder:
             if len(bd_exprs) == 1:
                 bd_select = f"{bd_exprs[0]} AS breakdown_value"
             else:
-                # Concatenate multiple breakdowns with " / " separator
                 parts = ", ' / ', ".join(f"toString({e})" for e in bd_exprs)
                 bd_select = f"concat({parts}) AS breakdown_value"
 
-            # Use table alias 's' when JOINs are present
             if has_annotation_bd:
                 agg_with_alias = (
                     agg_expr.replace("(", "(s.") if "(" in agg_expr else agg_expr
@@ -418,7 +642,7 @@ class DashboardQueryBuilder:
                     f"SELECT {bucket_fn}(s.start_time) AS time_bucket,\n"
                     f"       {bd_select},\n"
                     f"       {agg_with_alias} AS value\n"
-                    f"FROM spans AS s\n"
+                    f"FROM {spans_joined}\n"
                     f"{join_str}\n"
                     f"WHERE {where_str}\n"
                     f"GROUP BY time_bucket, breakdown_value\n"
@@ -432,7 +656,7 @@ class DashboardQueryBuilder:
                 ]
                 query = (
                     f"SELECT {', '.join(select_parts_with_bd)}\n"
-                    f"FROM spans\n"
+                    f"FROM {spans_flat}\n"
                     f"WHERE {' AND '.join(all_where)}\n"
                     f"GROUP BY time_bucket, breakdown_value\n"
                     f"ORDER BY time_bucket, breakdown_value"
@@ -440,7 +664,7 @@ class DashboardQueryBuilder:
         else:
             query = (
                 f"SELECT {', '.join(select_parts)}\n"
-                f"FROM spans\n"
+                f"FROM {spans_flat}\n"
                 f"WHERE {' AND '.join(all_where)}\n"
                 f"GROUP BY {', '.join(group_parts)}\n"
                 f"ORDER BY {', '.join(order_parts)}"
@@ -456,9 +680,9 @@ class DashboardQueryBuilder:
         metric: dict,
         aggregation: str,
         bucket_fn: str,
-        per_metric_filters: List[dict],
+        per_metric_filters: list[dict],
         params: dict,
-    ) -> Tuple[str, dict]:
+    ) -> tuple[str, dict]:
         """Build eval metric query against usage_apicalllog (central eval table).
 
         All eval executions (tracer, dataset, simulation, SDK, playground) write
@@ -484,31 +708,18 @@ class DashboardQueryBuilder:
         params["organization_id"] = self.organization_id
         params["workspace_id"] = self.workspace_id
 
-        # --- Score extraction & aggregation ---
-        # eval_score (Float64 MATERIALIZED): JSONExtractFloat on output.output.
-        #   SCORE evals:     0.0 – 1.0 (reliable)
-        #   PASS_FAIL evals: 1.0 when output is numeric, BUT 0.0 when output
-        #                    is the string "Passed"/"Failed" (JSONExtractFloat
-        #                    can't parse strings → returns 0).
-        #
-        # eval_output_str (String MATERIALIZED): raw string from output.output.
-        #   SCORE:     "0.4", "1", "0.8"
-        #   PASS_FAIL: "1", "Passed", "Failed", "0"  (both formats exist)
-        #
-        # Unified pass detection must check BOTH: numeric score >= 1.0 OR
-        # string matches "Passed"/"Pass"/"True"/"true".
+        _output_str_lower = "lower(e.eval_output_str)"
         _is_pass = (
-            "(e.eval_score >= 1.0 OR e.eval_output_str IN "
-            "('Passed', 'Pass', 'True', 'true'))"
+            f"(e.eval_score >= 1.0 OR {_output_str_lower} IN "
+            "('passed', 'pass', 'true', '1'))"
         )
         _is_fail = (
-            "(e.eval_score < 1.0 AND e.eval_output_str NOT IN "
-            "('Passed', 'Pass', 'True', 'true'))"
+            f"(e.eval_score < 1.0 AND {_output_str_lower} NOT IN "
+            "('passed', 'pass', 'true', '1'))"
         )
-        # Unified score: 1.0 for pass (string or numeric), else eval_score
         _unified_score = f"if({_is_pass}, 1.0, e.eval_score)"
 
-        _EVAL_AGGREGATIONS: Dict[str, str] = {
+        _EVAL_AGGREGATIONS: dict[str, str] = {
             "pass_rate": f"countIf({_is_pass}) / nullIf(count(), 0)",
             "fail_rate": f"countIf({_is_fail}) / nullIf(count(), 0)",
             "pass_count": f"countIf({_is_pass})",
@@ -518,15 +729,20 @@ class DashboardQueryBuilder:
 
         if aggregation in _EVAL_AGGREGATIONS:
             agg_expr = _EVAL_AGGREGATIONS[aggregation]
+        elif output_type in ("CHOICE", "CHOICES"):
+            agg_expr = "count()"
         else:
-            # Standard numeric aggregations.
-            if output_type in ("CHOICE", "CHOICES"):
-                col_expr = "1.0"
-            elif output_type == "PASS_FAIL":
-                # Use unified score so string "Passed" → 1.0
+            if output_type == "PASS_FAIL":
                 col_expr = _unified_score
             else:
-                col_expr = "e.eval_score"
+                # Some templates with missing output_type still emit pass/fail strings.
+                col_expr = (
+                    "if(e.eval_output_str = '', NULL, "
+                    f"if({_output_str_lower} IN ('passed', 'pass', 'true', '1'), 1.0, "
+                    f"if({_output_str_lower} IN ('failed', 'fail', 'false', '0'), 0.0, "
+                    "if(match(e.eval_output_str, '^-?[0-9]+\\.?[0-9]*$'), "
+                    "e.eval_score, NULL))))"
+                )
             agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
 
         select_parts = [f"{bucket_fn}(e.created_at) AS time_bucket"]
@@ -549,39 +765,50 @@ class DashboardQueryBuilder:
             "e.created_at < %(end_date)s",
         ]
 
-        # --- Dynamic JOINs ---
-        # The eval hub can connect to spans (traces), datasets, simulations,
-        # and other evals. We track which JOINs are needed and add them once.
-        joins = []
-        need_spans_join = False  # JOIN spans via trace_id
-        need_eval_join = {}  # alias -> eval_template_id for cross-eval JOINs
+        # Keep one latest trace-eval attempt; dataset/playground rows pass through.
+        _dedup_scope_d = (
+            "d.workspace_id = toUUID(%(workspace_id)s)"
+            if self.workspace_id
+            else "d.organization_id = toUUID(%(organization_id)s)"
+        )
+        # `d._peerdb_is_deleted = 0` already filters CDC tombstones; the outer
+        # `e … FINAL` still collapses duplicate parts for the join. argMax(id)
+        # picks the latest attempt deterministically even across unmerged parts,
+        # so we can skip the extra FINAL scan on this subquery.
+        where_parts.append(
+            "(e.eval_trace_id = '' OR (e.eval_trace_id, e.id) IN ("
+            "SELECT d.eval_trace_id, argMax(d.id, tuple(d.created_at, d.id)) "
+            "FROM usage_apicalllog AS d "
+            f"WHERE {_dedup_scope_d} "
+            "AND d._peerdb_is_deleted = 0 AND d.status = 'success' "
+            "AND d.source_id = %(eval_template_id)s "
+            "AND d.created_at >= %(start_date)s AND d.created_at < %(end_date)s "
+            "AND d.eval_trace_id != '' "
+            "GROUP BY d.eval_trace_id))"
+        )
 
-        # Helper: use materialized column for trace_id
+        joins = []
+        need_spans_join = False
+        need_eval_join = {}
+
         _trace_id_expr = "e.eval_trace_id"
 
-        # --- Resolve breakdowns ---
-        if self.breakdowns:
-            bd = self.breakdowns[0]
+        bd_exprs = []
+        for bd_idx, bd in enumerate(self.breakdowns):
             bd_name = (bd.get("name") or bd.get("id") or "").lower()
             bd_type = bd.get("type", "system_metric")
 
-            # Eval-native breakdowns (no JOIN needed)
             if bd_name in ("source", "eval_source"):
                 bd_expr = "if(e.source = '', '(not set)', e.source)"
 
             elif bd_name == "dataset":
-                # Use materialized column eval_dataset_id (pre-extracted at
-                # insert time — avoids runtime JSON parsing on every row).
-                # Name resolution happens in the view layer via PG lookup,
-                # so we just return the UUID here.
                 bd_expr = (
-                    "if(e.eval_dataset_id = '', '(no dataset)', " "e.eval_dataset_id)"
+                    "if(e.eval_dataset_id != '', e.eval_dataset_id, "
+                    + _eval_source_bucket_expr(exclude="dataset")
+                    + ")"
                 )
 
-            # Trace dimension breakdowns → JOIN spans
             elif bd_name == "project":
-                # Resolve trace_id → project_id via trace_dict.
-                # Non-trace evals show "(no project)".
                 _proj_uuid = (
                     f"dictGet('trace_dict', 'project_id', "
                     f"toUUIDOrZero({_trace_id_expr}))"
@@ -589,10 +816,11 @@ class DashboardQueryBuilder:
                 bd_expr = (
                     f"if({_trace_id_expr} != '' "
                     f"AND {_proj_uuid} != toUUID('00000000-0000-0000-0000-000000000000'), "
-                    f"toString({_proj_uuid}), '(no project)')"
+                    f"toString({_proj_uuid}), "
+                    + _eval_source_bucket_expr(exclude="project")
+                    + ")"
                 )
             elif bd_name in SYSTEM_METRICS:
-                # Known span column — JOIN spans to get the dimension
                 need_spans_join = True
                 _, span_col = SYSTEM_METRICS[bd_name]
                 bd_expr = f"if(s.trace_id = '', '(not set)', toString(s.{span_col}))"
@@ -615,7 +843,7 @@ class DashboardQueryBuilder:
                 _span_col_map = {
                     "model": "model",
                     "status": "status",
-                    "service_name": "name",
+                    "service_name": "service_name",
                     "span_kind": "observation_type",
                     "provider": "provider",
                     "session": "trace_session_id",
@@ -628,7 +856,6 @@ class DashboardQueryBuilder:
                 scol = _span_col_map.get(bd_name, bd_name)
                 bd_expr = f"if(s.trace_id = '', '(not set)', toString(s.{scol}))"
 
-            # Breakdown by eval metric
             elif bd_type == "eval_metric":
                 ev_tid = bd.get("config_id") or bd.get("label_id") or bd_name
                 ev_tid = resolve_eval_template_id(
@@ -638,12 +865,10 @@ class DashboardQueryBuilder:
                     bd.get("output_type") or bd.get("outputType") or ""
                 ).upper()
 
-                # Same eval as the metric → use main table columns directly
                 if ev_tid == eval_template_id:
                     if bd_output_type in ("PASS_FAIL", "CHOICE", "CHOICES"):
                         bd_expr = (
-                            "if(e.eval_output_str = '', '(not set)', "
-                            "e.eval_output_str)"
+                            "if(e.eval_output_str = '', '(not set)', e.eval_output_str)"
                         )
                     else:
                         bd_expr = (
@@ -651,10 +876,10 @@ class DashboardQueryBuilder:
                             "toString(round(e.eval_score * 100)))"
                         )
                 else:
-                    # Different eval → cross-eval JOIN
-                    ev_alias = "ev_bd"
-                    params["_ev_bd_tid"] = ev_tid
-                    need_eval_join[ev_alias] = "_ev_bd_tid"
+                    ev_alias = f"ev_bd{bd_idx}"
+                    param_key = f"_ev_bd{bd_idx}_tid"
+                    params[param_key] = ev_tid
+                    need_eval_join[ev_alias] = param_key
                     if bd_output_type in ("PASS_FAIL", "CHOICE", "CHOICES"):
                         bd_expr = (
                             f"if({ev_alias}.id IS NULL OR "
@@ -667,7 +892,6 @@ class DashboardQueryBuilder:
                             f"toString(round({ev_alias}.eval_score * 100)))"
                         )
 
-            # Custom attribute
             elif bd_type == "custom_attribute":
                 need_spans_join = True
                 attr_key = _sanitize_attr_key(bd_name)
@@ -676,7 +900,15 @@ class DashboardQueryBuilder:
             else:
                 bd_expr = "'(not set)'"
 
-            select_parts.append(f"{bd_expr} AS breakdown_value")
+            bd_exprs.append(bd_expr)
+
+        if bd_exprs:
+            if len(bd_exprs) == 1:
+                bd_select = f"{bd_exprs[0]} AS breakdown_value"
+            else:
+                parts = ", ' / ', ".join(f"toString({expr})" for expr in bd_exprs)
+                bd_select = f"concat({parts}) AS breakdown_value"
+            select_parts.append(bd_select)
             group_parts.append("breakdown_value")
             order_parts.append("breakdown_value")
 
@@ -706,7 +938,6 @@ class DashboardQueryBuilder:
                 )
                 f_out_type = (f.get("output_type") or "SCORE").upper()
 
-                # Same eval as the metric → filter on main table directly
                 if ev_tid == eval_template_id:
                     if f_out_type in ("PASS_FAIL", "CHOICE", "CHOICES"):
                         where_parts.append(
@@ -717,7 +948,6 @@ class DashboardQueryBuilder:
                         where_parts.append(f"e.eval_score {op_symbol} %({val_key})s")
                         params[val_key] = _coerce_filter_value(val, op)
                 else:
-                    # Different eval → cross-eval JOIN
                     ev_alias = f"ev_f{i}"
                     fkey = f"_evf_{i}_tid"
                     params[fkey] = ev_tid
@@ -739,10 +969,10 @@ class DashboardQueryBuilder:
                 )
                 params[val_key] = _coerce_filter_value(val, op)
 
-        # --- Build JOINs ---
         if need_spans_join:
+            spans_joined = self._spans_source(None, per_metric_filters, "s")
             joins.append(
-                f"LEFT JOIN spans AS s ON s.trace_id = {_trace_id_expr} "
+                f"LEFT JOIN {spans_joined} ON s.trace_id = {_trace_id_expr} "
                 f"AND s.parent_span_id = '' "
                 f"AND s._peerdb_is_deleted = 0"
             )
@@ -784,9 +1014,9 @@ class DashboardQueryBuilder:
         metric: dict,
         aggregation: str,
         bucket_fn: str,
-        per_metric_filters: List[dict],
+        per_metric_filters: list[dict],
         params: dict,
-    ) -> Tuple[str, dict]:
+    ) -> tuple[str, dict]:
         # The metric "name" is the annotation label UUID
         label_id = metric.get("label_id") or metric.get("name", "")
         params["annotation_label_id"] = label_id
@@ -817,9 +1047,7 @@ class DashboardQueryBuilder:
             # Stored as {"value": "up"|"down"} — percentage of "up".
             # countIf already skips NULL/missing rows, but we still want
             # the denominator to exclude rows where the key is absent.
-            col_expr = (
-                "JSONExtract(a.value, 'value', 'Nullable(String)')"
-            )
+            col_expr = "JSONExtract(a.value, 'value', 'Nullable(String)')"
             agg_expr = (
                 f"countIf({col_expr} = 'up') * 100.0 / "
                 f"greatest(countIf({col_expr} IS NOT NULL), 1)"
@@ -855,10 +1083,10 @@ class DashboardQueryBuilder:
                 "AND a.observation_span_id IN ("
                 "SELECT id FROM spans "
                 "WHERE project_id IN %(project_ids)s "
-                "AND _peerdb_is_deleted = 0))"
+                "AND is_deleted = 0))"
                 ")"
             ),
-            "a._peerdb_is_deleted = 0",
+            "a.is_deleted = 0",
             "a.deleted = 0",
             "a.created_at >= %(start_date)s",
             "a.created_at < %(end_date)s",
@@ -883,15 +1111,21 @@ class DashboardQueryBuilder:
         metric: dict,
         aggregation: str,
         bucket_fn: str,
-        per_metric_filters: List[dict],
+        per_metric_filters: list[dict],
         params: dict,
-    ) -> Tuple[str, dict]:
+    ) -> tuple[str, dict]:
         attr_key = _sanitize_attr_key(metric.get("attribute_key", ""))
         attr_type = metric.get("attribute_type", "number")
 
         if attr_type == "number":
             col_expr = f"span_attr_num['{attr_key}']"
         else:
+            if aggregation in _NUMERIC_ONLY_AGGREGATIONS:
+                raise InvalidMetricCombinationError(
+                    f"'{aggregation}' can't be applied to the text attribute "
+                    f"'{attr_key}'. Use count or count distinct, or pick a "
+                    f"numeric attribute."
+                )
             col_expr = f"span_attr_str['{attr_key}']"
 
         agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
@@ -921,9 +1155,11 @@ class DashboardQueryBuilder:
         if subquery_clauses[0]:
             all_where += subquery_clauses[0]
 
+        spans_flat = self._spans_source(None, per_metric_filters, "spans")
+
         query = (
             f"SELECT {', '.join(select_parts)}\n"
-            f"FROM spans\n"
+            f"FROM {spans_flat}\n"
             f"WHERE {' AND '.join(all_where)}\n"
             f"GROUP BY {', '.join(group_parts)}\n"
             f"ORDER BY {', '.join(order_parts)}"
@@ -934,7 +1170,7 @@ class DashboardQueryBuilder:
     # Build all queries
     # ------------------------------------------------------------------
 
-    def build_all_queries(self) -> List[Tuple[str, dict, dict]]:
+    def build_all_queries(self) -> list[tuple[str, dict, dict]]:
         """Build queries for all metrics.
 
         Returns:
@@ -943,16 +1179,24 @@ class DashboardQueryBuilder:
         results = []
         for metric in self.metrics:
             sql, params = self.build_metric_query(metric)
-            metric_info = {
-                "id": metric.get("id", ""),
-                "name": metric.get("display_name")
-                or metric.get("displayName")
-                or metric.get("name", ""),
-                "type": metric.get("type", "system_metric"),
-                "aggregation": metric.get("aggregation", "avg"),
-            }
-            results.append((sql, params, metric_info))
+            results.append((sql, params, self.metric_info(metric)))
         return results
+
+    def metric_info(self, metric: dict) -> dict:
+        """Build the response metadata for a single metric.
+
+        Exposed so callers can construct the metric's ``metric_info`` without
+        building its SQL — e.g. to attach a per-metric error when the build or
+        execution fails, keeping the rest of the dashboard's widgets intact.
+        """
+        return {
+            "id": metric.get("id", ""),
+            "name": metric.get("display_name")
+            or metric.get("displayName")
+            or metric.get("name", ""),
+            "type": metric.get("type", "system_metric"),
+            "aggregation": metric.get("aggregation", "avg"),
+        }
 
     # ------------------------------------------------------------------
     # Result formatting
@@ -960,8 +1204,8 @@ class DashboardQueryBuilder:
 
     def format_results(
         self,
-        metric_results: List[Tuple[dict, List[dict]]],
-        project_name_map: Optional[Dict[str, str]] = None,
+        metric_results: list[tuple[dict, list[dict]]],
+        project_name_map: dict[str, str] | None = None,
     ) -> dict:
         """Format raw ClickHouse results into the response format.
 
@@ -986,11 +1230,12 @@ class DashboardQueryBuilder:
 
         for metric_info, rows in metric_results:
             metric_name = metric_info.get("name", "")
-            unit = METRIC_UNITS.get(metric_name, "")
+            metric_id = metric_info.get("id", "")
+            unit = METRIC_UNITS.get(metric_name) or METRIC_UNITS.get(metric_id, "")
 
             # Group rows by breakdown value if present
             # Use a dict of {iso_timestamp: value} for easy merging
-            series_data: Dict[str, Dict[str, Any]] = {}
+            series_data: dict[str, dict[str, Any]] = {}
             for row in rows:
                 breakdown_key = str(row.get("breakdown_value", "total"))
                 # Resolve project UUID to name if breaking down by project
@@ -1011,9 +1256,9 @@ class DashboardQueryBuilder:
                     # CH may return date or naive datetime; convert to
                     # timezone-aware datetime so keys match _generate_time_buckets
                     if isinstance(ts, date) and not isinstance(ts, datetime):
-                        ts = datetime(ts.year, ts.month, ts.day, tzinfo=timezone.utc)
+                        ts = datetime(ts.year, ts.month, ts.day, tzinfo=UTC)
                     elif hasattr(ts, "tzinfo") and ts.tzinfo is None:
-                        ts = ts.replace(tzinfo=timezone.utc)
+                        ts = ts.replace(tzinfo=UTC)
                     ts = ts.isoformat()
                 val = row.get("value")
                 if isinstance(val, float):
@@ -1023,22 +1268,22 @@ class DashboardQueryBuilder:
             if not series_data:
                 series_data["total"] = {}
 
-            # Limit breakdown series (frontend shows top 10 in chart,
-            # rest available via legend toggle)
+            # Keep the highest-volume series first; the frontend still limits
+            # the initially visible chart series.
             MAX_SERIES = 100
-            if len(series_data) > MAX_SERIES and "total" not in series_data:
+            if "total" not in series_data:
                 ranked = sorted(
                     series_data.items(),
                     key=lambda kv: sum(v for v in kv[1].values() if v is not None),
                     reverse=True,
-                )[:MAX_SERIES]
+                )
+                if len(ranked) > MAX_SERIES:
+                    ranked = ranked[:MAX_SERIES]
                 series_data = dict(ranked)
 
-            # Fill in missing time buckets with null so consumers can
-            # distinguish missing values from real zeros.
+            # Preserve volume order from ``series_data``.
             series = []
-            for name in sorted(series_data.keys()):
-                data_map = series_data[name]
+            for name, data_map in series_data.items():
                 filled = []
                 for bucket_ts in all_buckets:
                     filled.append(
@@ -1051,15 +1296,16 @@ class DashboardQueryBuilder:
                     )
                 series.append({"name": name, "data": filled})
 
-            formatted_metrics.append(
-                {
-                    "id": metric_info.get("id", ""),
-                    "name": metric_name,
-                    "aggregation": metric_info.get("aggregation", "avg"),
-                    "unit": unit,
-                    "series": series,
-                }
-            )
+            formatted_metric = {
+                "id": metric_info.get("id", ""),
+                "name": metric_name,
+                "aggregation": metric_info.get("aggregation", "avg"),
+                "unit": unit,
+                "series": series,
+            }
+            if metric_info.get("error"):
+                formatted_metric["error"] = metric_info["error"]
+            formatted_metrics.append(formatted_metric)
 
         return {
             "metrics": formatted_metrics,
@@ -1079,12 +1325,12 @@ class DashboardQueryBuilder:
         "project": "toString(project_id)",
         "model": "model",
         "status": "status",
-        "service_name": "trace_name",
+        "service_name": "service_name",
         "span_kind": "observation_type",
         "provider": "provider",
         "session": "toString(trace_session_id)",
-        "user": "dictGetOrDefault('enduser_dict', 'user_id', end_user_id, toString(end_user_id))",
-        "user_id_type": "dictGetOrDefault('enduser_dict', 'user_id_type', end_user_id, '')",
+        "user": "dictGetOrDefault('end_users_dict', 'user_id', end_user_id, toString(end_user_id))",
+        "user_id_type": "dictGetOrDefault('end_users_dict', 'user_id_type', end_user_id, '')",
         "prompt_name": "dictGetOrDefault('prompt_dict', 'prompt_name', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",
         "prompt_version": "concat(dictGetOrDefault('prompt_dict', 'prompt_name', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), ''), ' v', dictGetOrDefault('prompt_dict', 'template_version', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), ''))",
         "prompt_label": "dictGetOrDefault('prompt_label_dict', 'name', ifNull(prompt_label_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",
@@ -1107,7 +1353,8 @@ class DashboardQueryBuilder:
             bd_name = bd.get("name", "")
             bd_source = bd.get("source", "traces")
 
-            if bd_source not in ("traces", "both", ""):
+            # source="all" can still be a trace-side dimension.
+            if bd_source in ("datasets", "simulation"):
                 continue
 
             if bd_type == "system_metric":
@@ -1234,8 +1481,7 @@ class DashboardQueryBuilder:
                     )
                 elif output_type in ("CHOICE", "CHOICES"):
                     val_expr = (
-                        f"if({alias}.id IS NULL, '(not set)', "
-                        f"{alias}.eval_output_str)"
+                        f"if({alias}.id IS NULL, '(not set)', {alias}.eval_output_str)"
                     )
                 else:
                     # SCORE: show as percentage
@@ -1257,7 +1503,7 @@ class DashboardQueryBuilder:
 
         return result
 
-    def _breakdown_select(self) -> Optional[str]:
+    def _breakdown_select(self) -> str | None:
         """Return the SQL expression for the first breakdown, or None.
         Kept for backward compat — delegates to _resolve_all_breakdowns for single breakdown.
         """
@@ -1276,9 +1522,9 @@ class DashboardQueryBuilder:
         self,
         table: str,
         time_col: str,
-        per_metric_filters: List[dict],
+        per_metric_filters: list[dict],
         params: dict,
-    ) -> Tuple[List[str], dict]:
+    ) -> tuple[list[str], dict]:
         """Build base WHERE clauses for spans-based queries."""
         clauses = [
             "project_id IN %(project_ids)s",
@@ -1300,12 +1546,12 @@ class DashboardQueryBuilder:
             "project": "toString(project_id)",
             "status": "status",
             "model": "model",
-            "service_name": "trace_name",
+            "service_name": "service_name",
             "span_kind": "observation_type",
             "provider": "provider",
             "session": "toString(trace_session_id)",
-            "user": "dictGetOrDefault('enduser_dict', 'user_id', end_user_id, toString(end_user_id))",
-            "user_id_type": "dictGetOrDefault('enduser_dict', 'user_id_type', end_user_id, '')",
+            "user": "dictGetOrDefault('end_users_dict', 'user_id', end_user_id, toString(end_user_id))",
+            "user_id_type": "dictGetOrDefault('end_users_dict', 'user_id_type', end_user_id, '')",
             "prompt_name": "dictGetOrDefault('prompt_dict', 'prompt_name', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",
             "prompt_version": "concat(dictGetOrDefault('prompt_dict', 'prompt_name', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), ''), ' v', dictGetOrDefault('prompt_dict', 'template_version', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), ''))",
             "prompt_label": "dictGetOrDefault('prompt_label_dict', 'name', ifNull(prompt_label_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",
@@ -1409,13 +1655,13 @@ class DashboardQueryBuilder:
 
     def _build_subquery_filters(
         self,
-        filters: List[dict],
+        filters: list[dict],
         params: dict,
         prefix: str,
-    ) -> Tuple[List[str], dict]:
+    ) -> tuple[list[str], dict]:
         """Build IN-subquery clauses for eval/annotation metric filters on spans."""
-        clauses: List[str] = []
-        extra_params: Dict[str, Any] = {}
+        clauses: list[str] = []
+        extra_params: dict[str, Any] = {}
         idx = 0
 
         for f in filters:
@@ -1505,7 +1751,7 @@ class DashboardQueryBuilder:
 # Module-level helpers
 # ---------------------------------------------------------------------------
 
-_OPERATOR_SYMBOLS: Dict[str, str] = {
+_OPERATOR_SYMBOLS: dict[str, str] = {
     "less_than": "<",
     "greater_than": ">",
     "equal_to": "=",
@@ -1521,13 +1767,13 @@ _OPERATOR_SYMBOLS: Dict[str, str] = {
 
 def _generate_time_buckets(
     start: datetime, end: datetime, granularity: str
-) -> List[str]:
+) -> list[str]:
     """Generate all time bucket ISO strings between *start* and *end*.
 
     Mirrors the ClickHouse ``toStartOf*`` bucketing so that the response
     includes every expected bucket — even those with no data (filled with null).
     """
-    buckets: List[str] = []
+    buckets: list[str] = []
     if granularity == "minute":
         cur = start.replace(second=0, microsecond=0)
         delta = timedelta(minutes=1)
@@ -1570,7 +1816,7 @@ def _generate_time_buckets(
     return buckets
 
 
-def _get_operator_symbol(op: str) -> Optional[str]:
+def _get_operator_symbol(op: str) -> str | None:
     """Return the SQL operator symbol for a filter operator name."""
     return _OPERATOR_SYMBOLS.get(op)
 
@@ -1581,7 +1827,7 @@ def _parse_dt(val: Any) -> datetime:
     Always returns a timezone-aware (UTC) datetime so that callers
     produce consistent isoformat strings (with ``+00:00`` suffix).
     """
-    dt: Optional[datetime] = None
+    dt: datetime | None = None
     if isinstance(val, datetime):
         dt = val
     elif isinstance(val, str):
@@ -1603,10 +1849,10 @@ def _parse_dt(val: Any) -> datetime:
                 except ValueError:
                     continue
     if dt is None:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
     # Ensure timezone-aware (UTC)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt
 
 

@@ -112,14 +112,13 @@ const MonitorGrid = forwardRef(
         resizable: true,
         suppressHeaderMenuButton: true,
         suppressHeaderContextMenu: true,
-        suppressMultiSort: true,
       }),
       [],
     );
 
     const gridOptions = {
       pagination: true,
-      rowSelection: { mode: "multiRow" },
+      rowSelection: { mode: "multiRow", enableClickSelection: false },
       paginationAutoPageSize: true,
     };
 
@@ -150,7 +149,7 @@ const MonitorGrid = forwardRef(
               pagination={gridOptions.pagination}
               paginationAutoPageSize={gridOptions.paginationAutoPageSize}
               rowSelection={gridOptions.rowSelection}
-              suppressRowClickSelection={true}
+              suppressMultiSort={true}
               paginationPageSizeSelector={false}
               suppressServerSideFullWidthLoadingRow={true}
               serverSideInitialRowCount={10}

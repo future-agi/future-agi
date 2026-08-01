@@ -10,6 +10,8 @@ metered nothing).
 """
 
 from __future__ import annotations
+from uuid import NAMESPACE_URL, uuid5
+
 import pytest
 pytest.importorskip("ee.usage.schemas.event_types")
 from ee.usage.schemas.event_types import BillingEventType
@@ -205,3 +207,28 @@ def test_case_4_storage_voice_emits_storage_for_spans_and_rehost(
     assert by_source["voice_observability"].amount == 1200
     assert by_source["voice_observability"].properties["units"] == 4
     assert by_source["voice_recording_rehost"].amount == 750_000
+
+
+def test_voice_recording_rehost_preserves_the_callers_idempotency_key(
+    captured_emit, set_mode
+):
+    """A repeated provider poll can send the same durable billing event ID."""
+    set_mode("storage")
+    from tracer.utils.usage_emit import emit_span_ingestion_usage
+
+    event_id = str(
+        uuid5(
+            NAMESPACE_URL,
+            "futureagi:voice-recording-rehost:v1:project-1:vapi:call-123:mono_combined",
+        )
+    )
+    emit_span_ingestion_usage(
+        organization_id=ORG_ID,
+        num_traces=0,
+        num_spans=0,
+        payload_bytes=750_000,
+        source="voice_recording_rehost",
+        event_id=event_id,
+    )
+
+    assert captured_emit[0].event_id == event_id

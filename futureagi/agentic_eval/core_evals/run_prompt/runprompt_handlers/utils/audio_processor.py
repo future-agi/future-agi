@@ -163,7 +163,10 @@ class AudioProcessor:
                         logger.info("[STT] Found audio URL in 'audio_url' part.")
                         return audio_url_payload["url"]
 
-        logger.error(
+        # Expected user misconfiguration: an STT/audio eval received text-only
+        # input. Raw emitter before the ValueError the STT handler catches and
+        # persists as a failed result. Warning.
+        logger.warning(
             f"[STT] No audio input found in messages. Sample: {str(messages)[:500]}"
         )
         raise ValueError("No audio input found in messages for STT.")

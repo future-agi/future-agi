@@ -20,17 +20,68 @@ const isUpdatedWithinTwoMinutes = (timestamp) => {
 };
 
 /**
+ * Single audio bar for a call that has exactly one mixed track. Keyed on the
+ * recording shape rather than the provider, so every provider that returns one
+ * URL renders identically.
+ */
+export const SingleTrackPlayer = ({ url }) => (
+  <Stack
+    height={50}
+    width="100%"
+    justifyContent="center"
+    alignItems="center"
+    direction="row"
+  >
+    <AudioPlaybackProvider>
+      <CustomAudioPlayer
+        audioData={{ url }}
+        customLoaderComponent={
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 1.5,
+              width: "100%",
+            }}
+          >
+            <Iconify icon="svg-spinners:bars-scale" width={20} height={20} />
+            <Typography typography="s1" fontWeight="fontWeightMedium">
+              Painting sound waves...
+            </Typography>
+          </Box>
+        }
+      />
+    </AudioPlaybackProvider>
+    <AudioDownloadButton
+      audioUrls={{ mono: url, stereo: "", assistant: "", customer: "" }}
+      singleTrack
+      size="small"
+      sx={{
+        minWidth: "32px",
+        mr: 1,
+        borderRadius: 0.5,
+        bgcolor: "background.paper",
+      }}
+    />
+  </Stack>
+);
+
+SingleTrackPlayer.propTypes = {
+  url: PropTypes.string,
+};
+
+/**
  * Renders MultiTrackAudioPlayer using stereo channel splitting when a stereo
- * URL is available. Falls back to separate mono assistant/customer URLs.
- *
- * Stereo splitting ensures both waveforms share the same duration and timeline,
- * fixing the misaligned waveform issue caused by mono files with different lengths.
+ * URL is available. Falls back to separate mono assistant/customer URLs, and to
+ * the single-track bar when the call has only one mixed recording.
  */
 export const StereoMultiTrackPlayer = ({
   recordings,
   id,
   height = 70,
   onInstance,
+  isInbound = false,
 }) => {
   const theme = useTheme();
   // Speaker palette — matches the TranscriptView timeline strip / talk
@@ -47,7 +98,7 @@ export const StereoMultiTrackPlayer = ({
     customerUrl: stereoCustomer,
     loading: stereoLoading,
     error: stereoError,
-  } = useStereoChannels(recordings?.stereo || "");
+  } = useStereoChannels(recordings?.stereo || "", isInbound);
 
   // Use stereo-split channels when available, fall back to separate mono files
   const useStereo =
@@ -55,6 +106,13 @@ export const StereoMultiTrackPlayer = ({
 
   const assistantUrl = useStereo ? stereoAssistant : recordings?.assistant;
   const customerUrl = useStereo ? stereoCustomer : recordings?.customer;
+
+  // One mono mix and nothing to split into channels: a two-row waveform can
+  // neither be filled nor tell the speakers apart, and the player only becomes
+  // ready once every track loads. Hand it to the single-track bar instead.
+  const combinedOnly =
+    !useStereo && !assistantUrl && !customerUrl && Boolean(recordings?.combined);
+
   const trackUrls = useMemo(
     () => [
       {
@@ -70,6 +128,10 @@ export const StereoMultiTrackPlayer = ({
     ],
     [customerUrl, assistantUrl, customerColor, assistantColor],
   );
+
+  if (combinedOnly) {
+    return <SingleTrackPlayer url={recordings.combined} />;
+  }
 
   if (useStereo && stereoLoading) {
     return (
@@ -106,6 +168,7 @@ StereoMultiTrackPlayer.propTypes = {
   id: PropTypes.string,
   height: PropTypes.number,
   onInstance: PropTypes.func,
+  isInbound: PropTypes.bool,
 };
 
 const AudioPlayerCustom = ({ data, onInstance }) => {
@@ -116,6 +179,12 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
     );
 
   const isProjectModule = data?.module === "project";
+  const isInbound =
+    (
+      data?.call_metadata?.call_direction ||
+      data?.call_type ||
+      ""
+    ).toLowerCase() === "inbound";
   if (isCallInProgress) {
     return (
       <Box sx={{ height: 200 }}>
@@ -124,7 +193,7 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
     );
   }
   if (isProjectModule) {
-    if (!data?.recordingAvailable) {
+    if (!data?.recording_available) {
       return (
         <Stack
           justifyContent="center"
@@ -139,62 +208,6 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
       );
     }
 
-    if (data?.callMetadata?.provider === "retell") {
-      return (
-        <Stack
-          height={50}
-          width="100%"
-          justifyContent="center"
-          alignItems="center"
-          direction="row"
-        >
-          <AudioPlaybackProvider>
-            <CustomAudioPlayer
-              audioData={{
-                url: data?.recording_url,
-              }}
-              customLoaderComponent={
-                <Box
-                  sx={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 1.5,
-                    width: "100%",
-                  }}
-                >
-                  <Iconify
-                    icon="svg-spinners:bars-scale"
-                    width={20}
-                    height={20}
-                  />
-                  <Typography typography="s1" fontWeight="fontWeightMedium">
-                    Painting sound waves...
-                  </Typography>
-                </Box>
-              }
-            />
-          </AudioPlaybackProvider>
-          <AudioDownloadButton
-            audioUrls={{
-              mono: data.recording_url,
-              stereo: "",
-              assistant: "",
-              customer: "",
-            }}
-            singleTrack
-            size="small"
-            sx={{
-              minWidth: "32px",
-              mr: 1,
-              borderRadius: 0.5,
-              bgcolor: "background.paper",
-            }}
-          />
-        </Stack>
-      );
-    }
-
     // Normalize recordings to flat format for project module
     const normalizedRecordings = normalizeRecordings(data?.recording);
     return (
@@ -202,6 +215,7 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
         recordings={normalizedRecordings}
         id={data?.id}
         onInstance={onInstance}
+        isInbound={isInbound}
       />
     );
   }
@@ -237,6 +251,7 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
         recordings={recordings}
         id={data?.id}
         onInstance={onInstance}
+        isInbound={isInbound}
       />
     );
   }
@@ -271,9 +286,9 @@ const areRecordingPropsEqual = (prev, next) => {
     p?.status === n?.status &&
     p?.simulation_call_type === n?.simulation_call_type &&
     p?.module === n?.module &&
-    p?.recordingAvailable === n?.recordingAvailable &&
+    p?.recording_available === n?.recording_available &&
     p?.ended_reason === n?.ended_reason &&
-    p?.callMetadata?.provider === n?.callMetadata?.provider &&
+    p?.call_metadata?.provider === n?.call_metadata?.provider &&
     p?.recording_url === n?.recording_url &&
     p?.recording === n?.recording &&
     p?.recordings === n?.recordings &&

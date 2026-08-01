@@ -14,12 +14,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { useParams } from "react-router";
 import EmptyGraph from "src/assets/illustrations/empty-graph";
 import _ from "lodash";
-import {
-  getRandomId,
-  getUniqueColorPalette,
-  objectCamelToSnake,
-} from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
+import { getRandomId, getUniqueColorPalette } from "src/utils/utils";
 import { add, format, sub } from "date-fns";
 import {
   isDateRangeLessThan90Days,
@@ -34,7 +29,8 @@ import { formatYAxisValue, getYAxisUnit, getLineSeriesName } from "./common";
 import SVGColor from "src/components/svg-color";
 import { useLLMTracingStoreShallow } from "../states";
 import { logger } from "src/utils/logger";
-import { FILTER_FOR_HAS_EVAL } from "../common";
+import { FILTER_FOR_HAS_EVAL, toBackendFilters } from "../common";
+import { buildDefaultDateEntry } from "./graphFilterUtils";
 
 const deltaObject = {
   hour: { hours: 1 },
@@ -124,36 +120,14 @@ const GraphSection = ({
     };
   }, [handleMouseMove, isDragging]);
 
-  const combinedFilters = useMemo(() => {
-    const createdAtExists = filters?.some?.(
-      (f) => f?.columnId === "created_at",
-    );
-    const startDate = dateFilter?.dateFilter?.[0];
-    const endDate = dateFilter?.dateFilter?.[1];
-
-    const defaultCreatedAtFilter =
-      !createdAtExists && startDate && endDate
-        ? [
-            {
-              columnId: "created_at",
-              filterConfig: {
-                filterType: "datetime",
-                filterOp: "between",
-                filterValue: [
-                  new Date(startDate).toISOString(),
-                  new Date(endDate).toISOString(),
-                ],
-              },
-            },
-          ]
-        : [];
-
-    return [
+  const combinedFilters = useMemo(
+    () => [
       ...(filters || []),
       ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-      ...defaultCreatedAtFilter,
-    ];
-  }, [filters, dateFilter, hasEvalFilter]);
+      ...buildDefaultDateEntry(filters, dateFilter),
+    ],
+    [filters, dateFilter, hasEvalFilter],
+  );
 
   const handleGraphConfigChange = (config) => {
     setSelectedGraphConfig(config ? { ...config } : null);
@@ -179,9 +153,7 @@ const GraphSection = ({
     queryFn: () =>
       axios.post(endpoints.project.getTraceGraphData(), {
         interval: selectedInterval,
-        filters: canonicalizeApiFilterColumnIds(
-          objectCamelToSnake(combinedFilters),
-        ),
+        filters: toBackendFilters(combinedFilters),
         property: "average",
         req_data_config: selectedGraphConfig,
         project_id: observeId,
@@ -209,9 +181,7 @@ const GraphSection = ({
     queryFn: () =>
       axios.post(endpoints.project.getSpanGraphData(), {
         interval: selectedInterval,
-        filters: canonicalizeApiFilterColumnIds(
-          objectCamelToSnake(combinedFilters),
-        ),
+        filters: toBackendFilters(combinedFilters),
         property: "average",
         req_data_config: selectedGraphConfig,
         project_id: observeId,

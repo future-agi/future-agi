@@ -134,9 +134,19 @@ export function buildFormSchema(functionEvalsList) {
       }),
     }),
   ];
+  const seenEvalTypeIds = new Set([
+    "",
+    "CustomPromptEvaluator",
+    "DeterministicEvaluator",
+  ]);
   for (let i = 0; i < functionEvalsList.length; i++) {
     const element = functionEvalsList[i];
-    const config = element.config.config;
+    const evalTypeId = element?.config?.evalTypeId;
+    const config = element?.config?.config;
+    if (!evalTypeId || seenEvalTypeIds.has(evalTypeId) || !config) {
+      continue;
+    }
+    seenEvalTypeIds.add(evalTypeId);
     const configKeys = Object.keys(config);
     const configMapping = {};
     for (let j = 0; j < configKeys.length; j++) {
@@ -144,7 +154,7 @@ export function buildFormSchema(functionEvalsList) {
       configMapping[key] = getAppropriateField(config[key]["type"]);
     }
     const validationObject = z.object({
-      evalTypeId: z.literal(element.config.evalTypeId),
+      evalTypeId: z.literal(evalTypeId),
       config: z.object({
         config: z.object({ ...configMapping }),
       }),
