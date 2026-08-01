@@ -24,7 +24,6 @@ from model_hub.models.annotation_queues import (
 )
 from model_hub.models.choices import AnnotationQueueStatusChoices, AnnotatorRole
 from model_hub.models.develop_annotations import AnnotationsLabels
-from tracer.models.custom_eval_config import CustomEvalConfig
 from model_hub.serializers.scores import ScoreSerializer
 from model_hub.utils.annotation_queue_helpers import (
     FIELD_MAPPING,
@@ -34,6 +33,7 @@ from model_hub.utils.annotation_queue_helpers import (
     resolve_source_object,
     resolve_source_preview,
 )
+from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.serializers.filters import StrictInputSerializer, filter_list_field
 
 

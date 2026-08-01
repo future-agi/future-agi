@@ -454,22 +454,21 @@ class TestJudgeHumanAgreementIntegration:
         result = _calculate_judge_human_agreement(queue)
         assert result["evaluator_name"] == "Template-Name-Fallback"
 
-    def test_evaluator_name_fallback_to_config_id(
+    def test_config_name_none_falls_back_to_template_name(
         self, organization, workspace
     ):
-        """When both config name and template name are empty, fall back to
-        config id.  This exercises the defense-in-depth ``or str(cfg_id)``
-        branch of the evaluator_name chain."""
+        """When custom_eval_config.name is None but eval_template.name is
+        truthy, the evaluator name resolves to template.name.
+
+        The ``or str(config_id)`` fallback is unreachable via integration
+        tests (EvalTemplate.name can't be blank).  That path is covered by
+        ``test_uses_config_id_as_final_evaluator_name_fallback`` in the
+        unit-test suite."""
         project = _make_project(organization, workspace)
         trace = _make_trace(project)
         span = _make_span(project, trace)
-        # EvalTemplate.name can't be blank, so use a non-empty name
-        # but set config.name to None.  The template name would normally
-        # be used here; the str(config_id) fallback is only reachable
-        # when BOTH are falsy — a situation guarded by DB constraints
-        # but worth having as defense-in-depth.
         template = _make_eval_template(
-            organization, workspace, name="Template-For-ConfigID-Fallback",
+            organization, workspace, name="Template-Name",
         )
         cfg = _make_custom_eval_config(
             project, template, name=None,
@@ -487,7 +486,7 @@ class TestJudgeHumanAgreementIntegration:
 
         result = _calculate_judge_human_agreement(queue)
         # config.name is None → falls back to template.name
-        assert result["evaluator_name"] == "Template-For-ConfigID-Fallback"
+        assert result["evaluator_name"] == "Template-Name"
 
     def test_select_related_avoids_extra_queries(
         self, organization, workspace, django_assert_max_num_queries,
@@ -522,3 +521,101 @@ class TestJudgeHumanAgreementIntegration:
             result = _calculate_judge_human_agreement(queue)
 
         assert result["overall_agreement"] == 1.0
+
+    def test_multiple_items_same_span(
+        self, organization, workspace
+    ):
+        """Two queue items that reference the same span each compare
+        independently against the single judge output for that span."""
+        project = _make_project(organization, workspace)
+        trace = _make_trace(project)
+        span = _make_span(project, trace)
+        template = _make_eval_template(organization, workspace)
+        cfg = _make_custom_eval_config(project, template)
+        queue = _make_queue(
+            organization, workspace, project, custom_eval_config=cfg
+        )
+
+        # Two items share the same span.
+        item_a = _make_queue_item(queue, span, organization)
+        item_b = _make_queue_item(queue, span, organization)
+        label = _make_label(organization, workspace)
+
+        # Judge says "pass" (once, for the single span).
+        _make_eval_row(span, trace, cfg, output_bool=True)
+
+        # Human annotator agrees on item_a ("pass"), disagrees on item_b ("fail").
+        Score.objects.create(
+            queue_item=item_a, label=label, organization=organization, value="pass",
+        )
+        Score.objects.create(
+            queue_item=item_b, label=label, organization=organization, value="fail",
+        )
+
+        result = _calculate_judge_human_agreement(queue)
+        # 1 agree + 1 disagree = 0.5
+        assert result["overall_agreement"] == 0.5
+        assert result["total_comparisons"] == 2
+
+    def test_all_eval_rows_normalize_to_none(
+        self, organization, workspace
+    ):
+        """Judge evals exist but every output value is None (e.g. pass_fail
+        with output_bool=None).  No overlap means overall is None."""
+        project = _make_project(organization, workspace)
+        trace = _make_trace(project)
+        span = _make_span(project, trace)
+        template = _make_eval_template(organization, workspace)
+        cfg = _make_custom_eval_config(project, template)
+        queue = _make_queue(
+            organization, workspace, project, custom_eval_config=cfg
+        )
+        item = _make_queue_item(queue, span, organization)
+        label = _make_label(organization, workspace)
+
+        # Judge output_bool is None — normalize_eval_output returns None.
+        _make_eval_row(span, trace, cfg, output_bool=None)
+        Score.objects.create(
+            queue_item=item, label=label, organization=organization, value="pass",
+        )
+
+        result = _calculate_judge_human_agreement(queue)
+        assert result["overall_agreement"] is None
+        assert result["total_comparisons"] == 0
+
+    def test_three_annotators_majority_wins(
+        self, organization, workspace
+    ):
+        """Three annotators: two "pass", one "fail" → majority is "pass",
+        which agrees with the judge."""
+        project = _make_project(organization, workspace)
+        trace = _make_trace(project)
+        span = _make_span(project, trace)
+        template = _make_eval_template(organization, workspace)
+        cfg = _make_custom_eval_config(project, template)
+        queue = _make_queue(
+            organization, workspace, project, custom_eval_config=cfg
+        )
+        item = _make_queue_item(queue, span, organization)
+        label = _make_label(organization, workspace)
+
+        _make_eval_row(span, trace, cfg, output_bool=True)
+
+        # Three annotators.
+        Score.objects.create(
+            queue_item=item, label=label, organization=organization,
+            value="pass", annotator_id="a1",
+        )
+        Score.objects.create(
+            queue_item=item, label=label, organization=organization,
+            value="pass", annotator_id="a2",
+        )
+        Score.objects.create(
+            queue_item=item, label=label, organization=organization,
+            value="fail", annotator_id="a3",
+        )
+
+        result = _calculate_judge_human_agreement(queue)
+        # Judge "pass", human majority "pass" → agree.
+        assert result["overall_agreement"] == 1.0
+        assert result["total_comparisons"] == 1
