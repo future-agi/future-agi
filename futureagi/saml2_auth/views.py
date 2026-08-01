@@ -179,11 +179,11 @@ def _get_saml_client(alias, acs_url):
                         (acs_url, BINDING_HTTP_POST),
                     ],
                 },
-                "allow_unsolicited": True,
-                "authn_requests_signed": False,
+                "allow_unsolicited": False,
+                "authn_requests_signed": True,
                 "logout_requests_signed": True,
                 "want_assertions_signed": True,
-                "want_response_signed": False,
+                "want_response_signed": True,
             },
         },
         "entityid": get_entity_id,
@@ -646,7 +646,7 @@ class IDPUploadViews(viewsets.ModelViewSet):
 
 import urllib.parse  # noqa: E402
 
-from jose import jwt  # noqa: E402
+from jose import jwk, jwt  # noqa: E402
 
 
 class Auth0LoginView(APIView):
@@ -720,8 +720,6 @@ class Auth0CallbackView(APIView):
             if not code:
                 logger.error("No code provided in callback.")
                 raise Exception("Authorization code not provided.")
-            logger.info(f"CODE: {code}")
-
             # Exchange code for access token
             token_url = f"https://{AUTH0_DOMAIN}/token"
             token_payload = {
@@ -734,8 +732,6 @@ class Auth0CallbackView(APIView):
             }
 
             response = requests.post(token_url, json=token_payload, timeout=10)
-            logger.info(f"RESPONSE: {response}")
-            logger.info(f"RESPONSE JSON: {response.text}")
 
             tokens = response.json()
             id_token = tokens.get("id_token")
@@ -743,14 +739,32 @@ class Auth0CallbackView(APIView):
             # Decode the ID token
             if id_token:
                 access_token = tokens.get("access_token")
+
+                # Verify signature against Auth0 JWKS endpoint
+                jwks_url = f"https://{AUTH0_DOMAIN}/.well-known/jwks.json"
+                jwks_response = requests.get(jwks_url, timeout=10)
+                jwks_data = jwks_response.json()
+                unverified_header = jwt.get_unverified_header(id_token)
+                matching_key = next(
+                    (
+                        k
+                        for k in jwks_data["keys"]
+                        if k["kid"] == unverified_header["kid"]
+                    ),
+                    None,
+                )
+                if not matching_key:
+                    logger.error("no_matching_jwk_for_token")
+                    raise Exception("Unable to validate authentication token")
+
+                public_key = jwk.construct(matching_key)
                 decoded = jwt.decode(
                     id_token,
-                    options={"verify_signature": False},
-                    key=AUTH0_CLIENT_ID,
+                    public_key,
+                    algorithms=["RS256"],
                     audience=AUTH0_CLIENT_ID,
                     access_token=access_token,
                 )
-                logger.info(f"DECODED: {decoded}")
 
                 user_email = decoded.get("email")
 
