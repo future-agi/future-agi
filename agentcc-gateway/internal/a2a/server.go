@@ -44,8 +44,15 @@ func newSyncTaskStore() *syncTaskStore {
 
 func (s *syncTaskStore) Store(task *Task) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Cancellation is terminal. A worker can finish concurrently with a
+	// tasks/cancel request, but its stale result must not revive the task.
+	if current, ok := s.store.Get(task.ID); ok &&
+		current.Status.State == TaskStatusCanceled && task.Status.State != TaskStatusCanceled {
+		return
+	}
 	s.store.Store(task)
-	s.mu.Unlock()
 }
 
 func (s *syncTaskStore) Get(id string) (*Task, bool) {
@@ -213,7 +220,7 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, msg *
 			s.tasks.Store(task)
 			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 			s.taskCancels.Store(task.ID, cancel)
-			go s.runMessageSendWithPipeline(ctx, r.Header.Get("Authorization"), task, inputText, params)
+			go s.runMessageSendWithPipeline(ctx, r.Header.Get("Authorization"), cloneTask(task), inputText, params)
 			writeA2AResult(w, msg.ID, task)
 			return
 		}
