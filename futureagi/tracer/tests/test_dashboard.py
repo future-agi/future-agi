@@ -936,6 +936,325 @@ class TestMetricsEndpoint:
         assert "SELECT DISTINCT name AS val" not in sql_arg
         assert "trace_name" not in sql_arg
 
+    # ------------------------------------------------------------------
+    # /filter_values — span-scan time bounds.
+    # `spans` is PARTITION BY toDate(start_time); without a start_time bound
+    # these DISTINCT scans read the project's whole history (measured: 19M
+    # rows / 51 GiB on the largest tenant, tripping the endpoint timeout).
+    # ------------------------------------------------------------------
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_filter_values_custom_attribute_bounds_scan_by_default_lookback(
+        self,
+        mock_analytics_cls,
+        _mock_ch_enabled,
+        auth_client,
+        observe_project,
+    ):
+        mock_result = MagicMock()
+        mock_result.data = [{"val": "checkout"}]
+        mock_analytics_cls.return_value.execute_ch_query.return_value = mock_result
+
+        response = auth_client.get(
+            "/tracer/dashboard/filter_values/"
+            "?metric_name=prompt_slug&metric_type=custom_attribute"
+            f"&project_ids={observe_project.id}&source=traces"
+        )
+
+        assert response.status_code == 200
+        calls = mock_analytics_cls.return_value.execute_ch_query.call_args_list
+        # A non-empty result must not trigger the widening retry.
+        assert len(calls) == 1
+        sql_arg, params = calls[0][0][0], calls[0][0][1]
+        assert "start_time >= now() - INTERVAL %(win_lookback_days)s DAY" in sql_arg
+        assert params["win_lookback_days"] == 7
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_filter_values_custom_attribute_honors_search(
+        self,
+        mock_analytics_cls,
+        _mock_ch_enabled,
+        auth_client,
+        observe_project,
+    ):
+        """Search must hit the SQL: case-insensitive, metacharacters
+        escaped, tighter limit."""
+        mock_result = MagicMock()
+        mock_result.data = [{"val": "agent_100%_done"}]
+        mock_analytics_cls.return_value.execute_ch_query.return_value = mock_result
+
+        response = auth_client.get(
+            "/tracer/dashboard/filter_values/"
+            "?metric_name=prompt_slug&metric_type=custom_attribute"
+            f"&project_ids={observe_project.id}&source=traces"
+            "&search=100%25_d"  # url-encoded "100%_d" — % and _ are literals
+        )
+
+        assert response.status_code == 200
+        sql_arg, params = (
+            mock_analytics_cls.return_value.execute_ch_query.call_args[0][0],
+            mock_analytics_cls.return_value.execute_ch_query.call_args[0][1],
+        )
+        assert "ILIKE %(search_pattern)s" in sql_arg
+        assert "LIMIT 20" in sql_arg
+        assert params["search_pattern"] == "%100\\%\\_d%"
+        # The lowered companion must mirror idx_attrs_str_ngram's expression
+        # byte-for-byte (023) — that is what lets the ngram bloom prune; the
+        # ILIKE on the map element alone never engages it.
+        assert (
+            "AND arrayStringConcat(arrayMap(x -> lower(x), "
+            "mapValues(attrs_string))) LIKE %(search_pattern_lower)s" in sql_arg
+        )
+        assert params["search_pattern_lower"] == "%100\\%\\_d%"
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_filter_values_search_of_ngram_size_scans_unbounded(
+        self,
+        mock_analytics_cls,
+        _mock_ch_enabled,
+        auth_client,
+        observe_project,
+    ):
+        """A >=4-char search drops the lookback: the ngram index can prune it,
+        and old values stay findable via search."""
+        mock_result = MagicMock()
+        mock_result.data = [{"val": "gpt-4o-mini"}]
+        mock_analytics_cls.return_value.execute_ch_query.return_value = mock_result
+
+        auth_client.get(
+            "/tracer/dashboard/filter_values/"
+            "?metric_name=model_name&metric_type=custom_attribute"
+            f"&project_ids={observe_project.id}&source=traces"
+            "&search=gpt-"
+        )
+
+        sql_arg, params = (
+            mock_analytics_cls.return_value.execute_ch_query.call_args[0][0],
+            mock_analytics_cls.return_value.execute_ch_query.call_args[0][1],
+        )
+        assert "start_time >=" not in sql_arg
+        assert "win_lookback_days" not in params
+        assert "ILIKE %(search_pattern)s" in sql_arg
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_filter_values_short_search_stays_windowed(
+        self,
+        mock_analytics_cls,
+        _mock_ch_enabled,
+        auth_client,
+        observe_project,
+    ):
+        """Under 4 chars the ngram index cannot prune, so the scan keeps the
+        lookback — an unbounded un-indexed scan would be all cost, no gain."""
+        mock_result = MagicMock()
+        mock_result.data = []
+        mock_analytics_cls.return_value.execute_ch_query.return_value = mock_result
+
+        auth_client.get(
+            "/tracer/dashboard/filter_values/"
+            "?metric_name=model_name&metric_type=custom_attribute"
+            f"&project_ids={observe_project.id}&source=traces"
+            "&search=gpt"
+        )
+
+        sql_arg, params = (
+            mock_analytics_cls.return_value.execute_ch_query.call_args[0][0],
+            mock_analytics_cls.return_value.execute_ch_query.call_args[0][1],
+        )
+        assert "start_time >= now() - INTERVAL %(win_lookback_days)s DAY" in sql_arg
+        assert params["win_lookback_days"] == 7
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_filter_values_search_companion_lowercases_needle(
+        self,
+        mock_analytics_cls,
+        _mock_ch_enabled,
+        auth_client,
+        observe_project,
+    ):
+        """The index stores lowered values — a non-lowered companion needle
+        silently kills the pruning."""
+        mock_result = MagicMock()
+        mock_result.data = []
+        mock_analytics_cls.return_value.execute_ch_query.return_value = mock_result
+
+        auth_client.get(
+            "/tracer/dashboard/filter_values/"
+            "?metric_name=prompt_slug&metric_type=custom_attribute"
+            f"&project_ids={observe_project.id}&source=traces"
+            "&search=AgEnT"
+        )
+
+        params = mock_analytics_cls.return_value.execute_ch_query.call_args[0][1]
+        assert params["search_pattern"] == "%AgEnT%"
+        assert params["search_pattern_lower"] == "%agent%"
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_filter_values_span_scans_run_in_break_mode(
+        self,
+        mock_analytics_cls,
+        _mock_ch_enabled,
+        auth_client,
+        observe_project,
+    ):
+        """Span scans attach break-mode: budget overruns return (empty)
+        instead of raising Code 159 -> 400."""
+        mock_result = MagicMock()
+        mock_result.data = [{"val": "checkout"}]
+        mock_analytics_cls.return_value.execute_ch_query.return_value = mock_result
+
+        auth_client.get(
+            "/tracer/dashboard/filter_values/"
+            "?metric_name=prompt_slug&metric_type=custom_attribute"
+            f"&project_ids={observe_project.id}&source=traces"
+        )
+
+        kwargs = mock_analytics_cls.return_value.execute_ch_query.call_args[1]
+        assert kwargs["settings"] == {"timeout_overflow_mode": "break"}
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_filter_values_empty_window_stays_a_single_bounded_call(
+        self,
+        mock_analytics_cls,
+        _mock_ch_enabled,
+        auth_client,
+        observe_project,
+    ):
+        """No unbounded fallback: an empty window is one bounded call and
+        200-empty (an unbounded retry could still die on 241/307)."""
+        empty = MagicMock()
+        empty.data = []
+        mock_analytics_cls.return_value.execute_ch_query.return_value = empty
+
+        response = auth_client.get(
+            "/tracer/dashboard/filter_values/"
+            "?metric_name=prompt_slug&metric_type=custom_attribute"
+            f"&project_ids={observe_project.id}&source=traces"
+        )
+
+        assert response.status_code == 200
+        assert response.json()["result"]["values"] == []
+        calls = mock_analytics_cls.return_value.execute_ch_query.call_args_list
+        assert len(calls) == 1
+        assert "win_lookback_days" in calls[0][0][0]
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_filter_values_custom_attribute_ch_error_degrades_to_empty(
+        self,
+        mock_analytics_cls,
+        _mock_ch_enabled,
+        auth_client,
+        observe_project,
+    ):
+        """Residual CH errors degrade to 200-empty, never a 400."""
+        mock_analytics_cls.return_value.execute_ch_query.side_effect = Exception(
+            "Code: 241. DB::Exception: Memory limit (total) exceeded"
+        )
+
+        response = auth_client.get(
+            "/tracer/dashboard/filter_values/"
+            "?metric_name=prompt_slug&metric_type=custom_attribute"
+            f"&project_ids={observe_project.id}&source=traces"
+        )
+
+        assert response.status_code == 200
+        assert response.json()["result"]["values"] == []
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_filter_values_ignores_caller_supplied_window(
+        self,
+        mock_analytics_cls,
+        _mock_ch_enabled,
+        auth_client,
+        observe_project,
+    ):
+        """A caller-sent range must not override the fixed lookback."""
+        mock_result = MagicMock()
+        mock_result.data = [{"val": "checkout"}]
+        mock_analytics_cls.return_value.execute_ch_query.return_value = mock_result
+
+        response = auth_client.get(
+            "/tracer/dashboard/filter_values/"
+            "?metric_name=prompt_slug&metric_type=custom_attribute"
+            f"&project_ids={observe_project.id}&source=traces"
+            "&start_time=2020-01-01T00:00:00Z&end_time=2030-01-01T00:00:00Z"
+        )
+
+        assert response.status_code == 200
+        sql_arg, params = (
+            mock_analytics_cls.return_value.execute_ch_query.call_args[0][0],
+            mock_analytics_cls.return_value.execute_ch_query.call_args[0][1],
+        )
+        assert "win_start" not in params
+        assert "start_time >= now() - INTERVAL %(win_lookback_days)s DAY" in sql_arg
+        assert params["win_lookback_days"] == 7
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_filter_values_system_metric_bounds_scan(
+        self,
+        mock_analytics_cls,
+        _mock_ch_enabled,
+        auth_client,
+        observe_project,
+    ):
+        mock_result = MagicMock()
+        mock_result.data = [{"val": "gpt-4o"}]
+        mock_analytics_cls.return_value.execute_ch_query.return_value = mock_result
+
+        auth_client.get(
+            "/tracer/dashboard/filter_values/"
+            "?metric_name=model&metric_type=system_metric"
+            f"&project_ids={observe_project.id}&source=traces"
+        )
+
+        sql_arg = mock_analytics_cls.return_value.execute_ch_query.call_args[0][0]
+        assert "start_time >= now() - INTERVAL %(win_lookback_days)s DAY" in sql_arg
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_filter_values_session_bounds_scan_on_aliased_column(
+        self,
+        mock_analytics_cls,
+        _mock_ch_enabled,
+        auth_client,
+        observe_project,
+    ):
+        """The session path aliases spans to `sp`, so the bound must be
+        qualified or ClickHouse cannot resolve it against the remap join."""
+        mock_result = MagicMock()
+        mock_result.data = [{"val": str(uuid.uuid4())}]
+        mock_analytics_cls.return_value.execute_ch_query.return_value = mock_result
+
+        auth_client.get(
+            "/tracer/dashboard/filter_values/"
+            "?metric_name=session&metric_type=system_metric"
+            f"&project_ids={observe_project.id}&source=traces"
+        )
+
+        sql_arg = mock_analytics_cls.return_value.execute_ch_query.call_args[0][0]
+        assert "sp.start_time >= now() - INTERVAL %(win_lookback_days)s DAY" in sql_arg
+
 
 class TestChartsView:
     @pytest.mark.django_db

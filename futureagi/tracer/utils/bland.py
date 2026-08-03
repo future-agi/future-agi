@@ -104,7 +104,13 @@ def _extract_eval_attributes(log: dict) -> dict:
 
 
 def _extract_recording(log: dict, eval_attributes: dict):
-    recording_url = log.get("recording_url")
+    # Bland only ever returns ``recording_url``, whose raw form serves no CORS
+    # headers and rejects range requests — usable server-side, not browser-
+    # playable. The simulate path rehosts to our storage and stores the durable
+    # URL under ``recording.combined``, so prefer that copy when it exists.
+    recording = log.get("recording")
+    combined = recording.get("combined") if isinstance(recording, dict) else None
+    recording_url = combined or log.get("recording_url")
     if recording_url:
         eval_attributes[_BLAND_COMBINED_RECORDING_KEY] = recording_url
 

@@ -3,6 +3,7 @@ import io
 import json
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from django.utils import timezone
@@ -12,7 +13,6 @@ from accounts.models.user import User
 from model_hub.models.ai_model import AIModel
 from model_hub.models.annotation_queues import (
     AnnotationQueue,
-    AnnotationQueueAnnotator,
     AnnotationQueueLabel,
     QueueItem,
     QueueItemNote,
@@ -32,6 +32,11 @@ from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.score import Score
+from model_hub.utils.annotation_queue_helpers import (
+    canonical_score_value,
+    eval_metrics_from_call_execution,
+    eval_output_value,
+)
 from simulate.models.agent_definition import AgentDefinition
 from simulate.models.run_test import RunTest
 from simulate.models.scenario_graph import ScenarioGraph
@@ -217,8 +222,7 @@ def _annotate_detail_url(queue, item):
 
 def _submit_url(queue, item):
     return (
-        f"/model-hub/annotation-queues/{queue.id}/items/{item.id}/"
-        "annotations/submit/"
+        f"/model-hub/annotation-queues/{queue.id}/items/{item.id}/annotations/submit/"
     )
 
 
@@ -2028,14 +2032,6 @@ class TestVoiceAnnotationRegressionE2E:
 
 # Unit tests for call_execution-side annotation queue export helpers
 
-from types import SimpleNamespace
-
-from model_hub.utils.annotation_queue_helpers import (
-    canonical_score_value,
-    eval_metrics_from_call_execution,
-    eval_output_value,
-)
-
 
 def _label(type_value):
     return SimpleNamespace(type=type_value, id="lbl-1")
@@ -2043,24 +2039,36 @@ def _label(type_value):
 
 class TestCanonicalScoreValue:
     def test_text_label_extracts_text_key(self):
-        assert canonical_score_value(
-            _label(AnnotationTypeChoices.TEXT.value), {"text": "hello"}
-        ) == "hello"
+        assert (
+            canonical_score_value(
+                _label(AnnotationTypeChoices.TEXT.value), {"text": "hello"}
+            )
+            == "hello"
+        )
 
     def test_numeric_label_extracts_value_key(self):
-        assert canonical_score_value(
-            _label(AnnotationTypeChoices.NUMERIC.value), {"value": 7}
-        ) == 7
+        assert (
+            canonical_score_value(
+                _label(AnnotationTypeChoices.NUMERIC.value), {"value": 7}
+            )
+            == 7
+        )
 
     def test_star_label_extracts_rating_key(self):
-        assert canonical_score_value(
-            _label(AnnotationTypeChoices.STAR.value), {"rating": 4}
-        ) == 4
+        assert (
+            canonical_score_value(
+                _label(AnnotationTypeChoices.STAR.value), {"rating": 4}
+            )
+            == 4
+        )
 
     def test_thumbs_label_extracts_value_key(self):
-        assert canonical_score_value(
-            _label(AnnotationTypeChoices.THUMBS_UP_DOWN.value), {"value": "up"}
-        ) == "up"
+        assert (
+            canonical_score_value(
+                _label(AnnotationTypeChoices.THUMBS_UP_DOWN.value), {"value": "up"}
+            )
+            == "up"
+        )
 
     def test_categorical_label_extracts_selected_key(self):
         assert canonical_score_value(
@@ -2068,10 +2076,15 @@ class TestCanonicalScoreValue:
         ) == ["a", "b"]
 
     def test_none_raw_returns_none(self):
-        assert canonical_score_value(_label(AnnotationTypeChoices.STAR.value), None) is None
+        assert (
+            canonical_score_value(_label(AnnotationTypeChoices.STAR.value), None)
+            is None
+        )
 
     def test_scalar_raw_passes_through(self):
-        assert canonical_score_value(_label(AnnotationTypeChoices.NUMERIC.value), 5) == 5
+        assert (
+            canonical_score_value(_label(AnnotationTypeChoices.NUMERIC.value), 5) == 5
+        )
 
     def test_missing_label_returns_raw_dict(self):
         assert canonical_score_value(None, {"value": 1}) == {"value": 1}
@@ -2333,3 +2346,500 @@ class TestQueueExportQueryCount:
             f"is bypassing the prefetched attribute.\n"
             + "\n".join(q["sql"][:200] for q in ctx_3.captured_queries)
         )
+
+
+class TestAnnotateDetailClickHouseReads:
+    """TH-7104: opening a voice item must not re-read the same trace from CH."""
+
+    def test_annotate_detail_reads_trace_root_once_scoped_to_project(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        observe_trace,
+        root_conversation_span,
+        thumbs_label,
+    ):
+        """One CH root-span read per open, pruned to the item's project.
+
+        The notes target, the rendered content and the preview all resolve the
+        SAME tracer source. Each used to do its own point-read, and none of
+        them passed the item's denormalized ``project_id``, so a voice item
+        cost three unscoped ``spans FINAL`` reads across the whole
+        multi-tenant table.
+        """
+        from tracer.services.clickhouse.v2 import span_reader
+
+        queue = _queue(
+            "TH-7104 CH read guard",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        item = QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.TRACE.value,
+            trace=observe_trace,
+            project=observe_project,
+            organization=organization,
+            workspace=workspace,
+            status=QueueItemStatus.PENDING.value,
+        )
+
+        calls = []
+        original = span_reader.CHSpanReader.roots_by_trace_ids
+
+        def recording(self, trace_ids, **kwargs):
+            calls.append(kwargs.get("project_id"))
+            return original(self, trace_ids, **kwargs)
+
+        span_reader.CHSpanReader.roots_by_trace_ids = recording
+        try:
+            resp = auth_client.get(_annotate_detail_url(queue, item))
+        finally:
+            span_reader.CHSpanReader.roots_by_trace_ids = original
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        detail = resp.data["result"]
+        # the read still has to produce the content the workspace renders
+        assert detail["item"]["source_content"]["type"] == "trace"
+        assert detail["item"]["source_preview"]["type"] == "trace"
+        assert detail["span_notes_source_id"] == root_conversation_span.id
+
+        assert len(calls) == 1, (
+            f"annotate-detail made {len(calls)} ClickHouse root-span reads for "
+            "one trace; content, preview and the notes target must share one "
+            "cached read (TH-7104)."
+        )
+        assert calls[0] == str(observe_project.id), (
+            "the root-span read was not scoped to the item's project, so it "
+            "cannot prune the spans PK prefix and scans every tenant "
+            f"(TH-7104). project_id passed: {calls[0]!r}"
+        )
+
+    def test_annotate_detail_reads_a_span_item_once(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        root_conversation_span,
+        thumbs_label,
+    ):
+        """The heavy path: an observation_span item must be read once, not thrice.
+
+        A span read carries the full column set including ``attributes_extra``,
+        which on a real voice conversation root is tens of MB. Measured on dev:
+        73 MiB and 203 MiB of ClickHouse memory per read, against 5.5 KiB for a
+        lean trace-root read. Tripling that is the expensive shape, so it gets
+        its own guard rather than riding on the trace test.
+        """
+        from tracer.services.clickhouse.v2 import span_reader
+
+        queue = _queue(
+            "TH-7104 span read guard",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        item = QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.OBSERVATION_SPAN.value,
+            observation_span=root_conversation_span,
+            project=observe_project,
+            organization=organization,
+            workspace=workspace,
+            status=QueueItemStatus.PENDING.value,
+        )
+
+        calls = []
+        orig_list = span_reader.CHSpanReader.list_by_ids
+        orig_get = span_reader.CHSpanReader.get
+
+        def rec_list(self, span_ids, **kwargs):
+            calls.append(("list_by_ids", kwargs.get("project_id")))
+            return orig_list(self, span_ids, **kwargs)
+
+        def rec_get(self, span_id, **kwargs):
+            calls.append(("get", kwargs.get("project_id")))
+            return orig_get(self, span_id, **kwargs)
+
+        span_reader.CHSpanReader.list_by_ids = rec_list
+        span_reader.CHSpanReader.get = rec_get
+        try:
+            resp = auth_client.get(_annotate_detail_url(queue, item))
+        finally:
+            span_reader.CHSpanReader.list_by_ids = orig_list
+            span_reader.CHSpanReader.get = orig_get
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        detail = resp.data["result"]
+        assert detail["item"]["source_content"]["type"] == "observation_span"
+        assert detail["item"]["source_preview"]["type"] == "observation_span"
+        assert detail["span_notes_source_id"] == root_conversation_span.id
+
+        assert len(calls) == 1, (
+            f"annotate-detail made {len(calls)} ClickHouse span reads "
+            f"({[c[0] for c in calls]}) for one item; the notes target, content "
+            "and preview must share one cached read (TH-7104)."
+        )
+
+
+@pytest.mark.django_db
+class TestQueueItemSourcePreviewCapture:
+    """TH-7211: rendering the items grid must not read ClickHouse.
+
+    A page used to cost one ``spans FINAL`` merge — ~1.5-2.3s on a large voice
+    project — purely to show a name and two 200-char previews. The preview is
+    now captured at add time, so a captured page does zero CH reads.
+    """
+
+    def _items_url(self, queue):
+        return f"/model-hub/annotation-queues/{queue.id}/items/?limit=25&page=1"
+
+    def _item(self, queue, organization, workspace, project, trace, **kwargs):
+        return QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.TRACE.value,
+            trace=trace,
+            project=project,
+            organization=organization,
+            workspace=workspace,
+            status=QueueItemStatus.PENDING.value,
+            **kwargs,
+        )
+
+    def test_captured_preview_makes_the_items_list_read_zero_ch(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        observe_trace,
+        root_conversation_span,
+        thumbs_label,
+    ):
+        """A page of captured items issues no root-span read at all.
+
+        Asserts the READ COUNT, not latency: on a small test dataset the live
+        read is fast, so only the absence of the read proves the fix. Fails
+        before the capture existed (that page did exactly one read).
+        """
+        from tracer.services.clickhouse.v2 import span_reader
+
+        queue = _queue(
+            "TH-7211 preview capture",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        item = self._item(
+            queue, organization, workspace, observe_project, observe_trace
+        )
+
+        # capture it the way the add path would
+        live = auth_client.get(self._items_url(queue))
+        assert live.status_code == status.HTTP_200_OK, live.data
+        live_preview = live.data["results"][0]["source_preview"]
+        QueueItem.all_objects.filter(id=item.id).update(source_preview=live_preview)
+
+        calls = []
+        original = span_reader.CHSpanReader.roots_by_trace_ids
+
+        def recording(self, trace_ids, **kwargs):
+            calls.append(kwargs.get("project_id"))
+            return original(self, trace_ids, **kwargs)
+
+        span_reader.CHSpanReader.roots_by_trace_ids = recording
+        try:
+            resp = auth_client.get(self._items_url(queue))
+        finally:
+            span_reader.CHSpanReader.roots_by_trace_ids = original
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert len(calls) == 0, (
+            f"items list made {len(calls)} ClickHouse root-span read(s) for a page "
+            "whose previews were already captured; the capture exists precisely "
+            "to remove that read (TH-7211)."
+        )
+        # and the payload the grid renders is unchanged
+        assert resp.data["results"][0]["source_preview"] == live_preview
+
+    def test_captured_and_live_previews_are_identical(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        observe_trace,
+        root_conversation_span,
+        thumbs_label,
+    ):
+        """The cached dict must equal what the live path would have produced.
+
+        Both come from the shared payload builders, so a drift here means
+        someone changed one shape without the other.
+        """
+        queue = _queue(
+            "TH-7211 preview parity",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        item = self._item(
+            queue, organization, workspace, observe_project, observe_trace
+        )
+
+        live = auth_client.get(self._items_url(queue)).data["results"][0][
+            "source_preview"
+        ]
+
+        from model_hub.utils.annotation_queue_helpers import (
+            preview_payload_for_source,
+            resolve_source_object,
+        )
+
+        source_obj = resolve_source_object(
+            QueueItemSourceType.TRACE.value,
+            str(item.trace_id),
+            organization=organization,
+            workspace=workspace,
+        )
+        captured = preview_payload_for_source(
+            QueueItemSourceType.TRACE.value, source_obj
+        )
+        assert captured == live, (
+            "add-time capture and the live render disagree; they share "
+            f"_trace_preview_payload so this is a drift.\ncaptured={captured}\nlive={live}"
+        )
+
+    def test_span_and_session_captures_match_the_live_path(
+        self,
+        organization,
+        workspace,
+        observe_project,
+        root_conversation_span,
+    ):
+        """Parity for the other two CH-backed builders.
+
+        The trace test above only covers ``_trace_preview_payload``; the
+        "shared builders can't drift" argument needs the span and session
+        builders pinned too, or half the surface is unguarded.
+        """
+        from model_hub.utils.annotation_queue_helpers import (
+            preview_payload_for_source,
+            resolve_source_object,
+            resolve_source_preview,
+        )
+
+        span_type = QueueItemSourceType.OBSERVATION_SPAN.value
+        source_obj = resolve_source_object(
+            span_type,
+            str(root_conversation_span.id),
+            organization=organization,
+            workspace=workspace,
+        )
+        assert source_obj is not None, "span source did not resolve from CH"
+        captured = preview_payload_for_source(span_type, source_obj)
+
+        item = QueueItem(
+            source_type=span_type,
+            observation_span_id=str(root_conversation_span.id),
+            project=observe_project,
+        )
+        live = resolve_source_preview(item)
+
+        assert captured == live, (
+            "add-time capture and live render disagree for observation_span; "
+            f"they share _span_preview_payload.\ncaptured={captured}\nlive={live}"
+        )
+
+    def test_filter_mode_add_captures_the_preview(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        observe_trace,
+        root_conversation_span,
+        thumbs_label,
+    ):
+        """The filter add-path must stamp source_preview, not just the enumerated one.
+
+        Filter mode is how voice items actually enter a queue in bulk, and it
+        takes its payload from ``previews_by_id`` rather than resolving a source
+        itself — so a regression to ``.get(tid) -> None`` would silently drop
+        every row back to a live ClickHouse read with nothing failing.
+        """
+        queue = _queue(
+            "TH-7211 filter capture",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+
+        resp = auth_client.post(
+            f"/model-hub/annotation-queues/{queue.id}/items/add-items/",
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": QueueItemSourceType.TRACE.value,
+                    "project_id": str(observe_project.id),
+                    "filter": [],
+                }
+            },
+            format="json",
+        )
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+
+        item = QueueItem.all_objects.filter(
+            queue=queue, source_type=QueueItemSourceType.TRACE.value, deleted=False
+        ).first()
+        assert item is not None, f"filter add created no trace item: {resp.data}"
+        assert item.source_preview, (
+            "filter-mode add left source_preview NULL — previews_by_id is not "
+            "reaching the QueueItem, so the grid falls back to a live CH read"
+        )
+        assert item.source_preview["type"] == "trace"
+
+    def test_backfill_leaves_unresolvable_sources_null(
+        self,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        thumbs_label,
+    ):
+        """The sentinel guard: a source CH can't resolve must stay NULL.
+
+        Freezing a ``deleted`` sentinel into the cache would make the grid
+        permanently claim the source is gone even if the read later succeeds.
+        """
+        from model_hub.management.commands.backfill_queue_item_source_preview import (
+            backfill_queue_item_source_previews,
+        )
+
+        queue = _queue(
+            "TH-7211 backfill sentinel",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        # A trace id with no ClickHouse row behind it.
+        item = QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.TRACE.value,
+            trace_id=uuid.uuid4(),
+            project=observe_project,
+            organization=organization,
+            workspace=workspace,
+            status=QueueItemStatus.PENDING.value,
+        )
+        QueueItem.all_objects.filter(id=item.id).update(source_preview=None)
+
+        stamped, skipped, failed = backfill_queue_item_source_previews(
+            queue_id=queue.id
+        )
+
+        assert stamped == 0, "an unresolvable source must not be stamped"
+        assert skipped == 1
+        assert failed == 0
+        item.refresh_from_db()
+        assert item.source_preview is None
+
+    def test_uncaptured_rows_still_render_via_the_live_path(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        observe_trace,
+        root_conversation_span,
+        thumbs_label,
+    ):
+        """NULL source_preview must fall back, not render an empty cell.
+
+        Every row that predates the capture is NULL until the backfill runs, so
+        the fallback is the normal path for existing data, not an edge case.
+        """
+        queue = _queue(
+            "TH-7211 preview fallback",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        item = self._item(
+            queue, organization, workspace, observe_project, observe_trace
+        )
+        QueueItem.all_objects.filter(id=item.id).update(source_preview=None)
+
+        resp = auth_client.get(self._items_url(queue))
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        preview = resp.data["results"][0]["source_preview"]
+        assert preview["type"] == "trace"
+        assert "name" in preview and "input_preview" in preview
+
+    def test_backfill_stamps_previews_and_is_idempotent(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        observe_trace,
+        root_conversation_span,
+        thumbs_label,
+    ):
+        """The backfill is what fixes EXISTING queues, so it needs its own test.
+
+        Re-running must be a no-op — the migration and the management command
+        both call it, so it can legitimately run twice.
+        """
+        from model_hub.management.commands.backfill_queue_item_source_preview import (
+            backfill_queue_item_source_previews,
+        )
+
+        queue = _queue(
+            "TH-7211 backfill",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        item = self._item(
+            queue, organization, workspace, observe_project, observe_trace
+        )
+        QueueItem.all_objects.filter(id=item.id).update(source_preview=None)
+
+        stamped, _, failed = backfill_queue_item_source_previews(queue_id=queue.id)
+        assert failed == 0
+        assert stamped == 1
+        item.refresh_from_db()
+        assert item.source_preview is not None
+        assert item.source_preview["type"] == "trace"
+
+        # second run has nothing left to do
+        stamped_again, _, _ = backfill_queue_item_source_previews(queue_id=queue.id)
+        assert stamped_again == 0, "backfill is not idempotent"

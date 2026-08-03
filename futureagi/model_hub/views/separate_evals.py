@@ -1819,12 +1819,13 @@ class EvalTemplateBulkDeleteView(APIView):
             from model_hub.models.develop_dataset import Cell, Column, Dataset
 
             with transaction.atomic():
+                delete_ts = timezone.now()
                 deleted_count = EvalTemplate.objects.filter(
                     id__in=req.template_ids,
                     organization=organization,
                     owner=OwnerChoices.USER.value,
                     deleted=False,
-                ).update(deleted=True, deleted_at=timezone.now())
+                ).update(deleted=True, deleted_at=delete_ts)
 
                 # Fetch all UserEvalMetrics bound to these templates
                 # Scoped to the requesting org to prevent cross-tenant cascade
@@ -1910,6 +1911,17 @@ class EvalTemplateBulkDeleteView(APIView):
                     UserEvalMetric.objects.filter(
                         id__in=[m[0] for m in metrics]
                     ).update(deleted=True, deleted_at=timezone.now())
+
+                # EvalSettings has no org field; gate through the exact templates deleted above.
+                EvalSettings.objects.filter(
+                    eval_id__in=EvalTemplate.all_objects.filter(
+                        id__in=req.template_ids,
+                        organization=organization,
+                        owner=OwnerChoices.USER.value,
+                        deleted_at=delete_ts,
+                    ).values_list("id", flat=True),
+                    deleted=False,
+                ).update(deleted=True, deleted_at=delete_ts)
 
             response = BulkDeleteResponse(deleted_count=deleted_count)
             return self._gm.success_response(response.model_dump())
@@ -6810,6 +6822,11 @@ class DeleteEvalTemplateView(APIView):
                     )
                 EvalLogger.objects.filter(
                     custom_eval_config__eval_template=eval_template
+                ).update(deleted=True, deleted_at=timezone.now())
+
+                # EvalSettings has no FK; cascade on the just-verified template id.
+                EvalSettings.objects.filter(
+                    eval_id=eval_template.id, deleted=False
                 ).update(deleted=True, deleted_at=timezone.now())
 
             return self._gm.success_response("Evaluation template Deleted successfully")

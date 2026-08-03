@@ -588,16 +588,16 @@ logger = logging.getLogger(__name__)
 def get_dataset_column_config(dataset) -> dict[str, dict[str, str]] | None:
     if dataset is None:
         return None
-    column_order = dataset.column_order or []
+    column_order = [str(cid) for cid in (dataset.column_order or [])]
     columns_by_id = {
-        col.id: col
+        str(col.id): col
         for col in Column.objects.filter(
             deleted=False,
             id__in=column_order,
             dataset=dataset,
         )
     }
-    
+
     config = {}
     for cid in column_order:
         if cid not in columns_by_id:
@@ -605,12 +605,12 @@ def get_dataset_column_config(dataset) -> dict[str, dict[str, str]] | None:
                 "scenario_column_order_references_missing_column",
                 extra={
                     "dataset_id": str(dataset.id),
-                    "column_id": str(cid),
+                    "column_id": cid,
                 }
             )
             continue
-            
-        config[str(cid)] = {
+
+        config[cid] = {
             "name": columns_by_id[cid].name,
             "type": columns_by_id[cid].data_type,
         }

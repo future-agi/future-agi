@@ -1528,7 +1528,9 @@ class TestScoreOnCollectorOnlySpan:
         from model_hub.models.ai_model import AIModel
         from tracer.models.project import Project
 
-        foreign_org = Organization.objects.create(name=f"Foreign {uuid.uuid4().hex[:8]}")
+        foreign_org = Organization.objects.create(
+            name=f"Foreign {uuid.uuid4().hex[:8]}"
+        )
         foreign_project = Project.objects.create(
             name="Foreign project",
             organization=foreign_org,
@@ -1620,7 +1622,13 @@ class TestScoreOnCollectorOnlyTrace:
                 return [root_span] if str(tid) == str(trace_id) else []
 
             def roots_by_trace_ids(
-                self_inner, tids, *, include_heavy=False, project_id=None, org_id=None
+                self_inner,
+                tids,
+                *,
+                include_heavy=False,
+                project_id=None,
+                org_id=None,
+                **_,
             ):
                 return [root_span] if str(trace_id) in {str(t) for t in tids} else []
 

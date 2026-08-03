@@ -1,4 +1,4 @@
-import { Box, Chip, Typography, useTheme } from "@mui/material";
+import { Alert, Box, Button, Chip, Typography, useTheme } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { formatDistanceToNow, differenceInHours } from "date-fns";
 import React, {
@@ -9,7 +9,7 @@ import React, {
   useState,
 } from "react";
 import { useNavigate } from "react-router";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
 import PropTypes from "prop-types";
@@ -17,8 +17,13 @@ import { DataTable, DataTablePagination } from "src/components/data-table";
 import VolumeBarChart from "./VolumeBarChart";
 import TagEditor from "./TagEditor";
 import { buildProjectListApiFilters } from "./common";
+import { toValidDate } from "src/utils/format-time";
+import { getRequestErrorMessage } from "src/utils/errorUtils";
 
 // ── Helpers ──
+
+const LOAD_ERROR_MESSAGE = "Could not load projects";
+const EMPTY_MESSAGE = "No projects found";
 
 const SORT_FIELD_MAP = {
   name: "name",
@@ -27,8 +32,9 @@ const SORT_FIELD_MAP = {
 };
 
 function getHealthColor(lastActive, theme) {
-  if (!lastActive) return theme.palette.text.disabled;
-  const hours = differenceInHours(new Date(), new Date(lastActive));
+  const parsed = toValidDate(lastActive);
+  if (!parsed) return theme.palette.text.disabled;
+  const hours = differenceInHours(new Date(), parsed);
   if (hours < 1) return theme.palette.success.main;
   if (hours < 24) return theme.palette.warning.main;
   return theme.palette.text.disabled;
@@ -79,7 +85,13 @@ const ObserveListView = forwardRef(
       [filters],
     );
 
-    const { data: apiData, isLoading } = useQuery({
+    const {
+      data: apiData,
+      isLoading,
+      isError,
+      error,
+      refetch,
+    } = useQuery({
       queryKey: [
         "observe-projects",
         {
@@ -101,7 +113,7 @@ const ObserveListView = forwardRef(
           project_type: "observe",
           ...(apiFilters && { filters: apiFilters }),
         }),
-      keepPreviousData: true,
+      placeholderData: keepPreviousData,
       staleTime: 30_000,
     });
 
@@ -208,9 +220,11 @@ const ObserveListView = forwardRef(
           size: 160,
           enableSorting: false,
           cell: ({ getValue, row }) => {
-            const val = getValue() || row.original?.updated_at;
-            const color = getHealthColor(val, theme);
-            if (!val) return null;
+            // Validity-aware fallback: an unparseable last_active must not win over a valid updated_at.
+            const parsed =
+              toValidDate(getValue()) ?? toValidDate(row.original?.updated_at);
+            const color = getHealthColor(parsed, theme);
+            if (!parsed) return null;
             return (
               <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
                 <Box
@@ -223,7 +237,7 @@ const ObserveListView = forwardRef(
                   }}
                 />
                 <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
-                  {formatDistanceToNow(new Date(val), { addSuffix: true })}
+                  {formatDistanceToNow(parsed, { addSuffix: true })}
                 </Typography>
               </Box>
             );
@@ -244,6 +258,18 @@ const ObserveListView = forwardRef(
           minHeight: 0,
         }}
       >
+        {isError && (
+          <Alert
+            severity="error"
+            action={
+              <Button color="inherit" size="small" onClick={() => refetch()}>
+                Retry
+              </Button>
+            }
+          >
+            {getRequestErrorMessage(error, LOAD_ERROR_MESSAGE)}
+          </Alert>
+        )}
         <DataTable
           columns={columns}
           data={items}
@@ -259,7 +285,7 @@ const ObserveListView = forwardRef(
           getRowId={(row) => row.id}
           enableSelection
           rowHeight={44}
-          emptyMessage="No projects found"
+          emptyMessage={isError ? "" : EMPTY_MESSAGE}
         />
         <DataTablePagination
           page={page}

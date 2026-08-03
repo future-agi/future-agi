@@ -17,6 +17,7 @@ The result sets are merged in Python, with raw_log processing delegated to
 the existing ``ObservabilityService.process_raw_logs()``.
 """
 
+from datetime import datetime
 from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
@@ -133,11 +134,35 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         """
         return query, self.params
 
-    def build_id_query(self) -> tuple[str, dict[str, Any]]:
+    def build_id_query(
+        self,
+        *,
+        created_at_floor: datetime | None = None,
+        created_at_ceiling: datetime | None = None,
+    ) -> tuple[str, dict[str, Any]]:
         """Filtered conversation-root span ids only — same predicate/window as
         build(), no pagination/order. Lets the eval resolver select the same
-        voice calls this list endpoint returns."""
+        voice calls this list endpoint returns.
+
+        ``created_at_floor``/``created_at_ceiling`` (continuous eval tasks only):
+        window the scan by CH arrival (``created_at``), not event time, so calls
+        whose root span reached CH long after they started (Vapi emits at
+        end-of-call) are still picked up. ``None`` keeps the ``start_time`` window
+        used by the UI list and historical tasks.
+        """
         start_date, end_date = self.parse_time_range(self.filters)
+        if created_at_floor is not None:
+            self.params["created_at_floor"] = created_at_floor
+            time_where = "AND created_at >= %(created_at_floor)s"
+            if created_at_ceiling is not None:
+                self.params["created_at_ceiling"] = created_at_ceiling
+                time_where += " AND created_at < %(created_at_ceiling)s"
+        else:
+            time_where = (
+                "AND created_at >= %(start_date)s - INTERVAL 1 DAY "
+                "AND start_time >= %(start_date)s "
+                "AND start_time < %(end_date)s"
+            )
         self.params["start_date"] = start_date
         self.params["end_date"] = end_date
 
@@ -157,9 +182,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         {self.project_where()}
           AND (parent_span_id IS NULL OR parent_span_id = '')
           AND observation_type = 'conversation'
-          AND created_at >= %(start_date)s - INTERVAL 1 DAY
-          AND start_time >= %(start_date)s
-          AND start_time < %(end_date)s
+          {time_where}
           {filter_fragment}
         ORDER BY start_time DESC
         LIMIT 1 BY trace_id
