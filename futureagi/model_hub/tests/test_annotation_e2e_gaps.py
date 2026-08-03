@@ -684,10 +684,7 @@ class TestCrossOrgIsolation:
 
     def test_other_org_cannot_read_queue(self, other_org_client, queue):
         resp = other_org_client.get(f"{QUEUE_URL}{queue}/")
-        assert resp.status_code in (
-            status.HTTP_404_NOT_FOUND,
-            status.HTTP_403_FORBIDDEN,
-        )
+        assert resp.status_code == status.HTTP_404_NOT_FOUND
 
     def test_other_org_cannot_modify_queue(self, other_org_client, queue):
         resp = other_org_client.patch(
@@ -1220,7 +1217,7 @@ def queue(db, auth_client, user):
         {"name": "E2E Gap Queue", "label_ids": [str(label_id)]},
         format="json",
     )
-    assert resp.status_code in (200, 201), resp.data
+    assert resp.status_code == status.HTTP_201_CREATED, resp.data
     qid = resp.data["id"]
     # Activate
     r = auth_client.post(
@@ -1581,7 +1578,4 @@ class TestAnnotationRoutesRejectAnonymous:
             resp = api_client.post(url, {}, format="json")
         else:
             resp = api_client.get(url)
-        assert resp.status_code in (
-            status.HTTP_401_UNAUTHORIZED,
-            status.HTTP_403_FORBIDDEN,
-        ), resp.status_code
+        assert resp.status_code == status.HTTP_401_UNAUTHORIZED, resp.status_code

@@ -1274,10 +1274,7 @@ class TestAutomationRules:
         rule_id = create_resp.data["id"]
 
         resp = auth_client.delete(self._rule_detail_url(queue_id, rule_id))
-        assert resp.status_code in (
-            status.HTTP_200_OK,
-            status.HTTP_204_NO_CONTENT,
-        )
+        assert resp.status_code == status.HTTP_204_NO_CONTENT
 
     def test_evaluate_rule_adds_items(self, auth_client, organization, workspace):
         queue_id = _create_queue(auth_client, name="Auto Q5")

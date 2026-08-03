@@ -348,7 +348,7 @@ def queue(db, auth_client, user, organization):
         {"name": "Team A Queue", "label_ids": [str(label_id)]},
         format="json",
     )
-    assert resp.status_code in (200, 201), resp.data
+    assert resp.status_code == status.HTTP_201_CREATED, resp.data
     qid = resp.data["id"]
     # The bootstrap label only satisfies the "at least one label" creation rule.
     # Mark it non-required so tests that annotate their own label can still
@@ -1110,13 +1110,13 @@ class TestAnnotationLabelsCRUD:
             {"description": "now described"},
             format="json",
         )
-        assert resp.status_code in (200, 202)
+        assert resp.status_code == status.HTTP_200_OK, resp.data
         star_label.refresh_from_db()
         assert star_label.description == "now described"
 
     def test_soft_delete_then_restore(self, auth_client, star_label):
         resp = auth_client.delete(f"{LABEL_URL}{star_label.id}/")
-        assert resp.status_code in (200, 204)
+        assert resp.status_code == status.HTTP_204_NO_CONTENT
 
         star_label.refresh_from_db()
         assert star_label.deleted is True
@@ -1151,7 +1151,7 @@ class TestQueueCRUD:
             },
             format="json",
         )
-        assert resp.status_code in (200, 201), resp.data
+        assert resp.status_code == status.HTTP_201_CREATED, resp.data
         qid = resp.data["id"]
         q = AnnotationQueue.objects.get(pk=qid)
         assert q.name == "MyQueue"
@@ -1465,8 +1465,11 @@ class TestQueueLabelManagement:
             {"label_id": str(star_label.id), "required": True},
             format="json",
         )
-        # Either 200 (entitlement exists) or an entitlement denial — not 500.
-        assert resp.status_code in (200, 402, 403), resp.data
+        assert resp.status_code == status.HTTP_402_PAYMENT_REQUIRED, resp.data
+        # Denied means no binding at all, not a binding with required=False.
+        assert not AnnotationQueueLabel.objects.filter(
+            queue_id=queue, label=star_label, deleted=False
+        ).exists()
 
     def test_remove_label_soft_deletes_binding(self, auth_client, queue, star_label):
         AnnotationQueueLabel.objects.create(queue_id=queue, label=star_label)
@@ -2747,8 +2750,7 @@ class TestQueueAnalytics:
     ):
         self._seed(auth_client, queue, dataset_with_rows, categorical_label)
         resp = auth_client.get(_agreement_url(queue))
-        # 200 if entitled, 403 if not — both valid behaviour we want to assert.
-        assert resp.status_code in (200, 403), resp.data
+        assert resp.status_code == status.HTTP_200_OK, resp.data
 
     def test_export_json(
         self, auth_client, queue, dataset_with_rows, categorical_label
@@ -2808,7 +2810,7 @@ class TestAutomationRules:
             "trigger_frequency": AutomationRuleTriggerFrequency.MANUAL.value,
         }
         resp = auth_client.post(_rules_url(queue), payload, format="json")
-        assert resp.status_code in (200, 201), resp.data
+        assert resp.status_code == status.HTTP_201_CREATED, resp.data
         rule_id = resp.data.get("id") or _result(resp).get("id")
         assert rule_id, resp.data
         rule = AutomationRule.objects.get(pk=rule_id)
@@ -2848,7 +2850,7 @@ class TestAutomationRules:
             {"name": "newname"},
             format="json",
         )
-        assert resp.status_code in (200, 202)
+        assert resp.status_code == status.HTTP_200_OK, resp.data
         rule.refresh_from_db()
         assert rule.name == "newname"
 
@@ -2860,7 +2862,7 @@ class TestAutomationRules:
             organization=organization,
         )
         resp = auth_client.delete(_rule_detail_url(queue, rule.id))
-        assert resp.status_code in (200, 204)
+        assert resp.status_code == status.HTTP_204_NO_CONTENT
         rule = AutomationRule.all_objects.get(pk=rule.id)
         assert rule.deleted is True
 
@@ -2875,11 +2877,15 @@ class TestAutomationRules:
             conditions={"scope": {"project_id": str(project.id)}},
             organization=organization,
         )
+        _seed_ch_trace_root(trace)
         # Pre-state: no items.
         assert QueueItem.objects.filter(queue_id=queue, deleted=False).count() == 0
         resp = auth_client.post(_rule_evaluate_url(queue, rule.id), {}, format="json")
-        # The endpoint may be 200/201 — we just ensure it doesn't 5xx.
-        assert resp.status_code in (200, 201, 400, 404), resp.data
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert _result(resp) == {"matched": 1, "added": 1, "duplicates": 0}
+        item = QueueItem.objects.get(queue_id=queue, deleted=False)
+        assert item.source_type == "trace"
+        assert str(item.trace_id) == str(trace.id)
 
 
 # ===========================================================================
