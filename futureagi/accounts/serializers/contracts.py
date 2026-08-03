@@ -120,6 +120,21 @@ class AccountsMessageResponseSerializer(serializers.Serializer):
     result = AccountsMessageResultSerializer()
 
 
+class SignupResponseSerializer(serializers.Serializer):
+    """Signup returns one of two shapes.
+
+    OSS deployments log the new owner straight in and return the same
+    ``{access, refresh}`` pair as ``POST /accounts/token/``, because there is
+    usually no SMTP to deliver a verification mail. Cloud/EE returns the
+    ``{status, result: {message}}`` envelope telling the user to check email.
+    """
+
+    status = serializers.BooleanField(required=False)
+    result = AccountsMessageResultSerializer(required=False)
+    access = serializers.CharField(required=False)
+    refresh = serializers.CharField(required=False)
+
+
 class AccountsStringResultResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = serializers.CharField()

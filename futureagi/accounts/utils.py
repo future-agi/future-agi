@@ -10,6 +10,7 @@ from django.contrib.auth.tokens import default_token_generator
 from django.db import close_old_connections, transaction
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from slack_sdk import WebhookClient
 
 from accounts.models.organization import Organization
@@ -262,7 +263,7 @@ def first_signup(data, mode=None):
         except ImportError:
             pass
     else:
-        raise Exception(f"Invalid data: {serializer.errors}")
+        raise DRFValidationError(serializer.errors)
 
     email = data.get("email", None)
     organization = get_user_organization(user)

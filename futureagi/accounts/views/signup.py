@@ -20,6 +20,7 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -45,10 +46,12 @@ from accounts.serializers.contracts import (
     PasswordResetConfirmRequestSerializer,
     PasswordResetInitiateRequestSerializer,
     SignupRequestSerializer,
+    SignupResponseSerializer,
     UserFullNameUpdateRequestSerializer,
     UserIdsRequestSerializer,
 )
 from accounts.serializers.user import UpdateUserSerializer
+from accounts.services.token_service import issue_tokens
 from accounts.utils import first_signup
 from accounts.views.workspace_management import clear_user_redis_cache
 from analytics.utils import (
@@ -59,12 +62,14 @@ from analytics.utils import (
 from saml2_auth.models import SAMLMetadataModel
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
+from tfc.ee_gating import is_oss
 from tfc.permissions.rbac import IsOrganizationAdmin
 from tfc.permissions.utils import get_org_membership
 from tfc.settings.settings import RECAPTCHA_ENABLED, RECAPTCHA_SECRET_KEY, ssl
 from tfc.utils.api_contracts import validated_api_request
 from tfc.utils.email import email_helper
 from tfc.utils.general_methods import GeneralMethods
+
 
 try:
     from ee.usage.utils.usage_entries import (
@@ -121,12 +126,12 @@ def verify_recaptcha(token):
 @swagger_auto_schema(
     method="post",
     request_body=SignupRequestSerializer,
-    responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: SignupResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
 @api_view(["POST"])
 @validated_api_request(
     request_serializer=SignupRequestSerializer,
-    responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: SignupResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     document=False,
 )
 def user_signup(request):
@@ -159,31 +164,60 @@ def user_signup(request):
 
         is_local = os.getenv("ENV_TYPE") == "local"
 
-        if not is_local:
-            if not verify_recaptcha(recaptcha_token):
-                logger.error("recaptcha verification failed")
-                return _gm.bad_request("reCAPTCHA verification failed")
-            else:
-                logger.info("recaptcha verification passed")
+        if is_local or is_oss():
+            logger.info(
+                "recaptcha verification skipped",
+                reason="local environment" if is_local else "oss deployment",
+            )
+        elif not verify_recaptcha(recaptcha_token):
+            logger.error("recaptcha verification failed")
+            return _gm.bad_request("reCAPTCHA verification failed")
         else:
-            logger.info("recaptcha verification skipped (local environment)")
+            logger.info("recaptcha verification passed")
 
         # Check if a user with the provided email already exists
         if User.objects.filter(email=email).exists():
             return _gm.bad_request("User with this email already exists.")
 
         # Allowlist fields to prevent hidden-parameter attacks
-        allowed_fields = {
-            "email",
-            "full_name",
-            "company_name",
-            "allow_email",
-        }
+        if is_oss():
+            allowed_fields = {
+                "email",
+                "full_name",
+                "company_name",
+                "password",
+            }
+        else:
+            allowed_fields = {
+                "email",
+                "full_name",
+                "company_name",
+                "allow_email",
+            }
+
         sanitized_data = {k: v for k, v in data.items() if k in allowed_fields}
-        first_signup(sanitized_data)
+        user = first_signup(sanitized_data)
+
+        if is_oss():
+            logger.info("signup_auto_login", email=email, user_id=str(user.id))
+            return Response(issue_tokens(user), status=status.HTTP_200_OK)
 
         return _gm.success_response(
             {"message": "User Created Successfully, Please Check your email to proceed"}
+        )
+
+    except DRFValidationError as exc:
+        logger.info(
+            "signup_validation_failed",
+            email=request.data.get("email", "").lower(),
+            errors=exc.detail,
+        )
+        return _gm.bad_request(
+            {
+                "error": "Signup validation failed",
+                "error_code": "SIGNUP_VALIDATION_FAILED",
+                "field_errors": exc.detail,
+            }
         )
 
     except Exception:
