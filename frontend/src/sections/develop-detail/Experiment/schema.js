@@ -462,14 +462,12 @@ export const getNewExperimentValidationSchema = (
         model: evalItem.model,
         error_localizer: evalItem.errorLocalizer ?? evalItem.error_localizer,
         kb_id: evalItem.kbId || evalItem.kb_id || null,
-        pinned_version_id:
-          evalItem.pinnedVersionId ?? evalItem.pinned_version_id ?? null,
-        ...((evalItem.compositeWeightOverrides ||
-          evalItem.composite_weight_overrides) && {
-          composite_weight_overrides:
-            evalItem.compositeWeightOverrides ??
-            evalItem.composite_weight_overrides,
-        }),
+        pinned_version_id: evalItem.pinnedVersionId ?? null,
+        ...(evalItem.compositeWeightOverrides
+          ? {
+              composite_weight_overrides: evalItem.compositeWeightOverrides,
+            }
+          : {}),
       })),
     }));
 

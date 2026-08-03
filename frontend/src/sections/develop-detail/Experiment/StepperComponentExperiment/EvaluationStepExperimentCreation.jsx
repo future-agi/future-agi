@@ -14,12 +14,15 @@ import PropTypes from "prop-types";
 import SvgColor from "src/components/svg-color";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import { useFieldArray, useWatch } from "react-hook-form";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import { useSearchParams } from "react-router-dom";
 import axios, { endpoints } from "src/utils/axios";
-import { enqueueSnackbar } from "src/components/snackbar";
 import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
+import {
+  buildEvalRunConfig,
+  resolveCompositeWeightOverrides,
+} from "src/sections/common/EvalPicker/buildEvalRunConfig";
 import { getVersionedEvalName } from "src/components/run-tests/common";
 import { ShowComponent } from "src/components/show";
 import { isUUID } from "src/utils/utils";
@@ -29,8 +32,6 @@ const EvaluationStepExperimentCreation = ({
   allColumns,
   errors,
   isEditingExperiment = false,
-  experimentId = null,
-  snapshotDatasetId = null,
 }) => {
   const selectedColumn = useWatch({ control, name: "columnId" });
   const { dataset: datasetParam } = useParams();
@@ -87,26 +88,6 @@ const EvaluationStepExperimentCreation = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userEvalList, replaceEvals]);
-  // Inline pin requires a persisted experiment + its snapshot dataset id.
-  const canPinInline =
-    isEditingExperiment && Boolean(experimentId) && Boolean(snapshotDatasetId);
-  const queryClient = useQueryClient();
-
-  const { mutate: pinEvalVersionInline } = useMutation({
-    mutationFn: ({ userEvalId, payload }) =>
-      axios.post(
-        endpoints.develop.eval.editEval(snapshotDatasetId, userEvalId),
-        payload,
-      ),
-    onError: (error) => {
-      enqueueSnackbar(
-        error?.response?.data?.result ||
-          error?.message ||
-          "Failed to save the new evaluation version",
-        { variant: "error" },
-      );
-    },
-  });
 
   const handleAddEvaluation = (evalConfig) => {
     // Build mapping: DatasetTestMode returns { variable: "column_name" }.
@@ -124,14 +105,23 @@ const EvaluationStepExperimentCreation = ({
 
     // Merge full template config with the mapping so the backend knows
     // how to execute the eval (eval_type_id, rule_prompt, output, etc.)
+    // Nest run_config the same way EvaluationDrawer does — otherwise Run
+    // Experiment snapshots diverge from picker-minted versions and dedup
+    // mints duplicates.
+    const isComposite = evalConfig.templateType === "composite";
     const templateConfig =
       evalConfig.config || evalConfig.evalTemplate?.config || {};
+    const runConfig = buildEvalRunConfig(evalConfig, { isComposite });
     const fullConfig = {
       ...templateConfig,
       mapping: translatedMapping,
+      ...(Object.keys(runConfig).length ? { run_config: runConfig } : {}),
     };
-    const isComposite = evalConfig.templateType === "composite";
+    const weightOverrides = resolveCompositeWeightOverrides(evalConfig);
 
+    // Version minting for dirty edits happens in EvalPicker (template
+    // versions/create). Create and edit both just pin whatever versionId
+    // the picker returns — no edit_and_run_user_eval on experiments.
     const evalEntry = {
       evalId: evalConfig.templateId,
       evalTemplateName: evalConfig.name,
@@ -145,107 +135,24 @@ const EvaluationStepExperimentCreation = ({
         evalConfig.evalTemplate?.requiredKeys ||
         templateConfig.requiredKeys ||
         [],
-      // Version picked from the dropdown; overwritten below once a dirty save resolves.
       pinnedVersionId: evalConfig.versionId ?? null,
-      ...(isComposite && evalConfig.compositeWeightOverrides
-        ? { compositeWeightOverrides: evalConfig.compositeWeightOverrides }
+      ...(isComposite && weightOverrides
+        ? { compositeWeightOverrides: weightOverrides }
         : {}),
     };
 
     if (editingEval) {
-      // Edit mode: replace the existing field in place, keep the same name.
-      const idx = evalFields.findIndex((f) => {
-        const fid = f.actualEvalCreatedId || f.evalId || f.id;
-        return fid === editingEval.userEvalId;
-      });
+      // Match by the useFieldArray row id captured at edit-open time.
+      // Never spread that id into update() — RHF owns it and corrupting
+      // it breaks the next re-edit (idx === -1, silent no-op).
+      const idx = evalFields.findIndex((f) => f.id === editingEval.fieldKey);
       if (idx !== -1) {
-        const merged = {
-          ...evalFields[idx],
+        const { id: _rhfId, ...existing } = evalFields[idx];
+        update(idx, {
+          ...existing,
           ...evalEntry,
           name: evalConfig.name,
-        };
-        update(idx, merged);
-
-        const userEvalId = editingEval.userEvalId;
-        const hasBackendMetric = userEvalId && isUUID(userEvalId);
-
-        // Only a dirty config edit needs a version created now; a plain version pick stays local.
-        if (canPinInline && hasBackendMetric && evalConfig.isDirty) {
-          const runConfig = {};
-          if (!isComposite) {
-            if (evalConfig.model) runConfig.model = evalConfig.model;
-            if (evalConfig.agent_mode) runConfig.agent_mode = evalConfig.agent_mode;
-            if (evalConfig.check_internet !== undefined)
-              runConfig.check_internet = !!evalConfig.check_internet;
-            if (evalConfig.summary) runConfig.summary = evalConfig.summary;
-            if (evalConfig.knowledge_bases)
-              runConfig.knowledge_bases = evalConfig.knowledge_bases;
-            if (evalConfig.tools) runConfig.tools = evalConfig.tools;
-            if (evalConfig.pass_threshold !== undefined)
-              runConfig.pass_threshold = evalConfig.pass_threshold;
-            if (
-              evalConfig.choice_scores &&
-              Object.keys(evalConfig.choice_scores).length
-            )
-              runConfig.choice_scores = evalConfig.choice_scores;
-            if (evalConfig.multi_choice !== undefined)
-              runConfig.multi_choice = !!evalConfig.multi_choice;
-          }
-          if (evalConfig.data_injection)
-            runConfig.data_injection = evalConfig.data_injection;
-          if (evalConfig.error_localizer_enabled !== undefined)
-            runConfig.error_localizer_enabled = !!evalConfig.error_localizer_enabled;
-          const evalParams =
-            evalConfig.params && typeof evalConfig.params === "object"
-              ? evalConfig.params
-              : {};
-
-          pinEvalVersionInline(
-            {
-              userEvalId,
-              payload: {
-                name: evalConfig.name,
-                template_id: evalConfig.templateId,
-                model: isComposite ? undefined : evalConfig.model,
-                run: false,
-                experiment_id: experimentId,
-                error_localizer: runConfig.error_localizer_enabled ?? false,
-                pinned_version_id: evalConfig.versionId || undefined,
-                config: {
-                  mapping: translatedMapping,
-                  config: isComposite ? {} : templateConfig,
-                  ...(Object.keys(evalParams).length
-                    ? { params: evalParams }
-                    : {}),
-                  ...(Object.keys(runConfig).length
-                    ? { run_config: runConfig }
-                    : {}),
-                },
-                ...(isComposite && evalConfig.compositeWeightOverrides
-                  ? {
-                      composite_weight_overrides:
-                        evalConfig.compositeWeightOverrides,
-                    }
-                  : {}),
-              },
-            },
-            {
-              onSuccess: (resp) => {
-                const resolvedPinnedVersionId =
-                  resp?.data?.result?.pinned_version_id;
-                if (resolvedPinnedVersionId) {
-                  update(idx, {
-                    ...merged,
-                    pinnedVersionId: resolvedPinnedVersionId,
-                  });
-                }
-                queryClient.invalidateQueries({
-                  queryKey: ["evals", "versions", evalConfig.templateId],
-                });
-              },
-            },
-          );
-        }
+        });
       }
     } else {
       // Add mode: append with versioned name to avoid duplicates.
@@ -275,14 +182,22 @@ const EvaluationStepExperimentCreation = ({
       evalItem.id;
     setEditingEval({
       id: tplId,
+      // RHF useFieldArray row id — stable across local updates, unique even
+      // when two rows share the same templateId before the experiment exists.
+      fieldKey: evalItem.id,
       userEvalId:
         evalItem.actualEvalCreatedId || evalItem.evalId || evalItem.id,
       name: evalItem.name || evalItem.evalTemplateName,
       templateType: evalItem.templateType || evalItem.template_type,
       mapping: evalItem.config?.mapping || evalItem.mapping,
       model: evalItem.model || evalItem.selected_model,
-      run_config: evalItem.config,
-      compositeWeightOverrides:
+      // Seed template config + nested run_config separately. Passing the
+      // whole config as run_config made version hydrate treat display
+      // labels (config.output = "Pass/Fail") as the select value and crash.
+      config: evalItem.config,
+      run_config: evalItem.config?.run_config || evalItem.run_config || {},
+      // Picker reads snake; form state is camel after getExperimentDefaultValue.
+      composite_weight_overrides:
         evalItem.compositeWeightOverrides ||
         evalItem.composite_weight_overrides,
       // Seeds the picker's preselected version.
@@ -588,6 +503,4 @@ EvaluationStepExperimentCreation.propTypes = {
   allColumns: PropTypes.array,
   errors: PropTypes.object,
   isEditingExperiment: PropTypes.bool,
-  experimentId: PropTypes.string,
-  snapshotDatasetId: PropTypes.string,
 };

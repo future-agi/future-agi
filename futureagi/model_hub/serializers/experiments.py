@@ -1,5 +1,6 @@
 # serializers.py
 from rest_framework import serializers
+from drf_yasg.utils import swagger_serializer_method
 from tfc.utils.serializer_fields import (
     JsonValueField,
     StringOrArrayField,
@@ -413,6 +414,34 @@ class EvalMetricEntrySerializer(serializers.Serializer):
     # Dedup baseline for maybe_pin_new_version.
     pinned_version_id = serializers.UUIDField(
         required=False, allow_null=True, default=None
+    )
+
+
+class ExperimentDetailEvalTemplateDetailsSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    description = serializers.CharField(allow_blank=True, allow_null=True)
+    config = serializers.JSONField()
+    criteria = serializers.CharField(allow_blank=True, allow_null=True)
+    type = serializers.CharField()
+
+
+class ExperimentDetailEvalMetricSerializer(serializers.Serializer):
+    """Shape of each metric emitted by ExperimentDetailV2.user_eval_metrics."""
+
+    id = serializers.UUIDField()
+    template_id = serializers.UUIDField()
+    template_details = ExperimentDetailEvalTemplateDetailsSerializer(
+        allow_null=True, required=False
+    )
+    name = serializers.CharField()
+    config = serializers.JSONField()
+    model = serializers.CharField(allow_blank=True, required=False)
+    error_localizer = serializers.BooleanField(required=False)
+    kb_id = serializers.UUIDField(allow_null=True, required=False)
+    pinned_version_id = serializers.UUIDField(allow_null=True, required=False)
+    composite_weight_overrides = serializers.JSONField(
+        allow_null=True, required=False
     )
 
 
@@ -851,6 +880,9 @@ class ExperimentDetailV2Serializer(serializers.ModelSerializer):
             eacs, many=True, context=self.context
         ).data
 
+    @swagger_serializer_method(
+        serializer_or_field=ExperimentDetailEvalMetricSerializer(many=True)
+    )
     def get_user_eval_metrics(self, obj):
         # Single query: M2M JOIN + select_related for template FK
         metrics = obj.user_eval_template_ids.select_related("template").all()
@@ -882,6 +914,7 @@ class ExperimentDetailV2Serializer(serializers.ModelSerializer):
                 "pinned_version_id": (
                     str(m.pinned_version_id) if m.pinned_version_id else None
                 ),
+                "composite_weight_overrides": m.composite_weight_overrides,
             }
             for m in metrics
         ]

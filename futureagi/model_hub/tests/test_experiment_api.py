@@ -1931,6 +1931,149 @@ class TestExperimentEvalVersionPinning:
             == version_count_after_v1
         )
 
+    def test_diff_and_update_evals_preserves_run_config_without_duplicate_version(
+        self, experiment, dataset, organization, user, workspace, user_eval_template
+    ):
+        """Wizard nests runtime toggles under config.run_config. An update that
+        keeps the same pin + same run_config must (a) persist run_config on the
+        metric and (b) not mint another EvalTemplateVersion (dedup)."""
+        from model_hub.views.experiments import (
+            _create_eval_metrics_inline,
+            _diff_and_update_evals,
+        )
+        from model_hub.models.evals_metric import EvalTemplateVersion
+
+        entry_create = {
+            "name": "run-config-survive",
+            "template_id": user_eval_template.id,
+            "config": {
+                "mapping": {"output": "output_column"},
+                "rule_prompt": "p1",
+                "run_config": {
+                    "agent_mode": "react",
+                    "check_internet": True,
+                    "error_localizer_enabled": True,
+                },
+            },
+            "model": "gpt-4",
+        }
+        metrics = _create_eval_metrics_inline(
+            eval_entries=[entry_create],
+            experiment=experiment,
+            snapshot_dataset=dataset,
+            organization=organization,
+            user=user,
+            workspace=workspace,
+        )
+        metric = metrics[0]
+        experiment.user_eval_template_ids.add(metric)
+        v1_id = metric.pinned_version_id
+        assert v1_id is not None
+        assert metric.config["run_config"]["agent_mode"] == "react"
+        version_count = EvalTemplateVersion.objects.filter(
+            eval_template=user_eval_template
+        ).count()
+
+        # Name tweak forces the update path; run_config + pin stay identical.
+        entry_update = {
+            "id": str(metric.id),
+            "name": "run-config-survive-renamed",
+            "template_id": user_eval_template.id,
+            "config": {
+                "mapping": {"output": "output_column"},
+                "rule_prompt": "p1",
+                "run_config": {
+                    "agent_mode": "react",
+                    "check_internet": True,
+                    "error_localizer_enabled": True,
+                },
+            },
+            "model": "gpt-4",
+            "pinned_version_id": str(v1_id),
+        }
+        with patch(
+            "model_hub.views.experiment_runner.ExperimentRunner"
+        ) as mock_runner:
+            mock_runner.return_value = MagicMock()
+            _diff_and_update_evals(
+                experiment=experiment,
+                new_eval_entries=[entry_update],
+                organization=organization,
+                user=user,
+                workspace=workspace,
+            )
+
+        metric.refresh_from_db()
+        assert metric.name == "run-config-survive-renamed"
+        assert metric.config.get("run_config") == {
+            "agent_mode": "react",
+            "check_internet": True,
+            "error_localizer_enabled": True,
+        }
+        assert metric.pinned_version_id == v1_id
+        assert (
+            EvalTemplateVersion.objects.filter(
+                eval_template=user_eval_template
+            ).count()
+            == version_count
+        )
+
+    def test_has_eval_changed_detects_run_config_only_edit(
+        self, organization, workspace, user, dataset, user_eval_template
+    ):
+        from model_hub.views.experiments import _has_eval_changed
+        from model_hub.models.evals_metric import UserEvalMetric
+
+        metric = UserEvalMetric.objects.create(
+            name="run-config-only",
+            organization=organization,
+            workspace=workspace,
+            dataset=dataset,
+            template=user_eval_template,
+            config={
+                "mapping": {"output": "col-1"},
+                "run_config": {"agent_mode": "react"},
+            },
+            model="gpt-4",
+            user=user,
+        )
+        entry = {
+            "name": metric.name,
+            "template_id": user_eval_template.id,
+            "model": metric.model,
+            "config": {
+                "mapping": {"output": "col-1"},
+                "run_config": {"agent_mode": "tools"},
+            },
+        }
+        assert _has_eval_changed(metric, entry, {"output": "col-1"}) is True
+
+    def test_experiment_detail_includes_composite_weight_overrides(
+        self, organization, workspace, user, dataset, user_eval_template, experiment
+    ):
+        from model_hub.serializers.experiments import ExperimentDetailV2Serializer
+        from model_hub.models.evals_metric import UserEvalMetric
+
+        overrides = {"child-a": 0.6, "child-b": 0.4}
+        metric = UserEvalMetric.objects.create(
+            name="composite-weights-detail",
+            organization=organization,
+            workspace=workspace,
+            dataset=dataset,
+            template=user_eval_template,
+            config={"mapping": {"output": "col-1"}},
+            model="gpt-4",
+            user=user,
+            composite_weight_overrides=overrides,
+        )
+        experiment.user_eval_template_ids.add(metric)
+
+        data = ExperimentDetailV2Serializer(experiment).data
+        metrics = data["user_eval_metrics"]
+        assert len(metrics) == 1
+        assert metrics[0]["composite_weight_overrides"] == overrides
+        assert metrics[0]["id"] == str(metric.id)
+
 
 @pytest.mark.django_db
 class TestExperimentComparisonWeights:

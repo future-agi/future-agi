@@ -8895,6 +8895,18 @@ export interface UserEvalUpdateRequestApi {
   pinned_version_id?: string;
 }
 
+export interface EditAndRunUserEvalResultApi {
+  /** @minLength 1 */
+  message: string;
+  id: string;
+  pinned_version_id: string;
+}
+
+export interface EditAndRunUserEvalResponseApi {
+  status: boolean;
+  result: EditAndRunUserEvalResultApi;
+}
+
 export type DatasetBehaviorRequestApiColumnConfig = { [key: string]: unknown };
 
 export type DatasetBehaviorRequestApiDatasetConfig = { [key: string]: unknown };
@@ -10725,6 +10737,7 @@ export interface EvalMetricEntryApi {
   error_localizer?: boolean;
   kb_id?: string;
   composite_weight_overrides?: EvalMetricEntryApiCompositeWeightOverrides;
+  pinned_version_id?: string;
 }
 
 export interface ExperimentCreateV2Api {
@@ -10849,6 +10862,37 @@ export const ExperimentDetailV2ApiStatus = {
   Cancelled: 'Cancelled',
 } as const;
 
+export type ExperimentDetailEvalTemplateDetailsApiConfig = { [key: string]: unknown };
+
+export interface ExperimentDetailEvalTemplateDetailsApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  config: ExperimentDetailEvalTemplateDetailsApiConfig;
+  criteria: string;
+  /** @minLength 1 */
+  type: string;
+}
+
+export type ExperimentDetailEvalMetricApiConfig = { [key: string]: unknown };
+
+export type ExperimentDetailEvalMetricApiCompositeWeightOverrides = { [key: string]: unknown };
+
+export interface ExperimentDetailEvalMetricApi {
+  id: string;
+  template_id: string;
+  template_details?: ExperimentDetailEvalTemplateDetailsApi;
+  /** @minLength 1 */
+  name: string;
+  config: ExperimentDetailEvalMetricApiConfig;
+  model?: string;
+  error_localizer?: boolean;
+  kb_id?: string;
+  pinned_version_id?: string;
+  composite_weight_overrides?: ExperimentDetailEvalMetricApiCompositeWeightOverrides;
+}
+
 export interface ExperimentDetailV2Api {
   readonly id?: string;
   /**
@@ -10864,7 +10908,7 @@ export interface ExperimentDetailV2Api {
   readonly snapshot_dataset_id?: string;
   readonly prompt_configs?: string;
   readonly agent_configs?: string;
-  readonly user_eval_metrics?: string;
+  readonly user_eval_metrics?: readonly ExperimentDetailEvalMetricApi[];
   readonly created_at?: string;
 }
 

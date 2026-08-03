@@ -7,11 +7,11 @@ import { render, screen, fireEvent, waitFor } from "src/utils/test-utils";
 
 import EvaluationStepExperimentCreation from "./EvaluationStepExperimentCreation";
 
-// Keep the picker itself out of scope — these tests only care about how
-// EvaluationStepExperimentCreation routes an onEvalAdded payload (TH-6979:
-// local-only for a pure version pick, scoped API call for a dirty edit).
-const { capturedOnEvalAdded } = vi.hoisted(() => ({
+// Picker owns minting (versions/create). This host only pins whatever
+// versionId the picker returns — same for create and edit.
+const { capturedOnEvalAdded, formApi } = vi.hoisted(() => ({
   capturedOnEvalAdded: { current: null },
+  formApi: { current: null },
 }));
 vi.mock("src/sections/common/EvalPicker", () => ({
   EvalPickerDrawer: ({ open, onEvalAdded }) => {
@@ -24,34 +24,24 @@ vi.mock("src/components/FromSearchSelectField", () => ({
   FormSearchSelectFieldControl: () => <div data-testid="column-select" />,
 }));
 
-const { mockAxiosPost, mockAxiosGet } = vi.hoisted(() => ({
+const { mockAxiosPost, mockAxiosGet, mockAxiosPut } = vi.hoisted(() => ({
   mockAxiosPost: vi.fn(),
   mockAxiosGet: vi.fn(),
+  mockAxiosPut: vi.fn(),
 }));
 vi.mock("src/utils/axios", () => ({
-  default: { post: mockAxiosPost, get: mockAxiosGet },
+  default: { post: mockAxiosPost, get: mockAxiosGet, put: mockAxiosPut },
   endpoints: {
     develop: {
-      eval: {
-        editEval: (datasetId, evalId) =>
-          `/model-hub/develops/${datasetId}/edit_and_run_user_eval/${evalId}/`,
-      },
       optimizeDevelop: { columnInfo: "/model-hub/optimize-develop/column-info/" },
     },
   },
 }));
 
-const { mockEnqueueSnackbar } = vi.hoisted(() => ({
-  mockEnqueueSnackbar: vi.fn(),
-}));
-vi.mock("src/components/snackbar", () => ({
-  enqueueSnackbar: mockEnqueueSnackbar,
-}));
-
 const EXISTING_USER_EVAL_ID = "11111111-1111-4111-8111-111111111111";
 
-const Harness = ({ isEditingExperiment, experimentId, snapshotDatasetId }) => {
-  const { control } = useForm({
+const Harness = ({ isEditingExperiment }) => {
+  const form = useForm({
     defaultValues: {
       userEvalMetrics: [
         {
@@ -68,14 +58,13 @@ const Harness = ({ isEditingExperiment, experimentId, snapshotDatasetId }) => {
       ],
     },
   });
+  formApi.current = form;
   return (
     <EvaluationStepExperimentCreation
-      control={control}
+      control={form.control}
       allColumns={[{ field: "output", headerName: "Output", dataType: "text" }]}
       errors={{}}
       isEditingExperiment={isEditingExperiment}
-      experimentId={experimentId}
-      snapshotDatasetId={snapshotDatasetId}
     />
   );
 };
@@ -91,39 +80,81 @@ const renderStep = (props) => {
   );
 };
 
-describe("EvaluationStepExperimentCreation — inline version pin routing (TH-6979)", () => {
+describe("EvaluationStepExperimentCreation — version pin (create + edit)", () => {
   beforeEach(() => {
     mockAxiosPost.mockReset();
     mockAxiosGet.mockReset();
-    mockEnqueueSnackbar.mockReset();
+    mockAxiosPut.mockReset();
+    formApi.current = null;
     mockAxiosGet.mockResolvedValue({ data: { result: [] } });
-    mockAxiosPost.mockResolvedValue({
-      data: { result: { id: EXISTING_USER_EVAL_ID, pinned_version_id: "v2-id" } },
-    });
   });
 
   const openEditForExistingEval = async () => {
-    // The single eval row renders exactly two icon buttons, edit then
-    // delete (see the JSX order in EvaluationStepExperimentCreation).
     const iconButtons = document.querySelectorAll(".MuiIconButton-root");
     fireEvent.click(iconButtons[0]);
-    // Wait for the picker drawer to actually open (editingEval populated) —
-    // capturedOnEvalAdded is already non-null from the initial render, so
-    // that alone isn't a reliable signal that the edit click landed.
     await waitFor(() =>
       expect(screen.getByTestId("eval-picker-drawer")).toBeInTheDocument(),
     );
   };
 
-  it("does not call the API when only the pinned version changes (isDirty=false)", async () => {
-    renderStep({
-      isEditingExperiment: true,
-      experimentId: "exp-1",
-      snapshotDatasetId: "snap-1",
-    });
+  it.each([true, false])(
+    "pins the picker versionId locally and never calls edit_and_run (isEditing=%s)",
+    async (isEditingExperiment) => {
+      renderStep({ isEditingExperiment });
+
+      await openEditForExistingEval();
+
+      capturedOnEvalAdded.current({
+        templateId: "tpl-1",
+        name: "toxicity-eval",
+        templateType: "single",
+        model: "gpt-4",
+        mapping: { output: "output" },
+        versionId: "v2-id",
+        isDirty: false,
+      });
+
+      await waitFor(() => {
+        expect(formApi.current.getValues("userEvalMetrics")[0].pinnedVersionId).toBe(
+          "v2-id",
+        );
+      });
+      expect(mockAxiosPost).not.toHaveBeenCalled();
+      expect(mockAxiosPut).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([true, false])(
+    "pins a freshly minted versionId the same way when dirty (isEditing=%s)",
+    async (isEditingExperiment) => {
+      renderStep({ isEditingExperiment });
+
+      await openEditForExistingEval();
+
+      // Picker already minted before onEvalAdded; host just stores the id.
+      capturedOnEvalAdded.current({
+        templateId: "tpl-1",
+        name: "toxicity-eval",
+        templateType: "single",
+        model: "gpt-4",
+        mapping: { output: "output" },
+        versionId: "minted-v3-id",
+        isDirty: false,
+      });
+
+      await waitFor(() => {
+        expect(formApi.current.getValues("userEvalMetrics")[0].pinnedVersionId).toBe(
+          "minted-v3-id",
+        );
+      });
+      expect(mockAxiosPost).not.toHaveBeenCalled();
+    },
+  );
+
+  it("re-editing a local eval (no experiment save yet) still updates the same row", async () => {
+    renderStep({ isEditingExperiment: false });
 
     await openEditForExistingEval();
-
     capturedOnEvalAdded.current({
       templateId: "tpl-1",
       name: "toxicity-eval",
@@ -133,59 +164,58 @@ describe("EvaluationStepExperimentCreation — inline version pin routing (TH-69
       versionId: "v2-id",
       isDirty: false,
     });
-
     await waitFor(() => {
-      expect(mockAxiosPost).not.toHaveBeenCalled();
-    });
-  });
-
-  it("fires the scoped edit-eval save when the config was actually edited (isDirty=true)", async () => {
-    renderStep({
-      isEditingExperiment: true,
-      experimentId: "exp-1",
-      snapshotDatasetId: "snap-1",
+      expect(formApi.current.getValues("userEvalMetrics")[0].pinnedVersionId).toBe(
+        "v2-id",
+      );
     });
 
+    // Re-open edit on the same row and pin another version — must not
+    // silently no-op (regression: spreading RHF field.id into update()).
     await openEditForExistingEval();
-
     capturedOnEvalAdded.current({
       templateId: "tpl-1",
       name: "toxicity-eval",
       templateType: "single",
-      model: "gpt-4",
+      model: "gpt-4o",
       mapping: { output: "output" },
-      versionId: "v2-id",
-      isDirty: true,
+      versionId: "v3-id",
+      isDirty: false,
     });
 
     await waitFor(() => {
-      expect(mockAxiosPost).toHaveBeenCalledTimes(1);
+      const row = formApi.current.getValues("userEvalMetrics")[0];
+      expect(row.pinnedVersionId).toBe("v3-id");
+      expect(row.model).toBe("gpt-4o");
+      expect(formApi.current.getValues("userEvalMetrics")).toHaveLength(1);
     });
-    const [url, payload] = mockAxiosPost.mock.calls[0];
-    expect(url).toBe(
-      `/model-hub/develops/snap-1/edit_and_run_user_eval/${EXISTING_USER_EVAL_ID}/`,
-    );
-    expect(payload.pinned_version_id).toBe("v2-id");
-    expect(payload.experiment_id).toBe("exp-1");
   });
 
-  it("does not call the scoped save for a dirty edit when not editing a persisted experiment", async () => {
+  it("nests run_config and dual-reads composite_weight_overrides from the picker", async () => {
     renderStep({ isEditingExperiment: false });
 
     await openEditForExistingEval();
-
     capturedOnEvalAdded.current({
       templateId: "tpl-1",
       name: "toxicity-eval",
-      templateType: "single",
-      model: "gpt-4",
-      mapping: { output: "output" },
-      versionId: "v2-id",
-      isDirty: true,
+      templateType: "composite",
+      mapping: { output: "Output" },
+      versionId: "comp-v1",
+      error_localizer_enabled: true,
+      // Picker emits snake; host must not drop it.
+      composite_weight_overrides: { child_a: 0.6, child_b: 0.4 },
     });
 
     await waitFor(() => {
-      expect(mockAxiosPost).not.toHaveBeenCalled();
+      const row = formApi.current.getValues("userEvalMetrics")[0];
+      expect(row.config.run_config).toEqual({
+        error_localizer_enabled: true,
+      });
+      expect(row.compositeWeightOverrides).toEqual({
+        child_a: 0.6,
+        child_b: 0.4,
+      });
+      expect(row.pinnedVersionId).toBe("comp-v1");
     });
   });
 });

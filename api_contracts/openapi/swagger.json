@@ -29497,7 +29497,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
+                            "$ref": "#/definitions/EditAndRunUserEvalResponse"
                         }
                     },
                     "400": {
@@ -95804,6 +95804,48 @@
                 }
             }
         },
+        "EditAndRunUserEvalResult": {
+            "required": [
+                "message",
+                "id",
+                "pinned_version_id"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "pinned_version_id": {
+                    "title": "Pinned version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                }
+            }
+        },
+        "EditAndRunUserEvalResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/EditAndRunUserEvalResult"
+                }
+            }
+        },
         "DatasetBehaviorRequest": {
             "type": "object",
             "properties": {
@@ -100593,6 +100635,12 @@
                     "title": "Composite weight overrides",
                     "type": "object",
                     "x-nullable": true
+                },
+                "pinned_version_id": {
+                    "title": "Pinned version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
                 }
             }
         },
@@ -100789,6 +100837,107 @@
                 }
             }
         },
+        "ExperimentDetailEvalTemplateDetails": {
+            "required": [
+                "id",
+                "name",
+                "description",
+                "config",
+                "criteria",
+                "type"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "config": {
+                    "title": "Config",
+                    "type": "object"
+                },
+                "criteria": {
+                    "title": "Criteria",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "minLength": 1
+                }
+            },
+            "x-nullable": true
+        },
+        "ExperimentDetailEvalMetric": {
+            "required": [
+                "id",
+                "template_id",
+                "name",
+                "config"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "template_id": {
+                    "title": "Template id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "template_details": {
+                    "$ref": "#/definitions/ExperimentDetailEvalTemplateDetails"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "config": {
+                    "title": "Config",
+                    "type": "object"
+                },
+                "model": {
+                    "title": "Model",
+                    "type": "string"
+                },
+                "error_localizer": {
+                    "title": "Error localizer",
+                    "type": "boolean"
+                },
+                "kb_id": {
+                    "title": "Kb id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "pinned_version_id": {
+                    "title": "Pinned version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "composite_weight_overrides": {
+                    "title": "Composite weight overrides",
+                    "type": "object",
+                    "x-nullable": true
+                }
+            }
+        },
         "ExperimentDetailV2": {
             "required": [
                 "name"
@@ -100872,8 +101021,10 @@
                     "readOnly": true
                 },
                 "user_eval_metrics": {
-                    "title": "User eval metrics",
-                    "type": "string",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ExperimentDetailEvalMetric"
+                    },
                     "readOnly": true
                 },
                 "created_at": {

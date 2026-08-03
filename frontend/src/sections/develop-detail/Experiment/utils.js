@@ -219,6 +219,13 @@ export const getExperimentDefaultValue = (
       ...item,
       actualEvalCreatedId: item.id,
       evalId: item.id,
+      // Normalize API snake_case onto camel so form hosts / schema can
+      // read one key. Keep snake on the wire out via schema.transform.
+      pinnedVersionId: item.pinnedVersionId ?? item.pinned_version_id ?? null,
+      compositeWeightOverrides:
+        item.compositeWeightOverrides ??
+        item.composite_weight_overrides ??
+        null,
     }),
   );
   // Transform prompt configs using existing function

@@ -377,6 +377,7 @@ import type {
   EELicenseListResponseApi,
   EELicenseRevokeRequestApi,
   EELicenseRevokeResponseApi,
+  EditAndRunUserEvalResponseApi,
   EditRunPromptColumnApi,
   EmbeddingsResponseApi,
   EmptyRequestApi,
@@ -32478,7 +32479,7 @@ export const modelHubDevelopsDownloadDatasetList = async (datasetId: string, opt
 
 
 export type modelHubDevelopsEditAndRunUserEvalCreateResponse200 = {
-  data: DevelopDatasetMessageResponseApi
+  data: EditAndRunUserEvalResponseApi
   status: 200
 }
 
