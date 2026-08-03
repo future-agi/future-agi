@@ -1246,19 +1246,13 @@ class TestAnonymousAccess:
         from rest_framework.test import APIClient
 
         resp = APIClient().get(QUEUE_URL)
-        assert resp.status_code in (
-            status.HTTP_401_UNAUTHORIZED,
-            status.HTTP_403_FORBIDDEN,
-        )
+        assert resp.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_automation_rule_viewset_rejects_anonymous(self):
         from rest_framework.test import APIClient
 
         resp = APIClient().get(f"{QUEUE_URL}{uuid.uuid4()}/automation-rules/")
-        assert resp.status_code in (
-            status.HTTP_401_UNAUTHORIZED,
-            status.HTTP_403_FORBIDDEN,
-        )
+        assert resp.status_code == status.HTTP_401_UNAUTHORIZED
 
 
 # ===========================================================================
@@ -1730,10 +1724,7 @@ class TestCrossTenantIsolation:
             {"action": "approve", "item_ids": [str(uuid.uuid4())]},
             format="json",
         )
-        assert resp.status_code in (
-            status.HTTP_403_FORBIDDEN,
-            status.HTTP_404_NOT_FOUND,
-        )
+        assert resp.status_code == status.HTTP_403_FORBIDDEN
         client.stop_workspace_injection()
 
     def test_other_org_cannot_evaluate_rule(self, auth_client):
@@ -1744,10 +1735,7 @@ class TestCrossTenantIsolation:
             {},
             format="json",
         )
-        assert resp.status_code in (
-            status.HTTP_403_FORBIDDEN,
-            status.HTTP_404_NOT_FOUND,
-        )
+        assert resp.status_code == status.HTTP_404_NOT_FOUND
         client.stop_workspace_injection()
 
     def test_other_org_cannot_preview_rule(self, auth_client):
@@ -1756,8 +1744,5 @@ class TestCrossTenantIsolation:
         resp = client.get(
             f"{QUEUE_URL}{queue_id}/automation-rules/{uuid.uuid4()}/preview/"
         )
-        assert resp.status_code in (
-            status.HTTP_403_FORBIDDEN,
-            status.HTTP_404_NOT_FOUND,
-        )
+        assert resp.status_code == status.HTTP_404_NOT_FOUND
         client.stop_workspace_injection()

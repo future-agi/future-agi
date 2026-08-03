@@ -124,7 +124,15 @@ class _ReaderCM:
     def __exit__(self, *exc):
         return False
 
-    def list_by_ids(self, span_ids, *, project_id=None, include_heavy=True):
+    def list_by_ids(
+        self,
+        span_ids,
+        *,
+        project_id=None,
+        include_heavy=True,
+        org_id=None,
+        dedup_via_limit_by=False,
+    ):
         ids = {str(s) for s in span_ids}
         if self._span is None:
             return []
@@ -136,7 +144,13 @@ class _ReaderCM:
         return self._span if str(span_id) == str(self._span.id) else None
 
     def roots_by_trace_ids(
-        self, trace_ids, *, include_heavy=False, project_id=None, org_id=None
+        self,
+        trace_ids,
+        *,
+        include_heavy=False,
+        project_id=None,
+        org_id=None,
+        dedup_via_limit_by=False,
     ):
         if self._span is None or self._span.parent_span_id:
             return []

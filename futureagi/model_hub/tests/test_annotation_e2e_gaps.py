@@ -592,10 +592,7 @@ class TestCrossOrgIsolation:
     ):
         """GET /annotations-labels/{id}/ for another org's label → 404."""
         resp = other_org_client.get(f"{LABEL_URL}{numeric_label.id}/")
-        assert resp.status_code in (
-            status.HTTP_404_NOT_FOUND,
-            status.HTTP_403_FORBIDDEN,
-        ), resp.data
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.data
 
     def test_other_org_cannot_update_label(
         self, other_org_client, numeric_label
