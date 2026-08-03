@@ -177,6 +177,14 @@ class MemberListItemSerializer(serializers.Serializer):
     created_at = serializers.CharField(allow_blank=True)
     type = serializers.ChoiceField(choices=["member", "invite"])
     auto_access = serializers.BooleanField(required=False)
+    invite_link = serializers.CharField(
+        required=False,
+        help_text=(
+            "Accept-invite link for a pending invite. Present on OSS "
+            "deployments only, where SMTP may not be configured; omitted on "
+            "Cloud/EE and on active-member rows."
+        ),
+    )
 
 
 class MemberListResultSerializer(serializers.Serializer):
