@@ -174,6 +174,13 @@ function InlineTraceView({ traceId, spanId }) {
   const queryClient = useQueryClient();
   const { data, isLoading } = useGetTraceDetail(traceId);
   const projectId = data?.trace?.project;
+  const sessionId = data?.trace?.session;
+  const [showSession, setShowSession] = useState(false);
+
+  // Drop session overlay when the queue item / trace changes.
+  useEffect(() => {
+    setShowSession(false);
+  }, [traceId]);
 
   // Saved views — includes both traces-type custom views and imagine tabs.
   const { data: savedViewsData } = useGetSavedViews(projectId);
@@ -340,6 +347,63 @@ function InlineTraceView({ traceId, spanId }) {
     );
   }
 
+  // Session overlay — same SessionContent used for trace_session queue items.
+  // Keeps the annotator in the queue workspace so they can return to the trace.
+  if (showSession && sessionId) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          minHeight: 0,
+          bgcolor: "background.paper",
+        }}
+      >
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{
+            px: 1.5,
+            py: 0.75,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+            minHeight: 36,
+          }}
+        >
+          <Button
+            size="small"
+            variant="text"
+            color="inherit"
+            startIcon={<Iconify icon="mdi:arrow-left" width={16} />}
+            onClick={() => setShowSession(false)}
+            sx={{
+              fontSize: 12,
+              fontWeight: 500,
+              textTransform: "none",
+              minWidth: 0,
+              px: 0.75,
+            }}
+          >
+            Back to trace
+          </Button>
+          <Divider orientation="vertical" flexItem sx={{ my: 0.5 }} />
+          <Typography
+            variant="body2"
+            sx={{ fontSize: 12, color: "text.secondary", fontWeight: 500 }}
+          >
+            Session
+          </Typography>
+        </Stack>
+        <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden", p: 2 }}>
+          <SessionContent content={{ session_id: sessionId }} />
+        </Box>
+      </Box>
+    );
+  }
+
   return (
     <Box
       sx={{
@@ -363,6 +427,33 @@ function InlineTraceView({ traceId, spanId }) {
         readOnly
         readOnlyTabTooltip={READ_ONLY_TAB_TOOLTIP}
         hideFilter
+        rightSlot={
+          sessionId ? (
+            <Button
+              size="small"
+              variant="outlined"
+              color="inherit"
+              startIcon={<Iconify icon="mdi:forum-outline" width={14} />}
+              onClick={() => setShowSession(true)}
+              sx={{
+                height: 24,
+                px: 1,
+                fontSize: 11,
+                fontWeight: 400,
+                textTransform: "none",
+                borderColor: "divider",
+                borderRadius: "4px",
+                color: "text.primary",
+                "&:hover": {
+                  bgcolor: "action.hover",
+                  borderColor: "text.disabled",
+                },
+              }}
+            >
+              View session
+            </Button>
+          ) : null
+        }
       />
 
       {/* Display options popover */}
