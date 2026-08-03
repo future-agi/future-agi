@@ -446,9 +446,7 @@ class TestWidgetReadEndpoints:
             created_by=user,
         )
         # List must not leak another workspace's widgets.
-        list_resp = auth_client.get(
-            f"/tracer/dashboard/{other_dash.id}/widgets/"
-        )
+        list_resp = auth_client.get(f"/tracer/dashboard/{other_dash.id}/widgets/")
         assert list_resp.status_code == 200
         assert str(other_widget.id) not in list_resp.content.decode()
         # The widget itself is not retrievable across the workspace boundary.
@@ -481,12 +479,15 @@ class TestMetricsEndpoint:
         metrics endpoint. The cache is best-effort — a get/set failure must
         fall through to ``build_metrics_catalog`` and return live results.
         """
-        with patch(
-            "tracer.services.dashboard_metrics_catalog.cache.get",
-            side_effect=RuntimeError("redis down"),
-        ), patch(
-            "tracer.services.dashboard_metrics_catalog.cache.set",
-            side_effect=RuntimeError("redis down"),
+        with (
+            patch(
+                "tracer.services.dashboard_metrics_catalog.cache.get",
+                side_effect=RuntimeError("redis down"),
+            ),
+            patch(
+                "tracer.services.dashboard_metrics_catalog.cache.set",
+                side_effect=RuntimeError("redis down"),
+            ),
         ):
             response = auth_client.get(
                 f"/tracer/dashboard/metrics/?project_ids={observe_project.id}"
@@ -912,9 +913,7 @@ class TestMetricsEndpoint:
     # suggestions for Trace Name / Span Name filters.
     # ------------------------------------------------------------------
 
-    @pytest.mark.parametrize(
-        "metric_name", ["name", "span_name", "service_name"]
-    )
+    @pytest.mark.parametrize("metric_name", ["name", "span_name", "service_name"])
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
     @patch("tracer.views.dashboard.AnalyticsQueryService")
@@ -1740,8 +1739,14 @@ class TestDashboardAttrRollupRouting:
     _COVERED_SINCE = datetime(2000, 1, 1, tzinfo=UTC)
 
     @staticmethod
-    def _config(metric_name="latency", aggregation="avg", breakdowns=None,
-                metric_filters=None, global_filters=None, granularity="day"):
+    def _config(
+        metric_name="latency",
+        aggregation="avg",
+        breakdowns=None,
+        metric_filters=None,
+        global_filters=None,
+        granularity="day",
+    ):
         metric = {
             "id": metric_name,
             "name": metric_name,
@@ -1891,9 +1896,7 @@ class TestDashboardAttrRollupRouting:
     def test_non_avg_aggregation_falls_back_to_spans(self, settings):
         # [FALLBACK] non-avg (p95) → spans path.
         self._enable(settings)
-        config = self._config(
-            aggregation="p95", breakdowns=[self._bd("final_status")]
-        )
+        config = self._config(aggregation="p95", breakdowns=[self._bd("final_status")])
         sql, _, _ = self._v2(config).build_all_queries()[0]
         assert "dashboard_attr_rollup" not in sql
         assert "FROM spans" in sql
@@ -1901,9 +1904,7 @@ class TestDashboardAttrRollupRouting:
     def test_non_latency_metric_falls_back_to_spans(self, settings):
         # [FALLBACK] non-latency (cost) → spans path.
         self._enable(settings)
-        config = self._config(
-            metric_name="cost", breakdowns=[self._bd("final_status")]
-        )
+        config = self._config(metric_name="cost", breakdowns=[self._bd("final_status")])
         sql, _, _ = self._v2(config).build_all_queries()[0]
         assert "dashboard_attr_rollup" not in sql
         assert "cost" in sql.lower()
@@ -1939,9 +1940,7 @@ class TestDashboardAttrRollupRouting:
     def test_hour_granularity_routes_to_rollup(self, settings):
         # [FIX] hour granularity is covered (>= the rollup's hour resolution).
         self._enable(settings)
-        config = self._config(
-            breakdowns=[self._bd("final_status")], granularity="hour"
-        )
+        config = self._config(breakdowns=[self._bd("final_status")], granularity="hour")
         sql, _, _ = self._v2(config).build_all_queries()[0]
         assert "dashboard_attr_rollup" in sql
 
@@ -2508,9 +2507,8 @@ class TestDashboardQueryExecution:
 
         assert response.status_code == 200
         sql = mock_service.execute_ch_query.call_args.args[0]
-        # Numeric span attribute read from the trace builder (spans) -- v1 uses
-        # `span_attr_num`, v2 uses `attrs_number` (flips with the DASHBOARD v1/v2
-        # dispatch). Either way it must NOT route to the simulation call table.
+        # v1 emits `span_attr_num`, v2 `attrs_number`; neither may hit the
+        # simulation call table.
         assert ("span_attr_num[" in sql) or ("attrs_number[" in sql)
         assert "FROM spans" in sql
         assert "simulate_call_execution" not in sql
@@ -2799,8 +2797,7 @@ class TestDashboardQueryExecution:
 
     @pytest.mark.django_db
     @patch(
-        "tracer.services.clickhouse.v2.trace_session_dict_reader."
-        "resolve_session_fields"
+        "tracer.services.clickhouse.v2.trace_session_dict_reader.resolve_session_fields"
     )
     @patch("tracer.views.dashboard.AnalyticsQueryService")
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
@@ -3304,9 +3301,8 @@ class TestWidgetQueryExecution:
 
         assert response.status_code == 200
         sql = mock_client.execute_read.call_args.args[0]
-        # Numeric span attribute read from the trace builder (spans) -- v1 uses
-        # `span_attr_num`, v2 uses `attrs_number` (flips with the DASHBOARD v1/v2
-        # dispatch). Either way it must NOT route to the simulation call table.
+        # v1 emits `span_attr_num`, v2 `attrs_number`; neither may hit the
+        # simulation call table.
         assert ("span_attr_num[" in sql) or ("attrs_number[" in sql)
         assert "FROM spans" in sql
         assert "simulate_call_execution" not in sql
@@ -4746,9 +4742,7 @@ class TestWidgetDuplicate:
         assert data["width"] == dashboard_widget.width
         assert data["query_config"] == dashboard_widget.query_config
         assert (
-            DashboardWidget.objects.filter(
-                dashboard=dashboard, deleted=False
-            ).count()
+            DashboardWidget.objects.filter(dashboard=dashboard, deleted=False).count()
             == 2
         )
 
@@ -4805,7 +4799,7 @@ class TestDashboardWorkspaceIsolation:
 
 
 class TestWidgetConfigPersistence:
-    """TH-7054: a saved widget must keep its query_config (running-suite proof)."""
+    """A saved widget must keep its query_config."""
 
     @pytest.mark.django_db
     def test_widget_update_persists_query_config(
@@ -4889,12 +4883,12 @@ class TestDashboardAuthRequired:
     @pytest.mark.django_db
     def test_unauthenticated_list_is_blocked(self, api_client):
         response = api_client.get("/tracer/dashboard/")
-        assert response.status_code in (401, 403)
+        assert response.status_code == 401
 
     @pytest.mark.django_db
     def test_unauthenticated_metrics_is_blocked(self, api_client):
         response = api_client.get("/tracer/dashboard/metrics/")
-        assert response.status_code in (401, 403)
+        assert response.status_code == 401
 
 
 class TestAnnotationMetricAggregation:
@@ -5037,7 +5031,9 @@ class TestFilterValuesEndpoint:
 
     @pytest.mark.django_db
     def test_invalid_source_returns_400(self, auth_client):
-        response = auth_client.get(self.URL, {"metric_name": "model", "source": "bogus"})
+        response = auth_client.get(
+            self.URL, {"metric_name": "model", "source": "bogus"}
+        )
         assert response.status_code == 400
 
     @pytest.mark.django_db
@@ -5441,9 +5437,7 @@ class TestWidgetWriteIsolation:
     @pytest.mark.django_db
     def test_destroy_foreign_widget_blocked(self, auth_client, organization, user):
         dash, widget = self._foreign(organization, user)
-        resp = auth_client.delete(
-            f"/tracer/dashboard/{dash.id}/widgets/{widget.id}/"
-        )
+        resp = auth_client.delete(f"/tracer/dashboard/{dash.id}/widgets/{widget.id}/")
         assert resp.status_code == 404
         widget.refresh_from_db()
         assert widget.deleted is False
@@ -5467,10 +5461,8 @@ class TestWidgetWriteIsolation:
         resp = auth_client.post(
             f"/tracer/dashboard/{dash.id}/widgets/{widget.id}/duplicate/"
         )
-        # 400, not 404 like the sibling write tests above: duplicate_widget wraps
-        # get_object() in a broad `except Exception`, so the Http404 raised by the
-        # workspace-scoped queryset is swallowed and re-emitted as 400. Isolation
-        # itself works (no copy is created). Tracked in TH-7087.
+        # 400 rather than 404: duplicate_widget catches the queryset's Http404
+        # and re-emits it as 400. Isolation still holds — no copy is created.
         assert resp.status_code == 400
         assert DashboardWidget.objects.filter(dashboard=dash).count() == before
 
@@ -5526,7 +5518,12 @@ class TestQueryEngineFailure:
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
     @patch("tracer.views.dashboard.get_clickhouse_client")
     def test_preview_survives_ch_failure(
-        self, mock_get_client, _mock_enabled, auth_client, dashboard, sample_query_config
+        self,
+        mock_get_client,
+        _mock_enabled,
+        auth_client,
+        dashboard,
+        sample_query_config,
     ):
         client = MagicMock()
         client.execute_read.side_effect = Exception("CH exploded")
@@ -5543,9 +5540,7 @@ class TestWidgetMutationErrorBranches:
     """Nonexistent-target error branches for the mutation actions."""
 
     @pytest.mark.django_db
-    def test_destroy_nonexistent_widget_returns_404(
-        self, auth_client, dashboard
-    ):
+    def test_destroy_nonexistent_widget_returns_404(self, auth_client, dashboard):
         resp = auth_client.delete(
             f"/tracer/dashboard/{dashboard.id}/widgets/{uuid.uuid4()}/"
         )
