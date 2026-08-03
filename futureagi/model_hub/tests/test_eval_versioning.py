@@ -1977,12 +1977,10 @@ class TestMaybePinNewVersion:
 
 
 # =============================================================================
-# Tracing test-tab mapping / project persistence (TH-7114)
+# Tracing test-tab mapping / project persistence
 #
-# The Tracing test tab's variable→trace-field mapping and selected project
-# used to be pure FE state — never persisted, lost on Save Version, and
-# unrecoverable when an older version was re-selected. These verify the
-# per-version snapshot + restore + list-response surface.
+# Verifies the per-version snapshot, restore, and list-response surface for
+# the Tracing tab's variable mapping and selected project.
 # =============================================================================
 
 
