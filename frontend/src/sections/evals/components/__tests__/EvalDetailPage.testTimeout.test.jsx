@@ -21,32 +21,14 @@ import { palette } from "src/theme/palette";
 
 const testTheme = createTheme({ palette: palette("light") });
 
-// TH-7114 (Bug B) — real call-path coverage for the `isTesting` stuck-state
-// fallback in EvalDetailPage.handleTestEvaluation.
+// Save Version calls switchToVersion, which unmounts the active test mode. A
+// test in flight loses the onTestResult callback that clears `isTesting`, so
+// the button stays on "Running..." forever; a 60s fallback clears it.
 //
-// Root cause: clicking "Save Version" calls testPlaygroundRef.switchToVersion,
-// which flips TestPlayground's activeMainTab to "versions" and UNMOUNTS the
-// active test-mode component. If a test was in flight, its onTestResult
-// callback (the only thing that clears isTesting) is dropped with the unmount,
-// so isTesting stays true forever — the button is stuck on "Running..." with
-// no result, no error, no timeout.
-//
-// Fix: after runTest, schedule a 60s fallback that clears isTesting if it's
-// still true (mirrors the identical guard already shipped in
-// EvalCreatePage.jsx's handleTestEvaluation).
-//
-// These tests mount the REAL EvalDetailPage (real handleTestEvaluation, real
-// isTesting state, real handleSaveVersion, real "Test Evaluation" button) and
-// mock ONLY TestPlayground — scoped to isolate EvalDetailPage's own wiring.
-// The mock honors TestPlayground's real contract exactly:
-//   ref  : runTest(tid) / switchToVersion(id) / getMappingState()  (imperative handle)
-//   props: onReadyChange(isReady, mapping) / onTestResult(success, result) /
-//          onVersionSelect(version)
-// From EvalDetailPage's boundary the unmount is observable only as "onTestResult
-// never fires", so the interrupted path is simulated faithfully by driving the
-// real Save Version (which really remounts <TestPlayground key=…>, dropping the
-// mock instance mid-flight) while withholding onTestResult — exactly what the
-// real unmount does to the real callback.
+// Mounts the REAL EvalDetailPage and mocks ONLY TestPlayground, honoring its
+// real contract. From EvalDetailPage's boundary the unmount is observable only
+// as "onTestResult never fires", so the interrupted path is driven by a real
+// Save Version while withholding onTestResult.
 
 const axiosGetMock = vi.hoisted(() => vi.fn());
 const axiosPutMock = vi.hoisted(() => vi.fn());
@@ -228,7 +210,7 @@ const startTest = async () => {
   expect(testButton()).toBeDisabled();
 };
 
-describe("EvalDetailPage → isTesting stuck-state 60s fallback (TH-7114 Bug B)", () => {
+describe("EvalDetailPage → isTesting stuck-state 60s fallback", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
 

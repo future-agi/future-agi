@@ -55,6 +55,10 @@ import {
 } from "../utils/rowPathWalker";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
+import {
+  MAPPING_MODE,
+  unwrapModeMapping,
+} from "../utils/evalMappingPersistence";
 
 const ROW_TYPE_OPTIONS = [
   { value: "Span", label: "Spans", icon: "solar:layers-outline" },
@@ -241,10 +245,11 @@ const TracingTestMode = React.forwardRef(
       // Optional: seed the variable→field mapping (used when editing an
       // already-configured eval so the user's previous mapping is preserved).
       initialMapping = null,
-      // Optional: seed the selected tracing project WITHOUT locking the
-      // picker (Eval Detail page restores the saved project but lets the
-      // user change it — unlike initialProjectId which locks the task flow).
-      initialTracingProjectId = null,
+      // When true, `initialProjectId` is fixed for this flow and the picker is
+      // hidden. Off by default: Eval Detail seeds it but keeps it changeable.
+      lockProject = false,
+      // Version identity; changing it re-seeds the mapping and project.
+      seedKey = "live",
       errorLocalizerEnabled = false,
       isComposite = false,
       compositeAdhocConfig = null,
@@ -265,7 +270,7 @@ const TracingTestMode = React.forwardRef(
     },
     ref,
   ) => {
-    const projectLocked = !!initialProjectId;
+    const projectLocked = lockProject && !!initialProjectId;
     const rowTypeLocked = !!initialRowType;
     const executeCompositeAdhoc = useExecuteCompositeEvalAdhoc();
 
@@ -273,7 +278,7 @@ const TracingTestMode = React.forwardRef(
     const [projects, setProjects] = useState([]);
     const [loadingProjects, setLoadingProjects] = useState(false);
     const [selectedProjectId, setSelectedProjectId] = useState(
-      initialProjectId || initialTracingProjectId || "",
+      initialProjectId || "",
     );
 
     // Row type
@@ -376,40 +381,53 @@ const TracingTestMode = React.forwardRef(
     const [tableSearch, setTableSearch] = useState("");
     const [expandedCols, setExpandedCols] = useState({});
 
-    // Variable mapping
-    const [mapping, setMapping] = useState(() =>
-      initialMapping && typeof initialMapping === "object"
-        ? { ...initialMapping }
-        : {},
+    // Callers may hand over a whole mapping field; take this mode's bucket so
+    // trace paths are never seeded from dataset column ids.
+    const seedMapping = useMemo(
+      () => unwrapModeMapping(initialMapping, MAPPING_MODE.TRACING),
+      [initialMapping],
     );
+
+    // Variable mapping
+    const [mapping, setMapping] = useState(() => ({ ...seedMapping }));
 
     // Seed the mapping / project from a saved version once it arrives. The
     // useState initializer covers the synchronous case; these cover the
     // async case (version loads after mount). Guarded so a user's own edits
     // are never overwritten.
-    const mappingSeededRef = useRef(
-      !!(initialMapping && Object.keys(initialMapping).length),
-    );
+    const mappingSeededRef = useRef(Object.keys(seedMapping).length > 0);
+    // Merge per key, saved wins — auto-map may already have filled some of
+    // them, and an all-or-nothing guard loses that race.
     useEffect(() => {
       if (mappingSeededRef.current) return;
-      if (initialMapping && Object.keys(initialMapping).length) {
+      if (Object.keys(seedMapping).length) {
         mappingSeededRef.current = true;
-        setMapping((prev) =>
-          Object.keys(prev).length ? prev : { ...initialMapping },
-        );
+        setMapping((prev) => ({ ...prev, ...seedMapping }));
       }
-    }, [initialMapping]);
+    }, [seedMapping]);
 
-    const projectSeededRef = useRef(
-      !!(initialProjectId || initialTracingProjectId),
-    );
+    const projectSeededRef = useRef(!!initialProjectId);
     useEffect(() => {
       if (projectSeededRef.current || projectLocked) return;
-      if (initialTracingProjectId) {
+      if (initialProjectId) {
         projectSeededRef.current = true;
-        setSelectedProjectId((prev) => prev || initialTracingProjectId);
+        setSelectedProjectId((prev) => prev || initialProjectId);
       }
-    }, [initialTracingProjectId, projectLocked]);
+    }, [initialProjectId, projectLocked]);
+
+    // Re-seed in place on a version switch. Replace, not merge — the previous
+    // version's keys are not this version's.
+    const seedKeyRef = useRef(seedKey);
+    useEffect(() => {
+      if (seedKeyRef.current === seedKey) return;
+      seedKeyRef.current = seedKey;
+      setMapping({ ...seedMapping });
+      mappingSeededRef.current = Object.keys(seedMapping).length > 0;
+      if (!projectLocked) {
+        setSelectedProjectId(initialProjectId || "");
+        projectSeededRef.current = !!initialProjectId;
+      }
+    }, [seedKey, seedMapping, initialProjectId, projectLocked]);
 
     // Template ID ref (updated via imperative handle for first-test flow)
     const templateIdRef = useRef(templateId);
@@ -1920,6 +1938,8 @@ TracingTestMode.propTypes = {
   onReadyChange: PropTypes.func,
   hasDataInjection: PropTypes.bool,
   initialProjectId: PropTypes.string,
+  lockProject: PropTypes.bool,
+  seedKey: PropTypes.string,
   initialRowType: PropTypes.string,
   initialMapping: PropTypes.object,
   isComposite: PropTypes.bool,
