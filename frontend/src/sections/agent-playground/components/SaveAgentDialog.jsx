@@ -13,6 +13,7 @@ import { buildVersionPayload } from "../utils/versionPayloadUtils";
 import { VERSION_STATUS } from "../utils/constants";
 import { validateGraphForSave } from "../utils/workflowValidation";
 import useWorkflowExecution from "../hooks/useWorkflowExecution";
+import useCanEditAgent from "../hooks/useCanEditAgent";
 
 const formSchema = z.object({
   versionName: z.string().min(1, "Version name is required"),
@@ -46,6 +47,7 @@ export default function SaveAgentDialog() {
     setPendingRunAfterSave: state.setPendingRunAfterSave,
   }));
   const { runWorkflow } = useWorkflowExecution();
+  const { canEditAgent } = useCanEditAgent();
   const form = useForm({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -124,6 +126,7 @@ export default function SaveAgentDialog() {
   });
 
   const handleSaveAgent = () => {
+    if (!canEditAgent) return;
     clearValidationErrors();
 
     const validationResult = validateGraphForSave(nodes, edges);

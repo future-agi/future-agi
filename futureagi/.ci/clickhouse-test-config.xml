@@ -1,0 +1,62 @@
+<?xml version="1.0"?>
+<!--
+  Test-only ClickHouse overrides for the test sidecar (CH 25.3-alpine).
+
+  The legacy CDC mirror schema (tracer/services/clickhouse/schema.py) uses
+  `ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/<table>', '{replica}', …)`.
+  In production these macros are provided by the Helm chart + ZK ensemble.
+  For local testing we run a single-node embedded clickhouse-keeper and
+  hardcode shard/replica macros so `CREATE TABLE` succeeds without an
+  external ZK cluster.
+
+  This file is mounted at `/etc/clickhouse-server/config.d/test-overrides.xml`
+  by docker-compose.test.yml.
+-->
+<clickhouse>
+  <!-- Single-shard, single-replica identifiers so ReplicatedMergeTree paths
+       resolve without external ZK. -->
+  <macros>
+    <shard>01</shard>
+    <replica>test-01</replica>
+  </macros>
+
+  <!-- Embedded ClickHouse Keeper (raft) — single-node quorum. Lets
+       ReplicatedMergeTree tables register without an external ensemble. -->
+  <keeper_server>
+    <tcp_port>9181</tcp_port>
+    <server_id>1</server_id>
+    <log_storage_path>/var/lib/clickhouse/coordination/log</log_storage_path>
+    <snapshot_storage_path>/var/lib/clickhouse/coordination/snapshots</snapshot_storage_path>
+    <coordination_settings>
+      <operation_timeout_ms>10000</operation_timeout_ms>
+      <session_timeout_ms>30000</session_timeout_ms>
+      <raft_logs_level>information</raft_logs_level>
+    </coordination_settings>
+    <raft_configuration>
+      <server>
+        <id>1</id>
+        <hostname>localhost</hostname>
+        <port>9234</port>
+      </server>
+    </raft_configuration>
+  </keeper_server>
+
+  <!-- Point ReplicatedMergeTree at the embedded keeper. -->
+  <zookeeper>
+    <node>
+      <host>localhost</host>
+      <port>9181</port>
+    </node>
+  </zookeeper>
+
+  <!-- Test-only: speed up replication settle so tables become writable fast. -->
+  <profiles>
+    <default>
+      <allow_experimental_json_type>1</allow_experimental_json_type>
+      <enable_json_type>1</enable_json_type>
+      <input_format_skip_unknown_fields>1</input_format_skip_unknown_fields>
+      <date_time_input_format>best_effort</date_time_input_format>
+      <use_skip_indexes_if_final>1</use_skip_indexes_if_final>
+    </default>
+  </profiles>
+</clickhouse>

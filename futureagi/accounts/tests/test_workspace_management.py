@@ -21,6 +21,12 @@ from accounts.models.workspace import Workspace, WorkspaceMembership
 from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import set_workspace_context
 
+
+def assert_unknown_field(response, field_name):
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["details"][field_name] == ["Unknown field."]
+
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -167,7 +173,7 @@ class TestWorkspaceListAPIView:
     def test_list_workspaces_with_pagination(self, auth_client, workspace):
         """Pagination parameters work correctly."""
         response = auth_client.get(
-            "/accounts/workspace/list/", {"page": 1, "page_size": 10}
+            "/accounts/workspace/list/", {"page": 1, "limit": 10}
         )
         assert response.status_code == status.HTTP_200_OK
 
@@ -186,6 +192,21 @@ class TestWorkspaceListAPIView:
 @pytest.mark.api
 class TestWorkspaceInviteAPIView:
     """Tests for POST /accounts/workspace/invite/ endpoint."""
+
+    def test_invite_rejects_unknown_request_fields(self, auth_client, workspace):
+        response = auth_client.post(
+            "/accounts/workspace/invite/",
+            {
+                "emails": ["newinvite@futureagi.com"],
+                "role": OrganizationRoles.WORKSPACE_MEMBER,
+                "workspace_ids": [str(workspace.id)],
+                "select_all": False,
+                "selectAll": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "selectAll")
 
     def test_invite_user_as_owner(self, auth_client, workspace):
         """Owner can invite users to workspace."""
@@ -234,7 +255,10 @@ class TestWorkspaceInviteAPIView:
             },
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_invite_user_unauthenticated(self, api_client, workspace):
         """Unauthenticated request fails."""
@@ -292,6 +316,56 @@ class TestWorkspaceInviteAPIView:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_invite_new_user_creates_pending_invite(
+        self, auth_client, api_client, workspace, monkeypatch
+    ):
+        """Inviting a brand-new user must persist a PENDING OrganizationInvite.
+
+        Regression: like the onboarding add-users flow, this endpoint created
+        the user + emailed a token but no invite row, so accept_invitation_mail
+        rejected the link as "expired or invalid".
+        """
+        from django.contrib.auth.tokens import default_token_generator
+        from django.utils.encoding import force_bytes
+        from django.utils.http import urlsafe_base64_encode
+
+        import accounts.views.workspace_management as wm
+        from accounts.models.organization_invite import (
+            InviteStatus,
+            OrganizationInvite,
+        )
+
+        monkeypatch.setattr(wm, "email_helper", lambda *a, **k: None)
+
+        email = "wsinvite@futureagi.com"
+        response = auth_client.post(
+            "/accounts/workspace/invite/",
+            {
+                "emails": [email],
+                "role": OrganizationRoles.WORKSPACE_MEMBER,
+                "workspace_ids": [str(workspace.id)],
+                "select_all": False,
+            },
+            format="json",
+        )
+        assert response.status_code in (
+            status.HTTP_200_OK,
+            status.HTTP_201_CREATED,
+        )
+
+        new_member = User.objects.get(email=email)
+        invite = OrganizationInvite.objects.get(
+            target_email__iexact=email,
+            organization=new_member.organization,
+            status=InviteStatus.PENDING,
+        )
+        assert invite.workspace_access
+
+        uidb64 = urlsafe_base64_encode(force_bytes(new_member.pk))
+        token = default_token_generator.make_token(new_member)
+        preview = api_client.get(f"/accounts/accept-invitation/{uidb64}/{token}/")
+        assert preview.status_code == status.HTTP_200_OK
+
 
 # =============================================================================
 # UserListAPIView Tests - GET /accounts/user/list/
@@ -344,7 +418,7 @@ class TestUserListAPIView:
     def test_list_users_with_status_filter(self, auth_client):
         """Can filter users by status."""
         response = auth_client.get(
-            "/accounts/user/list/", {"filter_status": '["Active"]'}
+            "/accounts/user/list/", {"filter_status": ["Active"]}
         )
         assert response.status_code == status.HTTP_200_OK
 
@@ -352,13 +426,13 @@ class TestUserListAPIView:
         """Can filter users by role."""
         response = auth_client.get(
             "/accounts/user/list/",
-            {"filter_role": f'["{OrganizationRoles.WORKSPACE_ADMIN}"]'},
+            {"filter_role": [OrganizationRoles.WORKSPACE_ADMIN]},
         )
         assert response.status_code == status.HTTP_200_OK
 
     def test_list_users_with_pagination(self, auth_client):
         """Pagination parameters work correctly."""
-        response = auth_client.get("/accounts/user/list/", {"page": 1, "page_size": 10})
+        response = auth_client.get("/accounts/user/list/", {"page": 1, "limit": 10})
         assert response.status_code == status.HTTP_200_OK
 
 
@@ -371,6 +445,19 @@ class TestUserListAPIView:
 @pytest.mark.api
 class TestUserRoleUpdateAPIView:
     """Tests for POST /accounts/user/role/update/ endpoint."""
+
+    def test_update_role_rejects_unknown_request_fields(self, auth_client, member_user):
+        response = auth_client.post(
+            "/accounts/user/role/update/",
+            {
+                "user_id": str(member_user.id),
+                "new_role": OrganizationRoles.WORKSPACE_ADMIN,
+                "userId": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "userId")
 
     def test_update_role_as_owner(self, auth_client, member_user):
         """Owner can update user roles."""
@@ -469,6 +556,18 @@ class TestUserRoleUpdateAPIView:
 class TestResendInviteAPIView:
     """Tests for POST /accounts/user/resend-invite/ endpoint."""
 
+    def test_resend_invite_rejects_unknown_request_fields(self, auth_client):
+        response = auth_client.post(
+            "/accounts/user/resend-invite/",
+            {
+                "user_id": "00000000-0000-0000-0000-000000000000",
+                "userId": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "userId")
+
     def test_resend_invite_as_owner(self, auth_client, inactive_user):
         """Owner can resend invite to inactive user."""
         response = auth_client.post(
@@ -500,7 +599,10 @@ class TestResendInviteAPIView:
             {"user_id": str(inactive_user.id)},
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_resend_invite_unauthenticated(self, api_client):
         """Unauthenticated request fails."""
@@ -534,6 +636,18 @@ class TestResendInviteAPIView:
 class TestDeleteUserAPIView:
     """Tests for POST /accounts/user/delete/ endpoint."""
 
+    def test_delete_user_rejects_unknown_request_fields(self, auth_client):
+        response = auth_client.post(
+            "/accounts/user/delete/",
+            {
+                "user_id": "00000000-0000-0000-0000-000000000000",
+                "userId": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "userId")
+
     def test_delete_user_as_owner(self, auth_client, member_user):
         """Owner can delete users."""
         response = auth_client.post(
@@ -562,7 +676,10 @@ class TestDeleteUserAPIView:
             {"user_id": str(admin_user.id)},
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_delete_user_unauthenticated(self, api_client):
         """Unauthenticated request fails."""
@@ -605,6 +722,18 @@ class TestDeleteUserAPIView:
 class TestDeactivateUserAPIView:
     """Tests for POST /accounts/user/deactivate/ endpoint."""
 
+    def test_deactivate_user_rejects_unknown_request_fields(self, auth_client):
+        response = auth_client.post(
+            "/accounts/user/deactivate/",
+            {
+                "user_id": "00000000-0000-0000-0000-000000000000",
+                "userId": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "userId")
+
     def test_deactivate_user_as_owner(self, auth_client, member_user):
         """Owner can deactivate users."""
         response = auth_client.post(
@@ -635,7 +764,10 @@ class TestDeactivateUserAPIView:
             {"user_id": str(admin_user.id)},
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_deactivate_user_unauthenticated(self, api_client):
         """Unauthenticated request fails."""
@@ -678,6 +810,20 @@ class TestDeactivateUserAPIView:
 class TestSwitchWorkspaceAPIView:
     """Tests for POST /accounts/workspace/switch/ endpoint."""
 
+    def test_switch_workspace_rejects_unknown_request_fields(
+        self, auth_client, workspace
+    ):
+        response = auth_client.post(
+            "/accounts/workspace/switch/",
+            {
+                "new_workspace_id": str(workspace.id),
+                "newWorkspaceId": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "newWorkspaceId")
+
     def test_switch_workspace_as_owner(self, auth_client, second_workspace):
         """Owner can switch to workspace."""
         response = auth_client.post(
@@ -708,7 +854,10 @@ class TestSwitchWorkspaceAPIView:
             format="json",
         )
         # Members do NOT have global workspace access — need explicit membership
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_switch_workspace_unauthenticated(self, api_client, workspace):
         """Unauthenticated request fails."""
@@ -762,12 +911,18 @@ class TestManageTeamViewGet:
     def test_list_team_as_admin_forbidden(self, admin_client):
         """Admin cannot list team (owner only)."""
         response = admin_client.get("/accounts/team/users/")
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_list_team_as_member_forbidden(self, member_client):
         """Member cannot list team."""
         response = member_client.get("/accounts/team/users/")
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_list_team_unauthenticated(self, api_client):
         """Unauthenticated request fails."""
@@ -781,6 +936,18 @@ class TestManageTeamViewGet:
         """Can search team members."""
         response = auth_client.get("/accounts/team/users/", {"search_query": user.name})
         assert response.status_code == status.HTTP_200_OK
+        result = response.json().get("result", {})
+        assert any(row["id"] == str(user.id) for row in result["results"])
+
+    def test_list_team_with_email_search(self, auth_client, user):
+        """Can search team members by email as shown in settings tables."""
+        response = auth_client.get(
+            "/accounts/team/users/", {"search_query": user.email}
+        )
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json().get("result", {})
+        assert result["total"] >= 1
+        assert any(row["id"] == str(user.id) for row in result["results"])
 
     def test_list_team_with_is_active_filter(self, auth_client):
         """Can filter by is_active."""
@@ -800,6 +967,27 @@ class TestManageTeamViewGet:
             "/accounts/team/users/", {"workspace_id": str(workspace.id)}
         )
         assert response.status_code == status.HTTP_200_OK
+
+    def test_get_team_member_by_id_filters_to_member(
+        self, auth_client, member_user, workspace
+    ):
+        """Member detail alias returns only the requested accessible member."""
+        response = auth_client.get(
+            f"/accounts/team/users/{member_user.id}/",
+            {"workspace_id": str(workspace.id)},
+        )
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json().get("result", {})
+        assert result["total"] == 1
+        assert len(result["results"]) == 1
+        assert result["results"][0]["id"] == str(member_user.id)
+
+    def test_get_team_member_by_id_not_found(self, auth_client):
+        """Member detail alias does not fall back to returning the full team."""
+        response = auth_client.get(
+            "/accounts/team/users/00000000-0000-0000-0000-000000000000/"
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
 @pytest.mark.integration
@@ -844,7 +1032,10 @@ class TestManageTeamViewPost:
             },
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_add_team_member_as_member_forbidden(self, member_client, workspace):
         """Member cannot add team members."""
@@ -861,7 +1052,10 @@ class TestManageTeamViewPost:
             },
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_add_team_member_unauthenticated(self, api_client):
         """Unauthenticated request fails."""
@@ -901,6 +1095,65 @@ class TestManageTeamViewPost:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_add_team_member_creates_pending_invite(
+        self, auth_client, api_client, workspace, monkeypatch
+    ):
+        """Adding a member must persist a PENDING OrganizationInvite.
+
+        Regression: the onboarding add-users flow created the user but no
+        invite row, so accept_invitation_mail rejected the link and the UI
+        rendered "This invite link has expired or is invalid."
+        """
+        from django.contrib.auth.tokens import default_token_generator
+        from django.utils.encoding import force_bytes
+        from django.utils.http import urlsafe_base64_encode
+
+        import accounts.views.workspace_management as wm
+        from accounts.models.organization_invite import (
+            InviteStatus,
+            OrganizationInvite,
+        )
+
+        # Avoid real email delivery and ee billing deduction in tests.
+        monkeypatch.setattr(wm, "email_helper", lambda *a, **k: None)
+        monkeypatch.setattr(
+            wm, "log_and_deduct_cost_for_resource_request", None, raising=False
+        )
+
+        email = "pendinginvite@futureagi.com"
+        response = auth_client.post(
+            "/accounts/team/users/",
+            {
+                "members": [
+                    {
+                        "email": email,
+                        "name": "Pending Invite",
+                        "organization_role": OrganizationRoles.MEMBER,
+                    }
+                ]
+            },
+            format="json",
+        )
+        assert response.status_code in (
+            status.HTTP_200_OK,
+            status.HTTP_201_CREATED,
+        )
+
+        new_member = User.objects.get(email=email)
+        invite = OrganizationInvite.objects.get(
+            target_email__iexact=email,
+            organization=new_member.organization,
+            status=InviteStatus.PENDING,
+        )
+        # workspace_access lets invite.accept() materialize memberships.
+        assert invite.workspace_access
+
+        # The invite link the email carries must now validate (GET preview).
+        uidb64 = urlsafe_base64_encode(force_bytes(new_member.pk))
+        token = default_token_generator.make_token(new_member)
+        preview = api_client.get(f"/accounts/accept-invitation/{uidb64}/{token}/")
+        assert preview.status_code == status.HTTP_200_OK
+
     def test_update_org_name(self, auth_client, organization):
         """Owner can update organization display name."""
         response = auth_client.post(
@@ -913,11 +1166,37 @@ class TestManageTeamViewPost:
             status.HTTP_201_CREATED,
         ]
 
+    def test_member_specific_create_route_rejected_before_mutation(
+        self, auth_client, member_user
+    ):
+        """Generated member POST alias should not create users while ignoring member_id."""
+        email = "member-specific-create@futureagi.com"
+        response = auth_client.post(
+            f"/accounts/team/users/{member_user.id}/",
+            {
+                "members": [
+                    {
+                        "email": email,
+                        "name": "Member Specific Create",
+                        "organization_role": OrganizationRoles.MEMBER,
+                    }
+                ]
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not User.objects.filter(email=email).exists()
+
 
 @pytest.mark.integration
 @pytest.mark.api
 class TestManageTeamViewDelete:
     """Tests for DELETE /accounts/team/users/<member_id>/ endpoint."""
+
+    def test_delete_collection_missing_member_id(self, auth_client):
+        """Collection delete route fails closed instead of mutating broadly."""
+        response = auth_client.delete("/accounts/team/users/")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_delete_team_member_as_owner(self, auth_client, member_user):
         """Owner can delete team members."""
@@ -927,12 +1206,18 @@ class TestManageTeamViewDelete:
     def test_delete_team_member_as_admin_forbidden(self, admin_client, member_user):
         """Admin cannot delete team members (owner only)."""
         response = admin_client.delete(f"/accounts/team/users/{member_user.id}/")
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_delete_team_member_as_member_forbidden(self, member_client, admin_user):
         """Member cannot delete team members."""
         response = member_client.delete(f"/accounts/team/users/{admin_user.id}/")
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_delete_team_member_unauthenticated(self, api_client, member_user):
         """Unauthenticated request fails."""

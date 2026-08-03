@@ -5,8 +5,9 @@ import requests
 import structlog
 from django.contrib.auth.hashers import check_password
 from django.core.cache import cache
-from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -27,12 +28,24 @@ from accounts.models.auth_token import (
 )
 from accounts.models.workspace import OrganizationRoles, Workspace, WorkspaceMembership
 from accounts.serializers import UserSerializer
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    AccountsAccessTokenResponseSerializer,
+    AccountsRedisDeleteResponseSerializer,
+    AccountsRedisSetResponseSerializer,
+    AccountsTokenPairResponseSerializer,
+    LoginRequestSerializer,
+    RedisKeyRequestSerializer,
+    TokenRefreshRequestSerializer,
+    UserChecksResponseSerializer,
+    UserInfoResponseSerializer,
+    UserOnboardingResponseSerializer,
+    UserOnboardingSaveResponseSerializer,
+)
 from accounts.serializers.user import UserOnboardingSerializer
 
 # from accounts.user_onboard import upload_demo_dataset
 from accounts.views.signup import verify_recaptcha
-
-logger = structlog.get_logger(__name__)
 from analytics.utils import (
     MixpanelEvents,
     MixpanelModes,
@@ -44,32 +57,56 @@ from model_hub.models.develop_dataset import Dataset
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.models.experiments import ExperimentsTable
 from tfc.settings import settings
+from tfc.utils.api_contracts import validated_api_request, validated_request
+from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.project import Project
 
+logger = structlog.get_logger(__name__)
 
+
+@swagger_auto_schema(
+    method="post",
+    request_body=RedisKeyRequestSerializer,
+    responses={200: AccountsRedisSetResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
+@swagger_auto_schema(
+    method="delete",
+    request_body=RedisKeyRequestSerializer,
+    responses={200: AccountsRedisDeleteResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["POST", "DELETE"])
 @permission_classes([IsAuthenticated])
+@validated_api_request(
+    request_serializer=RedisKeyRequestSerializer,
+    responses={
+        200: AccountsRedisSetResponseSerializer,
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
+    document=False,
+    reject_unknown_fields=True,
+)
 def manage_redis_key(request):
     gm = GeneralMethods()
     try:
         # Verify access token
-        access_token_id = request.data.get("access_token_id")
+        data = request.validated_data
+        access_token_id = data.get("access_token_id")
         if access_token_id != settings.SECRET_KEY:
             return gm.bad_request("Invalid or expired token")
 
-        key = request.data.get("key")
+        key = data.get("key")
         if not key:
             return gm.bad_request("Key is required")
 
         if request.method == "POST":
-            value = request.data.get("value")
+            value = data.get("value")
             if value is None:
                 return gm.bad_request("Value is required")
 
             # Optional: Set expiration time in seconds
-            expiry = request.data.get("expiry")
+            expiry = data.get("expiry")
             if expiry:
                 cache.set(key, value, timeout=int(expiry))
             else:
@@ -99,10 +136,16 @@ def manage_redis_key(request):
 class CustomTokenObtainPairView(TokenObtainPairView):
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=LoginRequestSerializer,
+        responses={200: AccountsTokenPairResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
         try:
-            email = request.data.get("email", "").lower()
-            remember_me = request.data.get("remember_me", False)
+            validated_data = request.validated_data
+            email = validated_data["email"].lower()
+            remember_me = validated_data.get("remember_me", False)
             client_ip, _ = get_client_ip(request)
 
             # Check if user is blocked
@@ -128,7 +171,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             failed_attempts = cache.get(attempts_key, 0)
 
             # Recaptcha verification
-            recaptcha_token = request.data.get("recaptcha-response")
+            recaptcha_token = validated_data.get("recaptcha_response", "")
             is_localhost = "localhost" in request.get_host()
             is_special_email = "futureagi" in email or "oodles" in email
 
@@ -147,8 +190,6 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 logger.info(
                     "recaptcha verification bypassed for localhost or special email"
                 )
-
-            request.data["email"] = email
 
             try:
                 # Query without is_active filter so we can distinguish
@@ -205,7 +246,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 logger.exception("login_config_save_failed", email=email)
 
             # --- Password check (must come before any token issuance) ---
-            password_entered = request.data.get("password")
+            password_entered = validated_data["password"]
             if password_entered and not check_password(password_entered, user.password):
                 failed_attempts += 1
                 cache.set(
@@ -447,14 +488,23 @@ class CustomTokenRefreshView(APIView):
     _gm = GeneralMethods()
     permission_classes = [AllowAny]
 
+    @validated_request(
+        request_serializer=TokenRefreshRequestSerializer,
+        responses={
+            200: AccountsAccessTokenResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
         try:
+            validated_data = request.validated_data
             # Recaptcha verification
-            recaptcha_token = request.data.get("recaptcha-response")
+            recaptcha_token = validated_data.get("recaptcha_response", "")
             is_localhost = "localhost" in request.get_host()
             # Only allow localhost_bypass in DEBUG mode (security fix)
             localhost_bypass = (
-                request.data.get("localhost_bypass", False) and settings.DEBUG
+                validated_data.get("localhost_bypass", False) and settings.DEBUG
             )
 
             if not (is_localhost or localhost_bypass):
@@ -468,7 +518,7 @@ class CustomTokenRefreshView(APIView):
                     "Refresh recaptcha verification bypassed for localhost or special email"
                 )
 
-            encrypted_refresh_token = request.data.get("refresh")
+            encrypted_refresh_token = validated_data["refresh"]
             if not encrypted_refresh_token:
                 return self._gm.bad_request("Refresh token is required.")
 
@@ -548,6 +598,10 @@ class CustomTokenRefreshView(APIView):
             return self._gm.bad_request("Failed to refresh token.")
 
 
+@swagger_auto_schema(
+    method="get",
+    responses={200: UserInfoResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_user_info(request):
@@ -555,7 +609,13 @@ def get_user_info(request):
         # Use select_related to avoid N+1 queries when accessing user.organization
         user = User.objects.select_related("organization").get(id=request.user.id)
     except User.DoesNotExist:
-        return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(
+            build_error_envelope(
+                "User not found.",
+                status_code=status.HTTP_404_NOT_FOUND,
+            ),
+            status=status.HTTP_404_NOT_FOUND,
+        )
 
     remember_me = user.config.get("remember_me", False)
     user_serializer = UserSerializer(user)
@@ -767,7 +827,6 @@ def get_user_info(request):
     # Add integer RBAC levels alongside existing string roles
     try:
         from accounts.models.organization_membership import OrganizationMembership
-        from tfc.constants.levels import Level
         from tfc.permissions.utils import get_effective_workspace_level
 
         org_membership = OrganizationMembership.objects.filter(
@@ -824,15 +883,104 @@ def get_user_info(request):
     return Response(data)
 
 
-def get_user_checks(user):
+def _workspace_scope_q(workspace, *, relation_prefix="", organization_id=None):
+    if not workspace:
+        return Q()
+
+    workspace_field = f"{relation_prefix}workspace"
+    if not getattr(workspace, "is_default", False):
+        return Q(**{workspace_field: workspace})
+
+    q = Q(**{workspace_field: workspace}) | Q(
+        **{
+            f"{workspace_field}__is_default": True,
+            f"{workspace_field}__organization_id": workspace.organization_id,
+        }
+    )
+    if organization_id:
+        organization_field = f"{relation_prefix}organization_id"
+        q |= Q(
+            **{
+                f"{workspace_field}__isnull": True,
+                organization_field: organization_id,
+            }
+        )
+    return q
+
+
+def _workspace_scope_queryset(
+    queryset, workspace, *, relation_prefix="", organization_id=None
+):
+    if not workspace:
+        return queryset
+    return queryset.filter(
+        _workspace_scope_q(
+            workspace,
+            relation_prefix=relation_prefix,
+            organization_id=organization_id,
+        )
+    )
+
+
+def get_user_checks(user, *, organization=None, workspace=None):
     # Use exists() instead of count() > 0 for better performance
+    organization = organization or user.organization
+    organization_id = getattr(organization, "id", None)
+
+    keys_qs = ApiKey.no_workspace_objects.filter(user=user)
+    datasets_qs = Dataset.no_workspace_objects.filter(user=user)
+    evaluations_qs = UserEvalMetric.no_workspace_objects.filter(user=user)
+    experiments_qs = ExperimentsTable.no_workspace_objects.filter(user=user)
+    observe_qs = Project.no_workspace_objects.filter(trace_type="observe", user=user)
+
+    if organization_id:
+        keys_qs = keys_qs.filter(organization_id=organization_id)
+        datasets_qs = datasets_qs.filter(organization_id=organization_id)
+        evaluations_qs = evaluations_qs.filter(organization_id=organization_id)
+        experiments_qs = experiments_qs.filter(dataset__organization_id=organization_id)
+        observe_qs = observe_qs.filter(organization_id=organization_id)
+
+    keys_qs = _workspace_scope_queryset(
+        keys_qs, workspace, organization_id=organization_id
+    )
+    datasets_qs = _workspace_scope_queryset(
+        datasets_qs, workspace, organization_id=organization_id
+    )
+    evaluations_qs = _workspace_scope_queryset(
+        evaluations_qs, workspace, organization_id=organization_id
+    )
+    experiments_qs = _workspace_scope_queryset(
+        experiments_qs,
+        workspace,
+        relation_prefix="dataset__",
+        organization_id=organization_id,
+    )
+    observe_qs = _workspace_scope_queryset(
+        observe_qs, workspace, organization_id=organization_id
+    )
+
+    if workspace:
+        invite_exists = (
+            WorkspaceMembership.no_workspace_objects.filter(
+                workspace=workspace,
+                is_active=True,
+            )
+            .filter(Q(invited_by=user) | Q(user__invited_by=user))
+            .exists()
+        )
+    else:
+        invite_qs = User.objects.filter(invited_by=user)
+        if organization_id:
+            invite_qs = invite_qs.filter(organization_id=organization_id)
+        invite_exists = invite_qs.exists()
+
     return {
-        "keys": ApiKey.objects.filter(user=user).exists(),
-        "dataset": Dataset.objects.filter(user=user).exists(),
-        "evaluation": UserEvalMetric.objects.filter(user=user).exists(),
-        "experiment": ExperimentsTable.objects.filter(user=user).exists(),
-        "observe": Project.objects.filter(trace_type="observe", user=user).exists(),
-        "invite": User.objects.filter(invited_by=user).exists(),
+        "keys": keys_qs.exists(),
+        "dataset": datasets_qs.exists(),
+        "evaluation": evaluations_qs.exists(),
+        "experiment": experiments_qs.exists(),
+        "observe": observe_qs.exists(),
+        "invite": invite_exists,
     }
 
 
@@ -840,6 +988,9 @@ class FirstChecksView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: UserChecksResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    )
     def get(self, request):
         try:
             user = request.user
@@ -855,7 +1006,12 @@ class FirstChecksView(APIView):
                     "invite": True,
                 }
             else:
-                result = get_user_checks(user)
+                result = get_user_checks(
+                    user,
+                    organization=getattr(request, "organization", None)
+                    or user.organization,
+                    workspace=getattr(request, "workspace", None),
+                )
             return self._gm.success_response(result)
         except Exception as e:
             logger.exception(f"Error in get started api: {e}")
@@ -864,8 +1020,27 @@ class FirstChecksView(APIView):
             )
 
 
+@swagger_auto_schema(
+    method="get",
+    responses={200: UserOnboardingResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
+@swagger_auto_schema(
+    method="post",
+    request_body=UserOnboardingSerializer,
+    responses={200: UserOnboardingSaveResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["POST", "GET"])
 @permission_classes([IsAuthenticated])
+@validated_api_request(
+    request_serializer=UserOnboardingSerializer,
+    responses={
+        200: UserOnboardingSaveResponseSerializer,
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
+    request_methods=["POST"],
+    document=False,
+    reject_unknown_fields=True,
+)
 def user_onboarding(request):
     """
     Handle user onboarding data (role and goals)
@@ -906,12 +1081,7 @@ def user_onboarding(request):
 
     elif request.method == "POST":
         try:
-            # Validate the incoming data
-            serializer = UserOnboardingSerializer(data=request.data)
-            if not serializer.is_valid():
-                return _gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
+            validated_data = request.validated_data
 
             # Get the user
             user = User.objects.get(id=request.user.id)

@@ -1,14 +1,6 @@
 import React from "react";
-import { Helmet } from "react-helmet-async";
-import FeedView from "./FeedView";
+import { Navigate } from "react-router-dom";
 
 export default function Feed() {
-  return (
-    <>
-      <Helmet>
-        <title>Feed</title>
-      </Helmet>
-      <FeedView />
-    </>
-  );
+  return <Navigate to="/dashboard/error-feed" replace />;
 }

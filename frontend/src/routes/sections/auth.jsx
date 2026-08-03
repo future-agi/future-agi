@@ -5,7 +5,7 @@ import { Suspense } from "react";
 import lazyWithRetry from "src/utils/lazyWithRetry";
 import { Outlet } from "react-router-dom";
 
-import { AuthGuard, GuestGuard } from "src/auth/guard";
+import { AuthGuard, GuestGuard, OssRestrictedGuard } from "src/auth/guard";
 import AuthClassicLayout from "src/layouts/auth/classic";
 
 import { SplashScreen } from "src/components/loading-screen";
@@ -70,9 +70,11 @@ const authJwt = {
     {
       path: "forget-password",
       element: (
-        <AuthClassicLayout>
-          <ForgetPassword />
-        </AuthClassicLayout>
+        <OssRestrictedGuard redirectHint="reset">
+          <AuthClassicLayout>
+            <ForgetPassword />
+          </AuthClassicLayout>
+        </OssRestrictedGuard>
       ),
     },
     {
@@ -85,14 +87,20 @@ const authJwt = {
     },
     {
       path: "register",
-      element: <JwtRegisterPage />,
+      element: (
+        <OssRestrictedGuard redirectHint="create">
+          <JwtRegisterPage />
+        </OssRestrictedGuard>
+      ),
     },
     {
       path: "sso-sml",
       element: (
-        <AuthClassicLayout>
-          <SSOLogin />
-        </AuthClassicLayout>
+        <OssRestrictedGuard redirectHint="create">
+          <AuthClassicLayout>
+            <SSOLogin />
+          </AuthClassicLayout>
+        </OssRestrictedGuard>
       ),
     },
     {

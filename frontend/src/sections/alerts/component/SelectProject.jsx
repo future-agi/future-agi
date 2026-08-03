@@ -90,6 +90,7 @@ export default function SelectProject({
           value={value}
           onChange={(e) => onChange(e?.target?.value)}
           options={projectOptions}
+          inputProps={{ "data-alert-field": "project" }}
         />
       </DialogContent>
       <DialogActions
@@ -113,6 +114,7 @@ export default function SelectProject({
           color={"primary"}
           size="small"
           variant="contained"
+          data-alert-project-action="next"
           onClick={() => {
             if (!value) return;
             onAction();

@@ -75,21 +75,6 @@ type RerankProvider interface {
 	Rerank(ctx context.Context, req *models.RerankRequest) (*models.RerankResponse, error)
 }
 
-// BatchProvider is implemented by providers that support native batch processing
-// (e.g., OpenAI Batch API). If not implemented, the gateway falls back to
-// concurrent request-level processing.
-type BatchProvider interface {
-	// SubmitBatch submits a batch of requests to the provider's native batch API.
-	// Returns the provider-assigned batch ID.
-	SubmitBatch(ctx context.Context, requests []models.BatchRequest) (string, error)
-
-	// GetBatch retrieves the current status of a provider batch.
-	GetBatch(ctx context.Context, batchID string) (*models.ProviderBatchStatus, error)
-
-	// CancelBatch cancels a provider batch.
-	CancelBatch(ctx context.Context, batchID string) error
-}
-
 // AssistantsProvider is implemented by providers that support the OpenAI Assistants API.
 type AssistantsProvider interface {
 	// ProxyAssistantsRequest forwards a non-streaming Assistants API request.

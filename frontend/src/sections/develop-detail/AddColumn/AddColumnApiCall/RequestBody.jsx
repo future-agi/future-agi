@@ -122,7 +122,11 @@ const RequestBody = ({
       jsonSchemas?.[column?.field]?.keys?.forEach((path) => {
         const fullPath = `${name}.${path}`;
         if (fullPath.toLowerCase().startsWith(lower)) {
-          options.push({ label: fullPath, value: `{{${fullPath}}}`, isJsonPath: true });
+          options.push({
+            label: fullPath,
+            value: `{{${fullPath}}}`,
+            isJsonPath: true,
+          });
         }
       });
     });
@@ -356,7 +360,8 @@ const RequestBody = ({
             border: "1px solid transparent",
             borderRadius: "8px",
             pointerEvents: "none",
-            color: theme.palette.text.primary,
+            color: "transparent",
+            zIndex: 1,
             overflow: "hidden",
           }}
         >
@@ -384,11 +389,11 @@ const RequestBody = ({
             padding: inputPadding,
             ...(multiline
               ? { minHeight: "200px", resize: "none" }
-              : { resize: "none", overflow: "hidden" }),
+              : { resize: "none", overflowX: "auto", overflowY: "hidden" }),
             border: `1px solid ${isError ? theme.palette.error.main : theme.palette.divider}`,
             borderRadius: "8px",
             outline: "none",
-            color: "transparent",
+            color: theme.palette.text.primary,
             caretColor: theme.palette.text.primary,
             backgroundColor: "transparent",
             position: "relative",
@@ -436,9 +441,7 @@ const RequestBody = ({
                   mx: 0.5,
                   color: variable.isJsonPath ? "primary.main" : "text.primary",
                   backgroundColor:
-                    index === selectedIndex
-                      ? "action.selected"
-                      : "inherit",
+                    index === selectedIndex ? "action.selected" : "inherit",
                   "&:hover": { backgroundColor: "action.hover" },
                   "&:focus": { outline: "none" },
                 }}

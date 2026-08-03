@@ -18,12 +18,15 @@ import { SIMULATION_TYPE } from "src/components/run-tests/common";
 import {
   statusStyles,
   STOPPABLE_STATUSES,
+  TERMINAL_STATUSES,
   useCancelExecution,
 } from "src/sections/common/simulation";
 
 import { useTestDetailContext } from "../context/TestDetailContext";
 import { useTestRunsGridStore } from "../states";
 import { useTestRunsSearchStoreShallow } from "./states";
+
+const POLL_INTERVAL_MS = 5000;
 
 // ── Cell renderers ──
 
@@ -399,6 +402,15 @@ const TestRunsGrid = ({ agentType, simulationType }) => {
     select: (d) => d.data,
     keepPreviousData: true,
     enabled: !!testId,
+    // Poll while any run is still in progress so the row auto-populates on completion.
+    refetchInterval: (query) => {
+      const rows = query?.state?.data?.data?.results ?? [];
+      const anyInProgress = rows.some(
+        (row) => !TERMINAL_STATUSES.includes(row.status),
+      );
+      return anyInProgress ? POLL_INTERVAL_MS : false;
+    },
+    refetchIntervalInBackground: false,
   });
 
   const items = useMemo(() => data?.results ?? [], [data]);

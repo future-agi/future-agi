@@ -16,6 +16,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { getTypeConfig } from "./spanTypeConfig";
+import { SpanTypes } from "src/utils/constant";
 
 // ---------------------------------------------------------------------------
 // Default config — used for "Reset view"
@@ -160,15 +161,7 @@ ViewTabButton.propTypes = {
 // Span type options
 // ---------------------------------------------------------------------------
 
-const SPAN_TYPES = [
-  { key: "chain", label: "Chain" },
-  { key: "tool", label: "Tool" },
-  { key: "llm", label: "LLM" },
-  { key: "agent", label: "Agent" },
-  { key: "retriever", label: "Retriever" },
-  { key: "embedding", label: "Embedding" },
-  { key: "generation", label: "Generation" },
-];
+const SPAN_TYPES = SpanTypes.map((s) => ({ key: s.value, label: s.label }));
 
 // ---------------------------------------------------------------------------
 // TraceDisplayPanel

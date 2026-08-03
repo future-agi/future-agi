@@ -3,7 +3,7 @@ import { endpoints, fetchWithPost } from "src/utils/axios";
 import useSWR from "swr";
 
 export function useModelPerformance(modelId, details) {
-  const URL = `${endpoints.model.performance}/${modelId}/`;
+  const URL = endpoints.model.performance(modelId);
 
   const { data, isLoading, error, isValidating } = useSWR(
     [URL, details],

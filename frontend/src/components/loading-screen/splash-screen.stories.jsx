@@ -1,11 +1,11 @@
-import React from 'react';
-import SplashScreen from './splash-screen';
+import React from "react";
+import SplashScreen from "./splash-screen";
 
 export default {
-  title: 'Components/SplashScreen',
+  title: "Components/SplashScreen",
   component: SplashScreen,
   parameters: {
-    layout: 'centered',
+    layout: "centered",
   },
 };
 
@@ -18,7 +18,7 @@ export const Default = {
 export const CustomBackground = {
   args: {
     sx: {
-      bgcolor: 'primary.main',
+      bgcolor: "primary.main",
     },
   },
 };
@@ -27,15 +27,15 @@ export const CustomBackground = {
 export const CustomSize = {
   args: {
     sx: {
-      '& img': {
-        height: '48px',
-        width: '48px',
+      "& img": {
+        height: "48px",
+        width: "48px",
       },
-      '& > div:nth-of-type(2)': {
+      "& > div:nth-of-type(2)": {
         width: 150,
         height: 150,
       },
-      '& > div:nth-of-type(3)': {
+      "& > div:nth-of-type(3)": {
         width: 180,
         height: 180,
       },
@@ -47,16 +47,16 @@ export const CustomSize = {
 export const FastAnimation = {
   args: {
     sx: {
-      '& > div:first-of-type': {
-        '& > div': {
+      "& > div:first-of-type": {
+        "& > div": {
           transition: {
             duration: 1,
             repeatDelay: 0.5,
           },
         },
       },
-      '& > div:nth-of-type(2), & > div:nth-of-type(3)': {
-        '& > div': {
+      "& > div:nth-of-type(2), & > div:nth-of-type(3)": {
+        "& > div": {
           transition: {
             duration: 1.6,
           },
@@ -64,4 +64,4 @@ export const FastAnimation = {
       },
     },
   },
-}; 
+};

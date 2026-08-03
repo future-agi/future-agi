@@ -238,15 +238,12 @@ const WorkspaceSwitcher = ({ collapsed }) => {
   const wsDisplayLabel =
     currentWorkspaceDisplayName ||
     user?.default_workspace_display_name ||
-    user?.defaultWorkspaceDisplayName ||
     "Workspace";
 
   const allowedToInvite = ["Owner", "Admin", "workspace_admin"];
   const canInvite =
     allowedToInvite.includes(
-      currentWorkspaceRole ||
-        user?.default_workspace_role ||
-        user?.defaultWorkspaceRole,
+      currentWorkspaceRole || user?.default_workspace_role,
     ) || allowedToInvite.includes(currentOrganizationRole);
 
   const onLogoutClick = () => {
@@ -367,9 +364,9 @@ const WorkspaceSwitcher = ({ collapsed }) => {
         <SectionHeader
           label="WORKSPACE"
           onAdd={
-            (user?.ws_enabled ?? user?.wsEnabled) &&
-            ((user?.organization_role ?? user?.organizationRole) === "Owner" ||
-              (user?.organization_role ?? user?.organizationRole) === "Admin")
+            user?.ws_enabled &&
+            (user?.organization_role === "Owner" ||
+              user?.organization_role === "Admin")
               ? () => {
                   setOpen(false);
                   useCreateWorkspaceModal.getState().setOpen(true);
@@ -382,7 +379,7 @@ const WorkspaceSwitcher = ({ collapsed }) => {
         />
 
         {/* Current workspace with sub-menu */}
-        {(user?.ws_enabled ?? user?.wsEnabled) && (
+        {user?.ws_enabled && (
           <AvatarRow
             letter={wsDisplayLabel?.slice(0, 1)}
             label={wsDisplayLabel}

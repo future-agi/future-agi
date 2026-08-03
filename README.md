@@ -505,7 +505,13 @@ We love contributions — bug fixes, new evaluators, framework integrations, doc
 
 ##  Telemetry
 
-Self-hosted Future AGI phones home **anonymous usage counts only** (version, instance ID, feature flags used) so we can size our release testing. **No trace data, no prompts, no API keys**, ever. Opt out via `FUTURE_AGI_TELEMETRY_DISABLED=1`.
+Self-hosted Future AGI collects deployment telemetry to help us size release testing and understand feature adoption. **No trace data, no prompts, no API keys**, ever.
+
+**What is collected:**
+- **Registration** (once, on first boot): instance ID, version, deployment type, and the **email addresses and domains** of active admin users.
+- **Heartbeat** (periodic): anonymous aggregate usage counts.
+
+Set `FUTURE_AGI_TELEMETRY_DISABLED=1` in `.env` (or `deploy/.env.production` for the production overlay) to opt out. When disabled the instance still sends a single minimal census ping — instance ID, version, deployment type, **no emails** — once after the first start, and no heartbeats. The ping lets us count how many self-hosted installs are out there; turn networking off at the edge if you need full silence.
 
 ---
 

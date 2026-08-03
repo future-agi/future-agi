@@ -25,6 +25,8 @@ from google.genai.types import GenerateContentConfig, HttpOptions, Part, Thinkin
 from litellm import completion
 from openai import AsyncOpenAI, OpenAI
 
+from agentic_eval.core.database.ch_vector import get_clickhouse_client_kwargs
+
 logger = structlog.get_logger(__name__)
 from agentic_eval.core.llm.audio_utils import (
     is_audio_url,
@@ -88,13 +90,7 @@ def log_to_clickhouse(log_data: LogData) -> None:
         Exception: If there's an error connecting to or writing to ClickHouse.
     """
     try:
-        client = Client(
-            host=os.getenv("CH_HOST"),
-            port=os.getenv("CH_PORT"),
-            user=os.getenv("CH_USERNAME"),
-            password=os.getenv("CH_PASSWORD"),
-            database=os.getenv("CH_DATABASE"),
-        )
+        client = Client(**get_clickhouse_client_kwargs())
 
         query = """
         INSERT INTO llm_logs (
@@ -293,7 +289,7 @@ class LLM:
             "aws_bedrock": {
                 "aws_access_key": os.getenv("AWS_ACCESS_KEY_ID"),
                 "aws_secret_key": os.getenv("AWS_SECRET_ACCESS_KEY"),
-                "aws_region": "us-west-2",
+                "aws_region": os.getenv("AWS_BEDROCK_REGION", "us-west-2"),
             },
         }
 
@@ -2090,10 +2086,11 @@ class LLM:
 
             # Handle API key scenarios
             if isinstance(self.api_key, dict):
-                payload["custom_llm_provider"] = provider
-                if provider == "bedrock" or provider.startswith("azure"):
+                provider_str = provider or ""
+                payload["custom_llm_provider"] = provider_str
+                if provider_str == "bedrock" or provider_str.startswith("azure"):
                     payload.update(self.api_key)
-                elif provider.startswith("vertex_ai"):
+                elif provider_str.startswith("vertex_ai"):
                     vertex_location = (
                         self.api_key.get("location")
                         if isinstance(self.api_key, dict)
@@ -2107,7 +2104,7 @@ class LLM:
                     payload["vertex_credentials"] = json.dumps(creds)
                     if vertex_location:
                         payload["vertex_location"] = vertex_location
-                elif provider == "openai":
+                elif provider_str == "openai":
                     if "key" in self.api_key:
                         api_key_dict = self.api_key.copy()
                         if "api_base" in api_key_dict:

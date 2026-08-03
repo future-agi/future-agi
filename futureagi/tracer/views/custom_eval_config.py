@@ -13,13 +13,16 @@ logger = structlog.get_logger(__name__)
 from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.serializers.develop_optimisation import EvalTemplateSerializer
+from tfc.routers import uses_db
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
+from tracer.db_routing import DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.observation_span import EvalLogger, ObservationSpan
+from tracer.models.observation_span import EvalLogger
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.serializers.custom_eval_config import (
+    CustomEvalConfigListQuerySerializer,
     CustomEvalConfigSerializer,
     GetCustomEvalTemplateSerializer,
     RunEvaluationSerializer,
@@ -238,28 +241,37 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             )
 
     @action(detail=False, methods=["get"])
+    @uses_db(
+        DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST,
+        feature_key="feature:custom_eval_config_list",
+    )
     def list_custom_eval_configs(self, request, *args, **kwargs):
         """
-        List CustomEvalConfigs filtered by the filters provided in the request body.
+        List CustomEvalConfigs filtered by canonical query parameters.
         """
         try:
-            filters = request.query_params.get("filters", {})
-            task_id = request.query_params.get(
-                "task_id", None
-            ) or request.query_params.get("taskId", None)
-            if filters:
-                filters = json.loads(filters)
-            if not isinstance(filters, dict):
-                return self._gm.bad_request("Filters must be a dictionary")
+            query_serializer = CustomEvalConfigListQuerySerializer(
+                data=request.query_params
+            )
+            if not query_serializer.is_valid():
+                return self._gm.bad_request(query_serializer.errors)
+            query_data = query_serializer.validated_data
+            task_id = query_data.get("task_id")
 
-            queryset = CustomEvalConfig.objects.filter(
+            # Pure-routing change: only the alias is different from the
+            # original query. CustomEvalConfigSerializer.get_eval_group()
+            # does `obj.eval_group.name` per row — that per-row FK fetch
+            # still goes through the router for EvalGroup (likely landing
+            # on `default`) and remains a pre-existing N+1. We do NOT fix
+            # that here — fixing the serializer is a separate refactor.
+            queryset = CustomEvalConfig.objects.db_manager(
+                DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST
+            ).filter(
                 deleted=False,
                 project__organization=getattr(request, "organization", None)
                 or request.user.organization,
             ).all()
-            project_id = request.query_params.get(
-                "project_id"
-            ) or request.query_params.get("projectId")
+            project_id = query_data.get("project_id")
             if project_id:
                 queryset = queryset.filter(project_id=project_id)
 
@@ -333,27 +345,41 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
                     f"Custom eval config with id {custom_eval_config.id} not found in the project version"
                 )
 
-            observation_spans = ObservationSpan.objects.filter(
-                project_version_id=project_version.id,
-                observation_type=req_eval_tag.get("value").lower(),
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
-            )
+            # Fetch spans from CH 25.3 — was ObservationSpan.objects.filter(
+            # project_version_id=, observation_type=, project__organization=).
+            # Org-tenant scope is already guaranteed: ``project_version`` was
+            # fetched above with ``project__organization=`` so its
+            # ``project_id`` is in the caller's org. CHSpanReader's
+            # ``list_by_project`` ANDs ``is_deleted=0`` already.
+            from tracer.services.clickhouse.v2 import get_reader
 
-            if observation_spans.count() == 0:
+            with get_reader() as reader:
+                ch_spans = reader.list_by_project(
+                    str(project_version.project_id),
+                    project_version_id=str(project_version.id),
+                    observation_type=req_eval_tag.get("value").lower(),
+                )
+
+            if not ch_spans:
                 return self._gm.bad_request(
                     f"No observation spans found for the custom eval config with id {custom_eval_config.id}"
                 )
 
-            # mark all previous eval_logger as deleted
+            span_ids = [span.id for span in ch_spans]
+
+            # Mark all previous eval_logger as deleted. Was
+            # ``EvalLogger.objects.filter(observation_span__in=<qs>)`` which
+            # joined on the FK; substitute the PK ``__in`` form using the
+            # collected CH span ids (EvalLogger.observation_span_id is the
+            # underlying column the FK resolves to).
             EvalLogger.objects.filter(
-                observation_span__in=observation_spans,
+                observation_span_id__in=span_ids,
                 custom_eval_config=custom_eval_config,
             ).update(deleted=True, deleted_at=timezone.now())
 
-            for observation_span in observation_spans:
+            for span_id in span_ids:
                 evaluate_observation_span.delay(
-                    observation_span.id,
+                    span_id,
                     custom_eval_config.id,
                 )
 

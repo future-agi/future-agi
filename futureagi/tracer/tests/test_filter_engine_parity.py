@@ -121,6 +121,8 @@ class TestSystemMetricAliases:
             ("tokens", "total_tokens"),
             ("prompt_tokens", "avg_input_tokens"),
             ("completion_tokens", "avg_output_tokens"),
+            ("input", "input"),
+            ("output", "output"),
         ],
     )
     def test_pg_filter_engine_accepts_frontend_and_canonical_ids(
@@ -182,6 +184,55 @@ class TestInMemoryFilterOps:
         out = engine._filter_text(objs, "k", "is_null", None, ColType.NORMAL)
         assert len(out) == 3  # "", None, missing
 
+    def test_apply_filters_routes_array_filters_to_array_membership(self):
+        engine = FilterEngine(
+            [
+                {"tags": ["vip", "beta"]},
+                {"tags": ["internal"]},
+                {"tags": "vip"},
+                {},
+            ]
+        )
+
+        out = engine.apply_filters(
+            [
+                {
+                    "column_id": "tags",
+                    "filter_config": {
+                        "filter_type": "array",
+                        "filter_op": "contains",
+                        "filter_value": ["vip"],
+                    },
+                }
+            ]
+        )
+
+        assert out == [{"tags": ["vip", "beta"]}]
+
+    def test_apply_filters_array_not_contains_supports_multi_value(self):
+        engine = FilterEngine(
+            [
+                {"tags": ["vip", "beta"]},
+                {"tags": ["internal"]},
+                {"tags": ["stable"]},
+            ]
+        )
+
+        out = engine.apply_filters(
+            [
+                {
+                    "column_id": "tags",
+                    "filter_config": {
+                        "filter_type": "array",
+                        "filter_op": "not_contains",
+                        "filter_value": ["vip", "internal"],
+                    },
+                }
+            ]
+        )
+
+        assert out == [{"tags": ["stable"]}]
+
     def test_filter_boolean_native_true(self):
         engine = FilterEngine([])
         objs = [{"b": True}, {"b": False}, {"b": "true"}]
@@ -202,7 +253,9 @@ class TestLegacyOpsRaiseInMemory:
     def test_filter_number_rejects_not_in_between(self):
         engine = FilterEngine([])
         with pytest.raises(ValueError):
-            engine._filter_number([{"x": 1}], "x", "not_in_between", [0, 10], ColType.NORMAL)
+            engine._filter_number(
+                [{"x": 1}], "x", "not_in_between", [0, 10], ColType.NORMAL
+            )
 
     def test_filter_text_rejects_is(self):
         engine = FilterEngine([])

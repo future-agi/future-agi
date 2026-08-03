@@ -16,6 +16,7 @@ export const WebSocketContext = createContext();
 
 const RECONNECT_INTERVAL = 5000;
 const MAX_RECONNECT_DELAY = 30000; // 30 seconds max delay
+const MAX_RECONNECT_ATTEMPTS = 10; // Give up after this many consecutive failures
 const HEARTBEAT_INTERVAL = 10000;
 
 export const WebSocketProvider = ({ children }) => {
@@ -102,6 +103,18 @@ export const WebSocketProvider = ({ children }) => {
       socketRef.current?.readyState === WebSocket.OPEN ||
       socketRef.current?.readyState === WebSocket.CONNECTING
     ) {
+      return;
+    }
+
+    // Reconnection permanently exhausted — stop retrying. The single actionable
+    // exception is emitted from errorHandler once this cap is reached; here we
+    // just stop the loop so transient drops don't retry forever.
+    if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
+      logger.addBreadcrumb({
+        category: "websocket",
+        level: "warning",
+        message: `WebSocket reconnection exhausted after ${reconnectAttempts.current} attempts`,
+      });
       return;
     }
 
@@ -193,7 +206,20 @@ export const WebSocketProvider = ({ children }) => {
       );
       wsError.name = "WebSocketError";
 
-      logger.error("WebSocket error:", wsError, errorContext);
+      // Transient WS drops (network blips, navigation, token expiry, proxy
+      // idle-timeout) are routine and must NOT create Sentry issues. Record a
+      // breadcrumb for context and only capture an exception once reconnection
+      // is permanently exhausted (the final attempt).
+      if (reconnectAttempts.current >= MAX_RECONNECT_ATTEMPTS) {
+        logger.error("WebSocket error:", wsError, errorContext);
+      } else {
+        logger.addBreadcrumb({
+          category: "websocket",
+          level: "warning",
+          message: wsError.message,
+          data: errorContext,
+        });
+      }
       setError("WebSocket connection error");
       setIsConnected(false);
 

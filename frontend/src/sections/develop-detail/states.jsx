@@ -253,6 +253,11 @@ export const useDevelopSearchStore = create((set) => ({
   setSearch: (value) => set(() => ({ search: value })),
 }));
 
+export const useCompositeEvalStore = create((set) => ({
+  compositeEval: null,
+  setCompositeEval: (value) => set(() => ({ compositeEval: value })),
+}));
+
 export const useDatapointDrawerStore = create((set) => ({
   datapoint: null,
   column: null,

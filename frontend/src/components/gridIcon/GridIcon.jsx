@@ -23,7 +23,7 @@ const GridIcon = memo(({ src, alt, sx, ...other }) => {
   );
 });
 
-GridIcon.displayName = 'GridIcon';
+GridIcon.displayName = "GridIcon";
 
 GridIcon.propTypes = {
   src: PropTypes.string.isRequired,

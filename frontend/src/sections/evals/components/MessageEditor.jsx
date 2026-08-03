@@ -4,11 +4,13 @@ import {
   IconButton,
   MenuItem,
   Select,
-  Typography,
+  Tooltip,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import { useCallback, useMemo } from "react";
 import Iconify from "src/components/iconify";
+import SvgColor from "src/components/svg-color";
+import { ShowComponent } from "src/components/show";
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import MessageEditorBlock from "./MessageEditorBlock";
 import ModelSelector from "./ModelSelector";
@@ -17,21 +19,6 @@ const ROLES = [
   { value: "system", label: "System" },
   { value: "user", label: "User" },
   { value: "assistant", label: "Assistant" },
-];
-
-const TEMPLATE_FORMATS = [
-  {
-    value: "mustache",
-    label: "Mustache",
-    icon: "{{x}}",
-    description: "{{variable}}",
-  },
-  {
-    value: "jinja",
-    label: "Jinja",
-    icon: "{% %}",
-    description: "{{ variable }}, {% if %}",
-  },
 ];
 
 const JINJA_KEYWORDS = [
@@ -46,23 +33,33 @@ const JINJA_KEYWORDS = [
 
 /**
  * Multi-message prompt editor for LLM-As-A-Judge.
- * Uses the same PromptEditor (Quill) as the agent InstructionEditor
- * for consistent variable autocomplete and styling.
+ *
+ * Renders a single bordered box (Falcon AI bar at the top when open, the
+ * message cards joined by dividers, and a bottom bar with the model
+ * selector + Add message + Falcon AI trigger) so it looks visually
+ * identical to the agent InstructionEditor. The template-format picker
+ * and the "Prompt Messages" label live in the parent LLMPromptEditor's
+ * header row, mirroring the agent layout.
+ *
+ * Uses the same PromptEditor (Quill) as the agent InstructionEditor for
+ * consistent variable autocomplete and styling.
  */
 const MessageEditor = ({
   messages = [{ role: "system", content: "" }],
   onChange,
   templateFormat = "mustache",
-  onTemplateFormatChange,
   datasetColumns = [],
   datasetJsonSchemas = {},
   disabled = false,
   modelSelectorDisabled,
-  // Optional model selector — when provided, renders inline in the top
-  // bar alongside the template format picker so LLM-as-a-judge has the
-  // same top-bar layout as the agent InstructionEditor.
   model,
   onModelChange,
+  // Falcon AI: the parent renders the AI bar node (shown at the top of
+  // the box when open) and passes the trigger handler for the bottom-bar
+  // icon. aiOpen hides the trigger while the bar is open, matching agent.
+  aiBar,
+  onFalconClick,
+  aiOpen = false,
 }) => {
   // Build dropdown options for variable autocomplete (same logic as InstructionEditor)
   const dropdownOptions = useMemo(() => {
@@ -181,18 +178,124 @@ const MessageEditor = ({
         : "Enter message content...";
 
   return (
-    <Box>
-      {/* Top bar — model selector on the left, template format selector
-          on the right. Matches the top bar of InstructionEditor (agent
-          flow) so LLM-as-a-judge and agent editors look consistent. */}
-      {(onModelChange || onTemplateFormatChange) && (
+    <>
+      <Box
+        sx={{
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: "8px",
+          "&:focus-within": {
+            borderColor: disabled ? undefined : "primary.main",
+          },
+          ...(disabled && {
+            cursor: "not-allowed",
+            "& .ql-editor, & .ql-container, & .ql-toolbar": {
+              cursor: "not-allowed !important",
+            },
+          }),
+        }}
+      >
+        {/* ── Falcon AI bar (rendered at the top of the box when open) ── */}
+        {aiBar}
+
+        {/* ── Message cards — joined inside the single bordered box and
+          separated by dividers, mirroring the agent InstructionEditor's
+          single editor box. ── */}
+        <Box sx={{ display: "flex", flexDirection: "column" }}>
+          {messages.map((msg, i) => (
+            <Box
+              key={i}
+              sx={{
+                borderBottom: i < messages.length - 1 ? "1px solid" : "none",
+                borderColor: "divider",
+              }}
+            >
+              {/* Role header */}
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  px: 1.5,
+                  pt: 1,
+                  pb: 0.5,
+                }}
+              >
+                <Select
+                  size="small"
+                  value={msg.role}
+                  onChange={(e) => handleUpdateRole(i, e.target.value)}
+                  disabled={disabled}
+                  variant="standard"
+                  disableUnderline
+                  sx={{
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    "& .MuiSelect-select": { py: 0, pr: "28px !important" },
+                    "& .MuiSelect-icon": { right: 0 },
+                  }}
+                >
+                  {ROLES.map((r) => (
+                    <MenuItem
+                      key={r.value}
+                      value={r.value}
+                      sx={{ fontSize: "13px" }}
+                    >
+                      {r.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.25 }}>
+                  {messages.length > 1 && (
+                    <IconButton
+                      size="small"
+                      onClick={() => handleRemoveMessage(i)}
+                      disabled={disabled}
+                      sx={{ p: 0.25, opacity: 0.5, "&:hover": { opacity: 1 } }}
+                    >
+                      <Iconify icon="mdi:close" width={14} />
+                    </IconButton>
+                  )}
+                </Box>
+              </Box>
+
+              {/* Content — same PromptEditor as agent InstructionEditor */}
+              <MessageEditorBlock
+                content={msg.content}
+                onContentChange={(text) => handleUpdateContent(i, text)}
+                placeholder={i === 0 ? placeholder : "Enter message content..."}
+                minHeight={i === 0 ? 80 : 50}
+                dropdownOptions={dropdownOptions}
+                mentionEnabled={mentionEnabled}
+                mentionDenotationChars={denotationChars}
+                onMentionSelect={
+                  templateFormat === "jinja" ? handleMentionSelect : undefined
+                }
+                disabled={disabled}
+                templateFormat={templateFormat}
+                allVariablesValid={templateFormat !== "jinja"}
+                variableValidator={
+                  templateFormat === "jinja" ? variableValidator : undefined
+                }
+                jinjaMode={templateFormat === "jinja"}
+              />
+            </Box>
+          ))}
+        </Box>
+
+        {/* ── Bottom bar inside the box: model selector (left) + Add message
+          + Falcon AI trigger (right), separated by a top divider —
+          identical in spirit to the agent InstructionEditor's model bar. ── */}
         <Box
           sx={{
+            px: 1.5,
+            py: 1,
+            borderTop: "1px solid",
+            borderColor: "divider",
             display: "flex",
             alignItems: "center",
-            justifyContent: "space-between",
             gap: 1,
-            mb: 0.75,
           }}
         >
           {onModelChange ? (
@@ -208,174 +311,32 @@ const MessageEditor = ({
           ) : (
             <Box sx={{ flex: 1 }} />
           )}
-          {onTemplateFormatChange && (
-            <Select
-              size="small"
-              value={templateFormat}
-              onChange={(e) => onTemplateFormatChange?.(e.target.value)}
-              disabled={disabled}
-              variant="outlined"
-              sx={{
-                fontSize: "13px",
-                height: 30,
-                borderColor: "divider",
-                "& .MuiOutlinedInput-notchedOutline": {
-                  borderColor: "divider",
-                },
-              }}
-              renderValue={(val) => {
-                const fmt = TEMPLATE_FORMATS.find((f) => f.value === val);
-                return (
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                    <Typography
-                      sx={{
-                        fontSize: "12px",
-                        fontFamily: "monospace",
-                        fontWeight: 600,
-                      }}
-                    >
-                      {fmt?.icon}
-                    </Typography>
-                    <Typography sx={{ fontSize: "12px" }}>
-                      {fmt?.label}
-                    </Typography>
-                  </Box>
-                );
-              }}
-            >
-              {TEMPLATE_FORMATS.map((fmt) => (
-                <MenuItem
-                  key={fmt.value}
-                  value={fmt.value}
-                  sx={{ fontSize: "13px", gap: 1 }}
-                >
-                  <Typography
-                    sx={{
-                      fontSize: "12px",
-                      fontFamily: "monospace",
-                      fontWeight: 600,
-                      minWidth: 32,
-                    }}
-                  >
-                    {fmt.icon}
-                  </Typography>
-                  <Box>
-                    <Typography variant="body2" sx={{ fontSize: "13px" }}>
-                      {fmt.label}
-                    </Typography>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ fontSize: "11px" }}
-                    >
-                      {fmt.description}
-                    </Typography>
-                  </Box>
-                </MenuItem>
-              ))}
-            </Select>
-          )}
-        </Box>
-      )}
 
-      {/* Message cards */}
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 0 }}>
-        {messages.map((msg, i) => (
-          <Box
-            key={i}
-            sx={{
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius:
-                i === 0
-                  ? "8px 8px 0 0"
-                  : i === messages.length - 1
-                    ? "0 0 8px 8px"
-                    : 0,
-              borderTop: i > 0 ? "none" : undefined,
-              "&:focus-within": {
-                borderColor: "primary.main",
-                zIndex: 1,
-                position: "relative",
-              },
-            }}
-          >
-            {/* Role header */}
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                px: 1.5,
-                pt: 1,
-                pb: 0.5,
-              }}
-            >
-              <Select
+          <ShowComponent condition={onFalconClick && !aiOpen}>
+            <Tooltip title="Generate with Falcon AI" arrow placement="top">
+              <IconButton
                 size="small"
-                value={msg.role}
-                onChange={(e) => handleUpdateRole(i, e.target.value)}
+                onClick={onFalconClick}
                 disabled={disabled}
-                variant="standard"
-                disableUnderline
                 sx={{
-                  fontSize: "13px",
-                  fontWeight: 600,
-                  "& .MuiSelect-select": { py: 0, pr: 2 },
+                  width: 32,
+                  height: 32,
+                  flexShrink: 0,
+                  "&:hover": { backgroundColor: "background.aiHover" },
                 }}
               >
-                {ROLES.map((r) => (
-                  <MenuItem
-                    key={r.value}
-                    value={r.value}
-                    sx={{ fontSize: "13px" }}
-                  >
-                    {r.label}
-                  </MenuItem>
-                ))}
-              </Select>
-
-              <Box sx={{ display: "flex", alignItems: "center", gap: 0.25 }}>
-                {messages.length > 1 && (
-                  <IconButton
-                    size="small"
-                    onClick={() => handleRemoveMessage(i)}
-                    disabled={disabled}
-                    sx={{ p: 0.25, opacity: 0.5, "&:hover": { opacity: 1 } }}
-                  >
-                    <Iconify icon="mdi:close" width={14} />
-                  </IconButton>
-                )}
-              </Box>
-            </Box>
-
-            {/* Content — same PromptEditor as agent InstructionEditor */}
-            <MessageEditorBlock
-              content={msg.content}
-              onContentChange={(text) => handleUpdateContent(i, text)}
-              placeholder={i === 0 ? placeholder : "Enter message content..."}
-              minHeight={i === 0 ? 80 : 50}
-              dropdownOptions={dropdownOptions}
-              mentionEnabled={mentionEnabled}
-              mentionDenotationChars={denotationChars}
-              onMentionSelect={
-                templateFormat === "jinja" ? handleMentionSelect : undefined
-              }
-              disabled={disabled}
-              templateFormat={templateFormat}
-              allVariablesValid={templateFormat !== "jinja"}
-              variableValidator={
-                templateFormat === "jinja" ? variableValidator : undefined
-              }
-              jinjaMode={templateFormat === "jinja"}
-            />
-          </Box>
-        ))}
+                <SvgColor
+                  src="/assets/icons/navbar/ic_falcon_ai.svg"
+                  sx={{ width: 20, height: 20, color: "primary.main" }}
+                />
+              </IconButton>
+            </Tooltip>
+          </ShowComponent>
+        </Box>
       </Box>
 
-      {/* Bottom bar: + Message. Template format moved to the top bar
-          above for parity with the agent InstructionEditor. */}
-      <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 1 }}>
+      {/* ── Add message — sits outside the box, bottom-left. ── */}
+      <Box sx={{ mt: 1 }}>
         <Button
           size="small"
           variant="outlined"
@@ -393,7 +354,7 @@ const MessageEditor = ({
           Message
         </Button>
       </Box>
-    </Box>
+    </>
   );
 };
 
@@ -406,13 +367,15 @@ MessageEditor.propTypes = {
   ),
   onChange: PropTypes.func.isRequired,
   templateFormat: PropTypes.oneOf(["mustache", "jinja"]),
-  onTemplateFormatChange: PropTypes.func,
   model: PropTypes.string,
   onModelChange: PropTypes.func,
   datasetColumns: PropTypes.array,
   datasetJsonSchemas: PropTypes.object,
   disabled: PropTypes.bool,
   modelSelectorDisabled: PropTypes.bool,
+  aiBar: PropTypes.node,
+  onFalconClick: PropTypes.func,
+  aiOpen: PropTypes.bool,
 };
 
 export default MessageEditor;

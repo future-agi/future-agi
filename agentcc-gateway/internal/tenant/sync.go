@@ -16,8 +16,8 @@ var syncHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
 // SyncFromControlPlane fetches all org configs from the Django control plane
 // bulk endpoint and loads them into the tenant store. If the control plane is
-// unreachable, it logs a warning and returns nil (gateway starts with an empty
-// store — org configs will be pushed later via the admin API).
+// unreachable, it logs a warning and returns an error so background retry loops
+// can keep trying while the gateway continues serving with its current store.
 func SyncFromControlPlane(ctx context.Context, baseURL, adminToken string, store *Store) error {
 	if baseURL == "" {
 		slog.Info("control plane sync skipped: no URL configured")

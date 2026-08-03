@@ -8,7 +8,8 @@ Domain-specific workflow starters should be in their respective feature's client
 
 import asyncio
 import concurrent.futures
-from typing import Any, Callable, Optional, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 from temporalio.client import Client, WorkflowExecutionStatus, WorkflowHandle
 from temporalio.common import WorkflowIDReusePolicy
@@ -57,7 +58,7 @@ def _run_async_in_sync_context(async_coro_fn: Callable[[], Any]) -> Any:
 # Singleton Client
 # =============================================================================
 
-_client: Optional[Client] = None
+_client: Client | None = None
 _client_lock = asyncio.Lock()
 
 
@@ -200,7 +201,7 @@ def start_workflow_sync(
     )
 
 
-async def get_workflow_status_async(workflow_id: str) -> Optional[dict]:
+async def get_workflow_status_async(workflow_id: str) -> dict | None:
     """
     Get the status of a workflow.
 
@@ -231,7 +232,7 @@ async def get_workflow_status_async(workflow_id: str) -> Optional[dict]:
         return None
 
 
-def get_workflow_status_sync(workflow_id: str) -> Optional[dict]:
+def get_workflow_status_sync(workflow_id: str) -> dict | None:
     """Get workflow status synchronously with OTel context propagation."""
     return _run_async_in_sync_context(lambda: get_workflow_status_async(workflow_id))
 
@@ -259,6 +260,28 @@ async def cancel_workflow_async(workflow_id: str) -> bool:
 def cancel_workflow_sync(workflow_id: str) -> bool:
     """Cancel a workflow synchronously with OTel context propagation."""
     return _run_async_in_sync_context(lambda: cancel_workflow_async(workflow_id))
+
+
+async def signal_workflow_async(workflow_id: str, signal: str, *args) -> bool:
+    """Send a signal to a running workflow.
+
+    Returns True if delivered, False if the workflow isn't found / already
+    closed (best-effort: callers fall back to the durable DB state).
+    """
+    client = await get_client()
+    try:
+        handle = client.get_workflow_handle(workflow_id)
+        await handle.signal(signal, *args)
+        return True
+    except Exception:
+        return False
+
+
+def signal_workflow_sync(workflow_id: str, signal: str, *args) -> bool:
+    """Signal a workflow synchronously with OTel context propagation."""
+    return _run_async_in_sync_context(
+        lambda: signal_workflow_async(workflow_id, signal, *args)
+    )
 
 
 async def get_workflow_result_async(workflow_id: str, timeout: float = 3600) -> Any:

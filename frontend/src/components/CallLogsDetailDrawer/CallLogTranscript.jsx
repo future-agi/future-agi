@@ -6,7 +6,7 @@ import TranscriptConversationCard from "./TranscriptConversationCard";
 const CallLogTranscript = ({ data }) => {
   const filteredTranscript = useMemo(() => {
     const transcript = data?.transcripts;
-    return transcript?.filter((item) => item.speakerRole !== "system");
+    return transcript?.filter((item) => item.speaker_role !== "system");
   }, [data]);
   return (
     <Stack

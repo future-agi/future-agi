@@ -18,6 +18,7 @@ import { useUrlState } from "src/routes/hooks/use-url-state";
 import axios, { endpoints } from "src/utils/axios";
 import { useQuery } from "@tanstack/react-query";
 import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
+import { hydrateStoredFilterList } from "src/api/contracts/filter-contract";
 import {
   useUpdateSavedView,
   useUpdateWorkspaceSavedView,
@@ -103,8 +104,8 @@ const USER_FILTER_FIELDS = [
 // Default filter and date range
 const defaultFilterBase = [
   {
-    columnId: "",
-    filterConfig: { filterType: "", filterOp: "", filterValue: "" },
+    column_id: "",
+    filter_config: { filter_type: "", filter_op: "", filter_value: "" },
   },
 ];
 
@@ -148,6 +149,8 @@ const UsersView = ({
     removeCustomColumns,
     openCustomColumnDialog,
     setOpenCustomColumnDialog,
+    searchQuery,
+    sortParams,
   } = useUsersStore(
     useShallow((state) => ({
       clearSelection: state.clearSelection,
@@ -160,6 +163,8 @@ const UsersView = ({
       removeCustomColumns: state.removeCustomColumns,
       openCustomColumnDialog: state.openCustomColumnDialog,
       setOpenCustomColumnDialog: state.setOpenCustomColumnDialog,
+      searchQuery: state.searchQuery,
+      sortParams: state.sortParams,
     })),
   );
 
@@ -218,14 +223,6 @@ const UsersView = ({
     }
   }, [gridApi]);
 
-  useEffect(() => {
-    setHeaderConfig((prev) => ({
-      ...prev,
-      text: "Users",
-      refreshData: refreshUsers,
-    }));
-  }, [refreshUsers, setHeaderConfig]);
-
   // --- Filter & date state ---
   const defaultDateFilter = useMemo(() => getDefaultDateRange(), []);
 
@@ -261,48 +258,10 @@ const UsersView = ({
   );
   const [showCompare, setShowCompare] = useUrlState("userShowCompare", false);
 
-  // Combine validated filters with extra filters
-  // extraFilters from ObserveToolbar use snake_case keys (column_id, filter_config)
-  // validatedFilters from useLLMTracingFilters use camelCase keys (columnId, filterConfig)
-  // Normalize extra filters to camelCase so useGetValidatedFilters in UsersGrid accepts them
+  // Combine canonical filter arrays. Both sources already use the API shape.
   const finalFilters = useMemo(() => {
     if (!extraFilters.length) return validatedFilters;
-
-    // ObserveToolbar number operators → Zod AllowedOperators
-    const opFixMap = {
-      equal_to: "equals",
-      not_equal_to: "not_equals",
-      not_between: "not_in_between",
-    };
-
-    const normalized = extraFilters.map((f) => {
-      const rawOp =
-        f.filter_config?.filter_op || f.filterConfig?.filterOp || "equals";
-      const rawType =
-        f.filter_config?.filter_type || f.filterConfig?.filterType || "text";
-      const rawValue =
-        f.filter_config?.filter_value ?? f.filterConfig?.filterValue ?? "";
-
-      // Number values arrive as comma-joined strings; Zod expects arrays
-      let filterValue = rawValue;
-      if (rawType === "number" && typeof rawValue === "string") {
-        filterValue = rawValue.includes(",") ? rawValue.split(",") : [rawValue];
-      }
-
-      return {
-        columnId: f.column_id || f.columnId || "",
-        _meta: { parentProperty: "" },
-        filterConfig: {
-          filterType: rawType,
-          filterOp: opFixMap[rawOp] || rawOp,
-          filterValue,
-          ...(f.filter_config?.col_type && {
-            col_type: f.filter_config.col_type,
-          }),
-        },
-      };
-    });
-    return [...validatedFilters, ...normalized];
+    return [...validatedFilters, ...extraFilters];
   }, [validatedFilters, extraFilters]);
 
   // --- Row height ---
@@ -317,6 +276,19 @@ const UsersView = ({
   useEffect(() => {
     useUsersStore.setState({ filters: finalFilters });
   }, [finalFilters]);
+
+  // Must live after finalFilters so the export button sees the current filter set.
+  // search + sort ride along too, so the CSV matches a searched/sorted grid.
+  useEffect(() => {
+    setHeaderConfig((prev) => ({
+      ...prev,
+      text: "Users",
+      filterUsers: finalFilters,
+      searchUsers: searchQuery,
+      sortUsers: sortParams,
+      refreshData: refreshUsers,
+    }));
+  }, [refreshUsers, finalFilters, searchQuery, sortParams, setHeaderConfig]);
 
   // Saved-view api — populates a ref the parent UsersPageTabBar drives.
   const getConfig = useCallback(() => {
@@ -338,14 +310,12 @@ const UsersView = ({
         showErrors,
         showNonAnnotated,
         hasEvalFilter,
+        dateFilter,
         visibleColumns,
         ...(columnState ? { columnState } : {}),
         ...(customColumns.length > 0 ? { customColumns } : {}),
       },
-      filters: {
-        extraFilters,
-        dateFilter,
-      },
+      extra_filters: extraFilters || [],
     };
   }, [
     columns,
@@ -513,7 +483,6 @@ const UsersView = ({
         return;
       }
       const display = config.display || {};
-      const filtersCfg = config.filters || {};
       if (display.cellHeight) setCellHeight(display.cellHeight);
       if (typeof display.showErrors === "boolean")
         setShowErrors(display.showErrors);
@@ -566,11 +535,11 @@ const UsersView = ({
           pendingColumnStateRef.current = display.columnState;
         }
       }
-      if (Array.isArray(filtersCfg.extraFilters)) {
-        setExtraFilters(filtersCfg.extraFilters);
+      if (Array.isArray(config.extra_filters)) {
+        setExtraFilters(hydrateStoredFilterList(config.extra_filters));
       }
-      if (filtersCfg.dateFilter) {
-        setDateFilter(filtersCfg.dateFilter);
+      if (display.dateFilter) {
+        setDateFilter(display.dateFilter);
       }
     },
     [
@@ -629,15 +598,16 @@ const UsersView = ({
   }, [savedViewApiRef, getConfig, applyConfig]);
 
   // "Save view" surfaces only on a custom saved-view tab when the live state
-  // diverges from its saved baseline. UsersView's config nests dateFilter
-  // inside `filters` (not `display` like LLMTracingView/SessionsView).
+  // diverges from its saved baseline. User saved-view metadata lives in
+  // `display`; filter lists are first-class top-level config keys.
   const canSaveView = useMemo(() => {
     if (!activeViewConfig) return false;
 
-    const baselineFilters = activeViewConfig.filters || {};
     const baselineDisplay = activeViewConfig.display || {};
-    const baselineExtraFilters = baselineFilters.extraFilters || [];
-    const baselineDateOption = baselineFilters.dateFilter?.dateOption ?? null;
+    const baselineExtraFilters = hydrateStoredFilterList(
+      activeViewConfig.extra_filters,
+    );
+    const baselineDateOption = baselineDisplay.dateFilter?.dateOption ?? null;
 
     // The `actions` column is an always-present UI column (not user data); its
     // visibility/position must not count toward "modified" (TH-6119).
@@ -951,31 +921,31 @@ const UsersView = ({
           pt: 1,
         }}
       >
-        {/* Empty state */}
-        {shouldShowEmptyLayout && (
-          <Box
-            sx={{
-              flex: 1,
-              display: "flex",
-              justifyContent: "center",
-            }}
-          >
-            <UsersEmptyScreen />
-          </Box>
-        )}
+        <Box
+          sx={{
+            flex: 1,
+            display: shouldShowEmptyLayout ? "flex" : "none",
+            justifyContent: "center",
+          }}
+        >
+          {shouldShowEmptyLayout && <UsersEmptyScreen />}
+        </Box>
 
-        {/* Grid */}
-        {shouldShowGrid && (
-          <Box sx={{ flex: 1, display: "flex", flexDirection: "column" }}>
-            <UsersGrid
-              setHasData={setHasData}
-              setIsLoading={setIsLoading}
-              setSearchState={setSearchState}
-              hasActiveFilter={hasActiveFilter}
-              cellHeight={cellHeight}
-            />
-          </Box>
-        )}
+        <Box
+          sx={{
+            flex: 1,
+            display: shouldShowGrid ? "flex" : "none",
+            flexDirection: "column",
+          }}
+        >
+          <UsersGrid
+            setHasData={setHasData}
+            setIsLoading={setIsLoading}
+            setSearchState={setSearchState}
+            hasActiveFilter={hasActiveFilter}
+            cellHeight={cellHeight}
+          />
+        </Box>
       </Box>
 
       {/* Column visibility popover */}

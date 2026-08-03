@@ -52,7 +52,7 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
   const { data: savedViewsData } =
     useGetWorkspaceSavedViews(USER_DETAIL_TAB_TYPE);
   const customViews = useMemo(
-    () => savedViewsData?.customViews ?? savedViewsData?.custom_views ?? [],
+    () => savedViewsData?.custom_views ?? [],
     [savedViewsData],
   );
 
@@ -155,19 +155,17 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
       lastAppliedTabRef.current = activeTab;
       return;
     }
-    const cached = queryClient.getQueryData([
+    const cachedResult = queryClient.getQueryData([
       SAVED_VIEWS_KEY,
       "workspace",
       USER_DETAIL_TAB_TYPE,
     ]);
-    const cachedResult = cached?.data?.result;
-    const cachedList =
-      cachedResult?.customViews ?? cachedResult?.custom_views ?? [];
+    const cachedList = cachedResult?.custom_views ?? [];
     const view =
       cachedList.find((v) => v.id === id) ??
       customViews.find((v) => v.id === id);
     if (view?.config) {
-      const subTab = view.config.sub_tab || view.config.subTab || "sessions";
+      const subTab = view.config.sub_tab || "sessions";
       // Seed URL state first so the sub-view can read correct filter/date
       // values on its first render, avoiding a default-then-saved double fetch
       // (the flash). Apply via setActiveViewConfig still handles non-URL
@@ -206,8 +204,7 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
       } else {
         const id = activeTab?.startsWith?.("view-") ? activeTab.slice(5) : null;
         const view = id ? customViews.find((v) => v.id === id) : null;
-        targetSubTab =
-          view?.config?.sub_tab || view?.config?.subTab || "sessions";
+        targetSubTab = view?.config?.sub_tab || "sessions";
       }
       // Live snapshot of the currently-mounted sub-view (LLMTracingView /
       // SessionsView register their buildViewConfig on the shared
@@ -341,8 +338,7 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
             isActive={activeTab === `view-${view.id}`}
             isRenaming={renamingId === view.id}
             onClick={(key) => {
-              const subTab =
-                view.config?.sub_tab || view.config?.subTab || "sessions";
+              const subTab = view.config?.sub_tab || "sessions";
               // Seed URL synchronously in the same click tick so the tab
               // switch, URL params, and sub-view mount all happen in one
               // React commit. Without this the sub-view mounts first with

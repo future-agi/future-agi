@@ -314,6 +314,29 @@ describe("AnnotationQueueTable", () => {
       expect(screen.getByText("Archive")).toBeInTheDocument();
     });
 
+    it("shows only restore actions in archived view", async () => {
+      const user = userEvent.setup();
+      const onRestore = vi.fn();
+      render(
+        <AnnotationQueueTable
+          {...defaultProps}
+          archivedView
+          onRestore={onRestore}
+        />,
+      );
+
+      await user.click(
+        screen.getAllByRole("button", { name: /restore queue/i })[0],
+      );
+
+      expect(screen.getByText("Restore")).toBeInTheDocument();
+      expect(screen.queryByText("Edit")).not.toBeInTheDocument();
+      expect(screen.queryByText("Archive")).not.toBeInTheDocument();
+
+      await user.click(screen.getByText("Restore"));
+      expect(onRestore).toHaveBeenCalledWith(MOCK_QUEUES[0]);
+    });
+
     it("uses viewer roles to show manager actions for workspace/org admins", async () => {
       const user = userEvent.setup();
       render(
