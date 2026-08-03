@@ -224,6 +224,76 @@ _LEAN_SELECT_SQL = ", ".join(
 # FINAL, so the predicate is redundant and only arms the resurrection bug.
 _FINAL_SKIP_INDEX_SETTINGS = {"use_skip_indexes_if_final": 1}
 
+# FINAL merges every part covering the queried key range, so its cost tracks the
+# project's span volume, not the number of ids asked for. On dev: a 500-id heavy
+# read is 2,358ms / 3.4GiB peak under FINAL vs 123ms / 67MiB here, same rows
+# (TH-7226). Opt-in per caller — this reader also backs feed / dataset / evals.
+#
+# This MUST equal the live table's ORDER BY — a shorter key over-collapses, a
+# different one under-collapses, and either is silent. `test_sorting_key_matches
+# _the_live_spans_table` pins it against system.tables so drift fails a test
+# rather than a production read.
+_SORTING_KEY_PARTS: tuple[str, ...] = (
+    "project_id",
+    "observation_type",
+    "service_name",
+    "toStartOfHour(start_time)",
+    "trace_id",
+    "id",
+)
+_SORTING_KEY = ", ".join(_SORTING_KEY_PARTS)
+
+# Two key columns are unavailable under their own names inside the dedup
+# subquery: project_id is exposed to callers as project_id_str, and service_name
+# is not in the read set at all. Both are re-selected under private aliases, and
+# the LIMIT 1 BY clause is DERIVED from the key above rather than restated, so
+# the two cannot drift apart.
+_DEDUP_KEY_ALIASES = {
+    "project_id": "_dedup_project",
+    "service_name": "_dedup_service",
+}
+_DEDUP_KEY = ", ".join(
+    _DEDUP_KEY_ALIASES.get(part, part) for part in _SORTING_KEY_PARTS
+)
+
+
+def _output_name(column: str) -> str:
+    """The name a ``_READ_COLUMNS`` entry exposes to an enclosing query."""
+    return column.rsplit(" AS ", 1)[-1].strip() if " AS " in column else column.strip()
+
+
+def _named_select(include_heavy: bool) -> str:
+    """``_SELECT_SQL`` / ``_LEAN_SELECT_SQL`` with the stubs named, so an
+    enclosing query can project them (``'' AS span_events``, not a bare ``''``)."""
+    return ", ".join(
+        f"'' AS {_output_name(col)}"
+        if not include_heavy and col in _HEAVY_COLUMNS
+        else col
+        for col in _READ_COLUMNS
+    )
+
+
+def _dedup_sql(where: str, order_by: str, *, include_heavy: bool) -> str:
+    """ReplacingMergeTree resolved without ``FINAL``. Same column shape/order as
+    the FINAL read, so ``_row_to_chspan`` decodes it unchanged.
+
+    ``is_deleted = 0`` MUST stay on the outer query: filtered inside the dedup,
+    a row whose newest version is deleted resurrects as its older live version.
+    """
+    projection = ", ".join(_output_name(col) for col in _READ_COLUMNS)
+    aliases = ", ".join(
+        f"{col} AS {alias}" for col, alias in _DEDUP_KEY_ALIASES.items()
+    )
+    return (
+        f"SELECT {projection} FROM ("
+        f" SELECT {_named_select(include_heavy)}, {aliases}"
+        f" FROM spans WHERE {where}"
+        f" ORDER BY _version DESC"
+        f" LIMIT 1 BY {_DEDUP_KEY}"
+        f") WHERE is_deleted = 0 {order_by}"
+    )
+
+
 # Order in which result_rows columns arrive — bare names (no `AS` aliases) for the
 # row→dataclass mapping below.
 _DATA_KEYS: tuple[str, ...] = (
@@ -676,6 +746,7 @@ class CHSpanReader:
         include_heavy: bool = False,
         project_id: str | None = None,
         org_id: str | None = None,
+        dedup_via_limit_by: bool = False,
     ) -> list[CHSpan]:
         """Parentless spans for the given traces, same shape/order as
         list_by_trace_ids. Fetches one row per root instead of every span.
@@ -704,13 +775,16 @@ class CHSpanReader:
         if org_id:
             where.append("org_id = %(oid)s")
             params["oid"] = str(org_id)
-        rows = self._client.query(
-            f"SELECT {select} FROM spans FINAL "
-            f"WHERE {' AND '.join(where)} "
-            "ORDER BY trace_id, start_time, id",
-            parameters=params,
-            settings=_FINAL_SKIP_INDEX_SETTINGS,
-        ).result_rows
+        order_by = "ORDER BY trace_id, start_time, id"
+        if dedup_via_limit_by:
+            sql = _dedup_sql(" AND ".join(where), order_by, include_heavy=include_heavy)
+            # Skip indexes need no coaxing without FINAL, and the is_deleted
+            # minmax hazard that setting guards against does not arise.
+            settings: dict[str, Any] = {}
+        else:
+            sql = f"SELECT {select} FROM spans FINAL WHERE {' AND '.join(where)} {order_by}"
+            settings = _FINAL_SKIP_INDEX_SETTINGS
+        rows = self._client.query(sql, parameters=params, settings=settings).result_rows
         return [_row_to_chspan(r) for r in rows]
 
     # ─── Per-trace rollups (latency / tokens) ─────────────────────────────────
@@ -779,6 +853,7 @@ class CHSpanReader:
         include_heavy: bool = True,
         project_id: str | None = None,
         org_id: str | None = None,
+        dedup_via_limit_by: bool = False,
     ) -> list[CHSpan]:
         """Equivalent to ObservationSpan.objects.filter(id__in=span_ids).
 
@@ -804,11 +879,18 @@ class CHSpanReader:
         if org_id:
             where.append("org_id = %(oid)s")
             params["oid"] = str(org_id)
-        rows = self._client.query(
-            f"SELECT {select} FROM spans FINAL WHERE {' AND '.join(where)} ORDER BY id",
-            parameters=params,
-            settings=_FINAL_SKIP_INDEX_SETTINGS,
-        ).result_rows
+        if dedup_via_limit_by:
+            sql = _dedup_sql(
+                " AND ".join(where), "ORDER BY id", include_heavy=include_heavy
+            )
+            settings: dict[str, Any] = {}
+        else:
+            sql = (
+                f"SELECT {select} FROM spans FINAL "
+                f"WHERE {' AND '.join(where)} ORDER BY id"
+            )
+            settings = _FINAL_SKIP_INDEX_SETTINGS
+        rows = self._client.query(sql, parameters=params, settings=settings).result_rows
         return [_row_to_chspan(r) for r in rows]
 
     def export_fields_by_ids(

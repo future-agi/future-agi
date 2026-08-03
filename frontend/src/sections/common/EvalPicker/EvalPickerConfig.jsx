@@ -20,6 +20,8 @@ import {
   DEFAULT_EVAL_MODEL,
   getEvalBaseName,
 } from "src/sections/common/EvaluationDrawer/common";
+import { FAGI_MODEL_VALUES } from "src/sections/evals/components/ModelSelector";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { FUTUREAGI_LLM_MODELS } from "src/sections/common/EvaluationDrawer/validation";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
 import { normalizeEvalPickerEval } from "./evalPickerValue";
@@ -113,6 +115,7 @@ function autoMapVariables(variables, sourceColumns) {
 
 const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
   const theme = useTheme();
+  const { isOSS } = useDeploymentMode();
   const { sourceColumns } = useEvalPickerContext();
   const normalizedEvalData = useMemo(
     () => normalizeEvalPickerEval(evalData),
@@ -143,9 +146,10 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
   const [evalName, setEvalName] = useState(() => {
     return `${getEvalBaseName(normalizedEvalData)}_${format(new Date(), "dd_MMM_yyyy")}`;
   });
-  const [model, setModel] = useState(
-    normalizedEvalData?.model || DEFAULT_EVAL_MODEL,
-  );
+  const [model, setModel] = useState(() => {
+    const seeded = normalizedEvalData?.model || DEFAULT_EVAL_MODEL;
+    return isOSS && FAGI_MODEL_VALUES.has(seeded) ? "" : seeded;
+  });
   const [mapping, setMapping] = useState(() =>
     autoMapVariables(variables, sourceColumns),
   );

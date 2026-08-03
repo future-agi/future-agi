@@ -21,6 +21,8 @@ These are pure query-string / pivot-logic tests — NO ClickHouse, NO DB.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 from django.test import override_settings
 
@@ -247,6 +249,33 @@ class TestBuildIdQuery:
         assert "ORDER BY" not in sql
         assert "LIMIT %(id_limit)s" not in sql
         assert "id_limit" not in params
+
+    def test_continuous_floor_windows_on_created_at(self):
+        floor = datetime(2026, 8, 1, 12, 0)
+        sql, params = _make_builder().build_id_query(created_at_floor=floor)
+        # Arrival floor replaces the start_time window (spans can start long ago).
+        assert "created_at >= %(created_at_floor)s" in sql
+        assert "start_time >= %(start_date)s" not in sql
+        assert params["created_at_floor"] == floor
+
+    def test_continuous_ceiling_upper_bounds_arrival(self):
+        floor = datetime(2026, 8, 1, 12, 0)
+        ceil = datetime(2026, 8, 1, 12, 5)
+        sql, params = _make_builder().build_id_query(
+            created_at_floor=floor, created_at_ceiling=ceil
+        )
+        assert "created_at >= %(created_at_floor)s" in sql
+        assert "created_at < %(created_at_ceiling)s" in sql
+        assert params["created_at_ceiling"] == ceil
+
+    def test_ceiling_ignored_without_floor(self):
+        # The ceiling only applies inside the continuous (floor) branch; the
+        # UI/historical None path stays on the start_time window.
+        sql, params = _make_builder().build_id_query(
+            created_at_ceiling=datetime(2026, 8, 1, 12, 5)
+        )
+        assert "created_at_ceiling" not in params
+        assert "start_time >= %(start_date)s" in sql
 
 
 # --------------------------------------------------------------------------- #

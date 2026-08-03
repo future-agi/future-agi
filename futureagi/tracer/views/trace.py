@@ -2593,7 +2593,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             project_id = proj_result.data[0]["project_id"]
             if not Project.objects.filter(
                 id=project_id,
-                organization_id=request.user.organization_id,
+                organization=_get_request_organization(request),
             ).exists():
                 return self._gm.not_found("trace_id not found")
 
@@ -2702,7 +2702,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     _st.isoformat() if hasattr(_st, "isoformat") else str(_st)
                 )
         simulation_context = _simulation_context_for_voice_call(
-            organization_id=request.user.organization_id,
+            organization_id=getattr(_get_request_organization(request), "id", None),
             span_attributes=span_attrs,
             eval_attributes=eval_attrs,
             raw_log=raw_log,

@@ -1058,6 +1058,11 @@ def _v_decode(v, precision):
         return float(round(v))
     if precision == "pct2":
         return round(v / (v + 1) * 100, 2) if v > 0 else None
+    if precision == "pct0":
+        # talk_ratio filter rounds the percentage to a whole number
+        # (filters.py: round(v/(v+1)*100), one-arg) — unlike the 2dp
+        # agent_talk_percentage. Mirror the API so boundaries agree.
+        return float(round(v / (v + 1) * 100)) if v > 0 else None
     return v
 
 

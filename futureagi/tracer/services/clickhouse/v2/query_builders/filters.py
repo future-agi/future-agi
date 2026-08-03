@@ -315,6 +315,68 @@ class ClickHouseFilterBuilderV2(ClickHouseFilterBuilder):
     _ENDUSER_DIM_ID_COL = "end_user_id"
     _ENDUSER_DIM_NOT_DELETED = "is_deleted = 0"
 
+    def _span_attr_inner(
+        self,
+        map_column: str,
+        attribute_key: str,
+        exists_predicate: str,
+        filter_op: str,
+        normalized_value: Any,
+        case_insensitive: bool = False,
+    ) -> str | None:
+        inner = super()._span_attr_inner(
+            map_column,
+            attribute_key,
+            exists_predicate,
+            filter_op,
+            normalized_value,
+            case_insensitive,
+        )
+        # idx_attrs_str_values is a bloom over arrayMap(x -> lower(x),
+        # mapValues(attrs_string)); the lower()-wrapped equality alone can
+        # never engage it, so equality/IN gain a companion predicate in the
+        # index's exact expression shape. The companion is implied by the
+        # real predicate (a matching row necessarily carries the lowered
+        # value), so result sets are unchanged. Negations must never get
+        # one (it would invert semantics) and substring ops can't use a
+        # plain bloom. lower() is ASCII-only on both sides — the CH lower()
+        # in the index expression and the Python .lower() on the constant
+        # must stay in step or the index silently disengages.
+        if (
+            not inner
+            or not case_insensitive
+            or filter_op not in ("equals", "in")
+            or map_column not in ("span_attr_str", cols.ATTRS_STRING)
+        ):
+            return inner
+        lowered_values = f"arrayMap(x -> lower(x), mapValues({map_column}))"
+        if filter_op == "equals":
+            param = self._next_param("attrv")
+            self._params[param] = (
+                normalized_value.lower()
+                if isinstance(normalized_value, str)
+                else normalized_value
+            )
+            return f"{inner} AND has({lowered_values}, %({param})s)"
+        bound = []
+        for value in normalized_value:
+            param = self._next_param("attrv")
+            self._params[param] = value.lower() if isinstance(value, str) else value
+            bound.append(f"%({param})s")
+        return f"{inner} AND hasAny({lowered_values}, [{', '.join(bound)}])"
+
+    def _span_membership_date_filter(self) -> str:
+        # The CH25 spans table is partitioned by toDate(start_time) with
+        # toStartOfHour(start_time) in the primary key and no index on
+        # created_at, so the inherited created_at bound prunes nothing there —
+        # membership subqueries scanned the project's entire span history.
+        if not self.span_date_scope:
+            return ""
+        return (
+            " AND start_time >= %(start_date)s - INTERVAL 1 DAY"
+            " AND start_time < %(end_date)s + INTERVAL 1 DAY"
+        )
+
     def translate(self, filters):  # type: ignore[override]
         # `translate` returns a WHERE fragment that gets stitched into a larger
         # SELECT statement by callers. Do NOT append SETTINGS here — that

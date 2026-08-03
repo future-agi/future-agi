@@ -441,7 +441,10 @@ class TestCheckCallBalance:
         try:
             from ee.usage.schemas.events import CheckResult
         except ImportError:
-            CheckResult = None
+            from types import SimpleNamespace
+
+            def CheckResult(**kwargs):
+                return SimpleNamespace(**kwargs)
 
         mock_check_usage.return_value = CheckResult(allowed=True)
 
@@ -465,7 +468,10 @@ class TestCheckCallBalance:
         try:
             from ee.usage.schemas.events import CheckResult
         except ImportError:
-            CheckResult = None
+            from types import SimpleNamespace
+
+            def CheckResult(**kwargs):
+                return SimpleNamespace(**kwargs)
 
         mock_check_usage.return_value = CheckResult(
             allowed=False,

@@ -155,6 +155,27 @@ def test_bland_already_owned_recording_is_not_rehosted():
 
 
 @pytest.mark.unit
+def test_bland_prefers_rehosted_combined_over_raw_recording_url():
+    # The simulate path rehosts on its own and stores the durable URL under
+    # `recording.combined`, leaving Bland's raw `recording_url` beside it. The
+    # raw one is not browser-playable, so the flattened attribute must surface
+    # the durable copy. Bland itself never returns a `recording` key.
+    log = {
+        **BLAND_CALL,
+        "recording_url": _BLAND_RECORDING_URL,
+        "recording": {"combined": _DURABLE_BLAND_URL},
+    }
+    with patch("tracer.utils.bland.convert_audio_url_to_s3_sync") as mock_convert:
+        result = normalize_bland_data(log)
+
+    mock_convert.assert_not_called()
+    assert (
+        result["span_attributes"]["conversation.recording.mono.combined"]
+        == _DURABLE_BLAND_URL
+    )
+
+
+@pytest.mark.unit
 def test_bland_rehost_failure_preserves_source_and_does_not_raise():
     log = {**BLAND_CALL, "recording_url": _BLAND_RECORDING_URL}
     with patch(

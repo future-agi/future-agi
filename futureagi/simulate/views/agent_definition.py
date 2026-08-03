@@ -278,6 +278,7 @@ class CreateAgentDefinitionView(APIView):
                 in [
                     ProviderChoices.VAPI,
                     ProviderChoices.RETELL,
+                    ProviderChoices.BLAND,
                     ProviderChoices.OTHERS,
                 ]
             ):

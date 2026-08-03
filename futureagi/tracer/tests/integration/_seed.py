@@ -41,6 +41,7 @@ CHOICE_OPTIONS = ["good", "bad", "neutral"]
 # value:
 #   raw  -> value as stored          int  -> round to integer
 #   pct2 -> round(v/(v+1)*100, 2)    (agent-talk-percentage style)
+#   pct0 -> round(v/(v+1)*100)       (talk_ratio filter: integer-rounded)
 #
 # Three known display-vs-filter mismatches are currently NOT covered here:
 #   - wpm: filter round()s to int; displayed value is raw.
@@ -53,7 +54,7 @@ CHOICE_OPTIONS = ["good", "bad", "neutral"]
 # (col_id, seed_key, formula, precision)
 VOICE_NUM_SPEC: list[tuple] = [
     # curated + FE aliases (handled) — read the real stored key
-    ("talk_ratio", "call.talk_ratio", lambda i: round(0.2 + i * 0.12, 4), "pct2"),
+    ("talk_ratio", "call.talk_ratio", lambda i: round(0.2 + i * 0.12, 4), "pct0"),
     # wpm carry a fractional .4 (rounds down): the auto-matrix uses the filter's
     # int precision so it passes (display-vs-filter gap not covered — see above).
     ("bot_wpm", "call.bot_wpm", lambda i: round(120.0 + i * 4 + 0.4, 4), "int"),

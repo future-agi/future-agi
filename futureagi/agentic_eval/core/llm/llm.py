@@ -2086,10 +2086,11 @@ class LLM:
 
             # Handle API key scenarios
             if isinstance(self.api_key, dict):
-                payload["custom_llm_provider"] = provider
-                if provider == "bedrock" or provider.startswith("azure"):
+                provider_str = provider or ""
+                payload["custom_llm_provider"] = provider_str
+                if provider_str == "bedrock" or provider_str.startswith("azure"):
                     payload.update(self.api_key)
-                elif provider.startswith("vertex_ai"):
+                elif provider_str.startswith("vertex_ai"):
                     vertex_location = (
                         self.api_key.get("location")
                         if isinstance(self.api_key, dict)
@@ -2103,7 +2104,7 @@ class LLM:
                     payload["vertex_credentials"] = json.dumps(creds)
                     if vertex_location:
                         payload["vertex_location"] = vertex_location
-                elif provider == "openai":
+                elif provider_str == "openai":
                     if "key" in self.api_key:
                         api_key_dict = self.api_key.copy()
                         if "api_base" in api_key_dict:

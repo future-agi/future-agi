@@ -500,7 +500,7 @@ USER_PASS=""
 prompt_user() {
   step "Create your first account"
   say "  ${DIM}You can press Enter on email to skip and create the user later via${RESET}"
-  say "  ${DIM}'$DC exec -it backend python manage.py create_user'.${RESET}"
+  say "  ${DIM}'docker exec -it futureagi-backend-1 python manage.py create_user'.${RESET}"
   say ""
 
   while true; do
@@ -629,7 +629,7 @@ if [[ -n "$USER_EMAIL" ]]; then
     warn "create_user failed (exit $cu_rc). Last 6 lines of output:"
     printf '%s\n' "$cu_out" | tail -6 | sed 's|^|      |'
     warn "Run it manually after the stack settles:"
-    warn "  $DC exec -it backend python manage.py create_user"
+    warn "  docker exec -it futureagi-backend-1 python manage.py create_user"
   fi
 fi
 

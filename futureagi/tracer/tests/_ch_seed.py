@@ -434,3 +434,127 @@ def truncate_ch_scores() -> None:
         client.command("TRUNCATE TABLE IF EXISTS model_hub_score")
     finally:
         client.close()
+
+
+# ---------------------------------------------------------------------------
+# tracer_eval_logger  (CDC mirror of PG tracer.models.observation_span.EvalLogger)
+# ---------------------------------------------------------------------------
+#
+# The session-scoped eval-logs endpoint reads the eval-logger table configured
+# by ``eval_logger_source()`` — ``tracer_eval_logger`` (prod default). Unlike
+# ``spans``/``_v2``, that table is NOT created by the v2 schema apply, so flat
+# (non-integration) tests may not have it. ``_ensure_ch_eval_logger_table``
+# creates it on demand from the real ``CDC_EVAL_LOGGER`` DDL, de-replicated so
+# the single-node test CH provisions it without a keeper dependency.
+
+# Columns present in BOTH the prod CDC shape and the integration hybrid clone,
+# so a seed row is readable whichever shape the running CH happens to carry.
+_EVAL_LOGGER_INSERT_COLUMNS = [
+    "id",
+    "trace_session_id",
+    "target_type",
+    "custom_eval_config_id",
+    "output_bool",
+    "output_float",
+    "output_str",
+    "error",
+    "error_message",
+    "eval_explanation",
+    "results_explanation",
+    "status",
+    "skipped_reason",
+    "created_at",
+    "deleted",
+    "_peerdb_version",
+]
+
+_ZERO_UUID = "00000000-0000-0000-0000-000000000000"
+
+
+def _ensure_ch_eval_logger_table(client: Any) -> None:
+    """Create ``tracer_eval_logger`` if absent, using the real CDC DDL with a
+    non-replicated engine (keeper-free) for the single-node test CH."""
+    import re
+
+    from tracer.services.clickhouse.schema import CDC_EVAL_LOGGER
+
+    ddl = re.sub(
+        r"ReplicatedReplacingMergeTree\([^)]*\)",
+        "ReplacingMergeTree(_peerdb_version)",
+        CDC_EVAL_LOGGER,
+    )
+    client.command(ddl)
+
+
+def _eval_logger_row_from_django(el: Any) -> tuple:
+    """Build a CH-insert tuple from a Django ``EvalLogger`` instance."""
+    import json
+
+    now = datetime.now(UTC)
+
+    def _bool_or_none(v: Any) -> Any:
+        return None if v is None else (1 if v else 0)
+
+    results_explanation = getattr(el, "results_explanation", None)
+    if isinstance(results_explanation, (dict, list)):
+        results_explanation = json.dumps(results_explanation)
+    elif results_explanation is None:
+        results_explanation = "{}"
+
+    return (
+        str(el.id),
+        str(el.trace_session_id) if el.trace_session_id else None,
+        el.target_type or "span",
+        str(el.custom_eval_config_id) if el.custom_eval_config_id else _ZERO_UUID,
+        _bool_or_none(el.output_bool),
+        el.output_float,
+        el.output_str,
+        1 if el.error else 0,
+        el.error_message,
+        el.eval_explanation,
+        str(results_explanation),
+        el.status or "completed",
+        el.skipped_reason,
+        el.created_at or now,
+        1 if getattr(el, "deleted", False) else 0,
+        1,  # _peerdb_version — seed rows carry unique ids, so no supersede needed
+    )
+
+
+def seed_ch_eval_loggers(
+    eval_loggers: Iterable[Any],
+    *,
+    client: Any | None = None,
+) -> int:
+    """Bulk-insert ``EvalLogger`` rows into CH ``tracer_eval_logger``.
+
+    Returns the number of rows inserted.
+    """
+    rows = [_eval_logger_row_from_django(el) for el in eval_loggers]
+    if not rows:
+        return 0
+
+    own_client = client is None
+    if own_client:
+        client = _get_ch_client()
+    try:
+        _ensure_ch_eval_logger_table(client)
+        client.insert(
+            "tracer_eval_logger",
+            rows,
+            column_names=list(_EVAL_LOGGER_INSERT_COLUMNS),
+        )
+    finally:
+        if own_client:
+            client.close()
+
+    return len(rows)
+
+
+def truncate_ch_eval_logger() -> None:
+    """Wipe the CH ``tracer_eval_logger`` table. Idempotent."""
+    client = _get_ch_client()
+    try:
+        client.command("TRUNCATE TABLE IF EXISTS tracer_eval_logger")
+    finally:
+        client.close()
