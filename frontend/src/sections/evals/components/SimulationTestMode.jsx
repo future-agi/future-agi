@@ -36,6 +36,7 @@ import {
   useExecuteCompositeEval,
   useExecuteCompositeEvalAdhoc,
 } from "../hooks/useCompositeEval";
+import RequiredMark from "src/components/RequiredMark";
 import {
   NEVER_PICKABLE_TOPLEVEL,
   VOICE_ONLY_METRICS,
@@ -594,8 +595,7 @@ const SimulationTestMode = React.forwardRef(
           }
 
           // simulation_call_type (modality) wins over call_type (Inbound/Outbound).
-          const callType =
-            callData.simulation_call_type || callData.call_type;
+          const callType = callData.simulation_call_type || callData.call_type;
           const isTextCall =
             typeof callType === "string" &&
             ["text", "chat", "prompt"].includes(callType.toLowerCase());
@@ -1058,15 +1058,7 @@ const SimulationTestMode = React.forwardRef(
         <Box>
           <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
             Simulation
-            <Box
-              component="span"
-              sx={{
-                color: (t) =>
-                  t.palette.mode === "dark" ? "error.light" : "#d32f2f",
-              }}
-            >
-              *
-            </Box>
+            <RequiredMark />
           </Typography>
           <Autocomplete
             size="small"
@@ -1707,9 +1699,7 @@ const SimulationTestMode = React.forwardRef(
                     size="small"
                     disabled={isMappingPending}
                     options={
-                      showCurrent
-                        ? [currentValue, ...fieldNames]
-                        : fieldNames
+                      showCurrent ? [currentValue, ...fieldNames] : fieldNames
                     }
                     value={mapping[variable] || null}
                     onChange={(_, val) =>

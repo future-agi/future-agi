@@ -17,6 +17,7 @@ import PropTypes from "prop-types";
 import React, { useCallback } from "react";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import RequiredMark from "src/components/RequiredMark";
 
 const OutputTypeConfig = ({
   outputType,
@@ -87,15 +88,7 @@ const OutputTypeConfig = ({
       <Box>
         <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
           Output Type
-          <Box
-            component="span"
-            sx={{
-              color: (t) =>
-                t.palette.mode === "dark" ? "error.light" : "#d32f2f",
-            }}
-          >
-            *
-          </Box>
+          <RequiredMark />
         </Typography>
         <Typography
           variant="caption"

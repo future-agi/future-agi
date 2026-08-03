@@ -272,24 +272,30 @@ function StatusDropdown({ clusterId, current }) {
           </Typography>
         </Box>
         <Divider sx={{ borderColor: "divider" }} />
-        {STATUS_OPTIONS.filter((s) => s.value !== current).map((s) => {
-          const c = isDark ? s.darkColor : s.color;
-          return (
-            <MenuItem
-              key={s.value}
-              onClick={() => {
-                updateIssue.mutate({ clusterId, status: s.value });
-                setAnchorEl(null);
-              }}
-              sx={{ gap: 1, fontSize: "13px", py: 0.75 }}
-            >
-              <Iconify icon={s.icon} width={15} sx={{ color: c }} />
-              <Typography fontSize="12px" sx={{ color: c }}>
-                {s.label}
-              </Typography>
-            </MenuItem>
-          );
-        })}
+        {STATUS_OPTIONS.filter((option) => option.value !== current).map(
+          (option) => {
+            const statusColor = isDark ? option.darkColor : option.color;
+            return (
+              <MenuItem
+                key={option.value}
+                onClick={() => {
+                  updateIssue.mutate({ clusterId, status: option.value });
+                  setAnchorEl(null);
+                }}
+                sx={{ gap: 1, fontSize: "13px", py: 0.75 }}
+              >
+                <Iconify
+                  icon={option.icon}
+                  width={15}
+                  sx={{ color: statusColor }}
+                />
+                <Typography fontSize="12px" sx={{ color: statusColor }}>
+                  {option.label}
+                </Typography>
+              </MenuItem>
+            );
+          },
+        )}
       </Menu>
     </>
   );

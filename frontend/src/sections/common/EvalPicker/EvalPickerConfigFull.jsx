@@ -80,6 +80,7 @@ import {
   getSourceModeVariables,
   hasNonEmptyPromptMessage,
 } from "./evalPickerConfigUtils";
+import RequiredMark from "src/components/RequiredMark";
 
 const ERROR_LOCALIZER_OSS_TOOLTIP =
   "Error Localization is not available on self-hosted (OSS) deployments.";
@@ -1266,15 +1267,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       <Box sx={{ py: 1.5, flexShrink: 0 }}>
         <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
           Name
-          <Box
-            component="span"
-            sx={{
-              color: (t) =>
-                t.palette.mode === "dark" ? "error.light" : "#d32f2f",
-            }}
-          >
-            *
-          </Box>
+          <RequiredMark />
         </Typography>
         <TextField
           fullWidth
@@ -1709,35 +1702,35 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   arrow
                   title={ERROR_LOCALIZER_OSS_TOOLTIP}
                 >
-                <FormControlLabel
-                  control={
-                    <Checkbox
-                      checked={errorLocalizerActive}
-                      disabled={isOSS}
-                      onChange={(e) => {
-                        setErrorLocalizerEnabled(e.target.checked);
-                        setIsDirty(true);
-                      }}
-                      size="small"
-                    />
-                  }
-                  label={
-                    <Box>
-                      <Typography variant="body2" fontWeight={500}>
-                        Error Localization
-                      </Typography>
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        sx={{ display: "block" }}
-                      >
-                        Pinpoints which parts of the input caused evaluation
-                        failures
-                      </Typography>
-                    </Box>
-                  }
-                  sx={{ alignItems: "flex-start" }}
-                />
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={errorLocalizerActive}
+                        disabled={isOSS}
+                        onChange={(e) => {
+                          setErrorLocalizerEnabled(e.target.checked);
+                          setIsDirty(true);
+                        }}
+                        size="small"
+                      />
+                    }
+                    label={
+                      <Box>
+                        <Typography variant="body2" fontWeight={500}>
+                          Error Localization
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ display: "block" }}
+                        >
+                          Pinpoints which parts of the input caused evaluation
+                          failures
+                        </Typography>
+                      </Box>
+                    }
+                    sx={{ alignItems: "flex-start" }}
+                  />
                 </CustomTooltip>
               )}
             </Box>

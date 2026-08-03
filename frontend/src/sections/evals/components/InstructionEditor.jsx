@@ -24,6 +24,7 @@ import axios, { endpoints } from "src/utils/axios";
 import PromptEditor from "src/components/PromptCards/PromptEditor";
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import ModelSelector from "./ModelSelector";
+import RequiredMark from "src/components/RequiredMark";
 
 const TEMPLATE_FORMATS = [
   {
@@ -616,15 +617,7 @@ const InstructionEditor = ({
       >
         <Typography variant="body2" fontWeight={600}>
           {label}
-          <Box
-            component="span"
-            sx={{
-              color: (t) =>
-                t.palette.mode === "dark" ? "error.light" : "#d32f2f",
-            }}
-          >
-            *
-          </Box>
+          <RequiredMark />
         </Typography>
 
         {/* Template format selector */}
