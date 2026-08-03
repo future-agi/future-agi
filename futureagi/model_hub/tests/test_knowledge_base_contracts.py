@@ -427,38 +427,26 @@ class TestStructuredKnowledgeBaseViewSet:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert not StructuredKnowledgeBase.objects.filter(name="bad-model-kb").exists()
 
-    def test_create_maps_serializer_validation_error_to_400(self, auth_client):
-        """``create`` re-validates after the decorator, so a serializer error
-        raised there must surface as 400 like ``update`` does, not 500."""
-        from rest_framework.exceptions import ValidationError as DRFValidationError
+    def test_create_contract_drops_client_supplied_organization(self, organization):
+        """A client-supplied ``organization`` never reaches ``validated_data``.
 
-        from model_hub.views.kb import KnowledgeBaseViewSet
+        The view saves the serializer the decorator validated, so a writable
+        ``organization`` would hand ``create()`` an Organization instance where
+        the field expects a pk.
+        """
+        from model_hub.serializers.kb import KnowledgeBaseCreateSerializer
 
-        # Patch the view's own serializer, not the class the decorator shares,
-        # so only the re-validation inside ``create`` fails.
-        failing = MagicMock()
-        failing.is_valid.side_effect = DRFValidationError({"chunk_size": ["Invalid."]})
+        serializer = KnowledgeBaseCreateSerializer(
+            data={
+                "name": "contract-org-kb",
+                "embedding_model": "BAAI/bge-small-en-v1.5",
+                "chunk_size": 256,
+                "organization": str(organization.id),
+            }
+        )
 
-        with (
-            patch("tfc.ee_gating.check_ee_feature", return_value=None),
-            patch.object(
-                KnowledgeBaseViewSet, "get_serializer", return_value=failing
-            ),
-        ):
-            response = auth_client.post(
-                "/model-hub/kb/",
-                {
-                    "name": "inner-validation-kb",
-                    "embedding_model": "BAAI/bge-small-en-v1.5",
-                    "chunk_size": 256,
-                },
-                format="json",
-            )
-
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert not StructuredKnowledgeBase.objects.filter(
-            name="inner-validation-kb"
-        ).exists()
+        assert serializer.is_valid(), serializer.errors
+        assert "organization" not in serializer.validated_data
 
     def test_partial_update_rejects_unknown_field(
         self, auth_client, organization, workspace

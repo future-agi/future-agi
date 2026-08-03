@@ -197,10 +197,10 @@ class TestStructuredKbCrossOrg:
     def test_create_ignores_client_supplied_organization(
         self, mocker, auth_client, organization, other_org
     ):
-        """``organization`` is writable on the create serializer but overridden.
+        """A payload naming another org still lands on the caller's org.
 
-        Pins the guard in ``KnowledgeBaseCreateSerializer.create`` — a payload
-        naming another org must still land on the caller's org.
+        Pins the guard in ``KnowledgeBaseCreateSerializer.create``. Returned 500
+        before the create path stopped re-validating its own validated data.
         """
         mocker.patch("tfc.ee_gating.check_ee_feature", return_value=None)
 
