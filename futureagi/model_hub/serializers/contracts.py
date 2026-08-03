@@ -719,6 +719,16 @@ class LegacyKnowledgeBaseFilesRequestSerializer(serializers.Serializer):
     page_number = serializers.IntegerField(required=False, default=0)
     page_size = serializers.IntegerField(required=False, default=10)
 
+    def validate_sort(self, value):
+        """Reject a null/empty ``column_id`` here so it fails with the same 400
+        the view returns for an unknown one, instead of sorting nothing."""
+        for item in value:
+            if isinstance(item, dict) and item.get("column_id", "") in (None, ""):
+                raise serializers.ValidationError(
+                    "Sort column_id cannot be null or empty."
+                )
+        return value
+
 
 class LegacyKnowledgeBaseBulkDeleteRequestSerializer(serializers.Serializer):
     """Body of ``DELETE /model-hub/knowledge-base/``.
@@ -776,6 +786,10 @@ class LegacyKnowledgeBaseSortQueryParamField(serializers.Field):
             if "column_id" not in item or "type" not in item:
                 raise serializers.ValidationError(
                     "Each sort item requires column_id and type."
+                )
+            if item["column_id"] in (None, ""):
+                raise serializers.ValidationError(
+                    "Sort column_id cannot be null or empty."
                 )
             if item["type"] not in ("ascending", "descending"):
                 raise serializers.ValidationError(

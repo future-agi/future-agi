@@ -2,12 +2,10 @@
 
 Covers ``GET /model-hub/knowledge-base/get/`` (table), ``GET
 /model-hub/knowledge-base/list/`` (dropdown) and both methods of ``POST|DELETE
-/model-hub/knowledge-base/files/``. Before this module the two read endpoints
-had no happy-path test and the file endpoints had only their reject branches.
+/model-hub/knowledge-base/files/``.
 
-Also pins the regression for the unbound ``sort_data`` crash: a sort item whose
-``column_id`` is blank passes serializer validation, and used to raise
-``UnboundLocalError`` inside the view and surface as a 500.
+Also pins sort validation: a blank ``column_id`` is rejected with 400 by the
+request serializer, the same code the view returns for an unknown one.
 """
 
 import json
@@ -212,16 +210,10 @@ class TestKnowledgeBaseTableView:
         assert result["total_rows"] == 3
 
     @pytest.mark.parametrize("blank_column_id", [None, ""])
-    def test_sort_item_with_blank_column_id_does_not_500(
+    def test_sort_item_with_blank_column_id_returns_400(
         self, auth_client, organization, workspace, blank_column_id
     ):
-        """Regression: ``sort_data`` was unbound when every sort item was skipped.
-
-        ``LegacyKnowledgeBaseSortQueryParamField`` requires the ``column_id``
-        key to be present but not to be non-empty, so this payload validates and
-        then hit ``if not column_id: continue`` for every item, leaving
-        ``sort_data`` unassigned and raising ``UnboundLocalError`` -> HTTP 500.
-        """
+        """A blank ``column_id`` is rejected with the same 400 as an unknown one."""
         _kb(organization, workspace, "unsorted-kb")
 
         response = auth_client.get(
@@ -233,9 +225,7 @@ class TestKnowledgeBaseTableView:
             },
         )
 
-        assert response.status_code == status.HTTP_200_OK
-        names = [row["name"] for row in response.json()["result"]["table_data"]]
-        assert names == ["unsorted-kb"]
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
 
 
 @pytest.mark.integration
@@ -377,10 +367,10 @@ class TestKnowledgeBaseFilesList:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_sort_item_with_blank_column_id_does_not_500(
+    def test_sort_item_with_blank_column_id_returns_400(
         self, auth_client, organization, workspace
     ):
-        """Regression: same unbound ``sort_data`` shape as the table endpoint."""
+        """Same rejection as the table endpoint, on the files POST path."""
         kb = _kb(
             organization, workspace, "unsorted-files-kb", files=[_file("only.txt")]
         )
@@ -391,9 +381,7 @@ class TestKnowledgeBaseFilesList:
             format="json",
         )
 
-        assert response.status_code == status.HTTP_200_OK
-        names = [row["name"] for row in response.json()["result"]["table_data"]]
-        assert names == ["only.txt"]
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
 
 
 @pytest.mark.integration

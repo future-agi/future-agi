@@ -163,18 +163,11 @@ class TestProcessFileDispatch:
     def test_unsupported_extension_fails_rather_than_silently_passing(
         self, mocker, indexer, filename
     ):
-        """No ``else`` branch assigns ``text``, so the guard raises UnboundLocalError.
+        """An unroutable extension fails loudly rather than indexing nothing.
 
-        Pins current behavior: an unroutable extension fails loudly rather than
-        indexing nothing silently. The dispatch is case-sensitive, so ``.PDF``
-        takes the same path as ``.csv``.
-
-        Not reachable from a real upload: ``create_files_and_upload`` lowercases
-        the extension before it becomes the S3 object key, and ``get_object_url``
-        returns a plain URL with no query string, so ``process_s3_file`` always
-        derives a lowercase known extension. Recorded so nobody re-investigates.
-        Callers reach ``process_file`` only via ``process_s3_file``, which turns
-        the raise into an error dict.
+        No ``else`` branch assigns ``text``, so the guard raises
+        UnboundLocalError. The dispatch is case-sensitive, so ``.PDF`` takes the
+        same path as ``.csv``.
         """
         process_content = mocker.patch.object(indexer, "process_content")
 

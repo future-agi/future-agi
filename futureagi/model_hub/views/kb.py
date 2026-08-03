@@ -77,6 +77,8 @@ class KnowledgeBaseViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewS
             serializer.is_valid(raise_exception=True)
             self.perform_create(serializer)
             return self._gm.success_response(serializer.data, status=201)
+        except DRFValidationError as e:
+            return self._gm.bad_request(e.detail)
         except Exception as e:
             logger.exception(f"Error in creating the knowledge base: {str(e)}")
             return self._gm.internal_server_error_response(

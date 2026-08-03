@@ -221,7 +221,7 @@ class TestSecretKeyCustomActionsAPI:
         ids=["enable", "disable", "delete"],
     )
     def test_mutating_key_routes_reject_anonymous(self, api_client, method, path):
-        """The three mutating actions had no anonymous-rejection test at all."""
+        """Enable, disable and delete all reject an unauthenticated caller."""
         import uuid as _uuid
 
         response = getattr(api_client, method)(
@@ -539,7 +539,7 @@ class TestGetSecretKeysSorting:
     def test_sort_by_mapped_boolean_and_choice_columns(
         self, auth_client, seeded_keys, sort_field
     ):
-        """Both are in SORT_FIELD_MAP but were previously unexercised."""
+        """``enabled`` and ``type`` sort through their SORT_FIELD_MAP entries."""
         response = auth_client.get(
             f"{SECRET_KEYS_URL}?sort_field={sort_field}&sort_order=asc"
         )

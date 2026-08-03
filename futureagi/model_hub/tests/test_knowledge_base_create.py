@@ -1,13 +1,8 @@
 """Functional coverage for the legacy ``/model-hub/knowledge-base/`` endpoint.
 
-``CreateKnowledgeBaseView`` is the heaviest code path in the knowledge-base
-feature (duplicate-file detection, a 1 GB size cap, two entitlement checks, a
-resource-limit fallback, threaded file validation, unique-name generation and
-duplicate-name rejection) and had no functional test before this module.
-
-No live service is reached: S3 upload, file parsing and Temporal ingestion are
-patched at their boundaries, and entitlements are patched on the class so the
-module behaves identically with and without ``ee/`` on the path.
+S3 upload, file parsing and Temporal ingestion are patched at their boundaries,
+and entitlements are patched on the class, so the module behaves identically
+with and without ``ee/`` on the path.
 """
 
 import json

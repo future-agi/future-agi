@@ -227,11 +227,8 @@ class TestStructuredKbCrossOrg:
 class TestStructuredKbEeGating:
     """``check_ee_feature`` is wired to ``create`` only.
 
-    These tests pin the shipped asymmetry rather than assert a desired one: an
-    unentitled org cannot create a structured KB but can still read, rename and
-    delete the ones it already has. Widening the gate to the other actions is a
-    product decision, not a test fix — see
-    ``docs/knowledge-base/TEST_COVERAGE_PLAN.md`` (Finding 2).
+    Pins the shipped asymmetry, not a desired one: an unentitled org cannot
+    create a structured KB but can still read, rename and delete existing ones.
     """
 
     def test_create_is_blocked_when_feature_unavailable(self, mocker, auth_client):
@@ -379,7 +376,5 @@ class TestLegacyKbCrossOrg:
         assert "org-b-table-kb" in names
         assert own.name not in names
 
-    # Org scoping for GET /model-hub/knowledge-base/list/ is already covered by
-    # accounts/tests/test_data_isolation_e2e.py::TestCrossOrgKnowledgeBaseIsolation,
-    # which exercises the stronger dual-membership case (one user in both orgs
-    # switching workspace). Not duplicated here.
+    # GET /model-hub/knowledge-base/list/ org scoping lives in
+    # accounts/tests/test_data_isolation_e2e.py::TestCrossOrgKnowledgeBaseIsolation.
