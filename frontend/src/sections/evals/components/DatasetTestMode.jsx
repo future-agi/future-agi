@@ -35,6 +35,10 @@ import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
 import { unwrapCellValue } from "./datasetCellValue";
 import { buildTree } from "./columnTree";
+import {
+  MAPPING_MODE,
+  unwrapModeMapping,
+} from "../utils/evalMappingPersistence";
 
 const DATASET_PAGE_SIZE = 25;
 
@@ -675,6 +679,8 @@ const DatasetTestMode = React.forwardRef(
       contextOptions = ["variables_only"],
       errorLocalizerEnabled = false,
       initialMapping = null,
+      // Version identity; changing it re-seeds the mapping.
+      seedKey = "live",
       isComposite = false,
       compositeAdhocConfig = null,
       sourceColumns,
@@ -712,12 +718,38 @@ const DatasetTestMode = React.forwardRef(
     const [currentRowIndex, setCurrentRowIndex] = useState(0);
     const [loadingData, setLoadingData] = useState(false);
 
-    // Variable mapping — seeded with saved values when editing an existing eval
-    const [mapping, setMapping] = useState(
-      initialMapping && typeof initialMapping === "object"
-        ? { ...initialMapping }
-        : {},
+    // Callers may hand over a whole mapping field; take this mode's bucket so
+    // column ids are never seeded from trace paths.
+    const seedMapping = useMemo(
+      () => unwrapModeMapping(initialMapping, MAPPING_MODE.DATASET),
+      [initialMapping],
     );
+
+    // Variable mapping — seeded with saved values when editing an existing eval
+    const [mapping, setMapping] = useState(() => ({ ...seedMapping }));
+
+    // Seed the mapping from a saved version once it arrives (async load case).
+    // The useState initializer covers the synchronous case; guarded so a
+    // user's own edits are never overwritten.
+    const mappingSeededRef = useRef(Object.keys(seedMapping).length > 0);
+    // Merge PER KEY, saved wins — same race and same fix as TracingTestMode.
+    useEffect(() => {
+      if (mappingSeededRef.current) return;
+      if (Object.keys(seedMapping).length) {
+        mappingSeededRef.current = true;
+        setMapping((prev) => ({ ...prev, ...seedMapping }));
+      }
+    }, [seedMapping]);
+
+    // Re-seed in place on a version switch. Replace, not merge — the previous
+    // version's keys are not this version's.
+    const seedKeyRef = useRef(seedKey);
+    useEffect(() => {
+      if (seedKeyRef.current === seedKey) return;
+      seedKeyRef.current = seedKey;
+      setMapping({ ...seedMapping });
+      mappingSeededRef.current = Object.keys(seedMapping).length > 0;
+    }, [seedKey, seedMapping]);
 
     // Search + expand
     const [tableSearch, setTableSearch] = useState("");
@@ -1409,6 +1441,8 @@ const DatasetTestMode = React.forwardRef(
         get mapping() {
           return mapping;
         },
+        // Read by Save Version. Dataset mode has no tracing project.
+        getMappingState: () => ({ mapping, tracingProjectId: null }),
       }),
       [handleRunTest, selectedDatasetId, allMapped, mapping],
     );
@@ -1935,6 +1969,7 @@ DatasetTestMode.propTypes = {
   onReadyChange: PropTypes.func,
   onClearResult: PropTypes.func,
   initialMapping: PropTypes.object,
+  seedKey: PropTypes.string,
   sourceColumns: PropTypes.array,
   extraColumns: PropTypes.array,
   isComposite: PropTypes.bool,

@@ -65,6 +65,12 @@ import { FAGI_MODEL_VALUES } from "./ModelSelector";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import {
+  MAPPING_MODE,
+  buildVersionMappingPayload,
+  resolveVersionMapping,
+  resolveVersionTracingProjectId,
+} from "../utils/evalMappingPersistence";
 
 const ERROR_LOCALIZER_OSS_TOOLTIP =
   "Error Localization is not available on self-hosted (OSS) deployments.";
@@ -201,7 +207,20 @@ const EvalDetailPage = () => {
     return () => clearTimeout(timer);
   }, [testError]);
 
+  // Cancellable, so a stale timer can't clear `isTesting` for a later test.
+  const testTimeoutRef = useRef(null);
+  useEffect(
+    () => () => {
+      if (testTimeoutRef.current) clearTimeout(testTimeoutRef.current);
+    },
+    [],
+  );
+
   const handleTestResult = useCallback((success, result) => {
+    if (testTimeoutRef.current) {
+      clearTimeout(testTimeoutRef.current);
+      testTimeoutRef.current = null;
+    }
     setTestPassed(true);
     setTestError(
       success
@@ -283,6 +302,22 @@ const EvalDetailPage = () => {
         (a.version_number ?? a.versionNumber ?? Number.MIN_SAFE_INTEGER),
     )[0];
   }, [versionsData]);
+
+  // The version whose saved mapping/tracing-project should seed the test
+  // panel: the one being viewed, or the default version when nothing is
+  // explicitly selected. Both come from the versions list, which already
+  // carries `mapping`/`tracing_project_id` per version.
+  const testMapping = useMemo(() => {
+    const version = viewingVersion || defaultVersion;
+    return {
+      tracing: resolveVersionMapping(version, MAPPING_MODE.TRACING),
+      dataset: resolveVersionMapping(version, MAPPING_MODE.DATASET),
+    };
+  }, [viewingVersion, defaultVersion]);
+  const testTracingProjectId = useMemo(
+    () => resolveVersionTracingProjectId(viewingVersion || defaultVersion),
+    [viewingVersion, defaultVersion],
+  );
 
   const handleVersionSelect = useCallback(
     (version) => {
@@ -842,10 +877,16 @@ const EvalDetailPage = () => {
         messages: evalType === "llm" ? messages : undefined,
         few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
       };
+      const mappingState = testPlaygroundRef.current?.getMappingState?.();
+      const mappingPayload = buildVersionMappingPayload(
+        mappingState?.mapping,
+        mappingState?.tracingProjectId,
+      );
       const newVersion = await createVersion.mutateAsync({
         config_snapshot: configSnapshot,
         criteria: evalType === "code" ? code : instructions,
         model,
+        ...mappingPayload,
       });
       enqueueSnackbar(`Version V${newVersion?.version_number ?? ""} saved`, {
         variant: "success",
@@ -853,7 +894,18 @@ const EvalDetailPage = () => {
       setIsDirty(false);
       // Switch to viewing the newly created version
       if (newVersion?.version_number) {
-        setViewingVersion({ ...newVersion, config_snapshot: configSnapshot });
+        // The create response carries neither config_snapshot nor mapping, so
+        // both are patched on; without them the panel re-seeds from nothing and
+        // renders a mapping that saved correctly as cleared.
+        setViewingVersion({
+          ...newVersion,
+          config_snapshot: configSnapshot,
+          mapping: mappingPayload.mapping ?? newVersion.mapping ?? null,
+          tracing_project_id:
+            mappingPayload.tracing_project_id ??
+            newVersion.tracing_project_id ??
+            null,
+        });
         setSearchParams(
           (prev) => {
             const next = new URLSearchParams(prev);
@@ -1012,6 +1064,16 @@ const EvalDetailPage = () => {
         });
       }
       testPlaygroundRef.current?.runTest?.(evalId);
+      // Save Version unmounts the active test-mode component (it swaps the
+      // panel to the Versions view), which drops its onTestResult callback
+      // mid-flight and would otherwise leave isTesting stuck true forever.
+      // Same fallback EvalCreatePage.jsx already uses for the same class of
+      // stuck-test state.
+      if (testTimeoutRef.current) clearTimeout(testTimeoutRef.current);
+      testTimeoutRef.current = setTimeout(() => {
+        testTimeoutRef.current = null;
+        setIsTesting((v) => (v ? false : v));
+      }, 60000);
     } catch (error) {
       const message =
         error?.response?.data?.result || error?.message || "Failed to run test";
@@ -1885,9 +1947,14 @@ const EvalDetailPage = () => {
               >
                 <Box sx={{ flex: 1, overflow: "auto", minHeight: 0 }}>
                   <TestPlayground
+                    // Re-seeds both tabs in place; remounting for this also
+                    // discarded the active tab and any test in flight.
+                    seedKey={viewingVersion?.id ?? "live"}
                     ref={testPlaygroundRef}
                     templateId={evalId}
                     model={model}
+                    initialMapping={testMapping}
+                    initialTracingProjectId={testTracingProjectId}
                     instructions={
                       evalType === "code"
                         ? ""
