@@ -584,6 +584,28 @@ class CallAttributes:
     TALK_RATIO = "call.talk_ratio"
     """Ratio of bot talk time to user talk time."""
 
+    CUSTOMER_NAME = "call.customer_name"
+    STATUS_DISPLAY = "call.status_display"
+    CALL_TYPE = "call.type"
+    SUMMARY = "call.summary"
+    OVERALL_SCORE = "call.overall_score"
+    ASSISTANT_ID = "call.assistant_id"
+    ASSISTANT_PHONE_NUMBER = "call.assistant_phone_number"
+    ERROR_MESSAGE = "call.error_message"
+    COST_CENTS = "call.cost_cents"
+    MESSAGE_COUNT = "call.message_count"
+    TRANSCRIPT_AVAILABLE = "call.transcript_available"
+    RECORDING_AVAILABLE = "call.recording_available"
+    STARTED_AT = "call.started_at"
+    ENDED_AT = "call.ended_at"
+    CREATED_AT = "call.created_at"
+    RESPONSE_TIME_MS = "call.response_time_ms"
+    RESPONSE_TIME_SECONDS = "call.response_time_seconds"
+    TALK_SECONDS_USER = "call.talk_seconds.user"
+    TALK_SECONDS_BOT = "call.talk_seconds.bot"
+    TALK_PCT_USER = "call.talk_pct.user"
+    TALK_PCT_BOT = "call.talk_pct.bot"
+
 
 class OpenInferenceSpanKindValues(Enum):
     TOOL = "TOOL"

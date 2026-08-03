@@ -132,32 +132,52 @@ def _extract_metadata(log: dict, eval_attributes: dict):
     )
 
     # Populating call cost
-    call_cost_object = log.get("call_cost", {})
+    call_cost_object = log.get("call_cost")
+    call_cost_object = call_cost_object if isinstance(call_cost_object, dict) else {}
     product_costs = call_cost_object.get("product_costs", [])
-    for i, cost in enumerate(product_costs):
-        call_cost_object[f"product_costs.{i}.product"] = cost.get("product")
-        call_cost_object[f"product_costs.{i}.unit_price"] = cost.get("unit_price")
-        call_cost_object[f"product_costs.{i}.cost"] = cost.get("cost")
-
-    del call_cost_object["product_costs"]
+    if isinstance(product_costs, list):
+        for i, cost in enumerate(product_costs):
+            if isinstance(cost, dict):
+                call_cost_object[f"product_costs.{i}.product"] = cost.get("product")
+                call_cost_object[f"product_costs.{i}.unit_price"] = cost.get(
+                    "unit_price"
+                )
+                call_cost_object[f"product_costs.{i}.cost"] = cost.get("cost")
+    call_cost_object.pop("product_costs", None)
 
     flattened_call_cost_object = flatten_dict(call_cost_object)
     eval_attributes.update(flattened_call_cost_object)
 
     # Populating llm token usages
     llm_token_usage_object = log.get("llm_token_usage")
-    if llm_token_usage_object:
+    if isinstance(llm_token_usage_object, dict):
         values = llm_token_usage_object.get("values")
-        for i, value in enumerate(values):
-            llm_token_usage_object[f"llm_token_usage.{i}"] = value
-
-        del log["llm_token_usage"]
+        if isinstance(values, list):
+            for i, value in enumerate(values):
+                llm_token_usage_object[f"llm_token_usage.{i}"] = value
+        log.pop("llm_token_usage", None)
         flattened_llm_token_usage_object = flatten_dict(llm_token_usage_object)
         eval_attributes.update(flattened_llm_token_usage_object)
 
     # Populating metadata
     eval_attributes["metadata"] = log.get("metadata", {})
     eval_attributes["latency"] = log.get("latency")
+
+    # Display fields for the voice-call list (mirror _process_retell_logs).
+    call_analysis = log.get("call_analysis")
+    call_summary = (
+        call_analysis.get("call_summary") if isinstance(call_analysis, dict) else None
+    )
+    if call_summary:
+        eval_attributes[CallAttributes.SUMMARY] = call_summary
+    if (overall_score := log.get("overallScore")) is not None:
+        eval_attributes[CallAttributes.OVERALL_SCORE] = overall_score
+    if agent_id := log.get("agent_id"):
+        eval_attributes[CallAttributes.ASSISTANT_ID] = agent_id
+    if from_number := log.get("from_number"):
+        eval_attributes[CallAttributes.ASSISTANT_PHONE_NUMBER] = from_number
+    if error_message := log.get("error_message"):
+        eval_attributes[CallAttributes.ERROR_MESSAGE] = error_message
 
 
 def _extract_eval_attributes(log: dict) -> dict:
@@ -176,18 +196,54 @@ def _extract_eval_attributes(log: dict) -> dict:
 def _process_transcript(log: dict, eval_attributes: dict):
     """Processes the transcript to extract conversation and tool call data."""
     transcript = log.get("transcript_with_tool_calls")
-    if not (transcript and isinstance(transcript, list)):
+    tlist = transcript if isinstance(transcript, list) else []
+    # Display fields for the voice-call list (mirror _process_retell_logs).
+    eval_attributes[CallAttributes.MESSAGE_COUNT] = len(tlist)
+    eval_attributes[CallAttributes.TRANSCRIPT_AVAILABLE] = len(tlist) > 0
+    if not tlist:
         return
 
     tool_call_index = 0
     eval_attributes["provider_transcript"] = []
     for i, msg in enumerate(transcript):
+        if not isinstance(msg, dict):
+            continue
         role = msg.get("role")
         if role == "tool_call_invocation":
             _process_tool_call(msg, eval_attributes, tool_call_index)
             tool_call_index += 1
         else:
             _process_conversation_message(msg, eval_attributes, i)
+
+    # Talk-ratio breakdown — per-message duration from word timings, by role.
+    # Defensive: tolerate non-dict rows / malformed word lists.
+    user_s = bot_s = 0.0
+    for msg in tlist:
+        if not isinstance(msg, dict):
+            continue
+        words = msg.get("words")
+        if not (isinstance(words, list) and words):
+            continue
+        first, last = words[0], words[-1]
+        if not (isinstance(first, dict) and isinstance(last, dict)):
+            continue
+        end, start = last.get("end"), first.get("start")
+        if not (isinstance(end, (int, float)) and isinstance(start, (int, float))):
+            continue
+        # Round per-message before summing to match _process_retell_logs.
+        dur = round(end - start, 2)
+        if dur <= 0:
+            continue
+        if msg.get("role") == "user":
+            user_s += dur
+        elif msg.get("role") in ("agent", "assistant", "bot"):
+            bot_s += dur
+    total_s = user_s + bot_s
+    if total_s > 0:
+        eval_attributes[CallAttributes.TALK_SECONDS_USER] = round(user_s, 1)
+        eval_attributes[CallAttributes.TALK_SECONDS_BOT] = round(bot_s, 1)
+        eval_attributes[CallAttributes.TALK_PCT_USER] = round((user_s / total_s) * 100)
+        eval_attributes[CallAttributes.TALK_PCT_BOT] = round((bot_s / total_s) * 100)
 
 
 def _process_tool_call(msg: dict, eval_attributes: dict, index: int):
@@ -232,14 +288,22 @@ def _process_conversation_message(msg: dict, eval_attributes: dict, index: int):
 
     if transcript_exists:
         words = msg.get("words")
-        seconds_from_start = words[0].get("start")
-        end_time = words[-1].get("end")
-        start_timedelta = timedelta(seconds=seconds_from_start)
-        end_timedelta = timedelta(seconds=end_time)
-        duration = end_timedelta - start_timedelta
+        first, last = words[0], words[-1]
+        seconds_from_start = first.get("start") if isinstance(first, dict) else None
+        end_time = last.get("end") if isinstance(last, dict) else None
+        if isinstance(seconds_from_start, (int, float)) and isinstance(
+            end_time, (int, float)
+        ):
+            duration = timedelta(seconds=end_time) - timedelta(
+                seconds=seconds_from_start
+            )
 
     duration = round(duration.total_seconds(), 2) if duration else None
-    seconds_from_start = round(seconds_from_start, 2) if seconds_from_start else None
+    seconds_from_start = (
+        round(seconds_from_start, 2)
+        if isinstance(seconds_from_start, (int, float))
+        else None
+    )
 
     eval_attributes[
         f"{ConversationAttributes.CONVERSATION_TRANSCRIPT}.{index}.{MessageAttributes.MESSAGE_DURATION}"
@@ -258,6 +322,7 @@ def _process_conversation_message(msg: dict, eval_attributes: dict, index: int):
 
 def _extract_recording_urls(log: dict, eval_attributes: dict):
     """Extracts recording URLs and adds them to eval_attributes."""
+    eval_attributes[CallAttributes.RECORDING_AVAILABLE] = bool(log.get("recording_url"))
     if recording_url := log.get("recording_url"):
         eval_attributes[
             f"{ConversationAttributes.CONVERSATION_RECORDING}.{ConversationAttributes.MONO_COMBINED}"
@@ -275,7 +340,9 @@ def _extract_common_call_fields(log: dict, eval_attributes: dict):
     transcript = log.get("transcript_with_tool_calls", [])
     if isinstance(transcript, list):
         eval_attributes[CallAttributes.TOTAL_TURNS] = sum(
-            1 for msg in transcript if msg.get("role") in ("user", "agent")
+            1
+            for msg in transcript
+            if isinstance(msg, dict) and msg.get("role") in ("user", "agent")
         )
     else:
         eval_attributes[CallAttributes.TOTAL_TURNS] = 0
@@ -308,3 +375,26 @@ def _extract_common_call_fields(log: dict, eval_attributes: dict):
     eval_attributes[CallAttributes.USER_WPM] = None
     eval_attributes[CallAttributes.BOT_WPM] = None
     eval_attributes[CallAttributes.TALK_RATIO] = None
+
+    # Display fields for the voice-call list (mirror _process_retell_logs).
+    if agent_name := log.get("agent_name"):
+        eval_attributes[CallAttributes.CUSTOMER_NAME] = agent_name
+    eval_attributes[CallAttributes.STATUS_DISPLAY] = (
+        "completed" if log.get("call_status") == "ended" else "in-progress"
+    )
+    if direction := log.get("direction"):
+        eval_attributes[CallAttributes.CALL_TYPE] = direction
+    call_cost = log.get("call_cost")
+    combined_cost = call_cost.get("combined_cost") if isinstance(call_cost, dict) else None
+    if combined_cost is not None:
+        eval_attributes[CallAttributes.COST_CENTS] = combined_cost
+    start_ts = log.get("start_timestamp")
+    if isinstance(start_ts, (int, float)):
+        started_at = datetime.fromtimestamp(start_ts / 1000, tz=UTC).isoformat()
+        eval_attributes[CallAttributes.STARTED_AT] = started_at
+        eval_attributes[CallAttributes.CREATED_AT] = started_at
+    end_ts = log.get("end_timestamp")
+    if isinstance(end_ts, (int, float)):
+        eval_attributes[CallAttributes.ENDED_AT] = datetime.fromtimestamp(
+            end_ts / 1000, tz=UTC
+        ).isoformat()
