@@ -174,6 +174,18 @@ class PromptConfigSerializer(serializers.Serializer):
     run_prompt_config = serializers.DictField(
         child=JsonValueField(allow_null=True), required=False
     )
+    configuration = serializers.DictField(
+        child=JsonValueField(allow_null=True),
+        required=False,
+        help_text=(
+            "Compatibility shim for legacy template_format only. Use "
+            "run_prompt_config for canonical run-prompt settings; other "
+            "configuration keys are ignored unless explicitly migrated. If "
+            "template_format is provided here and run_prompt_config.template_format "
+            "is missing, null, or blank, it is normalized into "
+            "run_prompt_config.template_format so preview and execution match."
+        ),
+    )
     messages = serializers.ListField(
         # content can be a string or a list of typed parts — keep values open.
         child=serializers.DictField(child=JsonValueField()),

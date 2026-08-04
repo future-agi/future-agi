@@ -59,7 +59,13 @@ from model_hub.utils.utils import (
     contains_sql,
     remove_empty_text_from_messages,
 )
-from model_hub.views.run_prompt import populate_placeholders
+from model_hub.views.run_prompt import (
+    PromptTemplateSyntaxError,
+    UnresolvedPromptPlaceholdersError,
+    _messages_require_media_processing,
+    get_run_prompt_template_format,
+    populate_placeholders,
+)
 
 # Define a Celery task for running the evaluation
 # Define a Celery task for running the evaluation
@@ -75,6 +81,22 @@ logger = structlog.get_logger(__name__)
 # Constants for batch processing
 # =============================================================================
 BATCH_SIZE = 500  # Number of cells to process in each batch for bulk operations
+
+RUN_PROMPT_BRANCH_VALIDATION_ERROR = (
+    "Run prompt branch failed before provider dispatch. Check prompt placeholders, "
+    "template syntax, and media support."
+)
+CONDITIONAL_BRANCH_ERROR = "Conditional branch failed while processing."
+CONDITIONAL_ROW_ERROR = "Conditional row failed while processing."
+
+
+def _safe_conditional_error_reason(error, *, branch_type=None):
+    if branch_type == "run_prompt" and isinstance(
+        error,
+        (UnresolvedPromptPlaceholdersError, PromptTemplateSyntaxError, ValueError),
+    ):
+        return RUN_PROMPT_BRANCH_VALIDATION_ERROR
+    return CONDITIONAL_BRANCH_ERROR
 
 
 def _request_organization(request):
@@ -1582,16 +1604,44 @@ class ConditionalColumnView(APIView):
                 )
 
             elif output_type == "run_prompt":
-                messages = populate_placeholders(
-                    config.get("messages"),
-                    dataset_id=row.dataset.id,
-                    row_id=row.id,
-                    col_id=None,
-                    model_name=config.get("model"),
-                    template_format=config.get("configuration", {}).get(
-                        "template_format"
-                    ),
-                )
+                try:
+                    template_format = get_run_prompt_template_format(config)
+                    validated_messages = populate_placeholders(
+                        config.get("messages"),
+                        dataset_id=row.dataset.id,
+                        row_id=row.id,
+                        col_id=None,
+                        model_name=config.get("model"),
+                        template_format=template_format,
+                        process_media=False,
+                        fail_closed=True,
+                    )
+                    if _messages_require_media_processing(validated_messages):
+                        messages = populate_placeholders(
+                            config.get("messages"),
+                            dataset_id=row.dataset.id,
+                            row_id=row.id,
+                            col_id=None,
+                            model_name=config.get("model"),
+                            template_format=template_format,
+                            fail_closed=True,
+                        )
+                    else:
+                        messages = validated_messages
+                except (
+                    UnresolvedPromptPlaceholdersError,
+                    PromptTemplateSyntaxError,
+                    ValueError,
+                ) as e:
+                    logger.warning(
+                        "conditional_run_prompt_validation_failed",
+                        error_type=type(e).__name__,
+                    )
+                    return None, {
+                        "reason": _safe_conditional_error_reason(
+                            e, branch_type="run_prompt"
+                        )
+                    }
                 messages = remove_empty_text_from_messages(messages)
                 executor = RunPrompt(
                     model=config.get("model"),
@@ -1630,7 +1680,7 @@ class ConditionalColumnView(APIView):
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Error processing branch: {str(e)}")
-            return None, None
+            return None, {"reason": _safe_conditional_error_reason(e)}
 
     def _process_row(self, row, config, org_id=None):
         """Process a single row through all conditions"""
@@ -1675,13 +1725,17 @@ class ConditionalColumnView(APIView):
                         final_value = value
                         final_value_infos = value_infos
                         break  # Exit after first matching condition
+                    if value_infos and value_infos.get("reason"):
+                        final_value = None
+                        final_value_infos = value_infos
+                        break  # Exit after first matching condition
 
             return final_value, final_value_infos
 
         except Exception as e:
             logger.error("traceback : ", traceback.format_exc())
             logger.error(f"Error processing row: {str(e)}")
-            return str(e), {"reason": str(e)}
+            return None, {"reason": CONDITIONAL_ROW_ERROR}
 
     @validated_request(
         request_serializer=ConditionalColumnRequestSerializer,
@@ -2927,13 +2981,18 @@ def conditional_column_async(
                         existing_cell.save()
                     else:
                         # Create new cell if it doesn't exist during rerun
+                        is_error = bool(value_infos and "reason" in value_infos)
                         new_cell = Cell(
                             dataset_id=dataset_id,
                             column_id=new_column_id,
                             row=row,
-                            value=None,
+                            value=None if is_error else value,
                             value_infos=json.dumps(value_infos if value_infos else {}),
-                            status=CellStatus.PASS.value,
+                            status=(
+                                CellStatus.ERROR.value
+                                if is_error
+                                else CellStatus.PASS.value
+                            ),
                         )
                         new_cell.save()
                         logger.error(
@@ -2947,7 +3006,9 @@ def conditional_column_async(
                     existing_cell = existing_cells_map.get(str(row.id))
                     if existing_cell:
                         existing_cell.value = None
-                        existing_cell.value_infos = json.dumps({"reason": str(e)})
+                        existing_cell.value_infos = json.dumps(
+                            {"reason": CONDITIONAL_ROW_ERROR}
+                        )
                         existing_cell.status = CellStatus.ERROR.value
                         existing_cell.save()
     else:
@@ -3002,7 +3063,7 @@ def conditional_column_async(
                             column_id=new_column_id,
                             row=row,
                             value=None,
-                            value_infos=json.dumps({"reason": str(e)}),
+                            value_infos=json.dumps({"reason": CONDITIONAL_ROW_ERROR}),
                             status=CellStatus.ERROR.value,
                         )
                     )
