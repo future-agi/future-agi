@@ -63,12 +63,11 @@ def fetch_observability_logs(
                 success_count += 1
             else:
                 failure_count += 1
-        except Exception as e:
+        except Exception as exc:
             failure_count += 1
-            logger.exception(
-                "Failed to fetch logs for provider, continuing with next provider",
-                provider_id=str(provider_id),
-                error=str(e),
+            logger.error(
+                "provider_log_fetch_failed",
+                error_type=type(exc).__name__,
             )
             continue
 
@@ -102,19 +101,22 @@ def fetch_logs_for_provider(
         try:
             provider = ObservabilityProvider.objects.get(id=provider_id)
         except ObservabilityProvider.DoesNotExist:
-            logger.warning(
-                "Provider not found, skipping",
-                provider_id=str(provider_id),
-            )
+            logger.warning("observability_provider_not_found")
             return None
 
         last_fetched_at = start_time if start_time else provider.last_fetched_at
         end_time_to_use = end_time if end_time else now
 
-        if provider.provider != ProviderChoices.RETELL or not last_fetched_at:
+        # Default: poll for every provider. Retell is the exception — after the
+        # first watermark, ongoing ingest is webhook-primary unless the caller
+        # passes start_time for an explicit backfill.
+        if (
+            provider.provider != ProviderChoices.RETELL
+            or provider.last_fetched_at is None
+            or start_time is not None
+        ):
             logger.info(
-                "Fetching logs for provider",
-                provider_id=str(provider_id),
+                "provider_log_fetch_started",
                 provider_type=provider.provider,
                 start_time=str(last_fetched_at) if last_fetched_at else None,
                 end_time=str(end_time_to_use),
@@ -126,75 +128,50 @@ def fetch_logs_for_provider(
                     start_time=last_fetched_at,
                     end_time=end_time_to_use,
                 )
-                logger.info(
-                    "fetch_logs_for_provider: get_call_logs RETURNED",
-                    provider_id=str(provider_id),
-                    logs_type=type(logs).__name__,
-                    logs_is_list=isinstance(logs, list),
-                    logs_len=len(logs) if hasattr(logs, "__len__") else "n/a",
-                    sample_types=(
-                        [type(x).__name__ for x in logs[:5]]
-                        if isinstance(logs, (list, tuple))
-                        else "n/a"
-                    ),
-                    first_elem_type=(
-                        type(logs[0]).__name__
-                        if isinstance(logs, (list, tuple)) and logs
-                        else None
-                    ),
-                    first_elem_keys=(
-                        list(logs[0].keys())[:15]
-                        if isinstance(logs, (list, tuple))
-                        and logs
-                        and isinstance(logs[0], dict)
-                        else None
-                    ),
-                )
             except HTTPError as e:
                 if e.response is not None and e.response.status_code in (401, 403):
                     logger.error(
                         "authentication_failed_for_provider",
-                        provider_id=str(provider_id),
                         provider_type=provider.provider,
                         status_code=e.response.status_code,
                     )
                     return None
-                logger.exception(
-                    "Failed to fetch logs from provider API",
-                    provider_id=str(provider_id),
+                logger.error(
+                    "provider_log_fetch_failed",
                     provider_type=provider.provider,
-                    error=str(e),
+                    status_code=(
+                        e.response.status_code if e.response is not None else None
+                    ),
+                    error_type=type(e).__name__,
                 )
                 return None
-            except Exception as e:
-                logger.exception(
-                    "Failed to fetch logs from provider API",
-                    provider_id=str(provider_id),
+            except Exception as exc:
+                logger.error(
+                    "provider_log_fetch_failed",
                     provider_type=provider.provider,
-                    error=str(e),
+                    error_type=type(exc).__name__,
                 )
                 return None
 
             # Only update last_fetched_at if we successfully got logs
             try:
                 _update_last_fetched_at(provider, end_time_to_use)
-            except Exception as e:
+            except Exception as exc:
                 logger.warning(
-                    "Failed to update last_fetched_at for provider",
-                    provider_id=str(provider_id),
-                    error=str(e),
+                    "provider_watermark_update_failed",
+                    provider_type=provider.provider,
+                    error_type=type(exc).__name__,
                 )
 
             # Process and store logs
             try:
                 process_and_store_logs(logs, provider)
-            except Exception as e:
-                logger.exception(
-                    "Failed to process and store logs",
-                    provider_id=str(provider_id),
+            except Exception as exc:
+                logger.error(
+                    "provider_log_processing_failed",
                     provider_type=provider.provider,
                     logs_count=len(logs) if logs else 0,
-                    error=str(e),
+                    error_type=type(exc).__name__,
                 )
                 # Still return logs since we fetched them successfully
                 return logs
@@ -205,16 +182,18 @@ def fetch_logs_for_provider(
                 provider_type=provider.provider,
                 logs_count=len(logs) if logs else 0,
             )
-
             return logs
 
+        logger.info(
+            "provider_log_fetch_skipped_webhook_primary",
+            provider_type=provider.provider,
+        )
         return []
 
-    except Exception as e:
-        logger.exception(
-            "Unexpected error fetching logs for provider",
-            provider_id=str(provider_id),
-            error=str(e),
+    except Exception as exc:
+        logger.error(
+            "provider_log_fetch_failed",
+            error_type=type(exc).__name__,
         )
         return None
 
@@ -292,7 +271,8 @@ def _provider_collector_span_id(
     Keyed by ``project_id`` so a call shared across projects (one provider account, many
     projects) gets a distinct id per project — only the project-scoping convention matches
     deterministic_id.py; this natural key (``:``-joined, provider-call) is local to this module.
-    Caveat: re-emits reuse the same ``_version`` (start_time), so late data may lose the merge."""
+    Caveat: re-emits reuse the same ``_version`` (start_time), so late data may lose the merge.
+    """
     return uuid.uuid5(
         _PROVIDER_SPAN_NS, f"{str(project_id)}:{provider}:{provider_log_id}"
     ).hex[:16]
@@ -302,7 +282,8 @@ def _provider_collector_trace_id(
     project_id: str | uuid.UUID, provider: str, provider_log_id: str
 ) -> uuid.UUID:
     """Deterministic trace id stable across re-polls. The CH ``spans`` and ``traces`` RMT sort keys both include trace_id, so a random id per poll would duplicate; this keys both writes to the call.
-    Keyed by ``project_id`` so the same provider call ingested into multiple projects yields a distinct trace per project."""
+    Keyed by ``project_id`` so the same provider call ingested into multiple projects yields a distinct trace per project.
+    """
     return uuid.uuid5(
         _PROVIDER_SPAN_NS, f"trace:{str(project_id)}:{provider}:{provider_log_id}"
     )
@@ -353,14 +334,18 @@ def _export_provider_call_to_collector(span, provider: str, provider_log_id: str
             )
             if processed.get("transcript"):
                 attrs["fi.conversation.transcript"] = processed["transcript"]
-        except Exception:
+        except Exception as exc:
             logger.warning(
-                "provider_transcript_compute_failed", provider=provider, exc_info=True
+                "provider_transcript_compute_failed",
+                provider=provider,
+                error_type=type(exc).__name__,
             )
         start_ns = _to_epoch_ns(span.start_time)
         span_dict = {
             "trace_id": span.trace.id.hex,
-            "span_id": _provider_collector_span_id(project.id, provider, provider_log_id),
+            "span_id": _provider_collector_span_id(
+                project.id, provider, provider_log_id
+            ),
             "parent_span_id": None,
             "parent_id": None,
             "name": span.name,
@@ -399,11 +384,11 @@ def _export_provider_call_to_collector(span, provider: str, provider_log_id: str
             service_name="fi-provider",
         )
         # collectTrace is sole `traces` writer (derives it from this root span); no app-side mirror, a second row would never merge.
-    except Exception:
-        logger.exception(
+    except Exception as exc:
+        logger.error(
             "provider_collector_export_failed",
             provider=provider,
-            provider_log_id=provider_log_id,
+            error_type=type(exc).__name__,
         )
 
 
@@ -429,9 +414,11 @@ def flatten_provider_call_attributes(provider_key: str, payload: dict) -> dict:
         return {}
     try:
         return normalize_fn(payload).get("span_attributes") or {}
-    except Exception:
-        logger.exception(
-            "flatten_provider_call_attributes failed", provider=provider_key
+    except Exception as exc:
+        logger.warning(
+            "flatten_provider_call_attributes_failed",
+            provider=provider_key,
+            error_type=type(exc).__name__,
         )
         return {}
 
@@ -495,11 +482,19 @@ def process_and_store_logs(
         try:
             normalized_data = normalize_fn(log)
             provider_log_id = normalized_data.get("id")
-        except Exception:
-            logger.exception(f"Failed to normalize log for {provider.provider}")
+        except Exception as exc:
+            logger.error(
+                "provider_log_normalization_failed",
+                provider_type=provider.provider,
+                error_type=type(exc).__name__,
+            )
+            continue
 
         if not provider_log_id:
-            logger.error(f"No provider log id found for {provider.provider}")
+            logger.error(
+                "provider_log_id_missing",
+                provider_type=provider.provider,
+            )
             continue
 
         metadata = {
@@ -514,9 +509,11 @@ def process_and_store_logs(
             span = _create_observation_span(
                 project, provider, normalized_data, metadata, provider_log_id
             )
-        except Exception as e:
-            logger.exception(
-                f"Error creating observation span for {provider.provider}: {e}"
+        except Exception as exc:
+            logger.error(
+                "provider_observation_span_creation_failed",
+                provider_type=provider.provider,
+                error_type=type(exc).__name__,
             )
             continue
 

@@ -29,6 +29,8 @@ def _install_ee_usage_stubs_if_missing() -> None:
     def _make(name: str) -> types.ModuleType:
         mod = types.ModuleType(name)
         mod.__path__ = []
+        # Keep __spec__ unset/None so importlib.find_spec stays falsy.
+        mod.__spec__ = None
         sys.modules[name] = mod
         if "." in name:
             parent_name, child_name = name.rsplit(".", 1)
@@ -40,6 +42,8 @@ def _install_ee_usage_stubs_if_missing() -> None:
     _make("ee")
     _make("ee.usage")
     _make("ee.usage.services")
+    _make("ee.usage.schemas")
+    _make("ee.usage.utils")
 
     entitlements = _make("ee.usage.services.entitlements")
 
@@ -63,6 +67,55 @@ def _install_ee_usage_stubs_if_missing() -> None:
 
     emitter = _make("ee.usage.services.emitter")
     emitter.emit = lambda *args, **kwargs: None
+
+    # Patch targets for tracer eval dual-write (_emit_eval_billing) and
+    # tracer/tests/test_eval_credits_emit.py — OSS-safe mocks only.
+    config = _make("ee.usage.services.config")
+
+    class BillingConfig:
+        @classmethod
+        def get(cls):
+            return cls()
+
+        def get_eval_per_run_fee(self):
+            return 0.0
+
+        def calculate_ai_credits(self, cost_usd):
+            try:
+                return float(cost_usd or 0) * 100.0
+            except (TypeError, ValueError):
+                return 0.0
+
+    config.BillingConfig = BillingConfig
+
+    events = _make("ee.usage.schemas.events")
+
+    class UsageEvent:
+        def __init__(self, org_id, event_type, amount=0, properties=None, **kwargs):
+            self.org_id = org_id
+            self.event_type = event_type
+            self.amount = amount
+            self.properties = properties or {}
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+    events.UsageEvent = UsageEvent
+
+    event_properties = _make("ee.usage.utils.event_properties")
+
+    def token_usage_properties(token_usage):
+        if not token_usage:
+            return {}
+        return {
+            "prompt_tokens": token_usage.get("prompt_tokens", 0),
+            "completion_tokens": token_usage.get("completion_tokens", 0),
+            "total_tokens": token_usage.get("total_tokens", 0),
+        }
+
+    event_properties.token_usage_properties = token_usage_properties
+
+    usage_entries = _make("ee.usage.utils.usage_entries")
+    usage_entries.log_and_deduct_cost_for_api_request = None
 
 
 _install_ee_usage_stubs_if_missing()

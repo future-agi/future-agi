@@ -1,9 +1,10 @@
 """Billing Temporal activities and schedules.
 
-Schedules: budget catch-up (15 min), dunning (daily), monthly closing
-(``0 0 1 * *``). Meter events fire at invoice-close inside the monthly
-closing activity — no hourly catch-up. The usage consumer is a separate
-long-lived workflow, not a schedule.
+Schedules: budget catch-up (15 min), monthly closing (``0 0 1 * *``).
+Dunning is owned by Stripe Revenue Recovery — no scheduled checks here.
+Meter events fire at invoice-close inside the monthly closing activity —
+no hourly catch-up. The usage consumer is a separate long-lived
+workflow, not a schedule.
 """
 
 from datetime import datetime, timezone
@@ -84,13 +85,6 @@ BILLING_SCHEDULES: List[ScheduleConfig] = [
         interval_seconds=900,
         queue="default",
         description="Evaluate budgets missed by consumer (every 15 min)",
-    ),
-    ScheduleConfig(
-        schedule_id="dunning-checks-daily",
-        activity_name="run_dunning_checks_activity",
-        interval_seconds=86400,
-        queue="tasks_l",
-        description="Process dunning steps for past_due orgs (daily)",
     ),
     ScheduleConfig(
         schedule_id="monthly-closing",

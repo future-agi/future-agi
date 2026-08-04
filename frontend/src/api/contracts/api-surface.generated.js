@@ -42,6 +42,9 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "get",
         "post"
       ],
+      "/accounts/activate/{uidb64}/{token}/": [
+        "get"
+      ],
       "/accounts/appsmith/users/": [
         "get",
         "patch",
@@ -3331,6 +3334,9 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/accounts/accept-invitation/{uidb64}/{token}/": [
     "get",
     "post"
+  ],
+  "/accounts/activate/{uidb64}/{token}/": [
+    "get"
   ],
   "/accounts/appsmith/users/": [
     "get",

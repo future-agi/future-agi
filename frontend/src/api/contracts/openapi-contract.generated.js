@@ -407,6 +407,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "/accounts/activate/{uidb64}/{token}/": {
+      "get": {
+        "operationId": "accounts_activate_read",
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
+        "queryParameters": {},
+        "responses": {
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
     "/accounts/appsmith/users/": {
       "get": {
         "operationId": "accounts_appsmith_users_list",
@@ -41097,7 +41111,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/StripeWebhookLegacyResponse"
+            "$ref": "#/definitions/StripeWebhookResponse"
           },
           "400": {
             "$ref": "#/definitions/UsageErrorResponse"
@@ -69409,21 +69423,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "StripeWebhookLegacyResponse": {
-      "required": [
-        "status"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/StripeWebhookResult"
-        }
-      }
-    },
     "StripeWebhookRequest": {
       "type": "object",
       "properties": {
@@ -72240,6 +72239,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "enum": [
             "active",
             "past_due",
+            "unpaid",
             "canceled",
             "inactive"
           ]
@@ -85073,6 +85073,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "enum": [
             "active",
             "past_due",
+            "unpaid",
             "canceled",
             "inactive"
           ]

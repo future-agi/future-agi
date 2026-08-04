@@ -1,5 +1,7 @@
-"""Temporal activities for billing — dunning, invoice gen, monthly closing.
+"""Temporal activities for billing — invoice gen, monthly closing.
 
+Dunning (payment retries, reminder emails, final unpaid/cancel) is owned
+by Stripe Revenue Recovery; state lands here via webhooks only.
 Stripe meter events fire at invoice-close (see invoice_generation.py);
 no hourly catch-up. Errors re-raise so Temporal applies its retry policy.
 """
@@ -11,75 +13,11 @@ from django.db import close_old_connections
 from temporalio import activity
 
 from tfc.temporal.billing.types import (
-    DunningCheckInput,
-    DunningCheckOutput,
     MonthlyClosingInput,
     MonthlyClosingOutput,
     MonthlyInvoiceInput,
     MonthlyInvoiceOutput,
 )
-
-# ── Dunning Checks (daily) ────────────────────────────────────────────────
-
-
-@activity.defn(name="run_dunning_checks_activity")
-async def run_dunning_checks_activity(
-    input: DunningCheckInput,
-) -> DunningCheckOutput:
-    """Process dunning steps for all past_due orgs.
-
-    Queries orgs with status=past_due, calculates days_overdue,
-    and runs the appropriate dunning step (Day 3: retry, Day 7: warn, Day 14: downgrade).
-    Re-raises on failure so Temporal applies retry policy.
-    """
-    close_old_connections()
-    try:
-        count = await sync_to_async(_run_dunning_checks_sync, thread_sensitive=False)()
-        activity.logger.info(f"Dunning checks processed: {count} orgs")
-        return DunningCheckOutput(orgs_processed=count, status="COMPLETED")
-    finally:
-        close_old_connections()
-
-
-def _run_dunning_checks_sync() -> int:
-    """Sync wrapper — processes all past_due orgs."""
-    close_old_connections()
-    try:
-        try:
-            from ee.usage.models.usage import OrganizationSubscription
-        except ImportError:
-            OrganizationSubscription = None
-        try:
-            from ee.usage.services.dunning import DunningService
-        except ImportError:
-            DunningService = None
-
-        past_due_subs = OrganizationSubscription.objects.filter(
-            status="past_due", deleted=False
-        )
-
-        count = 0
-        for sub in past_due_subs:
-            # Calculate days overdue from billing_period_end or status change
-            if sub.billing_period_end:
-                days_overdue = (datetime.utcnow().date() - sub.billing_period_end).days
-            else:
-                days_overdue = 0
-
-            try:
-                DunningService.process_dunning_step(
-                    str(sub.organization_id), days_overdue
-                )
-                count += 1
-            except Exception:
-                activity.logger.exception(
-                    f"Dunning failed for org {sub.organization_id}"
-                )
-                # Continue processing other orgs; don't fail the entire batch
-        return count
-    finally:
-        close_old_connections()
-
 
 # ── Monthly Invoice Generation ─────────────────────────────────────────────
 
