@@ -12,6 +12,7 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { pillFilledSx } from "./toolbarStyles";
 
 const DEFAULT_ACTIONS = [
   {
@@ -71,17 +72,9 @@ const BulkActionsBar = ({
         ref={anchorRef}
         variant="outlined"
         size="small"
-        endIcon={<Iconify icon="mdi:chevron-down" width={16} />}
+        endIcon={<Iconify icon="mdi:chevron-down" width={14} />}
         onClick={() => setMenuOpen(true)}
-        sx={{
-          textTransform: "none",
-          fontWeight: 500,
-          fontSize: 13,
-          borderColor: "divider",
-          color: "text.primary",
-          height: 32,
-          "&:hover": { borderColor: "text.secondary" },
-        }}
+        sx={pillFilledSx}
       >
         Actions
       </Button>
