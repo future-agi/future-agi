@@ -10,6 +10,7 @@ from mcp_server.constants import RATE_LIMITS
 from mcp_server.rate_limiter import check_rate_limit, get_rate_limit_tier
 
 
+@pytest.mark.requires_ee
 class TestGetRateLimitTier:
     """Tests for get_rate_limit_tier()."""
 
