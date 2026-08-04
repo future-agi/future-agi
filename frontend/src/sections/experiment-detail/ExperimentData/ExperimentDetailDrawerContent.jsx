@@ -4,6 +4,7 @@ import {
   IconButton,
   Stack,
   Switch,
+  Tooltip,
   Typography,
   useTheme,
   LinearProgress,
@@ -187,6 +188,12 @@ export default function ExperimentDetailDrawerContent({
   const agTheme = useAgThemeWith(EXPERIMENT_DRAWER_THEME_PARAMS);
   const resizableRowRef = useRef(null);
   const { setAddEvaluationFeeback } = useAddEvaluationFeebackStore();
+  const currentRowId = row?.rowId;
+  const currentRowIdText =
+    typeof currentRowId === "string" || typeof currentRowId === "number"
+      ? String(currentRowId)
+      : "";
+  const hasCurrentRowId = currentRowIdText !== "";
 
   // Column grouping logic - separates individual columns from dataset columns
   const { individualCols: _individualCols, datasetCols } = useMemo(() => {
@@ -265,6 +272,7 @@ export default function ExperimentDetailDrawerContent({
       },
       {
         headerName: "Score",
+        field: "scoreValue",
         flex: 1,
         minWidth: 100,
         cellRenderer: StatusCellRenderer,
@@ -272,7 +280,6 @@ export default function ExperimentDetailDrawerContent({
           display: "flex",
           alignItems: "center",
         },
-        valueGetter: (params) => row?.[params?.data?.id],
       },
     ];
 
@@ -289,7 +296,8 @@ export default function ExperimentDetailDrawerContent({
     }
 
     return tabs;
-  }, [showDescription, row]);
+  }, [showDescription]);
+
   // Custom overlay for empty evaluation data
   const CustomNoRowsOverlay = () => (
     <Box
@@ -340,6 +348,20 @@ export default function ExperimentDetailDrawerContent({
     }
     return datasetEvaluations;
   }, [columnConfig]);
+
+  const evaluationRowsByDataset = useMemo(() => {
+    const rowsByDataset = {};
+
+    for (const [datasetId, evaluations] of Object.entries(evalsData)) {
+      rowsByDataset[datasetId] = evaluations.map((evaluation) => ({
+        ...evaluation,
+        scoreValue: row?.[evaluation?.id],
+      }));
+    }
+
+    return rowsByDataset;
+  }, [evalsData, row]);
+
   // Effect to handle diff tracking for dataset columns
   useEffect(() => {
     if (isPending) return;
@@ -595,49 +617,77 @@ export default function ExperimentDetailDrawerContent({
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
+            gap: 1,
+            flexWrap: "wrap",
           }}
         >
-          <Box sx={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            gap={1}
+            minWidth={0}
+            sx={{
+              flex: "1 1 320px",
+              maxWidth: "100%",
+              flexWrap: { xs: "wrap", sm: "nowrap" },
+            }}
+          >
             <Typography variant="m3" fontWeight={700} color="text.primary">
               Experiments
             </Typography>
-            <ShowComponent condition={!!row?.rowId}>
-              <Box
-                sx={{
-                  border: "1px solid",
-                  borderColor: "divider",
-                  display: "flex",
-                  gap: "8px",
-                  alignItems: "center",
-                  borderRadius: "8px",
-                  padding: "2px 8px",
-                  maxWidth: "320px",
-                }}
+            {hasCurrentRowId ? (
+              <Tooltip
+                title={`Row ID: ${currentRowIdText}`}
+                arrow
+                placement="bottom"
               >
-                <Typography
-                  variant="s2"
-                  fontWeight={"fontWeightRegular"}
-                  color="text.primary"
-                  noWrap
-                >
-                  Row ID: {row?.rowId}
-                </Typography>
-                <SvgColor
-                  src="/assets/icons/ic_copy.svg"
-                  alt="Copy"
+                <Box
+                  data-testid="experiment-row-id-chip"
+                  tabIndex={0}
+                  aria-label={`Row ID: ${currentRowIdText}`}
                   sx={{
-                    width: "12px",
-                    height: "12px",
-                    color: "text.disabled",
-                    cursor: "pointer",
-                    flexShrink: 0,
+                    border: "1px solid",
+                    borderColor: "divider",
+                    display: "flex",
+                    gap: "4px",
+                    alignItems: "center",
+                    borderRadius: "8px",
+                    padding: "2px 6px 2px 8px",
+                    minWidth: 0,
+                    width: { xs: "100%", sm: "auto" },
+                    maxWidth: { xs: "100%", sm: 320 },
                   }}
-                  onClick={handleCopyRowId}
-                />
-              </Box>
-            </ShowComponent>
-          </Box>
-          <Stack direction={"row"} gap={"12px"} alignItems={"center"}>
+                >
+                  <Typography
+                    variant="s2"
+                    fontWeight={"fontWeightRegular"}
+                    color="text.primary"
+                    sx={{
+                      minWidth: 0,
+                      overflow: "hidden",
+                      overflowWrap: "anywhere",
+                      textOverflow: { xs: "clip", sm: "ellipsis" },
+                      whiteSpace: { xs: "normal", sm: "nowrap" },
+                    }}
+                  >
+                    Row ID: {currentRowIdText}
+                  </Typography>
+                </Box>
+              </Tooltip>
+            ) : null}
+          </Stack>
+          <Stack
+            direction={"row"}
+            gap={"12px"}
+            alignItems={"center"}
+            sx={{
+              flex: "0 1 auto",
+              flexWrap: "wrap",
+              justifyContent: { xs: "flex-start", sm: "flex-end" },
+              maxWidth: "100%",
+              rowGap: 1,
+            }}
+          >
             <ShowComponent condition={showDiff}>
               <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
                 <SvgColor
@@ -974,8 +1024,9 @@ export default function ExperimentDetailDrawerContent({
                         suppressContextMenu={true}
                         columnDefs={TabColumnDefs}
                         defaultColDef={defaultColDef}
+                        getRowId={({ data }) => data?.id}
                         rowData={
-                          evalsData?.[col?.dataset_id] ?? []
+                          evaluationRowsByDataset?.[col?.datasetId] ?? []
                         }
                         domLayout="normal"
                         suppressRowDrag={true}
