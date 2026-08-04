@@ -39,7 +39,6 @@ from model_hub.models.evals_metric import (
     OwnerChoices,
     UserEvalMetric,
 )
-
 from model_hub.models.run_prompt import PromptEvalConfig
 from model_hub.selectors.feedback import resolve_feedback_edit_contexts
 from model_hub.serializers.contracts import (
@@ -209,8 +208,11 @@ def apply_filters(row_data, filters):
                 }
 
                 if filter_op not in text_ops:
-                    message = "Invalid filter operation. \
-                        Allowed operations are: " + ", ".join(text_ops.keys())
+                    message = (
+                        "Invalid filter operation. \
+                        Allowed operations are: "
+                        + ", ".join(text_ops.keys())
+                    )
                     raise ValueError(message)
 
                 result = []
@@ -1175,7 +1177,10 @@ class GetEvalTemplateNameView(APIView):
             )
             if search_text:
                 from model_hub.utils.eval_list import normalize_search_for_name
-                eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
+
+                eval_templates = eval_templates.filter(
+                    normalize_search_for_name(search_text)
+                )
             eval_template_names = [
                 {
                     "id": str(eval_template.id),
@@ -3333,7 +3338,6 @@ def _get_accessible_eval_template_for_request(template_id, request, template_typ
 
 
 def _get_accessible_ground_truth(ground_truth_id, request):
-    from model_hub.models.evals_metric import EvalGroundTruth
 
     organization = _request_organization(request)
     return (
@@ -4436,7 +4440,6 @@ class GroundTruthListView(APIView):
         responses={200: GroundTruthListResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, template_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalGroundTruth
         from model_hub.types import GroundTruthItem, GroundTruthListResponse
 
         try:
@@ -4532,9 +4535,7 @@ class GroundTruthUploadView(APIView):
         )
 
         try:
-            template = _get_accessible_eval_template_for_request(
-                template_id, request
-            )
+            template = _get_accessible_eval_template_for_request(template_id, request)
         except EvalTemplate.DoesNotExist:
             return self._gm.not_found("Eval template not found.")
 
@@ -4555,9 +4556,7 @@ class GroundTruthUploadView(APIView):
                 )
             except ValueError as exc:
                 return self._gm.bad_request(str(exc))
-            name = (
-                request_data.get("name") or uploaded_file.name.rsplit(".", 1)[0]
-            )
+            name = request_data.get("name") or uploaded_file.name.rsplit(".", 1)[0]
             description = request_data.get("description", "")
             file_name = uploaded_file.name
             variable_mapping = request_data.get("variable_mapping")
@@ -4617,7 +4616,6 @@ class GroundTruthSetupView(APIView):
         reject_unknown_fields=True,
     )
     def put(self, request, ground_truth_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalGroundTruth
         from model_hub.services.ground_truth_service import (
             GroundTruthService,
             ServiceError,
@@ -4640,9 +4638,7 @@ class GroundTruthSetupView(APIView):
         )
         if isinstance(result, ServiceError):
             return self._gm.bad_request(result.message)
-        return self._gm.success_response(
-            GroundTruthSetupResult(**result).model_dump()
-        )
+        return self._gm.success_response(GroundTruthSetupResult(**result).model_dump())
 
 
 class GroundTruthDataView(APIView):
@@ -4655,7 +4651,6 @@ class GroundTruthDataView(APIView):
         responses={200: GroundTruthDataResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, ground_truth_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalGroundTruth
         from model_hub.types import GroundTruthDataResponse
 
         try:
@@ -4704,7 +4699,6 @@ class GroundTruthStatusView(APIView):
         }
     )
     def get(self, request, ground_truth_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalGroundTruth
         from model_hub.types import GroundTruthStatusResponse
 
         try:
@@ -4757,8 +4751,6 @@ class GroundTruthDeleteView(APIView):
     def delete(self, request, ground_truth_id, *args, **kwargs):
         from django.db import transaction
 
-        from model_hub.models.evals_metric import EvalGroundTruth
-
         try:
             try:
                 gt = _get_accessible_ground_truth(ground_truth_id, request)
@@ -4769,7 +4761,9 @@ class GroundTruthDeleteView(APIView):
                 gt.deleted = True
                 gt.deleted_at = timezone.now()
                 gt.is_active = False
-                gt.save(update_fields=["deleted", "deleted_at", "is_active", "updated_at"])
+                gt.save(
+                    update_fields=["deleted", "deleted_at", "is_active", "updated_at"]
+                )
 
             return self._gm.success_response({"deleted": True, "id": str(gt.id)})
 
@@ -4795,7 +4789,6 @@ class GroundTruthTriggerEmbeddingView(APIView):
         reject_unknown_fields=True,
     )
     def post(self, request, ground_truth_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalGroundTruth
 
         try:
             try:
@@ -5483,121 +5476,6 @@ class EvalFeedbackListView(APIView):
             return self._gm.bad_request(str(e))
 
 
-class TraceEvalView(APIView):
-    """
-    POST /model-hub/eval-templates/<id>/run-on-trace/
-
-    Run an eval against a trace's data. Extracts input/output from the trace
-    and passes it to the eval template.
-    """
-
-    _gm = GeneralMethods()
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request, template_id, *args, **kwargs):
-        from model_hub.types import TraceEvalRequest, TraceEvalResponse
-        from model_hub.utils.scoring import determine_pass_fail, normalize_score
-
-        try:
-            try:
-                req = TraceEvalRequest(**request.data)
-            except Exception as e:
-                from tfc.utils.errors import format_request_error
-
-                return self._gm.bad_request(format_request_error(e))
-
-            try:
-                template = EvalTemplate.no_workspace_objects.get(
-                    id=template_id, deleted=False
-                )
-            except EvalTemplate.DoesNotExist:
-                return self._gm.not_found("Eval template not found.")
-
-            # Get trace data
-            from tracer.models.trace import Trace
-
-            try:
-                trace = Trace.objects.get(id=req.trace_id, deleted=False)
-            except Trace.DoesNotExist:
-                return self._gm.not_found("Trace not found.")
-
-            # Extract trace input/output for eval context
-            trace_input = trace.input if hasattr(trace, "input") else {}
-            trace_output = trace.output if hasattr(trace, "output") else {}
-
-            # Build mapping from trace data
-            config = template.config or {}
-            required_keys = config.get("required_keys", [])
-            mapping = {}
-
-            if req.pass_context:
-                # Pass full trace context without explicit mapping
-                mapping = {
-                    "input": str(trace_input) if trace_input else "",
-                    "output": str(trace_output) if trace_output else "",
-                    "trace_id": str(trace.id),
-                }
-            else:
-                # Try to map required keys from trace input/output
-                for key in required_keys:
-                    if isinstance(trace_input, dict) and key in trace_input:
-                        mapping[key] = str(trace_input[key])
-                    elif isinstance(trace_output, dict) and key in trace_output:
-                        mapping[key] = str(trace_output[key])
-
-            # Run eval via existing playground infrastructure
-            try:
-                from model_hub.views.utils.evals import run_eval_func
-
-                organization = (
-                    getattr(request, "organization", None) or request.user.organization
-                )
-                runtime_config = {"mapping": mapping}
-
-                result = run_eval_func(
-                    runtime_config,
-                    mapping,
-                    template,
-                    organization,
-                    model=req.model,
-                )
-
-                output = result.get("output", {}) if isinstance(result, dict) else {}
-                raw_value = output.get("output") if isinstance(output, dict) else result
-
-                score = normalize_score(
-                    raw_value,
-                    template.output_type_normalized or "pass_fail",
-                    choice_scores=template.choice_scores,
-                )
-                threshold = template.pass_threshold or 0.5
-                passed = determine_pass_fail(score, threshold)
-                reason = output.get("reason") if isinstance(output, dict) else None
-
-                response = TraceEvalResponse(
-                    template_id=str(template_id),
-                    trace_id=req.trace_id,
-                    score=score,
-                    passed=passed,
-                    reason=str(reason) if reason else None,
-                    status="completed",
-                )
-
-            except Exception as eval_error:
-                response = TraceEvalResponse(
-                    template_id=str(template_id),
-                    trace_id=req.trace_id,
-                    status="failed",
-                    reason=str(eval_error),
-                )
-
-            return self._gm.success_response(response.model_dump())
-
-        except Exception as e:
-            logger.error(f"Error in TraceEvalView: {str(e)}\n{traceback.format_exc()}")
-            return self._gm.bad_request(str(e))
-
-
 class VersionCompareView(APIView):
     """
     GET /model-hub/eval-templates/<id>/versions/compare/?a=1&b=2
@@ -5791,7 +5669,10 @@ def _build_span_context(span) -> dict:
     base["recording_url"] = (
         sa.get("recording_url")
         or sa.get("recordingUrl")
-        or (raw_log.get("artifact") or {}).get("recording", {}).get("mono", {}).get("combinedUrl")
+        or (raw_log.get("artifact") or {})
+        .get("recording", {})
+        .get("mono", {})
+        .get("combinedUrl")
         or raw_log.get("recordingUrl")
         or raw_log.get("recording_url")
     )
@@ -6309,13 +6190,10 @@ class EvalPlayGroundAPIView(APIView):
                         _conversational_roles = (
                             SpeakerRoleResolver.get_conversational_roles()
                         )
-                        _transcript_rows = (
-                            CallTranscript.objects.filter(
-                                call_execution_id=_ce.id,
-                                speaker_role__in=_conversational_roles,
-                            )
-                            .order_by("start_time_ms")[:200]
-                        )
+                        _transcript_rows = CallTranscript.objects.filter(
+                            call_execution_id=_ce.id,
+                            speaker_role__in=_conversational_roles,
+                        ).order_by("start_time_ms")[:200]
                         call_context = {
                             "id": str(_ce.id),
                             "status": _ce.status,
