@@ -973,7 +973,7 @@ class EvaluationRunner:
         ):
             return cached
 
-        template_config = getattr(getattr(self, "eval_template", None), "config", None) or {}
+        template_config = getattr(self.eval_template, "config", None) or {}
         effective_config = (
             dict(template_config) if isinstance(template_config, dict) else {}
         )
