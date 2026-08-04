@@ -18,8 +18,13 @@ celery_app = Celery("tfc")
 # This ensures request_id, user_id, etc. flow from HTTP request to Celery task
 celery_app.steps["worker"].add(DjangoStructLogInitStep)
 
-# Ensure that Celery uses Django's logging configuration
-dictConfig(settings.LOGGING)
+# Ensure that Celery uses Django's logging configuration. Under the test
+# settings Django already applies LOGGING at startup, so skip the re-apply here:
+# if this import lands mid-session (the first test to pull in a Celery task) the
+# dictConfig would replace root's handlers and wipe pytest's caplog handler,
+# breaking every downstream caplog/capture_logs assertion.
+if not os.environ.get("DJANGO_SETTINGS_MODULE", "").endswith(".test"):
+    dictConfig(settings.LOGGING)
 
 # Import django-structlog Celery receivers for automatic task logging
 # This logs task_started, task_succeeded, task_failed, etc. with context
