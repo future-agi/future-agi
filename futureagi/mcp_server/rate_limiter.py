@@ -41,10 +41,53 @@ def get_rate_limit_tier(organization) -> str:
         return "free"
 
 
+def _day_bucket(now_dt: datetime.datetime) -> str:
+    """UTC calendar day the request belongs to, as ``YYYY-MM-DD``."""
+    return now_dt.strftime("%Y-%m-%d")
+
+
+def _next_utc_midnight(now_dt: datetime.datetime) -> datetime.datetime:
+    """Start of the next UTC day — the instant the daily quota resets."""
+    return (now_dt + datetime.timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+
+
+def _day_key(organization_id: str, now_dt: datetime.datetime) -> str:
+    """Cache key for an org's daily counter, stamped with the UTC calendar day.
+
+    Stamping the day into the key is what makes the quota reset at midnight.
+    The previous implementation used a single un-stamped key refreshed with
+    ``cache.set(..., timeout=86400)`` on every call, which re-armed the TTL each
+    time — so the counter only expired after 24 consecutive hours of *zero*
+    traffic, and an org with steady usage stayed locked out permanently once it
+    hit the limit. With the day in the key, yesterday's counter is simply never
+    read again and expires on its own.
+    """
+    return f"mcp_rl:day:{organization_id}:{_day_bucket(now_dt)}"
+
+
+def _increment_day_counter(day_key: str, ttl: int) -> None:
+    """Increment the daily counter, creating it if this is the day's first call.
+
+    ``cache.incr`` raises ``ValueError`` when the key is absent, so the first
+    call of each UTC day falls back to ``cache.add``. ``add`` is a no-op when the
+    key already exists, which is what makes the fallback safe: if another worker
+    created the key between our ``incr`` and our ``add``, ``add`` returns False
+    and we increment the value they created instead of overwriting it.
+    """
+    try:
+        cache.incr(day_key)
+    except ValueError:
+        if not cache.add(day_key, 1, timeout=ttl):
+            cache.incr(day_key)
+
+
 def check_rate_limit(organization_id: str, tier: str) -> None:
     """Check sliding window rate limits. Raises RateLimitExceededError if exceeded."""
     limits = RATE_LIMITS.get(tier, RATE_LIMITS["free"])
     now = time.time()
+    now_dt = datetime.datetime.now(datetime.timezone.utc)
 
     # Per-minute check (sliding window of timestamps)
     minute_key = f"mcp_rl:min:{organization_id}"
@@ -60,22 +103,23 @@ def check_rate_limit(organization_id: str, tier: str) -> None:
             retry_after=max(retry_after, 1),
         )
 
-    # Per-day check (simple counter with 24h TTL)
-    day_key = f"mcp_rl:day:{organization_id}"
+    # Per-day check (counter keyed by UTC calendar day, expiring at midnight)
+    day_key = _day_key(organization_id, now_dt)
     day_count = cache.get(day_key, 0) or 0
 
+    midnight = _next_utc_midnight(now_dt)
+    seconds_to_midnight = int((midnight - now_dt).total_seconds())
+
     if day_count >= limits["per_day"]:
-        now_dt = datetime.datetime.now(datetime.timezone.utc)
-        midnight = (now_dt + datetime.timedelta(days=1)).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-        retry_after = int((midnight - now_dt).total_seconds())
         raise RateLimitExceededError(
             f"Rate limit exceeded: {limits['per_day']} calls/day",
-            retry_after=retry_after,
+            retry_after=seconds_to_midnight,
         )
 
     # Record this call
     minute_window.append(now)
     cache.set(minute_key, minute_window, timeout=120)
-    cache.set(day_key, day_count + 1, timeout=86400)
+    # +60s of slack so the key outlives the boundary it is bounded by; once the
+    # clock rolls over, _day_key() points at a new key anyway, so a briefly
+    # lingering counter for yesterday is never consulted again.
+    _increment_day_counter(day_key, seconds_to_midnight + 60)

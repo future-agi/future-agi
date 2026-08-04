@@ -98,8 +98,11 @@ CATEGORY_TO_GROUP = {
     "docs": "docs",
 }
 
+# Per-tier MCP quotas. Every limit must be monotonically non-decreasing from
+# ``free`` -> ``pro`` -> ``enterprise``; ``test_rate_limits_are_monotonic_across_tiers``
+# enforces that so a paying tier can never end up throttled harder than a free one.
 RATE_LIMITS = {
-    "free": {"per_minute": 200, "per_day": 5000, "concurrent_sessions": 5},
+    "free": {"per_minute": 20, "per_day": 5000, "concurrent_sessions": 5},
     "pro": {"per_minute": 100, "per_day": 10_000, "concurrent_sessions": 5},
     "enterprise": {"per_minute": 500, "per_day": 100_000, "concurrent_sessions": None},
 }
