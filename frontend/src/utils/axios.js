@@ -20,10 +20,147 @@ import {
 import { resetUser } from "./Mixpanel";
 import logger from "./logger";
 import { RESPONSE_CODES } from "./constants";
+import { markGeneratedCamelAlias } from "./responseAliasMetadata";
 
 // ----------------------------------------------------------------------
 //
 const axiosInstance = axios.create({ baseURL: HOST_API });
+
+// ----------------------------------------------------------------------
+// Compatibility bridge: backend responses are now snake_case, but a lot of
+// existing UI code still reads camelCase keys (`columnConfig`, `rowId`,
+// `totalRows`, etc.). Add camelCase aliases on responses so those flows keep
+// working while new dynamic-field lists can use canonicalKeys/canonicalEntries
+// to avoid showing both forms.
+// ----------------------------------------------------------------------
+const SNAKE_TO_CAMEL_RE = /_([a-z0-9])/g;
+
+function snakeToCamelKey(key) {
+  return key.replace(SNAKE_TO_CAMEL_RE, (_, c) => c.toUpperCase());
+}
+
+const USER_KEYED_MAP_FIELDS = new Set([
+  "variable_names",
+  "mapping",
+  "placeholders",
+  "params",
+  "headers",
+  "choice_scores",
+  "attributes",
+  "span_attributes",
+  "trace_attributes",
+  "session_attributes",
+  "call_attributes",
+  "voice_call_attributes",
+]);
+
+function buildAliasTable(obj) {
+  const table = {};
+  const keys = Object.keys(obj);
+  for (let i = 0; i < keys.length; i += 1) {
+    const key = keys[i];
+    if (!key.includes("_")) continue;
+    const camel = snakeToCamelKey(key);
+    if (camel !== key && !(camel in obj)) {
+      table[camel] = key;
+    }
+  }
+  return table;
+}
+
+function isSpecialObject(obj) {
+  return (
+    obj instanceof Date ||
+    obj instanceof RegExp ||
+    (typeof FormData !== "undefined" && obj instanceof FormData) ||
+    (typeof Blob !== "undefined" && obj instanceof Blob) ||
+    (typeof File !== "undefined" && obj instanceof File)
+  );
+}
+
+function addCamelAliases(obj, seen, markGeneratedAliases = false) {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj !== "object") return obj;
+  if (seen.has(obj)) return obj;
+  seen.add(obj);
+
+  if (isSpecialObject(obj)) return obj;
+
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i += 1) {
+      addCamelAliases(obj[i], seen, markGeneratedAliases);
+    }
+    return obj;
+  }
+
+  const originalKeys = Object.keys(obj);
+  for (let i = 0; i < originalKeys.length; i += 1) {
+    const key = originalKeys[i];
+    if (USER_KEYED_MAP_FIELDS.has(key)) continue;
+    const value = obj[key];
+    if (value !== null && typeof value === "object") {
+      addCamelAliases(value, seen, markGeneratedAliases || key === "metadata");
+    }
+  }
+
+  // Keep aliases enumerable because many legacy call sites spread API objects
+  // before reading camelCase keys. Inside user-owned metadata subtrees, also
+  // mark generated aliases so gateway renderers can hide phantom fields without
+  // changing response object enumerability for existing consumers.
+  const aliases = buildAliasTable(obj);
+  Object.keys(aliases).forEach((camel) => {
+    const snake = aliases[camel];
+    try {
+      obj[camel] = obj[snake];
+      if (markGeneratedAliases) markGeneratedCamelAlias(obj, camel);
+    } catch {
+      // Ignore read-only / frozen objects.
+    }
+  });
+
+  return obj;
+}
+
+function stripCamelAliases(obj, seen) {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj !== "object") return obj;
+  if (seen.has(obj)) return obj;
+  seen.add(obj);
+
+  if (isSpecialObject(obj)) return obj;
+
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i += 1) {
+      stripCamelAliases(obj[i], seen);
+    }
+    return obj;
+  }
+
+  const keys = Object.keys(obj);
+  for (let i = 0; i < keys.length; i += 1) {
+    const key = keys[i];
+    const value = obj[key];
+    if (value !== null && typeof value === "object") {
+      stripCamelAliases(value, seen);
+    }
+    if (/[A-Z]/.test(key) && !key.includes("_")) {
+      const snakeKey = key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+      if (
+        snakeKey !== key &&
+        Object.prototype.hasOwnProperty.call(obj, snakeKey) &&
+        obj[snakeKey] === obj[key]
+      ) {
+        try {
+          delete obj[key];
+        } catch {
+          // Ignore non-configurable objects.
+        }
+      }
+    }
+  }
+
+  return obj;
+}
 
 const avoidRedirect = [
   "/auth/jwt/register",

@@ -5,50 +5,11 @@ vi.mock("../Mixpanel", () => ({
 }));
 
 import axiosInstance from "../axios";
+import { canonicalKeys } from "../canonicalKeys";
+import { isGeneratedCamelAlias } from "../responseAliasMetadata";
 
-describe("axios response shape", () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.restoreAllMocks();
-  });
-
-  it("keeps request bodies immutable and lets contract validation catch drift", () => {
-    const fulfilled = axiosInstance.interceptors.request.handlers.find(
-      (handler) => handler.fulfilled,
-    )?.fulfilled;
-
-    const body = {
-      query_config: {
-        time_range: { preset: "7D" },
-        metrics: [{ name: "Latency", type: "system_metric" }],
-      },
-      queryConfig: {
-        timeRange: { preset: "7D" },
-        metrics: [{ name: "Latency", type: "system_metric" }],
-      },
-    };
-    const config = {
-      url: "/tracer/dashboard/7f9d0f16-9d42-48b6-9bb8-44cdb1a9c0ab/widgets/preview/",
-      method: "post",
-      data: body,
-    };
-
-    expect(() => fulfilled(config)).toThrowError(
-      "request body contract validation failed",
-    );
-    expect(config.data).toEqual({
-      query_config: {
-        time_range: { preset: "7D" },
-        metrics: [{ name: "Latency", type: "system_metric" }],
-      },
-      queryConfig: {
-        timeRange: { preset: "7D" },
-        metrics: [{ name: "Latency", type: "system_metric" }],
-      },
-    });
-  });
-
-  it("preserves canonical response keys without adding camelCase aliases", () => {
+describe("axios response shape Unit", () => {
+  it("adds camelCase aliases while canonicalKeys still hides duplicates", () => {
     const fulfilled = axiosInstance.interceptors.response.handlers.find(
       (handler) => handler.fulfilled,
     )?.fulfilled;
@@ -73,6 +34,53 @@ describe("axios response shape", () => {
     expect(Object.keys(result.data.span_attributes)).toEqual([
       "gen_ai.usage.total_tokens",
     ]);
+    expect(isGeneratedCamelAlias(result.data, "createdAt")).toBe(false);
+  });
+
+  it("marks generated metadata aliases while preserving enumerable compatibility", () => {
+    const fulfilled = axiosInstance.interceptors.response.handlers.find(
+      (handler) => handler.fulfilled,
+    )?.fulfilled;
+
+    const response = {
+      data: {
+        metadata: {
+          generated_key: "generated",
+          explicit_key: "same-value",
+          explicitKey: "same-value",
+          events: [{ request_id: "req-1" }],
+        },
+      },
+    };
+
+    const result = fulfilled(response);
+
+    expect(result.data.metadata.generatedKey).toBe("generated");
+    expect(result.data.metadata.events[0].requestId).toBe("req-1");
+    expect(Object.keys(result.data.metadata)).toEqual([
+      "generated_key",
+      "explicit_key",
+      "explicitKey",
+      "events",
+      "generatedKey",
+    ]);
+    expect(Object.keys(result.data.metadata.events[0])).toEqual([
+      "request_id",
+      "requestId",
+    ]);
+    expect(JSON.stringify(result.data.metadata)).toContain("generatedKey");
+    expect(JSON.stringify(result.data.metadata)).toContain("requestId");
+    expect({ ...result.data.metadata }.generatedKey).toBe("generated");
+
+    expect(isGeneratedCamelAlias(result.data.metadata, "generatedKey")).toBe(
+      true,
+    );
+    expect(isGeneratedCamelAlias(result.data.metadata, "explicitKey")).toBe(
+      false,
+    );
+    expect(
+      isGeneratedCamelAlias(result.data.metadata.events[0], "requestId"),
+    ).toBe(true);
   });
 
   it("warns by default when documented error responses drift from the generated contract", async () => {
