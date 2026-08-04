@@ -138,7 +138,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState(PYTHON_CODE_TEMPLATE);
   const [codeLanguage, setCodeLanguage] = useState("python");
-  const [model, setModel] = useState("turing_large");
+  const [model, setModel] = useState(isOSS ? "" : "turing_large");
+  const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
   const [choiceScores, setChoiceScores] = useState({});
@@ -347,6 +348,11 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
 
   // Test
   const handleTestEvaluation = useCallback(async () => {
+    if (isOSS && evalType !== "code" && !model) {
+      enqueueSnackbar("Please select a model.", { variant: "error" });
+      setOpenModelMenuSignal((n) => n + 1);
+      return;
+    }
     if (!draftId) return;
     setIsTesting(true);
     setTestError(null);
@@ -358,7 +364,16 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     } catch (error) {
       handleTestResult(false, error?.message || "Failed to test");
     }
-  }, [draftId, buildPayload, updateDraft, handleTestResult]);
+  }, [
+    draftId,
+    isOSS,
+    evalType,
+    model,
+    buildPayload,
+    updateDraft,
+    handleTestResult,
+    enqueueSnackbar,
+  ]);
 
   const hasDataInjection = useMemo(
     () =>
@@ -500,10 +515,12 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         "Turing models are not available in OSS. Please select your own model.",
         { variant: "error" },
       );
+      setOpenModelMenuSignal((n) => n + 1);
       return;
     }
     if (isOSS && evalType !== "code" && !model) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
+      setOpenModelMenuSignal((n) => n + 1);
       return;
     }
     if (!validate()) return;
@@ -1009,6 +1026,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
               {!isComposite && evalType === "agent" && (
                 <>
                   <InstructionEditor
+                    openModelMenuSignal={openModelMenuSignal}
                     value={instructions}
                     onChange={handleInstructionsChange}
                     model={model}
@@ -1037,8 +1055,10 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     onModelChange={setModel}
                     showMode={false}
                     showPlus={false}
+                    openModelMenuSignal={openModelMenuSignal}
                   />
                   <LLMPromptEditor
+                    openModelMenuSignal={openModelMenuSignal}
                     messages={messages}
                     onMessagesChange={(msgs) => {
                       setMessages(msgs);
