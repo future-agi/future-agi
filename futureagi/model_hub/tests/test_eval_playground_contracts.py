@@ -5,7 +5,10 @@ from rest_framework import status
 
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
-from ee.usage.models.usage import APICallLog, APICallStatusChoices
+try:
+    from ee.usage.models.usage import APICallLog, APICallStatusChoices
+except ImportError:
+    APICallLog = APICallStatusChoices = None
 from model_hub.models.choices import OwnerChoices, SourceChoices
 from model_hub.models.error_localizer_model import (
     ErrorLocalizerSource,
@@ -15,6 +18,8 @@ from model_hub.models.error_localizer_model import (
 from model_hub.models.evals_metric import EvalSettings, EvalTemplate, Feedback
 from model_hub.serializers.contracts import EvalApiLogTableQuerySerializer
 from model_hub.views.separate_evals import create_column_config_playground
+
+pytestmark = pytest.mark.requires_ee
 
 
 def _create_workspace(organization, user, name):

@@ -9,7 +9,12 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
-from ee.evals.localizer.error_localizer import LocalizerResult
+try:
+    from ee.evals.localizer.error_localizer import LocalizerResult
+except ImportError:
+    LocalizerResult = None
+
+pytestmark = pytest.mark.requires_ee
 
 
 @pytest.fixture(autouse=True)
