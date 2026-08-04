@@ -70,11 +70,11 @@ export default function OssSetupShell({
         >
           <SvgColor
             src="/favicon/logo.svg"
-            sx={{ height: 34, width: 34, color: "text.primary" }}
+            sx={{ height: 34, width: 34, color: "primary.main" }}
           />
           <SvgColor
             src="/logo/future_agi_text.svg"
-            sx={{ height: 18, width: 116, color: "text.primary" }}
+            sx={{ height: 18, width: 116, color: "primary.main" }}
           />
         </Stack>
 

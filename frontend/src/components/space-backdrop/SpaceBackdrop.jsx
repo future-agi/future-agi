@@ -1,10 +1,11 @@
 import React from "react";
 import { Box, useTheme } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import { keyframes } from "@mui/system";
 
 // Decorative starfield behind the auth screens and the self-hosted setup flow.
-// Dark mode only — the stars are white and this draws no surface of its own, so
-// on a light background they would be invisible.
+// Rendered in both themes: white stars with a glow read on the dark background,
+// while light needs a grey-violet star and no glow or the field turns to soot.
 
 const twinkle = keyframes`
   0%, 100% { opacity: 0.15; transform: scale(0.8); }
@@ -49,7 +50,19 @@ const STARS = [
 
 export default function SpaceBackdrop() {
   const theme = useTheme();
-  if (theme.palette.mode !== "dark") return null;
+  const isDark = theme.palette.mode === "dark";
+
+  const starColor = isDark
+    ? theme.palette.common.white
+    : theme.palette.grey[500];
+  const starGlow = isDark ? "0 0 6px 1px rgba(255,255,255,0.5)" : "none";
+  // Brand violet, not primary.main — dark mode's primary is monochrome white
+  // by design, which would drain the rings of colour.
+  const ringColor = alpha(theme.palette.purple[500], isDark ? 0.1 : 0.18);
+  const trailColor = isDark
+    ? theme.palette.common.white
+    : theme.palette.purple[500];
+  const trailOpacity = isDark ? 0.9 : 0.55;
 
   return (
     <Box
@@ -74,7 +87,8 @@ export default function SpaceBackdrop() {
             height: size,
             transform: "translateX(-50%)",
             borderRadius: "50%",
-            border: "1px solid rgba(123,97,255,0.10)",
+            border: "1px solid",
+            borderColor: ringColor,
           }}
         />
       ))}
@@ -90,8 +104,8 @@ export default function SpaceBackdrop() {
             width: star.s,
             height: star.s,
             borderRadius: "50%",
-            bgcolor: "common.white",
-            boxShadow: "0 0 6px 1px rgba(255,255,255,0.5)",
+            bgcolor: starColor,
+            boxShadow: starGlow,
             animation: `${twinkle} ${2.4 + (i % 5) * 0.6}s ease-in-out ${star.d}s infinite`,
           }}
         />
@@ -111,9 +125,8 @@ export default function SpaceBackdrop() {
             width: 90,
             height: 1.5,
             borderRadius: 2,
-            background:
-              "linear-gradient(90deg, rgba(255,255,255,0.9), rgba(255,255,255,0))",
-            filter: "drop-shadow(0 0 6px rgba(255,255,255,0.6))",
+            background: `linear-gradient(90deg, ${alpha(trailColor, trailOpacity)}, ${alpha(trailColor, 0)})`,
+            filter: `drop-shadow(0 0 6px ${alpha(trailColor, 0.6)})`,
             opacity: 0,
             animation: `${shoot} 9s ease-in ${sh.delay}s infinite`,
           }}

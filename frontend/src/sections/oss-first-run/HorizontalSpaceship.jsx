@@ -1,13 +1,11 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { Box } from "@mui/material";
+import { Box, useTheme } from "@mui/material";
 import { keyframes } from "@mui/system";
 
 // Compact horizontal "live" banner: a little starship glides across a dashed
 // trajectory while validation runs. Used in place of the tall vertical hero on
 // the validation step so the check list has more vertical room.
-
-const LINE = "#EAEFF6";
 
 const flow = keyframes`
   to { stroke-dashoffset: -30; }
@@ -27,6 +25,12 @@ const STARS = [
 ];
 
 export default function HorizontalSpaceship({ progress = 0, height = 60, sx }) {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === "dark";
+  const LINE = isDark ? "#EAEFF6" : theme.palette.grey[700];
+  const starColor = isDark
+    ? theme.palette.common.white
+    : theme.palette.grey[500];
   const p = Math.max(0, Math.min(1, progress));
   return (
     <Box
@@ -77,7 +81,7 @@ export default function HorizontalSpaceship({ progress = 0, height = 60, sx }) {
             width: 2,
             height: 2,
             borderRadius: "50%",
-            bgcolor: "common.white",
+            bgcolor: starColor,
             animation: `${twinkle} ${2.2 + (i % 3) * 0.6}s ease-in-out ${s.d}s infinite`,
           }}
         />

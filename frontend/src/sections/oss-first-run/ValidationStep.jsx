@@ -13,6 +13,7 @@ import {
   Link,
   Collapse,
   IconButton,
+  Tooltip,
   useTheme,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
@@ -36,6 +37,10 @@ const FAST_POLL_WINDOW_MS = 30000;
 
 const PANEL_MAX_WIDTH = 460;
 
+// `warning.main` is a pale yellow that all but disappears on a light surface,
+// so the amber ramp carries the warning state here.
+const WARNING_COLOR = "amber.600";
+
 const STATUS_META = {
   [PASSED]: {
     icon: "solar:check-circle-bold",
@@ -44,7 +49,7 @@ const STATUS_META = {
   },
   [WARNING]: {
     icon: "solar:danger-triangle-bold",
-    color: "warning.main",
+    color: WARNING_COLOR,
     label: "Warning",
   },
   [FAILED]: {
@@ -57,9 +62,12 @@ const STATUS_META = {
     color: "text.disabled",
     label: "Optional",
   },
+  // Arc without the background track — at row scale a full ring reads as a
+  // filled status dot rather than something in progress.
   [PENDING]: {
-    icon: "solar:record-linear",
-    color: "text.disabled",
+    icon: "svg-spinners:90-ring",
+    color: "primary.main",
+    labelColor: "text.primary",
     label: "Checking…",
   },
 };
@@ -134,19 +142,34 @@ export default function ValidationStep({
     onProgress?.(checks.length ? revealCount / checks.length : 0);
   }, [revealCount, checks.length, onProgress]);
 
-  const revealed = checks.slice(0, revealCount);
+  const resolved = useMemo(
+    () => checks.slice(0, revealCount),
+    [checks, revealCount],
+  );
   const stillRevealing = revealCount < checks.length;
+
+  // The whole list is on screen from the first snapshot; the stagger flips each
+  // row's status rather than adding the row, so the card never grows under the
+  // reader's cursor. A row awaiting its turn shows no detail — the detail
+  // describes an outcome it does not have yet.
+  const displayChecks = useMemo(
+    () =>
+      checks.map((check, i) =>
+        i < revealCount ? check : { ...check, status: PENDING, detail: "" },
+      ),
+    [checks, revealCount],
+  );
 
   const counts = useMemo(() => {
     const c = { passed: 0, warning: 0, failed: 0, optional: 0 };
-    revealed.forEach((check) => {
+    resolved.forEach((check) => {
       if (check.status === PASSED) c.passed += 1;
       else if (check.status === WARNING) c.warning += 1;
       else if (check.status === FAILED) c.failed += 1;
       else if (check.status === SKIPPED) c.optional += 1;
     });
     return c;
-  }, [revealed]);
+  }, [resolved]);
 
   const summary = useMemo(() => {
     if (!reachable) {
@@ -160,6 +183,7 @@ export default function ValidationStep({
     return parts.join(", ") || "Running checks…";
   }, [counts, reachable]);
 
+  const amberMain = theme.palette.amber[600];
   const tint = (key, opacity = 0.16) => alpha(theme.palette[key].main, opacity);
 
   // Connection state and check state are separate axes. An unreachable server
@@ -178,10 +202,10 @@ export default function ValidationStep({
   } else if (reachable && counts.warning) {
     summaryIcon = {
       icon: "solar:danger-triangle-bold",
-      color: "warning.main",
-      bg: tint("warning"),
+      color: WARNING_COLOR,
+      bg: alpha(amberMain, 0.16),
     };
-  } else if (reachable && !stillRevealing) {
+  } else if (reachable) {
     summaryIcon = {
       icon: "solar:check-circle-bold",
       color: "success.main",
@@ -197,6 +221,10 @@ export default function ValidationStep({
     stillRevealing ||
     checks.some((c) => c.required && c.status === FAILED);
 
+  // One request returns the whole snapshot, so every re-run entry point — the
+  // per-row icon included — triggers the same full refetch.
+  const rerunDisabled = isFetching || stillRevealing;
+
   const renderHead = (
     <Stack sx={{ mb: 2.5 }}>
       <Typography
@@ -211,8 +239,8 @@ export default function ValidationStep({
         variant="s1_2"
         sx={{ color: "text.secondary", maxWidth: PANEL_MAX_WIDTH, mt: 1 }}
       >
-        Validation runs immediately. You can re-run the checks at any time. If
-        you get stuck, see the{" "}
+        Validation runs immediately. You can re-run any check that fails. If you
+        get stuck, see the{" "}
         <Link
           href="https://docs.futureagi.com"
           target="_blank"
@@ -229,6 +257,7 @@ export default function ValidationStep({
   const renderRow = (check) => {
     const meta = STATUS_META[check.status] || STATUS_META[PENDING];
     const failed = check.status === FAILED;
+    const canRerun = check.status === WARNING || failed;
     return (
       <Stack
         key={check.id}
@@ -269,10 +298,25 @@ export default function ValidationStep({
           )}
         </Stack>
 
+        {canRerun && (
+          <Tooltip title="Re-run checks">
+            <span>
+              <IconButton
+                size="small"
+                disabled={rerunDisabled}
+                onClick={() => refetch()}
+                sx={{ color: "text.primary", flexShrink: 0 }}
+              >
+                <Iconify icon="solar:refresh-linear" width={16} />
+              </IconButton>
+            </span>
+          </Tooltip>
+        )}
+
         <Typography
           variant="s2_1"
           fontWeight="fontWeightSemiBold"
-          sx={{ color: meta.color, flexShrink: 0 }}
+          sx={{ color: meta.labelColor || meta.color, flexShrink: 0 }}
         >
           {meta.label}
         </Typography>
@@ -336,29 +380,24 @@ export default function ValidationStep({
       </Stack>
 
       <Collapse in={expanded}>
-        {/* Rows fill the remaining viewport height, so the list stretches on
-            tall screens and scrolls on short ones — while Continue / Back stay
-            visible. */}
-        <Box sx={{ maxHeight: "calc(100vh - 560px)", overflowY: "auto" }}>
-          {revealed.map(renderRow)}
-        </Box>
+        {displayChecks.map(renderRow)}
 
-        {/* Re-runs everything: one request returns the whole snapshot, so a
-            per-row re-run would be a lie about independent probing. */}
         <Stack
           direction="row"
           alignItems="center"
           justifyContent="center"
           spacing={1}
-          onClick={isFetching ? undefined : () => refetch()}
+          onClick={rerunDisabled ? undefined : () => refetch()}
           sx={{
             px: 2,
             py: 1.5,
             borderTop: "1px solid",
             borderColor: "divider",
-            cursor: isFetching ? "default" : "pointer",
-            color: isFetching ? "text.disabled" : "text.primary",
-            "&:hover": { bgcolor: isFetching ? "transparent" : "action.hover" },
+            cursor: rerunDisabled ? "default" : "pointer",
+            color: rerunDisabled ? "text.disabled" : "text.primary",
+            "&:hover": {
+              bgcolor: rerunDisabled ? "transparent" : "action.hover",
+            },
           }}
         >
           <Iconify icon="solar:refresh-linear" width={16} />

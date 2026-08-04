@@ -5,7 +5,12 @@ import { Suspense } from "react";
 import lazyWithRetry from "src/utils/lazyWithRetry";
 import { Outlet } from "react-router-dom";
 
-import { AuthGuard, GuestGuard, OssRestrictedGuard } from "src/auth/guard";
+import {
+  AuthGuard,
+  GuestGuard,
+  OssRestrictedGuard,
+  OssSetupGuard,
+} from "src/auth/guard";
 import AuthClassicLayout from "src/layouts/auth/classic";
 
 import { SplashScreen } from "src/components/loading-screen";
@@ -87,9 +92,14 @@ const authJwt = {
     },
     {
       // Signup works in OSS: the password is set on this screen and the new
-      // admin is signed straight in. No CLI diversion.
+      // admin is signed straight in. No CLI diversion — but on self-hosted it
+      // is only reachable once the infrastructure checks have been completed.
       path: "register",
-      element: <JwtRegisterPage />,
+      element: (
+        <OssSetupGuard>
+          <JwtRegisterPage />
+        </OssSetupGuard>
+      ),
     },
     {
       // SSO has no IdP on self-hosted. Send them back to login, but without a

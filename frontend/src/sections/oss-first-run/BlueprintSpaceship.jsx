@@ -1,13 +1,18 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { Box } from "@mui/material";
+import { Box, useTheme } from "@mui/material";
 import { keyframes } from "@mui/system";
 
 // Blueprint-style spaceship: a sleek winged starship framed by the signature
 // dashed "almond" arcs (matching the Future AGI marketing illustrations),
-// rendered as white technical line-art. Inline SVG so it stays crisp.
-
-const LINE = "#EAEFF6";
+// rendered as technical line-art. Inline SVG so it stays crisp.
+//
+// One ink colour drives the whole drawing — the per-element strokeOpacity below
+// then separates hull from arcs in either theme.
+const useLineColor = () => {
+  const theme = useTheme();
+  return theme.palette.mode === "dark" ? "#EAEFF6" : theme.palette.grey[700];
+};
 
 const float = keyframes`
   0%, 100% { transform: translateY(0); }
@@ -24,6 +29,8 @@ const pulse = keyframes`
 `;
 
 export default function BlueprintSpaceship({ size = 194, sx }) {
+  const LINE = useLineColor();
+
   return (
     <Box
       aria-hidden
