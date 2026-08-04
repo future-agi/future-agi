@@ -4073,7 +4073,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AccountsMessageResponse"
+                            "$ref": "#/definitions/PasswordResetInitiateResponse"
                         }
                     },
                     "400": {
@@ -4329,7 +4329,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AccountsMessageResponse"
+                            "$ref": "#/definitions/SignupResponse"
                         }
                     },
                     "400": {
@@ -15156,6 +15156,39 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiDetailErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "api"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/api/setup-checks/": {
+            "get": {
+                "operationId": "api_setup-checks_list",
+                "summary": "Public infrastructure probe for the OSS first-run setup screen.",
+                "description": "Returns ``{\"status\": \"ok\"|\"issues\", \"mode\": ..., \"checks\": [...]}``. No auth —\nit runs before any account exists.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SetupChecksResponse"
                         }
                     },
                     "500": {
@@ -74233,6 +74266,12 @@
                 "auto_access": {
                     "title": "Auto access",
                     "type": "boolean"
+                },
+                "invite_link": {
+                    "title": "Invite link",
+                    "description": "Accept-invite link for a pending invite. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud/EE and on active-member rows.",
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -75021,6 +75060,41 @@
                 }
             }
         },
+        "PasswordResetInitiateResult": {
+            "required": [
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "reset_link": {
+                    "title": "Reset link",
+                    "description": "Password-reset link, returned on OSS deployments only, where SMTP is usually not configured and the emailed link would never arrive. Never present on Cloud/EE, and never present for an email with no matching account. Treat as a credential: anyone holding it can set that account's password.",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "PasswordResetInitiateResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/PasswordResetInitiateResult"
+                }
+            }
+        },
         "RedisKeyRequest": {
             "required": [
                 "access_token_id",
@@ -75158,6 +75232,46 @@
                 "recaptcha_response": {
                     "title": "Recaptcha response",
                     "type": "string"
+                }
+            }
+        },
+        "SignupResult": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "access": {
+                    "title": "Access",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "refresh": {
+                    "title": "Refresh",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "new_org": {
+                    "title": "New org",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SignupResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SignupResult"
                 }
             }
         },
@@ -82446,6 +82560,94 @@
                 },
                 "meta": {
                     "$ref": "#/definitions/LangfuseTracesMeta"
+                }
+            }
+        },
+        "SetupCheck": {
+            "required": [
+                "id",
+                "label",
+                "status",
+                "required",
+                "detail"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "passed",
+                        "warning",
+                        "failed",
+                        "skipped"
+                    ]
+                },
+                "required": {
+                    "title": "Required",
+                    "type": "boolean"
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string"
+                }
+            }
+        },
+        "SetupChecksResult": {
+            "required": [
+                "status",
+                "mode",
+                "checks"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "ok",
+                        "issues"
+                    ]
+                },
+                "mode": {
+                    "title": "Mode",
+                    "type": "string",
+                    "enum": [
+                        "live",
+                        "experiment"
+                    ]
+                },
+                "checks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SetupCheck"
+                    }
+                }
+            }
+        },
+        "SetupChecksResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/SetupChecksResult"
                 }
             }
         },
@@ -130747,10 +130949,7 @@
                 },
                 "features": {
                     "title": "Features",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "object"
-                    }
+                    "type": "object"
                 }
             }
         },
@@ -130827,10 +131026,7 @@
                 },
                 "features": {
                     "title": "Features",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "object"
-                    }
+                    "type": "object"
                 },
                 "pricing": {
                     "title": "Pricing",
@@ -130849,7 +131045,7 @@
                 "tiers",
                 "addons",
                 "pricing",
-                "isCustomPricing",
+                "is_custom_pricing",
                 "pending_cancel"
             ],
             "type": "object",
@@ -130883,11 +131079,11 @@
                         "$ref": "#/definitions/UsagePricingDimension"
                     }
                 },
-                "isCustomPricing": {
-                    "title": "Iscustompricing",
+                "is_custom_pricing": {
+                    "title": "Is custom pricing",
                     "type": "boolean"
                 },
-                "customDetails": {
+                "custom_details": {
                     "$ref": "#/definitions/UsageCustomPlanDetails"
                 },
                 "pending_cancel": {

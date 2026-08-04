@@ -793,6 +793,7 @@ import type {
   PasskeyRenameResponseApi,
   PasswordResetConfirmRequestApi,
   PasswordResetInitiateRequestApi,
+  PasswordResetInitiateResponseApi,
   PasswordValidationApi,
   PaymentMethodCheckoutResponseApi,
   PaymentMethodConfirmResponseApi,
@@ -988,6 +989,7 @@ import type {
   SecretKeysResponseApi,
   SendChatRequestApi,
   SessionComparisonResponseApi,
+  SetupChecksResponseApi,
   SetupIntentConfirmRequestApi,
   ShadowResultsWebhookRequestApi,
   SharedLinkCreateApi,
@@ -996,6 +998,7 @@ import type {
   SharedLinkResolveResponseApi,
   SharedLinkUpdateApi,
   SignupRequestApi,
+  SignupResponseApi,
   SimulateAgentDefinitionsListParams,
   SimulateApiAgentDefinitionOperationsList200,
   SimulateApiAgentDefinitionOperationsListParams,
@@ -5546,7 +5549,7 @@ export const accountsPasswordResetConfirmCreate = async (uidb64: string,
 
 
 export type accountsPasswordResetInitiateCreateResponse200 = {
-  data: AccountsMessageResponseApi
+  data: PasswordResetInitiateResponseApi
   status: 200
 }
 
@@ -5810,7 +5813,7 @@ export const accountsResendInvitationEmailsCreate = async (userIdsRequestApi: Us
 
 
 export type accountsSignupCreateResponse200 = {
-  data: AccountsMessageResponseApi
+  data: SignupResponseApi
   status: 200
 }
 
@@ -17318,6 +17321,56 @@ metadata so the credential check passes.
 export const apiPublicTracesList = async ( options?: RequestInit): Promise<apiPublicTracesListResponse> => {
 
   return apiMutator<apiPublicTracesListResponse>(getApiPublicTracesListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type apiSetupChecksListResponse200 = {
+  data: SetupChecksResponseApi
+  status: 200
+}
+
+export type apiSetupChecksListResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
+export type apiSetupChecksListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 500>
+}
+
+export type apiSetupChecksListResponseSuccess = (apiSetupChecksListResponse200) & {
+  headers: Headers;
+};
+export type apiSetupChecksListResponseError = (apiSetupChecksListResponse500 | apiSetupChecksListResponseDefault) & {
+  headers: Headers;
+};
+
+export type apiSetupChecksListResponse = (apiSetupChecksListResponseSuccess | apiSetupChecksListResponseError)
+
+export const getApiSetupChecksListUrl = () => {
+
+
+
+
+  return `/api/setup-checks/`
+}
+
+/**
+ * Returns ``{"status": "ok"|"issues", "mode": ..., "checks": [...]}``. No auth —
+it runs before any account exists.
+ * @summary Public infrastructure probe for the OSS first-run setup screen.
+ */
+export const apiSetupChecksList = async ( options?: RequestInit): Promise<apiSetupChecksListResponse> => {
+
+  return apiMutator<apiSetupChecksListResponse>(getApiSetupChecksListUrl(),
   {
     ...options,
     method: 'GET'

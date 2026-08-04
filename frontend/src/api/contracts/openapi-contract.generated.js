@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 968,
+  "endpointCount": 969,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -2138,7 +2138,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/AccountsMessageResponse"
+            "$ref": "#/definitions/PasswordResetInitiateResponse"
           },
           "400": {
             "$ref": "#/definitions/AccountsErrorResponse"
@@ -2275,7 +2275,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/AccountsMessageResponse"
+            "$ref": "#/definitions/SignupResponse"
           },
           "400": {
             "$ref": "#/definitions/AccountsErrorResponse"
@@ -8671,6 +8671,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           "403": {
             "$ref": "#/definitions/ApiDetailErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/api/setup-checks/": {
+      "get": {
+        "operationId": "api_setup-checks_list",
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": true,
+        "requestBody": null,
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/SetupChecksResponse"
           },
           "500": {
             "$ref": "#/definitions/ApiTextErrorResponse"
@@ -62272,6 +62292,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "PasswordResetInitiateResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/PasswordResetInitiateResult"
+        }
+      }
+    },
     "PasswordValidation": {
       "required": [
         "password"
@@ -68410,6 +68446,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "SetupChecksResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/SetupChecksResult"
+        }
+      }
+    },
     "SetupIntentConfirmRequest": {
       "required": [
         "session_id"
@@ -68813,6 +68865,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "recaptcha_response": {
           "title": "Recaptcha response",
           "type": "string"
+        }
+      }
+    },
+    "SignupResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/SignupResult"
         }
       }
     },
@@ -85347,6 +85415,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "PasswordResetInitiateResult": {
+      "required": [
+        "message"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "reset_link": {
+          "title": "Reset link",
+          "description": "Password-reset link, returned on OSS deployments only, where SMTP is usually not configured and the emailed link would never arrive. Never present on Cloud/EE, and never present for an email with no matching account. Treat as a credential: anyone holding it can set that account's password.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "UpgradeToPaygPostResult": {
       "required": [
         "checkout_url"
@@ -88582,6 +88669,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "SetupChecksResult": {
+      "required": [
+        "status",
+        "mode",
+        "checks"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "enum": [
+            "ok",
+            "issues"
+          ]
+        },
+        "mode": {
+          "title": "Mode",
+          "type": "string",
+          "enum": [
+            "live",
+            "experiment"
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SetupCheck"
+          }
+        }
+      }
+    },
     "SharedLinkAccess": {
       "required": [
         "email"
@@ -88728,6 +88847,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "widget_count": {
           "title": "Widget count",
           "type": "integer"
+        }
+      }
+    },
+    "SignupResult": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "access": {
+          "title": "Access",
+          "type": "string",
+          "minLength": 1
+        },
+        "refresh": {
+          "title": "Refresh",
+          "type": "string",
+          "minLength": 1
+        },
+        "new_org": {
+          "title": "New org",
+          "type": "boolean"
         }
       }
     },
@@ -90346,7 +90489,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "tiers",
         "addons",
         "pricing",
-        "isCustomPricing",
+        "is_custom_pricing",
         "pending_cancel"
       ],
       "type": "object",
@@ -90380,11 +90523,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/UsagePricingDimension"
           }
         },
-        "isCustomPricing": {
-          "title": "Iscustompricing",
+        "is_custom_pricing": {
+          "title": "Is custom pricing",
           "type": "boolean"
         },
-        "customDetails": {
+        "custom_details": {
           "$ref": "#/definitions/UsageCustomPlanDetails"
         },
         "pending_cancel": {
@@ -96016,6 +96159,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "auto_access": {
           "title": "Auto access",
           "type": "boolean"
+        },
+        "invite_link": {
+          "title": "Invite link",
+          "description": "Accept-invite link for a pending invite. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud/EE and on active-member rows.",
+          "type": "string",
+          "minLength": 1
         }
       }
     },
@@ -97728,6 +97877,46 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true
     },
+    "SetupCheck": {
+      "required": [
+        "id",
+        "label",
+        "status",
+        "required",
+        "detail"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "title": "Label",
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "enum": [
+            "passed",
+            "warning",
+            "failed",
+            "skipped"
+          ]
+        },
+        "required": {
+          "title": "Required",
+          "type": "boolean"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        }
+      }
+    },
     "SharedLinkResolvedSummary": {
       "type": "object",
       "properties": {
@@ -98673,10 +98862,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "features": {
           "title": "Features",
-          "type": "object",
-          "additionalProperties": {
-            "type": "object"
-          }
+          "type": "object"
         },
         "pricing": {
           "title": "Pricing",
@@ -98718,10 +98904,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "features": {
           "title": "Features",
-          "type": "object",
-          "additionalProperties": {
-            "type": "object"
-          }
+          "type": "object"
         }
       }
     },

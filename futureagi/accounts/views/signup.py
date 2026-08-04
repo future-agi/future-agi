@@ -45,6 +45,7 @@ from accounts.serializers.contracts import (
     LogoutRequestSerializer,
     PasswordResetConfirmRequestSerializer,
     PasswordResetInitiateRequestSerializer,
+    PasswordResetInitiateResponseSerializer,
     SignupRequestSerializer,
     SignupResponseSerializer,
     UserFullNameUpdateRequestSerializer,
@@ -52,7 +53,7 @@ from accounts.serializers.contracts import (
 )
 from accounts.serializers.user import UpdateUserSerializer
 from accounts.services.token_service import issue_tokens
-from accounts.utils import first_signup
+from accounts.utils import build_password_reset_link, first_signup
 from accounts.views.workspace_management import clear_user_redis_cache
 from analytics.utils import (
     MixpanelEvents,
@@ -121,6 +122,32 @@ def verify_recaptcha(token):
     logger.info("recaptcha result", result=result)
 
     return result.get("success", False)
+
+
+def _login_payload(user):
+    """The body ``POST /accounts/token/`` returns on a successful login, built for
+    a user who has just signed up.
+
+    OSS signup logs the new owner straight in, so the frontend should be able to
+    treat the signup response exactly as it treats a login response — same
+    fields, same routing decision — instead of special-casing the one endpoint.
+    Selecting the organization here is part of that: login does it from the first
+    active membership, and the auth layer reads it back on the next request.
+    """
+    org = user.organization
+    if org:
+        user.config["selected_organization_id"] = str(org.id)
+        user.config["currentOrganizationId"] = str(org.id)
+        user.save(update_fields=["config"])
+    membership = get_org_membership(user)
+    new_org = bool(
+        org
+        and org.is_new
+        and membership
+        and membership.role == OrganizationRoles.OWNER.value
+    )
+
+    return {**issue_tokens(user), "new_org": new_org}
 
 
 @swagger_auto_schema(
@@ -200,7 +227,7 @@ def user_signup(request):
 
         if is_oss():
             logger.info("signup_auto_login", email=email, user_id=str(user.id))
-            return Response(issue_tokens(user), status=status.HTTP_200_OK)
+            return _gm.success_response(_login_payload(user), status=status.HTTP_200_OK)
 
         return _gm.success_response(
             {"message": "User Created Successfully, Please Check your email to proceed"}
@@ -348,12 +375,18 @@ def activate_account(request, uidb64, token):
 @swagger_auto_schema(
     method="post",
     request_body=PasswordResetInitiateRequestSerializer,
-    responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={
+        200: PasswordResetInitiateResponseSerializer,
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
 )
 @api_view(["POST"])
 @validated_api_request(
     request_serializer=PasswordResetInitiateRequestSerializer,
-    responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={
+        200: PasswordResetInitiateResponseSerializer,
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
     document=False,
     reject_unknown_fields=True,
 )
@@ -392,6 +425,18 @@ def initiate_password_reset(request):
                 # Generate uidb64
                 uidb64 = urlsafe_base64_encode(force_bytes(user.id))
 
+                reset_link = build_password_reset_link(str(uidb64), token)
+
+                if settings.DEBUG:
+                    logger.info(f"Password reset link {reset_link}")
+                if is_oss():
+                    return _gm.success_response(
+                        {
+                            "message": "Use the link below to reset your password.",
+                            "reset_link": reset_link,
+                        }
+                    )
+
                 email_helper(
                     "Reset Password",
                     "reset_password.html",
@@ -403,11 +448,6 @@ def initiate_password_reset(request):
                     },
                     [user.email],
                 )
-
-                if settings.DEBUG:
-                    logger.info(
-                        f"Password reset link {settings.APP_URL}/auth/jwt/verify/{str(uidb64)}/{token}"
-                    )
 
                 return _gm.success_response(
                     {

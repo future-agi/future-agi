@@ -714,6 +714,11 @@ export interface MemberListItemApi {
   created_at: string;
   type: MemberListItemApiType;
   auto_access?: boolean;
+  /**
+     * Accept-invite link for a pending invite. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud/EE and on active-member rows.
+     * @minLength 1
+     */
+  invite_link?: string;
 }
 
 export interface MemberListResultApi {
@@ -978,6 +983,21 @@ export interface PasswordResetInitiateRequestApi {
   email: string;
 }
 
+export interface PasswordResetInitiateResultApi {
+  /** @minLength 1 */
+  message: string;
+  /**
+     * Password-reset link, returned on OSS deployments only, where SMTP is usually not configured and the emailed link would never arrive. Never present on Cloud/EE, and never present for an email with no matching account. Treat as a credential: anyone holding it can set that account's password.
+     * @minLength 1
+     */
+  reset_link?: string;
+}
+
+export interface PasswordResetInitiateResponseApi {
+  status: boolean;
+  result: PasswordResetInitiateResultApi;
+}
+
 export type RedisKeyRequestApiValue = { [key: string]: unknown };
 
 export interface RedisKeyRequestApi {
@@ -1026,6 +1046,21 @@ export interface SignupRequestApi {
   password?: string;
   allow_email?: boolean;
   recaptcha_response?: string;
+}
+
+export interface SignupResultApi {
+  /** @minLength 1 */
+  message?: string;
+  /** @minLength 1 */
+  access?: string;
+  /** @minLength 1 */
+  refresh?: string;
+  new_org?: boolean;
+}
+
+export interface SignupResponseApi {
+  status: boolean;
+  result: SignupResultApi;
 }
 
 export interface TeamWorkspaceSummaryApi {
@@ -3771,6 +3806,53 @@ export interface LangfuseTracesMetaApi {
 export interface LangfuseTracesResponseApi {
   data: LangfuseTracesResponseApiDataItem[];
   meta: LangfuseTracesMetaApi;
+}
+
+export type SetupChecksResultApiStatus = typeof SetupChecksResultApiStatus[keyof typeof SetupChecksResultApiStatus];
+
+
+export const SetupChecksResultApiStatus = {
+  ok: 'ok',
+  issues: 'issues',
+} as const;
+
+export type SetupChecksResultApiMode = typeof SetupChecksResultApiMode[keyof typeof SetupChecksResultApiMode];
+
+
+export const SetupChecksResultApiMode = {
+  live: 'live',
+  experiment: 'experiment',
+} as const;
+
+export type SetupCheckApiStatus = typeof SetupCheckApiStatus[keyof typeof SetupCheckApiStatus];
+
+
+export const SetupCheckApiStatus = {
+  passed: 'passed',
+  warning: 'warning',
+  failed: 'failed',
+  skipped: 'skipped',
+} as const;
+
+export interface SetupCheckApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  label: string;
+  status: SetupCheckApiStatus;
+  required: boolean;
+  detail: string;
+}
+
+export interface SetupChecksResultApi {
+  status: SetupChecksResultApiStatus;
+  mode: SetupChecksResultApiMode;
+  checks: SetupCheckApi[];
+}
+
+export interface SetupChecksResponseApi {
+  status?: boolean;
+  result: SetupChecksResultApi;
 }
 
 export type SpanAttributeDetailResponseApiType = typeof SpanAttributeDetailResponseApiType[keyof typeof SpanAttributeDetailResponseApiType];
@@ -22886,7 +22968,7 @@ export interface PaymentMethodConfirmResponseApi {
   result: PaymentMethodConfirmResultApi;
 }
 
-export type UsagePlanOptionApiFeatures = {[key: string]: { [key: string]: unknown }};
+export type UsagePlanOptionApiFeatures = { [key: string]: unknown };
 
 export interface UsagePlanOptionApi {
   /** @minLength 1 */
@@ -22911,7 +22993,7 @@ export interface UsagePricingDimensionApi {
   tiers: UsagePricingTierApi[];
 }
 
-export type UsageCustomPlanDetailsApiFeatures = {[key: string]: { [key: string]: unknown }};
+export type UsageCustomPlanDetailsApiFeatures = { [key: string]: unknown };
 
 export type UsageCustomPlanDetailsApiPricing = {[key: string]: { [key: string]: unknown }};
 
@@ -22935,8 +23017,8 @@ export interface UsagePlansAndAddonsResultApi {
   tiers: UsagePlanOptionApi[];
   addons: UsagePlanOptionApi[];
   pricing: UsagePlansAndAddonsResultApiPricing;
-  isCustomPricing: boolean;
-  customDetails?: UsageCustomPlanDetailsApi;
+  is_custom_pricing: boolean;
+  custom_details?: UsageCustomPlanDetailsApi;
   pending_cancel: boolean;
   /** @minLength 1 */
   cancel_at?: string;

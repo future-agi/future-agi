@@ -337,6 +337,16 @@ def build_invite_accept_link(user):
     return f"{settings.APP_URL}/auth/jwt/invitation/accept/{uid}/{token}"
 
 
+def build_password_reset_link(uidb64, token):
+    """Build the password-reset link for an already-issued uid/token pair.
+
+    Same URL reset_password.html renders. The uid and token are passed in rather
+    than derived here because the caller has already minted the AuthToken that
+    the token encodes — building a second one would leave a stray active token.
+    """
+    return f"{settings.APP_URL}/auth/jwt/verify/{uidb64}/{token}"
+
+
 def send_invite_email(email, organization, inviter):
     """Send invite email to the target user."""
     try:

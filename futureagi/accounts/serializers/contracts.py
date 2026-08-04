@@ -120,19 +120,31 @@ class AccountsMessageResponseSerializer(serializers.Serializer):
     result = AccountsMessageResultSerializer()
 
 
-class SignupResponseSerializer(serializers.Serializer):
-    """Signup returns one of two shapes.
+class SignupResultSerializer(serializers.Serializer):
+    """What signup puts inside the success envelope, which differs by deployment.
 
-    OSS deployments log the new owner straight in and return the same
-    ``{access, refresh}`` pair as ``POST /accounts/token/``, because there is
-    usually no SMTP to deliver a verification mail. Cloud/EE returns the
-    ``{status, result: {message}}`` envelope telling the user to check email.
+    Cloud/EE sends ``message`` — the account exists but needs the emailed
+    set-password link. OSS has no SMTP for that link, so the password is set on
+    the signup form itself and the new owner is logged straight in: the same
+    ``{access, refresh, new_org}`` trio ``POST /accounts/token/`` returns, so a
+    caller can route on a signup exactly as it routes on a login.
+
+    Every field is optional because no response carries all of them; which set
+    arrives is decided by the deployment, not by the request.
     """
 
-    status = serializers.BooleanField(required=False)
-    result = AccountsMessageResultSerializer(required=False)
+    message = serializers.CharField(required=False)
     access = serializers.CharField(required=False)
     refresh = serializers.CharField(required=False)
+    new_org = serializers.BooleanField(required=False)
+
+
+class SignupResponseSerializer(serializers.Serializer):
+    """Both deployments share the standard success envelope; only the contents of
+    ``result`` differ. See :class:`SignupResultSerializer`."""
+
+    status = serializers.BooleanField()
+    result = SignupResultSerializer()
 
 
 class AccountsStringResultResponseSerializer(serializers.Serializer):
@@ -373,6 +385,25 @@ class UserFullNameUpdateRequestSerializer(serializers.Serializer):
 
 class PasswordResetInitiateRequestSerializer(serializers.Serializer):
     email = serializers.EmailField()
+
+
+class PasswordResetInitiateResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    reset_link = serializers.CharField(
+        required=False,
+        help_text=(
+            "Password-reset link, returned on OSS deployments only, where SMTP "
+            "is usually not configured and the emailed link would never arrive. "
+            "Never present on Cloud/EE, and never present for an email with no "
+            "matching account. Treat as a credential: anyone holding it can set "
+            "that account's password."
+        ),
+    )
+
+
+class PasswordResetInitiateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = PasswordResetInitiateResultSerializer()
 
 
 class PasswordResetConfirmRequestSerializer(serializers.Serializer):

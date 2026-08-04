@@ -939,6 +939,7 @@ export const AccountsOrganizationMembersListQueryParams = zod.object({
 
 
 
+
 export const AccountsOrganizationMembersListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
@@ -960,7 +961,8 @@ export const AccountsOrganizationMembersListResponse = zod.object({
   "status": zod.string().min(1),
   "created_at": zod.string(),
   "type": zod.enum(['member', 'invite']),
-  "auto_access": zod.boolean().optional()
+  "auto_access": zod.boolean().optional(),
+  "invite_link": zod.string().min(1).optional().describe('Accept-invite link for a pending invite. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud\/EE and on active-member rows.')
 })),
   "total": zod.number(),
   "page": zod.number(),
@@ -1482,10 +1484,12 @@ export const AccountsPasswordResetInitiateCreateBody = zod.object({
 
 
 
+
 export const AccountsPasswordResetInitiateCreateResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
-  "message": zod.string().min(1)
+  "message": zod.string().min(1),
+  "reset_link": zod.string().min(1).optional().describe('Password-reset link, returned on OSS deployments only, where SMTP is usually not configured and the emailed link would never arrive. Never present on Cloud\/EE, and never present for an email with no matching account. Treat as a credential: anyone holding it can set that account\'s password.')
 })
 })
 
@@ -1579,10 +1583,15 @@ export const AccountsSignupCreateBody = zod.object({
 
 
 
+
+
 export const AccountsSignupCreateResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
-  "message": zod.string().min(1)
+  "message": zod.string().min(1).optional(),
+  "access": zod.string().min(1).optional(),
+  "refresh": zod.string().min(1).optional(),
+  "new_org": zod.boolean().optional()
 })
 })
 
@@ -9417,6 +9426,31 @@ export const ApiPublicTracesListResponse = zod.object({
   "limit": zod.number(),
   "total_items": zod.number(),
   "total_pages": zod.number()
+})
+})
+
+
+/**
+ * Returns ``{"status": "ok"|"issues", "mode": ..., "checks": [...]}``. No auth —
+it runs before any account exists.
+ * @summary Public infrastructure probe for the OSS first-run setup screen.
+ */
+export const apiSetupChecksListResponseStatusDefault = true;
+
+
+
+export const ApiSetupChecksListResponse = zod.object({
+  "status": zod.boolean().default(apiSetupChecksListResponseStatusDefault),
+  "result": zod.object({
+  "status": zod.enum(['ok', 'issues']),
+  "mode": zod.enum(['live', 'experiment']),
+  "checks": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "label": zod.string().min(1),
+  "status": zod.enum(['passed', 'warning', 'failed', 'skipped']),
+  "required": zod.boolean(),
+  "detail": zod.string()
+}))
 })
 })
 
@@ -46037,18 +46071,18 @@ export const UsageV2PlansAndAddonsListResponse = zod.object({
   "display_name": zod.string().min(1),
   "platform_fee_monthly": zod.number(),
   "is_current": zod.boolean(),
-  "features": zod.record(zod.string(), zod.object({
+  "features": zod.object({
 
-}).passthrough())
+}).passthrough()
 })),
   "addons": zod.array(zod.object({
   "key": zod.string().min(1),
   "display_name": zod.string().min(1),
   "platform_fee_monthly": zod.number(),
   "is_current": zod.boolean(),
-  "features": zod.record(zod.string(), zod.object({
+  "features": zod.object({
 
-}).passthrough())
+}).passthrough()
 })),
   "pricing": zod.record(zod.string(), zod.object({
   "display_name": zod.string().min(1),
@@ -46058,15 +46092,15 @@ export const UsageV2PlansAndAddonsListResponse = zod.object({
   "price_per_unit": zod.number()
 }))
 })),
-  "isCustomPricing": zod.boolean(),
-  "customDetails": zod.object({
+  "is_custom_pricing": zod.boolean(),
+  "custom_details": zod.object({
   "platform_fee": zod.number(),
   "platform_fee_billing_cycle": zod.number(),
   "per_charge_amount": zod.number(),
   "contract_end_date": zod.string().min(1).optional(),
-  "features": zod.record(zod.string(), zod.object({
+  "features": zod.object({
 
-}).passthrough()),
+}).passthrough(),
   "pricing": zod.record(zod.string(), zod.object({
 
 }).passthrough())
