@@ -152,6 +152,14 @@ def retrieve_trace_detail_ch(
         except (ValueError, TypeError):
             return default
 
+    def _parse_content(val):
+        if not isinstance(val, str) or not val:
+            return _parse_json(val)
+        try:
+            return _json.loads(val)
+        except (ValueError, TypeError):
+            return val
+
     for row in result.data:
         span_id = str(row.get("id", ""))
         parent_id = row.get("parent_span_id")
@@ -199,8 +207,8 @@ def retrieve_trace_detail_ch(
             "observation_type": row.get("observation_type"),
             "start_time": row.get("start_time"),
             "end_time": row.get("end_time"),
-            "input": _parse_json(row.get("input")),
-            "output": _parse_json(row.get("output")),
+            "input": _parse_content(row.get("input")),
+            "output": _parse_content(row.get("output")),
             "model": row.get("model"),
             "model_parameters": _parse_json(row.get("model_parameters")),
             "latency_ms": row.get("latency_ms"),

@@ -22178,6 +22178,7 @@ export type UsageOrganizationSubscriptionApiStatus = typeof UsageOrganizationSub
 export const UsageOrganizationSubscriptionApiStatus = {
   active: 'active',
   past_due: 'past_due',
+  unpaid: 'unpaid',
   canceled: 'canceled',
   inactive: 'inactive',
 } as const;
@@ -22254,6 +22255,7 @@ export type UsageOrganizationSubscriptionCreateApiStatus = typeof UsageOrganizat
 export const UsageOrganizationSubscriptionCreateApiStatus = {
   active: 'active',
   past_due: 'past_due',
+  unpaid: 'unpaid',
   canceled: 'canceled',
   inactive: 'inactive',
 } as const;
@@ -23070,11 +23072,6 @@ export interface UsageWorkspaceBreakdownResultApi {
 export interface UsageWorkspaceBreakdownResponseApi {
   status: boolean;
   result: UsageWorkspaceBreakdownResultApi;
-}
-
-export interface StripeWebhookLegacyResponseApi {
-  status: boolean;
-  result?: StripeWebhookResultApi;
 }
 
 export type AccountsAwsMarketplaceLaunchSoftwareCreateBody = {

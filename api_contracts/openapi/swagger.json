@@ -816,6 +816,41 @@
                 }
             ]
         },
+        "/accounts/activate/{uidb64}/{token}/": {
+            "get": {
+                "operationId": "accounts_activate_read",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "accounts"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "uidb64",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "token",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/accounts/appsmith/users/": {
             "get": {
                 "operationId": "accounts_appsmith_users_list",
@@ -72011,7 +72046,8 @@
         "/usage/webhook/": {
             "post": {
                 "operationId": "usage_webhook_create",
-                "description": "",
+                "summary": "Handle Stripe webhook events.",
+                "description": "No auth — Stripe authenticates via signature header.\nAPIView.as_view() auto-applies csrf_exempt.",
                 "parameters": [
                     {
                         "name": "data",
@@ -72026,7 +72062,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/StripeWebhookLegacyResponse"
+                            "$ref": "#/definitions/StripeWebhookResponse"
                         }
                     },
                     "400": {
@@ -128718,6 +128754,7 @@
                     "enum": [
                         "active",
                         "past_due",
+                        "unpaid",
                         "canceled",
                         "inactive"
                     ]
@@ -128895,6 +128932,7 @@
                     "enum": [
                         "active",
                         "past_due",
+                        "unpaid",
                         "canceled",
                         "inactive"
                     ]
@@ -131315,21 +131353,6 @@
                 },
                 "result": {
                     "$ref": "#/definitions/UsageWorkspaceBreakdownResult"
-                }
-            }
-        },
-        "StripeWebhookLegacyResponse": {
-            "required": [
-                "status"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean"
-                },
-                "result": {
-                    "$ref": "#/definitions/StripeWebhookResult"
                 }
             }
         }

@@ -208,6 +208,43 @@ class TestV2SynthesisFromRootSpan:
 
 
 # --------------------------------------------------------------------------- #
+# 2a) input/output parsing: JSON parses to objects; plaintext is preserved
+# --------------------------------------------------------------------------- #
+class TestV2InputOutputParsing:
+    """Regression: bare plaintext input/output (e.g. voice transcripts) used to
+    be dropped to {} by json.loads; it must be preserved as the raw string."""
+
+    def _span(self, **row_overrides):
+        analytics = _FakeAnalytics(
+            project_rows=[{"project_id": "P1"}],
+            span_rows=[_root_span_row(**row_overrides)],
+        )
+        with ExitStack() as stack:
+            _patch_v2_pg(stack, project_accessible=True, pg_trace=None)
+            result = retrieve_trace_detail_ch(
+                MagicMock(), MagicMock(), "T1", analytics
+            )
+        return result
+
+    def test_json_input_output_parsed_to_objects(self):
+        result = self._span(input='{"q": "hi"}', output='{"a": "yo"}')
+        span = result["observation_spans"][0]["observation_span"]
+        assert span["input"] == {"q": "hi"}
+        assert span["output"] == {"a": "yo"}
+
+    def test_plaintext_input_output_preserved(self):
+        text_in = "What's on my calendar this afternoon?"
+        text_out = "You have a 3pm meeting."
+        result = self._span(input=text_in, output=text_out)
+        span = result["observation_spans"][0]["observation_span"]
+        assert span["input"] == text_in  # not {}
+        assert span["output"] == text_out
+        # synthesized trace envelope inherits the same raw text
+        assert result["trace"]["input"] == text_in
+        assert result["trace"]["output"] == text_out
+
+
+# --------------------------------------------------------------------------- #
 # 2b) span_attributes = typed maps ∪ attributes_extra
 # --------------------------------------------------------------------------- #
 class TestV2SpanAttributesMerge:
