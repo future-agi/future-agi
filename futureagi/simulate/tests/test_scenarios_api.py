@@ -1505,6 +1505,42 @@ class TestAddScenarioRowsView:
 class TestAddScenarioColumnsView:
     """Tests for POST /simulate/scenarios/<uuid>/add-columns/"""
 
+    @pytest.fixture(autouse=True)
+    def _entitled_agentic_eval(self):
+        """add-columns is gated on the ``agentic_eval`` entitlement, which is
+        denied on OSS/unlicensed deployments by design (fail-closed). Entitle
+        the billing singleton so the behavior tests below keep exercising the
+        endpoint in every lane; the explicit denial test builds its own
+        _NoopBilling, which stays unpatched and denies."""
+        from tfc.billing.boundary import get_billing
+
+        with patch.object(get_billing(), "has_feature", return_value=True):
+            yield
+
+    def test_add_columns_denied_without_agentic_eval_entitlement(
+        self, auth_client, scenario, dataset_with_rows
+    ):
+        """OSS/unlicensed (_NoopBilling) must 403 before any scenario work."""
+        from tfc.billing.boundary import _NoopBilling
+
+        scenario.dataset = dataset_with_rows
+        scenario.save()
+
+        with patch(
+            "tfc.billing.boundary.get_billing", return_value=_NoopBilling()
+        ):
+            response = auth_client.post(
+                f"/simulate/scenarios/{scenario.id}/add-columns/",
+                {
+                    "columns": [
+                        {"name": "c1", "data_type": "text", "description": "d"}
+                    ]
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
     @patch("simulate.views.scenarios.start_add_columns_workflow_sync")
     def test_add_columns_success(
         self, mock_workflow, auth_client, scenario, dataset_with_rows
@@ -1981,23 +2017,28 @@ class TestScenariosWriteActionWorkspaceScope:
     def test_add_columns_foreign_scenario_returns_404(
         self, mock_workflow, auth_client, hidden_scenario
     ):
+        from tfc.billing.boundary import get_billing
+
         cols_before = Column.objects.filter(
             dataset=hidden_scenario.dataset, deleted=False
         ).count()
 
-        response = auth_client.post(
-            f"/simulate/scenarios/{hidden_scenario.id}/add-columns/",
-            {
-                "columns": [
-                    {
-                        "name": "leaked_col",
-                        "data_type": "text",
-                        "description": "should not run",
-                    }
-                ]
-            },
-            format="json",
-        )
+        # Entitle agentic_eval so the workspace-scoping 404 (the behavior
+        # under test) is reached instead of the entitlement gate's 403.
+        with patch.object(get_billing(), "has_feature", return_value=True):
+            response = auth_client.post(
+                f"/simulate/scenarios/{hidden_scenario.id}/add-columns/",
+                {
+                    "columns": [
+                        {
+                            "name": "leaked_col",
+                            "data_type": "text",
+                            "description": "should not run",
+                        }
+                    ]
+                },
+                format="json",
+            )
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         cols_after = Column.objects.filter(

@@ -414,7 +414,6 @@ class TestExecuteCompositeChildrenSync:
         self, composite_parent, organization, workspace, monkeypatch
     ):
         from ee.usage.services.config import BillingConfig
-        import model_hub.views.utils.evals as evals_module
         from model_hub.views.utils.evals import run_eval_func
         from tfc.constants.api_calls import APICallStatusChoices
 
@@ -455,9 +454,8 @@ class TestExecuteCompositeChildrenSync:
         )
 
         monkeypatch.setattr(
-            evals_module,
-            "log_and_deduct_cost_for_api_request",
-            lambda **_kwargs: log_row,
+            "tfc.billing.boundary._EeBilling.log_and_deduct",
+            lambda self, **_kwargs: log_row,
         )
         monkeypatch.setattr(
             "ee.usage.services.metering.check_usage",

@@ -27,10 +27,7 @@ from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
-try:
-    from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
-except ImportError:
-    log_and_deduct_cost_for_resource_request = None
+from tfc.billing.boundary import get_billing
 
 logger = structlog.get_logger(__name__)
 
@@ -63,20 +60,17 @@ class CreateEmptyDatasetView(APIView):
             except Exception as validation_err:
                 return self._gm.bad_request(str(validation_err.detail[0]))
 
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row_entry = log_and_deduct_cost_for_resource_request(
-                    organization=organization,
-                    api_call_type=APICallTypeChoices.DATASET_ADD.value,
-                    workspace=request.workspace,
+            billing = get_billing()
+            call_log_row_entry = billing.log_and_deduct_resource(
+                organization=organization,
+                api_call_type=APICallTypeChoices.DATASET_ADD.value,
+                workspace=request.workspace,
+            )
+            if billing.resource_denied(call_log_row_entry):
+                return self._gm.too_many_requests(
+                    get_error_message("DATASET_CREATE_LIMIT_REACHED")
                 )
-                if (
-                    call_log_row_entry is None
-                    or call_log_row_entry.status
-                    == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(
-                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
-                    )
+            if call_log_row_entry is not None:
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
 

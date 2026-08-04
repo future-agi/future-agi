@@ -11,12 +11,8 @@ from model_hub.services.derived_variable_service import (
     extract_derived_variables_from_output,
 )
 from model_hub.utils.column_utils import is_json_response_format
+from tfc.billing.boundary import get_billing
 from tfc.constants.api_calls import APICallTypeChoices
-
-try:
-    from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
-except ImportError:
-    log_and_deduct_cost_for_api_request = None
 
 
 async def run_template_async(
@@ -136,37 +132,22 @@ async def run_template_async(
                     metadata = value_info.get("metadata", {})
                     token_config = metadata.get("usage", {})
 
-                    # Wrap the synchronous DB call
-                    if log_and_deduct_cost_for_api_request is not None:
-                        await database_sync_to_async(log_and_deduct_cost_for_api_request)(
-                            organization,
-                            APICallTypeChoices.PROMPT_BENCH.value,
-                            config=token_config,
-                            source="run_prompt_gen",
-                            workspace=workspace,
-                        )
+                    # Log and emit usage event for billing system
+                    billing = get_billing()
+                    await database_sync_to_async(billing.log_and_deduct)(
+                        organization=organization,
+                        api_call_type=APICallTypeChoices.PROMPT_BENCH.value,
+                        config=token_config,
+                        source="run_prompt_gen",
+                        workspace=workspace,
+                    )
 
-                    # Dual-write: emit usage event for new billing system
                     try:
-                        try:
-                            from ee.usage.schemas.events import UsageEvent
-                        except ImportError:
-                            UsageEvent = None
-                        try:
-                            from ee.usage.services.emitter import emit
-                        except ImportError:
-                            emit = None
-
-                        if emit is not None and UsageEvent is not None:
-                            emit(
-                                UsageEvent(
-                                org_id=str(organization.id),
-                                event_type=APICallTypeChoices.PROMPT_BENCH.value,
-                                properties={
-                                    "source": "run_prompt_gen",
-                                    "source_id": str(template.id),
-                                },
-                            )
+                        billing.record_usage(
+                            str(organization.id),
+                            APICallTypeChoices.PROMPT_BENCH.value,
+                            source="run_prompt_gen",
+                            source_id=str(template.id),
                         )
                     except Exception:
                         pass  # Metering failure must not break the action

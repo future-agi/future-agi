@@ -441,6 +441,15 @@ class TestAddRowsAPIWithMockedWorkflow:
 class TestAddColumnsAPIWithMockedWorkflow:
     """Integration tests for adding columns to scenarios."""
 
+    @pytest.fixture(autouse=True)
+    def _entitled_agentic_eval(self):
+        """add-columns is gated on ``agentic_eval`` (fail-closed on
+        OSS/unlicensed). Entitle so this behavior test reaches the workflow."""
+        from tfc.billing.boundary import get_billing
+
+        with patch.object(get_billing(), "has_feature", return_value=True):
+            yield
+
     @patch("simulate.views.scenarios.start_add_columns_workflow_sync")
     def test_add_columns_starts_workflow(
         self, mock_workflow, auth_client, existing_scenario

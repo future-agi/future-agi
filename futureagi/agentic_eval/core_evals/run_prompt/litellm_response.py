@@ -42,10 +42,7 @@ from model_hub.utils.utils import convert_messages_to_text_only
 from model_hub.utils.websocket_manager import get_websocket_manager
 from tfc.utils.error_codes import get_error_message
 
-try:
-    from ee.usage.utils.usage_entries import count_tiktoken_tokens
-except ImportError:
-    count_tiktoken_tokens = None
+from tfc.billing.boundary import get_billing
 from tfc.utils.storage import upload_audio_to_s3, upload_image_to_s3
 from agentic_eval.core_evals.run_prompt.other_services.manager import (
     OtherServicesManager,
@@ -322,9 +319,8 @@ class RunPrompt:
 
         # Token usage: prompt (text) via tiktoken helper, completion (audio) via 32 tokens/sec
         try:
-            prompt_tokens = (
-                count_tiktoken_tokens(input_text) if count_tiktoken_tokens else 0
-            )
+            billing = get_billing()
+            prompt_tokens = billing.count_tiktoken_tokens(input_text)
         except Exception:
             prompt_tokens = None
         completion_tokens = int(duration_seconds * 32) if duration_seconds else None
@@ -974,16 +970,9 @@ class RunPrompt:
                 completion_text = response_content
 
                 # Use tiktoken for accurate token counting (handles both text and images)
-                estimated_prompt_tokens = (
-                    count_tiktoken_tokens(prompt_text, image_urls)
-                    if count_tiktoken_tokens
-                    else 0
-                )
-                estimated_completion_tokens = (
-                    count_tiktoken_tokens(completion_text)
-                    if count_tiktoken_tokens
-                    else 0
-                )
+                billing = get_billing()
+                estimated_prompt_tokens = billing.count_tiktoken_tokens(prompt_text, image_urls)
+                estimated_completion_tokens = billing.count_tiktoken_tokens(completion_text)
                 total_tokens = estimated_prompt_tokens + estimated_completion_tokens
 
                 # Use calculate_total_cost with custom model pricing as fallback

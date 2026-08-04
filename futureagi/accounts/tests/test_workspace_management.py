@@ -1114,10 +1114,17 @@ class TestManageTeamViewPost:
             OrganizationInvite,
         )
 
+        from unittest.mock import MagicMock
+
+        from tfc.constants.api_calls import APICallStatusChoices
+
         # Avoid real email delivery and ee billing deduction in tests.
         monkeypatch.setattr(wm, "email_helper", lambda *a, **k: None)
+        _allowed_row = MagicMock()
+        _allowed_row.status = APICallStatusChoices.PROCESSING.value
         monkeypatch.setattr(
-            wm, "log_and_deduct_cost_for_resource_request", None, raising=False
+            "tfc.billing.boundary._EeBilling.log_and_deduct_resource",
+            lambda self, *a, **k: _allowed_row,
         )
 
         email = "pendinginvite@futureagi.com"

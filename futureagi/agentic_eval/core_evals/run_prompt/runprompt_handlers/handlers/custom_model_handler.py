@@ -148,17 +148,16 @@ class CustomModelHandler(BaseModelHandler):
         Returns:
             Tuple of (prompt_tokens, completion_tokens, cost_dict)
         """
-        try:
-            from ee.usage.utils.usage_entries import count_tiktoken_tokens
-        except ImportError:
-            count_tiktoken_tokens = None
         from agentic_eval.core_evals.fi_utils.token_count_helper import (
             calculate_total_cost,
         )
+        from tfc.billing.boundary import get_billing
+
+        billing = get_billing()
 
         # Count tokens
-        estimated_prompt_tokens = (count_tiktoken_tokens(prompt_text, image_urls) if count_tiktoken_tokens else 0)
-        estimated_completion_tokens = (count_tiktoken_tokens(completion_text) if count_tiktoken_tokens else 0)
+        estimated_prompt_tokens = billing.count_tiktoken_tokens(prompt_text, image_urls)
+        estimated_completion_tokens = billing.count_tiktoken_tokens(completion_text)
 
         # Prepare usage payload for cost calculation
         token_usage = {

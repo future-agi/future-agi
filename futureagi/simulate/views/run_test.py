@@ -173,7 +173,6 @@ from tfc.ee_gates import strip_turing_from_config_options
 from tfc.settings import settings as app_settings
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
 from tfc.utils.api_contracts import validated_request
-from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import (
     ApiTextErrorResponseSerializer,
     EmptyRequestSerializer,
@@ -208,6 +207,11 @@ def _voice_sim_gate_response(user_organization, gm):
     Two layers:
       1. OSS gate (402, upgrade_required) — via tfc.ee_gates.
       2. Cloud/EE plan entitlement (`has_voice_sim`) — 403 on denial.
+
+    Deliberate site-level fail-CLOSED when ee is broken on an EE/Cloud
+    deployment: voice calls cost real Vapi money, so we must not let them
+    through unbillable. The boundary's global broken-ee policy fails open
+    elsewhere; voice is the exception (same as pre-boundary).
     """
     from tfc.ee_gates import voice_sim_oss_gate_response
 
@@ -215,28 +219,28 @@ def _voice_sim_gate_response(user_organization, gm):
     if oss_gate is not None:
         return oss_gate
 
-    try:
-        from ee.usage.services.entitlements import Entitlements
-    except ImportError:
-        # ee.usage.deployment exists but entitlements is missing — partial
-        # EE install. Fail closed.
-        message = (
-            "Voice simulation is not available on this deployment. "
-            "Upgrade to cloud or enterprise to run voice calls."
-        )
+    from tfc.billing.boundary import get_billing
+    billing = get_billing()
+    if not billing.has_ee_billing:
+  
+        from rest_framework.response import Response
+
+        from tfc.utils.api_errors import build_error_envelope
+
         return Response(
             build_error_envelope(
-                message,
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                code="payment_required",
+                "Voice simulation is unavailable: billing is "
+                "misconfigured on this deployment.",
+                status_code=402,
+                error_type="entitlement_error",
+                code="ENTITLEMENT_DENIED",
                 extra={"upgrade_required": True, "feature": "voice_sim"},
             ),
-            status=status.HTTP_402_PAYMENT_REQUIRED,
+            status=402,
         )
-
-    feat_check = Entitlements.check_feature(str(user_organization.id), "has_voice_sim")
-    if not feat_check.allowed:
-        return gm.forbidden_response(feat_check.reason)
+    gate = billing.check_feature_gate(str(user_organization.id), "has_voice_sim")
+    if not gate.allowed:
+        return gm.forbidden_response(gate.reason)
     return None
 
 

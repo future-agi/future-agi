@@ -12,11 +12,7 @@ from tracer.models.external_eval_config import (
     PlatformChoices,
     StatusChoices,
 )
-from tfc.constants.api_calls import APICallStatusChoices
-try:
-    from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
-except ImportError:
-    log_and_deduct_cost_for_api_request = None
+from tfc.billing.boundary import get_billing, token_usage_properties
 
 
 def _run_external_platform_evaluation(
@@ -54,60 +50,34 @@ def _log_and_deduct_cost_for_external_eval(
 
     api_call_type = _get_api_call_type(config.model)
 
-    # Pre-check: enforce free tier limits
-    try:
-        from ee.usage.services.metering import check_usage
-    except ImportError:
-        check_usage = None
+    billing = get_billing()
+    usage_check = billing.check_usage(str(config.organization.id), api_call_type)
+    if not usage_check.allowed:
+        raise ValueError(usage_check.reason or "Usage limit exceeded")
 
-    if check_usage is not None:
-        usage_check = check_usage(str(config.organization.id), api_call_type)
-        if not usage_check.allowed:
-            raise ValueError(usage_check.reason or "Usage limit exceeded")
-
-    api_call_log_row = None
-    if log_and_deduct_cost_for_api_request is not None:
-        api_call_log_row = log_and_deduct_cost_for_api_request(
-            organization=config.organization,
-            api_call_type=api_call_type,
-            source="tracer",
-            source_id=config.id,
-            config=log_config,
-            workspace=config.workspace,
-        )
-        if not api_call_log_row:
+    api_call_log_row = billing.log_and_deduct(
+        organization=config.organization,
+        api_call_type=api_call_type,
+        source="tracer",
+        source_id=config.id,
+        config=log_config,
+        workspace=config.workspace,
+    )
+    if billing.deduct_denied(api_call_log_row):
+        if api_call_log_row is None:
             raise ValueError("API call not allowed : Error validating the api call.")
+        raise ValueError("API call not allowed : ", api_call_log_row.status)
 
-        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-            raise ValueError("API call not allowed : ", api_call_log_row.status)
+    # Emit usage event for billing
 
-    # Dual-write: emit usage event for new billing system
     try:
-        try:
-            from ee.usage.schemas.events import UsageEvent
-        except ImportError:
-            UsageEvent = None
-        try:
-            from ee.usage.services.emitter import emit
-        except ImportError:
-            emit = None
-        try:
-            from ee.usage.utils.event_properties import token_usage_properties
-        except ImportError:
-            token_usage_properties = lambda token_usage: {}
-
-        if emit is not None and UsageEvent is not None:
-            emit(
-                UsageEvent(
-                    org_id=str(config.organization.id),
-                    event_type=api_call_type,
-                    properties={
-                        "source": "tracer",
-                        "source_id": str(config.id),
-                        **token_usage_properties(log_config.get("token_usage", {})),
-                    },
-                )
-            )
+        billing.record_usage(
+            str(config.organization.id),
+            api_call_type,
+            source="tracer",
+            source_id=str(config.id),
+            **token_usage_properties(log_config.get("token_usage", {})),
+        )
     except Exception:
         pass  # Metering failure must not break the action
 

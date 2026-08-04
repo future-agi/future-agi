@@ -1156,21 +1156,11 @@ class AddScenarioColumnsView(APIView):
         }
         """
         try:
-            try:
-                try:
-                    from ee.usage.services.entitlements import Entitlements
-                except ImportError:
-                    Entitlements = None
-
-                if Entitlements is not None:
-                    org = _request_organization(request)
-                    feat_check = Entitlements.check_feature(
-                        str(org.id), "has_agentic_eval"
-                    )
-                    if not feat_check.allowed:
-                        return self.gm.forbidden_response(feat_check.reason)
-            except ImportError:
-                pass
+            from tfc.billing.boundary import get_billing
+            billing = get_billing()
+            org = _request_organization(request)
+            if not billing.has_feature(str(org.id), "agentic_eval"):
+                return self.gm.forbidden_response("This feature requires an EE or Cloud plan.")
 
             # Get the scenario
             scenario = get_object_or_404(

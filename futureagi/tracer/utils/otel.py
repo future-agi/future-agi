@@ -35,11 +35,8 @@ from tracer.utils.semantic_conventions import (
     detect_semconv,
     get_attribute,
 )
+from tfc.billing.boundary import get_billing
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
-try:
-    from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
-except ImportError:
-    log_and_deduct_cost_for_resource_request = None
 
 
 class OtelSpan:
@@ -1072,17 +1069,15 @@ def _deduct_project_creation_cost(
         else APICallTypeChoices.OBSERVE_ADD.value
     )
 
-    call_log_row = log_and_deduct_cost_for_resource_request(
-        organization,
-        call_type,
+    billing = get_billing()
+    call_log_row = billing.log_and_deduct_resource(
+        organization=organization,
+        api_call_type=call_type,
         config={"existing": existing, "project_id": project_id},
         workspace=workspace,
     )
 
-    if (
-        call_log_row is None
-        or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-    ):
+    if billing.resource_denied(call_log_row):
         raise ResourceLimitError(
             "Trace creation not allowed due to plan limits or insufficient credits."
         )

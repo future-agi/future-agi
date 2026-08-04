@@ -59,11 +59,6 @@ from tracer.utils.external_eval import run_external_eval_config
 from tracer.utils.helper import get_default_project_session_config
 from tracer.utils.otel import SpanAttributes, convert_otel_span_to_observation_span
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
-try:
-    from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request, refund_cost_for_api_call
-except ImportError:
-    log_and_deduct_cost_for_api_request = None
-    refund_cost_for_api_call = None
 
 
 def _convert_attributes(attributes):

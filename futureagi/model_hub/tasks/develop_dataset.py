@@ -51,12 +51,8 @@ from tfc.temporal import temporal_activity
 from tfc.utils.storage import (
     delete_compare_folder,
 )
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
-try:
-    from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
-except ImportError:
-    count_text_tokens = None
-    log_and_deduct_cost_for_api_request = None
+from tfc.billing.boundary import get_billing, BillingEventType, llm_usage_properties
+from tfc.constants.api_calls import APICallTypeChoices
 
 
 def run_generate_new_rows_test(
@@ -361,21 +357,12 @@ def create_synthetic_dataset(
             request_uuid = task_manager.start_task(str(dataset_id))
 
         from tfc.constants.api_calls import APICallTypeChoices
-        try:
-            from ee.usage.schemas.event_types import BillingEventType
-        except ImportError:
-            BillingEventType = None
-        try:
-            from ee.usage.services.metering import check_usage
-        except ImportError:
-            check_usage = None
-
-        if check_usage is not None and BillingEventType is not None:
-            _usage_check = check_usage(
-                str(organization.id), BillingEventType.SYNTHETIC_DATA_GENERATION
-            )
-            if not _usage_check.allowed:
-                raise ValueError(_usage_check.reason or "Usage limit exceeded")
+        billing = get_billing()
+        _usage_check = billing.check_usage(
+            str(organization.id), BillingEventType.SYNTHETIC_DATA_GENERATION
+        )
+        if not _usage_check.allowed:
+            raise ValueError(_usage_check.reason or "Usage limit exceeded")
 
         agent = SyntheticDataAgent(dataset_id=dataset_id, request_uuid=request_uuid)
 
@@ -440,7 +427,7 @@ def create_synthetic_dataset(
         tik_total_tokens = 0
         for col in synthetic_df.columns:
             for value in synthetic_df[col]:
-                tik_total_tokens += (count_text_tokens(str(value)) if count_text_tokens else 0)
+                tik_total_tokens += billing.count_tokens(str(value))
 
         rows = list(Row.objects.filter(dataset=dataset))
 
@@ -507,62 +494,33 @@ def create_synthetic_dataset(
                 "input_tokens": int(tik_total_tokens),
             }
 
-            if log_and_deduct_cost_for_api_request is not None:
-                api_call_log_row = log_and_deduct_cost_for_api_request(
-                    organization,
-                    api_call_type,
-                    config=api_call_config,
-                    source="synthetic_dataset",
-                    workspace=dataset.workspace,
-                )
+            api_call_log_row = billing.log_and_deduct(
+                organization=organization,
+                api_call_type=api_call_type,
+                config=api_call_config,
+                source="synthetic_dataset",
+                workspace=dataset.workspace,
+            )
 
-                if not api_call_log_row:
-                    raise ValueError(
-                        "API call not allowed : Error validating the api call."
-                    )
+            if billing.deduct_denied(api_call_log_row):
+                if api_call_log_row is None:
+                    raise ValueError("API call not allowed : Error validating the api call.")
+                raise ValueError("API call not allowed : ", api_call_log_row.status)
 
-                if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-                    raise ValueError("API call not allowed : ", api_call_log_row.status)
-
-            # Dual-write: emit usage event for new billing system (cost-based)
+            # Emit usage event for billing system (cost-based)
             try:
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.config import BillingConfig
-                except ImportError:
-                    BillingConfig = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-                try:
-                    from ee.usage.utils.event_properties import llm_usage_properties
-                except ImportError:
-                    llm_usage_properties = lambda obj: {}
-
                 actual_cost = getattr(agent, "cost", {}).get("total_cost", 0)
                 if not actual_cost and hasattr(agent, "llm"):
                     actual_cost = getattr(agent.llm, "cost", {}).get("total_cost", 0)
-                credits = 0
-                if BillingConfig is not None:
-                    credits = BillingConfig.get().calculate_ai_credits(actual_cost)
-
-                if emit is not None and UsageEvent is not None:
-                    emit(
-                    UsageEvent(
-                        org_id=str(organization.id),
-                        event_type=api_call_type,
-                        amount=credits,
-                        properties={
-                            "source": "synthetic_dataset",
-                            "source_id": str(dataset.id),
-                            "raw_cost_usd": str(actual_cost),
-                            **llm_usage_properties(agent),
-                        },
-                    )
+                credits = billing.ai_credits(actual_cost)
+                billing.record_usage(
+                    str(organization.id),
+                    api_call_type,
+                    amount=credits,
+                    source="synthetic_dataset",
+                    source_id=str(dataset.id),
+                    raw_cost_usd=str(actual_cost),
+                    **llm_usage_properties(agent),
                 )
             except Exception:
                 pass  # Metering failure must not break the action

@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation
 import structlog
 
 from agentcc.models import AgentccAPIKey, AgentccRequestLog, AgentccSession
+from tfc.billing.boundary import get_billing, BillingEventType
 
 logger = structlog.get_logger(__name__)
 
@@ -303,45 +304,23 @@ def ingest_request_logs(logs):
         logger.exception("webhook_dispatch_failed", org_id=str(org.id))
 
     try:
-        try:
-            from ee.usage.deployment import DeploymentMode
-        except ImportError:
-            DeploymentMode = None
+        billing = get_billing()
+        cache_hits = sum(1 for o in objects if o.cache_hit)
+        regular_requests = len(objects) - cache_hits
 
-        if not DeploymentMode.is_oss():
-            try:
-                from ee.usage.schemas.event_types import BillingEventType
-            except ImportError:
-                BillingEventType = None
-            try:
-                from ee.usage.schemas.events import UsageEvent
-            except ImportError:
-                UsageEvent = None
-            try:
-                from ee.usage.services.emitter import emit
-            except ImportError:
-                emit = None
-
-            cache_hits = sum(1 for o in objects if o.cache_hit)
-            regular_requests = len(objects) - cache_hits
-
-            if regular_requests > 0:
-                emit(
-                    UsageEvent(
-                        org_id=str(org.id),
-                        event_type=BillingEventType.GATEWAY_REQUEST,
-                        amount=regular_requests,
-                        properties={"batch_size": len(objects)},
-                    )
-                )
-            if cache_hits > 0:
-                emit(
-                    UsageEvent(
-                        org_id=str(org.id),
-                        event_type=BillingEventType.GATEWAY_CACHE_HIT,
-                        amount=cache_hits,
-                    )
-                )
+        if regular_requests > 0:
+            billing.record_usage(
+                str(org.id),
+                BillingEventType.GATEWAY_REQUEST,
+                amount=regular_requests,
+                batch_size=len(objects),
+            )
+        if cache_hits > 0:
+            billing.record_usage(
+                str(org.id),
+                BillingEventType.GATEWAY_CACHE_HIT,
+                amount=cache_hits,
+            )
     except Exception:
         pass  # Metering failure must not break log ingestion
 

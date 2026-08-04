@@ -25,6 +25,7 @@ from analytics.utils import (
     track_mixpanel_event,
 )
 from saml2_auth.models import SAMLMetadataModel
+from tfc.billing.boundary import get_billing as _get_billing_sub
 from tfc.constants.email import FREE_EMAIL_DOMAINS
 from tfc.constants.levels import Level
 from tfc.settings.settings import ssl
@@ -253,14 +254,7 @@ def first_signup(data, mode=None):
 
         # Create billing subscription (Free plan default).
         # Skip when ee is absent — no subscription model.
-        try:
-            from ee.usage.utils.usage_entries import (
-                create_organization_subscription_if_not_exists,
-            )
-
-            create_organization_subscription_if_not_exists(organization)
-        except ImportError:
-            pass
+        _get_billing_sub().setup_org_subscription(organization)
     else:
         raise Exception(f"Invalid data: {serializer.errors}")
 

@@ -50,7 +50,7 @@ def _query_data(values):
 
 def _post_add_rows_sdk(auth_client, dataset_id):
     with patch(
-        "model_hub.views.develop_dataset.log_and_deduct_cost_for_resource_request",
+        "tfc.billing.boundary._EeBilling.log_and_deduct_resource",
         return_value=_SuccessfulResourceCallLog(),
     ):
         return auth_client.post(

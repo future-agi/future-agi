@@ -18,15 +18,11 @@ from tracer.serializers.dataset import (
     AddToNewDatasetObserveSerializer,
     ObserveDatasetSerializer,
 )
+from tfc.billing.boundary import get_billing
 from tracer.services.clickhouse.v2 import get_reader
 from tracer.tasks import CHUNK_SIZE, process_spans_chunk_task
 
 logger = structlog.get_logger(__name__)
-
-try:
-    from ee.usage.utils.usage_entries import check_if_dataset_creation_is_allowed
-except ImportError:
-    check_if_dataset_creation_is_allowed = None
 
 
 class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
@@ -430,10 +426,14 @@ def create_new_dataset(new_dataset_name, organization, workspace, user_id):
     ).exists():
         raise ValueError(get_error_message("DATASET_EXIST_IN_ORG"))
 
-    if (
-        check_if_dataset_creation_is_allowed is not None
-        and not check_if_dataset_creation_is_allowed(organization)
-    ):
+    # Entitlement key is plural "datasets" (see billing.yaml); count mirrors
+    # the old ee check_if_dataset_creation_is_allowed helper.
+    dataset_count = Dataset.objects.filter(
+        organization=organization, source__in=["build", "observe"], deleted=False
+    ).count()
+    billing = get_billing()
+    result = billing.can_create(str(organization.id), "datasets", dataset_count)
+    if not result.allowed:
         raise ValueError(get_error_message("DATASET_CREATE_LIMIT_REACHED"))
 
     return Dataset.no_workspace_objects.create(

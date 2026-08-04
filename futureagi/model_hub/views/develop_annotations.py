@@ -57,6 +57,7 @@ from model_hub.serializers.develop_annotations import (
 )
 from model_hub.utils.auto_annotate import generate_annotations_task
 from model_hub.utils.utils import corpus_builder
+from tfc.billing.boundary import get_billing
 from tfc.constants.levels import Level
 from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.api_contracts import validated_request
@@ -585,15 +586,7 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
             try:
                 import json as _json
 
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-
+                billing = get_billing()
                 org = (
                     getattr(request, "organization", None) or request.user.organization
                 )
@@ -602,16 +595,12 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 )
                 # Non-chargeable tracking event — annotation creation is free.
                 # "annotation_creation" is intentionally not in billing.yaml.
-                emit(
-                    UsageEvent(
-                        org_id=str(org.id),
-                        event_type="annotation_creation",
-                        amount=annotation_size,
-                        properties={
-                            "source": "annotation",
-                            "source_id": str(annotation.id),
-                        },
-                    )
+                billing.record_usage(
+                    str(org.id),
+                    "annotation_creation",
+                    amount=annotation_size,
+                    source="annotation",
+                    source_id=str(annotation.id),
                 )
             except Exception:
                 logger.debug("emit_annotation_event_failed")
@@ -2074,19 +2063,20 @@ class AnnotationSummaryView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
 
-            try:
-                try:
-                    from ee.usage.services.entitlements import Entitlements
-                except ImportError:
-                    Entitlements = None
-
-                feat_check = Entitlements.check_feature(
-                    str(organization.id), "has_agreement_metrics"
+            # Use ``check_feature_gate`` (returns UsageDecision with .reason)
+            # so denied users see the actual upgrade prompt instead of a
+            # hardcoded "Feature not available" message. The bool-returning
+            # ``has_feature`` drops the reason on the floor. No ``is_enabled``
+            # wrapper: agreement_metrics is an EE feature, so the gate must
+            # run (and deny) on OSS too.
+            billing = get_billing()
+            gate = billing.check_feature_gate(
+                str(organization.id), "has_agreement_metrics"
+            )
+            if not gate.allowed:
+                return self._gm.forbidden_response(
+                    gate.reason or "This feature requires an EE or Cloud plan."
                 )
-                if not feat_check.allowed:
-                    return self._gm.forbidden_response(feat_check.reason)
-            except ImportError:
-                pass
 
             get_object_or_404(Dataset, id=dataset_id, organization=organization)
 

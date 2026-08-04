@@ -245,33 +245,24 @@ def _install_run_eval_func_patches(monkeypatch, captured_configs, log_id="log-00
     so both test files use the same faking strategy.
     """
     import model_hub.views.utils.evals as evals_module
+    from tfc.billing.boundary import _NoopBilling
     from tfc.constants.api_calls import APICallStatusChoices
 
-    def _fake_log_and_deduct(organization, api_call_type, config=None, **_kw):
-        captured_configs.append(dict(config) if config else {})
-        return SimpleNamespace(
-            log_id=log_id,
-            config=json.dumps(config or {}),
-            status=APICallStatusChoices.PROCESSING.value,
-            input_token_count=0,
-            save=MagicMock(),
-        )
 
-    # log_and_deduct_cost_for_api_request is a module-level name in evals.py
-    # (assigned via `try: from ee.usage... except ImportError: ... = None`).
-    monkeypatch.setattr(
-        evals_module,
-        "log_and_deduct_cost_for_api_request",
-        _fake_log_and_deduct,
-    )
+    class _CapturingBilling(_NoopBilling):
+        has_ee_billing = True
 
-    # check_usage is imported locally inside run_eval_func each call, so we
-    # patch it on the source module so the local `from ... import` picks up
-    # the mock.
-    monkeypatch.setattr(
-        "ee.usage.services.metering.check_usage",
-        lambda *_args, **_kwargs: SimpleNamespace(allowed=True),
-    )
+        def log_and_deduct(self, organization=None, api_call_type=None, config=None, **_kw):
+            captured_configs.append(dict(config) if config else {})
+            return SimpleNamespace(
+                log_id=log_id,
+                config=json.dumps(config or {}),
+                status=APICallStatusChoices.PROCESSING.value,
+                input_token_count=0,
+                save=MagicMock(),
+            )
+
+    monkeypatch.setattr(evals_module, "get_billing", lambda: _CapturingBilling())
 
     # Suppress the eval engine, field mapping, output formatting, and input
     # validation — all irrelevant to version tracking.

@@ -8,7 +8,26 @@ from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.views.utils import evals as evals_module
 from model_hub.views.utils.evals import run_eval_func
+from tfc.billing.boundary import _NoopBilling
 from tfc.constants.api_calls import APICallStatusChoices
+
+
+class _MeteringBilling(_NoopBilling):
+    """Billing seam with metering available: ``log_and_deduct`` returns a live
+    APICallLog-shaped row (the EE behavior), everything else stays no-op.
+
+    Subclassing _NoopBilling keeps the fake honest — any new Billing method a
+    future run_eval_func change calls resolves to the real OSS no-op instead
+    of a MagicMock that silently returns truthy garbage.
+    """
+
+    has_ee_billing = True
+
+    def __init__(self, log_row):
+        self._log_row = log_row
+
+    def log_and_deduct(self, **_kwargs):
+        return self._log_row
 
 
 _CANONICAL_KEYS = {
@@ -96,8 +115,9 @@ def test_response_shape_is_canonical_when_metering_helper_absent(
     monkeypatch, pass_fail_template, organization
 ):
     _patch_runner(monkeypatch, format_output_return="Passed")
-    # Simulate the build where the metering entry point is not loaded.
-    monkeypatch.setattr(evals_module, "log_and_deduct_cost_for_api_request", None)
+    # Simulate the OSS build: the billing boundary hands out _NoopBilling,
+    # so log_and_deduct returns None and no APICallLog row exists.
+    monkeypatch.setattr(evals_module, "get_billing", lambda: _NoopBilling())
 
     output = run_eval_func(
         {"config": {}, "params": {}},
@@ -146,19 +166,7 @@ def test_response_shape_is_canonical_when_metering_is_available(
         save=lambda *a, **k: None,
     )
     monkeypatch.setattr(
-        evals_module,
-        "log_and_deduct_cost_for_api_request",
-        lambda **_kwargs: log_row,
-    )
-    # Metering sub-imports called inside run_eval_func; stub the ones
-    # that would otherwise hit real services.
-    monkeypatch.setattr(
-        "ee.usage.services.metering.check_usage",
-        lambda *_args, **_kwargs: SimpleNamespace(allowed=True),
-    )
-    monkeypatch.setattr(
-        "ee.usage.services.emitter.emit",
-        lambda _event: None,
+        evals_module, "get_billing", lambda: _MeteringBilling(log_row)
     )
 
     output = run_eval_func(
@@ -191,7 +199,7 @@ def test_response_output_preserves_polymorphic_shapes(
     monkeypatch, pass_fail_template, organization, value
 ):
     _patch_runner(monkeypatch, format_output_return=value)
-    monkeypatch.setattr(evals_module, "log_and_deduct_cost_for_api_request", None)
+    monkeypatch.setattr(evals_module, "get_billing", lambda: _NoopBilling())
 
     output = run_eval_func(
         {"config": {}, "params": {}},

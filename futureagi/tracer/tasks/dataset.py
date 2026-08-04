@@ -10,6 +10,7 @@ import uuid
 import structlog
 from django.db import close_old_connections, transaction
 
+from tfc.billing.boundary import get_billing
 from tfc.temporal import temporal_activity
 
 logger = structlog.get_logger(__name__)
@@ -545,28 +546,16 @@ def process_spans_chunk_task(
         try:
             from model_hub.models.develop_dataset import Database
 
-            try:
-                from ee.usage.schemas.events import UsageEvent
-            except ImportError:
-                UsageEvent = None
-            try:
-                from ee.usage.services.emitter import emit
-            except ImportError:
-                emit = None
-
             dataset = Database.objects.only("organization_id").get(id=dataset_id)
             data_size = sum(len(str(c.value or "").encode()) for c in cells_to_create)
-            emit(
-                UsageEvent(
-                    org_id=str(dataset.organization_id),
-                    event_type="dataset_row_from_spans",
-                    amount=data_size,
-                    properties={
-                        "source": "dataset_from_spans",
-                        "source_id": str(dataset_id),
-                        "rows_created": len(created_rows),
-                    },
-                )
+            billing = get_billing()
+            billing.record_usage(
+                str(dataset.organization_id),
+                "dataset_row_from_spans",
+                amount=data_size,
+                source="dataset_from_spans",
+                source_id=str(dataset_id),
+                rows_created=len(created_rows),
             )
         except Exception:
             logger.debug(

@@ -17,6 +17,7 @@ from model_hub.models.choices import (
     SourceChoices,
 )
 from model_hub.models.develop_dataset import Column, Dataset
+from tfc.billing.boundary import UsageDecision
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.trace import Trace
@@ -358,12 +359,14 @@ class TestAddToNewDatasetAPI:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     @patch("tracer.views.dataset.process_spans_chunk_task")
-    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    @patch("tracer.views.dataset.get_billing")
     def test_missing_project_derives_from_spans(
-        self, mock_check_allowed, mock_task, auth_client, observe_spans, ch_seed
+        self, mock_get_billing, mock_task, auth_client, observe_spans, ch_seed
     ):
         """Request without project derives it from selected spans."""
-        mock_check_allowed.return_value = True
+        mock_get_billing.return_value.can_create.return_value = UsageDecision(
+            allowed=True
+        )
         mock_task.delay.return_value = None
         ch_seed(observe_spans)
 
@@ -392,10 +395,10 @@ class TestAddToNewDatasetAPI:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     @patch("tracer.views.dataset.process_spans_chunk_task")
-    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    @patch("tracer.views.dataset.get_billing")
     def test_success_with_spanIds(
         self,
-        mock_check_allowed,
+        mock_get_billing,
         mock_task,
         auth_client,
         workspace,
@@ -404,7 +407,9 @@ class TestAddToNewDatasetAPI:
         ch_seed,
     ):
         """Successfully create dataset with spanIds."""
-        mock_check_allowed.return_value = True
+        mock_get_billing.return_value.can_create.return_value = UsageDecision(
+            allowed=True
+        )
         mock_task.delay.return_value = None
         ch_seed(observe_spans)
 
@@ -435,17 +440,19 @@ class TestAddToNewDatasetAPI:
         assert dataset.workspace_id == workspace.id
 
     @patch("tracer.views.dataset.process_spans_chunk_task")
-    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    @patch("tracer.views.dataset.get_billing")
     def test_success_with_ch_only_span_ids_without_project(
         self,
-        mock_check_allowed,
+        mock_get_billing,
         mock_task,
         auth_client,
         observe_project,
         ch_seed,
     ):
         """Span ids derive their project from ClickHouse, not PG spans."""
-        mock_check_allowed.return_value = True
+        mock_get_billing.return_value.can_create.return_value = UsageDecision(
+            allowed=True
+        )
         mock_task.delay.return_value = None
         trace_id = uuid.uuid4()
         span_id = f"ch_span_{uuid.uuid4().hex[:16]}"
@@ -469,10 +476,10 @@ class TestAddToNewDatasetAPI:
         assert mock_task.delay.call_args.args[0] == [span_id]
 
     @patch("tracer.views.dataset.process_spans_chunk_task")
-    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    @patch("tracer.views.dataset.get_billing")
     def test_success_with_traceIds(
         self,
-        mock_check_allowed,
+        mock_get_billing,
         mock_task,
         auth_client,
         observe_project,
@@ -481,7 +488,9 @@ class TestAddToNewDatasetAPI:
         ch_seed,
     ):
         """Successfully create dataset with traceIds."""
-        mock_check_allowed.return_value = True
+        mock_get_billing.return_value.can_create.return_value = UsageDecision(
+            allowed=True
+        )
         mock_task.delay.return_value = None
         ch_seed(observe_spans)
 
@@ -504,17 +513,19 @@ class TestAddToNewDatasetAPI:
         assert result["status"] == "processing"
 
     @patch("tracer.views.dataset.process_spans_chunk_task")
-    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    @patch("tracer.views.dataset.get_billing")
     def test_success_with_ch_only_trace_ids(
         self,
-        mock_check_allowed,
+        mock_get_billing,
         mock_task,
         auth_client,
         observe_project,
         ch_seed,
     ):
         """Trace ids no longer need PG Trace/ObservationSpan rows to export."""
-        mock_check_allowed.return_value = True
+        mock_get_billing.return_value.can_create.return_value = UsageDecision(
+            allowed=True
+        )
         mock_task.delay.return_value = None
         trace_id = uuid.uuid4()
         span_id = f"ch_root_{uuid.uuid4().hex[:16]}"
@@ -539,10 +550,10 @@ class TestAddToNewDatasetAPI:
         assert mock_task.delay.call_args.args[0] == [span_id]
 
     @patch("tracer.views.dataset.process_spans_chunk_task")
-    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    @patch("tracer.views.dataset.get_billing")
     def test_success_with_selectAll(
         self,
-        mock_check_allowed,
+        mock_get_billing,
         mock_task,
         auth_client,
         observe_project,
@@ -550,7 +561,9 @@ class TestAddToNewDatasetAPI:
         ch_seed,
     ):
         """Successfully create dataset with selectAll=True."""
-        mock_check_allowed.return_value = True
+        mock_get_billing.return_value.can_create.return_value = UsageDecision(
+            allowed=True
+        )
         mock_task.delay.return_value = None
         ch_seed(observe_spans)
 
@@ -572,12 +585,14 @@ class TestAddToNewDatasetAPI:
         result = get_result(response)
         assert result["status"] == "processing"
 
-    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    @patch("tracer.views.dataset.get_billing")
     def test_duplicate_dataset_name(
-        self, mock_check_allowed, auth_client, observe_project, observe_spans, dataset
+        self, mock_get_billing, auth_client, observe_project, observe_spans, dataset
     ):
         """Creating dataset with existing name should return 400."""
-        mock_check_allowed.return_value = True
+        mock_get_billing.return_value.can_create.return_value = UsageDecision(
+            allowed=True
+        )
 
         response = auth_client.post(
             "/tracer/dataset/add_to_new_dataset/",
@@ -595,10 +610,10 @@ class TestAddToNewDatasetAPI:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     @patch("tracer.views.dataset.process_spans_chunk_task")
-    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    @patch("tracer.views.dataset.get_billing")
     def test_duplicate_dataset_name_in_same_org_other_workspace_is_allowed(
         self,
-        mock_check_allowed,
+        mock_get_billing,
         mock_task,
         auth_client,
         organization,
@@ -610,7 +625,9 @@ class TestAddToNewDatasetAPI:
         ch_seed,
     ):
         """Same-org duplicate names outside the active workspace do not block create."""
-        mock_check_allowed.return_value = True
+        mock_get_billing.return_value.can_create.return_value = UsageDecision(
+            allowed=True
+        )
         mock_task.delay.return_value = None
         ch_seed(observe_spans)
         dataset_name = f"Cross Workspace Name {uuid.uuid4().hex[:8]}"
@@ -643,10 +660,10 @@ class TestAddToNewDatasetAPI:
         assert created.workspace_id == workspace.id
 
     @patch("tracer.views.dataset.process_spans_chunk_task")
-    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    @patch("tracer.views.dataset.get_billing")
     def test_other_workspace_span_ids_do_not_create_dataset(
         self,
-        mock_check_allowed,
+        mock_get_billing,
         mock_task,
         auth_client,
         organization,
@@ -654,7 +671,9 @@ class TestAddToNewDatasetAPI:
         ch_seed,
     ):
         """Selected spans from another workspace are hidden before dataset creation."""
-        mock_check_allowed.return_value = True
+        mock_get_billing.return_value.can_create.return_value = UsageDecision(
+            allowed=True
+        )
         mock_task.delay.return_value = None
         _, _, other_span = create_observe_span_for_workspace(
             organization, other_workspace, suffix="new_dataset_guard"
@@ -685,10 +704,10 @@ class TestAddToNewDatasetAPI:
         self, auth_client, observe_project, observe_spans
     ):
         """Should return 400 when dataset creation limit is reached."""
-        with patch(
-            "tracer.views.dataset.check_if_dataset_creation_is_allowed"
-        ) as mock_check:
-            mock_check.return_value = False
+        with patch("tracer.views.dataset.get_billing") as mock_check:
+            mock_check.return_value.can_create.return_value = UsageDecision(
+                allowed=False, reason="Dataset limit reached"
+            )
 
             response = auth_client.post(
                 "/tracer/dataset/add_to_new_dataset/",

@@ -64,19 +64,14 @@ class ObservationSpanService(generics.GenericService, TraceServiceServicer):
                 raise PermissionDenied("User has no organization.")
 
             # Ingestion rate limit check
-            try:
-                from ee.usage.services.rate_limiter import RateLimiter
-            except ImportError:
-                RateLimiter = None
-
-            if RateLimiter is not None:
-                rl_result = await sync_to_async(RateLimiter.check)(
-                    str(organization_id), "ingestion"
+            from tfc.billing.boundary import get_billing
+            rl_result = await sync_to_async(get_billing().check_rate_limit)(
+                str(organization_id), "ingestion"
+            )
+            if not rl_result.allowed:
+                await context.abort(
+                    grpc.StatusCode.RESOURCE_EXHAUSTED, rl_result.reason
                 )
-                if not rl_result.allowed:
-                    await context.abort(
-                        grpc.StatusCode.RESOURCE_EXHAUSTED, rl_result.reason
-                    )
 
             request_bytes = request.SerializeToString()
 
