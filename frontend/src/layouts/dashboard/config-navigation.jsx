@@ -6,6 +6,7 @@ import {
   useWorkspacesList,
 } from "src/api/workspaces/list";
 import { paths } from "src/routes/paths";
+import { HELP_LINK } from "src/config-global";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
@@ -295,12 +296,6 @@ export function useNavUpgradeData() {
           });
         },
       },
-
-      {
-        title: "Help",
-        path: import.meta.env.VITE_HELP_LINK,
-        icon: ICONS.help,
-      },
     ];
 
     if (getStartedCompleted) {
@@ -308,6 +303,16 @@ export function useNavUpgradeData() {
         title: "Get started",
         path: paths.dashboard.getstarted,
         icon: ICONS.getStarted,
+      });
+    }
+
+    // Unset in OSS deployments unless the operator configures it. Without a
+    // path the item renders as a link to the current route, so drop it.
+    if (HELP_LINK) {
+      items.push({
+        title: "Help",
+        path: HELP_LINK,
+        icon: ICONS.help,
       });
     }
     return [{ subheader: "RESOURCES", items }];
