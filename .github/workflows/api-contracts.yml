@@ -23,10 +23,15 @@ on:
       - "frontend/scripts/check-api-endpoint-registry-contract.mjs"
       - "frontend/scripts/check-api-surface-usage.mjs"
       - "futureagi/model_hub/serializers/annotation_queues.py"
+      - "futureagi/model_hub/serializers/run_prompt.py"
       - "futureagi/model_hub/serializers/scores.py"
       - "futureagi/model_hub/views/annotation_queues.py"
       - "futureagi/model_hub/views/ai_filter.py"
+      - "futureagi/model_hub/views/dynamic_columns.py"
+      - "futureagi/model_hub/views/experiment_runner.py"
+      - "futureagi/model_hub/views/run_prompt.py"
       - "futureagi/model_hub/views/scores.py"
+      - "futureagi/model_hub/tests/test_run_prompt_placeholders.py"
       - "futureagi/tfc/utils/api_contracts.py"
       - "futureagi/tfc/utils/general_methods.py"
       - "futureagi/model_hub/utils/annotation_queue_helpers.py"
@@ -59,10 +64,15 @@ on:
       - "frontend/scripts/check-api-endpoint-registry-contract.mjs"
       - "frontend/scripts/check-api-surface-usage.mjs"
       - "futureagi/model_hub/serializers/annotation_queues.py"
+      - "futureagi/model_hub/serializers/run_prompt.py"
       - "futureagi/model_hub/serializers/scores.py"
       - "futureagi/model_hub/views/annotation_queues.py"
       - "futureagi/model_hub/views/ai_filter.py"
+      - "futureagi/model_hub/views/dynamic_columns.py"
+      - "futureagi/model_hub/views/experiment_runner.py"
+      - "futureagi/model_hub/views/run_prompt.py"
       - "futureagi/model_hub/views/scores.py"
+      - "futureagi/model_hub/tests/test_run_prompt_placeholders.py"
       - "futureagi/tfc/utils/api_contracts.py"
       - "futureagi/tfc/utils/general_methods.py"
       - "futureagi/model_hub/utils/annotation_queue_helpers.py"
@@ -139,6 +149,7 @@ jobs:
           src/api/contracts/__tests__/openapi-contract.test.js
           src/api/contracts/__tests__/filter-contract.test.js
           src/api/contracts/__tests__/api-surface.test.js
+          src/api/contracts/__tests__/run-prompt-contract.test.js
           src/utils/__tests__/axios.test.js
           src/api/annotation-queues/__tests__/annotation-queues.test.js
           src/api/scores/__tests__/scores.test.js
@@ -295,6 +306,7 @@ jobs:
           tracer/tests/test_filter_engine_parity.py
           model_hub/tests/test_annotation_api_contract.py
           model_hub/tests/test_annotation_workflow_api.py
+          model_hub/tests/test_run_prompt_placeholders.py
           tfc/tests/test_falcon_api_contract_debt.py
           tfc/tests/test_usage_api_contract_debt.py
           ee/usage/tests/test_events_schema.py
