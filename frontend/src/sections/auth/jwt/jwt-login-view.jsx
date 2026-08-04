@@ -25,7 +25,7 @@ import Iconify from "src/components/iconify";
 import FormProvider, { RHFTextField } from "src/components/hook-form";
 import { useSearchParams, useNavigate, useLocation } from "react-router-dom";
 import { Events, trackEvent, PropertyName } from "src/utils/Mixpanel";
-import { Button, CircularProgress } from "@mui/material";
+import { Box, Button, CircularProgress } from "@mui/material";
 import axiosInstance, { endpoints } from "src/utils/axios";
 import { LOGIN_ERROR_CODES } from "src/utils/constants";
 import { useSnackbar } from "src/components/snackbar";
@@ -40,7 +40,7 @@ import {
   browserSupportsWebAuthn,
   startAuthentication,
 } from "@simplewebauthn/browser";
-import AuthSpaceLayout from "./AuthSpaceLayout";
+import RightSectionAuth from "./RightSectionAuth";
 import { isValidUtm } from "src/utils/utmUtils";
 import { usePostLoginPath } from "src/hooks/useDeploymentMode";
 import { OssSetupModal, useOssSetupModal } from "./oss-setup";
@@ -799,28 +799,84 @@ export default function JwtLoginView() {
   // Show loading screen while accepting an invitation (token present but not yet failed)
   if (token && !inviteFailed) {
     return (
-      <AuthSpaceLayout>
-        <Stack spacing={2} alignItems="center">
-          <CircularProgress size={32} />
-          <Typography
-            fontWeight="fontWeightMedium"
-            sx={{ fontSize: "16px", color: "text.secondary" }}
-          >
-            Accepting your invitation...
-          </Typography>
-        </Stack>
-      </AuthSpaceLayout>
+      <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
+        <Box
+          sx={{
+            width: "50%",
+            height: "100vh",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            bgcolor: "background.paper",
+            overflowY: "auto",
+          }}
+        >
+          <Stack spacing={2} alignItems="center">
+            <CircularProgress size={32} />
+            <Typography
+              fontWeight="fontWeightMedium"
+              sx={{ fontSize: "16px", color: "text.secondary" }}
+            >
+              Accepting your invitation...
+            </Typography>
+          </Stack>
+        </Box>
+
+        <Box
+          sx={{
+            width: "50%",
+            height: "100%",
+            backgroundColor: "background.neutral",
+          }}
+        >
+          <RightSectionAuth />
+        </Box>
+      </Box>
     );
   }
 
   return (
-    <AuthSpaceLayout>
-      <FormProvider methods={methods} onSubmit={onSubmit}>
-        {renderHead}
-        {renderForm}
-      </FormProvider>
+    <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
+      {/* Left Side - Form */}
+      <Box
+        sx={{
+          width: "50%",
+          height: "100vh",
+          display: "flex",
+          justifyContent: "center",
+
+          bgcolor: "background.paper",
+          overflowY: "auto",
+        }}
+      >
+        <Box
+          sx={{
+            maxWidth: "640px",
+            paddingY: "100px",
+            width: "100%",
+            px: 10,
+            height: "fit-content",
+          }}
+        >
+          <FormProvider methods={methods} onSubmit={onSubmit}>
+            {renderHead}
+            {renderForm}
+          </FormProvider>
+        </Box>
+      </Box>
 
       <OssSetupModal open={ossSetup.open} onClose={ossSetup.onClose} />
-    </AuthSpaceLayout>
+
+      {/* Right Side - Image with Text Overlay */}
+      <Box
+        sx={{
+          width: "50%",
+          height: "100%",
+          backgroundColor: "background.neutral",
+        }}
+      >
+        <RightSectionAuth />
+      </Box>
+    </Box>
   );
 }

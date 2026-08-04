@@ -9,7 +9,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import LoadingButton from "@mui/lab/LoadingButton";
 import Divider from "@mui/material/Divider";
-import { Button, IconButton, InputAdornment } from "@mui/material";
+import { Box, Button, IconButton, InputAdornment } from "@mui/material";
 import { useNavigate, useLocation } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import { useAuthContext } from "src/auth/hooks";
@@ -29,7 +29,7 @@ import logger from "src/utils/logger";
 import SvgColor from "src/components/svg-color";
 import { RouterLink } from "src/routes/components";
 import RegionSelect from "src/components/RegionSelect";
-import AuthSpaceLayout from "./AuthSpaceLayout";
+import RightSectionAuth from "./RightSectionAuth";
 import { isValidUtm } from "src/utils/utmUtils";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 
@@ -650,23 +650,55 @@ export default function JwtRegisterView() {
   );
 
   return (
-    <AuthSpaceLayout>
-      <FormProvider methods={methods} onSubmit={onSubmit}>
-        {registerSuccess ? (
-          <PasswordSentView
-            email={email}
-            isSubmitting={loading}
-            errorMsg={errorMsg}
-            password={password}
-            setRegisterSuccess={setRegisterSuccess}
-          />
-        ) : (
-          <Stack spacing={4}>
-            {renderHead}
-            {renderForm}
-          </Stack>
-        )}
-      </FormProvider>
-    </AuthSpaceLayout>
+    <Box sx={{ display: "flex", width: "100%", height: "100vh" }}>
+      <Box
+        sx={{
+          width: "50%",
+          height: "100%",
+          display: "flex",
+          justifyContent: "center",
+
+          bgcolor: "background.paper",
+          overflowY: "auto",
+        }}
+      >
+        <Box
+          sx={{
+            maxWidth: "640px",
+            width: "100%",
+            px: 10,
+            paddingY: "100px",
+            height: "fit-content",
+          }}
+        >
+          <FormProvider methods={methods} onSubmit={onSubmit}>
+            {registerSuccess ? (
+              <PasswordSentView
+                email={email}
+                isSubmitting={loading}
+                errorMsg={errorMsg}
+                password={password}
+                setRegisterSuccess={setRegisterSuccess}
+              />
+            ) : (
+              <Stack spacing={4}>
+                {renderHead}
+                {renderForm}
+              </Stack>
+            )}
+          </FormProvider>
+        </Box>
+      </Box>
+
+      <Box
+        sx={{
+          width: "50%",
+          height: "100%",
+          backgroundColor: "background.neutral",
+        }}
+      >
+        <RightSectionAuth />
+      </Box>
+    </Box>
   );
 }

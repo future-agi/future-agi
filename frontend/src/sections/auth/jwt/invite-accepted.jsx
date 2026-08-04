@@ -7,7 +7,7 @@ import LoadingButton from "@mui/lab/LoadingButton";
 import InputAdornment from "@mui/material/InputAdornment";
 import IconButton from "@mui/material/IconButton";
 import Button from "@mui/material/Button";
-import { Alert, CircularProgress } from "@mui/material";
+import { Alert, Box, CircularProgress } from "@mui/material";
 import { paths } from "src/routes/paths";
 import { RouterLink } from "src/routes/components";
 import Iconify from "src/components/iconify";
@@ -20,7 +20,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { useParams } from "src/routes/hooks";
 import { useAuthContext } from "src/auth/hooks";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
-import AuthSpaceLayout from "./AuthSpaceLayout";
+import RightSectionAuth from "./RightSectionAuth";
 
 export default function InviteAcceptedPage() {
   const [showPassword, setShowPassword] = useState({
@@ -394,5 +394,33 @@ export default function InviteAcceptedPage() {
     );
   };
 
-  return <AuthSpaceLayout>{renderPageContent()}</AuthSpaceLayout>;
+  return (
+    <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
+      <Box
+        sx={{
+          width: "50%",
+          height: "100vh",
+          display: "flex",
+          justifyContent: "center",
+          bgcolor: "background.paper",
+          paddingY: "100px",
+          overflowY: "auto",
+        }}
+      >
+        <Box sx={{ width: "640px", px: 10, height: "fit-content" }}>
+          {renderPageContent()}
+        </Box>
+      </Box>
+
+      <Box
+        sx={{
+          width: "50%",
+          height: "100%",
+          backgroundColor: "background.neutral",
+        }}
+      >
+        <RightSectionAuth />
+      </Box>
+    </Box>
+  );
 }

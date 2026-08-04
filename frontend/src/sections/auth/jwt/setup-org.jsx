@@ -17,7 +17,7 @@ import { Events, trackEvent, PropertyName } from "src/utils/Mixpanel";
 import PropTypes from "prop-types";
 import { paths } from "src/routes/paths";
 import { FormSearchSelectFieldState } from "src/components/FromSearchSelectField";
-import AuthSpaceLayout from "./AuthSpaceLayout";
+import RightSectionAuth from "./RightSectionAuth";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { Controller, useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -986,17 +986,50 @@ const SetupOrganization = ({ getStarted = false }) => {
   }
 
   return (
-    <AuthSpaceLayout>
-      <Stack sx={{ width: "100%", gap: 2 }}>
-        <DotsStepper
-          variant="dots"
-          steps={isOwner ? 3 : 2}
-          position="static"
-          activeStep={activeStep}
-        />
-        {renderContent()}
-      </Stack>
-    </AuthSpaceLayout>
+    <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
+      <Box
+        sx={{
+          width: "50%",
+          height: "100vh",
+          bgcolor: "background.paper",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          overflowY: "auto",
+        }}
+      >
+        <Box
+          sx={{
+            maxWidth: "640px",
+            width: "100%",
+            px: 10,
+            paddingY: "100px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+            height: "fit-content",
+          }}
+        >
+          <DotsStepper
+            variant="dots"
+            steps={isOwner ? 3 : 2}
+            position="static"
+            activeStep={activeStep}
+          />
+          {renderContent()}
+        </Box>
+      </Box>
+
+      <Box
+        sx={{
+          width: "50%",
+          height: "100%",
+          backgroundColor: "background.neutral",
+        }}
+      >
+        <RightSectionAuth />
+      </Box>
+    </Box>
   );
 };
 
