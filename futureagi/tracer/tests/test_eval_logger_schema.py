@@ -7,7 +7,8 @@ Schema-only tests; PR4 introduces the writers.
 """
 
 import json
-from unittest.mock import MagicMock, patch
+import uuid
+from unittest.mock import patch
 
 import pytest
 
@@ -192,23 +193,21 @@ class TestEvalLoggerConflationOnRootSpan:
 class TestEvalLoggerReaderAudit:
     """Pin the reader-audit fixes that keep session rows off span/trace surfaces."""
 
-    def test_get_evaluation_details_clickhouse_filters_target_type_span_and_trace(
-        self, observation_span, custom_eval_config
-    ):
-        """CH query allows span+trace targets and excludes session rows."""
-        from tracer.views.observation_span import ObservationSpanView
+    def test_get_eval_detail_ch_filters_target_type_span_and_trace(self):
+        """CH query allows span+trace targets and excludes session rows.
 
-        view = ObservationSpanView()
-        analytics = MagicMock()
-        analytics.execute_ch_query.return_value.data = []
+        The query now lives in ``AnalyticsQueryService.get_eval_detail_ch``
+        (the view delegates to it), so assert against the query that method
+        sends to ``execute_ch_query``.
+        """
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
 
-        view._get_evaluation_details_clickhouse(
-            observation_span_id=observation_span.id,
-            custom_eval_config_id=custom_eval_config.id,
-            analytics=analytics,
-        )
+        analytics = AnalyticsQueryService()
+        with patch.object(analytics, "execute_ch_query") as mock_exec:
+            mock_exec.return_value.data = []
+            analytics.get_eval_detail_ch("0000000000000000", str(uuid.uuid4()))
 
-        sent_query = analytics.execute_ch_query.call_args.args[0]
+        sent_query = mock_exec.call_args.args[0]
         assert "target_type IN ('span', 'trace')" in sent_query, (
             f"expected target_type IN ('span', 'trace') filter in CH query, got:\n{sent_query}"
         )

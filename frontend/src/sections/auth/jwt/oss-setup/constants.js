@@ -3,7 +3,7 @@ const INSTALL_GUIDE_BASE =
 
 export const OSS_RESET_DOC_URL = `${INSTALL_GUIDE_BASE}#password-reset-without-email`;
 
-export const RESET_SHELL_CMD = `docker compose exec backend python manage.py shell`;
+export const RESET_SHELL_CMD = `docker exec -it futureagi-backend-1 python manage.py shell`;
 
 export const RESET_PYTHON_SNIPPET = `from django.utils import timezone
 from django.utils.http import urlsafe_base64_encode

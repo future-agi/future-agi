@@ -669,26 +669,22 @@ export const dashboardRoutes = (
         </RoleProtection>
       ),
     },
-    ...(!isOSS
-      ? [
-          {
-            path: "falcon-ai-connectors",
-            element: (
-              <RoleProtection
-                allowedRoles={[
-                  "Owner",
-                  "Admin",
-                  "Member",
-                  "workspace_admin",
-                  "workspace_member",
-                ]}
-              >
-                <FalconAIConnectorsPage />
-              </RoleProtection>
-            ),
-          },
-        ]
-      : []),
+    {
+      path: "falcon-ai-connectors",
+      element: (
+        <RoleProtection
+          allowedRoles={[
+            "Owner",
+            "Admin",
+            "Member",
+            "workspace_admin",
+            "workspace_member",
+          ]}
+        >
+          <FalconAIConnectorsPage />
+        </RoleProtection>
+      ),
+    },
   ];
 
   // Conditionally include billing routes:
@@ -876,14 +872,10 @@ export const dashboardRoutes = (
       ],
     },
 
-    ...(!isOSS
-      ? [
-          {
-            path: "falcon-ai/:conversationId?",
-            element: <FalconAIPage />,
-          },
-        ]
-      : []),
+    {
+      path: "falcon-ai/:conversationId?",
+      element: <FalconAIPage />,
+    },
     {
       path: "tasks",
       children: [

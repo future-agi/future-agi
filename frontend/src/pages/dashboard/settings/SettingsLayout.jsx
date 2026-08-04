@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import { Box, useTheme, CircularProgress } from "@mui/material";
 import { Outlet } from "react-router";
 import { useAuthContext } from "src/auth/hooks";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import SvgColor from "src/components/svg-color";
 
 const icon = (name) => (
@@ -54,6 +55,7 @@ TabErrorBoundary.propTypes = {
 const SettingsLayout = React.memo(() => {
   const theme = useTheme();
   const { user } = useAuthContext();
+  const { isOSS } = useDeploymentMode();
   const userOrgRole = user?.organization_role;
   const isOwner = userOrgRole === "Owner";
   const isAdmin = userOrgRole === "Admin";
@@ -65,11 +67,15 @@ const SettingsLayout = React.memo(() => {
       // Administration items - only shown to owners
       ...(isOwner
         ? [
-            {
-              path: "/dashboard/settings/usage-summary",
-              title: "Usage Summary",
-              icon: ICONS.Summary,
-            },
+            ...(isOSS
+              ? []
+              : [
+                  {
+                    path: "/dashboard/settings/usage-summary",
+                    title: "Usage Summary",
+                    icon: ICONS.Summary,
+                  },
+                ]),
             {
               path: "/dashboard/settings/user-management",
               title: "User Management",
@@ -140,7 +146,7 @@ const SettingsLayout = React.memo(() => {
       },
     ];
     return allTabs;
-  }, [isOwner, isOwnerOrAdmin]);
+  }, [isOwner, isOwnerOrAdmin, isOSS]);
 
   // Memoized styles to prevent recreation
   const containerStyles = useMemo(

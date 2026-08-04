@@ -22405,8 +22405,7 @@ export const modelHubKbCreateBodyChunkSizeMax = 2147483647;
 export const ModelHubKbCreateBody = zod.object({
   "name": zod.string().min(1).max(modelHubKbCreateBodyNameMax),
   "embedding_model": zod.enum(['BAAI/bge-small-en-v1.5']).optional(),
-  "chunk_size": zod.number().min(modelHubKbCreateBodyChunkSizeMin).max(modelHubKbCreateBodyChunkSizeMax),
-  "organization": zod.string().uuid().optional()
+  "chunk_size": zod.number().min(modelHubKbCreateBodyChunkSizeMin).max(modelHubKbCreateBodyChunkSizeMax)
 })
 
 
@@ -22607,6 +22606,21 @@ export const ModelHubKnowledgeBasePartialUpdateResponse = zod.object({
 })
 
 
+export const modelHubKnowledgeBaseDeleteBodyKbIdsDefault = [];
+
+export const ModelHubKnowledgeBaseDeleteBody = zod.object({
+  "kb_ids": zod.array(zod.string().uuid()).default(modelHubKnowledgeBaseDeleteBodyKbIdsDefault)
+})
+
+
+
+
+export const ModelHubKnowledgeBaseDeleteResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.string().min(1)
+})
+
+
 export const modelHubKnowledgeBaseFilesCreateBodySortDefault = [];
 export const modelHubKnowledgeBaseFilesCreateBodyPageNumberDefault = 0;
 export const modelHubKnowledgeBaseFilesCreateBodyPageSizeDefault = 10;
@@ -22643,6 +22657,28 @@ export const ModelHubKnowledgeBaseFilesCreateResponse = zod.object({
   "status_count": zod.number(),
   "total_rows": zod.number()
 })
+})
+
+
+export const modelHubKnowledgeBaseFilesDeleteBodyDeleteAllDefault = false;
+export const modelHubKnowledgeBaseFilesDeleteBodyFileIdsDefault = [];
+export const modelHubKnowledgeBaseFilesDeleteBodyExcludedFileIdsDefault = [];
+export const modelHubKnowledgeBaseFilesDeleteBodyFileNamesDefault = [];
+
+export const ModelHubKnowledgeBaseFilesDeleteBody = zod.object({
+  "kb_id": zod.string().uuid().optional(),
+  "delete_all": zod.boolean().default(modelHubKnowledgeBaseFilesDeleteBodyDeleteAllDefault),
+  "file_ids": zod.array(zod.string().uuid()).default(modelHubKnowledgeBaseFilesDeleteBodyFileIdsDefault),
+  "excluded_file_ids": zod.array(zod.string().uuid()).default(modelHubKnowledgeBaseFilesDeleteBodyExcludedFileIdsDefault),
+  "file_names": zod.array(zod.string().min(1)).default(modelHubKnowledgeBaseFilesDeleteBodyFileNamesDefault)
+})
+
+
+
+
+export const ModelHubKnowledgeBaseFilesDeleteResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.string().min(1)
 })
 
 

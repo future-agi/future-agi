@@ -2177,14 +2177,30 @@ RootCauses.propTypes = { causes: PropTypes.array.isRequired };
 
 // ── Recommendations ──────────────────────────────────────────────────────────
 const PRIORITY_META = {
-  critical: { color: "#DB2F2D", label: "Critical", icon: "mdi:alert-circle" },
-  high: { color: "#F5A623", label: "High", icon: "mdi:alert-circle-outline" },
+  critical: {
+    color: "#DB2F2D",
+    darkColor: "#E87876",
+    label: "Critical",
+    icon: "mdi:alert-circle",
+  },
+  high: {
+    color: "#F5A623",
+    darkColor: "#F5A623",
+    label: "High",
+    icon: "mdi:alert-circle-outline",
+  },
   medium: {
     color: "#2F7CF7",
+    darkColor: "#78AAFA",
     label: "Medium",
     icon: "mdi:information-outline",
   },
-  low: { color: "#5ACE6D", label: "Low", icon: "mdi:check-circle-outline" },
+  low: {
+    color: "#5ACE6D",
+    darkColor: "#5ACE6D",
+    label: "Low",
+    icon: "mdi:check-circle-outline",
+  },
 };
 const EFFORT_COLOR = { Low: "#5ACE6D", Medium: "#F5A623", High: "#DB2F2D" };
 
@@ -2208,7 +2224,8 @@ RecSectionLabel.propTypes = { icon: PropTypes.string, label: PropTypes.string };
 
 function RecommendationCard({ rec, rootCauses, isDark }) {
   const [expanded, setExpanded] = useState(false);
-  const pm = PRIORITY_META[rec.priority] || PRIORITY_META.medium;
+  const pmBase = PRIORITY_META[rec.priority] || PRIORITY_META.medium;
+  const pm = { ...pmBase, color: isDark ? pmBase.darkColor : pmBase.color };
   const linkedCause = rootCauses?.find((c) => c.rank === rec.root_cause_link);
 
   return (

@@ -23,6 +23,7 @@ import { useWatch } from "react-hook-form";
 import {
   AGENT_TYPES,
   AUTH_METHODS_BY_PROVIDER,
+  defaultAuthMethodForProvider,
   VOICE_CHAT_PROVIDERS,
   INBOUND_OUTBOUND_COPY,
   isLiveKitProvider,
@@ -371,10 +372,18 @@ const EditAgentDetails = ({
                 const isNextMain = mainProviders.includes(value);
 
                 if (value !== selectedProvider) {
+                  // Providers with only one selectable method get it
+                  // preselected, so the required field is never left empty
+                  // after a switch.
+                  const nextAuthMethod = defaultAuthMethodForProvider(value);
                   if (isPrevMain && isNextMain) {
-                    // between vapi/retell/elevenlabs → keep authenticationMethod
+                    // between vapi/retell/elevenlabs → keep the key, but
+                    // realign the method to the provider now selected
+                    if (nextAuthMethod) {
+                      setValue("authenticationMethod", nextAuthMethod);
+                    }
                   } else {
-                    setValue("authenticationMethod", "");
+                    setValue("authenticationMethod", nextAuthMethod);
                     setValue("apiKey", "");
                   }
                   // Clear LiveKit fields when switching away from livekit

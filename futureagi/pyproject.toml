@@ -235,6 +235,7 @@ select = [
     "B",   # flake8-bugbear
     "C4",  # flake8-comprehensions
     "UP",  # pyupgrade
+    "TID251", # flake8-tidy-imports: banned-api
 ]
 ignore = [
     "E501",  # line too long (handled by black)
@@ -242,8 +243,12 @@ ignore = [
     "C901",  # too complex
 ]
 
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"accounts.services.token_service.issue_sos_tokens" = { msg = "SOS mints must be audited - use accounts.services.sos_service.start_sos_session." }
+
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # unused imports
+"accounts/services/sos_service.py" = ["TID251"]  # the one audited caller
 
 [tool.mypy]
 python_version = "3.11"

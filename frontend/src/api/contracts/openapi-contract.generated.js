@@ -20791,11 +20791,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "model-hub_knowledge-base_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/LegacyKnowledgeBaseBulkDeleteRequest"
+        },
         "queryParameters": {},
         "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubStringResultResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -20837,11 +20857,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "model-hub_knowledge-base_files_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/LegacyKnowledgeBaseFileDeleteRequest"
+        },
         "queryParameters": {},
         "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubStringResultResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -57954,7 +57994,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "organization": {
           "title": "Organization",
           "type": "string",
-          "format": "uuid"
+          "format": "uuid",
+          "readOnly": true
         },
         "created_at": {
           "title": "Created at",
@@ -58172,6 +58213,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "LegacyKnowledgeBaseBulkDeleteRequest": {
+      "type": "object",
+      "properties": {
+        "kb_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "default": []
+        }
+      }
+    },
     "LegacyKnowledgeBaseCreateResponse": {
       "required": [
         "status",
@@ -58185,6 +58239,46 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/LegacyKnowledgeBaseCreateResult"
+        }
+      }
+    },
+    "LegacyKnowledgeBaseFileDeleteRequest": {
+      "type": "object",
+      "properties": {
+        "kb_id": {
+          "title": "Kb id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "delete_all": {
+          "title": "Delete all",
+          "type": "boolean",
+          "default": false
+        },
+        "file_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "default": []
+        },
+        "excluded_file_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "default": []
+        },
+        "file_names": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
         }
       }
     },

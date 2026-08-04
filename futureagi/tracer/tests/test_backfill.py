@@ -86,6 +86,11 @@ class TestBaselineBackfill:
         inner ``while`` loop — the O(n) sweep the whole design rests on. Five
         rows over ``batch_size=2`` paginate 2 + 2 + 1; every row must be visited
         exactly once (no row skipped or re-counted)."""
+        # The backfill sweeps EvalLogger globally; a committed row leaked from
+        # another test would inflate the counts. Drain any pre-existing unstamped
+        # rows first (idempotent) so the asserted run sees only this test's 5.
+        backfill_config_hash_and_status()
+
         error_entries = [
             _entry(project, custom_eval_config, error=True) for _ in range(3)
         ]
