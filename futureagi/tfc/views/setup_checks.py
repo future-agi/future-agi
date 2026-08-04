@@ -24,10 +24,14 @@ row's status; "spans sent by the SDK will not arrive" tells them what breaks.
 Keep them plain and free of mode wording.
 
 This endpoint only reports. It never starts or stops anything — bringing model
-serving up or down stays an operator decision. Experimentation mode simply says
-that an absent model-serving container is an acceptable state to continue from,
-which is the one thing the two modes disagree about most sharply and the reason
-this endpoint takes a mode at all.
+serving up or down stays an operator decision, which is why neither mode blocks
+on it: an install run purely for observability is a legitimate deployment.
+
+What the modes actually disagree about is the supporting infrastructure. Only
+seven services are interdependent enough that nothing works without them, and
+those block in both modes. The rest are feature-level: a capability is lost, the
+application still runs, and a live deployment says so loudly where an
+experimenting one stays quiet.
 """
 
 import os
@@ -179,8 +183,8 @@ CHECKS = (
             "on_down": FAILED,
         },
         EXPERIMENT: {
-            "required": False,
-            "on_down": WARNING,
+            "required": True,
+            "on_down": FAILED,
         },
     },
     {
@@ -235,8 +239,8 @@ CHECKS = (
             "on_down": FAILED,
         },
         EXPERIMENT: {
-            "required": False,
-            "on_down": WARNING,
+            "required": True,
+            "on_down": FAILED,
         },
     },
     {
@@ -249,8 +253,8 @@ CHECKS = (
             "on_down": FAILED,
         },
         EXPERIMENT: {
-            "required": False,
-            "on_down": WARNING,
+            "required": True,
+            "on_down": FAILED,
         },
     },
     {
@@ -263,8 +267,8 @@ CHECKS = (
             "on_down": FAILED,
         },
         EXPERIMENT: {
-            "required": False,
-            "on_down": WARNING,
+            "required": True,
+            "on_down": FAILED,
         },
     },
     {
@@ -287,8 +291,8 @@ CHECKS = (
         "down_detail": "Built-in evaluations and guardrails will not run",
         "probe": _model_serving_up,
         LIVE: {
-            "required": True,
-            "on_down": FAILED,
+            "required": False,
+            "on_down": WARNING,
         },
         EXPERIMENT: {
             "required": False,
