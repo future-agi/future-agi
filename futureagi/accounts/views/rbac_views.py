@@ -238,34 +238,16 @@ class InviteCreateAPIView(APIView):
         result = {"invited": created_invites}
         if already_members:
             result["already_members"] = already_members
-        invite_links = self._build_invite_links(created_invites)
-        if invite_links:
-            result["invites"] = invite_links
+        # Saves the admin a round trip to the members list, which is the only
+        # other place the link is exposed.
+        links = build_invite_links(created_invites)
+        if links:
+            result["invites"] = [
+                {"email": email, "invite_link": links[email.lower()]}
+                for email in created_invites
+                if email.lower() in links
+            ]
         return gm.success_response(result)
-
-    def _build_invite_links(self, emails):
-        """Accept-invite links for the invites just created, OSS only.
-
-        Mirrors MemberListAPIView._get_invite_links: self-hosted instances
-        usually have no SMTP configured, so the invite email never lands.
-        Returning the link on create saves the admin a second round trip to
-        the members list. Cloud/EE keeps the link email-only.
-        """
-        if not emails or not is_oss():
-            return []
-
-        links = {
-            user.email.lower(): build_invite_accept_link(user)
-            for user in User.objects.annotate(email_lower=Lower("email")).filter(
-                email_lower__in=[email.lower() for email in emails],
-                is_active=False,
-            )
-        }
-        return [
-            {"email": email, "invite_link": links[email.lower()]}
-            for email in emails
-            if email.lower() in links
-        ]
 
     def _dual_write_legacy(
         self, email, organization, inviter, org_level, workspace_access
@@ -782,7 +764,7 @@ class MemberListAPIView(APIView):
             )
         }
 
-        invite_links = build_invite_links(invites)
+        invite_links = build_invite_links([inv.target_email for inv in invites])
 
         results = []
         for inv in invites:

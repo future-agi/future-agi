@@ -186,7 +186,7 @@ def _pending_invites(organization, workspace, viewer_org_level=0):
         organization=organization, status=InviteStatus.PENDING
     )
     invites = list(qs)
-    invite_links = build_invite_links(invites)
+    invite_links = build_invite_links([inv.target_email for inv in invites])
     results = []
     for inv in invites:
         ws_match = None

@@ -336,22 +336,22 @@ def build_invite_accept_link(user):
     return f"{settings.APP_URL}/auth/jwt/invitation/accept/{uid}/{token}"
 
 
-def build_invite_links(invites):
+def build_invite_links(emails):
     """Map lowercased email -> accept-invite link, OSS only.
 
-    Shared by the organization and workspace member lists so the two cannot
-    disagree about who gets a link.
+    Shared by invite creation and both member lists so they cannot disagree
+    about who gets a link.
     """
     from tfc.ee_gating import is_oss
 
-    if not invites or not is_oss():
+    if not emails or not is_oss():
         return {}
 
-    emails = {inv.target_email.lower() for inv in invites}
+    lowered = {email.lower() for email in emails}
     return {
         user.email.lower(): build_invite_accept_link(user)
         for user in User.objects.annotate(email_lower=Lower("email")).filter(
-            email_lower__in=emails,
+            email_lower__in=lowered,
             is_active=False,
         )
     }
