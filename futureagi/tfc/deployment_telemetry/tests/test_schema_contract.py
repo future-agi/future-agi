@@ -17,14 +17,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from tfc.deployment_telemetry import schema as sender_schema
-
-try:
-    from ee.usage import deployment_telemetry_schema as receiver_schema
-except ImportError:
-    receiver_schema = None
-
+pytest.importorskip("ee.usage.deployment_telemetry_schema", reason="requires ee/")
 pytestmark = pytest.mark.requires_ee
+
+from ee.usage import deployment_telemetry_schema as receiver_schema
+from tfc.deployment_telemetry import schema as sender_schema
 
 
 def _public_constants(module) -> dict:
