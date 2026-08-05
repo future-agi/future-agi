@@ -2,6 +2,7 @@
 import React, {
   forwardRef,
   useCallback,
+  useEffect,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -57,6 +58,9 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import WidgetChart from "./WidgetChart";
 import { resolveGlobalDateRange } from "./dashboardDateRange";
 import useCanEditDashboard from "./hooks/useCanEditDashboard";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
+import axios, { endpoints } from "src/utils/axios";
+import logger from "src/utils/logger";
 import {
   DndContext,
   DragOverlay,
@@ -641,10 +645,15 @@ export default function DashboardDetailView() {
   const navigate = useNavigate();
   const { dashboardId } = useParams();
   const { enqueueSnackbar } = useSnackbar();
+  const { currentWorkspaceId, switchWorkspace, isReady } = useWorkspace();
 
   const { canUpdate, isReadOnly } = useCanEditDashboard();
 
-  const { data: dashboard, isLoading } = useDashboardDetail(dashboardId);
+  const {
+    data: dashboard,
+    isLoading,
+    error: dashboardError,
+  } = useDashboardDetail(dashboardId);
   const updateDashboard = useUpdateDashboard();
   const updateWidget = useUpdateWidget();
   const deleteWidget = useDeleteWidget();
@@ -694,6 +703,75 @@ export default function DashboardDetailView() {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
   );
+
+  // --- Workspace mismatch resolution ---
+  const [resolvingWorkspace, setResolvingWorkspace] = useState(false);
+
+  useEffect(() => {
+    if (
+      !dashboard &&
+      !isLoading &&
+      dashboardError &&
+      dashboardError.response?.status === 404 &&
+      !resolvingWorkspace &&
+      isReady
+    ) {
+      resolveWorkspace();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dashboard, isLoading, dashboardError, resolvingWorkspace, isReady]);
+
+  const resolveWorkspace = async () => {
+    setResolvingWorkspace(true);
+    try {
+      const wsRes = await axios.get(endpoints.workspaces.list);
+      const workspaces = wsRes.data?.results || [];
+
+      if (workspaces.length === 0) {
+        setResolvingWorkspace(false);
+        return;
+      }
+
+      // Try each workspace (excluding current) in parallel to find the dashboard
+      const otherWorkspaces = workspaces.filter(
+        (ws) => ws.id !== currentWorkspaceId,
+      );
+
+      if (otherWorkspaces.length === 0) {
+        setResolvingWorkspace(false);
+        return;
+      }
+
+      const results = await Promise.allSettled(
+        otherWorkspaces.map((ws) =>
+          axios.get(endpoints.dashboard.detail(dashboardId), {
+            headers: { "X-Workspace-Id": ws.id },
+          }),
+        ),
+      );
+
+      const foundIndex = results.findIndex(
+        (r) => r.status === "fulfilled" && r.value.status === 200,
+      );
+
+      if (foundIndex >= 0) {
+        const targetWs = otherWorkspaces[foundIndex];
+        enqueueSnackbar(
+          `Switching to workspace: ${targetWs.name || targetWs.display_name || targetWs.id}`,
+          { variant: "info" },
+        );
+        // switchWorkspace performs a hard reload — component will unmount
+        await switchWorkspace(targetWs.id, currentWorkspaceId);
+        return;
+      }
+
+      // Not found in any workspace
+      setResolvingWorkspace(false);
+    } catch (err) {
+      logger.error("Failed to resolve workspace for dashboard:", err);
+      setResolvingWorkspace(false);
+    }
+  };
 
   const widgets = useMemo(
     () =>
@@ -1040,6 +1118,25 @@ export default function DashboardDetailView() {
   }
 
   if (!dashboard) {
+    if (resolvingWorkspace) {
+      return (
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            height: "60vh",
+          }}
+        >
+          <Stack alignItems="center" spacing={2}>
+            <CircularProgress />
+            <Typography color="text.secondary">
+              Looking for this dashboard in other workspaces…
+            </Typography>
+          </Stack>
+        </Box>
+      );
+    }
     return (
       <Box
         sx={{
