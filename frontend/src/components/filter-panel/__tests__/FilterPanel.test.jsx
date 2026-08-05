@@ -224,11 +224,7 @@ describe("QueryInput — token lifecycle", () => {
 
   it("operator keeps toggled value after deleting a token", async () => {
     const { user } = renderQueryInput({
-      initialTokens: [
-        TOKEN_STATUS_OK,
-        TOKEN_MODEL_GPT,
-        TOKEN_LATENCY_HIGH,
-      ],
+      initialTokens: [TOKEN_STATUS_OK, TOKEN_MODEL_GPT, TOKEN_LATENCY_HIGH],
     });
     await user.click(screen.getAllByText("AND")[0]);
     expect(screen.getAllByText("OR")).toHaveLength(2);
@@ -316,9 +312,7 @@ describe("QueryInput — external sync via initialTokens", () => {
     );
     expect(screen.getByText("AND")).toBeInTheDocument();
 
-    rerender(
-      <QueryInput {...makeProps({ initialTokens: [], onApply })} />,
-    );
+    rerender(<QueryInput {...makeProps({ initialTokens: [], onApply })} />);
     await waitFor(() => {
       expect(screen.queryByText("AND")).not.toBeInTheDocument();
     });
@@ -348,13 +342,13 @@ describe("QueryInput — token data shapes", () => {
 // Category F: Interaction boundaries
 // ---------------------------------------------------------------------------
 describe("QueryInput — interaction boundaries", () => {
-  it("operator is a span (not a button/input), not tab-focusable", () => {
+  it("operator is a button element, keyboard-accessible", () => {
     renderQueryInput({
       initialTokens: [TOKEN_STATUS_OK, TOKEN_MODEL_GPT],
     });
     const badge = screen.getByText("AND");
-    expect(badge.tagName).toBe("SPAN");
-    expect(badge.hasAttribute("tabIndex")).toBe(false);
+    expect(badge.tagName).toBe("BUTTON");
+    // Buttons are natively focusable without an explicit tabIndex attr
   });
 
   it("operator badge is clickable (cursor: pointer)", () => {
@@ -363,7 +357,7 @@ describe("QueryInput — interaction boundaries", () => {
     });
     const badge = screen.getByText("AND");
     expect(badge).toBeInTheDocument();
-    // Verify it's rendered as an interactive element (span with onClick)
+    // Verify it's rendered as an interactive element (button with onClick)
     expect(badge.onclick).toBeDefined(); // onClick handler is present
   });
 
