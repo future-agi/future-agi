@@ -17,6 +17,7 @@ os.environ.setdefault("VAPI_API_KEY", "test-api-key-for-testing")
 os.environ.setdefault("VAPI_API_BASE_URL", "https://test.vapi.local")
 
 from tfc.ee_loader import has_ee
+from tfc.logging.config import configure_structlog
 
 EE_AVAILABLE = has_ee("ee")
 
@@ -130,11 +131,6 @@ def pytest_configure(config):
     project_root = Path(__file__).parent
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
-
-    config.addinivalue_line(
-        "markers",
-        "requires_ee: test needs the enterprise `ee/` package; skipped in the OSS lane",
-    )
 
     _apply_ch25_schema_for_tests()
 
@@ -530,12 +526,13 @@ def clean_workspace_context():
 
 @pytest.fixture(autouse=True)
 def _structlog_capturable():
-    """Reconfigure structlog uncached per test so capture_logs()/caplog keep
-    working after another test leaves structlog reconfigured. This disables
-    structlog's logger caching for every test (a fidelity/throughput trade)."""
+    """Reconfigure structlog uncached before each test so capture_logs()/caplog
+    survive reconfig leaked elsewhere: ee's agent_evaluator tests reset_defaults()
+    per test. Function-scoped for that per-test leak. The logging.disable reset
+    undoes a global stdlib disable that a few collected ee/falcon_ai integration
+    scripts apply at import; no product code calls logging.disable, so this masks
+    nothing."""
     import logging
-
-    from tfc.logging.config import configure_structlog
 
     configure_structlog(cache_logger_on_first_use=False)
     logging.disable(logging.NOTSET)

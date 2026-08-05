@@ -21,8 +21,6 @@ from ai_tools.tests.conftest import run_tool
 from ai_tools.tests.fixtures import make_trace
 from tfc.ee_gating import EEFeature, FeatureUnavailable
 
-pytestmark = pytest.mark.requires_ee
-
 # ---------------------------------------------------------------------------
 # Helpers / constants
 # ---------------------------------------------------------------------------
@@ -161,6 +159,7 @@ class TestInputValidation:
                 EEFeature.AGENTIC_EVAL, org_id=str(tool_context.organization.id)
             )
 
+    @pytest.mark.requires_ee
     def test_invalid_scope_returns_error(self, tool_context):
         result = run_tool(
             "evaluate_with_agent",
@@ -175,6 +174,7 @@ class TestInputValidation:
         assert "banana" in result.content
         assert "input_scope" in result.content
 
+    @pytest.mark.requires_ee
     def test_all_valid_scopes_accepted(self, tool_context, mock_orchestrator):
         for scope in ("span", "trace", "session", "dataset_row", "cell"):
             result = run_tool(
@@ -197,6 +197,8 @@ class TestInputValidation:
 
 
 class TestHappyPath:
+    pytestmark = pytest.mark.requires_ee
+
     def test_returns_result_and_explanation(self, tool_context, mock_orchestrator):
         result = run_tool(
             "evaluate_with_agent",
@@ -289,6 +291,8 @@ class TestHappyPath:
 
 
 class TestChoices:
+    pytestmark = pytest.mark.requires_ee
+
     def test_numeric_scoring_mode_when_no_choices(self, tool_context):
         """With no choices, the tool passes choices=None → orchestrator defaults to 0–1 scoring."""
         with (
@@ -356,6 +360,8 @@ class TestChoices:
 
 
 class TestOptionalParams:
+    pytestmark = pytest.mark.requires_ee
+
     def test_kb_id_passed_to_gather_resources(self, tool_context):
         with (
             patch(
@@ -453,6 +459,8 @@ class TestOptionalParams:
 
 
 class TestErrorHandling:
+    pytestmark = pytest.mark.requires_ee
+
     def test_orchestrator_exception_surfaces_as_error(self, tool_context):
         with (
             patch(

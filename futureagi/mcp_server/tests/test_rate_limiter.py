@@ -1,5 +1,6 @@
 """Tests for MCP Server rate limiter."""
 
+import sys
 import time
 from unittest.mock import MagicMock, patch
 
@@ -89,6 +90,12 @@ class TestGetRateLimitTier:
         )
         org = MagicMock()
         assert get_rate_limit_tier(org) == "free"
+
+
+def test_returns_free_when_ee_absent(monkeypatch):
+    """Runs on both lanes: with ee's subscription model unimportable, fall back to free."""
+    monkeypatch.setitem(sys.modules, "ee.usage.models.usage", None)
+    assert get_rate_limit_tier(MagicMock()) == "free"
 
 
 class TestCheckRateLimit:
