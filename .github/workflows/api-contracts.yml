@@ -36,6 +36,10 @@ on:
       - "futureagi/tracer/utils/filters.py"
       - "futureagi/tracer/utils/helper.py"
       - "futureagi/tracer/views/**"
+      - "futureagi/tracer/urls.py"
+      - "futureagi/tracer/otel_compat_urls.py"
+      - "futureagi/tfc/urls.py"
+      - "futureagi/model_hub/urls.py"
       - ".github/workflows/api-contracts.yml"
   push:
     branches: [main, develop, dev]
@@ -72,6 +76,10 @@ on:
       - "futureagi/tracer/utils/filters.py"
       - "futureagi/tracer/utils/helper.py"
       - "futureagi/tracer/views/**"
+      - "futureagi/tracer/urls.py"
+      - "futureagi/tracer/otel_compat_urls.py"
+      - "futureagi/tfc/urls.py"
+      - "futureagi/model_hub/urls.py"
       - ".github/workflows/api-contracts.yml"
   workflow_dispatch:
 
