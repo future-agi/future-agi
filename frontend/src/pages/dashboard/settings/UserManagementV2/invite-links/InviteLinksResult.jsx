@@ -20,7 +20,9 @@ export default function InviteLinksResult({
   onClose,
   onInviteMore,
 }) {
-  const allInvites = formatInvitesForCopy(invites);
+  // Redundant with the row's own button when there is only one link.
+  const showCopyAll = invites.filter((i) => i.inviteLink).length > 1;
+  const allInvites = showCopyAll ? formatInvitesForCopy(invites) : "";
 
   return (
     <Dialog
@@ -47,8 +49,10 @@ export default function InviteLinksResult({
               color="text.secondary"
               sx={{ mt: 0.5, display: "block" }}
             >
-              Copy each link and send it to the teammate it belongs to. Invites
-              keep their links until they are accepted.
+              {invites.length === 1
+                ? "Copy the link and send it to the teammate it belongs to."
+                : "Copy each link and send it to the teammate it belongs to."}{" "}
+              Invites keep their links until they are accepted.
             </Typography>
           </Box>
           <IconButton onClick={onClose}>

@@ -36,6 +36,10 @@ const FAST_POLL_WINDOW_MS = 30000;
 // The server caches a snapshot for 3s, so anything faster is wasted.
 const UNSETTLED_POLL_MS = 5000;
 
+// How long a snapshot may go unchanged before polling gives up and leaves it
+// to the re-run controls.
+const STALL_TIMEOUT_MS = 60000;
+
 const PANEL_MAX_WIDTH = 460;
 
 // `warning.main` disappears on a light surface.
@@ -83,6 +87,8 @@ export default function ValidationStep({
   const unreachableSince = useRef(null);
   const timers = useRef([]);
   const hasStaggered = useRef(false);
+  const lastSignature = useRef(null);
+  const stalledSince = useRef(null);
 
   const { data, isError, isFetching, refetch, errorUpdatedAt } = useSetupChecks(
     mode,
@@ -104,12 +110,31 @@ export default function ValidationStep({
     [checks],
   );
 
+  const signature = useMemo(
+    () => checks.map((c) => `${c.id}:${c.status}`).join("|"),
+    [checks],
+  );
+
   // Keyed on `errorUpdatedAt`, not `isError`: consecutive failures leave
   // isError identical and the backoff would never engage.
   useEffect(() => {
     if (reachable) {
       unreachableSince.current = null;
-      setPollInterval(settled ? false : UNSETTLED_POLL_MS);
+      if (settled) {
+        setPollInterval(false);
+        return;
+      }
+      // A service that stays down is not necessarily still starting: on a box
+      // that is simply missing one, polling would never end. Keep going only
+      // while the snapshot is still changing, and give up once it stops.
+      if (signature !== lastSignature.current) {
+        lastSignature.current = signature;
+        stalledSince.current = performance.now();
+      }
+      const stalledFor = performance.now() - (stalledSince.current ?? 0);
+      setPollInterval(
+        stalledFor > STALL_TIMEOUT_MS ? false : UNSETTLED_POLL_MS,
+      );
       return;
     }
     if (unreachableSince.current === null) {
@@ -119,7 +144,7 @@ export default function ValidationStep({
     setPollInterval(
       elapsed > FAST_POLL_WINDOW_MS ? SLOW_POLL_MS : FAST_POLL_MS,
     );
-  }, [reachable, settled, errorUpdatedAt]);
+  }, [reachable, settled, signature, errorUpdatedAt]);
 
   const clearTimers = useCallback(() => {
     timers.current.forEach(clearTimeout);

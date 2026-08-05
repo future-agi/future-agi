@@ -443,7 +443,7 @@ export default function JwtRegisterView() {
         placeholder="Enter Email address"
         size="small"
         name="email"
-        label="Business Email ID"
+        label={isOSS ? "Email ID" : "Business Email ID"}
       />
       {isOSS && (
         <>
