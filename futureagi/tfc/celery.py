@@ -4,6 +4,7 @@ from logging.config import dictConfig
 from celery import Celery
 from celery.signals import worker_process_init
 from django_structlog.celery.steps import DjangoStructLogInitStep
+from django.conf import settings as django_settings
 from kombu import Exchange, Queue
 
 from tfc.logging import init_sentry
@@ -20,7 +21,8 @@ celery_app.steps["worker"].add(DjangoStructLogInitStep)
 
 # Ensure Celery uses Django's logging config. Skip under test settings: Django
 # already applies it, and a mid-session re-apply wipes pytest's caplog handler.
-if not os.environ.get("DJANGO_SETTINGS_MODULE", "").endswith(".test"):
+# (`settings` here is the base module, which has no TESTING; use the active one.)
+if not getattr(django_settings, "TESTING", False):
     dictConfig(settings.LOGGING)
 
 # Import django-structlog Celery receivers for automatic task logging

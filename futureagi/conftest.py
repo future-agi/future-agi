@@ -531,7 +531,8 @@ def clean_workspace_context():
 @pytest.fixture(autouse=True)
 def _structlog_capturable():
     """Reconfigure structlog uncached per test so capture_logs()/caplog keep
-    working after another test leaves structlog reconfigured."""
+    working after another test leaves structlog reconfigured. This disables
+    structlog's logger caching for every test (a fidelity/throughput trade)."""
     import logging
 
     from tfc.logging.config import configure_structlog
