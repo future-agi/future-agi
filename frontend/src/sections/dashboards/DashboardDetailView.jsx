@@ -41,6 +41,7 @@ import {
   useDuplicateWidget,
   useCreateWidget,
 } from "src/hooks/useDashboards";
+import { useCrossWorkspaceRecovery } from "src/hooks/use_cross_workspace_recovery";
 import { format } from "date-fns";
 import Iconify from "src/components/iconify";
 import {
@@ -644,7 +645,21 @@ export default function DashboardDetailView() {
 
   const { canUpdate, isReadOnly } = useCanEditDashboard();
 
-  const { data: dashboard, isLoading } = useDashboardDetail(dashboardId);
+  const {
+    data: dashboard,
+    isLoading,
+    isError,
+    error,
+  } = useDashboardDetail(dashboardId);
+
+  // Auto-resolve and switch workspace when a dashboard 404s because it
+  // belongs to a different workspace than the one the user is currently in.
+  const { isResolving, resolveAttempted } = useCrossWorkspaceRecovery({
+    dashboardId,
+    isError,
+    error,
+    isLoading,
+  });
   const updateDashboard = useUpdateDashboard();
   const updateWidget = useUpdateWidget();
   const deleteWidget = useDeleteWidget();
@@ -1039,6 +1054,27 @@ export default function DashboardDetailView() {
     );
   }
 
+  // Looking for the dashboard in another workspace that the user belongs to
+  if (isResolving) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          alignItems: "center",
+          height: "60vh",
+          gap: 2,
+        }}
+      >
+        <CircularProgress />
+        <Typography color="text.secondary">
+          Looking for this dashboard…
+        </Typography>
+      </Box>
+    );
+  }
+
   if (!dashboard) {
     return (
       <Box
@@ -1049,7 +1085,11 @@ export default function DashboardDetailView() {
           height: "60vh",
         }}
       >
-        <Typography color="text.secondary">Dashboard not found</Typography>
+        <Typography color="text.secondary">
+          {resolveAttempted
+            ? "Dashboard not found or you may not have access to this workspace."
+            : "Dashboard not found"}
+        </Typography>
       </Box>
     );
   }

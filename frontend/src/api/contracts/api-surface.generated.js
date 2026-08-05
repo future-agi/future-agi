@@ -2578,6 +2578,9 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "patch",
         "put"
       ],
+      "/tracer/dashboard/{id}/resolve-workspace/": [
+        "get"
+      ],
       "/tracer/dataset/": [
         "get",
         "post"
@@ -5839,6 +5842,9 @@ export const API_SURFACE_PATHS = Object.freeze({
     "get",
     "patch",
     "put"
+  ],
+  "/tracer/dashboard/{id}/resolve-workspace/": [
+    "get"
   ],
   "/tracer/dataset/": [
     "get",
