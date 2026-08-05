@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 969,
+  "endpointCount": 970,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -30730,6 +30730,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "requestBody": null,
         "queryParameters": {},
         "responses": {
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/tracer/dashboard/{id}/resolve-workspace/": {
+      "get": {
+        "operationId": "tracer_dashboard_resolve_workspace",
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "boolean"
+              },
+              "result": {
+                "type": "object",
+                "properties": {
+                  "workspace_id": {
+                    "type": "string"
+                  },
+                  "workspace_name": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
