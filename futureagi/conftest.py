@@ -530,17 +530,8 @@ def clean_workspace_context():
 
 @pytest.fixture(autouse=True)
 def _structlog_capturable():
-    """Restore a capturable structlog + stdlib logging state before each test.
-
-    Some tests reconfigure structlog and leak it into the rest of the process:
-    a LogCapture fixture that tears down with ``structlog.reset_defaults()``
-    drops the app's stdlib routing (so later ``caplog`` assertions see nothing),
-    and the app's ``cache_logger_on_first_use=True`` caches a bound logger that
-    ``capture_logs()`` can no longer intercept. Both pass in isolation and fail
-    in a full ``bin/test`` session. Reconfigure uncached with the app processors
-    and clear any ``logging.disable`` so every test is capturable regardless of
-    order.
-    """
+    """Reconfigure structlog uncached per test so capture_logs()/caplog keep
+    working after another test leaves structlog reconfigured."""
     import logging
 
     from tfc.logging.config import configure_structlog
