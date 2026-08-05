@@ -229,4 +229,75 @@ describe("QueueDetailView bulk assignment", () => {
     expect(screen.getByLabelText("Item 1")).toBeVisible();
     expect(mocks.navigate).not.toHaveBeenCalled();
   });
+
+  it("shows Select All and Select None buttons in the bulk assign dialog when 2+ annotators", async () => {
+    const user = userEvent.setup();
+    render(<QueueDetailView />);
+
+    await user.click(screen.getByLabelText("Item 1"));
+    await user.click(
+      screen.getByRole("button", { name: /assign selected \(1\)/i }),
+    );
+
+    expect(
+      screen.getByRole("button", { name: /Select All/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Select None/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("selects all annotators and toggles to Deselect All", async () => {
+    const user = userEvent.setup();
+    render(<QueueDetailView />);
+
+    await user.click(screen.getByLabelText("Item 1"));
+    await user.click(
+      screen.getByRole("button", { name: /assign selected \(1\)/i }),
+    );
+
+    await user.click(screen.getByRole("button", { name: /Select All/ }));
+
+    expect(screen.getByLabelText("Alice")).toBeChecked();
+    expect(screen.getByLabelText("Bob")).toBeChecked();
+    expect(
+      screen.getByRole("button", { name: /Deselect All/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("deselects all annotators when Deselect All is clicked", async () => {
+    const user = userEvent.setup();
+    render(<QueueDetailView />);
+
+    await user.click(screen.getByLabelText("Item 1"));
+    await user.click(
+      screen.getByRole("button", { name: /assign selected \(1\)/i }),
+    );
+
+    await user.click(screen.getByRole("button", { name: /Select All/ }));
+    expect(screen.getByLabelText("Alice")).toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: /Deselect All/ }));
+    expect(screen.getByLabelText("Alice")).not.toBeChecked();
+    expect(screen.getByLabelText("Bob")).not.toBeChecked();
+    expect(
+      screen.getByRole("button", { name: /Select All/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("clears all selections when Select None is clicked", async () => {
+    const user = userEvent.setup();
+    render(<QueueDetailView />);
+
+    await user.click(screen.getByLabelText("Item 1"));
+    await user.click(
+      screen.getByRole("button", { name: /assign selected \(1\)/i }),
+    );
+
+    await user.click(screen.getByLabelText("Alice"));
+    expect(screen.getByLabelText("Alice")).toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: /Select None/ }));
+    expect(screen.getByLabelText("Alice")).not.toBeChecked();
+  });
 });
