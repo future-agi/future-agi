@@ -222,7 +222,11 @@ def first_signup(data, mode=None):
         # For work emails, use domain as before
         data["company_name"] = domain.split(".")[0]
 
-    allow_any_email = os.getenv("ALLOW_ANY_EMAIL", "false").lower() == "true"
+    from tfc.ee_gating import is_oss
+
+    allow_any_email = (
+        os.getenv("ALLOW_ANY_EMAIL", "true" if is_oss() else "false").lower() == "true"
+    )
     if not allow_any_email and not is_work_email(data.get("email")):
         raise Exception("Provided Email is not work email")
 

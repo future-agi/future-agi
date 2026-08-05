@@ -1879,7 +1879,11 @@ class TestOssPasswordResetLink:
 
         no_outbound_email.assert_not_called()
 
-    def test_unknown_address_gets_no_link(self, api_client, db, no_outbound_email):
+    def test_unknown_address_is_told_so_plainly(
+        self, api_client, db, no_outbound_email
+    ):
+        """Self-hosted has no enumeration risk worth the confusion — an admin
+        who mistypes an address should be told, not handed a false success."""
         with _oss():
             response = api_client.post(
                 "/accounts/password-reset-initiate/",
@@ -1887,8 +1891,21 @@ class TestOssPasswordResetLink:
                 format="json",
             )
 
-        assert response.status_code == status.HTTP_200_OK
-        assert "reset_link" not in response.json()["result"]
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "nobody-oss@futureagi.com" in response.json()["message"]
+
+    def test_unknown_address_still_gets_no_link(
+        self, api_client, db, no_outbound_email
+    ):
+        with _oss():
+            response = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": "nobody-oss@futureagi.com"},
+                format="json",
+            )
+
+        assert "reset_link" not in response.json().get("result", {})
+        no_outbound_email.assert_not_called()
 
     def test_each_request_issues_a_fresh_link(
         self, api_client, user, no_outbound_email
@@ -1942,6 +1959,84 @@ class TestCloudPasswordResetUnchanged:
             ).json()
 
         assert set(known["result"]) == set(unknown["result"]) == {"message"}
+
+
+def _oss_gate(enabled=True):
+    return patch("tfc.ee_gating.is_oss", return_value=enabled)
+
+
+def _first_signup_payload(email):
+    return {
+        "email": email,
+        "full_name": "Solo Dev",
+        "company_name": "",
+        "password": OSS_SIGNUP_PASSWORD,
+    }
+
+
+@pytest.mark.integration
+class TestWorkEmailGate:
+    """Self-hosters run on personal addresses, so OSS accepts any domain.
+    Cloud still requires a work email unless an operator opts out."""
+
+    def test_oss_accepts_a_free_provider_address(
+        self, db, no_outbound_email, monkeypatch
+    ):
+        from accounts.utils import first_signup
+
+        monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
+
+        with _oss_gate(True):
+            user = first_signup(_first_signup_payload("solo.dev@gmail.com"))
+
+        assert user.email == "solo.dev@gmail.com"
+
+    def test_cloud_still_rejects_a_free_provider_address(
+        self, db, no_outbound_email, monkeypatch
+    ):
+        from accounts.utils import first_signup
+
+        monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
+
+        with _oss_gate(False):
+            with pytest.raises(Exception, match="not work email"):
+                first_signup(_first_signup_payload("solo.dev@gmail.com"))
+
+    def test_explicit_false_still_overrides_the_oss_default(
+        self, db, no_outbound_email, monkeypatch
+    ):
+        """An operator who sets it explicitly outranks the deployment default."""
+        from accounts.utils import first_signup
+
+        monkeypatch.setenv("ALLOW_ANY_EMAIL", "false")
+
+        with _oss_gate(True):
+            with pytest.raises(Exception, match="not work email"):
+                first_signup(_first_signup_payload("solo.dev@gmail.com"))
+
+    def test_explicit_true_still_opens_cloud_up(
+        self, db, no_outbound_email, monkeypatch
+    ):
+        from accounts.utils import first_signup
+
+        monkeypatch.setenv("ALLOW_ANY_EMAIL", "true")
+
+        with _oss_gate(False):
+            user = first_signup(_first_signup_payload("solo.dev@gmail.com"))
+
+        assert user.email == "solo.dev@gmail.com"
+
+    def test_work_email_is_accepted_on_either_deployment(
+        self, db, no_outbound_email, monkeypatch
+    ):
+        from accounts.utils import first_signup
+
+        monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
+
+        with _oss_gate(False):
+            user = first_signup(_first_signup_payload("owner@acmecorp.dev"))
+
+        assert user.email == "owner@acmecorp.dev"
 
 
 @pytest.mark.unit
@@ -2003,14 +2098,14 @@ class TestInviteLinkOnMemberList:
     def test_oss_exposes_the_link_on_pending_invites(
         self, auth_client, pending_invite
     ):
-        with patch("accounts.views.rbac_views.is_oss", return_value=True):
+        with _oss_gate(True):
             rows = _member_rows(auth_client)
 
         invite = next(r for r in rows if r.get("type") == "invite")
         assert "/auth/jwt/invitation/accept/" in invite["invite_link"]
 
     def test_cloud_keeps_the_link_email_only(self, auth_client, pending_invite):
-        with patch("accounts.views.rbac_views.is_oss", return_value=False):
+        with _oss_gate(False):
             rows = _member_rows(auth_client)
 
         invite = next(r for r in rows if r.get("type") == "invite")
@@ -2018,7 +2113,7 @@ class TestInviteLinkOnMemberList:
 
     def test_active_members_never_carry_a_link(self, auth_client, pending_invite):
         """Only an unclaimed invite has a link; an active account must not."""
-        with patch("accounts.views.rbac_views.is_oss", return_value=True):
+        with _oss_gate(True):
             rows = _member_rows(auth_client)
 
         for row in rows:
@@ -2046,7 +2141,7 @@ class TestInviteLinkOnInviteCreate:
     """Returning the link on create saves the admin a trip to the member list."""
 
     def test_oss_returns_a_link_per_new_invite(self, auth_client):
-        with patch("accounts.views.rbac_views.is_oss", return_value=True):
+        with _oss_gate(True):
             response = _invite(auth_client, [FRESH_INVITEE])
 
         assert response.status_code == status.HTTP_200_OK
@@ -2057,7 +2152,7 @@ class TestInviteLinkOnInviteCreate:
         assert "/auth/jwt/invitation/accept/" in invite["invite_link"]
 
     def test_cloud_keeps_the_link_email_only(self, auth_client):
-        with patch("accounts.views.rbac_views.is_oss", return_value=False):
+        with _oss_gate(False):
             response = _invite(auth_client, [FRESH_INVITEE])
 
         assert response.status_code == status.HTTP_200_OK
@@ -2067,7 +2162,7 @@ class TestInviteLinkOnInviteCreate:
 
     def test_already_active_accounts_get_no_link(self, auth_client, second_user):
         """An account that can already log in has nothing to accept."""
-        with patch("accounts.views.rbac_views.is_oss", return_value=True):
+        with _oss_gate(True):
             response = _invite(auth_client, [FRESH_INVITEE, second_user.email])
 
         result = response.json()["result"]

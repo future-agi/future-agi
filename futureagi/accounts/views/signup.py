@@ -456,9 +456,10 @@ def initiate_password_reset(request):
                         "message": f"If an account matches {email}, you will receive an email with instructions on how to reset your password shortly."
                     }
                 )
-        except (
-            User.DoesNotExist
-        ):  # Don't disclose that the user doesn't exist ,we just send a sucess response
+        except User.DoesNotExist:
+            if is_oss():
+                return _gm.bad_request(f"No account found for {email}.")
+            # Don't disclose that the user doesn't exist ,we just send a sucess response
             return _gm.success_response(
                 {
                     "message": f"If an account matches {email}, you will receive an email with instructions on how to reset your password shortly."
