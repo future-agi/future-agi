@@ -10,7 +10,7 @@ within the same eval, never across different evals.
 
 import hashlib
 import re
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import List, Optional, Tuple
 
 import structlog
@@ -20,7 +20,7 @@ from django.utils import timezone
 
 from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
 from agentic_eval.core.embeddings.embedding_manager import model_manager
-from tracer.models.observation_span import EvalLogger, EvalTargetType
+from tracer.models.observation_span import EvalLogger
 from tracer.models.trace_error_analysis import (
     ClusterSource,
     ErrorClusterTraces,
@@ -41,59 +41,28 @@ COSINE_THRESHOLD = 0.45
 # bound the per-run work unit.
 _CLUSTER_WINDOW_DAYS = 60
 
+# Clustering is scoped to eval-TASK results — rows carrying an ``eval_task_id``.
+# The (now-retired) eval-task cron was the sole clustering trigger, but the old
+# query had no such filter, so a cron run for a project also swept that project's
+# inline / continuous-span failures. This filter makes clustering eval-task-only
+# by design: a deliberate product change (inline/continuous failures no longer
+# cluster). The trigger now lives on the eval-task execution path itself
+# (``run_entry`` dispatches per failing eval-task eval), so this filter keeps a
+# same-project inline failure from riding in on that trigger. (Inline evals set
+# no ``eval_task_id``; external evals never write EvalLogger at all.)
+_FAILING_EVAL_Q = (
+    Q(custom_eval_config__isnull=False)
+    & (Q(output_bool=False) | Q(output_float__lt=1.0))
+    & ~Q(eval_explanation__isnull=True)
+    & ~Q(eval_explanation="")
+    & ~Q(eval_task_id__isnull=True)
+    & ~Q(eval_task_id="")
+)
+
 
 # ---------------------------------------------------------------------------
 # Fetch unclustered failing eval results
 # ---------------------------------------------------------------------------
-
-
-def _project_session_eval_ids(
-    project_id: str, since: datetime, base_filters: Q
-) -> set[str]:
-    """``trace_session_id``s of session-target eval rows that belong to
-    ``project_id`` — resolved through ClickHouse, not a PG FK join.
-
-    Session evals anchor to a ``trace_session`` whose FK is unenforced
-    (``db_constraint=False``) and whose PG ``TraceSession`` row is absent for
-    CH-only sessions, so ``Q(trace_session__project_id=...)`` INNER-JOINs to
-    nothing and silently drops every CH-only session eval. Session membership
-    is a span fact, so we read it from CH instead: the candidate eval rows'
-    session ids intersected with the project's live session ids, scoped through
-    ``distinct_session_ids_with_filters`` (which resolves new→old internally so
-    a candidate id matches regardless of cutover side).
-
-    For CH-only (net-new) sessions — the case this fix targets — no id-remap row
-    exists, so the candidate id and the id CH returns are byte-identical and a
-    plain set intersection is exact. Returns the subset of candidate ids that
-    belong to the project, in the id space the eval rows store.
-
-    A CH read failure propagates rather than fail-open: an empty set would
-    wrongly admit no session evals, and the clustering activity is idempotently
-    retried, so starving one run is safer than silently mis-scoping.
-    """
-    from tracer.services.clickhouse.v2 import get_reader
-
-    candidate_ids = list(
-        EvalLogger.objects.filter(
-            base_filters,
-            target_type=EvalTargetType.SESSION,
-            trace_session_id__isnull=False,
-            created_at__gte=since,
-        )
-        .values_list("trace_session_id", flat=True)
-        .distinct()
-    )
-    if not candidate_ids:
-        return set()
-
-    candidate_strs = {str(c) for c in candidate_ids}
-    with get_reader() as reader:
-        in_project = set(
-            reader.distinct_session_ids_with_filters(
-                project_id=str(project_id), session_id=list(candidate_strs)
-            )
-        )
-    return candidate_strs & in_project
 
 
 def get_unclustered_eval_results(
@@ -120,34 +89,28 @@ def get_unclustered_eval_results(
     )
 
     since = timezone.now() - timedelta(days=_CLUSTER_WINDOW_DAYS)
-    # Failure + explanation filters shared by both the span/trace branch and the
-    # session-membership pre-pass, so a candidate session id can't enter the CH
-    # set unless it would also survive the main filter.
-    base_filters = (
-        Q(custom_eval_config__isnull=False)
-        & (Q(output_bool=False) | Q(output_float__lt=1.0))
-        & ~Q(eval_explanation__isnull=True)
-        & ~Q(eval_explanation="")
-    )
 
-    # All three eval targets cluster, but never into the SAME cluster — the
-    # centroid family is keyed by (target_type, eval_name) downstream, so
-    # span / trace / session results form separate, homogeneous clusters. The
-    # targets reach their project two different ways: span/trace results anchor
-    # to a trace (scoped by the PG ``trace__project_id`` FK), session results
-    # anchor to a ``trace_session`` whose project we resolve through CH (the FK
-    # is unenforced and absent for CH-only sessions — see
-    # ``_project_session_eval_ids``).
-    session_eval_ids = _project_session_eval_ids(project_id, since, base_filters)
-
+    # Project scope is the eval's *config* project — never the trace/session's.
+    # Every candidate row has a config (``_FAILING_EVAL_Q`` requires it), the
+    # config is always project-FK'd, and an eval only ever runs its own project's
+    # config over that project's data, so ``custom_eval_config__project_id`` is
+    # the exact, total project key for span / trace / session targets alike. It's
+    # also the key the whole pipeline already trusts: the trigger dispatches per
+    # ``config.project_id`` and clusters are created under that same id. Scoping
+    # here the same way — rather than through ``trace__project_id`` /
+    # ``trace_session__project_id`` — keeps this read off the PG ``tracer_trace``
+    # / ``tracer_observation_span`` tables (empty post-CH-cutover, being dropped)
+    # and drops the CH session pre-pass that only existed to resolve
+    # session→project. ``trace_id`` / ``trace_session_id`` are read below from the
+    # eval row's own FK columns (no join). Targets still never co-cluster: the
+    # centroid family is keyed by (target_type, eval_name) downstream.
     evals = (
         EvalLogger.objects.filter(
-            base_filters,
-            Q(trace__project_id=project_id)
-            | Q(trace_session_id__in=session_eval_ids),
+            _FAILING_EVAL_Q,
+            custom_eval_config__project_id=project_id,
             created_at__gte=since,
         )
-        .select_related("custom_eval_config", "trace", "trace_session")
+        .select_related("custom_eval_config")
         .order_by("created_at")
     )
 
