@@ -28,17 +28,17 @@ import {
 
 const { PENDING, PASSED, WARNING, FAILED, SKIPPED } = CHECK_STATUS;
 
-// While unreachable we poll fast for the first stretch — on a genuine first run
-// the containers are up seconds before Django is — then back off so a long
-// outage doesn't hammer the box.
+// Fast while the stack boots, then back off so a long outage doesn't hammer it.
 const FAST_POLL_MS = 2000;
 const SLOW_POLL_MS = 10000;
 const FAST_POLL_WINDOW_MS = 30000;
 
+// The server caches a snapshot for 3s, so anything faster is wasted.
+const UNSETTLED_POLL_MS = 5000;
+
 const PANEL_MAX_WIDTH = 460;
 
-// `warning.main` is a pale yellow that all but disappears on a light surface,
-// so the amber ramp carries the warning state here.
+// `warning.main` disappears on a light surface.
 const WARNING_COLOR = "amber.600";
 
 const STATUS_META = {
@@ -62,8 +62,6 @@ const STATUS_META = {
     color: "text.disabled",
     label: "Optional",
   },
-  // Arc without the background track — at row scale a full ring reads as a
-  // filled status dot rather than something in progress.
   [PENDING]: {
     icon: "svg-spinners:90-ring",
     color: "primary.main",
@@ -84,6 +82,7 @@ export default function ValidationStep({
   const [pollInterval, setPollInterval] = useState(FAST_POLL_MS);
   const unreachableSince = useRef(null);
   const timers = useRef([]);
+  const hasStaggered = useRef(false);
 
   const { data, isError, isFetching, refetch, errorUpdatedAt } = useSetupChecks(
     mode,
@@ -97,16 +96,20 @@ export default function ValidationStep({
   else if (data) connectionState = CONNECTION_STATE.REACHABLE;
   const reachable = connectionState === CONNECTION_STATE.REACHABLE;
 
-  // Back off polling after the first stretch of being unreachable, and stop
-  // entirely once we get a snapshot — from then on, runs are user-initiated.
-  //
-  // Keyed on `errorUpdatedAt` rather than `isError`: consecutive failures leave
-  // isError identical, so the effect would never re-run and the backoff would
-  // never engage. Each new error bumps the timestamp.
+  // Warnings are down services too, just ones this mode tolerates.
+  const settled = useMemo(
+    () =>
+      checks.length > 0 &&
+      checks.every((c) => c.status !== FAILED && c.status !== WARNING),
+    [checks],
+  );
+
+  // Keyed on `errorUpdatedAt`, not `isError`: consecutive failures leave
+  // isError identical and the backoff would never engage.
   useEffect(() => {
     if (reachable) {
       unreachableSince.current = null;
-      setPollInterval(false);
+      setPollInterval(settled ? false : UNSETTLED_POLL_MS);
       return;
     }
     if (unreachableSince.current === null) {
@@ -116,18 +119,23 @@ export default function ValidationStep({
     setPollInterval(
       elapsed > FAST_POLL_WINDOW_MS ? SLOW_POLL_MS : FAST_POLL_MS,
     );
-  }, [reachable, errorUpdatedAt]);
+  }, [reachable, settled, errorUpdatedAt]);
 
   const clearTimers = useCallback(() => {
     timers.current.forEach(clearTimeout);
     timers.current = [];
   }, []);
 
-  // Stagger is a reveal animation over ONE response, not one request per row.
+  // First response only — re-animating every poll would restart the rows under
+  // the reader.
   useEffect(() => {
-    clearTimers();
-    setRevealCount(0);
     if (!checks.length) return undefined;
+    if (hasStaggered.current) {
+      setRevealCount(checks.length);
+      return undefined;
+    }
+    hasStaggered.current = true;
+    clearTimers();
     checks.forEach((_, i) => {
       timers.current.push(
         setTimeout(() => setRevealCount(i + 1), i * CHECK_REVEAL_STAGGER_MS),
@@ -148,10 +156,8 @@ export default function ValidationStep({
   );
   const stillRevealing = revealCount < checks.length;
 
-  // The whole list is on screen from the first snapshot; the stagger flips each
-  // row's status rather than adding the row, so the card never grows under the
-  // reader's cursor. A row awaiting its turn shows no detail — the detail
-  // describes an outcome it does not have yet.
+  // The stagger flips each row's status rather than adding rows, so the card
+  // never grows under the reader's cursor.
   const displayChecks = useMemo(
     () =>
       checks.map((check, i) =>
@@ -186,8 +192,7 @@ export default function ValidationStep({
   const amberMain = theme.palette.amber[600];
   const tint = (key, opacity = 0.16) => alpha(theme.palette[key].main, opacity);
 
-  // Connection state and check state are separate axes. An unreachable server
-  // shows a spinner here, never a wall of failed checks.
+  // An unreachable server shows a spinner, never a wall of failed checks.
   let summaryIcon = {
     icon: "svg-spinners:90-ring-with-bg",
     color: "text.secondary",
@@ -213,16 +218,9 @@ export default function ValidationStep({
     };
   }
 
-  // Only a REQUIRED check that FAILED blocks. `required` is computed server-side
-  // per launch mode — never re-derived here, so the two cannot disagree.
-  const blocked =
-    !reachable ||
-    isFetching ||
-    stillRevealing ||
-    checks.some((c) => c.required && c.status === FAILED);
+  // No check result blocks; the only bar is having a snapshot at all.
+  const blocked = !reachable || !checks.length;
 
-  // One request returns the whole snapshot, so every re-run entry point — the
-  // per-row icon included — triggers the same full refetch.
   const rerunDisabled = isFetching || stillRevealing;
 
   const renderHead = (

@@ -9,7 +9,7 @@ import React, {
 } from "react";
 import { Helmet } from "react-helmet-async";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
-import { InviteLinkCell, InviteActionCell } from "./invite-links";
+import { InviteLinkCell } from "./invite-links";
 import UserHeaders from "./UserHeaders";
 import GridTable from "./GridTable";
 import { getUserQueryOptions } from "./getUserQueryOptions";
@@ -62,23 +62,10 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
 
   const { allowed: canSendInvite } = useCanSendInvite(orgLevel, effectiveLevel);
 
-  const {
-    isOSS,
-    isSuccess: modeConfirmed,
-    canDeliverEmail,
-  } = useDeploymentMode();
-  // Same rule as AllActionForm, plus canManageUsers — the link embeds the
-  // accept token, so it is a shareable credential.
-  const useInviteLinks =
-    modeConfirmed &&
-    isOSS &&
-    !canDeliverEmail &&
-    !workspaceScope &&
-    canManageUsers;
-
-  const refreshGrid = useCallback(() => {
-    gridApiRef.current?.api?.refreshServerSide({ purge: true });
-  }, []);
+  const { isOSS, isSuccess: modeConfirmed } = useDeploymentMode();
+  // Gated on canManageUsers: the link embeds the accept token, so it is a
+  // shareable credential.
+  const useInviteLinks = modeConfirmed && isOSS && canManageUsers;
 
   const columnDefs = useMemo(
     () => [
@@ -134,8 +121,6 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
         valueFormatter: (params) =>
           params?.value ? format(new Date(params?.value), "dd/MM/yyyy") : "",
       },
-      // Additive — replacing the action column would strip edit-role, resend
-      // and deactivate from admins.
       ...(useInviteLinks
         ? [
             {
@@ -144,14 +129,6 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
               flex: 1.8,
               sortable: false,
               cellRenderer: InviteLinkCell,
-            },
-            {
-              headerName: " ",
-              field: "cancel_invite",
-              width: 56,
-              sortable: false,
-              cellRenderer: InviteActionCell,
-              cellRendererParams: { onRefresh: refreshGrid },
             },
           ]
         : []),
@@ -168,7 +145,7 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
           ]
         : []),
     ],
-    [canManageUsers, workspaceScope, workspaceId, useInviteLinks, refreshGrid],
+    [canManageUsers, workspaceScope, workspaceId, useInviteLinks],
   );
 
   // When workspaceScope is true, use workspace-specific member endpoint
@@ -342,8 +319,6 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
             </Button>
           )}
         </Box>
-        {/* AllActionForm itself swaps in the link-based dialog when email
-            cannot reach invitees, so every entry point behaves the same. */}
         <AllActionForm
           openActionForm={inviteUser ? { action: "invite-user" } : null}
           onClose={() => setInviteUser(false)}

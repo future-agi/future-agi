@@ -99247,6 +99247,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "auto_access": {
           "title": "Auto access",
           "type": "boolean"
+        },
+        "invite_link": {
+          "title": "Invite link",
+          "description": "Accept-invite link for a pending invite. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud/EE, on active-member rows, and on Admin+ invites when the caller is only a workspace admin.",
+          "type": "string",
+          "minLength": 1
         }
       }
     },

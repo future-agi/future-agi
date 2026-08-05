@@ -75,11 +75,9 @@ const authJwt = {
     {
       path: "forget-password",
       element: (
-        <OssRestrictedGuard redirectHint="reset" requiresEmail>
-          <AuthClassicLayout>
-            <ForgetPassword />
-          </AuthClassicLayout>
-        </OssRestrictedGuard>
+        <AuthClassicLayout>
+          <ForgetPassword />
+        </AuthClassicLayout>
       ),
     },
     {
@@ -91,9 +89,7 @@ const authJwt = {
       ),
     },
     {
-      // Signup works in OSS: the password is set on this screen and the new
-      // admin is signed straight in. No CLI diversion — but on self-hosted it
-      // is only reachable once the infrastructure checks have been completed.
+      // On self-hosted, only reachable once the checks are done.
       path: "register",
       element: (
         <OssSetupGuard>
@@ -102,8 +98,6 @@ const authJwt = {
       ),
     },
     {
-      // SSO has no IdP on self-hosted. Send them back to login, but without a
-      // modal hint — the CLI modal is about passwords, not SSO.
       path: "sso-sml",
       element: (
         <OssRestrictedGuard>

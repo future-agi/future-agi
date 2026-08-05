@@ -101,21 +101,15 @@ const AllActionForm = ({
   userData,
   gridApi,
   workspaceId,
+  showInviteLinks = false,
 }) => {
   const theme = useTheme();
   const queryClient = useQueryClient();
-  // Self-hosted with no mail delivery: show copyable invite links instead.
-  // Both terms are deliberate — cloud keeps the emailed flow either way.
-  // Gated here, not per call site, so every entry point behaves the same.
-  const {
-    isOSS,
-    isSuccess: modeConfirmed,
-    canDeliverEmail,
-  } = useDeploymentMode();
-  const showInviteLinks = modeConfirmed && isOSS && !canDeliverEmail;
+  // Opt-in, for mounts with no member list behind them to read links off.
+  const { isOSS, isSuccess: modeConfirmed } = useDeploymentMode();
+  const revealInviteLinks = showInviteLinks && modeConfirmed && isOSS;
   const [inviteLinks, setInviteLinks] = useState(null);
-  // The request outlives a close, so onSuccess would otherwise repopulate
-  // inviteLinks and the next open would show the previous batch.
+  // The request outlives a close, so the next open would show the old batch.
   const awaitingInviteRef = useRef(false);
   const { user, orgLevel: actorOrgLevel } = useAuthContext();
   const { usersList } = useUserManagementStore();
@@ -264,13 +258,10 @@ const AllActionForm = ({
       });
       refetchData();
 
-      // Stay open and show the links — a "sent" toast would be a lie when
-      // nothing was delivered. Only skipped if the user already closed.
-      if (showInviteLinks && awaitingInviteRef.current) {
+      if (revealInviteLinks && awaitingInviteRef.current) {
         setInviteLinks(normalizeInvites(result, variables?.emails));
         return;
       }
-      if (showInviteLinks) return;
 
       const successCount = result?.invited?.length || 0;
       if (successCount > 0) {
@@ -280,8 +271,7 @@ const AllActionForm = ({
       }
       handleOnClose();
     },
-    // Handled here, so opt out of the global handler's duplicate toast.
-    // `error.result` — the interceptor rejects with the flattened body.
+    // `error.result`: the interceptor rejects with the flattened body.
     meta: { errorHandled: true },
     onError: (error) => {
       enqueueSnackbar(error?.result || "Failed to send invite", {
@@ -603,7 +593,6 @@ const AllActionForm = ({
     watchedEditOrgLevel != null &&
     watchedEditOrgLevel < LEVELS.ADMIN;
 
-  // Invites succeeded but mail cannot reach them: hand the admin the links.
   if (inviteLinks) {
     return (
       <InviteLinksResult
@@ -612,7 +601,6 @@ const AllActionForm = ({
         onClose={handleOnClose}
         onInviteMore={() => {
           // Clear emails or the next submit re-invites the same batch.
-          // Role and workspace are kept for the next one.
           inviteForm.resetField("emails");
           setInviteLinks(null);
         }}
@@ -1170,4 +1158,5 @@ AllActionForm.propTypes = {
   onClose: PropTypes.func,
   gridApi: PropTypes.object,
   workspaceId: PropTypes.string,
+  showInviteLinks: PropTypes.bool,
 };

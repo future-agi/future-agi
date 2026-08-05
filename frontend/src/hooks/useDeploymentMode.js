@@ -12,40 +12,24 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { paths } from "src/routes/paths";
 
-// Whether an email actually reaches the person it was sent to.
-//   none      no mail server set up, nothing is sent
-//   provider  real mail server, it arrives
-export const EMAIL_DELIVERY = {
-  NONE: "none",
-  PROVIDER: "provider",
-};
-
+// Self-hosted is assumed unable to deliver email: no SMTP on a default install,
+// and the backend exposes no signal to tell the two apart.
 export function useDeploymentMode() {
   const { data, isLoading, isSuccess } = useQuery({
     queryKey: ["deployment-info"],
     queryFn: () => axios.get(endpoints.settings.v2.deploymentInfo),
-    select: (res) => ({
-      mode: res.data?.result?.mode || "oss",
-      // Absent until the backend adds it. Default to "none" rather than
-      // "provider": showing "check your email" to someone who will never
-      // receive one strands them, whereas the CLI path always works.
-      emailDelivery: res.data?.result?.email_delivery || EMAIL_DELIVERY.NONE,
-    }),
+    select: (res) => res.data?.result?.mode || "oss",
     staleTime: Infinity,
     retry: 1,
   });
 
-  const mode = data?.mode || "oss";
-  const emailDelivery = data?.emailDelivery || EMAIL_DELIVERY.NONE;
+  const mode = data || "oss";
 
   return {
     mode,
     isCloud: mode === "cloud",
     isOSS: mode === "oss",
     isEE: mode === "ee",
-    emailDelivery,
-    // Only a real provider actually delivers to the recipient.
-    canDeliverEmail: emailDelivery === EMAIL_DELIVERY.PROVIDER,
     isLoading,
     isSuccess,
   };

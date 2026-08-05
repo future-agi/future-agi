@@ -229,6 +229,15 @@ class WorkspaceMemberRowSerializer(serializers.Serializer):
     created_at = serializers.CharField(allow_blank=True)
     type = serializers.ChoiceField(choices=["member", "invite"])
     auto_access = serializers.BooleanField(required=False)
+    invite_link = serializers.CharField(
+        required=False,
+        help_text=(
+            "Accept-invite link for a pending invite. Present on OSS "
+            "deployments only, where SMTP may not be configured; omitted on "
+            "Cloud/EE, on active-member rows, and on Admin+ invites when the "
+            "caller is only a workspace admin."
+        ),
+    )
 
 
 class WorkspaceMemberListResultSerializer(serializers.Serializer):

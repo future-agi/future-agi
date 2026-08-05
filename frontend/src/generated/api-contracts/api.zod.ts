@@ -2199,6 +2199,7 @@ export const AccountsWorkspaceMembersListQueryParams = zod.object({
 
 
 
+
 export const AccountsWorkspaceMembersListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
@@ -2213,7 +2214,8 @@ export const AccountsWorkspaceMembersListResponse = zod.object({
   "status": zod.string().min(1),
   "created_at": zod.string(),
   "type": zod.enum(['member', 'invite']),
-  "auto_access": zod.boolean().optional()
+  "auto_access": zod.boolean().optional(),
+  "invite_link": zod.string().min(1).optional().describe('Accept-invite link for a pending invite. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud\/EE, on active-member rows, and on Admin+ invites when the caller is only a workspace admin.')
 })),
   "total": zod.number(),
   "page": zod.number(),

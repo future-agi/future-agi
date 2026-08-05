@@ -1,14 +1,6 @@
-// Reads the invite links off a create-invite response.
-//
-// The backend builds this link already — it is the same one the invite email
-// carries (`accounts/templates/invite_user.html`:
-// {APP_URL}/auth/jwt/invitation/accept/{uid}/{token}) — but does not yet return
-// it. Contract addition, additive so the existing `invited` consumer is
-// untouched:
-//   result: { invited: [email], invites: [{ email, invite_link }], errors: [] }
-//
-// Until that ships, fall back to the emails we submitted with empty links, so
-// the UI says "invited, no link" rather than rendering nothing.
+// `invite_link` is per-entry optional: absent on Cloud/EE, and absent for an
+// invitee who already has an account. The fallback keeps the UI saying
+// "invited, no link" rather than rendering nothing.
 export function normalizeInvites(result, submittedEmails = []) {
   if (Array.isArray(result?.invites) && result.invites.length) {
     return result.invites.map((invite) => ({

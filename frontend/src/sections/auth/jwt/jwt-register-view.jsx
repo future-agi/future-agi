@@ -31,18 +31,27 @@ import { RouterLink } from "src/routes/components";
 import RegionSelect from "src/components/RegionSelect";
 import RightSectionAuth from "./RightSectionAuth";
 import { isValidUtm } from "src/utils/utmUtils";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import {
+  useDeploymentMode,
+  usePostLoginPath,
+} from "src/hooks/useDeploymentMode";
+
+// Backend keys errors by request field name, the form does not.
+const FIELD_ERROR_TO_FORM_FIELD = {
+  password: "password",
+  email: "email",
+  full_name: "fullName",
+};
 
 export default function JwtRegisterView() {
   const { register, login, awsRegister } = useAuthContext();
   const [errorMsg, setErrorMsg] = useState("");
   const [registerSuccess, setRegisterSuccess] = useState(false);
-  // Only treat this as OSS on a CONFIRMED read. The hook falls back to "oss"
-  // when deployment-info errors, and an unguarded check would show a cloud user
-  // the OSS signup form (password fields, no social) after one transient
-  // failure — and post a password the cloud backend would reject.
+  // Confirmed read only: the hook falls back to "oss" when deployment-info
+  // errors, and a cloud user must never be shown the password fields.
   const { isOSS: ossMode, isSuccess: modeConfirmed } = useDeploymentMode();
   const isOSS = modeConfirmed && ossMode;
+  const postLoginPath = usePostLoginPath();
   const password = useBoolean();
   const confirmPassword = useBoolean();
   const navigate = useNavigate();
@@ -134,20 +143,23 @@ export default function JwtRegisterView() {
     context: { registerSuccess },
   });
 
-  const { handleSubmit, watch } = methods;
+  const { handleSubmit, watch, setError } = methods;
   const email = watch("email");
 
   const handleSignup = async (data) => {
     persistReturnTo();
-    let token;
-    try {
-      token = await getRecaptchaToken("signup");
-    } catch (err) {
-      enqueueSnackbar({
-        message: "reCAPTCHA not ready. Please try again",
-        variant: "error",
-      });
-      return;
+    // No site key on self-hosted, and the backend skips verification there.
+    let token = "";
+    if (!isOSS) {
+      try {
+        token = await getRecaptchaToken("signup");
+      } catch (err) {
+        enqueueSnackbar({
+          message: "reCAPTCHA not ready. Please try again",
+          variant: "error",
+        });
+        return;
+      }
     }
     setErrorMsg("");
     try {
@@ -207,20 +219,27 @@ export default function JwtRegisterView() {
         });
 
         if (isOSS) {
-          // Sign the new admin straight in with the password they just set,
-          // then continue to role → goals → org.
+          // Signup returns the same {access, refresh, new_org} a login does.
+          // The AWS marketplace response carries no tokens.
           try {
-            const loginToken = await getRecaptchaToken("login");
-            const loginResp = await axios.post(endpoints.auth.login, {
-              email: data.email,
-              password: data.password,
-              recaptcha_response: loginToken,
-            });
-            await login(loginResp);
-            navigate(paths.auth.jwt.setup_org + search);
+            if (!response.result?.access) {
+              throw new Error("signup response carried no access token");
+            }
+            await login({ status: 200, data: response.result });
+            // The auth guard re-fires signup conversions for anything but
+            // "email", and this view already fired them above.
+            localStorage.setItem("signupProvider", "email");
+
+            if (response.result.new_org) {
+              navigate(paths.auth.jwt.setup_org + search);
+            } else {
+              const returnTo = new URLSearchParams(search).get("returnTo");
+              if (returnTo) localStorage.setItem("initial-render", "done");
+              navigate(returnTo || postLoginPath);
+              localStorage.removeItem("redirectUrl");
+            }
           } catch (loginErr) {
-            // The account exists either way, so never strand them on an error
-            // screen — send them to login with the reason stated.
+            // The account exists either way, so never strand them.
             logger.info("OSS auto-login after signup failed", loginErr);
             enqueueSnackbar({
               variant: "info",
@@ -244,10 +263,35 @@ export default function JwtRegisterView() {
       } else {
         logger.error("Registration Error:", error);
       }
+      const fieldErrors =
+        error?.result?.error_code === "SIGNUP_VALIDATION_FAILED"
+          ? error?.result?.field_errors
+          : null;
+
+      if (fieldErrors) {
+        const unmapped = [];
+        Object.entries(fieldErrors).forEach(([key, messages]) => {
+          const message = [].concat(messages).join(" ");
+          const field = FIELD_ERROR_TO_FORM_FIELD[key];
+          if (field) {
+            setError(field, { type: "server", message }, { shouldFocus: true });
+          } else {
+            unmapped.push(`${key}: ${message}`);
+          }
+        });
+        setErrorMsg(unmapped.join(" "));
+        return;
+      }
+
       setErrorMsg(
         typeof error === "string"
           ? error
-          : error.error || error.detail || error.result,
+          : error.error ||
+              error.detail ||
+              // An object `result` would throw inside the Alert.
+              (typeof error.result === "string"
+                ? error.result
+                : error.result?.error),
       );
     } finally {
       setLoading(false);

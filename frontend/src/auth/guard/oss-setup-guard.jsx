@@ -9,14 +9,9 @@ import { isValidationDone } from "src/sections/oss-first-run/ossFlowState";
 
 // ----------------------------------------------------------------------
 
-// Signup is the END of the OSS first-run flow, not a way into it: it is reached
-// by finishing the infrastructure checks, which mark completion before
-// navigating here. Anyone arriving directly beforehand gets the checks first.
-//
-// Deliberately not applied to login. Completion lives in localStorage, so it is
-// per-browser: an existing user signing in from a second machine, an incognito
-// window, or after clearing site data has no flag, and bouncing them into an
-// infrastructure wizard would read as a broken install.
+// Signup is the end of the first-run flow, so anyone arriving before the checks
+// gets them first. Not applied to login: completion is per-browser, and bouncing
+// an existing user into a wizard would read as a broken install.
 export default function OssSetupGuard({ children }) {
   const { isOSS, isLoading, isSuccess } = useDeploymentMode();
 

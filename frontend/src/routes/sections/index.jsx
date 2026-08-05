@@ -40,9 +40,7 @@ export default function Router() {
     [user, currentWorkspaceRole, isOSS],
   );
 
-  // OSS first-run only. Routing must never send anyone to signup — that is
-  // reached solely by finishing the checks, or logout lands on "Create an
-  // account". Confirmed read required, or a failed probe sends cloud to /setup.
+  // Confirmed read required, or a failed probe sends cloud users to /setup.
   let rootTarget = postLoginPath;
   if (isDeploymentModeConfirmed && isOSS && !isValidationDone()) {
     rootTarget = paths.ossSetup;

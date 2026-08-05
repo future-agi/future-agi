@@ -8,6 +8,7 @@ import structlog
 from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
 from django.db import close_old_connections, transaction
+from django.db.models.functions import Lower
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -55,9 +56,7 @@ def _fire_deployment_telemetry_registration():
 
         threading.Thread(target=_register).start()
     except Exception:
-        logger.warning(
-            "deployment_telemetry_signup_hook_failed", exc_info=True
-        )
+        logger.warning("deployment_telemetry_signup_hook_failed", exc_info=True)
 
 
 def resolve_org(request):
@@ -335,6 +334,27 @@ def build_invite_accept_link(user):
     uid = urlsafe_base64_encode(force_bytes(user.pk))
     token = default_token_generator.make_token(user)
     return f"{settings.APP_URL}/auth/jwt/invitation/accept/{uid}/{token}"
+
+
+def build_invite_links(invites):
+    """Map lowercased email -> accept-invite link, OSS only.
+
+    Shared by the organization and workspace member lists so the two cannot
+    disagree about who gets a link.
+    """
+    from tfc.ee_gating import is_oss
+
+    if not invites or not is_oss():
+        return {}
+
+    emails = {inv.target_email.lower() for inv in invites}
+    return {
+        user.email.lower(): build_invite_accept_link(user)
+        for user in User.objects.annotate(email_lower=Lower("email")).filter(
+            email_lower__in=emails,
+            is_active=False,
+        )
+    }
 
 
 def build_password_reset_link(uidb64, token):

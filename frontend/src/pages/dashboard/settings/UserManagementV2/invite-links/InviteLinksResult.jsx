@@ -12,16 +12,16 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CopyLinkButton from "./CopyLinkButton";
+import { formatInvitesForCopy } from "./formatInvites";
 
-// Shown after a successful invite when email can't reach the invitee. The
-// invite itself is created either way — this is purely about handing the admin
-// something they can pass on.
 export default function InviteLinksResult({
   open,
   invites,
   onClose,
   onInviteMore,
 }) {
+  const allInvites = formatInvitesForCopy(invites);
+
   return (
     <Dialog
       open={open}
@@ -38,14 +38,17 @@ export default function InviteLinksResult({
               fontWeight="fontWeightSemiBold"
               color="text.primary"
             >
-              Invites created
+              {invites.length === 1
+                ? "1 invite created"
+                : `${invites.length} invites created`}
             </Typography>
             <Typography
               variant="s1"
               color="text.secondary"
               sx={{ mt: 0.5, display: "block" }}
             >
-              Copy each link and send it to the teammate it belongs to.
+              Copy each link and send it to the teammate it belongs to. Invites
+              keep their links until they are accepted.
             </Typography>
           </Box>
           <IconButton onClick={onClose}>
@@ -53,7 +56,13 @@ export default function InviteLinksResult({
           </IconButton>
         </Stack>
 
-        <Stack spacing={1.25} sx={{ mt: 2.5 }}>
+        {allInvites && (
+          <Stack direction="row" justifyContent="flex-end" sx={{ mt: 2 }}>
+            <CopyLinkButton text={allInvites} label="Copy all" />
+          </Stack>
+        )}
+
+        <Stack spacing={1.25} sx={{ mt: allInvites ? 1.5 : 2.5 }}>
           {invites.map((invite) => (
             <Box
               key={invite.email}
@@ -84,7 +93,7 @@ export default function InviteLinksResult({
                       sx: { fontFamily: "monospace" },
                     }}
                   />
-                  <CopyLinkButton link={invite.inviteLink} />
+                  <CopyLinkButton text={invite.inviteLink} />
                 </Stack>
               ) : (
                 <Typography variant="s2" color="text.secondary">

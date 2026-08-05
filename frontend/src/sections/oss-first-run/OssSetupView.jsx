@@ -12,15 +12,8 @@ import {
   usePostLoginPath,
 } from "src/hooks/useDeploymentMode";
 import { DEFAULT_LAUNCH_MODE } from "./constants";
-import { isValidationDone, markValidationDone } from "./ossFlowState";
+import { markValidationDone } from "./ossFlowState";
 
-// OSS first-run flow.
-//   step 0 — pick a launch mode, which decides which checks are required
-//   step 1 — run the infrastructure checks
-// then straight into signup to create the admin account.
-//
-// No "launch mode seen" marker: root routing only sends anyone here while
-// validation is unrecorded, so this runs once and the flag would have no reader.
 export default function OssSetupView() {
   const navigate = useNavigate();
   const { authenticated } = useAuthContext();
@@ -31,23 +24,18 @@ export default function OssSetupView() {
   const [validationProgress, setValidationProgress] = useState(0);
 
   const handleValidationContinue = () => {
-    // Read before marking, or firstRun is always false.
-    const firstRun = !isValidationDone();
     markValidationDone();
 
     if (authenticated) {
       navigate(postLoginPath);
       return;
     }
-    // Signup only on a genuine first run. Otherwise login, which carries a
-    // "Sign up" link — there is no reliable client-side signal for whether an
-    // account exists, so login is the safe default.
-    navigate(firstRun ? paths.auth.jwt.register : paths.auth.jwt.login);
+    // Always signup: it carries a "Sign in" link, so an existing account is one
+    // click away. Login with no account yet is a dead end.
+    navigate(paths.auth.jwt.register);
   };
 
-  // This flow is self-hosted only. On dev this URL 404'd for everyone; keep it
-  // unreachable for cloud and EE rather than letting a typed URL drop a paying
-  // user into an infra-setup wizard.
+  // Self-hosted only — a typed URL must not drop a cloud user into a wizard.
   if (isLoading) return <SplashScreen />;
   if (isSuccess && !isOSS) return <Navigate to={postLoginPath} replace />;
 

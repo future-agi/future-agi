@@ -7,7 +7,6 @@ Old endpoints remain untouched until Phase 4 cutover.
 
 import structlog
 from django.db import IntegrityError, transaction
-from django.db.models.functions import Lower
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -38,14 +37,13 @@ from accounts.serializers.rbac import (
 from accounts.services import member_role_service
 from accounts.services.workspace_members import list_workspace_members
 from accounts.utils import (
-    build_invite_accept_link,
+    build_invite_links,
     existing_member_access_will_change,
     generate_password,
     resolve_org,
     send_invite_email,
 )
 from tfc.constants.levels import Level
-from tfc.ee_gating import is_oss
 from tfc.permissions.rbac import (
     CanManageTargetUser,
     IsOrganizationAdmin,
@@ -784,7 +782,7 @@ class MemberListAPIView(APIView):
             )
         }
 
-        invite_links = self._get_invite_links(invites)
+        invite_links = build_invite_links(invites)
 
         results = []
         for inv in invites:
@@ -840,25 +838,6 @@ class MemberListAPIView(APIView):
             results.append(row)
 
         return results
-
-    def _get_invite_links(self, invites):
-        """Map lowercased email -> accept-invite link, OSS deployments only.
-
-        Self-hosted instances usually have no SMTP configured, so the invite
-        email never lands. Handing the admin the same link the email carries
-        lets them share it manually. Cloud/EE keeps the link email-only.
-        """
-        if not invites or not is_oss():
-            return {}
-
-        emails = {inv.target_email.lower() for inv in invites}
-        return {
-            user.email.lower(): build_invite_accept_link(user)
-            for user in User.objects.annotate(email_lower=Lower("email")).filter(
-                email_lower__in=emails,
-                is_active=False,
-            )
-        }
 
 
 class MemberRoleUpdateAPIView(APIView):
@@ -1208,6 +1187,7 @@ class WorkspaceMemberListAPIView(APIView):
             sort=params.get("sort", "-created_at"),
             page=params.get("page", 1),
             limit=params.get("limit", 20),
+            viewer_org_level=org_level,
         )
         return gm.success_response(page_data)
 

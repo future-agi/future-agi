@@ -1,8 +1,5 @@
-// OSS first-run setup flow — static definitions.
-//
-// Check labels, statuses and `required` all come from GET /api/setup-checks/.
-// Nothing about the check list lives here: the endpoint is list-shaped so checks
-// can be added or removed server-side without a frontend change.
+// The check list itself comes from GET /api/setup-checks/ — nothing about it
+// lives here, so checks can change server-side without a frontend release.
 
 export const LAUNCH_MODES = [
   {
@@ -29,9 +26,7 @@ export const MODE_NOTE = {
     "We will not enforce some security requirements in experimentation mode.",
 };
 
-// Per-check status, mirroring the server enum. `skipped` means the check does
-// not apply in the selected launch mode and must never block. Presentation
-// (icon/colour/label) lives with the component that renders it.
+// Mirrors the server enum. No status gates the flow.
 export const CHECK_STATUS = {
   PENDING: "pending",
   PASSED: "passed",
@@ -40,15 +35,11 @@ export const CHECK_STATUS = {
   SKIPPED: "skipped",
 };
 
-// Whether we can reach the server at all, which is a separate axis from what any
-// individual check reports. A server cannot tell us it is unreachable, so this is
-// derived from the transport and rendered once, above the list.
+// Derived from the transport, not from any check.
 export const CONNECTION_STATE = {
   CONNECTING: "connecting",
   REACHABLE: "reachable",
   UNREACHABLE: "unreachable",
 };
 
-// Reveal delay between rows. Purely a display animation over ONE response, not
-// nine separate requests.
 export const CHECK_REVEAL_STAGGER_MS = 350;

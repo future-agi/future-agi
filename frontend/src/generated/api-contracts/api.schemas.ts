@@ -1545,6 +1545,11 @@ export interface WorkspaceMemberRowApi {
   created_at: string;
   type: WorkspaceMemberRowApiType;
   auto_access?: boolean;
+  /**
+     * Accept-invite link for a pending invite. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud/EE, on active-member rows, and on Admin+ invites when the caller is only a workspace admin.
+     * @minLength 1
+     */
+  invite_link?: string;
 }
 
 export interface WorkspaceMemberListResultApi {
