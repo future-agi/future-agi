@@ -1058,6 +1058,14 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	for _, rule := range c.Routing.Mirror.Rules {
+		if rule.TargetProvider != "" {
+			if _, ok := c.Providers[rule.TargetProvider]; !ok {
+				return fmt.Errorf("mirror rule for model %q: target_provider %q not found in configured providers", rule.SourceModel, rule.TargetProvider)
+			}
+		}
+	}
+
 	validLevels := map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
 	if !validLevels[strings.ToLower(c.Logging.Level)] {
 		return fmt.Errorf("logging.level must be one of debug, info, warn, error; got %q", c.Logging.Level)
