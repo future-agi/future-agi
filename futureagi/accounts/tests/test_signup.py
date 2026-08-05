@@ -2024,3 +2024,52 @@ class TestInviteLinkOnMemberList:
         for row in rows:
             if row.get("type") == "member":
                 assert "invite_link" not in row
+
+
+INVITE_CREATE_URL = "/accounts/organization/invite/"
+FRESH_INVITEE = "fresh-invitee@futureagi.com"
+
+
+def _invite(client, emails):
+    from tfc.constants.levels import Level
+
+    return client.post(
+        INVITE_CREATE_URL,
+        {"emails": emails, "org_level": Level.VIEWER},
+        format="json",
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestInviteLinkOnInviteCreate:
+    """Returning the link on create saves the admin a trip to the member list."""
+
+    def test_oss_returns_a_link_per_new_invite(self, auth_client):
+        with patch("accounts.views.rbac_views.is_oss", return_value=True):
+            response = _invite(auth_client, [FRESH_INVITEE])
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["invited"] == [FRESH_INVITEE]
+        (invite,) = result["invites"]
+        assert invite["email"] == FRESH_INVITEE
+        assert "/auth/jwt/invitation/accept/" in invite["invite_link"]
+
+    def test_cloud_keeps_the_link_email_only(self, auth_client):
+        with patch("accounts.views.rbac_views.is_oss", return_value=False):
+            response = _invite(auth_client, [FRESH_INVITEE])
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["invited"] == [FRESH_INVITEE]
+        assert "invites" not in result
+
+    def test_already_active_accounts_get_no_link(self, auth_client, second_user):
+        """An account that can already log in has nothing to accept."""
+        with patch("accounts.views.rbac_views.is_oss", return_value=True):
+            response = _invite(auth_client, [FRESH_INVITEE, second_user.email])
+
+        result = response.json()["result"]
+        assert set(result["invited"]) == {FRESH_INVITEE, second_user.email}
+        assert [i["email"] for i in result["invites"]] == [FRESH_INVITEE]

@@ -640,9 +640,21 @@ export interface InviteCreateApi {
   workspace_access?: WorkspaceAccessInputApi[];
 }
 
+/**
+ * Accept-invite links for the invites just created. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud/EE.
+ */
+export interface InviteLinkApi {
+  /** @minLength 1 */
+  email: string;
+  /** @minLength 1 */
+  invite_link: string;
+}
+
 export interface InviteCreateResultApi {
   invited: string[];
   already_members?: string[];
+  /** Accept-invite links for the invites just created. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud/EE. */
+  invites?: InviteLinkApi[];
 }
 
 export interface InviteCreateResponseApi {
@@ -22970,7 +22982,7 @@ export interface PaymentMethodConfirmResponseApi {
   result: PaymentMethodConfirmResultApi;
 }
 
-export type UsagePlanOptionApiFeatures = { [key: string]: unknown };
+export type UsagePlanOptionApiFeatures = {[key: string]: { [key: string]: unknown }};
 
 export interface UsagePlanOptionApi {
   /** @minLength 1 */
@@ -22995,7 +23007,7 @@ export interface UsagePricingDimensionApi {
   tiers: UsagePricingTierApi[];
 }
 
-export type UsageCustomPlanDetailsApiFeatures = { [key: string]: unknown };
+export type UsageCustomPlanDetailsApiFeatures = {[key: string]: { [key: string]: unknown }};
 
 export type UsageCustomPlanDetailsApiPricing = {[key: string]: { [key: string]: unknown }};
 
@@ -23019,8 +23031,8 @@ export interface UsagePlansAndAddonsResultApi {
   tiers: UsagePlanOptionApi[];
   addons: UsagePlanOptionApi[];
   pricing: UsagePlansAndAddonsResultApiPricing;
-  is_custom_pricing: boolean;
-  custom_details?: UsageCustomPlanDetailsApi;
+  isCustomPricing: boolean;
+  customDetails?: UsageCustomPlanDetailsApi;
   pending_cancel: boolean;
   /** @minLength 1 */
   cancel_at?: string;

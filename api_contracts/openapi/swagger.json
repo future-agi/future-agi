@@ -74088,6 +74088,27 @@
                 }
             }
         },
+        "InviteLink": {
+            "description": "Accept-invite links for the invites just created. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud/EE.",
+            "required": [
+                "email",
+                "invite_link"
+            ],
+            "type": "object",
+            "properties": {
+                "email": {
+                    "title": "Email",
+                    "type": "string",
+                    "format": "email",
+                    "minLength": 1
+                },
+                "invite_link": {
+                    "title": "Invite link",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
         "InviteCreateResult": {
             "required": [
                 "invited"
@@ -74108,6 +74129,13 @@
                         "type": "string",
                         "format": "email",
                         "minLength": 1
+                    }
+                },
+                "invites": {
+                    "description": "Accept-invite links for the invites just created. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud/EE.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/InviteLink"
                     }
                 }
             }
@@ -130987,7 +131015,10 @@
                 },
                 "features": {
                     "title": "Features",
-                    "type": "object"
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object"
+                    }
                 }
             }
         },
@@ -131064,7 +131095,10 @@
                 },
                 "features": {
                     "title": "Features",
-                    "type": "object"
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object"
+                    }
                 },
                 "pricing": {
                     "title": "Pricing",
@@ -131083,7 +131117,7 @@
                 "tiers",
                 "addons",
                 "pricing",
-                "is_custom_pricing",
+                "isCustomPricing",
                 "pending_cancel"
             ],
             "type": "object",
@@ -131117,11 +131151,11 @@
                         "$ref": "#/definitions/UsagePricingDimension"
                     }
                 },
-                "is_custom_pricing": {
-                    "title": "Is custom pricing",
+                "isCustomPricing": {
+                    "title": "Iscustompricing",
                     "type": "boolean"
                 },
-                "custom_details": {
+                "customDetails": {
                     "$ref": "#/definitions/UsageCustomPlanDetails"
                 },
                 "pending_cancel": {

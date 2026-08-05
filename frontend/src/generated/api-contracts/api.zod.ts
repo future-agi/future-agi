@@ -865,11 +865,17 @@ export const AccountsOrganizationInviteCreateBody = zod.object({
 
 
 
+
+
 export const AccountsOrganizationInviteCreateResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
   "invited": zod.array(zod.string().email().min(1)),
-  "already_members": zod.array(zod.string().email().min(1)).optional()
+  "already_members": zod.array(zod.string().email().min(1)).optional(),
+  "invites": zod.array(zod.object({
+  "email": zod.string().email().min(1),
+  "invite_link": zod.string().min(1)
+}).describe('Accept-invite links for the invites just created. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud\/EE.')).optional().describe('Accept-invite links for the invites just created. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud\/EE.')
 })
 })
 
@@ -46077,18 +46083,18 @@ export const UsageV2PlansAndAddonsListResponse = zod.object({
   "display_name": zod.string().min(1),
   "platform_fee_monthly": zod.number(),
   "is_current": zod.boolean(),
-  "features": zod.object({
+  "features": zod.record(zod.string(), zod.object({
 
-}).passthrough()
+}).passthrough())
 })),
   "addons": zod.array(zod.object({
   "key": zod.string().min(1),
   "display_name": zod.string().min(1),
   "platform_fee_monthly": zod.number(),
   "is_current": zod.boolean(),
-  "features": zod.object({
+  "features": zod.record(zod.string(), zod.object({
 
-}).passthrough()
+}).passthrough())
 })),
   "pricing": zod.record(zod.string(), zod.object({
   "display_name": zod.string().min(1),
@@ -46098,15 +46104,15 @@ export const UsageV2PlansAndAddonsListResponse = zod.object({
   "price_per_unit": zod.number()
 }))
 })),
-  "is_custom_pricing": zod.boolean(),
-  "custom_details": zod.object({
+  "isCustomPricing": zod.boolean(),
+  "customDetails": zod.object({
   "platform_fee": zod.number(),
   "platform_fee_billing_cycle": zod.number(),
   "per_charge_amount": zod.number(),
   "contract_end_date": zod.string().min(1).optional(),
-  "features": zod.object({
+  "features": zod.record(zod.string(), zod.object({
 
-}).passthrough(),
+}).passthrough()),
   "pricing": zod.record(zod.string(), zod.object({
 
 }).passthrough())

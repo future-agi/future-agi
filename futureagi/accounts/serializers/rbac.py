@@ -75,11 +75,25 @@ class InviteCreateSerializer(serializers.Serializer):
         return sanitized
 
 
+class InviteLinkSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    invite_link = serializers.CharField()
+
+
 class InviteCreateResultSerializer(serializers.Serializer):
     invited = serializers.ListField(child=serializers.EmailField())
     already_members = serializers.ListField(
         child=serializers.EmailField(),
         required=False,
+    )
+    invites = InviteLinkSerializer(
+        many=True,
+        required=False,
+        help_text=(
+            "Accept-invite links for the invites just created. Present on OSS "
+            "deployments only, where SMTP may not be configured; omitted on "
+            "Cloud/EE."
+        ),
     )
 
 

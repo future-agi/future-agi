@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 969,
+  "endpointCount": 970,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -82820,6 +82820,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "format": "email",
             "minLength": 1
           }
+        },
+        "invites": {
+          "description": "Accept-invite links for the invites just created. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud/EE.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/InviteLink"
+          }
         }
       }
     },
@@ -90490,7 +90497,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "tiers",
         "addons",
         "pricing",
-        "is_custom_pricing",
+        "isCustomPricing",
         "pending_cancel"
       ],
       "type": "object",
@@ -90524,11 +90531,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/UsagePricingDimension"
           }
         },
-        "is_custom_pricing": {
-          "title": "Is custom pricing",
+        "isCustomPricing": {
+          "title": "Iscustompricing",
           "type": "boolean"
         },
-        "custom_details": {
+        "customDetails": {
           "$ref": "#/definitions/UsageCustomPlanDetails"
         },
         "pending_cancel": {
@@ -95785,6 +95792,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "InviteLink": {
+      "description": "Accept-invite links for the invites just created. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud/EE.",
+      "required": [
+        "email",
+        "invite_link"
+      ],
+      "type": "object",
+      "properties": {
+        "email": {
+          "title": "Email",
+          "type": "string",
+          "format": "email",
+          "minLength": 1
+        },
+        "invite_link": {
+          "title": "Invite link",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "LegacyEvalTemplateItem": {
       "required": [
         "id",
@@ -98863,7 +98891,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "features": {
           "title": "Features",
-          "type": "object"
+          "type": "object",
+          "additionalProperties": {
+            "type": "object"
+          }
         },
         "pricing": {
           "title": "Pricing",
@@ -98905,7 +98936,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "features": {
           "title": "Features",
-          "type": "object"
+          "type": "object",
+          "additionalProperties": {
+            "type": "object"
+          }
         }
       }
     },
