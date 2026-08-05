@@ -18,10 +18,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ai_tools.tests.conftest import run_tool
-
-pytestmark = pytest.mark.requires_ee
 from ai_tools.tests.fixtures import make_trace
 from tfc.ee_gating import EEFeature, FeatureUnavailable
+
+pytestmark = pytest.mark.requires_ee
 
 # ---------------------------------------------------------------------------
 # Helpers / constants
