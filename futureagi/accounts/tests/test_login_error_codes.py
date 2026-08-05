@@ -480,6 +480,7 @@ class TestMiddlewareIpBlockedRouting:
     def test_ip_rate_limited_error_code(self):
         """When IP requests hit the threshold, middleware returns LOGIN_IP_RATE_LIMITED."""
         from django.conf import settings
+
         from accounts.authentication import RATE_LIMIT_WINDOW_SECONDS
 
         max_attempts = getattr(settings, "MAX_LOGIN_ATTEMPTS_PER_HOUR", 10)
@@ -501,6 +502,7 @@ class TestMiddlewareIpBlockedRouting:
     def test_ip_rate_limit_keeps_requests_for_full_hour(self):
         """Requests older than 1000s but inside the 1h window still count."""
         from django.conf import settings
+
         from accounts.authentication import RATE_LIMIT_WINDOW_SECONDS
 
         max_attempts = getattr(settings, "MAX_LOGIN_ATTEMPTS_PER_HOUR", 10)
@@ -517,13 +519,17 @@ class TestMiddlewareIpBlockedRouting:
         assert body["result"]["error_code"] == "LOGIN_IP_RATE_LIMITED"
 
     def test_ip_request_cache_ttl_matches_full_window(self):
-        from accounts.authentication import RATE_LIMIT_WINDOW_SECONDS
+        from accounts.authentication import (
+            RATE_LIMIT_WINDOW_SECONDS,
+            AuthMonitoringMiddleware,
+        )
 
-        middleware = self._middleware()
+        # Failed attempts (4xx) are the ones that consume budget.
+        middleware = AuthMonitoringMiddleware(lambda r: HttpResponse("no", status=400))
         with patch("accounts.authentication.cache.set", wraps=cache.set) as cache_set:
             resp = middleware(self._request("/api/accounts/token/"))
 
-        assert resp.status_code == 200
+        assert resp.status_code == 400
         cache_set.assert_any_call(
             f"ip_requests_{self.TEST_IP}",
             ANY,
@@ -536,6 +542,89 @@ class TestMiddlewareIpBlockedRouting:
         resp = middleware(self._request("/api/accounts/token/"))
         # Passes through to the dummy lambda which returns 200
         assert resp.status_code == 200
+
+
+@pytest.mark.unit
+class TestMiddlewareFailedAttemptCounting:
+    """Only failed credential submissions consume the per-IP budget (TH-7023).
+
+    Successful logins, page views, and CORS preflights must not count —
+    otherwise one office NAT exhausts the shared budget and locks out
+    everyone behind it, including first-time users.
+    """
+
+    TEST_IP = "10.10.10.98"
+
+    def _middleware(self, status_code=200):
+        from accounts.authentication import AuthMonitoringMiddleware
+
+        return AuthMonitoringMiddleware(
+            lambda r: HttpResponse("resp", status=status_code)
+        )
+
+    def _request(self, path: str, method: str = "post"):
+        factory = RequestFactory()
+        req = getattr(factory, method)(path, content_type="application/json")
+        req.META["REMOTE_ADDR"] = self.TEST_IP
+        return req
+
+    def _attempt_count(self):
+        return len(cache.get(f"ip_requests_{self.TEST_IP}", []))
+
+    def test_successful_login_not_counted(self):
+        self._middleware(status_code=200)(self._request("/accounts/token/"))
+        assert self._attempt_count() == 0
+
+    def test_failed_login_counted(self):
+        self._middleware(status_code=400)(self._request("/accounts/token/"))
+        assert self._attempt_count() == 1
+
+    def test_get_page_view_not_counted(self):
+        self._middleware(status_code=200)(self._request("/admin/login/", "get"))
+        assert self._attempt_count() == 0
+
+    def test_cors_preflight_not_counted(self):
+        self._middleware(status_code=200)(self._request("/accounts/token/", "options"))
+        assert self._attempt_count() == 0
+
+    def test_admin_failed_post_counted(self):
+        # Django admin re-renders the form with 200 on bad credentials.
+        self._middleware(status_code=200)(self._request("/admin/login/"))
+        assert self._attempt_count() == 1
+
+    def test_admin_successful_post_not_counted(self):
+        # Successful admin login redirects.
+        self._middleware(status_code=302)(self._request("/admin/login/"))
+        assert self._attempt_count() == 0
+
+    def test_saml2_login_not_gated(self):
+        """/saml2_auth/login/ carries no credentials — not rate limited."""
+        cache.set(f"blocked_ip_{self.TEST_IP}", True, 3600)
+        resp = self._middleware(status_code=200)(
+            self._request("/saml2_auth/login/", "get")
+        )
+        assert resp.status_code == 200
+
+    def test_block_set_after_max_failed_attempts(self):
+        from django.conf import settings
+
+        max_attempts = getattr(settings, "MAX_LOGIN_ATTEMPTS_PER_HOUR", 10)
+        middleware = self._middleware(status_code=400)
+        for _ in range(max_attempts):
+            resp = middleware(self._request("/accounts/token/"))
+            assert resp.status_code == 400
+
+        # The next request — regardless of outcome — is rate limited.
+        resp = middleware(self._request("/accounts/token/"))
+        assert resp.status_code == 403
+        body = json.loads(resp.content)
+        assert body["result"]["error_code"] == "LOGIN_IP_RATE_LIMITED"
+
+        # And from then on the IP is blocked outright.
+        resp = middleware(self._request("/accounts/token/"))
+        assert resp.status_code == 403
+        body = json.loads(resp.content)
+        assert body["result"]["error_code"] == "LOGIN_IP_BLOCKED"
 
 
 @pytest.mark.unit
@@ -568,6 +657,7 @@ class TestMiddlewarePasswordResetRouting:
 
     def test_rate_limit_trigger_on_password_reset(self):
         from django.conf import settings
+
         from accounts.authentication import RATE_LIMIT_WINDOW_SECONDS
 
         max_attempts = getattr(settings, "MAX_LOGIN_ATTEMPTS_PER_HOUR", 10)
@@ -588,6 +678,7 @@ class TestMiddlewarePasswordResetRouting:
     def test_password_reset_rate_limit_keeps_requests_for_full_hour(self):
         """Requests older than 1000s but inside the 1h window still count."""
         from django.conf import settings
+
         from accounts.authentication import RATE_LIMIT_WINDOW_SECONDS
 
         max_attempts = getattr(settings, "MAX_LOGIN_ATTEMPTS_PER_HOUR", 10)
