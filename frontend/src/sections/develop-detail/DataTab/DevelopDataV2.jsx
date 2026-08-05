@@ -276,6 +276,12 @@ const getDataSource = (
         if (data?.data?.result?.failure_reason) {
           setFailedToGenerateData(true);
           setFailureReason(data.data.result.failure_reason);
+        } else if (getResultIsSyntheticDataset(result)) {
+          // Dataset is synthetic and the backend has no failure reason —
+          // clear any stale failure state so the overlay shows the correct
+          // status (default-synthetic or regenerating-synthetic).
+          setFailedToGenerateData(false);
+          setFailureReason(null);
         }
 
         updateRefreshing(

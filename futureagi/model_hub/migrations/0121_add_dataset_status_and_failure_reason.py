@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('model_hub', '0101_backfill_composite_v1_config_snapshots'),
+        ('model_hub', '0120_backfill_score_tracer_project'),
     ]
 
     operations = [
