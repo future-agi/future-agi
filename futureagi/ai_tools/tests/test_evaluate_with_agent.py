@@ -12,6 +12,7 @@ deterministic, and free of external dependencies. What we're testing:
   5. Error propagation: orchestrator exception surfaces cleanly
 """
 
+import sys
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -158,6 +159,25 @@ class TestInputValidation:
             mock_check.assert_called_once_with(
                 EEFeature.AGENTIC_EVAL, org_id=str(tool_context.organization.id)
             )
+
+    def test_ee_agenthub_import_failure_returns_unavailable(
+        self, tool_context, monkeypatch
+    ):
+        """Both lanes: entitled org but ee.agenthub missing degrades to
+        feature-unavailable (the open-build path), it does not crash."""
+        monkeypatch.setitem(sys.modules, "ee.agenthub.eval_orchestrator", None)
+        with patch("tfc.ee_gating.check_ee_feature", return_value=None):
+            result = run_tool(
+                "evaluate_with_agent",
+                {
+                    "source_id": _FAKE_TRACE_ID,
+                    "input_scope": "trace",
+                    "criteria": "Is it helpful?",
+                },
+                tool_context,
+            )
+        assert result.is_error
+        assert result.error_code == "ENTITLEMENT_DENIED"
 
     @pytest.mark.requires_ee
     def test_invalid_scope_returns_error(self, tool_context):

@@ -526,17 +526,15 @@ def clean_workspace_context():
 
 @pytest.fixture(autouse=True)
 def _structlog_capturable():
-    """Reconfigure structlog uncached before each test so capture_logs()/caplog
-    survive reconfig leaked elsewhere: ee's agent_evaluator tests reset_defaults()
-    per test. Function-scoped for that per-test leak. The logging.disable reset
-    undoes a global stdlib disable that a few collected ee/falcon_ai integration
-    scripts apply at import; no product code calls logging.disable, so this masks
-    nothing."""
+    """Uncached structlog before each test so capture_logs()/caplog survive
+    reconfig leaked elsewhere (ee agent_evaluator tests call reset_defaults()
+    per test - hence function scope). The logging.disable reset undoes a global
+    stdlib disable that a few collected ee/falcon_ai integration scripts apply
+    at import; no product code calls logging.disable, so it masks nothing."""
     import logging
 
     configure_structlog(cache_logger_on_first_use=False)
     logging.disable(logging.NOTSET)
-    yield
 
 
 @pytest.fixture(autouse=True)
