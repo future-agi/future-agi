@@ -24,7 +24,7 @@ def _resolve_simulation_type(attrs, instance=None):
 
 def _has_selection(value):
     """Return True if the value is a non-empty list."""
-    return bool(value) if isinstance(value, list) else bool(value)
+    return isinstance(value, list) and len(value) > 0
 
 
 def _validate_behavioral_settings(attrs, instance=None):
@@ -32,22 +32,36 @@ def _validate_behavioral_settings(attrs, instance=None):
 
     Returns a dict of field-level error messages. An empty dict means
     validation passed.
+
+    For updates (instance is not None), validation is only triggered when
+    at least one behavioural field is present in ``attrs``.  This preserves
+    backward compatibility: existing personas whose behavioural settings
+    were saved before this validation was introduced can still receive
+    unrelated partial updates (e.g. a name change) without being blocked.
     """
     errors = {}
+    behavioural_fields = {"personality", "communication_style", "accent"}
+
+    if instance is not None:
+        # Update path — only validate when the caller is touching
+        # behavioural fields.
+        if not (behavioural_fields & set(attrs.keys())):
+            return errors
+
     simulation_type = _resolve_simulation_type(attrs, instance)
 
     if not _has_selection(_resolve_value(attrs, "personality", instance)):
-        errors["personality"] = "At least one personality trait is required."
+        errors["personality"] = "At least one personality trait is required"
 
     if not _has_selection(
         _resolve_value(attrs, "communication_style", instance)
     ):
-        errors["communication_style"] = "Communication style is required."
+        errors["communication_style"] = "Communication style is required"
 
     if simulation_type == "voice" and not _has_selection(
         _resolve_value(attrs, "accent", instance)
     ):
-        errors["accent"] = "Accent is required."
+        errors["accent"] = "Accent is required"
 
     return errors
 

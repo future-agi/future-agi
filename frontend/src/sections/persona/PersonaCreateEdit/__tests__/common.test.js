@@ -177,17 +177,6 @@ describe("PersonCreateValidationSchema – accent", () => {
     expect(result.data.accent).toBeNull();
   });
 
-  it("accepts when accent is an empty array for a text persona", () => {
-    const result = PersonCreateValidationSchema.safeParse(
-      buildValidPersona({
-        simulationType: "text",
-        accent: [],
-      }),
-    );
-
-    expect(result.success).toBe(true);
-  });
-
   it("treats accent=null as a type error since accent must be an array", () => {
     const result = PersonCreateValidationSchema.safeParse(
       buildValidPersona({

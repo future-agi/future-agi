@@ -11,7 +11,7 @@ def _create_payload(simulation_type="voice", **overrides):
         "description": "A realistic persona",
         "simulation_type": simulation_type,
         "multilingual": False,
-        "language": "English",
+        "language": ["English"],
         "personality": ["Friendly and cooperative"],
         "communication_style": ["Direct and concise"],
         "accent": ["American"],
@@ -272,8 +272,12 @@ class TestUpdateSerializer:
         )
 
         assert not serializer.is_valid()
-        # After clearing personality, no behavioural setting remains
+        # After clearing personality, no behavioural setting remains.
+        # All three fields should be flagged because the update touches
+        # behavioural fields and the final state is invalid.
         assert "personality" in serializer.errors
+        assert "communication_style" in serializer.errors
+        assert "accent" in serializer.errors
 
     def test_rejects_clearing_last_behavioural_field(self):
         """Clearing the only remaining behavioural field should fail."""
@@ -327,6 +331,28 @@ class TestUpdateSerializer:
         serializer = PersonaSerializer(
             instance=persona,
             data={"name": "Updated persona"},
+            partial=True,
+        )
+
+        assert serializer.is_valid(), serializer.errors
+
+    def test_allows_unrelated_update_when_instance_has_empty_behavioural_fields(
+        self,
+    ):
+        """Name-only update on a persona whose behavioural fields are all
+        empty should succeed — backward compatibility for personas created
+        before this validation was introduced."""
+        persona = Persona(
+            name="Legacy persona",
+            description="Legacy persona",
+            personality=[],
+            communication_style=[],
+            accent=[],
+        )
+
+        serializer = PersonaSerializer(
+            instance=persona,
+            data={"name": "Renamed legacy persona"},
             partial=True,
         )
 

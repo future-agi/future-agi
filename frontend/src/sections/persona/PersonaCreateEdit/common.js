@@ -72,9 +72,6 @@ export const CommunicationStyleOptions = [
   { value: "Collaborative", label: "Collaborative" },
 ];
 
-export const BEHAVIOURAL_SETTINGS_ERROR =
-  "Select at least one behavioural setting.";
-
 const hasSelection = (value) => Array.isArray(value) && value.length > 0;
 
 const accentList = [
