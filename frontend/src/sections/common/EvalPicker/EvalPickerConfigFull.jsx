@@ -899,7 +899,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           evalType === "llm" && fewShotExamples.length > 0
             ? fewShotExamples
             : undefined,
-        ...(templateType === "composite" &&
+        ...(isComposite &&
         Object.keys(compositeChildWeights || {}).length > 0
           ? { composite_weight_overrides: compositeChildWeights }
           : {}),
