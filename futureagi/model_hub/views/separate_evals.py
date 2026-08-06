@@ -2944,7 +2944,11 @@ class EvalTemplateVersionCreateView(APIView):
                 return self._gm.not_found("Eval template not found or not editable.")
 
             # Use live template.config; FE-supplied snapshot is incomplete.
-            effective_config = template.config or {}
+            effective_config = dict(template.config or {})
+            if req.composite_weight_overrides is not None:
+                effective_config["composite_weight_overrides"] = (
+                    req.composite_weight_overrides
+                )
             version = EvalTemplateVersion.objects.create_version(
                 eval_template=template,
                 prompt_messages=effective_config.get("messages") or [],
@@ -2955,9 +2959,6 @@ class EvalTemplateVersionCreateView(APIView):
                 organization=organization,
                 workspace=getattr(template, "workspace", None),
             )
-            if req.composite_weight_overrides is not None:
-                version.composite_weight_overrides = req.composite_weight_overrides
-                version.save(update_fields=["composite_weight_overrides"])
 
             # Only set as default if this is the first version (no existing default)
             has_default = (
