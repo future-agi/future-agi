@@ -133,6 +133,22 @@ docker compose logs -f backend
 
 Binds the frontend on `0.0.0.0:3000`; data stores stay on `127.0.0.1`. Put a reverse proxy in front of the frontend for HTTPS in any non-laptop deployment.
 
+### Mode 1b — OSS + PeerDB (`full` profile)
+
+Analytics views under Observe / Trace drilldowns are fed by PeerDB, which streams Postgres → ClickHouse. In the default `light` profile those views render empty because the CDC stack isn't running. Add PeerDB with the `full` profile:
+
+```bash
+COMPOSE_PROFILES=full docker compose up -d
+```
+
+One-time mirror registration (safe to re-run — it upserts):
+
+```bash
+docker compose exec peerdb-init bash /setup.sh
+```
+
+Adds ~10 containers on top of Mode 1. Use this for any real self-host where analytics matter.
+
 ### Mode 2 — Development mode
 
 For Future AGI engineers or contributors hacking on the code. Layers `docker-compose.dev.yml` on top of the base compose.

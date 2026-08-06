@@ -1,8 +1,20 @@
 import time
 
-from elevenlabs.client import ElevenLabs
-
 import structlog
+
+
+# `elevenlabs` lives in the `voice` extra (OSS-light skips it). Import is
+# lazy — the client factory raises a clear ImportError at call time instead
+# of breaking module load for OSS boots that never touch TTS/STT.
+def _elevenlabs_client(api_key):
+    try:
+        from elevenlabs.client import ElevenLabs
+    except ImportError as e:
+        raise ImportError(
+            "ElevenLabs TTS/STT requires the `voice` extra. "
+            "Install with: pip install 'core-backend[voice]'"
+        ) from e
+    return ElevenLabs(api_key=api_key)
 
 logger = structlog.get_logger(__name__)
 from tfc.utils.storage import (
@@ -77,7 +89,7 @@ def elevenlabs_speech_response(run_prompt_instance, start_time, api_key):
     """Handles Text-to-Speech generation using the ElevenLabs SDK."""
     input_text = run_prompt_instance._get_input_text_from_messages()
 
-    client = ElevenLabs(api_key=api_key)
+    client = _elevenlabs_client(api_key)
 
     # The model name from RunPrompt includes the provider, e.g., "elevenlabs/eleven_v3".
     # We need to strip the "elevenlabs/" prefix for the SDK.
@@ -334,7 +346,7 @@ def elevenlabs_transcription_response(run_prompt_instance, start_time, api_key):
     # Normalize audio input using shared utility
     audio_bytes = audio_bytes_from_url_or_base64(raw_input)
 
-    client = ElevenLabs(api_key=api_key)
+    client = _elevenlabs_client(api_key)
 
     # Extract model_id from the model string (e.g., "elevenlabs/scribe_v2" -> "scribe_v2")
     model_name_with_provider = run_prompt_instance.model
@@ -458,7 +470,7 @@ def elevenlabs_transcription_response(run_prompt_instance, start_time, api_key):
 def validate_elevenlabs_voice(voice_id, api_key):
     """Validates if a voice ID exists in ElevenLabs."""
     try:
-        client = ElevenLabs(api_key=api_key)
+        client = _elevenlabs_client(api_key)
         client.voices.get(voice_id=voice_id)
         return True
     except Exception as e:

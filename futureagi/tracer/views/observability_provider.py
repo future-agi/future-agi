@@ -2,6 +2,24 @@ import json
 import math
 from typing import Any
 
+
+def verify_retell_webhook(payload, *, api_key, signature):
+    """Thin wrapper around retell.lib.webhook_auth.verify.
+
+    Defined at module level so tests can patch
+    tracer.views.observability_provider.verify_retell_webhook without
+    needing the retell-sdk voice extra installed.
+    """
+    try:
+        from retell.lib.webhook_auth import verify as _verify
+    except ImportError as e:
+        raise ImportError(
+            "Retell webhook verification requires the `voice` extra. "
+            "Install with: pip install 'core-backend[voice]'"
+        ) from e
+    return _verify(payload, api_key=api_key, signature=signature)
+
+
 import structlog
 from django.db import DatabaseError
 from rest_framework import serializers, status
@@ -10,7 +28,6 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
-from retell.lib.webhook_auth import verify as verify_retell_webhook
 
 from accounts.utils import get_request_organization
 from simulate.models import AgentDefinition

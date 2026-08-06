@@ -67,8 +67,6 @@ services:
       # - PGBOUNCER_READ_PORT=6432
       # - READ_REPLICA_OPT_IN=feature:org_config_bulk
     depends_on:
-      pgbouncer:
-        condition: service_started
       temporal:
         condition: service_healthy
       db:
@@ -308,18 +306,6 @@ services:
       timeout: 5s
       retries: 5
 
-  pgbouncer:
-    image: edoburu/pgbouncer:1.18.0
-    container_name: pgbouncer
-    ports:
-      - "6432:6432"
-    depends_on:
-      db:
-        condition: service_healthy
-    volumes:
-      - ./config/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini
-      - ./config/userlist.txt:/etc/pgbouncer/userlist.txt
-
   clickhouse:
     image: clickhouse/clickhouse-server:25.3.14.14-alpine
     container_name: clickhouse
@@ -427,20 +413,6 @@ services:
       - "${MINIO_API_PORT:-9005}:9000"
       - "${MINIO_CONSOLE_PORT:-9006}:9001"
     command: server /data --console-address ":9001"
-
-  # ===========================================
-  # Docker Proxy (for container orchestration)
-  # ===========================================
-
-  docker-proxy:
-    image: alpine/socat
-    container_name: docker-proxy
-    command: -t 900 TCP-LISTEN:2375,fork,reuseaddr UNIX-CONNECT:/var/run/docker.sock
-    ports:
-      - "2375"
-    user: root
-    volumes:
-      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
 
   # ===========================================
   # Temporal Services
