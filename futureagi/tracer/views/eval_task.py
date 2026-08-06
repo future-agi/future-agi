@@ -770,7 +770,14 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             qp = PaginationQuerySerializer(data=self.request.query_params)
             qp.is_valid(raise_exception=True)
             page_size = qp.validated_data["page_size"]
+            
             period = self.request.query_params.get("period", "30d")
+
+            start_date_str = self.request.query_params.get("start_date")
+            end_date_str = self.request.query_params.get("end_date")
+
+
+
             # Optional eval filter — tasks may run multiple evals; the UI
             # passes this when the user picks one from the dropdown.
             eval_id_filter = self.request.query_params.get("eval_id")
@@ -877,7 +884,19 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 base_qs = base_qs.filter(custom_eval_config_id=eval_id_filter)
 
             total_runs = base_qs.count()
-            period_qs = base_qs.filter(created_at__gte=start_date)
+            period_used = period
+
+            if start_date_str and end_date_str:
+                start_date = datetime.fromisoformat(start_date_str)
+                end_date = datetime.fromisoformat(end_date_str)
+                period_qs = base_qs.filter(
+                    created_at__gte=start_date,
+                    created_at__lte=end_date,
+                )
+                period_used = "custom"
+
+            else:
+                period_qs = base_qs.filter(created_at__gte=start_date)
             runs_period = period_qs.count()
 
             # Fallback: if the user picked a period that excludes every
@@ -885,20 +904,30 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             # time" so they aren't staring at an empty chart. The
             # `period_used` field tells the frontend which period was
             # actually applied so it can surface a hint.
-            period_used = period
+          
             if runs_period == 0 and total_runs > 0:
                 period_qs = base_qs
                 runs_period = total_runs
                 period_used = "all"
-                # Recompute start_date to the earliest run so the
-                # zero-fill chart loop covers the right range.
+                # Recompute start_date/end_date to the actual run range so
+                # the zero-fill chart loop covers it. end_date is still
+                # pinned to the (empty) custom window otherwise, and when
+                # every run falls outside that window start_date would end
+                # up past end_date, leaving the chart empty.
                 earliest = (
                     base_qs.order_by("created_at")
                     .values_list("created_at", flat=True)
                     .first()
                 )
+                latest = (
+                    base_qs.order_by("-created_at")
+                    .values_list("created_at", flat=True)
+                    .first()
+                )
                 if earliest:
                     start_date = earliest
+                if latest:
+                    end_date = latest
 
             success_count = period_qs.filter(error=False).count()
             error_count = period_qs.filter(error=True).count()
@@ -1168,7 +1197,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 # Echo back the period actually used. If the user picked
                 # "30D" but the task only has older runs, this will be
                 # "all" — the frontend can show a hint explaining why.
-                "period_requested": period,
+                "period_requested": "custom" if start_date_str and end_date_str else period,
                 "period_used": period_used,
             }
             return self._gm.success_response(response)

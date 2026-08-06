@@ -12,22 +12,37 @@ import axios, { endpoints } from "src/utils/axios";
  * every page change.
  */
 
-const buildParams = ({ evalTaskId, period, evalId }) => {
+const buildParams = ({ evalTaskId, period, evalId, startDate, endDate }) => {
   const params = { eval_task_id: evalTaskId, period };
   if (evalId) params.eval_id = evalId;
+  if (startDate && endDate) {
+    params.start_date = startDate;
+    params.end_date = endDate;
+  }
   return params;
 };
 
 /**
  * Fetch chart + stats + configured-evals list. Independent of pagination.
  */
-export function useTaskUsageChart(evalTaskId, { period = "30d", evalId } = {}) {
+export function useTaskUsageChart(
+  evalTaskId,
+  { period = "30d", evalId, startDate, endDate } = {},
+) {
   return useQuery({
-    queryKey: ["tasks", "usage-chart", evalTaskId, period, evalId || null],
+    queryKey: [
+      "tasks",
+      "usage-chart",
+      evalTaskId,
+      period,
+      evalId || null,
+      startDate || null,
+      endDate || null,
+    ],
     queryFn: async () => {
       const { data } = await axios.get(endpoints.project.getEvalTaskUsage(), {
         params: {
-          ...buildParams({ evalTaskId, period, evalId }),
+          ...buildParams({ evalTaskId, period, evalId, startDate, endDate }),
           // The chart hook ignores the paginated `logs` block; we still
           // need to send valid pagination params or the BE serializer
           // 400s. page is 1-indexed (DRF PageNumberPagination).
@@ -45,6 +60,10 @@ export function useTaskUsageChart(evalTaskId, { period = "30d", evalId } = {}) {
         // runs and the backend fell back to "all time".
         periodUsed: result.period_used,
         periodRequested: result.period_requested,
+        // Effective window actually charted. Differs from the requested
+        // range after the backend's all-time fallback.
+        startDateUsed: result.start_date_used,
+        endDateUsed: result.end_date_used,
       };
     },
     enabled: !!evalTaskId,
@@ -58,7 +77,7 @@ export function useTaskUsageChart(evalTaskId, { period = "30d", evalId } = {}) {
  */
 export function useTaskUsageLogs(
   evalTaskId,
-  { page = 0, pageSize = 25, period = "30d", evalId } = {},
+  { page = 0, pageSize = 25, period = "30d", evalId, startDate, endDate } = {},
 ) {
   return useQuery({
     queryKey: [
@@ -69,11 +88,13 @@ export function useTaskUsageLogs(
       evalId || null,
       page,
       pageSize,
+      startDate || null,
+      endDate || null,
     ],
     queryFn: async () => {
       const { data } = await axios.get(endpoints.project.getEvalTaskUsage(), {
         params: {
-          ...buildParams({ evalTaskId, period, evalId }),
+          ...buildParams({ evalTaskId, period, evalId, startDate, endDate }),
           page: page + 1,
           page_size: pageSize,
         },
