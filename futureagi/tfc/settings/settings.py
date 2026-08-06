@@ -129,7 +129,7 @@ INSTALLED_APPS = [
     "model_hub",
     "tracer",
     "simulate",
-    "agent_playground",
+    "agent_playground.apps.AgentPlaygroundConfig",
     "integrations",
     # AI tools shared layer (MCP + AI Assistant)
     "ai_tools",

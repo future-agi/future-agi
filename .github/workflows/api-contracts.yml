@@ -36,6 +36,7 @@ on:
       - "futureagi/tracer/utils/filters.py"
       - "futureagi/tracer/utils/helper.py"
       - "futureagi/tracer/views/**"
+      - "futureagi/tfc/deployment_telemetry/**"
       - ".github/workflows/api-contracts.yml"
   push:
     branches: [main, develop, dev]
@@ -72,6 +73,7 @@ on:
       - "futureagi/tracer/utils/filters.py"
       - "futureagi/tracer/utils/helper.py"
       - "futureagi/tracer/views/**"
+      - "futureagi/tfc/deployment_telemetry/**"
       - ".github/workflows/api-contracts.yml"
   workflow_dispatch:
 
@@ -317,3 +319,4 @@ jobs:
           simulate/tests/test_simulator_agent_api_contract.py
           simulate/tests/test_test_execution_api_contract.py
           tracer/tests/test_tracer_feed_api_contract.py
+          tfc/deployment_telemetry/tests/test_schema_contract.py

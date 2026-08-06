@@ -56,6 +56,7 @@ show_help() {
     echo "  unit          Run unit tests only"
     echo "  integration   Run integration tests"
     echo "  app <name>    Run tests for specific app"
+    echo "  stress        Run the stress suite (manual only; rebuilds CH default DB)"
     echo "  changed       Run tests for changed files only"
     echo "  watch         Watch mode - rerun tests on file changes"
     echo "  up            Start test services"
@@ -266,6 +267,15 @@ case "${1:-}" in
         fi
         echo -e "${GREEN}Running tests for $app_name...${NC}"
         run_pytest "$app_name/tests/" -v "$@"
+        ;;
+    stress)
+        shift
+        if [ "$NO_SERVICES" = false ]; then
+            start_services
+            run_migrations
+        fi
+        echo -e "${GREEN}Running stress suite (manual only)...${NC}"
+        run_pytest -m stress tests/stress/ "$@"
         ;;
     changed)
         shift

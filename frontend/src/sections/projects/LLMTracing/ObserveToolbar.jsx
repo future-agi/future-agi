@@ -7,6 +7,7 @@ import Iconify from "src/components/iconify";
 import DisplayPanel from "./DisplayPanel";
 import TraceFilterPanel from "./TraceFilterPanel";
 import BulkActionsBar from "./BulkActionsBar";
+import { pillSx } from "./toolbarStyles";
 import { useTabStoreShallow } from "./tabStore";
 import { ID_ONLY_FIELDS } from "./idFields";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
@@ -277,22 +278,6 @@ const ObserveToolbar = ({
   const { openCreateModal } = useTabStoreShallow((s) => ({
     openCreateModal: s.openCreateModal,
   }));
-
-  // Shared pill button style — 26px bordered
-  const pillSx = {
-    textTransform: "none",
-    fontWeight: 500,
-    fontSize: 13,
-    fontFamily: "'IBM Plex Sans', sans-serif",
-    height: 26,
-    border: "1px solid",
-    borderColor: "divider",
-    borderRadius: "4px",
-    color: "text.primary",
-    bgcolor: "background.paper",
-    px: 1,
-    "&:hover": { bgcolor: "background.neutral", borderColor: "text.disabled" },
-  };
 
   // Find the portal target in the tab bar
   const [portalTarget, setPortalTarget] = useState(null);

@@ -151,24 +151,30 @@ export const defaultAuthMethodForProvider = (provider) => {
   return selectable.length === 1 ? selectable[0].value : "";
 };
 
-export const stepsInfo = [
+export const getStepsInfo = (isDark) => [
   {
     title: "Select agent definition",
     description:
       "Start from scratch to create a clear, goal-oriented prompt tailored to your needs.",
-    imageSrc: "/assets/agents/help/select-agent-def.svg",
+    imageSrc: isDark
+      ? "/assets/agents/help/select-agent-def_dark.svg"
+      : "/assets/agents/help/select-agent-def.svg",
   },
   {
     title: "Generate workflow and add personas",
     description:
       "Start with a ready-made prompt template. Select an option and tailor it to fit your specific needs.",
-    imageSrc: "/assets/agents/help/gen-workkflow.svg",
+    imageSrc: isDark
+      ? "/assets/agents/help/gen-workkflow_dark.svg"
+      : "/assets/agents/help/gen-workkflow.svg",
   },
   {
     title: "Review scenarios for tests",
     description:
       "Refine what you have to make your output clearer, smarter, and more effective.",
-    imageSrc: "/assets/agents/help/review-scenatios.svg",
+    imageSrc: isDark
+      ? "/assets/agents/help/review-scenatios_dark.svg"
+      : "/assets/agents/help/review-scenatios.svg",
   },
 ];
 

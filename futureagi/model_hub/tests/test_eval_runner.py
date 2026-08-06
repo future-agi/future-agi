@@ -1050,6 +1050,85 @@ class TestBulkUpdateOrCreateCells(EvalRunnerBaseTestCase):
         assert updated == 1
         assert created == 2
 
+    def test_default_overwrites_completed_cells(self):
+        """Default behaviour must overwrite PASS cells.
+
+        Reset-before-run callers (experiment_runner, temporal activities,
+        composite_runner) and _create_skipped_eval_cells depend on being able
+        to overwrite completed cells. This pins that contract so the
+        skip_completed guard stays opt-in.
+        """
+        from model_hub.views.eval_runner import bulk_update_or_create_cells
+
+        for row in self.rows:
+            Cell.objects.create(
+                row=row,
+                column=self.column,
+                dataset=self.dataset,
+                value="completed_result",
+                status="pass",
+            )
+
+        row_ids = [row.id for row in self.rows]
+        new_values = {"value": None, "status": "running"}
+
+        updated, created = bulk_update_or_create_cells(
+            row_ids, self.column.id, self.dataset.id, new_values
+        )
+
+        assert updated == 3
+        assert created == 0
+        for cell in Cell.objects.filter(column=self.column, dataset=self.dataset):
+            assert cell.status == "running"
+            assert cell.value is None
+
+    def test_skip_completed_preserves_pass_cells(self):
+        """skip_completed=True leaves PASS cells alone but still updates
+        non-terminal cells and creates missing ones."""
+        from model_hub.views.eval_runner import bulk_update_or_create_cells
+
+        # Row 0: completed cell — must survive. Row 1: running cell — must be
+        # updated. Row 2: no cell — must be created.
+        Cell.objects.create(
+            row=self.rows[0],
+            column=self.column,
+            dataset=self.dataset,
+            value="completed_result",
+            status="pass",
+        )
+        Cell.objects.create(
+            row=self.rows[1],
+            column=self.column,
+            dataset=self.dataset,
+            value=None,
+            status="running",
+        )
+
+        row_ids = [row.id for row in self.rows]
+        new_values = {"value": "Upgrade plan to unlock", "status": "error"}
+
+        updated, created = bulk_update_or_create_cells(
+            row_ids,
+            self.column.id,
+            self.dataset.id,
+            new_values,
+            skip_completed=True,
+        )
+
+        assert updated == 1
+        assert created == 1
+
+        pass_cell = Cell.objects.get(row=self.rows[0], column=self.column)
+        assert pass_cell.status == "pass"
+        assert pass_cell.value == "completed_result"
+
+        error_cells = Cell.objects.filter(
+            column=self.column, dataset=self.dataset, status="error"
+        )
+        assert error_cells.count() == 2
+        for cell in error_cells:
+            assert cell.value == "Upgrade plan to unlock"
+
 
 # =============================================================================
 # EvalTemplateSerializer Tests
@@ -1281,6 +1360,7 @@ class TestTestEvaluationTemplateAPIView(EvalRunnerBaseTestCase):
         """Function eval without eval_type_id returns error."""
         data = {
             "name": "test-function-eval",
+            "model": "gpt-4o",
             "config": {
                 "config": {"keywords": ["hello", "world"], "case_sensitive": True}
             },
@@ -1302,6 +1382,7 @@ class TestTestEvaluationTemplateAPIView(EvalRunnerBaseTestCase):
         """Unsupported template_type returns error."""
         data = {
             "name": "test-eval",
+            "model": "gpt-4o",
             "config": {},
             "output_type": "Pass/Fail",
             "template_type": "InvalidType",
