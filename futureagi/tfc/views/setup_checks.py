@@ -43,10 +43,13 @@ import boto3
 import redis
 import requests
 from botocore.config import Config
+from botocore.exceptions import ClientError
 from django.core.cache import cache
 from django.db import connections
+from rest_framework import status
 from rest_framework.views import APIView
 
+from tfc.ee_gating import is_oss
 from tfc.settings import settings
 from tfc.temporal import TEMPORAL_HOST
 from tfc.utils.api_contracts import validated_request
@@ -120,19 +123,41 @@ def _temporal_up() -> bool:
     return _tcp_up(host, int(port))
 
 
+def _s3_endpoint_url():
+    """Resolve the endpoint the same way ``tfc.utils.storage_client`` does, so
+    the probe talks to the storage the application actually writes to."""
+    raw = os.environ.get("S3_ENDPOINT") or os.environ.get("S3_ENDPOINT_URL")
+    if not raw:
+        return None
+    if "://" in raw:
+        return raw
+    secure_env = os.environ.get("S3_SECURE")
+    if secure_env is not None:
+        secure = secure_env.lower() == "true"
+    else:
+        secure = os.environ.get("STORAGE_BACKEND", "s3").lower() == "s3"
+    return f"{'https' if secure else 'http'}://{raw}"
+
+
 def _object_storage_up() -> bool:
     client = boto3.client(
         "s3",
-        endpoint_url=os.environ.get("S3_ENDPOINT_URL") or None,
-        aws_access_key_id=os.environ.get("S3_ACCESS_KEY"),
-        aws_secret_access_key=os.environ.get("S3_SECRET_KEY"),
+        endpoint_url=_s3_endpoint_url(),
+        aws_access_key_id=os.environ.get("S3_ACCESS_KEY")
+        or os.environ.get("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.environ.get("S3_SECRET_KEY")
+        or os.environ.get("AWS_SECRET_ACCESS_KEY"),
         config=Config(
             connect_timeout=PROBE_TIMEOUT_SECONDS,
             read_timeout=PROBE_TIMEOUT_SECONDS,
             retries={"max_attempts": 0},
         ),
     )
-    client.head_bucket(Bucket=os.environ.get("S3_BUCKET", "futureagi"))
+    try:
+        client.head_bucket(Bucket=settings.UPLOAD_BUCKET_NAME)
+    except ClientError as exc:
+        code = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        return code is not None and code != 404
     return True
 
 
@@ -153,7 +178,7 @@ def _code_executor_up() -> bool:
 
 
 def _model_serving_up() -> bool:
-    base = os.environ.get("SERVING_URL", "http://serving:8080")
+    base = os.environ.get("MODEL_SERVING_URL", "http://serving:8080")
     return _http_ok(f"{base.rstrip('/')}/health")
 
 
@@ -363,11 +388,30 @@ def _build_checks(mode: str, probe_results: dict) -> list:
     return checks
 
 
+def _cached_snapshot(cache_key: str):
+    """Redis is one of the services being probed, so the cache it backs cannot be
+    a precondition for answering — a down Redis would 500 the very screen that
+    exists to report it as down."""
+    try:
+        return cache.get(cache_key)
+    except Exception:
+        return None
+
+
+def _store_snapshot(cache_key: str, result: dict) -> None:
+    try:
+        cache.set(cache_key, result, SNAPSHOT_TTL_SECONDS)
+    except Exception:
+        pass
+
+
 class SetupChecksView(APIView):
     """Public infrastructure probe for the OSS first-run setup screen.
 
     Returns ``{"status": "ok"|"issues", "mode": ..., "checks": [...]}``. No auth —
-    it runs before any account exists.
+    it runs before any account exists. Self-hosted only: on cloud and EE the
+    route answers 404, so neither the internal service topology nor the outbound
+    probes it triggers are reachable by an anonymous caller.
     """
 
     authentication_classes = []
@@ -376,10 +420,16 @@ class SetupChecksView(APIView):
     @validated_request(
         responses={
             200: SetupChecksResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
             500: ApiTextErrorResponseSerializer,
         }
     )
     def get(self, request, *args, **kwargs):
+        gm = GeneralMethods(request)
+
+        if not is_oss():
+            return gm.custom_error_response(status.HTTP_404_NOT_FOUND, "Not found.")
+
         mode = request.query_params.get("mode", LIVE)
         if mode not in (LIVE, EXPERIMENT):
             mode = LIVE
@@ -387,7 +437,7 @@ class SetupChecksView(APIView):
         # Cached per mode: the mode changes what the snapshot says, so the two
         # modes cannot share an entry.
         cache_key = f"setup-checks:{mode}"
-        result = cache.get(cache_key)
+        result = _cached_snapshot(cache_key)
 
         if result is None:
             checks = _build_checks(mode, _run_probes())
@@ -397,6 +447,6 @@ class SetupChecksView(APIView):
                 "mode": mode,
                 "checks": checks,
             }
-            cache.set(cache_key, result, SNAPSHOT_TTL_SECONDS)
+            _store_snapshot(cache_key, result)
 
-        return GeneralMethods(request).success_response(result)
+        return gm.success_response(result)

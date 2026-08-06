@@ -4,6 +4,8 @@ Signup & Account API Tests
 Tests for user registration, logout, password reset, and account management.
 """
 
+import os
+
 import pytest
 from django.contrib.auth.tokens import default_token_generator
 from rest_framework import status
@@ -1839,7 +1841,17 @@ class TestCloudSignupUnchanged:
 @pytest.mark.integration
 @pytest.mark.api
 class TestOssPasswordResetLink:
-    """OSS returns the reset link instead of mailing it."""
+    """OSS returns the reset link instead of mailing it, once an operator opts in.
+
+    The endpoint takes no authentication and the link takes over the account it
+    names, so the link is withheld unless ``OSS_RETURN_PASSWORD_RESET_LINK`` says
+    the deployment already trusts everyone who can reach it.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _link_in_response(self):
+        with patch.dict(os.environ, {"OSS_RETURN_PASSWORD_RESET_LINK": "true"}):
+            yield
 
     def test_link_is_returned_in_the_response(
         self, api_client, user, no_outbound_email

@@ -72,6 +72,14 @@ def _clear_snapshot_cache():
     cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def _self_hosted():
+    """The endpoint is self-hosted only — cloud and EE answer 404 — so every
+    test here has to stand in an OSS deployment to reach the view at all."""
+    with patch("tfc.views.setup_checks.is_oss", return_value=True):
+        yield
+
+
 @pytest.mark.integration
 @pytest.mark.api
 class TestSetupChecksResponseShape:

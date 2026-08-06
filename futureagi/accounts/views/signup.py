@@ -82,6 +82,27 @@ except ImportError:
 logger = structlog.get_logger(__name__)
 _gm = GeneralMethods()
 
+OSS_RESET_UNAVAILABLE = (
+    "Email delivery is not configured on this deployment, so the reset link "
+    "cannot be sent. An administrator can set a new password from the host with "
+    "`docker exec -it futureagi-backend-1 python manage.py reset_password "
+    "--email <address>`, or set OSS_RETURN_PASSWORD_RESET_LINK=true to receive "
+    "reset links in the browser — only on a network where every caller is "
+    "already trusted, since the link takes over the account it names."
+)
+
+
+def oss_reset_link_in_response() -> bool:
+    """Whether ``initiate_password_reset`` may hand the reset link straight back
+    to the caller.
+
+    The endpoint is unauthenticated, and the link sets the password on the named
+    account, so returning it makes anyone who can reach the instance able to take
+    over any account on it. Off by default: an operator opts in only for a
+    deployment where network reach already implies full trust.
+    """
+    return os.getenv("OSS_RETURN_PASSWORD_RESET_LINK", "false").lower() == "true"
+
 
 class AccountActivationTokenGenerator(PasswordResetTokenGenerator):
     def _make_hash_value(self, user, timestamp):
@@ -412,6 +433,9 @@ def initiate_password_reset(request):
                 properties = get_mixpanel_properties(user=user)
                 track_mixpanel_event(MixpanelEvents.RESET_PASS.value, properties)
 
+                if is_oss() and not oss_reset_link_in_response():
+                    return _gm.success_response({"message": OSS_RESET_UNAVAILABLE})
+
                 # Send reset password email
                 # Generate a token
                 access_token = AuthToken.objects.create(
@@ -458,6 +482,12 @@ def initiate_password_reset(request):
                 )
         except User.DoesNotExist:
             if is_oss():
+                # Naming the address only helps where the caller can act on the
+                # answer. With the link withheld the response is identical for
+                # every address, so the endpoint tells an anonymous caller
+                # nothing about who has an account here.
+                if not oss_reset_link_in_response():
+                    return _gm.success_response({"message": OSS_RESET_UNAVAILABLE})
                 return _gm.bad_request(f"No account found for {email}.")
             # Don't disclose that the user doesn't exist ,we just send a sucess response
             return _gm.success_response(

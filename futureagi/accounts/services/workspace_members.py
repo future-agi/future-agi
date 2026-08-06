@@ -204,10 +204,13 @@ def _pending_invites(organization, workspace, viewer_org_level=0):
             if ws_match
             else Level.WORKSPACE_ADMIN
         )
-        # The link claims the invite, so a workspace admin holding one for an
-        # Admin+ invite could take an org-admin seat.
+        # The link claims the invite, so whoever reads one can take that seat.
+        # Compare against the invite's own level rather than a fixed rank: a
+        # workspace admin must not receive the link for a MEMBER invite they
+        # could never create, and an org admin must not receive one for an
+        # Owner invite.
         invite_link = None
-        if viewer_org_level >= Level.ADMIN or inv.level < Level.ADMIN:
+        if viewer_org_level >= inv.level:
             invite_link = invite_links.get(inv.target_email.lower())
 
         results.append(

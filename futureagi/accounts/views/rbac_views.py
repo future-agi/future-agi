@@ -533,8 +533,13 @@ class MemberListAPIView(APIView):
         # Org-level member list always returns full workspace memberships;
         # workspace_id is NOT used here (it's only for workspace-scoped endpoints).
 
+        viewer_membership = get_org_membership(request.user)
+        viewer_org_level = (
+            viewer_membership.level_or_legacy if viewer_membership else 0
+        )
+
         # Build pending/expired invites
-        invites = self._get_invites(organization)
+        invites = self._get_invites(organization, viewer_org_level)
 
         # Collect emails with pending invites so we can deduplicate
         invited_emails = {inv["email"] for inv in invites}
@@ -747,7 +752,7 @@ class MemberListAPIView(APIView):
 
         return results
 
-    def _get_invites(self, organization):
+    def _get_invites(self, organization, viewer_org_level=0):
         """Return pending/expired invites as dicts."""
         invites = list(
             OrganizationInvite.objects.filter(
@@ -813,9 +818,10 @@ class MemberListAPIView(APIView):
                 "type": "invite",
             }
 
-            invite_link = invite_links.get(inv.target_email.lower())
-            if invite_link:
-                row["invite_link"] = invite_link
+            if viewer_org_level >= inv.level:
+                invite_link = invite_links.get(inv.target_email.lower())
+                if invite_link:
+                    row["invite_link"] = invite_link
 
             results.append(row)
 
