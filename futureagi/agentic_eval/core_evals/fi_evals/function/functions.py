@@ -55,8 +55,10 @@ def _preprocess_strings(keywords, text, case_sensitive):
     if isinstance(keywords, str):
         keywords = keywords.split(",")
 
-    # Strip leading and spaces from the keywords
-    keywords = [k.strip() for k in keywords]
+    # Strip surrounding whitespace and drop blank entries. A blank keyword is a
+    # substring of every string, so keeping one would make the verdict independent
+    # of the text (e.g. the trailing comma in "foo," yields an empty keyword).
+    keywords = [k.strip() for k in keywords if str(k).strip()]
 
     # If case_sensitive is False, convert all keywords and text to lowercase
     if not case_sensitive:
@@ -3518,7 +3520,8 @@ def regex_pii_detection(text, detect_types=None, **kwargs):
     Args:
         text (str): Text to scan for PII.
         detect_types (list, optional): Types to detect. Default: all.
-            Options: ssn, credit_card, phone, email, ip_address
+            Options: ssn, credit_card, phone, email, ip_address (case-insensitive).
+            Unrecognized types fail closed rather than silently scanning nothing.
 
     Returns:
         dict: {"result": bool (True=no PII found), "reason": str}
@@ -3541,7 +3544,24 @@ def regex_pii_detection(text, detect_types=None, **kwargs):
                 detect_types = json.loads(detect_types)
             except (json.JSONDecodeError, ValueError):
                 detect_types = [t.strip() for t in detect_types.split(",")]
-        active_patterns = {k: v for k, v in patterns.items() if k in detect_types}
+        # A JSON scalar (e.g. '"ssn"') decodes to a str, which would otherwise be
+        # iterated one character at a time below.
+        if isinstance(detect_types, str):
+            detect_types = [detect_types]
+
+        requested = [str(t).strip().lower() for t in detect_types if str(t).strip()]
+        unsupported = sorted(set(requested) - set(patterns))
+        if unsupported or not requested:
+            # Fail closed: scanning nothing must never be reported as "no PII found".
+            named = ", ".join(unsupported) or "(none given)"
+            return {
+                "result": False,
+                "reason": (
+                    f"Unsupported detect_types: {named}. "
+                    f"Supported types: {', '.join(patterns.keys())}"
+                ),
+            }
+        active_patterns = {k: v for k, v in patterns.items() if k in requested}
     else:
         active_patterns = patterns
 
