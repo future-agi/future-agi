@@ -15217,13 +15217,19 @@
             "get": {
                 "operationId": "api_setup-checks_list",
                 "summary": "Public infrastructure probe for the OSS first-run setup screen.",
-                "description": "Returns ``{\"status\": \"ok\"|\"issues\", \"mode\": ..., \"checks\": [...]}``. No auth —\nit runs before any account exists.",
+                "description": "Returns ``{\"status\": \"ok\"|\"issues\", \"mode\": ..., \"checks\": [...]}``. No auth —\nit runs before any account exists. Self-hosted only: on cloud and EE the\nroute answers 404, so neither the internal service topology nor the outbound\nprobes it triggers are reachable by an anonymous caller.",
                 "parameters": [],
                 "responses": {
                     "200": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/SetupChecksResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {

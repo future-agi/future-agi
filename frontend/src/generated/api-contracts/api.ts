@@ -17377,6 +17377,11 @@ export type apiSetupChecksListResponse200 = {
   status: 200
 }
 
+export type apiSetupChecksListResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
 export type apiSetupChecksListResponse500 = {
   data: ApiTextErrorResponseApi
   status: 500
@@ -17384,13 +17389,13 @@ export type apiSetupChecksListResponse500 = {
 
 export type apiSetupChecksListResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 500>
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 500>
 }
 
 export type apiSetupChecksListResponseSuccess = (apiSetupChecksListResponse200) & {
   headers: Headers;
 };
-export type apiSetupChecksListResponseError = (apiSetupChecksListResponse500 | apiSetupChecksListResponseDefault) & {
+export type apiSetupChecksListResponseError = (apiSetupChecksListResponse404 | apiSetupChecksListResponse500 | apiSetupChecksListResponseDefault) & {
   headers: Headers;
 };
 
@@ -17406,7 +17411,9 @@ export const getApiSetupChecksListUrl = () => {
 
 /**
  * Returns ``{"status": "ok"|"issues", "mode": ..., "checks": [...]}``. No auth —
-it runs before any account exists.
+it runs before any account exists. Self-hosted only: on cloud and EE the
+route answers 404, so neither the internal service topology nor the outbound
+probes it triggers are reachable by an anonymous caller.
  * @summary Public infrastructure probe for the OSS first-run setup screen.
  */
 export const apiSetupChecksList = async ( options?: RequestInit): Promise<apiSetupChecksListResponse> => {

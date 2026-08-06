@@ -9446,7 +9446,9 @@ export const ApiPublicTracesListResponse = zod.object({
 
 /**
  * Returns ``{"status": "ok"|"issues", "mode": ..., "checks": [...]}``. No auth —
-it runs before any account exists.
+it runs before any account exists. Self-hosted only: on cloud and EE the
+route answers 404, so neither the internal service topology nor the outbound
+probes it triggers are reachable by an anonymous caller.
  * @summary Public infrastructure probe for the OSS first-run setup screen.
  */
 export const apiSetupChecksListResponseStatusDefault = true;
