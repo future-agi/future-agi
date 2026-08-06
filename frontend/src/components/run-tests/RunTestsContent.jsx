@@ -9,6 +9,8 @@ import {
   Menu,
   MenuItem,
   Popover,
+  Stack,
+  TextField,
   Tooltip,
   Typography,
   useTheme,
@@ -29,6 +31,7 @@ import { ShowComponent } from "src/components/show";
 import CustomDialog from "src/sections/develop-detail/Common/CustomDialog/CustomDialog";
 
 import { useAuthContext } from "src/auth/hooks";
+import { AGENT_TYPES } from "src/sections/agents/constants";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
@@ -296,6 +299,7 @@ const RunTestsContent = ({
   const queryClient = useQueryClient();
 
   const [searchQuery, setSearchQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState(""); // "" = All types
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [testToDelete, setTestToDelete] = useState(null);
@@ -358,12 +362,20 @@ const RunTestsContent = ({
       limit: pageSize,
       search: debouncedSearchQuery,
       simulation_type: simulationType,
+      ...(typeFilter && { agent_type: typeFilter }),
     };
     if (simulationType === SIMULATION_TYPE.PROMPT && promptTemplateId) {
       params.prompt_template_id = promptTemplateId;
     }
     return params;
-  }, [page, pageSize, debouncedSearchQuery, simulationType, promptTemplateId]);
+  }, [
+    page,
+    pageSize,
+    debouncedSearchQuery,
+    simulationType,
+    promptTemplateId,
+    typeFilter,
+  ]);
 
   const { isPending, data } = useQuery({
     queryKey: [
@@ -373,6 +385,7 @@ const RunTestsContent = ({
       page,
       pageSize,
       debouncedSearchQuery,
+      typeFilter,
     ],
     queryFn: () => axios.get(endpoints.runTests.list, { params: queryParams }),
     select: (d) => d.data,
@@ -384,7 +397,11 @@ const RunTestsContent = ({
   const hasData = items.length > 0;
 
   const showEmptyScreen =
-    !isPending && data && total === 0 && debouncedSearchQuery === "";
+    !isPending &&
+    data &&
+    total === 0 &&
+    debouncedSearchQuery === "" &&
+    !typeFilter;
 
   const canManage =
     RolePermission.SIMULATION_AGENT[PERMISSIONS.UPDATE][role] &&
@@ -616,19 +633,39 @@ const RunTestsContent = ({
               }}
             >
               <ShowComponent condition={showSearch}>
-                <FormSearchField
-                  value={searchQuery}
-                  onChange={(e) => {
-                    setSearchQuery(e.target.value);
-                    setPage(0);
-                  }}
-                  size="small"
-                  placeholder="Search"
-                  sx={{
-                    minWidth: "250px",
-                    "& .MuiOutlinedInput-root": { height: "30px" },
-                  }}
-                />
+                <Stack direction="row" spacing={1.5} alignItems="center">
+                  <FormSearchField
+                    value={searchQuery}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      setPage(0);
+                    }}
+                    size="small"
+                    placeholder="Search"
+                    sx={{
+                      minWidth: "250px",
+                      "& .MuiOutlinedInput-root": { height: "30px" },
+                    }}
+                  />
+                  <TextField
+                    select
+                    size="small"
+                    value={typeFilter}
+                    onChange={(e) => {
+                      setTypeFilter(e.target.value);
+                      setPage(0); // reset to first page when the filter changes
+                    }}
+                    SelectProps={{ displayEmpty: true }}
+                    sx={{
+                      minWidth: 140,
+                      "& .MuiOutlinedInput-root": { height: "30px" },
+                    }}
+                  >
+                    <MenuItem value="">All types</MenuItem>
+                    <MenuItem value={AGENT_TYPES.VOICE}>Voice</MenuItem>
+                    <MenuItem value={AGENT_TYPES.CHAT}>Chat</MenuItem>
+                  </TextField>
+                </Stack>
               </ShowComponent>
               <ShowComponent condition={!showSearch}>
                 <Box />
