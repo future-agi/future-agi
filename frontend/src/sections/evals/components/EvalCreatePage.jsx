@@ -162,7 +162,8 @@ const EvalCreatePage = () => {
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState(PYTHON_CODE_TEMPLATE);
   const [codeLanguage, setCodeLanguage] = useState("python");
-  const [model, setModel] = useState("turing_large");
+  const [model, setModel] = useState(isOSS ? "" : "turing_large");
+  const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
   const [choiceScores, setChoiceScores] = useState({});
@@ -446,10 +447,12 @@ const EvalCreatePage = () => {
         "Turing models are not available in OSS. Please select your own model.",
         { variant: "error" },
       );
+      setOpenModelMenuSignal((n) => n + 1);
       return;
     }
     if (isOSS && evalType !== "code" && !model) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
+      setOpenModelMenuSignal((n) => n + 1);
       return;
     }
     if (!draftId) {
@@ -560,6 +563,12 @@ const EvalCreatePage = () => {
     // needed since the composite hasn't been (and won't be) saved as a
     // single-eval draft. Single evals still need their draft up to date
     // so the playground sees the latest instructions/code/config.
+ 
+    if (isOSS && evalType !== "code" && !model) {
+      enqueueSnackbar("Please select a model.", { variant: "error" });
+      setOpenModelMenuSignal((n) => n + 1);
+      return;
+    }
     if (mode === "single" && !draftId) {
       enqueueSnackbar("Draft not ready yet, please wait", {
         variant: "warning",
@@ -591,6 +600,9 @@ const EvalCreatePage = () => {
   }, [
     mode,
     draftId,
+    isOSS,
+    evalType,
+    model,
     buildUpdatePayload,
     updateDraft,
     handleTestResult,
@@ -964,6 +976,7 @@ const EvalCreatePage = () => {
                       onChange={setInstructions}
                       model={model}
                       onModelChange={setModel}
+                      openModelMenuSignal={openModelMenuSignal}
                       placeholder="You are a helpful assistant"
                       templateFormat={templateFormat}
                       onTemplateFormatChange={setTemplateFormat}
@@ -994,6 +1007,7 @@ const EvalCreatePage = () => {
                           format render inline in LLMPromptEditor's top
                           bar, matching the agent InstructionEditor. */}
                       <LLMPromptEditor
+                        openModelMenuSignal={openModelMenuSignal}
                         messages={messages}
                         onMessagesChange={(msgs) => {
                           setMessages(msgs);

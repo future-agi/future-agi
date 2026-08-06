@@ -79,6 +79,7 @@ class TestUserAlertMonitorCreateAPI:
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
+    @pytest.mark.requires_ee
     def test_create_monitor_success(self, auth_client, observe_project):
         """Create a new user alert monitor."""
         response = auth_client.post(
@@ -98,6 +99,7 @@ class TestUserAlertMonitorCreateAPI:
         monitor = UserAlertMonitor.objects.get(name="Error Rate Alert")
         assert monitor.workspace_id == observe_project.workspace_id
 
+    @pytest.mark.requires_ee
     def test_create_monitor_rejects_other_workspace_project(
         self, auth_client, organization, user
     ):
@@ -124,6 +126,7 @@ class TestUserAlertMonitorCreateAPI:
             name="Cross Workspace Alert"
         ).exists()
 
+    @pytest.mark.requires_ee
     def test_create_monitor_with_slack_config(self, auth_client, observe_project):
         """Create monitor with Slack notification config."""
         response = auth_client.post(
@@ -142,6 +145,7 @@ class TestUserAlertMonitorCreateAPI:
         )
         assert response.status_code == status.HTTP_200_OK
 
+    @pytest.mark.requires_ee
     def test_create_monitor_accepts_canonical_span_attribute_filters(
         self, auth_client, observe_project
     ):
@@ -178,6 +182,7 @@ class TestUserAlertMonitorCreateAPI:
             "customer_tier"
         )
 
+    @pytest.mark.requires_ee
     def test_create_monitor_rejects_camel_case_span_attribute_filters(
         self, auth_client, observe_project
     ):

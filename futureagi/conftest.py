@@ -17,6 +17,7 @@ os.environ.setdefault("VAPI_API_KEY", "test-api-key-for-testing")
 os.environ.setdefault("VAPI_API_BASE_URL", "https://test.vapi.local")
 
 from tfc.ee_loader import has_ee
+from tfc.logging.config import configure_structlog
 
 EE_AVAILABLE = has_ee("ee")
 
@@ -61,7 +62,7 @@ def _install_ee_usage_stubs_if_missing() -> None:
     metering = _make("ee.usage.services.metering")
 
     def check_usage(*args, **kwargs):
-        return {"allowed": True}
+        return types.SimpleNamespace(allowed=True, reason="")
 
     metering.check_usage = check_usage
 
@@ -130,11 +131,6 @@ def pytest_configure(config):
     project_root = Path(__file__).parent
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
-
-    config.addinivalue_line(
-        "markers",
-        "requires_ee: test needs the enterprise `ee/` package; skipped in the OSS lane",
-    )
 
     _apply_ch25_schema_for_tests()
 
@@ -526,6 +522,20 @@ def clean_workspace_context():
     clear_workspace_context()
     yield
     clear_workspace_context()
+
+
+@pytest.fixture(autouse=True)
+def _structlog_capturable():
+    """Uncached structlog before each test so capture_logs()/caplog survive
+    global reconfig leaked by other tests in a full session (some suites reset
+    structlog defaults per test - hence function scope). The logging.disable
+    reset undoes a global stdlib disable that a few collected integration test
+    scripts apply at import; no product code calls logging.disable, so it masks
+    nothing."""
+    import logging
+
+    configure_structlog(cache_logger_on_first_use=False)
+    logging.disable(logging.NOTSET)
 
 
 @pytest.fixture(autouse=True)

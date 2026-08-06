@@ -50,14 +50,19 @@ import structlog
 # ──────────────────────────────────────────────────────────────────────────────
 # Logging — structured, machine-parseable, never print()
 # ──────────────────────────────────────────────────────────────────────────────
-structlog.configure(
-    processors=[
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.add_log_level,
-        structlog.processors.JSONRenderer(),
-    ],
-)
 log = structlog.get_logger("apply_schema")
+
+
+def _configure_logging() -> None:
+    """Configure structlog for CLI runs. Called from main(), not at import, so
+    importing this module never mutates the process's global structlog config."""
+    structlog.configure(
+        processors=[
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.add_log_level,
+            structlog.processors.JSONRenderer(),
+        ],
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -237,6 +242,7 @@ def apply_file(client, sf: SchemaFile, applied_by: str, *,
 # Main
 # ──────────────────────────────────────────────────────────────────────────────
 def main(argv: list[str] | None = None) -> int:
+    _configure_logging()
     args = build_argparser().parse_args(argv)
 
     log.info("connect", host=args.ch_host, port=args.ch_http_port, database=args.ch_database)
