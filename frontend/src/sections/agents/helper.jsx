@@ -77,7 +77,7 @@ export const createAgentDefinitionSchema = (options) => {
     .object({
       // Basic Information
       agentType: z.string().min(1, "Agent type is required"),
-      agentName: z.string().min(1, "Agent name is required"),
+      agentName: z.string().trim().min(1, "Agent name is required"),
       languages: z
         .array(z.string())
         .min(1, "At least one language is required"),
@@ -106,7 +106,7 @@ export const createAgentDefinitionSchema = (options) => {
         .optional(),
 
       // Behaviour
-      description: z.string().min(1, "Description is required"),
+      description: z.string().trim().min(1, "Description is required"),
       knowledgeBase: z.string().optional(),
       countryCode: z.string().optional(),
       contactNumber: z.string().optional(),
