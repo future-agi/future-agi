@@ -9,6 +9,7 @@ rows (``observation_span_id IS NULL``) and picks the latest run when the
 same ``(span, eval_config)`` repeats.
 """
 
+import uuid
 from datetime import timedelta
 
 import pytest  # noqa: E402
@@ -87,6 +88,21 @@ def _row(*, span, cfg, task, **kwargs):
     )
 
 
+def _fresh_span(base):
+    """A new span sharing base's trace/project — one eval row per span, so
+    live rows don't collide on the eval_logger_live_span_uniq
+    (task, span, cfg) partial unique constraint."""
+    return ObservationSpan.objects.create(
+        id=f"span_{uuid.uuid4().hex[:16]}",
+        project=base.project,
+        trace=base.trace,
+        name="agg span",
+        observation_type="llm",
+        start_time=base.start_time,
+        end_time=base.end_time,
+    )
+
+
 # ── eval_aggregation ───────────────────────────────────────────────────
 
 
@@ -111,7 +127,7 @@ class TestEvalAggregation:
         cfg = _config(project=project, template=tpl, name="Faithfulness")
         task = _task(project=project)
         for v in (0.4, 0.6, 0.8):
-            _row(span=observation_span, cfg=cfg, task=task, output_float=v)
+            _row(span=_fresh_span(observation_span), cfg=cfg, task=task, output_float=v)
 
         body = self._get(auth_client, task).json()["result"]
         agg = body["eval_aggregation"]["Faithfulness"]
@@ -130,7 +146,7 @@ class TestEvalAggregation:
         cfg = _config(project=project, template=tpl, name="Toxicity Check")
         task = _task(project=project)
         for v in (True, True, True, False):
-            _row(span=observation_span, cfg=cfg, task=task, output_bool=v)
+            _row(span=_fresh_span(observation_span), cfg=cfg, task=task, output_bool=v)
 
         agg = self._get(auth_client, task).json()["result"]["eval_aggregation"][
             "Toxicity Check"
@@ -150,7 +166,12 @@ class TestEvalAggregation:
         task = _task(project=project)
         # 4 rows: A, B, AC, A → A in 3/4, B in 1/4, C in 1/4
         for lst in (["A"], ["B"], ["A", "C"], ["A"]):
-            _row(span=observation_span, cfg=cfg, task=task, output_str_list=lst)
+            _row(
+                span=_fresh_span(observation_span),
+                cfg=cfg,
+                task=task,
+                output_str_list=lst,
+            )
 
         agg = self._get(auth_client, task).json()["result"]["eval_aggregation"][
             "Sentiment"
@@ -212,12 +233,12 @@ class TestEvalAggregation:
         )
         cfg = _config(project=project, template=tpl, name="Faithfulness")
         task = _task(project=project)
-        _row(span=observation_span, cfg=cfg, task=task, output_float=0.5)
-        _row(span=observation_span, cfg=cfg, task=task, output_float=0.5)
+        _row(span=_fresh_span(observation_span), cfg=cfg, task=task, output_float=0.5)
+        _row(span=_fresh_span(observation_span), cfg=cfg, task=task, output_float=0.5)
         # Adding an error row with a spurious output_float must not shift
         # the mean — the row is excluded entirely.
         _row(
-            span=observation_span,
+            span=_fresh_span(observation_span),
             cfg=cfg,
             task=task,
             error=True,
@@ -240,12 +261,12 @@ class TestEvalAggregation:
         )
         cfg = _config(project=project, template=tpl, name="Toxicity")
         task = _task(project=project)
-        _row(span=observation_span, cfg=cfg, task=task, output_bool=True)
-        _row(span=observation_span, cfg=cfg, task=task, output_bool=True)
+        _row(span=_fresh_span(observation_span), cfg=cfg, task=task, output_bool=True)
+        _row(span=_fresh_span(observation_span), cfg=cfg, task=task, output_bool=True)
         # A soft-deleted False row would drop pass-rate to 66% if counted;
         # excluding it keeps it at 100%.
         _row(
-            span=observation_span,
+            span=_fresh_span(observation_span),
             cfg=cfg,
             task=task,
             output_bool=False,
@@ -405,9 +426,23 @@ class TestSpanAggregation:
         assert list(sa.keys()) == [str(observation_span.id)]
         assert sa[str(observation_span.id)]["SpanEval"]["value"] is True
 
-    def test_latest_wins_when_same_span_eval_pair_has_multiple_rows(
+    def test_soft_deleted_predecessor_is_superseded_by_live_row(
         self, auth_client, project, organization, workspace, observation_span
     ):
+        """Re-evaluating a (task, span, cfg) triple soft-deletes the old row and
+        upserts a new live one; only the live value surfaces in the rollup.
+
+        The ``eval_logger_live_span_uniq`` constraint (scoped
+        ``eval_task_id__isnull=False``) makes two *live* rows for one triple
+        impossible, so for eval-*task* rollups "latest wins" reduces to
+        "soft-deleted predecessor is excluded" — which is all this can assert.
+
+        NOTE: the endpoint's created_at "latest wins" tie-break is only
+        reachable on the inline (task-less) path, where the unique constraint
+        does not apply and multiple live rows are representable. That branch is
+        unexercised here. TODO(TH-XXXX): add ordering coverage on the inline
+        path, or delete the now-unreachable ordering branch.
+        """
         tpl = _template(
             organization=organization,
             workspace=workspace,
@@ -415,18 +450,10 @@ class TestSpanAggregation:
         )
         cfg = _config(project=project, template=tpl, name="Faithfulness")
         task = _task(project=project)
-        older = _row(span=observation_span, cfg=cfg, task=task, output_float=0.1)
-        newer = _row(span=observation_span, cfg=cfg, task=task, output_float=0.9)
-        # bump `older` further into the past so created_at ordering is
-        # deterministic regardless of intra-test timing.
-        from datetime import timedelta
-
-        from django.utils import timezone
-
-        EvalLogger.objects.filter(id=older.id).update(
-            created_at=timezone.now() - timedelta(hours=2)
-        )
-        EvalLogger.objects.filter(id=newer.id).update(created_at=timezone.now())
+        # Superseded row is soft-deleted (re-eval upserts it); the live row is
+        # the only survivor under the (task, span, cfg) unique constraint.
+        _row(span=observation_span, cfg=cfg, task=task, output_float=0.1, deleted=True)
+        _row(span=observation_span, cfg=cfg, task=task, output_float=0.9)
 
         sa = self._get(auth_client, task).json()["result"]["span_aggregation"]
         assert sa[str(observation_span.id)]["Faithfulness"]["value"] == pytest.approx(

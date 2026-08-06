@@ -35,6 +35,7 @@ import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
 import { unwrapCellValue } from "./datasetCellValue";
 import { buildTree } from "./columnTree";
+import RequiredMark from "src/components/RequiredMark";
 
 const DATASET_PAGE_SIZE = 25;
 
@@ -1419,7 +1420,8 @@ const DatasetTestMode = React.forwardRef(
         {!initialDatasetId && !isWorkbenchMode && (
           <Box>
             <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
-              Choose Dataset<span style={{ color: "#d32f2f" }}>*</span>
+              Choose Dataset
+              <RequiredMark />
             </Typography>
             <Autocomplete
               fullWidth

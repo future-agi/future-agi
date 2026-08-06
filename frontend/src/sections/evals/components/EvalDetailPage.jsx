@@ -66,6 +66,9 @@ import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerCon
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
+const ERROR_LOCALIZER_OSS_TOOLTIP =
+  "Error Localization is not available on self-hosted (OSS) deployments.";
+
 const extract_selected_tools = (tools) => {
   if (Array.isArray(tools)) return tools;
   if (tools && typeof tools === "object") {
@@ -143,7 +146,8 @@ const EvalDetailPage = () => {
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState("");
   const [codeLanguage, setCodeLanguage] = useState("python");
-  const [model, setModel] = useState("turing_large");
+  const [model, setModel] = useState(isOSS ? "" : "turing_large");
+  const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
   const [choiceScores, setChoiceScores] = useState({});
@@ -165,6 +169,7 @@ const EvalDetailPage = () => {
       "mustache",
   );
   const [errorLocalizerEnabled, setErrorLocalizerEnabled] = useState(false);
+  const errorLocalizerActive = errorLocalizerEnabled && !isOSS;
 
   // Dataset columns for autocomplete
   const [datasetColumns, setDatasetColumns] = useState([]);
@@ -768,6 +773,12 @@ const EvalDetailPage = () => {
         "Turing models are not available in OSS. Please select your own model.",
         { variant: "error" },
       );
+      setOpenModelMenuSignal((n) => n + 1);
+      return;
+    }
+    if (isOSS && evalType !== "code" && !model) {
+      enqueueSnackbar("Please select a model.", { variant: "error" });
+      setOpenModelMenuSignal((n) => n + 1);
       return;
     }
     try {
@@ -797,7 +808,7 @@ const EvalDetailPage = () => {
         knowledge_bases: evalType === "agent" ? knowledgeBaseIds : undefined,
         data_injection: evalType === "agent" ? dataInjection : undefined,
         summary: evalType === "agent" ? summary : undefined,
-        error_localizer_enabled: errorLocalizerEnabled,
+        error_localizer_enabled: errorLocalizerActive,
         template_format: templateFormat,
         messages: evalType === "llm" ? messages : undefined,
         // Send [] for LLM evals so the BE can persist a user-cleared list.
@@ -829,7 +840,7 @@ const EvalDetailPage = () => {
         knowledge_bases: evalType === "agent" ? knowledgeBaseIds : undefined,
         data_injection: evalType === "agent" ? dataInjection : undefined,
         summary: evalType === "agent" ? summary : undefined,
-        error_localizer_enabled: errorLocalizerEnabled,
+        error_localizer_enabled: errorLocalizerActive,
         template_format: templateFormat,
         messages: evalType === "llm" ? messages : undefined,
         few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
@@ -887,7 +898,7 @@ const EvalDetailPage = () => {
     connectorIds,
     knowledgeBaseIds,
     contextOptions,
-    errorLocalizerEnabled,
+    errorLocalizerActive,
     messages,
     fewShotExamples,
     updateEval,
@@ -948,6 +959,11 @@ const EvalDetailPage = () => {
 
   // Test evaluation — auto-saves current config before running
   const handleTestEvaluation = useCallback(async () => {
+    if (isOSS && evalType !== "code" && !model) {
+      enqueueSnackbar("Please select a model.", { variant: "error" });
+      setOpenModelMenuSignal((n) => n + 1);
+      return;
+    }
     setIsTesting(true);
     setTestError(null);
     setTestPassed(false);
@@ -978,7 +994,7 @@ const EvalDetailPage = () => {
           knowledge_bases: evalType === "agent" ? knowledgeBaseIds : undefined,
           data_injection: evalType === "agent" ? dataInjection : undefined,
           summary: evalType === "agent" ? summary : undefined,
-          error_localizer_enabled: errorLocalizerEnabled,
+          error_localizer_enabled: errorLocalizerActive,
           template_format: templateFormat,
           messages: evalType === "llm" ? messages : undefined,
           few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
@@ -1013,6 +1029,7 @@ const EvalDetailPage = () => {
   }, [
     evalId,
     evalType,
+    isOSS,
     isSystemEval,
     isComposite,
     instructions,
@@ -1029,7 +1046,7 @@ const EvalDetailPage = () => {
     connectorIds,
     knowledgeBaseIds,
     contextOptions,
-    errorLocalizerEnabled,
+    errorLocalizerActive,
     messages,
     fewShotExamples,
     updateEval,
@@ -1506,6 +1523,7 @@ const EvalDetailPage = () => {
                 {/* Agent type — InstructionEditor with model bar */}
                 {!isComposite && evalType === "agent" && (
                   <InstructionEditor
+                    openModelMenuSignal={openModelMenuSignal}
                     value={instructions}
                     onChange={(v) => {
                       setInstructions(v);
@@ -1561,6 +1579,7 @@ const EvalDetailPage = () => {
                 {!isComposite && evalType === "llm" && (
                   <>
                     <LLMPromptEditor
+                      openModelMenuSignal={openModelMenuSignal}
                       messages={messages}
                       onMessagesChange={(msgs) => {
                         setMessages(msgs);
@@ -1683,24 +1702,34 @@ const EvalDetailPage = () => {
                 {/* Error Localization */}
                 {!isComposite && evalType !== "code" && (
                   <Box>
-                    <FormControlLabel
-                      control={
-                        <Checkbox
-                          checked={errorLocalizerEnabled}
-                          onChange={(e) => {
-                            setErrorLocalizerEnabled(e.target.checked);
-                            markDirty();
-                          }}
-                          size="small"
+                    <CustomTooltip
+                      show={isOSS}
+                      type=""
+                      arrow
+                      title={ERROR_LOCALIZER_OSS_TOOLTIP}
+                    >
+                      <Box sx={{ display: "inline-flex" }}>
+                        <FormControlLabel
+                          control={
+                            <Checkbox
+                              checked={errorLocalizerActive}
+                              disabled={isOSS}
+                              onChange={(e) => {
+                                setErrorLocalizerEnabled(e.target.checked);
+                                markDirty();
+                              }}
+                              size="small"
+                            />
+                          }
+                          label={
+                            <Typography variant="body2" fontWeight={500}>
+                              Error Localization
+                            </Typography>
+                          }
+                          sx={{ ml: 0 }}
                         />
-                      }
-                      label={
-                        <Typography variant="body2" fontWeight={500}>
-                          Error Localization
-                        </Typography>
-                      }
-                      sx={{ ml: 0 }}
-                    />
+                      </Box>
+                    </CustomTooltip>
                     <Typography
                       variant="caption"
                       color="text.secondary"
@@ -1884,7 +1913,7 @@ const EvalDetailPage = () => {
                     requiredKeys={variables}
                     multiChoice={multiChoice}
                     showVersions={!(isSystemEval && evalType === "code")}
-                    errorLocalizerEnabled={errorLocalizerEnabled}
+                    errorLocalizerEnabled={errorLocalizerActive}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
                     onVersionSelect={handleVersionSelect}

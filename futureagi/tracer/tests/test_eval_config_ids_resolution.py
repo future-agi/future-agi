@@ -142,7 +142,9 @@ class TestEvalConfigIdSelectors:
         assert "tracer_eval_logger" in query
         assert "FINAL" not in query
         assert "(deleted = 0 OR deleted IS NULL)" in query
-        assert "_peerdb_is_deleted = 0" in query
+        # Project selector uses the rewrite-safe `deleted` marker only — the CDC
+        # `_peerdb_is_deleted` guard is no longer injected here.
+        assert "_peerdb_is_deleted" not in query
 
     def test_project_selector_forwards_timeout(self):
         svc, captured = _capturing_service([])

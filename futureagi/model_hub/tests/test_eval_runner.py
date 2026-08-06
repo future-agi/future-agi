@@ -1281,6 +1281,7 @@ class TestTestEvaluationTemplateAPIView(EvalRunnerBaseTestCase):
         """Function eval without eval_type_id returns error."""
         data = {
             "name": "test-function-eval",
+            "model": "gpt-4o",
             "config": {
                 "config": {"keywords": ["hello", "world"], "case_sensitive": True}
             },
@@ -1302,6 +1303,7 @@ class TestTestEvaluationTemplateAPIView(EvalRunnerBaseTestCase):
         """Unsupported template_type returns error."""
         data = {
             "name": "test-eval",
+            "model": "gpt-4o",
             "config": {},
             "output_type": "Pass/Fail",
             "template_type": "InvalidType",

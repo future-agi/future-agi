@@ -208,6 +208,43 @@ class TestV2SynthesisFromRootSpan:
 
 
 # --------------------------------------------------------------------------- #
+# 2a) input/output parsing: JSON parses to objects; plaintext is preserved
+# --------------------------------------------------------------------------- #
+class TestV2InputOutputParsing:
+    """Regression: bare plaintext input/output (e.g. voice transcripts) used to
+    be dropped to {} by json.loads; it must be preserved as the raw string."""
+
+    def _span(self, **row_overrides):
+        analytics = _FakeAnalytics(
+            project_rows=[{"project_id": "P1"}],
+            span_rows=[_root_span_row(**row_overrides)],
+        )
+        with ExitStack() as stack:
+            _patch_v2_pg(stack, project_accessible=True, pg_trace=None)
+            result = retrieve_trace_detail_ch(
+                MagicMock(), MagicMock(), "T1", analytics
+            )
+        return result
+
+    def test_json_input_output_parsed_to_objects(self):
+        result = self._span(input='{"q": "hi"}', output='{"a": "yo"}')
+        span = result["observation_spans"][0]["observation_span"]
+        assert span["input"] == {"q": "hi"}
+        assert span["output"] == {"a": "yo"}
+
+    def test_plaintext_input_output_preserved(self):
+        text_in = "What's on my calendar this afternoon?"
+        text_out = "You have a 3pm meeting."
+        result = self._span(input=text_in, output=text_out)
+        span = result["observation_spans"][0]["observation_span"]
+        assert span["input"] == text_in  # not {}
+        assert span["output"] == text_out
+        # synthesized trace envelope inherits the same raw text
+        assert result["trace"]["input"] == text_in
+        assert result["trace"]["output"] == text_out
+
+
+# --------------------------------------------------------------------------- #
 # 2b) span_attributes = typed maps ∪ attributes_extra
 # --------------------------------------------------------------------------- #
 class TestV2SpanAttributesMerge:
@@ -462,6 +499,104 @@ class TestV2EvalScoreRendering:
 
     def test_no_score_when_both_null(self):
         assert self._scores_for(self._eval_row())[0]["score"] is None
+
+    def _scores_for_type(self, output_type, eval_row, config=None):
+        """Config resolves to an eval of ``output_type`` (via derive_output_type).
+        Pass ``config`` (e.g. {"output": "Pass/Fail"}) with output_type=None to
+        exercise the config["output"] fallback when output_type_normalized is unset."""
+        analytics = _FakeAnalytics(
+            project_rows=[{"project_id": "P1"}],
+            span_rows=[_root_span_row()],
+            eval_rows=[eval_row],
+        )
+        cfg = SimpleNamespace(
+            id="C1",
+            name="e",
+            eval_template=SimpleNamespace(
+                output_type_normalized=output_type,
+                name="e",
+                template_type="single",
+                config=config or {},
+            ),
+        )
+        cfg_mgr = MagicMock()
+        cfg_mgr.filter.return_value.select_related.return_value = [cfg]
+        with ExitStack() as stack:
+            _patch_v2_pg(stack, project_accessible=True, pg_trace=None)
+            stack.enter_context(
+                patch(
+                    "tracer.models.custom_eval_config.CustomEvalConfig.objects",
+                    cfg_mgr,
+                )
+            )
+            result = retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
+        return result["observation_spans"][0]["eval_scores"]
+
+    def test_pass_fail_pass_with_coerced_zero_float(self):
+        # Verdict in output_bool, output_float coerced to 0 → 100 (Pass), not 0.
+        row = self._eval_row(eval_config_id="C1", output_bool=True, output_float=0.0)
+        assert self._scores_for_type("pass_fail", row)[0]["score"] == 100
+
+    def test_pass_fail_fail_with_coerced_zero_float(self):
+        row = self._eval_row(eval_config_id="C1", output_bool=False, output_float=0.0)
+        assert self._scores_for_type("pass_fail", row)[0]["score"] == 0
+
+    def test_percentage_uses_float_not_coerced_bool(self):
+        # percentage → output_float; the coerced output_bool must be ignored.
+        row = self._eval_row(eval_config_id="C1", output_float=0.6, output_bool=True)
+        assert self._scores_for_type("percentage", row)[0]["score"] == 60.0
+
+    def test_choices_single_surfaces_label_not_zero(self):
+        # Choices: value in output_str_list; float/bool coerced to 0. Must show
+        # the option as score_label with score None (not 0% / a fake Fail).
+        row = self._eval_row(
+            output_str_list='["neutral"]', output_bool=False, output_float=0.0
+        )
+        e = self._scores_for(row)[0]
+        assert e["score"] is None
+        assert e["score_items"] == ["neutral"]
+        assert e["score_label"] == "neutral"
+
+    def test_choices_multiselect_lists_each_option(self):
+        row = self._eval_row(
+            output_str_list='["neutral","formal"]', output_bool=False, output_float=0.0
+        )
+        e = self._scores_for(row)[0]
+        assert e["score"] is None
+        assert e["score_items"] == ["neutral", "formal"]
+        assert e["score_label"] == "neutral, formal"
+
+    def test_pass_fail_with_real_float_uses_bool_not_float(self):
+        # Deterministic evaluator writes a bool verdict AND a float; Pass/Fail
+        # must score from the bool (100), not the float (85).
+        row = self._eval_row(eval_config_id="C1", output_bool=True, output_float=0.85)
+        assert self._scores_for_type("pass_fail", row)[0]["score"] == 100
+
+    def test_pass_fail_routed_via_config_output_when_normalized_null(self):
+        # output_type_normalized unset → derive_output_type falls back to
+        # config["output"], so a passing Pass/Fail still scores 100, not 0.
+        row = self._eval_row(eval_config_id="C1", output_bool=True, output_float=0.0)
+        e = self._scores_for_type(None, row, config={"output": "Pass/Fail"})[0]
+        assert e["score"] == 100
+
+    def test_errored_row_nulls_all_derived_fields(self):
+        row = self._eval_row(
+            output_str_list='["neutral"]', output_bool=True, error=True
+        )
+        e = self._scores_for(row)[0]
+        assert e["score"] is None
+        assert e["score_items"] is None
+        assert e["score_label"] is None
+        assert e["result"] is None
+
+    def test_skipped_row_nulls_all_derived_fields(self):
+        row = self._eval_row(
+            output_str_list='["neutral"]', output_bool=True, status="skipped"
+        )
+        e = self._scores_for(row)[0]
+        assert e["score"] is None
+        assert e["score_items"] is None
+        assert e["result"] is None
 
 
 # --------------------------------------------------------------------------- #

@@ -21,20 +21,20 @@ jobs:
         id: detect
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Push-event tip SHA. (push payload commits use .id, not .sha; only the
+          # tip can be a squash of a dev->main PR, so we check just that commit.)
+          HEAD_SHA: ${{ github.event.after }}
         run: |
           set -eu
-          violation=""
-          for sha in $(jq -r '.commits[].sha' "$GITHUB_EVENT_PATH"); do
-            parents=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha" --jq '.parents | length')
-            [ "$parents" -ge 2 ] && continue
-            pr_json=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/pulls" --jq \
-              '[.[] | select(.base.ref == "main" and .head.ref == "dev" and .merged_at != null and .merge_commit_sha == "'"$sha"'")][0] // empty')
-            if [ -n "$pr_json" ]; then
-              violation="$(printf '%s' "$pr_json" | jq -r '.number')"
-              break
-            fi
-          done
-          echo "pr=${violation}" >> "$GITHUB_OUTPUT"
+          case "$HEAD_SHA" in 0000000000000000000000000000000000000000) echo "pr=" >> "$GITHUB_OUTPUT"; exit 0 ;; esac
+          parents=$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA" --jq '.parents | length')
+          if [ "$parents" -ge 2 ]; then
+            echo "pr=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/pulls" \
+            --jq '[.[] | select(.base.ref == "main" and .head.ref == "dev" and .merged_at != null and .merge_commit_sha == env.HEAD_SHA)][0].number // empty')
+          echo "pr=${pr}" >> "$GITHUB_OUTPUT"
       - name: Send Slack alert
         if: steps.detect.outputs.pr != ''
         continue-on-error: true

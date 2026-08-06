@@ -351,6 +351,12 @@ export const AccountsAcceptInvitationCreateResponse = zod.object({
 })
 
 
+export const AccountsActivateReadParams = zod.object({
+  "uidb64": zod.string(),
+  "token": zod.string()
+})
+
+
 
 
 
@@ -22465,8 +22471,7 @@ export const modelHubKbCreateBodyChunkSizeMax = 2147483647;
 export const ModelHubKbCreateBody = zod.object({
   "name": zod.string().min(1).max(modelHubKbCreateBodyNameMax),
   "embedding_model": zod.enum(['BAAI/bge-small-en-v1.5']).optional(),
-  "chunk_size": zod.number().min(modelHubKbCreateBodyChunkSizeMin).max(modelHubKbCreateBodyChunkSizeMax),
-  "organization": zod.string().uuid().optional()
+  "chunk_size": zod.number().min(modelHubKbCreateBodyChunkSizeMin).max(modelHubKbCreateBodyChunkSizeMax)
 })
 
 
@@ -22667,6 +22672,21 @@ export const ModelHubKnowledgeBasePartialUpdateResponse = zod.object({
 })
 
 
+export const modelHubKnowledgeBaseDeleteBodyKbIdsDefault = [];
+
+export const ModelHubKnowledgeBaseDeleteBody = zod.object({
+  "kb_ids": zod.array(zod.string().uuid()).default(modelHubKnowledgeBaseDeleteBodyKbIdsDefault)
+})
+
+
+
+
+export const ModelHubKnowledgeBaseDeleteResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.string().min(1)
+})
+
+
 export const modelHubKnowledgeBaseFilesCreateBodySortDefault = [];
 export const modelHubKnowledgeBaseFilesCreateBodyPageNumberDefault = 0;
 export const modelHubKnowledgeBaseFilesCreateBodyPageSizeDefault = 10;
@@ -22703,6 +22723,28 @@ export const ModelHubKnowledgeBaseFilesCreateResponse = zod.object({
   "status_count": zod.number(),
   "total_rows": zod.number()
 })
+})
+
+
+export const modelHubKnowledgeBaseFilesDeleteBodyDeleteAllDefault = false;
+export const modelHubKnowledgeBaseFilesDeleteBodyFileIdsDefault = [];
+export const modelHubKnowledgeBaseFilesDeleteBodyExcludedFileIdsDefault = [];
+export const modelHubKnowledgeBaseFilesDeleteBodyFileNamesDefault = [];
+
+export const ModelHubKnowledgeBaseFilesDeleteBody = zod.object({
+  "kb_id": zod.string().uuid().optional(),
+  "delete_all": zod.boolean().default(modelHubKnowledgeBaseFilesDeleteBodyDeleteAllDefault),
+  "file_ids": zod.array(zod.string().uuid()).default(modelHubKnowledgeBaseFilesDeleteBodyFileIdsDefault),
+  "excluded_file_ids": zod.array(zod.string().uuid()).default(modelHubKnowledgeBaseFilesDeleteBodyExcludedFileIdsDefault),
+  "file_names": zod.array(zod.string().min(1)).default(modelHubKnowledgeBaseFilesDeleteBodyFileNamesDefault)
+})
+
+
+
+
+export const ModelHubKnowledgeBaseFilesDeleteResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.string().min(1)
 })
 
 
@@ -44613,7 +44655,7 @@ export const UsageOrganizationSubscriptionListResponse = zod.object({
   "organization": zod.string().uuid(),
   "subscription_tier": zod.string().optional(),
   "custom_subscription_id": zod.string().max(usageOrganizationSubscriptionListResponseResultItemCustomSubscriptionIdMax).optional(),
-  "status": zod.enum(['active', 'past_due', 'canceled', 'inactive']).optional(),
+  "status": zod.enum(['active', 'past_due', 'unpaid', 'canceled', 'inactive']).optional(),
   "subscription_price": zod.string().optional().describe('Price of the subscription.'),
   "wallet_balance": zod.string().optional(),
   "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
@@ -44653,7 +44695,7 @@ export const UsageOrganizationSubscriptionCreateBody = zod.object({
   "subscription_future_tier": zod.enum(['free', 'basic', 'basic_yearly', 'custom']).optional(),
   "subscription_future_start_date": zod.string().date().optional().describe('Next due date for renewal.'),
   "subscription_future_price": zod.string().optional().describe('Price of the future subscription.'),
-  "status": zod.enum(['active', 'past_due', 'canceled', 'inactive']).optional(),
+  "status": zod.enum(['active', 'past_due', 'unpaid', 'canceled', 'inactive']).optional(),
   "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
   "wallet_balance": zod.string().optional(),
   "stripe_customer_id_test": zod.string().max(usageOrganizationSubscriptionCreateBodyStripeCustomerIdTestMax).optional().describe('Stripe customer ID for test mode. NULL values are allowed.'),
@@ -44685,7 +44727,7 @@ export const UsageOrganizationSubscriptionCreateResponse = zod.object({
   "subscription_future_tier": zod.enum(['free', 'basic', 'basic_yearly', 'custom']).optional(),
   "subscription_future_start_date": zod.string().date().optional().describe('Next due date for renewal.'),
   "subscription_future_price": zod.string().optional().describe('Price of the future subscription.'),
-  "status": zod.enum(['active', 'past_due', 'canceled', 'inactive']).optional(),
+  "status": zod.enum(['active', 'past_due', 'unpaid', 'canceled', 'inactive']).optional(),
   "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
   "wallet_balance": zod.string().optional(),
   "stripe_customer_id_test": zod.string().max(usageOrganizationSubscriptionCreateResponseResultStripeCustomerIdTestMax).optional().describe('Stripe customer ID for test mode. NULL values are allowed.'),
@@ -44721,7 +44763,7 @@ export const UsageOrganizationSubscriptionPartialUpdateBody = zod.object({
   "subscription_future_tier": zod.enum(['free', 'basic', 'basic_yearly', 'custom']).optional(),
   "subscription_future_start_date": zod.string().date().optional().describe('Next due date for renewal.'),
   "subscription_future_price": zod.string().optional().describe('Price of the future subscription.'),
-  "status": zod.enum(['active', 'past_due', 'canceled', 'inactive']).optional(),
+  "status": zod.enum(['active', 'past_due', 'unpaid', 'canceled', 'inactive']).optional(),
   "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
   "wallet_balance": zod.string().optional(),
   "stripe_customer_id_test": zod.string().max(usageOrganizationSubscriptionPartialUpdateBodyStripeCustomerIdTestMax).optional().describe('Stripe customer ID for test mode. NULL values are allowed.'),
@@ -44753,7 +44795,7 @@ export const UsageOrganizationSubscriptionPartialUpdateResponse = zod.object({
   "subscription_future_tier": zod.enum(['free', 'basic', 'basic_yearly', 'custom']).optional(),
   "subscription_future_start_date": zod.string().date().optional().describe('Next due date for renewal.'),
   "subscription_future_price": zod.string().optional().describe('Price of the future subscription.'),
-  "status": zod.enum(['active', 'past_due', 'canceled', 'inactive']).optional(),
+  "status": zod.enum(['active', 'past_due', 'unpaid', 'canceled', 'inactive']).optional(),
   "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
   "wallet_balance": zod.string().optional(),
   "stripe_customer_id_test": zod.string().max(usageOrganizationSubscriptionPartialUpdateResponseResultStripeCustomerIdTestMax).optional().describe('Stripe customer ID for test mode. NULL values are allowed.'),
@@ -44803,7 +44845,7 @@ export const UsageOrganizationSubscriptionReadResponse = zod.object({
   "organization": zod.string().uuid(),
   "subscription_tier": zod.string().optional(),
   "custom_subscription_id": zod.string().max(usageOrganizationSubscriptionReadResponseResultItemCustomSubscriptionIdMax).optional(),
-  "status": zod.enum(['active', 'past_due', 'canceled', 'inactive']).optional(),
+  "status": zod.enum(['active', 'past_due', 'unpaid', 'canceled', 'inactive']).optional(),
   "subscription_price": zod.string().optional().describe('Price of the subscription.'),
   "wallet_balance": zod.string().optional(),
   "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
@@ -46427,6 +46469,11 @@ export const UsageV2UsageWorkspaceBreakdownListResponse = zod.object({
 })
 
 
+/**
+ * No auth — Stripe authenticates via signature header.
+APIView.as_view() auto-applies csrf_exempt.
+ * @summary Handle Stripe webhook events.
+ */
 
 
 
@@ -46437,8 +46484,11 @@ export const UsageWebhookCreateBody = zod.object({
   "data": zod.record(zod.string(), zod.string()).optional()
 })
 
+
+
+
 export const UsageWebhookCreateResponse = zod.object({
-  "status": zod.boolean(),
+  "status": zod.string().min(1),
   "result": zod.object({
   "event_type": zod.string().optional(),
   "action": zod.string().optional(),

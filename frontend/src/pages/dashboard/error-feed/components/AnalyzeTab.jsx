@@ -889,13 +889,13 @@ function SynthesisCard({ synthesis }) {
         <Iconify
           icon="mdi:star-four-points"
           width={12}
-          sx={{ color: "#7857FC" }}
+          sx={{ color: isDark ? "#A792FD" : "#7857FC" }}
         />
         <Typography
           fontSize="10.5px"
           fontWeight={700}
           sx={{
-            color: "#7857FC",
+            color: isDark ? "#A792FD" : "#7857FC",
             textTransform: "uppercase",
             letterSpacing: "0.08em",
           }}
@@ -1647,7 +1647,7 @@ export default function AnalyzeTab({ error }) {
                 <Iconify
                   icon="mdi:star-four-points-outline"
                   width={20}
-                  sx={{ color: "#7857FC" }}
+                  sx={{ color: "accent.brand" }}
                 />
               </Box>
               <Typography fontSize="14px" fontWeight={600} color="text.primary">

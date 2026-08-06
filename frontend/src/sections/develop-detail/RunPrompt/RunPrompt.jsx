@@ -82,6 +82,7 @@ import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { sanitizeContent } from "src/utils/utils";
 import { AudioPlaybackProvider } from "../../../components/custom-audio/context-provider/AudioPlaybackContext";
 import logger from "src/utils/logger";
+import { canonicalResponseFormat } from "src/utils/responseFormat";
 import { useCustomAudioDialog, useRunPromptStore } from "../states";
 import { useDevelopDetailContext } from "../Context/DevelopDetailContext";
 import { ShowComponent } from "../../../components/show";
@@ -1182,7 +1183,7 @@ export const RunPromptForm = React.forwardRef(
 
       setValue(
         "config.responseFormat",
-        importedConfig?.response_format ?? "text",
+        canonicalResponseFormat(importedConfig?.response_format ?? "text"),
       );
       setValue(
         "config.tools",

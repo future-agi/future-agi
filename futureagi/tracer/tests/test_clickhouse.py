@@ -920,7 +920,7 @@ class TestClickHouseFilterBuilder:
         assert "_peerdb_is_deleted" not in where
         assert "created_at >= %(start_date)s - INTERVAL 7 DAY" in where
 
-    def test_eval_metric_filter_keeps_legacy_predicate(self):
+    def test_eval_metric_filter_uses_deleted_marker(self):
         from django.test import override_settings
 
         with override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger"):
@@ -928,7 +928,10 @@ class TestClickHouseFilterBuilder:
         assert "FROM tracer_eval_logger " in where
         assert "tracer_eval_logger_v2" not in where
         assert "FINAL" not in where
-        assert "_peerdb_is_deleted = 0" in where
+        # Migrated off the legacy CDC `_peerdb_is_deleted` guard to the
+        # rewrite-safe `deleted` marker.
+        assert "(deleted = 0 OR deleted IS NULL)" in where
+        assert "_peerdb_is_deleted" not in where
 
     def test_eval_metric_filter_omits_date_bound_without_scope(self):
         """Callers that don't bind %(start_date)s (score_date_scope=False)
@@ -2698,7 +2701,10 @@ class TestTraceListQueryBuilder:
 
         assert "SELECT" in query
         assert "trace_id" in query
-        assert "dictGetOrDefault('enduser_dict', 'user_id', end_user_id, '')" in query
+        assert (
+            "dictGetOrDefault('enduser_dict', 'user_id', any(end_user_id), '')"
+            in query
+        )
         assert "GROUP BY trace_id" in query
         assert "PREWHERE trace_id IN" in query
         assert params["user_trace_ids"] == ("trace-1", "trace-2", "trace-3")
@@ -3868,12 +3874,18 @@ class TestConsistencyChecker:
 
     def test_health_status_disabled(self):
         """When CH is not enabled, get_health_status should return disabled status."""
+        from unittest.mock import patch
+
         from tracer.services.clickhouse.consistency import ConsistencyChecker
 
         checker = ConsistencyChecker()
-        health = checker.get_health_status()
-        # When CH is not enabled (default in test), should return disabled
-        assert health.status in ("disabled", "unhealthy", "degraded")
+        # CH25 is enabled by default now, so force the disabled branch.
+        with patch(
+            "tracer.services.clickhouse.consistency.is_clickhouse_enabled",
+            return_value=False,
+        ):
+            health = checker.get_health_status()
+        assert health.status == "disabled"
 
     def test_consistency_result_dataclass(self):
         """ConsistencyResult dataclass should hold comparison data."""
@@ -6826,7 +6838,7 @@ class TestVoiceCallListQueryBuilder:
         query, _ = builder.build()
 
         assert "mapContains(span_attr_str, 'ended_reason')" in query
-        assert "span_attr_str['ended_reason'] LIKE" in query
+        assert "span_attr_str['ended_reason'] ILIKE" in query
 
 
 @pytest.mark.unit

@@ -44,6 +44,9 @@ import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 
+const ERROR_LOCALIZER_OSS_TOOLTIP =
+  "Error Localization is not available on self-hosted (OSS) deployments.";
+
 const EVAL_TYPE_TABS = [
   { value: "agent", label: "Agents" },
   { value: "llm", label: "LLM-As-A-Judge" },
@@ -145,7 +148,7 @@ const EvalCreatePage = () => {
   const canEditEvals =
     RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][role];
   const { enqueueSnackbar } = useSnackbar();
-  const { isOSS } = useDeploymentMode();
+  const { isOSS, isLoading: deploymentModeLoading } = useDeploymentMode();
   const createEval = useCreateEval();
   const createComposite = useCreateCompositeEval();
   const testPlaygroundRef = useRef(null);
@@ -155,11 +158,12 @@ const EvalCreatePage = () => {
 
   // --- Single eval state ---
   const [name, setName] = useState("");
-  const [evalType, setEvalType] = useState("agent");
+  const [evalType, setEvalType] = useState(isOSS ? "llm" : "agent");
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState(PYTHON_CODE_TEMPLATE);
   const [codeLanguage, setCodeLanguage] = useState("python");
-  const [model, setModel] = useState("turing_large");
+  const [model, setModel] = useState(isOSS ? "" : "turing_large");
+  const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
   const [choiceScores, setChoiceScores] = useState({});
@@ -173,6 +177,7 @@ const EvalCreatePage = () => {
   const [knowledgeBaseIds, setKnowledgeBaseIds] = useState([]);
   const [contextOptions, setContextOptions] = useState(["variables_only"]);
   const [errorLocalizerEnabled, setErrorLocalizerEnabled] = useState(false);
+  const errorLocalizerActive = errorLocalizerEnabled && !isOSS;
   const [tags, setTags] = useState([]);
   const [fewShotExamples, setFewShotExamples] = useState([]);
   const [messages, setMessages] = useState([{ role: "system", content: "" }]);
@@ -246,9 +251,17 @@ const EvalCreatePage = () => {
     setIsTesting(false);
   }, []);
 
+  const evalTypeDefaulted = useRef(false);
+  useEffect(() => {
+    if (deploymentModeLoading || evalTypeDefaulted.current) return;
+    evalTypeDefaulted.current = true;
+    setEvalType(isOSS ? "llm" : "agent");
+  }, [deploymentModeLoading, isOSS]);
+
   // Load existing draft from URL, or create a new one
   const draftLoaded = useRef(false);
   useEffect(() => {
+    if (deploymentModeLoading) return;
     if (draftCreating.current) return;
 
     // If URL has a draft ID, load its config
@@ -314,7 +327,7 @@ const EvalCreatePage = () => {
             endpoints.develop.eval.createEvalTemplateV2,
             {
               is_draft: true,
-              eval_type: "agent",
+              eval_type: isOSS ? "llm" : "agent",
               output_type: "pass_fail",
               model: "turing_large",
               pass_threshold: 0.5,
@@ -330,7 +343,7 @@ const EvalCreatePage = () => {
         }
       })();
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [deploymentModeLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-save config to draft (debounced, skip initial load)
   const autoSaveTimer = useRef(null);
@@ -369,7 +382,7 @@ const EvalCreatePage = () => {
       knowledge_bases: evalType === "agent" ? knowledgeBaseIds : undefined,
       data_injection: evalType === "agent" ? dataInjection : undefined,
       summary: evalType === "agent" ? summary : undefined,
-      error_localizer_enabled: errorLocalizerEnabled,
+      error_localizer_enabled: errorLocalizerActive,
       messages: evalType === "llm" ? messages : undefined,
       // Send [] for LLM evals so the BE can persist a user-cleared list.
       few_shot_examples:
@@ -395,7 +408,7 @@ const EvalCreatePage = () => {
     connectorIds,
     knowledgeBaseIds,
     contextOptions,
-    errorLocalizerEnabled,
+    errorLocalizerActive,
     messages,
     fewShotExamples,
     templateFormat,
@@ -434,6 +447,12 @@ const EvalCreatePage = () => {
         "Turing models are not available in OSS. Please select your own model.",
         { variant: "error" },
       );
+      setOpenModelMenuSignal((n) => n + 1);
+      return;
+    }
+    if (isOSS && evalType !== "code" && !model) {
+      enqueueSnackbar("Please select a model.", { variant: "error" });
+      setOpenModelMenuSignal((n) => n + 1);
       return;
     }
     if (!draftId) {
@@ -544,6 +563,12 @@ const EvalCreatePage = () => {
     // needed since the composite hasn't been (and won't be) saved as a
     // single-eval draft. Single evals still need their draft up to date
     // so the playground sees the latest instructions/code/config.
+ 
+    if (isOSS && evalType !== "code" && !model) {
+      enqueueSnackbar("Please select a model.", { variant: "error" });
+      setOpenModelMenuSignal((n) => n + 1);
+      return;
+    }
     if (mode === "single" && !draftId) {
       enqueueSnackbar("Draft not ready yet, please wait", {
         variant: "warning",
@@ -575,6 +600,9 @@ const EvalCreatePage = () => {
   }, [
     mode,
     draftId,
+    isOSS,
+    evalType,
+    model,
     buildUpdatePayload,
     updateDraft,
     handleTestResult,
@@ -639,6 +667,11 @@ const EvalCreatePage = () => {
   // and can be tested individually.
   const canSave =
     canEditEvals && (mode === "single" ? canSaveSingle : canSaveComposite);
+
+
+  if (deploymentModeLoading) {
+    return null;
+  }
 
   return (
     <Box
@@ -838,7 +871,16 @@ const EvalCreatePage = () => {
                   {/* Eval Type Toggle — pill tabs (same as EvalAccordion Text/Image/Audio) */}
                   <Tabs
                     value={evalType}
-                    onChange={(_, val) => setEvalType(val)}
+                    onChange={(_, val) => {
+                      if (isOSS && val === "agent") {
+                        enqueueSnackbar(
+                          "Agent evaluations require an Enterprise (EE) license. Upgrade to EE license key to enable.",
+                          { variant: "info" },
+                        );
+                        return;
+                      }
+                      setEvalType(val);
+                    }}
                     variant="standard"
                     scrollButtons={false}
                     TabIndicatorProps={{ style: { display: "none" } }}
@@ -865,35 +907,64 @@ const EvalCreatePage = () => {
                           : "background.neutral",
                     }}
                   >
-                    {EVAL_TYPE_TABS.map((tab) => (
-                      <Tab
-                        key={tab.value}
-                        value={tab.value}
-                        label={tab.label}
-                        sx={{
-                          bgcolor:
-                            evalType === tab.value
-                              ? (theme) =>
-                                  theme.palette.mode === "dark"
-                                    ? "rgba(255,255,255,0.12)"
-                                    : "background.paper"
-                              : "transparent",
-                          boxShadow:
-                            evalType === tab.value
-                              ? (theme) =>
-                                  theme.palette.mode === "dark"
-                                    ? "none"
-                                    : "0 1px 3px rgba(0,0,0,0.08)"
-                              : "none",
-                          borderRadius: "6px",
-                          fontWeight: evalType === tab.value ? 600 : 400,
-                          color:
-                            evalType === tab.value
-                              ? "text.primary"
-                              : "text.disabled",
-                        }}
-                      />
-                    ))}
+                    {EVAL_TYPE_TABS.map((tab) => {
+                      const locked = isOSS && tab.value === "agent";
+                      return (
+                        <Tab
+                          key={tab.value}
+                          value={tab.value}
+                          label={
+                            locked ? (
+                              <CustomTooltip
+                                show
+                                type=""
+                                arrow
+                                title="Agent evaluations require an Enterprise (EE) license. Upgrade to EE license key to enable."
+                              >
+                                <Box
+                                  sx={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 0.5,
+                                  }}
+                                >
+                                  {tab.label}
+                                  <Iconify
+                                    icon="mdi:lock-outline"
+                                    width={14}
+                                  />
+                                </Box>
+                              </CustomTooltip>
+                            ) : (
+                              tab.label
+                            )
+                          }
+                          sx={{
+                            bgcolor:
+                              evalType === tab.value
+                                ? (theme) =>
+                                    theme.palette.mode === "dark"
+                                      ? "rgba(255,255,255,0.12)"
+                                      : "background.paper"
+                                : "transparent",
+                            boxShadow:
+                              evalType === tab.value
+                                ? (theme) =>
+                                    theme.palette.mode === "dark"
+                                      ? "none"
+                                      : "0 1px 3px rgba(0,0,0,0.08)"
+                                : "none",
+                            borderRadius: "6px",
+                            fontWeight: evalType === tab.value ? 600 : 400,
+                            opacity: locked ? 0.6 : 1,
+                            color:
+                              evalType === tab.value
+                                ? "text.primary"
+                                : "text.disabled",
+                          }}
+                        />
+                      );
+                    })}
                   </Tabs>
 
                   {/* ═══ Tab-specific content ═══ */}
@@ -905,6 +976,7 @@ const EvalCreatePage = () => {
                       onChange={setInstructions}
                       model={model}
                       onModelChange={setModel}
+                      openModelMenuSignal={openModelMenuSignal}
                       placeholder="You are a helpful assistant"
                       templateFormat={templateFormat}
                       onTemplateFormatChange={setTemplateFormat}
@@ -935,6 +1007,7 @@ const EvalCreatePage = () => {
                           format render inline in LLMPromptEditor's top
                           bar, matching the agent InstructionEditor. */}
                       <LLMPromptEditor
+                        openModelMenuSignal={openModelMenuSignal}
                         messages={messages}
                         onMessagesChange={(msgs) => {
                           setMessages(msgs);
@@ -1038,23 +1111,33 @@ const EvalCreatePage = () => {
                       produce model traces for the localizer to introspect. */}
                   {evalType !== "code" && (
                     <Box>
-                      <FormControlLabel
-                        control={
-                          <Checkbox
-                            checked={errorLocalizerEnabled}
-                            onChange={(e) =>
-                              setErrorLocalizerEnabled(e.target.checked)
+                      <CustomTooltip
+                        show={isOSS}
+                        type=""
+                        arrow
+                        title={ERROR_LOCALIZER_OSS_TOOLTIP}
+                      >
+                        <Box sx={{ display: "inline-flex" }}>
+                          <FormControlLabel
+                            control={
+                              <Checkbox
+                                checked={errorLocalizerActive}
+                                disabled={isOSS}
+                                onChange={(e) =>
+                                  setErrorLocalizerEnabled(e.target.checked)
+                                }
+                                size="small"
+                              />
                             }
-                            size="small"
+                            label={
+                              <Typography variant="body2" fontWeight={500}>
+                                Error Localization
+                              </Typography>
+                            }
+                            sx={{ ml: 0 }}
                           />
-                        }
-                        label={
-                          <Typography variant="body2" fontWeight={500}>
-                            Error Localization
-                          </Typography>
-                        }
-                        sx={{ ml: 0 }}
-                      />
+                        </Box>
+                      </CustomTooltip>
                       <Typography
                         variant="caption"
                         color="text.secondary"
@@ -1212,7 +1295,7 @@ const EvalCreatePage = () => {
                   onColumnsLoaded={handleColumnsLoaded}
                   onReadyChange={handlePlaygroundReadyChange}
                   errorLocalizerEnabled={
-                    mode === "composite" ? false : errorLocalizerEnabled
+                    mode === "composite" ? false : errorLocalizerActive
                   }
                   templateFormat={templateFormat}
                 />

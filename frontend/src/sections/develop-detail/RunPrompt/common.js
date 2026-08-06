@@ -1,6 +1,7 @@
 import _ from "lodash";
 import { normalizeForComparison } from "src/sections/workbench/createPrompt/Playground/common";
 import { getRandomId } from "src/utils/utils";
+import { canonicalResponseFormat } from "src/utils/responseFormat";
 import { z } from "zod";
 
 function getIdFromObject(obj) {
@@ -128,11 +129,13 @@ export const transformDefaultData = (editConfigData, allColumns) => {
   const resolvedModelType =
     runPromptConfig?.model_type || runPromptConfig?.modelType;
 
+  // Prompts saved elsewhere store the backend's `json` spelling; map it onto
+  // the menu's `json_object` row.
   const rawResponseFormat = editConfigData?.response_format;
   const resolvedResponseFormat =
     typeof rawResponseFormat === "object"
       ? rawResponseFormat?.name ?? "text"
-      : rawResponseFormat ?? "text";
+      : canonicalResponseFormat(rawResponseFormat ?? "text");
 
   let voiceInputColumn = "";
   if (resolvedModelType === MODEL_TYPES.STT) {

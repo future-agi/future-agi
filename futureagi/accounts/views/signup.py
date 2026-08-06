@@ -20,7 +20,7 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.authentication import decrypt_message, generate_encrypted_message
@@ -230,6 +230,8 @@ def user_logout(request):
         return _gm.bad_request("Error in user logout.")
 
 
+@api_view(["GET"])
+@permission_classes([AllowAny])
 def activate_account(request, uidb64, token):
     # Rate-limit by IP: 10 requests per minute.
     ip = request.META.get("HTTP_X_FORWARDED_FOR", request.META.get("REMOTE_ADDR", ""))

@@ -132,24 +132,49 @@ export const AUTH_METHODS_BY_PROVIDER = {
   others: OTHER_AUTH_METHODS,
 };
 
-export const stepsInfo = [
+/**
+ * Providers that offer a single selectable auth method (API Key) have nothing
+ * to choose, so preselect it rather than leaving a required field empty.
+ * Providers with a real menu return "" and the user picks.
+ *
+ * @param {string} provider
+ * @returns {string}
+ */
+export const defaultAuthMethodForProvider = (provider) => {
+  const byProvider =
+    /** @type {Record<string, {value: string, disabled?: boolean}[]>} */ (
+      AUTH_METHODS_BY_PROVIDER
+    );
+  const selectable = (byProvider[provider] || []).filter(
+    (method) => !method.disabled,
+  );
+  return selectable.length === 1 ? selectable[0].value : "";
+};
+
+export const getStepsInfo = (isDark) => [
   {
     title: "Select agent definition",
     description:
       "Start from scratch to create a clear, goal-oriented prompt tailored to your needs.",
-    imageSrc: "/assets/agents/help/select-agent-def.svg",
+    imageSrc: isDark
+      ? "/assets/agents/help/select-agent-def_dark.svg"
+      : "/assets/agents/help/select-agent-def.svg",
   },
   {
     title: "Generate workflow and add personas",
     description:
       "Start with a ready-made prompt template. Select an option and tailor it to fit your specific needs.",
-    imageSrc: "/assets/agents/help/gen-workkflow.svg",
+    imageSrc: isDark
+      ? "/assets/agents/help/gen-workkflow_dark.svg"
+      : "/assets/agents/help/gen-workkflow.svg",
   },
   {
     title: "Review scenarios for tests",
     description:
       "Refine what you have to make your output clearer, smarter, and more effective.",
-    imageSrc: "/assets/agents/help/review-scenatios.svg",
+    imageSrc: isDark
+      ? "/assets/agents/help/review-scenatios_dark.svg"
+      : "/assets/agents/help/review-scenatios.svg",
   },
 ];
 

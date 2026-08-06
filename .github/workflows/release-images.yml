@@ -120,7 +120,7 @@ jobs:
         .temporal_worker_default.image.tag .temporal_worker_tasks_s.image.tag
         .temporal_worker_tasks_l.image.tag .temporal_worker_tasks_xl.image.tag
         .temporal_worker_trace.image.tag .temporal_worker_agent_compass.image.tag
-        .agentcc_gateway.image.tag .codeExecutor.image.tag
+        .agentcc_gateway.image.tag .codeExecutor.image.tag .embedding.image.tag
     steps:
       - uses: actions/create-github-app-token@v2
         id: app-token
@@ -152,10 +152,10 @@ jobs:
           }
           # $COMMON_PATHS is intentionally unquoted: it must word-split into
           # one argument per yq path handed to bump().
+          # Only the active GCP regions are bumped by the pipeline; us/aws is the
+          # decommissioned AWS deployment and is intentionally left untouched.
           # shellcheck disable=SC2086
-          bump us/aws/deployment/values.yaml  $COMMON_PATHS
-          # shellcheck disable=SC2086
-          bump eu/gcp/deployment/values.yaml  $COMMON_PATHS
+          bump eu/gcp/deployment/values.yaml  $COMMON_PATHS .fiCollector.image.tag
           # shellcheck disable=SC2086
           bump us/gcp/deployment/values.yaml  $COMMON_PATHS .fiCollector.image.tag
       - name: Open bump PR

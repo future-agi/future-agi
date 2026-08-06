@@ -16,6 +16,7 @@ span IDs, grouped by ``(observation_span_id, label_id)``.
 The three result sets are merged in Python to produce the final response.
 """
 
+from datetime import datetime
 from typing import Any
 
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
@@ -279,7 +280,13 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         """
         return query, self.params
 
-    def build_id_query(self, *, limit: int | None = None) -> tuple[str, dict[str, Any]]:
+    def build_id_query(
+        self,
+        *,
+        limit: int | None = None,
+        created_at_floor: datetime | None = None,
+        created_at_ceiling: datetime | None = None,
+    ) -> tuple[str, dict[str, Any]]:
         """Filtered span ids only — same filter/time window as build(), no pivots.
 
         With ``limit=None`` (default) the full matching id set is returned
@@ -287,8 +294,25 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         capped "select all matching" resolve: the ids are then ordered
         newest-first (``start_time DESC, id DESC`` — same as the observe list and
         the PG bulk-select) so the cap keeps the most recent rows deterministically.
+
+        ``created_at_floor`` (continuous eval tasks only): floor the scan on CH
+        arrival time (``created_at``) instead of event time (``start_time``), so a
+        span whose ingestion lagged its ``start_time`` is still picked up. ``None``
+        keeps the ``start_time`` window used by the UI list and historical tasks.
         """
         start_date, end_date = self.parse_time_range(self.filters)
+        if created_at_floor is not None:
+            self.params["created_at_floor"] = created_at_floor
+            time_where = "AND created_at >= %(created_at_floor)s"
+            if created_at_ceiling is not None:
+                self.params["created_at_ceiling"] = created_at_ceiling
+                time_where += " AND created_at < %(created_at_ceiling)s"
+        else:
+            time_where = (
+                "AND created_at >= %(start_date)s - INTERVAL 1 DAY "
+                "AND start_time >= %(start_date)s "
+                "AND start_time < %(end_date)s"
+            )
         self.params["start_date"] = start_date
         self.params["end_date"] = end_date
 
@@ -319,9 +343,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         SELECT id
         FROM {self.TABLE}
         {self.project_where()}
-          AND created_at >= %(start_date)s - INTERVAL 1 DAY
-          AND start_time >= %(start_date)s
-          AND start_time < %(end_date)s
+          {time_where}
           {pv_fragment}
           {filter_fragment}
         {order_fragment}

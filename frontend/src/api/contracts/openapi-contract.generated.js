@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 968,
+  "endpointCount": 969,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -401,6 +401,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "500": {
             "$ref": "#/definitions/AccountsErrorResponse"
           },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/accounts/activate/{uidb64}/{token}/": {
+      "get": {
+        "operationId": "accounts_activate_read",
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
+        "queryParameters": {},
+        "responses": {
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -20791,11 +20805,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "model-hub_knowledge-base_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/LegacyKnowledgeBaseBulkDeleteRequest"
+        },
         "queryParameters": {},
         "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubStringResultResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -20837,11 +20871,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "model-hub_knowledge-base_files_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/LegacyKnowledgeBaseFileDeleteRequest"
+        },
         "queryParameters": {},
         "responses": {
+          "200": {
+            "$ref": "#/definitions/ModelHubStringResultResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -41037,7 +41091,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/StripeWebhookLegacyResponse"
+            "$ref": "#/definitions/StripeWebhookResponse"
           },
           "400": {
             "$ref": "#/definitions/UsageErrorResponse"
@@ -57970,7 +58024,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "organization": {
           "title": "Organization",
           "type": "string",
-          "format": "uuid"
+          "format": "uuid",
+          "readOnly": true
         },
         "created_at": {
           "title": "Created at",
@@ -58188,6 +58243,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "LegacyKnowledgeBaseBulkDeleteRequest": {
+      "type": "object",
+      "properties": {
+        "kb_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "default": []
+        }
+      }
+    },
     "LegacyKnowledgeBaseCreateResponse": {
       "required": [
         "status",
@@ -58201,6 +58269,46 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/LegacyKnowledgeBaseCreateResult"
+        }
+      }
+    },
+    "LegacyKnowledgeBaseFileDeleteRequest": {
+      "type": "object",
+      "properties": {
+        "kb_id": {
+          "title": "Kb id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "delete_all": {
+          "title": "Delete all",
+          "type": "boolean",
+          "default": false
+        },
+        "file_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "default": []
+        },
+        "excluded_file_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "default": []
+        },
+        "file_names": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
         }
       }
     },
@@ -69263,21 +69371,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "StripeWebhookLegacyResponse": {
-      "required": [
-        "status"
-      ],
-      "type": "object",
-      "properties": {
-        "status": {
-          "title": "Status",
-          "type": "boolean"
-        },
-        "result": {
-          "$ref": "#/definitions/StripeWebhookResult"
-        }
-      }
-    },
     "StripeWebhookRequest": {
       "type": "object",
       "properties": {
@@ -72094,6 +72187,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "enum": [
             "active",
             "past_due",
+            "unpaid",
             "canceled",
             "inactive"
           ]
@@ -84961,6 +85055,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "enum": [
             "active",
             "past_due",
+            "unpaid",
             "canceled",
             "inactive"
           ]

@@ -3,6 +3,7 @@ Root conftest.py for core-backend tests.
 Provides common fixtures for all test modules.
 """
 
+import os
 import sys
 import types
 from pathlib import Path
@@ -10,6 +11,15 @@ from pathlib import Path
 _project_root = Path(__file__).parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
+
+# Stub live-service credentials so import-time constructors do not fail during collection.
+os.environ.setdefault("VAPI_API_KEY", "test-api-key-for-testing")
+os.environ.setdefault("VAPI_API_BASE_URL", "https://test.vapi.local")
+
+from tfc.ee_loader import has_ee
+from tfc.logging.config import configure_structlog
+
+EE_AVAILABLE = has_ee("ee")
 
 
 def _install_ee_usage_stubs_if_missing() -> None:
@@ -20,6 +30,8 @@ def _install_ee_usage_stubs_if_missing() -> None:
     def _make(name: str) -> types.ModuleType:
         mod = types.ModuleType(name)
         mod.__path__ = []
+        # Keep __spec__ unset/None so importlib.find_spec stays falsy.
+        mod.__spec__ = None
         sys.modules[name] = mod
         if "." in name:
             parent_name, child_name = name.rsplit(".", 1)
@@ -31,6 +43,8 @@ def _install_ee_usage_stubs_if_missing() -> None:
     _make("ee")
     _make("ee.usage")
     _make("ee.usage.services")
+    _make("ee.usage.schemas")
+    _make("ee.usage.utils")
 
     entitlements = _make("ee.usage.services.entitlements")
 
@@ -48,12 +62,61 @@ def _install_ee_usage_stubs_if_missing() -> None:
     metering = _make("ee.usage.services.metering")
 
     def check_usage(*args, **kwargs):
-        return {"allowed": True}
+        return types.SimpleNamespace(allowed=True, reason="")
 
     metering.check_usage = check_usage
 
     emitter = _make("ee.usage.services.emitter")
     emitter.emit = lambda *args, **kwargs: None
+
+    # Patch targets for tracer eval dual-write (_emit_eval_billing) and
+    # tracer/tests/test_eval_credits_emit.py — OSS-safe mocks only.
+    config = _make("ee.usage.services.config")
+
+    class BillingConfig:
+        @classmethod
+        def get(cls):
+            return cls()
+
+        def get_eval_per_run_fee(self):
+            return 0.0
+
+        def calculate_ai_credits(self, cost_usd):
+            try:
+                return float(cost_usd or 0) * 100.0
+            except (TypeError, ValueError):
+                return 0.0
+
+    config.BillingConfig = BillingConfig
+
+    events = _make("ee.usage.schemas.events")
+
+    class UsageEvent:
+        def __init__(self, org_id, event_type, amount=0, properties=None, **kwargs):
+            self.org_id = org_id
+            self.event_type = event_type
+            self.amount = amount
+            self.properties = properties or {}
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+    events.UsageEvent = UsageEvent
+
+    event_properties = _make("ee.usage.utils.event_properties")
+
+    def token_usage_properties(token_usage):
+        if not token_usage:
+            return {}
+        return {
+            "prompt_tokens": token_usage.get("prompt_tokens", 0),
+            "completion_tokens": token_usage.get("completion_tokens", 0),
+            "total_tokens": token_usage.get("total_tokens", 0),
+        }
+
+    event_properties.token_usage_properties = token_usage_properties
+
+    usage_entries = _make("ee.usage.utils.usage_entries")
+    usage_entries.log_and_deduct_cost_for_api_request = None
 
 
 _install_ee_usage_stubs_if_missing()
@@ -184,20 +247,22 @@ def _load_ch25_skip_set():
 
 
 def pytest_collection_modifyitems(config, items):
-    """Auto-skip known-broken tests inventoried during the CH25 migration audit.
-
-    The frozen list at tracer/tests/_ch25_skip.txt was captured 2026-05-26.
-    Follow-up PRs will whittle it down; see MIGRATION_TEST_DEBT.md for the plan.
-    """
+    """Auto-skip requires_ee tests when ee/ is absent + the CH25 frozen skip list."""
     import pytest as _pytest
 
     skip_ids = _load_ch25_skip_set()
-    if not skip_ids:
-        return
-    marker = _pytest.mark.skip(reason=_CH25_SKIP_REASON)
+    ch25_marker = _pytest.mark.skip(reason=_CH25_SKIP_REASON) if skip_ids else None
+    ee_marker = (
+        _pytest.mark.skip(reason="requires ee/ (skipped in OSS lane)")
+        if not EE_AVAILABLE
+        else None
+    )
+
     for item in items:
-        if item.nodeid in skip_ids:
-            item.add_marker(marker)
+        if ch25_marker is not None and item.nodeid in skip_ids:
+            item.add_marker(ch25_marker)
+        if ee_marker is not None and item.get_closest_marker("requires_ee") is not None:
+            item.add_marker(ee_marker)
 
 
 from unittest.mock import patch
@@ -457,6 +522,20 @@ def clean_workspace_context():
     clear_workspace_context()
     yield
     clear_workspace_context()
+
+
+@pytest.fixture(autouse=True)
+def _structlog_capturable():
+    """Uncached structlog before each test so capture_logs()/caplog survive
+    global reconfig leaked by other tests in a full session (some suites reset
+    structlog defaults per test - hence function scope). The logging.disable
+    reset undoes a global stdlib disable that a few collected integration test
+    scripts apply at import; no product code calls logging.disable, so it masks
+    nothing."""
+    import logging
+
+    configure_structlog(cache_logger_on_first_use=False)
+    logging.disable(logging.NOTSET)
 
 
 @pytest.fixture(autouse=True)

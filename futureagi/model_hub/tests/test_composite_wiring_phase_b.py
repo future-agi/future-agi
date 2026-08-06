@@ -410,6 +410,7 @@ class TestExecuteCompositeChildrenSync:
         # Aggregate should still compute using the one completed child.
         assert outcome.aggregate_score == pytest.approx(0.8, abs=1e-6)
 
+    @pytest.mark.requires_ee
     def test_composite_child_billing_uses_token_pricing_when_cost_is_zero(
         self, composite_parent, organization, workspace, monkeypatch
     ):

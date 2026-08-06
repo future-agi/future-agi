@@ -19,7 +19,11 @@ from tracer.models.observation_span import (
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
 from tracer.services.eval_tasks.run_entry import run_entry
-from tracer.tests._ch_seed import seed_ch_span, seed_ch_trace, seed_ch_trace_sessions
+from tracer.tests._ch_seed import (
+    seed_ch_span,
+    seed_ch_trace,
+    seed_ch_trace_sessions,
+)
 
 
 def _make_entry(**kwargs):
@@ -79,8 +83,9 @@ class TestRunEntryChInput:
             status=EvalEntryStatus.RUNNING,
         )
         _assert_completed(run_entry(entry), entry, task_id=str(eval_task.id))
-        # The span was read from CH and never written to PG.
-        assert ObservationSpan.objects.count() == 0
+        # The span was read from CH and never written to PG. Scope by id — the
+        # shared PG table may hold committed rows from other tests.
+        assert not ObservationSpan.objects.filter(id=span.id).exists()
 
     def test_voicecall_rides_span_path_from_ch(
         self, project, custom_eval_config, eval_task, stub_run_eval, stub_cost_log
@@ -120,8 +125,8 @@ class TestRunEntryChInput:
             status=EvalEntryStatus.RUNNING,
         )
         _assert_completed(run_entry(entry), entry, task_id=str(eval_task.id))
-        assert ObservationSpan.objects.count() == 0
-        assert Trace.objects.count() == 0  # trace came from CH, not PG
+        assert not ObservationSpan.objects.filter(id=root.id).exists()
+        assert not Trace.objects.filter(id=trace.id).exists()  # from CH, not PG
 
     def test_session_evaluates_from_ch_with_pg_empty(
         self, observe_project, eval_template, eval_task, stub_run_eval, stub_cost_log

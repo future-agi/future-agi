@@ -14,6 +14,7 @@ Run with: bin/test -k "test_session_list_performance" --no-services unit
 import json
 import time
 import uuid
+from datetime import datetime
 
 import pytest
 
@@ -133,6 +134,24 @@ class TestSessionListQueryPerformance:
         assert "GROUP BY" not in stripped
         assert "HAVING" not in query
         assert "count(DISTINCT trace_session_id)" in query
+
+    def test_id_query_continuous_floor_and_ceiling_window_on_created_at(self):
+        floor = datetime(2026, 8, 1, 12, 0)
+        ceil = datetime(2026, 8, 1, 12, 5)
+        query, params = self._make_builder().build_id_query(
+            created_at_floor=floor, created_at_ceiling=ceil
+        )
+        # Arrival window replaces the start_time bound on the span scan.
+        assert "created_at >= %(created_at_floor)s" in query
+        assert "created_at < %(created_at_ceiling)s" in query
+        assert "start_time >= %(start_date)s" not in query
+        assert params["created_at_floor"] == floor
+        assert params["created_at_ceiling"] == ceil
+
+    def test_id_query_default_keeps_start_time_window(self):
+        query, params = self._make_builder().build_id_query()
+        assert "start_time >= %(start_date)s" in query
+        assert "created_at_ceiling" not in params
 
 
 @pytest.mark.unit
