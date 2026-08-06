@@ -622,31 +622,20 @@ def get_all_system_metrics(
             "cost": {"metric_name": "cost", "data": [...]}
         }
 
-    CH25-TODO(semantic-mismatch-prevents-1-line-migration): the new
-    time_bucket_aggregate reader returns the right output shape
-    ({bucket, span_count, tokens, cost, latency_ms}) but with TWO
-    silent semantic drifts versus this PG helper:
-      (1) buckets on `start_time` (the spans column used in CH) whereas
-          this PG path uses Trunc("created_at"). For just-completed
-          spans these are usually within seconds, but for backfilled or
-          replayed spans they can diverge.
-      (2) emits `cost = sum(cost)` whereas this PG path returns
-          `cost_value = Avg("cost")` per bucket. Cost-per-bucket vs
-          total-cost-per-bucket — semantically different.
-    The sibling helper get_system_metric_graph_data (below) dispatches
-    to TimeSeriesQueryBuilder; that builder has two internal branches:
-      • the preaggregated `span_metrics_hourly.hour` path (built from
-        `created_at` in the materialized view), which matches the PG
-        `created_at` semantics here
-      • the raw filtered `start_time`-bucketed path (matches drift 1)
-    So drift (1) already exists internally inside the sibling CH
-    builder. Drift (2) is unique to `time_bucket_aggregate`.
-    A safe migration of THIS helper needs either:
-      (a) a `time_bucket_aggregate(...,  cost_agg="avg"|"sum",
-          bucket_field="start_time"|"created_at")` reader signature,
-      (b) accepting the drift and writing a product decision doc that
-          replays both paths through `start_time` + `avg(cost)`.
-    Defer.
+    Bucketing: this PG path buckets and windows on ``start_time`` (event time)
+    to match the live ClickHouse dashboard, whose ``TimeSeriesQueryBuilder``
+    buckets on ``start_time``, and the session/replay path, which orders on
+    ``Coalesce(start_time, created_at)``. Bucketing on ``created_at`` (ingestion
+    time) instead made a backfilled or replayed span — ``created_at`` now,
+    ``start_time`` in the past — land in a different time bucket here than in
+    CH, so a CH-enabled deployment switched dashboard numbers silently whenever
+    it fell back to PG.
+
+    Note: the ``sum(cost)`` vs ``avg(cost)`` mismatch once flagged here is not a
+    live drift — every dashboard path (this PG one and CH
+    ``TimeSeriesQueryBuilder``) aggregates ``avg(cost)``. The ``sum`` form lives
+    only in ``time_bucket_aggregate``, which feeds monitors, where a per-bucket
+    total is the intended metric.
     """
     # Parse time filters
     start_date, end_date = parse_time_filters(filters)
@@ -657,8 +646,8 @@ def get_all_system_metrics(
     if project_id:
         base_queryset = ObservationSpan.objects.filter(
             project_id=project_id,
-            created_at__gte=start_date,
-            created_at__lte=end_date,
+            start_time__gte=start_date,
+            start_time__lte=end_date,
         )
     else:
         raise ValueError("Either project_id or span_ids must be provided")
@@ -669,7 +658,7 @@ def get_all_system_metrics(
     trunc_func = get_truncate_function(interval)
 
     aggregated_data = (
-        base_queryset.annotate(time_bucket=trunc_func("created_at"))
+        base_queryset.annotate(time_bucket=trunc_func("start_time"))
         .values("time_bucket")
         .annotate(
             latency_value=Avg("latency_ms"),
@@ -1069,8 +1058,8 @@ def get_system_metric_data(
         # Never evaluates the trace IDs into Python memory
         base_queryset = ObservationSpan.objects.filter(
             trace_id__in=trace_ids_queryset.values("id"),
-            created_at__gte=start_date,
-            created_at__lte=end_date,
+            start_time__gte=start_date,
+            start_time__lte=end_date,
         )
 
     elif observe_type == "span":
@@ -1086,8 +1075,8 @@ def get_system_metric_data(
         # Memory efficient even with 1M+ records
         base_queryset = ObservationSpan.objects.filter(
             id__in=span_ids_queryset.values("id"),
-            created_at__gte=start_date,
-            created_at__lte=end_date,
+            start_time__gte=start_date,
+            start_time__lte=end_date,
         )
 
     elif observe_type == "charts":
@@ -1100,8 +1089,8 @@ def get_system_metric_data(
 
         base_queryset = ObservationSpan.objects.filter(
             project_id=project_id,
-            created_at__gte=start_date,
-            created_at__lte=end_date,
+            start_time__gte=start_date,
+            start_time__lte=end_date,
         )
         base_queryset = apply_chart_span_filters(base_queryset, filters)
 
@@ -1114,7 +1103,7 @@ def get_system_metric_data(
     # Aggregate based on metric type
     if metric_name == "latency":
         aggregated_data = (
-            base_queryset.annotate(time_bucket=trunc_func("created_at"))
+            base_queryset.annotate(time_bucket=trunc_func("start_time"))
             .values("time_bucket")
             .annotate(value=Avg("latency_ms"), count=Count("id"))
             .order_by("time_bucket")
@@ -1122,7 +1111,7 @@ def get_system_metric_data(
 
     elif metric_name == "tokens":
         aggregated_data = (
-            base_queryset.annotate(time_bucket=trunc_func("created_at"))
+            base_queryset.annotate(time_bucket=trunc_func("start_time"))
             .values("time_bucket")
             .annotate(value=models.Sum("total_tokens"), count=Count("id"))
             .order_by("time_bucket")
@@ -1130,7 +1119,7 @@ def get_system_metric_data(
 
     elif metric_name == "cost":
         aggregated_data = (
-            base_queryset.annotate(time_bucket=trunc_func("created_at"))
+            base_queryset.annotate(time_bucket=trunc_func("start_time"))
             .values("time_bucket")
             .annotate(value=Avg("cost"), count=Count("id"))
             .order_by("time_bucket")
