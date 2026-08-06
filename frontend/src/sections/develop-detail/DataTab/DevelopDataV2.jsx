@@ -3,6 +3,7 @@ import React, {
   useEffect,
   useMemo,
   useRef,
+  useState,
   lazy,
   Suspense,
 } from "react";
@@ -77,6 +78,10 @@ import DevelopFilterBox from "./DevelopFilters/DevelopFilterBox";
 import TopBanner from "./TopBanner";
 import { transformFilter, validateFilter } from "./DevelopFilters/common";
 import DatapointDrawerV2 from "./DatapointDrawerV2/DatapointDrawerV2";
+import {
+  getActiveRowClass,
+  useActiveRowHighlightRedraw,
+} from "./DatapointDrawerV2/navigation";
 import useWavesurferCache from "src/hooks/use-wavesurfer-cache";
 import AddRowData from "./AddRowData";
 import DatasetLoader from "../../develop/loaders/DatasetLoader";
@@ -236,14 +241,17 @@ const getDataSource = (
           search,
           { enabled: true, staleTime: 5 * 1000, pageSize: DATASET_ROWS_LIMIT },
         );
+
+        // If this page is already in the cache and has not been marked
+        // changed, reuse it instantly; otherwise fetch it from the server.
         const cachedState = queryClient.getQueryState(queryOptions.queryKey);
         const servedFromCache =
           cachedState?.data !== undefined && !cachedState.isInvalidated;
         const data = servedFromCache
           ? cachedState.data
           : await queryClient.fetchQuery({ ...queryOptions });
-        const result = data?.data?.result;
-        const processingData = getResultIsProcessingData(result);
+
+        const processingData = data?.data?.result?.isProcessingData;
 
         useProcessingStore.getState().setIsProcessingData(processingData);
 
@@ -596,6 +604,13 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
   const { processingComplete, setProcessingComplete } = useDatasetOriginStore();
   const overlayTimeoutRef = useRef(null);
   const wasProcessingData = useRef(false);
+  const [gridApiReadyVersion, setGridApiReadyVersion] = useState(0);
+
+  useActiveRowHighlightRedraw(
+    gridApiRef,
+    activeDatapoint?.rowData?.rowId ?? activeDatapoint?.index,
+    gridApiReadyVersion,
+  );
 
   const updateProcessingSyntheticData = useCallback(
     (val) => {
@@ -896,6 +911,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
     dataset,
     queryClient,
     averageMetaData?.isProcessingData,
+    isViewerRole,
   ]);
 
   const isData = useMemo(() => {
@@ -1273,6 +1289,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
                   rowModelType="serverSide"
                   onGridReady={(params) => {
                     setGridApi(params.api);
+                    setGridApiReadyVersion((version) => version + 1);
                     onGridReady(params);
                   }}
                   onCellValueChanged={onCellValueChanged}
@@ -1347,11 +1364,9 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
                     }, 0);
                   }}
                   getRowClass={(params) =>
-                    params.node.rowIndex === activeDatapoint?.index
-                      ? "active-row"
-                      : ""
+                    getActiveRowClass(params, activeDatapoint)
                   }
-                  className={`develop-data-grid ${_viewOptions.bottomRow ? "show-bottom-row" : ""}`}
+                  className={`develop-data-grid datapoint-drawer-v2-grid ${_viewOptions.bottomRow ? "show-bottom-row" : ""}`}
                   suppressColumnMoveAnimation={true}
                   suppressAnimationFrame={true}
                   pinnedBottomRowData={_viewOptions.bottomRow ? bottomRow : []}
