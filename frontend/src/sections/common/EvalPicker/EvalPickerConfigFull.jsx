@@ -474,6 +474,15 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     if (config.error_localizer_enabled != null) {
       setErrorLocalizerEnabled(!!config.error_localizer_enabled);
     }
+    if (config.composite_weight_overrides) {
+      setCompositeChildWeights(config.composite_weight_overrides);
+    } else if (Array.isArray(config.children)) {
+      const weights = {};
+      config.children.forEach((c) => {
+        if (c.child_id && c.weight != null) weights[c.child_id] = c.weight;
+      });
+      if (Object.keys(weights).length) setCompositeChildWeights(weights);
+    }
 
     if (isEditMode) setEvalName(evalData?.name || fullEval?.name || "");
     setIsDirty(false);
