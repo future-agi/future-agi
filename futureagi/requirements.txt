@@ -867,13 +867,16 @@ pandas==2.3.0
     #   datasets
 partial-json-parser==0.2.1.1.post6
     # via core-backend (pyproject.toml)
-pdfminer==20191125
-    # via core-backend (pyproject.toml)
-pdfminer-six==20250506
+# NOTE(interim, 2026-08-06): dead 'pdfminer' package removed and the pdf pair pinned
+# to the uv.lock-tested versions (see monorepo pyproject 'pdfminer.six<=20240706' pin;
+# pdfminer-six>=20250327 drops PDFStackT which pdfplumber<0.11.10 imports, and the dead
+# package overwrote pdfminer-six's files nondeterministically). Full requirements/uv.lock
+# alignment is deferred to its own PR.
+pdfminer-six==20231228
     # via
     #   core-backend (pyproject.toml)
     #   pdfplumber
-pdfplumber==0.11.7
+pdfplumber==0.11.5
     # via core-backend (pyproject.toml)
 phonenumbers==9.0.26
     # via presidio-analyzer
