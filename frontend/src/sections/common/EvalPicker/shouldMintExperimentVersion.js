@@ -6,9 +6,7 @@ export const shouldMintExperimentVersion = ({
   source,
   isDirty,
   isSystemEval,
-  templateType,
 }) =>
   source === "experiment" &&
   Boolean(isDirty) &&
-  !isSystemEval &&
-  templateType !== "composite";
+  !isSystemEval;

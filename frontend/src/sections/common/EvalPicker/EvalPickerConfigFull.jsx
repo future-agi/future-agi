@@ -899,6 +899,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           evalType === "llm" && fewShotExamples.length > 0
             ? fewShotExamples
             : undefined,
+        ...(templateType === "composite" &&
+        Object.keys(compositeChildWeights || {}).length > 0
+          ? { composite_weight_overrides: compositeChildWeights }
+          : {}),
       };
       const newVersion = await createVersion.mutateAsync({
         config_snapshot: configSnapshot,
@@ -1063,7 +1067,6 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         source,
         isDirty: dirty,
         isSystemEval,
-        templateType,
       })
     ) {
       const newVersion = await handleSaveVersion();
