@@ -17,7 +17,7 @@ from model_hub.management.commands.backfill_eval_usage_version import (
 pytestmark = pytest.mark.requires_ee
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(databases=["default", "default_direct"])
 class TestBackfillUsageLogsCommand:
     def test_stamps_version_id_on_logs_without_it(self, organization, workspace):
         from ee.usage.models.usage import APICallLog, APICallStatusChoices
