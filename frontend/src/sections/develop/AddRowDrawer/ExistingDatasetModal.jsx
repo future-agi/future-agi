@@ -171,6 +171,7 @@ const ExistingDatasetModal = ({
       name: "",
       value: "",
       dataType: "ImportDataPromptConfiguration",
+      num_rows: "",
       config: {
         mapping: {},
       },
@@ -372,6 +373,9 @@ const ExistingDatasetModal = ({
       payload = {
         source_dataset_id: selectedValue,
         column_mapping: output,
+        ...(formData.num_rows !== "" && formData.num_rows != null
+          ? { num_rows: Number(formData.num_rows) }
+          : {}),
       };
     } else {
       const columns = {};
@@ -536,6 +540,19 @@ const ExistingDatasetModal = ({
                     error={""}
                     helperText={""}
                   />
+                  {dataset && (
+                    <FormTextFieldV2
+                      control={control}
+                      fieldName="num_rows"
+                      size="small"
+                      label="No. of rows"
+                      variant="outlined"
+                      fullWidth
+                      isSpinnerField
+                      fieldType="number"
+                      placeholder="Enter number of rows (leave blank to import all)"
+                    />
+                  )}
                   <RadioField
                     control={control}
                     fieldName={"dataType"}
