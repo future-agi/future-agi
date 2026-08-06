@@ -59,6 +59,7 @@ services:
       - AGENTCC_INTERNAL_URL=http://agentcc-gateway:8090
       - AGENTCC_GATEWAY_INTERNAL_URL=http://agentcc-gateway:8090
       - AGENTCC_INTERNAL_API_KEY=${AGENTCC_INTERNAL_API_KEY:-}
+      - CODE_EXECUTOR_INTERNAL_API_KEY=${CODE_EXECUTOR_INTERNAL_API_KEY:-}
       - CH25_DATABASE=${CH25_DATABASE:-futureagi}
       # Read replica: uncomment to test read/write split locally (points to same DB).
       # Both PGBOUNCER_READ_HOST and READ_REPLICA_OPT_IN must be set for any
@@ -136,7 +137,10 @@ services:
       context: ./code-executor
       dockerfile: Dockerfile
     ports:
-      - "8060:8060"
+      # Bind to loopback — only the host (backend/worker) should reach the executor.
+      - "127.0.0.1:8060:8060"
+    environment:
+      - CODE_EXECUTOR_INTERNAL_API_KEY=${CODE_EXECUTOR_INTERNAL_API_KEY:-}
     # Privileged needed for nsjail namespace creation
     privileged: true
     restart: unless-stopped
