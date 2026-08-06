@@ -94,10 +94,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Launch backing services in the background
+      - name: Prefetch service images in the background
+        # Pull-only on purpose: compose has no cross-invocation locking, so a
+        # background `up` can race the health gate's `up` on container creation
+        # when pulls are cold and the uv cache is warm. Concurrent pulls of the
+        # same image are safe at the daemon level; the gate stays the only
+        # invocation that creates containers.
         run: |
           nohup docker compose -f docker-compose.test.yml -p futureagi-test \
-            up -d --quiet-pull > /tmp/compose-up.log 2>&1 &
+            pull --quiet > /tmp/compose-up.log 2>&1 &
 
       - name: Checkout EE package (internal runs only)
         if: env.IS_INTERNAL_RUN == 'true'
