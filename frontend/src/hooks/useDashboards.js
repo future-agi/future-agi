@@ -43,6 +43,16 @@ export function useDashboardDetail(id) {
   });
 }
 
+export function useResolveDashboardWorkspace(id) {
+  return useQuery({
+    queryKey: [...DASHBOARD_KEYS.all, "resolveWorkspace", id],
+    queryFn: () => axios.get(endpoints.dashboard.resolveWorkspace(id)),
+    select: (res) => res.data?.result || null,
+    enabled: false,
+    retry: false,
+  });
+}
+
 export function useCreateDashboard() {
   const queryClient = useQueryClient();
   return useMutation({

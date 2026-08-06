@@ -5936,3 +5936,159 @@ class TestXSSPayloadNonExecutable:
         assert resp.status_code == 200
         # Non-executable: served as JSON, so a reflected payload is inert text.
         assert resp["Content-Type"].startswith("application/json")
+
+
+# ===========================================================================
+# Dashboard resolve-workspace
+# ===========================================================================
+
+
+@pytest.fixture
+def second_workspace(db, user, organization):
+    """A second (non-default) workspace the test user belongs to."""
+    ws = Workspace.objects.create(
+        name="Second Workspace",
+        display_name="Second WS",
+        description="A second workspace for testing",
+        organization=organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    from accounts.models.workspace import WorkspaceMembership
+
+    org_membership = None
+    try:
+        from accounts.models.organization_membership import (
+            OrganizationMembership,
+        )
+
+        org_membership = OrganizationMembership.no_workspace_objects.filter(
+            user=user, organization=organization
+        ).first()
+    except Exception:
+        pass
+
+    WorkspaceMembership.no_workspace_objects.create(
+        workspace=ws,
+        user=user,
+        role="workspace_admin",
+        invited_by=user,
+        organization_membership=org_membership,
+    )
+    return ws
+
+
+@pytest.fixture
+def dashboard_in_second_ws(db, second_workspace, user):
+    """A dashboard that lives in the second workspace."""
+    return Dashboard.objects.create(
+        workspace=second_workspace,
+        name="Dashboard in Second WS",
+        description="Belongs to the second workspace",
+        created_by=user,
+        updated_by=user,
+    )
+
+
+@pytest.fixture
+def member_user_for_dashboard(db, organization, workspace):
+    """A regular member user (non-owner/admin) for access-control tests."""
+    from accounts.models.user import User
+    from accounts.models.workspace import WorkspaceMembership
+
+    member = User.objects.create_user(
+        email="dashboard-member@futureagi.com",
+        password="testpassword123",
+        name="Dashboard Member",
+        organization=organization,
+        organization_role="member",
+    )
+    WorkspaceMembership.no_workspace_objects.create(
+        workspace=workspace,
+        user=member,
+        role="workspace_member",
+    )
+    return member
+
+
+@pytest.fixture
+def member_auth_client(api_client, member_user_for_dashboard, workspace):
+    """Authenticated API client for a regular member user."""
+    api_client.force_authenticate(user=member_user_for_dashboard)
+    api_client.set_workspace(workspace)
+    yield api_client
+    api_client.stop_workspace_injection()
+
+
+@pytest.mark.django_db
+class TestDashboardResolveWorkspace:
+    """Tests for GET /tracer/dashboard/{id}/resolve-workspace/."""
+
+    def test_resolve_returns_workspace_for_dashboard_in_current_ws(
+        self, auth_client, dashboard
+    ):
+        response = auth_client.get(
+            f"/tracer/dashboard/{dashboard.id}/resolve-workspace/"
+        )
+        assert response.status_code == 200
+        data = response.json()["result"]
+        assert data["workspace_id"] == str(dashboard.workspace_id)
+        assert data["workspace_name"] == (
+            dashboard.workspace.display_name or dashboard.workspace.name
+        )
+
+    def test_resolve_returns_correct_ws_for_dashboard_in_other_ws(
+        self, auth_client, dashboard_in_second_ws, second_workspace
+    ):
+        response = auth_client.get(
+            f"/tracer/dashboard/{dashboard_in_second_ws.id}/resolve-workspace/"
+        )
+        assert response.status_code == 200
+        data = response.json()["result"]
+        assert data["workspace_id"] == str(second_workspace.id)
+
+    def test_resolve_returns_404_for_unknown_dashboard(self, auth_client):
+        import uuid as _uuid
+
+        fake_id = str(_uuid.uuid4())
+        response = auth_client.get(f"/tracer/dashboard/{fake_id}/resolve-workspace/")
+        assert response.status_code == 404
+
+    def test_resolve_returns_404_for_deleted_dashboard(self, auth_client, dashboard):
+        dashboard.deleted = True
+        dashboard.save()
+        response = auth_client.get(
+            f"/tracer/dashboard/{dashboard.id}/resolve-workspace/"
+        )
+        assert response.status_code == 404
+
+    def test_resolve_returns_404_when_user_has_no_access(
+        self,
+        member_auth_client,
+        dashboard_in_second_ws,
+    ):
+        """A regular member in the default workspace should not be able to
+        resolve a dashboard in a second workspace they haven't joined."""
+        response = member_auth_client.get(
+            f"/tracer/dashboard/{dashboard_in_second_ws.id}/resolve-workspace/"
+        )
+        assert response.status_code == 404
+
+    def test_resolve_returns_404_for_dashboard_in_different_org(
+        self, auth_client, dashboard_in_second_ws
+    ):
+        """A dashboard in a different organization must always return 404."""
+        from accounts.models.organization import Organization
+
+        other_org = Organization.objects.create(
+            name="Other Org",
+            display_name="Other Organization",
+        )
+        dashboard_in_second_ws.workspace.organization = other_org
+        dashboard_in_second_ws.workspace.save()
+
+        response = auth_client.get(
+            f"/tracer/dashboard/{dashboard_in_second_ws.id}/resolve-workspace/"
+        )
+        assert response.status_code == 404
