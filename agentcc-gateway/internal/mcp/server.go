@@ -1,7 +1,10 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -381,9 +384,17 @@ func (s *Server) handleToolsCall(w http.ResponseWriter, r *http.Request, msg *Me
 	}
 
 	// Validate arguments against input schema if available.
-	if len(regTool.Tool.InputSchema) > 0 && len(params.Arguments) > 0 {
-		if errMsg := validateArgsAgainstSchema(regTool.Tool.InputSchema, params.Arguments); errMsg != "" {
-			writeJSONRPCError(w, msg.ID, ErrCodeInvalidParams, errMsg)
+	if len(regTool.Tool.InputSchema) > 0 {
+		if failure := validateArgsAgainstSchemaFailure(regTool.Tool.InputSchema, params.Arguments); failure != nil {
+			slog.Warn("mcp tool call rejected by input schema",
+				"tool", params.Name,
+				"server", regTool.Server,
+				"schema_hash", inputSchemaHash(regTool.Tool.InputSchema),
+				"violation_path", failure.path,
+				"reason", failure.message,
+				"args_preview", redactedArgsPreview(params.Arguments),
+			)
+			writeJSONRPCError(w, msg.ID, ErrCodeInvalidParams, failure.message)
 			return
 		}
 	}
@@ -801,19 +812,35 @@ func stringInSlice(s string, list []string) bool {
 // validateArgsAgainstSchema validates tool call arguments against a JSON Schema.
 // Checks required fields and basic type validation.
 func validateArgsAgainstSchema(schemaRaw json.RawMessage, args map[string]interface{}) string {
+	if failure := validateArgsAgainstSchemaFailure(schemaRaw, args); failure != nil {
+		return failure.message
+	}
+	return ""
+}
+
+type schemaValidationFailure struct {
+	message string
+	path    string
+}
+
+func validateArgsAgainstSchemaFailure(schemaRaw json.RawMessage, args map[string]interface{}) *schemaValidationFailure {
 	var schema struct {
-		Type       string                            `json:"type"`
-		Required   []string                          `json:"required"`
-		Properties map[string]map[string]interface{} `json:"properties"`
+		Type                 string                            `json:"type"`
+		Required             []string                          `json:"required"`
+		Properties           map[string]map[string]interface{} `json:"properties"`
+		AdditionalProperties interface{}                       `json:"additionalProperties"`
 	}
 	if err := json.Unmarshal(schemaRaw, &schema); err != nil {
-		return "" // Can't parse schema, skip validation
+		return nil // Can't parse schema, skip validation
 	}
 
 	// Check required fields.
 	for _, req := range schema.Required {
 		if _, ok := args[req]; !ok {
-			return fmt.Sprintf("missing required argument: %q", req)
+			return &schemaValidationFailure{
+				message: fmt.Sprintf("missing required argument: %q", req),
+				path:    "$." + req,
+			}
 		}
 	}
 
@@ -821,18 +848,70 @@ func validateArgsAgainstSchema(schemaRaw json.RawMessage, args map[string]interf
 	for name, val := range args {
 		prop, ok := schema.Properties[name]
 		if !ok {
-			continue // Extra args are allowed
+			if disallowAdditionalProperties(schema.AdditionalProperties) {
+				return &schemaValidationFailure{
+					message: fmt.Sprintf("unexpected argument: %q", name),
+					path:    "$." + name,
+				}
+			}
+			continue // Extra args are allowed unless additionalProperties is false.
 		}
 		expectedType, _ := prop["type"].(string)
 		if expectedType == "" {
 			continue
 		}
 		if !matchesJSONType(val, expectedType) {
-			return fmt.Sprintf("argument %q: expected type %q", name, expectedType)
+			return &schemaValidationFailure{
+				message: fmt.Sprintf("argument %q: expected type %q", name, expectedType),
+				path:    "$." + name,
+			}
 		}
 	}
 
-	return ""
+	return nil
+}
+
+func disallowAdditionalProperties(additionalProperties interface{}) bool {
+	allowed, ok := additionalProperties.(bool)
+	return ok && !allowed
+}
+
+func inputSchemaHash(schemaRaw json.RawMessage) string {
+	var compact bytes.Buffer
+	hashInput := []byte(schemaRaw)
+	if err := json.Compact(&compact, schemaRaw); err == nil {
+		hashInput = compact.Bytes()
+	}
+
+	sum := sha256.Sum256(hashInput)
+	return hex.EncodeToString(sum[:8])
+}
+
+func redactedArgsPreview(args map[string]interface{}) map[string]string {
+	preview := make(map[string]string, len(args))
+	for name, val := range args {
+		preview[name] = redactedValuePreview(val)
+	}
+	return preview
+}
+
+func redactedValuePreview(val interface{}) string {
+	switch v := val.(type) {
+	case nil:
+		return "null"
+	case string:
+		return fmt.Sprintf("string(len=%d)", len(v))
+	case bool:
+		return "boolean"
+	case float64, float32, int, int64, int32, uint, uint64, uint32:
+		return "number"
+	case []interface{}:
+		return fmt.Sprintf("array(len=%d)", len(v))
+	case map[string]interface{}:
+		return fmt.Sprintf("object(keys=%d)", len(v))
+	default:
+		return fmt.Sprintf("%T", val)
+	}
 }
 
 // matchesJSONType checks if a Go value matches a JSON Schema type.
