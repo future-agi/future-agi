@@ -65,7 +65,16 @@ const RocketMascot = ({
   }[variant];
 
   return (
-    <Box sx={{ ...wrapperAnimation, ...sx }}>
+    <Box
+      sx={{
+        ...wrapperAnimation,
+        "@media (prefers-reduced-motion: reduce)": {
+          animation: "none !important",
+          "& animate, & animateTransform": { display: "none" },
+        },
+        ...sx,
+      }}
+    >
       <svg
         width={size}
         height={size}

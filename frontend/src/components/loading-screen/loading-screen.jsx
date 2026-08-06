@@ -15,15 +15,6 @@ import {
 
 // ----------------------------------------------------------------------
 
-/**
- * Two variants:
- *   "rocket" (default) — branded rocket mascot, full-page friendly
- *   "orbit"            — minimal futuristic orbital loader; cleaner for
- *                        dense inner pages where the mascot feels too loud
- *
- * Pass `compact` to get a bare pulse (dots only) — intended for tiny
- * Suspense fallbacks inside drawers or popovers.
- */
 export default function LoadingScreen({
   sx,
   variant = "rocket",
@@ -33,7 +24,6 @@ export default function LoadingScreen({
 }) {
   const location = useLocation();
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
 
   const message = useMemo(
     () => messageOverride || pickRandom(LOADING_MESSAGES),
@@ -59,7 +49,7 @@ export default function LoadingScreen({
 
   if (compact) {
     return (
-      <Box sx={baseSx} {...other}>
+      <Box sx={baseSx} role="status" aria-live="polite" aria-busy="true" {...other}>
         <OrbitDots />
       </Box>
     );
@@ -67,21 +57,19 @@ export default function LoadingScreen({
 
   if (variant === "orbit") {
     return (
-      <Box sx={baseSx} {...other}>
+      <Box sx={baseSx} role="status" aria-live="polite" aria-busy="true" {...other}>
         <OrbitLoader />
         <Box sx={{ textAlign: "center", maxWidth: 420, mt: 1 }}>
           <Typography
-            fontFamily="IBM Plex Sans"
-            fontWeight={600}
-            fontSize="16px"
+            variant="subtitle1"
             color="text.primary"
             letterSpacing="0.02em"
           >
             Standing by
           </Typography>
           <Typography
+            variant="caption"
             fontFamily="IBM Plex Mono, ui-monospace, monospace"
-            fontSize="12px"
             color={alpha(theme.palette.text.secondary, 0.8)}
             mt={0.5}
             sx={{
@@ -97,21 +85,19 @@ export default function LoadingScreen({
 
   // Default: rocket mascot
   return (
-    <Box sx={baseSx} {...other}>
+    <Box sx={baseSx} role="status" aria-live="polite" aria-busy="true" {...other}>
       <RocketMascot variant="launching" size={140} />
       <Box sx={{ textAlign: "center", maxWidth: 420 }}>
         <Typography
-          fontFamily="IBM Plex Sans"
-          fontWeight={600}
-          fontSize="18px"
+          variant="m2"
+          fontWeight="fontWeightSemiBold"
           color="text.primary"
           lineHeight={1.3}
         >
           Preparing for liftoff
         </Typography>
         <Typography
-          fontFamily="IBM Plex Sans"
-          fontSize="14px"
+          variant="body2"
           fontStyle="italic"
           color="text.secondary"
           mt={0.5}
@@ -148,6 +134,11 @@ export function OrbitLoader({ size = 120 }) {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
+        "@media (prefers-reduced-motion: reduce)": {
+          "& .fagi-orbit-svg animateTransform, & .fagi-orbit-svg animate": {
+            display: "none",
+          },
+        },
       }}
     >
       <svg
@@ -156,6 +147,7 @@ export function OrbitLoader({ size = 120 }) {
         viewBox="0 0 120 120"
         fill="none"
         style={{ position: "absolute", inset: 0 }}
+        className="fagi-orbit-svg"
       >
         {/* Static inner ring */}
         <circle cx="60" cy="60" r="22" stroke={faint} strokeWidth="1" />
@@ -243,10 +235,13 @@ export function OrbitLoader({ size = 120 }) {
           borderRadius: "50%",
           bgcolor: primary,
           boxShadow: `0 0 16px ${alpha(primary, 0.7)}`,
-          animation: "orbit-pulse 1.8s ease-in-out infinite",
-          "@keyframes orbit-pulse": {
+          animation: "fagi-orbit-pulse 1.8s ease-in-out infinite",
+          "@keyframes fagi-orbit-pulse": {
             "0%, 100%": { transform: "scale(1)", opacity: 0.9 },
             "50%": { transform: "scale(1.25)", opacity: 1 },
+          },
+          "@media (prefers-reduced-motion: reduce)": {
+            animation: "none",
           },
         }}
       />
@@ -272,13 +267,16 @@ export function OrbitDots() {
           height: 7,
           borderRadius: "50%",
           background: color,
-          animation: "orbit-dot 1s ease-in-out infinite",
+          animation: "fagi-orbit-dot 1s ease-in-out infinite",
         },
         "& span:nth-of-type(2)": { animationDelay: "0.15s" },
         "& span:nth-of-type(3)": { animationDelay: "0.3s" },
-        "@keyframes orbit-dot": {
+        "@keyframes fagi-orbit-dot": {
           "0%, 100%": { transform: "translateY(0)", opacity: 0.5 },
           "50%": { transform: "translateY(-4px)", opacity: 1 },
+        },
+        "@media (prefers-reduced-motion: reduce)": {
+          "& span": { animation: "none" },
         },
       }}
     >

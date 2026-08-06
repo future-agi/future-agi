@@ -1,5 +1,4 @@
-/* eslint-disable react/prop-types */
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import {
   Box,
   Divider,
@@ -17,20 +16,9 @@ import { enqueueSnackbar } from "src/components/snackbar";
 // ---------------------------------------------------------------------------
 // Shared "map-from-table" (click-to-map) behaviour for every variable-mapping
 // surface. Each Columns/Value row exposes a hover action that maps its path to
-// an eval variable without hand-typing it into the mapping field below. With a
-// single variable we assign immediately; with several we open a small menu so
-// the user picks (and sees) which one, plus a Copy-path fallback.
-//
-// Usage in a consumer:
-//   const { renderRowMapAction, mapMenu, rowHoverSx, hasVariables } =
-//     useMapToVariable({ variables, mapping, setMapping });
-//   // on each Columns/Value row container: sx={{ ...rowHoverSx, ...existing }}
-//   // inside the row, after the value cell: {renderRowMapAction(path)}
-//   // once, near the end of the component's JSX: {mapMenu}
+// an eval variable without hand-typing it into the mapping field below.
 // ---------------------------------------------------------------------------
 
-// Spread onto each row container so the action only shows on hover (or while
-// that row's menu is open).
 export const mapRowHoverSx = {
   "& .row-map-action": {
     opacity: 0,
@@ -42,9 +30,12 @@ export const mapRowHoverSx = {
 };
 
 export function useMapToVariable({ variables, mapping, setMapping }) {
-  const vars = Array.isArray(variables) ? variables : [];
+  const vars = useMemo(
+    () => (Array.isArray(variables) ? variables : []),
+    [variables],
+  );
   const map = mapping || {};
-  const [mapMenu, setMapMenu] = useState(null); // { anchorEl, path } | null
+  const [mapMenu, setMapMenu] = useState(null);
 
   const assignPathToVariable = useCallback(
     (variable, path) => {
@@ -75,20 +66,34 @@ export function useMapToVariable({ variables, mapping, setMapping }) {
         .catch(() =>
           enqueueSnackbar("Couldn't copy path", { variant: "error" }),
         );
+    } else {
+      try {
+        const textarea = document.createElement("textarea");
+        textarea.value = path;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy"); // eslint-disable-line no-restricted-properties
+        document.body.removeChild(textarea);
+        enqueueSnackbar("Copied path", { variant: "success" });
+      } catch {
+        enqueueSnackbar("Couldn't copy path", { variant: "error" });
+      }
     }
   }, []);
 
-  // Per-row hover action button. `sx` lets a consumer nudge alignment for its
-  // particular table row (default suits a flex-start row).
   const renderRowMapAction = useCallback(
     (path, sx = {}) => {
       if (!vars.length) return null;
+      const label =
+        vars.length === 1 ? `Map to ${vars[0]}` : "Map to variable";
       return (
         <CustomTooltip
           show
           type="black"
           size="small"
-          title={vars.length === 1 ? `Map to ${vars[0]}` : "Map to variable"}
+          title={label}
           placement="top"
           arrow
         >
@@ -97,6 +102,7 @@ export function useMapToVariable({ variables, mapping, setMapping }) {
               mapMenu?.path === path ? " is-open" : ""
             }`}
             size="small"
+            aria-label={label}
             onClick={(e) => handleRowMapClick(e, path)}
             sx={{
               flexShrink: 0,
@@ -116,7 +122,6 @@ export function useMapToVariable({ variables, mapping, setMapping }) {
     [vars, mapMenu, handleRowMapClick],
   );
 
-  // Render this once, anywhere in the component's tree.
   const mapMenuNode = (
     <Menu
       anchorEl={mapMenu?.anchorEl || null}
@@ -129,7 +134,7 @@ export function useMapToVariable({ variables, mapping, setMapping }) {
       <Typography
         variant="caption"
         color="text.secondary"
-        sx={{ px: 1.5, py: 0.5, display: "block", fontWeight: 600 }}
+        sx={{ px: 1.5, py: 0.5, display: "block", fontWeight: "fontWeightSemiBold" }}
       >
         Map{" "}
         <Box
@@ -159,8 +164,6 @@ export function useMapToVariable({ variables, mapping, setMapping }) {
                 sx={{ color: isThis ? "success.main" : "text.secondary" }}
               />
             </ListItemIcon>
-            {/* Name and its current mapping share one row — keeps the menu
-                compact when an eval has several variables. */}
             <Box
               sx={{
                 display: "flex",
@@ -171,14 +174,16 @@ export function useMapToVariable({ variables, mapping, setMapping }) {
               }}
             >
               <Typography
-                sx={{ fontSize: "13px", fontWeight: 600, flexShrink: 0 }}
+                variant="s2_1"
+                fontWeight="fontWeightSemiBold"
+                sx={{ flexShrink: 0 }}
               >
                 {variable}
               </Typography>
               <Typography
+                variant="s3"
                 noWrap
                 sx={{
-                  fontSize: "11px",
                   fontFamily: "monospace",
                   color: current ? "text.secondary" : "text.disabled",
                   minWidth: 0,
@@ -201,9 +206,10 @@ export function useMapToVariable({ variables, mapping, setMapping }) {
         <ListItemIcon sx={{ minWidth: 0, mr: 0.25 }}>
           <Iconify icon="mdi:content-copy" width={15} />
         </ListItemIcon>
+        {/* eslint-disable-next-line react/prop-types */}
         <ListItemText
           primary="Copy path"
-          primaryTypographyProps={{ fontSize: "13px" }}
+          primaryTypographyProps={{ variant: "s2_1" }}
         />
       </MenuItem>
     </Menu>

@@ -83,6 +83,13 @@ export default function SplashScreen({ sx, ...other }) {
         gap: 4,
         overflow: "hidden",
         bgcolor: "background.default",
+        "@media (prefers-reduced-motion: reduce)": {
+          "& *, & *::before, & *::after": {
+            animationDuration: "0.01ms !important",
+            animationIterationCount: "1 !important",
+            transitionDuration: "0.01ms !important",
+          },
+        },
         ...sx,
       }}
       {...other}
@@ -384,12 +391,11 @@ export default function SplashScreen({ sx, ...other }) {
       {/* ============ Wordmark ============ */}
       <Box sx={{ textAlign: "center", zIndex: 2 }}>
         <Typography
-          fontFamily="IBM Plex Sans"
-          fontWeight={700}
-          fontSize="22px"
+          variant="l3"
+          fontWeight="fontWeightBold"
           letterSpacing="0.22em"
           color="text.primary"
-          sx={{ textTransform: "uppercase" }}
+          sx={{ textTransform: "uppercase", fontSize: "22px" }}
         >
           Future&nbsp;AGI
         </Typography>

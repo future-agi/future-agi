@@ -1,9 +1,8 @@
 import React from "react";
 import PropTypes from "prop-types";
 import { Box } from "@mui/material";
+import { useTheme } from "@mui/material/styles";
 
-// Shared twinkling starfield for dark mode backdrops.
-// Positioned absolutely inside a relatively-positioned parent.
 const STARS = [
   { top: "5%", left: "8%", cls: "star star-far" },
   { top: "12%", left: "25%", cls: "star star-far" },
@@ -28,6 +27,8 @@ const STARS = [
 ];
 
 const Starfield = ({ density = "full", showGrid = false, sx = {} }) => {
+  const theme = useTheme();
+  const starColor = theme.palette.common.white;
   const stars = density === "sparse" ? STARS.slice(0, 10) : STARS;
   return (
     <Box
@@ -38,26 +39,26 @@ const Starfield = ({ density = "full", showGrid = false, sx = {} }) => {
         overflow: "hidden",
         "& .star": {
           position: "absolute",
-          background: "#fafafa",
+          background: starColor,
           borderRadius: "50%",
         },
         "& .star-far": {
           width: "1px",
           height: "1px",
           opacity: 0.3,
-          animation: "twinkle 4s ease-in-out infinite",
+          animation: "fagi-twinkle 4s ease-in-out infinite",
         },
         "& .star-mid": {
           width: 2,
           height: 2,
           opacity: 0.4,
-          animation: "twinkle 3s ease-in-out infinite",
+          animation: "fagi-twinkle 3s ease-in-out infinite",
         },
         "& .star-close": {
           width: 3,
           height: 3,
           opacity: 0.6,
-          animation: "twinkle 2.5s ease-in-out infinite",
+          animation: "fagi-twinkle 2.5s ease-in-out infinite",
         },
         ...(showGrid && {
           "&::before": {
@@ -66,13 +67,16 @@ const Starfield = ({ density = "full", showGrid = false, sx = {} }) => {
             inset: 0,
             opacity: 0.015,
             backgroundImage:
-              "linear-gradient(#fafafa 1px, transparent 1px), linear-gradient(90deg, #fafafa 1px, transparent 1px)",
+              `linear-gradient(${starColor} 1px, transparent 1px), linear-gradient(90deg, ${starColor} 1px, transparent 1px)`,
             backgroundSize: "60px 60px",
           },
         }),
-        "@keyframes twinkle": {
+        "@keyframes fagi-twinkle": {
           "0%, 100%": { opacity: 0.2, transform: "scale(1)" },
           "50%": { opacity: 1, transform: "scale(1.2)" },
+        },
+        "@media (prefers-reduced-motion: reduce)": {
+          "& .star": { animation: "none" },
         },
         ...sx,
       }}

@@ -8,6 +8,13 @@ describe("LoadingScreen", () => {
     expect(screen.getByText("Preparing for liftoff")).toBeInTheDocument();
   });
 
+  it("exposes role=status for assistive technology", () => {
+    render(<LoadingScreen />);
+    const status = screen.getByRole("status");
+    expect(status).toBeInTheDocument();
+    expect(status).toHaveAttribute("aria-busy", "true");
+  });
+
   it("applies custom sx props correctly", () => {
     render(<LoadingScreen data-testid="loading-wrapper" sx={{ backgroundColor: "red" }} />);
     expect(screen.getByTestId("loading-wrapper")).toBeInTheDocument();
@@ -27,6 +34,7 @@ describe("LoadingScreen", () => {
   it("renders the orbit variant with standby text", () => {
     render(<LoadingScreen variant="orbit" />);
     expect(screen.getByText("Standing by")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
   it("renders a custom message override", () => {
@@ -35,9 +43,18 @@ describe("LoadingScreen", () => {
   });
 
   describe("accessibility", () => {
-    it("renders a container element", () => {
-      render(<LoadingScreen data-testid="a11y-check" />);
-      expect(screen.getByTestId("a11y-check")).toBeInTheDocument();
+    it("has role=status with aria-busy on rocket variant", () => {
+      render(<LoadingScreen />);
+      const el = screen.getByRole("status");
+      expect(el).toHaveAttribute("aria-live", "polite");
+      expect(el).toHaveAttribute("aria-busy", "true");
+    });
+
+    it("has role=status with aria-busy on orbit variant", () => {
+      render(<LoadingScreen variant="orbit" />);
+      const el = screen.getByRole("status");
+      expect(el).toHaveAttribute("aria-live", "polite");
+      expect(el).toHaveAttribute("aria-busy", "true");
     });
   });
 });
