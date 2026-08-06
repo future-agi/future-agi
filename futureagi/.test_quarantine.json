@@ -214,6 +214,15 @@
       "added": "2026-08-06",
       "expires": "2026-09-20",
       "mode": "run"
+    },
+    {
+      "id": "ee/usage/tests/test_consumer.py::TestConsumerDuplicateEventHandling::test_duplicate_event_across_batches_is_not_double_counted",
+      "reason": "process_batch() drains the shared 'usage:events' Redis stream, which no fixture clears before the test runs; entries emitted by earlier tests carry org ids whose rows have already rolled back, so the consumer writes a UsageEventLog with a dangling FK and teardown's SET CONSTRAINTS ALL IMMEDIATE raises. Order-dependent: only fails when a polluting test lands in the same shard | mode skip, not run: the failure is in teardown and xfail only covers the call phase",
+      "owner": "azain",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "skip"
     }
   ]
 }
