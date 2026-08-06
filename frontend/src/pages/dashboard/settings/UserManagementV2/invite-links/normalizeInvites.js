@@ -1,16 +1,19 @@
-// `invite_link` is per-entry optional: absent on Cloud/EE, and absent for an
-// invitee who already has an account. The fallback keeps the UI saying
-// "invited, no link" rather than rendering nothing.
+// Merged on `invited`: `invites` carries links only and omits an invitee who
+// already has an account.
 export function normalizeInvites(result, submittedEmails = []) {
-  if (Array.isArray(result?.invites) && result.invites.length) {
-    return result.invites.map((invite) => ({
-      email: invite?.email ?? "",
-      inviteLink: invite?.invite_link ?? "",
-    }));
-  }
+  const links = new Map(
+    (Array.isArray(result?.invites) ? result.invites : []).map((invite) => [
+      (invite?.email ?? "").toLowerCase(),
+      invite?.invite_link ?? "",
+    ]),
+  );
 
   const emails = Array.isArray(result?.invited)
     ? result.invited
     : submittedEmails;
-  return emails.map((email) => ({ email, inviteLink: "" }));
+
+  return emails.map((email) => ({
+    email,
+    inviteLink: links.get((email ?? "").toLowerCase()) ?? "",
+  }));
 }

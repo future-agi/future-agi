@@ -14,14 +14,31 @@ import Iconify from "src/components/iconify";
 import CopyLinkButton from "./CopyLinkButton";
 import { formatInvitesForCopy } from "./formatInvites";
 
+function subtitleFor(invites, withLinkCount) {
+  if (!withLinkCount) {
+    return invites.length === 1
+      ? "This invite has no shareable link, so it has to arrive by email."
+      : "These invites have no shareable links, so they have to arrive by email.";
+  }
+
+  const keep = "Invites keep their links until they are accepted.";
+  if (withLinkCount < invites.length) {
+    return `Send each teammate their link. Where there is no link, the invite has to arrive by email. ${keep}`;
+  }
+  return invites.length === 1
+    ? `Copy the link and send it to the teammate it belongs to. ${keep}`
+    : `Copy each link and send it to the teammate it belongs to. ${keep}`;
+}
+
 export default function InviteLinksResult({
   open,
   invites,
   onClose,
   onInviteMore,
 }) {
+  const withLinks = invites.filter((invite) => invite.inviteLink);
   // Redundant with the row's own button when there is only one link.
-  const showCopyAll = invites.filter((i) => i.inviteLink).length > 1;
+  const showCopyAll = withLinks.length > 1;
   const allInvites = showCopyAll ? formatInvitesForCopy(invites) : "";
 
   return (
@@ -49,10 +66,7 @@ export default function InviteLinksResult({
               color="text.secondary"
               sx={{ mt: 0.5, display: "block" }}
             >
-              {invites.length === 1
-                ? "Copy the link and send it to the teammate it belongs to."
-                : "Copy each link and send it to the teammate it belongs to."}{" "}
-              Invites keep their links until they are accepted.
+              {subtitleFor(invites, withLinks.length)}
             </Typography>
           </Box>
           <IconButton onClick={onClose}>
@@ -67,9 +81,9 @@ export default function InviteLinksResult({
         )}
 
         <Stack spacing={1.25} sx={{ mt: allInvites ? 1.5 : 2.5 }}>
-          {invites.map((invite) => (
+          {invites.map((invite, index) => (
             <Box
-              key={invite.email}
+              key={`${invite.email}-${index}`}
               sx={{
                 p: 1.5,
                 borderRadius: 1,
@@ -101,8 +115,8 @@ export default function InviteLinksResult({
                 </Stack>
               ) : (
                 <Typography variant="s2" color="text.secondary">
-                  Invited. This server didn&apos;t return a shareable link, so
-                  the invite has to arrive by email.
+                  Invited. No shareable link for this address, so the invite has
+                  to arrive by email.
                 </Typography>
               )}
             </Box>
