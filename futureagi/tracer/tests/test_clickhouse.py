@@ -206,7 +206,7 @@ class TestClickHouseSchema:
         """ALTER statements bring already-created tracer_eval_logger tables forward."""
         from tracer.services.clickhouse.schema import POST_DDL_ALTERS
 
-        joined = "\n".join(POST_DDL_ALTERS)
+        joined = "\n".join(statement for _table, statement in POST_DDL_ALTERS)
         assert "tracer_eval_logger ADD COLUMN IF NOT EXISTS trace_session_id" in joined
         assert "tracer_eval_logger ADD COLUMN IF NOT EXISTS target_type" in joined
         assert "tracer_eval_logger MODIFY COLUMN trace_id Nullable(UUID)" in joined
@@ -2702,8 +2702,7 @@ class TestTraceListQueryBuilder:
         assert "SELECT" in query
         assert "trace_id" in query
         assert (
-            "dictGetOrDefault('enduser_dict', 'user_id', any(end_user_id), '')"
-            in query
+            "dictGetOrDefault('enduser_dict', 'user_id', any(end_user_id), '')" in query
         )
         assert "GROUP BY trace_id" in query
         assert "PREWHERE trace_id IN" in query
@@ -6977,13 +6976,13 @@ class TestVoiceCallListPhase1bMigration:
         `raw_log` is kept: process_raw_logs still needs it.
         """
         src = self._voice_list_source()
-        assert "project_id = %(project_id)s" in src, (
-            "Phase 1b must scope by project_id so the primary key can prune."
-        )
+        assert (
+            "project_id = %(project_id)s" in src
+        ), "Phase 1b must scope by project_id so the primary key can prune."
         # attrs_string Map strip.
-        assert "mapFilter" in src and "call_logs" in src, (
-            "Phase 1b must exclude `call_logs` from attrs_string at read time."
-        )
+        assert (
+            "mapFilter" in src and "call_logs" in src
+        ), "Phase 1b must exclude `call_logs` from attrs_string at read time."
         # attributes_extra JSON-overflow strip (backfill cohort).
         assert "JSONExtractKeysAndValuesRaw" in src, (
             "Phase 1b must also strip `call_logs` from attributes_extra so the "

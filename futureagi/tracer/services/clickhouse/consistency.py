@@ -60,6 +60,23 @@ class ConsistencyChecker:
     def __init__(self):
         self._ch_client = get_clickhouse_client()
 
+    @classmethod
+    def _live_monitored_tables(cls) -> list[tuple[str, str]]:
+        """``MONITORED_TABLES`` minus pairs whose CH side no longer exists.
+
+        The PG tables all still exist; only their ClickHouse mirrors were
+        removed by the legacy-chain cutover. Comparing a live PG table against
+        a dropped CH table produced a permanent bogus mismatch, so drop the
+        pair entirely rather than report a difference nobody can act on.
+        """
+        from tracer.services.clickhouse.schema import is_retired_table
+
+        return [
+            (pg_table, ch_table)
+            for pg_table, ch_table in cls.MONITORED_TABLES
+            if not is_retired_table(ch_table)
+        ]
+
     def check_row_counts(
         self,
         project_id: str,
@@ -69,7 +86,7 @@ class ConsistencyChecker:
     ) -> list[ConsistencyResult]:
         """Compare row counts between PG and CH for each table."""
         results = []
-        for pg_table, ch_table in self.MONITORED_TABLES:
+        for pg_table, ch_table in self._live_monitored_tables():
             try:
                 # PG count
                 with pg_connection.cursor() as cursor:
@@ -116,11 +133,7 @@ class ConsistencyChecker:
     def get_cdc_lag(self) -> dict[str, float]:
         """Get CDC replication lag per table in seconds."""
         lag = {}
-        tables = [
-            "tracer_trace",
-            "trace_session",
-            "tracer_eval_logger",
-        ]
+        tables = [ch_table for _pg, ch_table in self._live_monitored_tables()]
         for table in tables:
             try:
                 result = self._ch_client.execute(

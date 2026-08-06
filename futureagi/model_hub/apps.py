@@ -47,10 +47,10 @@ class ModelHubConfig(AppConfig):
         Idempotent — uses CREATE IF NOT EXISTS for everything."""
         from tracer.services.clickhouse.client import get_clickhouse_client
         from tracer.services.clickhouse.schema import (
-            POST_DDL_ALTERS,
             detect_spans_table_shape,
             get_all_schema_ddl,
             get_legacy_chain_drop_statements,
+            get_post_ddl_alters,
             should_drop_legacy_chain,
         )
 
@@ -87,13 +87,16 @@ class ModelHubConfig(AppConfig):
                 if "already exists" not in str(e).lower():
                     logger.warning(f"CH schema {name}: {e}")
 
-        # Ensure materialized columns on CDC tables that PeerDB may recreate
-        for alter in POST_DDL_ALTERS:
+        # Ensure materialized columns on CDC tables that PeerDB may recreate.
+        # get_post_ddl_alters() drops entries whose target table the legacy
+        # chain already removed above — without it those ALTERs run against a
+        # table dropped seconds earlier and log Code: 60 on every boot.
+        for table, alter in get_post_ddl_alters():
             try:
                 ch.execute(alter, settings=ddl_settings)
             except Exception as e:
                 if "already exists" not in str(e).lower():
-                    logger.warning(f"CH post-DDL alter: {e}")
+                    logger.warning(f"CH post-DDL alter {table}: {e}")
 
         logger.info("ClickHouse analytics schema ensured")
 
@@ -181,14 +184,18 @@ class ModelHubConfig(AppConfig):
         OS page cache.  Subsequent user queries hit warm cache (~300ms)
         instead of cold disk (~5s).
         """
-        from tracer.services.clickhouse.schema import should_drop_legacy_chain
+        from tracer.services.clickhouse.schema import is_retired_table
 
+        # ``(target_table, query, label)`` — the table drives the retired-object
+        # filter below. Entries naming a legacy object are kept here (they are
+        # still correct wherever the cutover flag is off) and filtered at use.
         warmup_queries = [
             # Warm spans index + light columns for recent data. The v2
             # spans table uses `is_deleted`; pre-cutover prod still
             # carries the `_peerdb_is_deleted` ALIAS column for back-
             # compat, but the canonical name is what we read.
             (
+                "spans",
                 "SELECT project_id, count() FROM spans "
                 "WHERE is_deleted = 0 "
                 "AND start_time >= now() - INTERVAL 7 DAY "
@@ -197,6 +204,7 @@ class ModelHubConfig(AppConfig):
             ),
             # Warm tracer_trace for recent data
             (
+                "tracer_trace",
                 "SELECT project_id, count() FROM tracer_trace "
                 "WHERE _peerdb_is_deleted = 0 "
                 "AND created_at >= now() - INTERVAL 7 DAY "
@@ -205,6 +213,7 @@ class ModelHubConfig(AppConfig):
             ),
             # Warm usage_apicalllog for eval metrics
             (
+                "usage_apicalllog",
                 "SELECT organization_id, count() FROM usage_apicalllog "
                 "WHERE _peerdb_is_deleted = 0 "
                 "AND created_at >= now() - INTERVAL 7 DAY "
@@ -216,23 +225,24 @@ class ModelHubConfig(AppConfig):
             # docs/CH25_MIGRATION.md. countMerge collapses the aggregate
             # state column.
             (
+                "spans_hourly_rollup",
                 "SELECT countMerge(n) FROM spans_hourly_rollup "
                 "WHERE hour >= now() - INTERVAL 7 DAY",
                 "spans_hourly_rollup (7d)",
             ),
+            # Legacy aggregate — stays hot until the cutover, filtered out
+            # once the legacy chain is dropped.
+            (
+                "span_metrics_hourly",
+                "SELECT count() FROM span_metrics_hourly "
+                "WHERE hour >= now() - INTERVAL 7 DAY",
+                "span_metrics_hourly (7d, legacy)",
+            ),
         ]
 
-        # When the legacy chain is retained (prod default), also warm
-        # the legacy aggregate so it stays hot until the cutover.
-        if not should_drop_legacy_chain():
-            warmup_queries.append(
-                (
-                    "SELECT count() FROM span_metrics_hourly "
-                    "WHERE hour >= now() - INTERVAL 7 DAY",
-                    "span_metrics_hourly (7d, legacy)",
-                )
-            )
-        for query, label in warmup_queries:
+        for table, query, label in warmup_queries:
+            if is_retired_table(table):
+                continue
             try:
                 ch.execute_read(query, timeout_ms=30000)
                 logger.info(f"CH cache warmed: {label}")

@@ -1894,65 +1894,129 @@ SCHEMA_DDL_STATEMENTS: list[tuple[str, str]] = [
 
 # Post-DDL ALTER statements to ensure materialized columns exist on CDC tables
 # that PeerDB may recreate without them during RESYNC operations.
-POST_DDL_ALTERS: list[str] = [
-    "ALTER TABLE usage_apicalllog ADD COLUMN IF NOT EXISTS "
-    "eval_score Float64 MATERIALIZED "
-    "JSONExtractFloat(JSONExtractString(config), 'output', 'output')",
-    "ALTER TABLE usage_apicalllog ADD COLUMN IF NOT EXISTS "
-    "eval_output_str String MATERIALIZED "
-    "JSONExtractString(JSONExtractString(config), 'output', 'output')",
-    "ALTER TABLE usage_apicalllog ADD COLUMN IF NOT EXISTS "
-    "eval_trace_id String MATERIALIZED "
-    "JSONExtractString(JSONExtractString(config), 'trace_id')",
-    "ALTER TABLE usage_apicalllog ADD COLUMN IF NOT EXISTS "
-    "eval_dataset_id String MATERIALIZED "
-    "JSONExtractString(JSONExtractString(config), 'dataset_id')",
+#
+# Each entry is ``(target_table, statement)``. The table is carried explicitly
+# so ``get_post_ddl_alters()`` can drop entries targeting objects the
+# legacy-chain cutover has already removed — see ``is_retired_table()`` for why
+# matching on statement text instead would be unsafe.
+POST_DDL_ALTERS: list[tuple[str, str]] = [
+    (
+        "usage_apicalllog",
+        "ALTER TABLE usage_apicalllog ADD COLUMN IF NOT EXISTS "
+        "eval_score Float64 MATERIALIZED "
+        "JSONExtractFloat(JSONExtractString(config), 'output', 'output')",
+    ),
+    (
+        "usage_apicalllog",
+        "ALTER TABLE usage_apicalllog ADD COLUMN IF NOT EXISTS "
+        "eval_output_str String MATERIALIZED "
+        "JSONExtractString(JSONExtractString(config), 'output', 'output')",
+    ),
+    (
+        "usage_apicalllog",
+        "ALTER TABLE usage_apicalllog ADD COLUMN IF NOT EXISTS "
+        "eval_trace_id String MATERIALIZED "
+        "JSONExtractString(JSONExtractString(config), 'trace_id')",
+    ),
+    (
+        "usage_apicalllog",
+        "ALTER TABLE usage_apicalllog ADD COLUMN IF NOT EXISTS "
+        "eval_dataset_id String MATERIALIZED "
+        "JSONExtractString(JSONExtractString(config), 'dataset_id')",
+    ),
     # PR3: evolve existing tracer_eval_logger tables to the row_type stack's
     # new shape. CREATE TABLE IF NOT EXISTS skips already-created tables, so
     # these ALTERs bring the schema forward in place. Idempotent thanks to
     # IF NOT EXISTS / IF EXISTS clauses; ordering matters where the bloom
     # index on trace_id has to be dropped before we can MODIFY the column.
-    "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
-    "trace_session_id Nullable(UUID)",
-    "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
-    "target_type LowCardinality(String) DEFAULT 'span'",
+    (
+        "tracer_eval_logger",
+        "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
+        "trace_session_id Nullable(UUID)",
+    ),
+    (
+        "tracer_eval_logger",
+        "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
+        "target_type LowCardinality(String) DEFAULT 'span'",
+    ),
     # ClickHouse refuses to MODIFY a column that's part of a skip index
     # (Code: 524 — "Trying to ALTER trace_id column which is a part of
     # index idx_trace_id"). Drop the index, modify the column to Nullable
     # so session rows (target_type='session') can write NULL trace_id,
     # then re-add the index. All idempotent.
-    "ALTER TABLE tracer_eval_logger DROP INDEX IF EXISTS idx_trace_id",
-    "ALTER TABLE tracer_eval_logger MODIFY COLUMN trace_id Nullable(UUID)",
-    "ALTER TABLE tracer_eval_logger ADD INDEX IF NOT EXISTS "
-    "idx_trace_id trace_id TYPE bloom_filter GRANULARITY 1",
+    (
+        "tracer_eval_logger",
+        "ALTER TABLE tracer_eval_logger DROP INDEX IF EXISTS idx_trace_id",
+    ),
+    (
+        "tracer_eval_logger",
+        "ALTER TABLE tracer_eval_logger MODIFY COLUMN trace_id Nullable(UUID)",
+    ),
+    (
+        "tracer_eval_logger",
+        "ALTER TABLE tracer_eval_logger ADD INDEX IF NOT EXISTS "
+        "idx_trace_id trace_id TYPE bloom_filter GRANULARITY 1",
+    ),
     # Bloom filter indexes for the new columns (mirrors the existing
     # idx_observation_span_id / idx_trace_id). Cheap filter queries.
-    "ALTER TABLE tracer_eval_logger ADD INDEX IF NOT EXISTS "
-    "idx_trace_session_id trace_session_id TYPE bloom_filter GRANULARITY 1",
-    "ALTER TABLE tracer_eval_logger ADD INDEX IF NOT EXISTS "
-    "idx_target_type target_type TYPE bloom_filter GRANULARITY 1",
+    (
+        "tracer_eval_logger",
+        "ALTER TABLE tracer_eval_logger ADD INDEX IF NOT EXISTS "
+        "idx_trace_session_id trace_session_id TYPE bloom_filter GRANULARITY 1",
+    ),
+    (
+        "tracer_eval_logger",
+        "ALTER TABLE tracer_eval_logger ADD INDEX IF NOT EXISTS "
+        "idx_target_type target_type TYPE bloom_filter GRANULARITY 1",
+    ),
     # Work-item columns (mirror of EvalLogger.status / config_hash).
-    "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
-    "status LowCardinality(String) DEFAULT 'completed'",
-    "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
-    "config_hash Nullable(String)",
+    (
+        "tracer_eval_logger",
+        "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
+        "status LowCardinality(String) DEFAULT 'completed'",
+    ),
+    (
+        "tracer_eval_logger",
+        "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
+        "config_hash Nullable(String)",
+    ),
     # skipped_reason / attempts exist on the PG source (EvalLogger work-item
     # columns) and are in the PeerDB normalize INSERT column list; without them
     # the CH normalize fails with "No such column ..." and the mirror never
     # drains.
-    "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
-    "skipped_reason Nullable(String)",
-    "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
-    "attempts Int32 DEFAULT 0",
+    (
+        "tracer_eval_logger",
+        "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
+        "skipped_reason Nullable(String)",
+    ),
+    (
+        "tracer_eval_logger",
+        "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
+        "attempts Int32 DEFAULT 0",
+    ),
     # Strip the legacy 365d TTL from the v1 hourly rollup tables. The CREATE
     # strings above no longer declare TTL, but existing prod clusters carry
     # the original TTL on the live tables — these ALTERs remove it.
-    # In dev/test where the legacy CDC chain is gated off, the tables don't
-    # exist and these ALTERs error out; _ensure_analytics_schema() catches
-    # those as warnings (model_hub/apps.py:88-93).
-    "ALTER TABLE span_metrics_hourly REMOVE TTL",
-    "ALTER TABLE eval_metrics_hourly REMOVE TTL",
+    # Both tables are in _LEGACY_CDC_CHAIN_NAMES, so wherever the cutover flag
+    # is on (US + EU prod, and dev/compose) get_post_ddl_alters() filters these
+    # out — they used to run unconditionally and log a Code: 60 on every boot.
+    ("span_metrics_hourly", "ALTER TABLE span_metrics_hourly REMOVE TTL"),
+    ("eval_metrics_hourly", "ALTER TABLE eval_metrics_hourly REMOVE TTL"),
 ]
+
+
+def get_post_ddl_alters() -> list[tuple[str, str]]:
+    """``POST_DDL_ALTERS`` minus statements targeting retired objects.
+
+    Returns ``(target_table, statement)`` tuples so the caller can log which
+    target failed without parsing SQL — same shape as
+    ``get_legacy_chain_drop_statements()``.
+    """
+    return [
+        (table, statement)
+        for table, statement in POST_DDL_ALTERS
+        if not is_retired_table(table)
+    ]
 
 
 # ============================================================================
@@ -2081,6 +2145,26 @@ def should_drop_legacy_chain() -> bool:
     the env semantics live in one place.
     """
     return _DROP_LEGACY_CDC_CHAIN
+
+
+def is_retired_table(name: str) -> bool:
+    """Whether ``name`` has been dropped by the legacy-chain cutover.
+
+    Single source of truth for "does this ClickHouse object still exist?".
+    ``get_all_schema_ddl()`` already filters ``_LEGACY_CDC_CHAIN_NAMES`` out
+    of the CREATE statements; every OTHER consumer that names a legacy object
+    (post-DDL ALTERs, cache warmers, CDC-lag probes, consistency checks) must
+    go through this predicate instead of hand-placing a
+    ``should_drop_legacy_chain()`` check — three such sites were missed when
+    the flag was enabled in prod, each producing a permanent per-boot
+    ``Code: 60 — Could not find table`` in both regions.
+
+    NOTE this deliberately takes an explicit table name rather than sniffing
+    a SQL string: ``trace_session`` is a substring of the very-much-alive
+    ``trace_session_id`` column on ``tracer_eval_logger``, so substring
+    matching against statement text would silently drop a required ALTER.
+    """
+    return should_drop_legacy_chain() and name in _LEGACY_CDC_CHAIN_NAMES
 
 
 def detect_spans_table_shape(execute_fn) -> str:

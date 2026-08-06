@@ -6,7 +6,8 @@ Replaces ``get_eval_graph_data()`` and its helpers from
 
 Strategy:
 - Unfiltered eval dashboard queries read from the ``eval_metrics_hourly``
-  pre-aggregated table.
+  pre-aggregated table — unless the legacy-chain cutover has dropped it, in
+  which case they fall through to the raw path below.
 - Filtered queries or per-eval-config breakdowns read from the
   ``tracer_eval_logger`` CDC table (with FINAL for correct deduplication).
 
@@ -22,6 +23,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.schema import is_retired_table
 
 # Eval output type constants (mirrors EvalOutputType from Django models)
 SCORE = "SCORE"
@@ -93,7 +95,19 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         # Pre-aggregated eval rows do not carry arbitrary trace/span filter
         # dimensions. If filters are present, force the raw logger path so the
         # graph reflects the filtered result set.
-        self.use_preaggregated = use_preaggregated and not self.filters
+        #
+        # Also force the raw path when the legacy-chain cutover has dropped
+        # AGG_TABLE: an unfiltered eval graph would otherwise SELECT from
+        # `eval_metrics_hourly`, which no longer exists wherever
+        # CH25_DROP_LEGACY_CDC_CHAIN is on (US + EU prod), and there is no
+        # fallback above this layer — trace.py deleted the PG path post-CH25.
+        # RAW_TABLE (`tracer_eval_logger`) is deliberately NOT retired and
+        # already serves every filtered request, so this just always uses it.
+        self.use_preaggregated = (
+            use_preaggregated
+            and not self.filters
+            and not is_retired_table(self.AGG_TABLE)
+        )
 
         # Graph endpoints historically default to a compact 7-day window.
         # BaseQueryBuilder's list-view fallback is intentionally much wider,

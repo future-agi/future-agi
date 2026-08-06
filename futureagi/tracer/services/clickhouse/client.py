@@ -181,9 +181,7 @@ class ClickHouseClient:
             rows_returned = (
                 len(result[0])
                 if with_column_types and result
-                else len(result)
-                if result and not isinstance(result, int)
-                else 0
+                else len(result) if result and not isinstance(result, int) else 0
             )
             logger.info(
                 "ClickHouse query completed",
@@ -420,13 +418,20 @@ class ClickHouseClient:
         """
         from datetime import datetime
 
+        from tracer.services.clickhouse.schema import is_retired_table
+
         # CH25 close-out (2026-05-28): removed `tracer_observation_span`
         # from the CDC lag check. Spans now land in v2 typed-JSON `spans`
         # via fi-collector OTLP — no CDC mirror, no lag to measure.
+        #
+        # `tracer_trace` and `trace_session` were dropped later by the
+        # legacy-chain cutover, so where that flag is on this probe reported
+        # a bogus -1 for two of the three tables. Filter them out so the
+        # result only claims lag for mirrors that actually exist.
         tables = [
-            "tracer_trace",
-            "trace_session",
-            "tracer_eval_logger",
+            table
+            for table in ("tracer_trace", "trace_session", "tracer_eval_logger")
+            if not is_retired_table(table)
         ]
         lag: dict[str, float] = {}
         for table in tables:
