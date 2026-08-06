@@ -174,6 +174,8 @@ function InlineTraceView({ traceId, spanId }) {
   const queryClient = useQueryClient();
   const { data, isLoading } = useGetTraceDetail(traceId);
   const projectId = data?.trace?.project;
+  const sessionId = data?.trace?.session;
+  const [showSession, setShowSession] = useState(false);
 
   // Saved views — includes both traces-type custom views and imagine tabs.
   const { data: savedViewsData } = useGetSavedViews(projectId);
@@ -289,6 +291,10 @@ function InlineTraceView({ traceId, spanId }) {
     setSelectedSpanId(spanId || null);
   }, [traceId, spanId]);
 
+  useEffect(() => {
+    setShowSession(false);
+  }, [traceId, sessionId]);
+
   const rawSpans = data?.observation_spans;
 
   // Apply span-type filter from display options.
@@ -340,6 +346,48 @@ function InlineTraceView({ traceId, spanId }) {
     );
   }
 
+  if (showSession && sessionId) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          minHeight: 0,
+          bgcolor: "background.paper",
+        }}
+      >
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{
+            px: 1.5,
+            minHeight: 36,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
+        >
+          <Button
+            size="small"
+            variant="text"
+            startIcon={<Iconify icon="mdi:arrow-left" width={16} />}
+            onClick={() => setShowSession(false)}
+          >
+            Back to trace
+          </Button>
+          <Typography variant="body2" color="text.secondary" noWrap>
+            Session
+          </Typography>
+        </Stack>
+        <Box sx={{ p: 2, flex: 1, minHeight: 0, overflow: "hidden" }}>
+          <SessionContent content={{ session_id: sessionId }} />
+        </Box>
+      </Box>
+    );
+  }
+
   return (
     <Box
       sx={{
@@ -363,6 +411,19 @@ function InlineTraceView({ traceId, spanId }) {
         readOnly
         readOnlyTabTooltip={READ_ONLY_TAB_TOOLTIP}
         hideFilter
+        rightSlot={
+          sessionId ? (
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<Iconify icon="mdi:account-clock-outline" width={16} />}
+              onClick={() => setShowSession(true)}
+              sx={{ height: 24, fontSize: 11 }}
+            >
+              View session
+            </Button>
+          ) : null
+        }
       />
 
       {/* Display options popover */}

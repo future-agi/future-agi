@@ -4,6 +4,10 @@ import { render, screen, waitFor, userEvent } from "src/utils/test-utils";
 import axios from "src/utils/axios";
 import ContentPanel from "../annotate/content-panel";
 
+const traceDetailMocks = vi.hoisted(() => ({
+  useGetTraceDetail: vi.fn(() => ({ data: null, isLoading: false })),
+}));
+
 vi.mock("src/components/iconify", () => ({
   default: ({ icon, ...props }) => (
     <span data-testid="iconify" data-icon={icon} {...props} />
@@ -115,7 +119,9 @@ vi.mock("src/components/traceDetail/TraceLeftPanel", () => ({
 }));
 
 vi.mock("src/components/traceDetail/DrawerToolbar", () => ({
-  default: () => <div data-testid="drawer-toolbar" />,
+  default: ({ rightSlot }) => (
+    <div data-testid="drawer-toolbar">{rightSlot}</div>
+  ),
 }));
 
 vi.mock("src/components/traceDetail/TraceDisplayPanel", () => ({
@@ -124,7 +130,7 @@ vi.mock("src/components/traceDetail/TraceDisplayPanel", () => ({
 }));
 
 vi.mock("src/api/project/trace-detail", () => ({
-  useGetTraceDetail: () => ({ data: null, isLoading: false }),
+  useGetTraceDetail: traceDetailMocks.useGetTraceDetail,
 }));
 
 vi.mock("src/api/project/saved-views", () => ({
@@ -148,6 +154,11 @@ describe("Annotation queue ContentPanel", () => {
   const clipboardWriteText = vi.fn(() => Promise.resolve());
 
   beforeEach(() => {
+    traceDetailMocks.useGetTraceDetail.mockReset();
+    traceDetailMocks.useGetTraceDetail.mockReturnValue({
+      data: null,
+      isLoading: false,
+    });
     clipboardWriteText.mockClear();
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText: clipboardWriteText },
@@ -336,5 +347,75 @@ describe("Annotation queue ContentPanel", () => {
       await screen.findByText("customer asks for help"),
     ).toBeInTheDocument();
     expect(screen.queryByTestId("trace-detail-drawer")).not.toBeInTheDocument();
+  });
+
+  it("lets trace queue items open and return from their parent session", async () => {
+    const user = userEvent.setup();
+    traceDetailMocks.useGetTraceDetail.mockReturnValue({
+      data: {
+        trace: {
+          project: "project-123",
+          session: "session-123",
+          tags: [],
+        },
+        observation_spans: [
+          {
+            observation_span: {
+              id: "span-root",
+              observation_type: "llm",
+              start_time: "2026-08-02T00:00:00Z",
+            },
+            children: [],
+          },
+        ],
+      },
+      isLoading: false,
+    });
+    axios.get.mockResolvedValueOnce({
+      data: {
+        result: {
+          session_metadata: { total_traces: 1 },
+          response: [
+            {
+              trace_id: "trace-456",
+              input: "session conversation",
+              output: "assistant response",
+              system_metrics: {},
+              evals_metrics: {},
+            },
+          ],
+          next: null,
+        },
+      },
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ContentPanel
+          item={{
+            source_type: "trace",
+            source_content: { trace_id: "trace-123" },
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("drawer-toolbar")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /View session/i }));
+
+    expect(
+      await screen.findByText("session conversation"),
+    ).toBeInTheDocument();
+    expect(axios.get).toHaveBeenCalledWith("/tracer/trace-session/session-123/", {
+      params: { page_number: 0, page_size: 10 },
+    });
+
+    await user.click(screen.getByRole("button", { name: /Back to trace/i }));
+    expect(screen.getByTestId("drawer-toolbar")).toBeInTheDocument();
   });
 });
