@@ -27,6 +27,9 @@ import {
   prefetchCallLogs,
 } from "../helper";
 import Iconify from "src/components/iconify";
+import { buildColumnBlocks } from "src/sections/projects/LLMTracing/evalTaskGrouping";
+import { useUrlState } from "src/routes/hooks/use-url-state";
+import EvalTaskGroupHeader from "src/sections/projects/LLMTracing/Renderers/EvalTaskGroupHeader";
 import { useAgentDetailsStore } from "../store/agentDetailsStore";
 import TestDetailSideDrawer from "src/sections/test-detail/TestDetailDrawer/TestDetailSideDrawer";
 import {
@@ -191,6 +194,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     }),
     [],
   );
+  const [, setDrawerTab] = useUrlState("drawerTab");
   const { data, isLoading, queryKey } = useCallLogs({
     module,
     id: id,
@@ -241,6 +245,8 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
           groupBy: c.field.match(/^[0-9a-f-]{36}/)
             ? "Evaluation Metrics"
             : "Call Columns",
+          evalTaskId: c.evalTaskId ?? null,
+          evalTaskName: c.evalTaskName ?? null,
         }));
       onConfigLoaded(colConfig);
     }
@@ -365,7 +371,22 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       const bi = orderIndex.get(b?.field ?? b?.colId) ?? Infinity;
       return ai - bi;
     });
-    return combined;
+
+    // Group eval columns under one header per eval task (parity with the
+    // trace/span grids). Non-eval columns — customs included — pass through
+    // flat at their sorted position; voice tasks carry no rowType, so the
+    // header renders without a T/S glyph.
+    return buildColumnBlocks(combined).map((block) =>
+      block.type === "col"
+        ? block.col
+        : {
+            headerName: block.group.taskName,
+            headerGroupComponent: EvalTaskGroupHeader,
+            headerGroupComponentParams: { rowType: block.group.rowType },
+            marryChildren: true,
+            children: block.group.evals,
+          },
+    );
   }, [callLogsColumnDefs, columnVisibility, isLoading]);
   useEffect(() => {
     return () => {
@@ -383,7 +404,9 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       )
         return;
       // User drags only — a programmatic move would rebuild the shared trace
-      // `columns` from this grid's voice-only state and corrupt it.
+      // `columns` from this grid's voice-only state and corrupt it. Eval task
+      // grouping makes this more likely: marryChildren snaps group children
+      // back together, which fires a non-uiColumnMoved event.
       if (params.source !== "uiColumnMoved") return;
       const newOrder = (params?.api?.getColumnState() ?? [])
         .map((s) => s.colId)
@@ -472,6 +495,16 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
               )
             }
             getRowStyle={getRowStyle}
+            onCellClicked={(params) => {
+              // Eval-cell click pre-focuses the drawer's Evals tab (read once
+              // on drawer open). Any other cell clears it so normal opens
+              // land on the default tab.
+              setDrawerTab(
+                params?.colDef?.field?.startsWith("eval_outputs.")
+                  ? "evals"
+                  : null,
+              );
+            }}
             onRowClicked={(params) => {
               onRowClicked(params, page, pageLimit);
             }}

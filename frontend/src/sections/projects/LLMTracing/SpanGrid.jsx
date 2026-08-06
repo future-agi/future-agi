@@ -11,13 +11,12 @@ import React, {
   useState,
 } from "react";
 import { useAgTheme } from "src/hooks/use-ag-theme";
-import { getRandomId, safeParse } from "src/utils/utils";
+import { safeParse } from "src/utils/utils";
 import axios, { endpoints } from "src/utils/axios";
 import { useParams } from "src/routes/hooks";
 import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
 
 import {
-  AllowedGroups,
   applyQuickFilters,
   FILTER_FOR_HAS_EVAL,
   SPAN_DEFAULT_COLUMNS,
@@ -26,18 +25,23 @@ import {
   normalizeConfigKeys,
   toBackendFilters,
 } from "./common";
+import { buildColumnBlocks } from "./evalTaskGrouping";
+import EvalTaskGroupHeader from "./Renderers/EvalTaskGroupHeader";
 import CustomTraceRenderer from "./Renderers/CustomTraceRenderer";
 import CustomTraceHeaderRenderer from "./Renderers/CustomTraceHeaderRenderer";
+import EvalResultChips from "./Renderers/EvalResultChips";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import { statusBar } from "src/components/run-insights/traces-tab/common";
 import LLMTracingSpanDetailDrawer from "./LLMTracingSpanDetailDrawer";
 import { useLLMTracingStoreShallow, useSpanGridStore } from "./states";
+import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
 import IPOPTooltipComponent from "./Renderers/IPOPTooltipComponent";
 import { RENDERER_CONFIG } from "./Renderers/common";
 import { NameCell } from "./Renderers";
 import IPOPCell from "./Renderers/IPOPCell";
 import { isCellValueEmpty } from "src/components/table/utils";
+import { getEvalNonScoreStatusFromValue } from "src/utils/evalStatus";
 import { APP_CONSTANTS } from "src/utils/constants";
 import { useShallowToggleAnnotationsStore } from "../../agents/store";
 import { useAuthContext } from "src/auth/hooks";
@@ -106,6 +110,20 @@ const getSpanListColumnDefs = (col) => {
     cellRendererSelector: (params) => {
       const value = params.value;
       const column = params?.colDef?.context?.sourceColumn;
+      // Chips for object-valued eval cells (pass/fail or choice counts);
+      // scalar score cells fall through to the default renderer.
+      // Lifecycle markers ({error}, {status: pending|running|skipped}) are
+      // objects too, but must reach EvaluationCell's status indicator instead —
+      // chips would render them as "Not evaluated" or "[object Object]".
+      if (
+        column?.groupBy === "Evaluation Metrics" &&
+        value !== null &&
+        typeof value === "object" &&
+        !Array.isArray(value) &&
+        !getEvalNonScoreStatusFromValue(value)
+      ) {
+        return { component: EvalResultChips };
+      }
       const colId = column?.id;
 
       // The tags column stays interactive even when empty so a first tag can
@@ -133,12 +151,29 @@ const getSpanListColumnDefs = (col) => {
       // The tags column keeps its default left alignment so an empty "+ Tag"
       // sits where the chips will, instead of jumping from center to left.
       const cellColId = params?.colDef?.context?.sourceColumn?.id;
-      if (isCellValueEmpty(value) && cellColId !== "tags") {
+      const isEvalMetric =
+        params?.colDef?.context?.sourceColumn?.groupBy === "Evaluation Metrics";
+      const structured =
+        isEvalMetric &&
+        value &&
+        typeof value === "object" &&
+        !Array.isArray(value);
+      if (isCellValueEmpty(value) && !structured && cellColId !== "tags") {
         return {
           display: "flex",
           alignItems: "center",
           height: "100%",
           justifyContent: "center",
+        };
+      }
+      if (isEvalMetric) {
+        return {
+          display: "flex",
+          height: "100%",
+          alignItems: "center",
+          justifyContent: "flex-start",
+          padding: 0,
+          overflow: "hidden",
         };
       }
     },
@@ -204,6 +239,7 @@ const SpanGrid = React.forwardRef(
     const { setSpanDetailDrawerOpen } = useLLMTracingStoreShallow((state) => ({
       setSpanDetailDrawerOpen: state.setSpanDetailDrawerOpen,
     }));
+    const [, setDrawerTab] = useUrlState("drawerTab");
     const [openQuickFilter, setOpenQuickFilter] = useState(null);
     const [selectedAll, setSelectedAll] = useState(false);
 
@@ -306,72 +342,69 @@ const SpanGrid = React.forwardRef(
         };
       }
 
-      // If columns are populated → process normally
-      const grouping = {};
       const bottomRowObj = {};
 
-      for (const eachCol of columns) {
-        // Bucket each custom col alone so it stays flat in its store position
-        // (a shared bucket collapsed them together and oscillated the order).
-        if (eachCol?.groupBy && eachCol.groupBy !== "Custom Columns") {
-          if (!grouping[eachCol?.groupBy]) {
-            grouping[eachCol?.groupBy] = [eachCol];
-          } else {
-            grouping[eachCol?.groupBy].push(eachCol);
-          }
-        } else {
-          grouping[getRandomId()] = [eachCol];
+      // Annotation col defs, keyed by store id. An expanded metric generates
+      // several child defs, so each entry is a list. Built up-front so the
+      // ordered pass below can drop them at their own store position — they
+      // used to be appended after every other column, which silently undid a
+      // user's drag of an annotation column on the next rebuild.
+      const annotationDefsById = new Map();
+      for (const c of columns) {
+        if (c?.groupBy !== "Annotation Metrics") continue;
+        const generated =
+          generateAnnotationColumnsForTracing([c], showMetricsIds) || [];
+        const flat = [];
+        for (const group of generated) {
+          if (group.children) flat.push(...group.children);
+          else flat.push(group);
         }
+        if (flat.length) annotationDefsById.set(c.id, flat);
       }
-      const annotationColumns = generateAnnotationColumnsForTracing(
-        grouping["Annotation Metrics"] || [],
-        showMetricsIds,
-      );
-      delete grouping["Annotation Metrics"];
-      const columnDefsResult = Object.entries(grouping).flatMap(
-        ([group, cols]) => {
-          if (!AllowedGroups.includes(group) && cols.length === 1) {
-            const c = cols[0];
+
+      // Eval columns grouped under their parent Eval Task (two-tier header with
+      // T/S glyph). Everything else — custom and annotation columns included —
+      // stays flat in its store position: a shared bucket collapsed them
+      // together and oscillated the order (TH-6119). Only eval columns carry
+      // evalTaskName, so buildColumnBlocks emits the rest as flat blocks.
+      const columnDefsResult = buildColumnBlocks(columns).flatMap((block) => {
+        if (block.type === "col") {
+          const c = block.col;
+          if (annotationDefsById.has(c?.id)) {
+            return annotationDefsById.get(c.id);
+          }
+          bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+          const colDef = getSpanListColumnDefs(c);
+          // Custom col: flat, but keep its width/style.
+          if (c?.groupBy === "Custom Columns") {
+            return {
+              ...colDef,
+              minWidth: 200,
+              flex: 1,
+              cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
+            };
+          }
+          return colDef;
+        }
+        const task = block.group;
+        return {
+          headerName: task.taskName,
+          headerGroupComponent: EvalTaskGroupHeader,
+          headerGroupComponentParams: { rowType: task.rowType },
+          marryChildren: true,
+          children: task.evals.map((c) => {
             bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
             const colDef = getSpanListColumnDefs(c);
-            // Custom col: flat, but keep its width/style.
-            if (c?.groupBy === "Custom Columns") {
-              return {
-                ...colDef,
-                minWidth: 200,
-                flex: 1,
-                cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
-              };
-            }
-            return colDef;
-          }
-          // marryChildren + groupId keep the group movable across rebuilds.
-          return {
-            headerName: group,
-            groupId: group,
-            marryChildren: true,
-            children: cols.map((c) => {
-              bottomRowObj[c?.id] = c?.average ? `Average ${c?.average}` : null;
-              const colDef = getSpanListColumnDefs(c);
-              return {
-                ...colDef,
-                minWidth: 200,
-                flex: 1,
-                cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
-              };
-            }),
-          };
-        },
-      );
-      if (annotationColumns?.length > 0) {
-        for (const group of annotationColumns) {
-          if (group.children) {
-            columnDefsResult.push(...group.children);
-          } else {
-            columnDefsResult.push(group);
-          }
-        }
-      }
+            return {
+              ...colDef,
+              minWidth: 200,
+              flex: 1,
+              cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
+            };
+          }),
+        };
+      });
+
       return {
         columnDefs: columnDefsResult,
         bottomRow: [
@@ -613,6 +646,11 @@ const SpanGrid = React.forwardRef(
         if (!traceId || !spanId) {
           return;
         }
+        // Eval-cell click pre-focuses the drawer's Evals tab (read once on
+        // open); any other cell clears it for the default tab.
+        const isEvalCell =
+          event?.colDef?.context?.sourceColumn?.groupBy === "Evaluation Metrics";
+        setDrawerTab(isEvalCell ? "evals" : null);
         setSpanDetailDrawerOpen({
           trace_id: traceId,
           span_id: spanId,
@@ -622,7 +660,7 @@ const SpanGrid = React.forwardRef(
 
         trackEvent(Events.observeSpanidClicked);
       },
-      [filters, setSpanDetailDrawerOpen],
+      [filters, setSpanDetailDrawerOpen, setDrawerTab],
     );
 
     useEffect(() => {

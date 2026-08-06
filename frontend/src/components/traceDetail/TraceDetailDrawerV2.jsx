@@ -139,6 +139,15 @@ const TraceDetailDrawerV2 = ({
     });
 
   const [selectedSpanId, setSelectedSpanId] = useState(null);
+  // Eval-cell clicks set ?drawerTab=evals. Read the LIVE URL (react-router
+  // updates window.location synchronously) rather than a useUrlState value,
+  // which lags a render for cross-component updates and would be stale at the
+  // open render. The span pane is keyed per open so it re-seeds each open
+  // without ever overriding the user's tab choice mid-session.
+  const initialSpanTab =
+    new URLSearchParams(window.location.search).get("drawerTab") === "evals"
+      ? "evals"
+      : "preview";
   const [viewMode, setViewMode] = useState(() => {
     try {
       const raw = localStorage.getItem(`trace-view-default-${projectId}`);
@@ -439,7 +448,11 @@ const TraceDetailDrawerV2 = ({
   }, []);
 
   const queryClient = useQueryClient();
-  const { data, isLoading } = useGetTraceDetail(open ? traceId : null);
+  const { data: apiData, isLoading: apiLoading } = useGetTraceDetail(
+    open ? traceId : null,
+  );
+  const data = apiData;
+  const isLoading = apiLoading;
 
   const handleRefresh = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["trace-detail", traceId] });
@@ -1146,6 +1159,8 @@ const TraceDetailDrawerV2 = ({
                   onAction={handleAction}
                   onSelectSpan={handleSelectSpan}
                   drawerOpen={open}
+                  initialTab={initialSpanTab}
+                  key={`${traceId}-${initialSpanId}-${open}`}
                 />
               </Box>
             )}
@@ -1229,6 +1244,8 @@ const TraceDetailDrawerV2 = ({
                   onAction={handleAction}
                   onSelectSpan={handleSelectSpan}
                   drawerOpen={open}
+                  initialTab={initialSpanTab}
+                  key={`${traceId}-${initialSpanId}-${open}`}
                 />
               ) : (
                 /* Summary when no span selected */
