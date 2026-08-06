@@ -178,11 +178,8 @@ const placeholderMembers = (seed) =>
     ? [{ email: "", name: "", organization_role: "Owner", disabled: false }]
     : [];
 
-// `seedPlaceholderMember` controls what happens when the member list comes back
-// empty or the request fails. Cloud seeds one editable row, which the user can
-// see and type into. Self-hosted must NOT: the member block is hidden there, so
-// a seeded row with an empty email fails validation with nothing on screen to
-// fix, and Continue stays disabled forever with no visible cause.
+// Never seed on self-hosted: the member block is hidden there, so a seeded row
+// with an empty email fails validation with nothing on screen to fix.
 const useOrganizationInitialData = (isOwner, seedPlaceholderMember = true) => {
   const { enqueueSnackbar } = useSnackbar();
   const [isLoading, setIsLoading] = useState(true);
@@ -611,9 +608,8 @@ const SetupOrganization = ({ getStarted = false }) => {
             />
           )}
 
-          {/* Self-hosted keeps this step to just the org name. Invites depend
-              on email reaching the person, which a self-hosted install can't
-              assume — teammates are added later from inside the product. */}
+          {/* Hidden on self-hosted: invites need email delivery, so teammates
+              are added later from inside the product. */}
           {!isOSS && (
             <>
               <Typography variant="m2" fontWeight="fontWeightMedium">

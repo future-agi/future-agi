@@ -12,8 +12,6 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { paths } from "src/routes/paths";
 
-// Self-hosted is assumed unable to deliver email: no SMTP on a default install,
-// and the backend exposes no signal to tell the two apart.
 export function useDeploymentMode() {
   const { data, isLoading, isSuccess } = useQuery({
     queryKey: ["deployment-info"],

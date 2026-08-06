@@ -8,8 +8,6 @@ import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 
 // ----------------------------------------------------------------------
 
-// Sends auth routes self-hosted cannot serve back to login. Only SSO qualifies:
-// there is no IdP on a self-hosted box.
 export default function OssRestrictedGuard({ children }) {
   const { isOSS, isLoading, isSuccess } = useDeploymentMode();
   const location = useLocation();

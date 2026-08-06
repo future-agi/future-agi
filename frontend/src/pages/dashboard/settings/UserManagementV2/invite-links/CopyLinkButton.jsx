@@ -1,24 +1,25 @@
 import React, { useState } from "react";
 import PropTypes from "prop-types";
-import { Button, Tooltip } from "@mui/material";
+import { Button } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
+import { copyToClipboard } from "src/utils/utils";
 
 export default function CopyLinkButton({ text, label = "Copy", sx }) {
   const [copied, setCopied] = useState(false);
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
+    if (!(await copyToClipboard(text))) {
       enqueueSnackbar("Could not copy", { variant: "error" });
+      return;
     }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
   };
 
   return (
-    <Tooltip title={copied ? "Copied" : label}>
+    <CustomTooltip show size="small" title={copied ? "Copied" : label}>
       <Button
         onClick={copy}
         size="small"
@@ -34,7 +35,7 @@ export default function CopyLinkButton({ text, label = "Copy", sx }) {
       >
         {copied ? "Copied" : label}
       </Button>
-    </Tooltip>
+    </CustomTooltip>
   );
 }
 

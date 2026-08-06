@@ -1,8 +1,10 @@
 import React, { useState } from "react";
 import PropTypes from "prop-types";
-import { Stack, Typography, IconButton, Tooltip } from "@mui/material";
+import { Stack, Typography, IconButton } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
+import { copyToClipboard } from "src/utils/utils";
 
 export function InviteLinkCell({ data }) {
   const [copied, setCopied] = useState(false);
@@ -22,13 +24,12 @@ export function InviteLinkCell({ data }) {
 
   const copy = async (e) => {
     e?.stopPropagation();
-    try {
-      await navigator.clipboard.writeText(link);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
+    if (!(await copyToClipboard(link))) {
       enqueueSnackbar("Could not copy", { variant: "error" });
+      return;
     }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
   };
 
   return (
@@ -38,14 +39,18 @@ export function InviteLinkCell({ data }) {
       alignItems="center"
       sx={{ height: "100%", minWidth: 0 }}
     >
-      <Tooltip title={copied ? "Copied" : "Copy invite link"}>
+      <CustomTooltip
+        show
+        size="small"
+        title={copied ? "Copied" : "Copy invite link"}
+      >
         <IconButton size="small" onClick={copy} sx={{ color: "primary.main" }}>
           <Iconify
             icon={copied ? "solar:check-read-linear" : "solar:copy-linear"}
             width={16}
           />
         </IconButton>
-      </Tooltip>
+      </CustomTooltip>
       <Typography
         variant="s2"
         onClick={copy}

@@ -10,8 +10,7 @@ import { isValidationDone } from "src/sections/oss-first-run/ossFlowState";
 // ----------------------------------------------------------------------
 
 // Signup is the end of the first-run flow, so anyone arriving before the checks
-// gets them first. Not applied to login: completion is per-browser, and bouncing
-// an existing user into a wizard would read as a broken install.
+// gets them first.
 export default function OssSetupGuard({ children }) {
   const { isOSS, isLoading, isSuccess } = useDeploymentMode();
 

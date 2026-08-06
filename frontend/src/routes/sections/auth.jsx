@@ -65,6 +65,8 @@ const authJwt = {
       element: <InviteAccepted />,
     },
     {
+      // Deliberately not behind OssSetupGuard: completion is per-browser, so
+      // guarding login would throw an existing user into the setup wizard.
       path: "login",
       element: (
         <AuthClassicLayout>
@@ -89,7 +91,6 @@ const authJwt = {
       ),
     },
     {
-      // On self-hosted, only reachable once the checks are done.
       path: "register",
       element: (
         <OssSetupGuard>

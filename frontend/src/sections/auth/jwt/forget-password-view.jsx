@@ -22,7 +22,7 @@ import RightSectionAuth from "./RightSectionAuth";
 
 // Take the path off the link rather than following it: it is built from the
 // backend's APP_URL, which need not match the origin serving the app.
-const RESET_ROUTE = "/auth/jwt/verify/";
+const RESET_ROUTE = `${paths.auth.jwt.verify}/`;
 
 const toResetPath = (resetLink) => {
   const start = resetLink?.indexOf(RESET_ROUTE) ?? -1;

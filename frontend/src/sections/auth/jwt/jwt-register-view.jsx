@@ -31,17 +31,11 @@ import { RouterLink } from "src/routes/components";
 import RegionSelect from "src/components/RegionSelect";
 import RightSectionAuth from "./RightSectionAuth";
 import { isValidUtm } from "src/utils/utmUtils";
+import { getSignupFieldErrors } from "src/utils/errorUtils";
 import {
   useDeploymentMode,
   usePostLoginPath,
 } from "src/hooks/useDeploymentMode";
-
-// Backend keys errors by request field name, the form does not.
-const FIELD_ERROR_TO_FORM_FIELD = {
-  password: "password",
-  email: "email",
-  full_name: "fullName",
-};
 
 export default function JwtRegisterView() {
   const { register, login, awsRegister } = useAuthContext();
@@ -219,15 +213,12 @@ export default function JwtRegisterView() {
         });
 
         if (isOSS) {
-          // Signup returns the same {access, refresh, new_org} a login does.
-          // The AWS marketplace response carries no tokens.
           try {
             if (!response.result?.access) {
               throw new Error("signup response carried no access token");
             }
             await login({ status: 200, data: response.result });
-            // The auth guard re-fires signup conversions for anything but
-            // "email", and this view already fired them above.
+            // Stops the auth guard re-firing the conversions sent above.
             localStorage.setItem("signupProvider", "email");
 
             if (response.result.new_org) {
@@ -239,7 +230,6 @@ export default function JwtRegisterView() {
               localStorage.removeItem("redirectUrl");
             }
           } catch (loginErr) {
-            // The account exists either way, so never strand them.
             logger.info("OSS auto-login after signup failed", loginErr);
             enqueueSnackbar({
               variant: "info",
@@ -263,23 +253,12 @@ export default function JwtRegisterView() {
       } else {
         logger.error("Registration Error:", error);
       }
-      const fieldErrors =
-        error?.result?.error_code === "SIGNUP_VALIDATION_FAILED"
-          ? error?.result?.field_errors
-          : null;
-
-      if (fieldErrors) {
-        const unmapped = [];
-        Object.entries(fieldErrors).forEach(([key, messages]) => {
-          const message = [].concat(messages).join(" ");
-          const field = FIELD_ERROR_TO_FORM_FIELD[key];
-          if (field) {
-            setError(field, { type: "server", message }, { shouldFocus: true });
-          } else {
-            unmapped.push(`${key}: ${message}`);
-          }
-        });
-        setErrorMsg(unmapped.join(" "));
+      const signupErrors = getSignupFieldErrors(error);
+      if (signupErrors) {
+        signupErrors.fields.forEach(({ name, message }) =>
+          setError(name, { type: "server", message }, { shouldFocus: true }),
+        );
+        setErrorMsg(signupErrors.message);
         return;
       }
 
