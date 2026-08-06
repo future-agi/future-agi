@@ -55,7 +55,7 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 		rc.IsStream = false
 	}
 
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.extractClientIP(r)
 
 	// Extract auth from query param, header, or Authorization header.
 	if key := r.URL.Query().Get("key"); key != "" {

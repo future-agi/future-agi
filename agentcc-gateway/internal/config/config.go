@@ -1063,6 +1063,14 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("logging.level must be one of debug, info, warn, error; got %q", c.Logging.Level)
 	}
 
+	if c.CORS.Enabled && c.CORS.AllowCredentials {
+		for _, o := range c.CORS.AllowedOrigins {
+			if o == "*" {
+				return fmt.Errorf("cors: allow_credentials cannot be combined with a wildcard origin %q; list explicit origins instead", "*")
+			}
+		}
+	}
+
 	return nil
 }
 

@@ -67,7 +67,7 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 
 	rc.Model = model
 	rc.IsStream = isStream
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.extractClientIP(r)
 
 	// Extract headers.
 	setAuthMetadataFromRequest(rc, r)
@@ -245,7 +245,7 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 	}
 
 	rc.Model = model
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.extractClientIP(r)
 	setAuthMetadataFromRequest(rc, r)
 
 	timeout := h.resolveTimeout(rc, r)

@@ -8,13 +8,13 @@ server:
   write_timeout: 300s
   idle_timeout: 120s
   shutdown_timeout: 30s
-  max_request_body_size: 10485760  # 10MB
+  max_request_body_size: 10485760 # 10MB
   default_request_timeout: 60s
 
 providers:
   openai:
     base_url: "https://api.openai.com"
-    api_key: "${OPENAI_API_KEY}"  # Set via env var
+    api_key: "${OPENAI_API_KEY}" # Set via env var
     api_format: "openai"
     default_timeout: 60s
     max_concurrent: 100
@@ -362,7 +362,6 @@ logging:
   #   include_bodies: false      # Include full request/response bodies (default: false)
   #   buffer_size: 4096          # Async buffer size (default: 4096)
   #   workers: 2                 # Number of log worker goroutines (default: 2)
-
 # guardrails:
 #   enabled: true
 #   fail_open: true                     # If a guardrail times out or errors, allow the request (default: true)
@@ -398,12 +397,15 @@ logging:
 #   allowed_headers: ["Authorization", "Content-Type"]
 #   exposed_headers: []
 #   max_age: 86400
-#   allow_credentials: false
+#   allow_credentials: false              # NOTE: cannot be true while allowed_origins contains "*" (rejected at startup)
 
 # Restrict inbound traffic by IP / CIDR.
 # ip_acl:
 #   enabled: true
-#   trusted_proxies: 1                    # hops of X-Forwarded-For to trust
+#   trusted_proxies: 1                    # reverse-proxy hops in front of the gateway.
+#                                         # X-Forwarded-For / X-Real-IP are only trusted up to this many hops.
+#                                         # 0 (default) = ignore those headers and use the socket peer IP,
+#                                         # so a spoofed header cannot bypass allow/deny or per-key AllowedIPs.
 #   allow: ["10.0.0.0/8", "192.168.1.0/24"]
 #   deny:  ["203.0.113.7"]                # deny takes precedence over allow
 
