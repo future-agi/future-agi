@@ -1,9 +1,9 @@
 {
   "generated_from": "api_contracts/openapi/swagger.json",
   "summary": {
-    "paths": 969,
-    "operations": 1315,
-    "mutation_endpoints_without_body_schema": 0,
+    "paths": 973,
+    "operations": 1319,
+    "mutation_endpoints_without_body_schema": 1,
     "operations_without_response_schema": 0,
     "broad_success_response_schemas": 0,
     "operations_without_error_response_schema": 0,
@@ -128,9 +128,9 @@
       "broad_error_response_schemas": 0
     },
     "simulate": {
-      "paths": 106,
-      "operations": 126,
-      "mutation_endpoints_without_body_schema": 0,
+      "paths": 110,
+      "operations": 130,
+      "mutation_endpoints_without_body_schema": 1,
       "operations_without_response_schema": 0,
       "broad_success_response_schemas": 0,
       "operations_without_error_response_schema": 0,
@@ -164,7 +164,17 @@
       "broad_error_response_schemas": 0
     }
   },
-  "mutation_endpoints_without_body_schema": [],
+  "mutation_endpoints_without_body_schema": [
+    {
+      "group": "simulate",
+      "method": "POST",
+      "path": "/simulate/api/alk-simulate/call-executions/{call_execution_id}/recording/",
+      "operation_id": "simulate_api_alk-simulate_call-executions_recording_upload",
+      "tags": [
+        "simulate"
+      ]
+    }
+  ],
   "operations_without_response_schema": [],
   "broad_success_response_schemas": []
 }

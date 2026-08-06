@@ -80,6 +80,7 @@ from simulate.serializers.response.run_test import (
     RunTestErrorResponseSerializer,
     RunTestExecutionResponseSerializer,
     RunTestExecutionsResponseSerializer,
+    RunTestListPaginatedResponseSerializer,
     RunTestMessageResponseSerializer,
     RunTestResponseSerializer,
     RunTestScenarioItemResponseSerializer,
@@ -143,12 +144,12 @@ from simulate.utils.agent_optimiser import (
     get_or_create_optimiser_for_test_execution,
 )
 from simulate.utils.baseline import resolve_baseline_id
-from simulate.utils.eval_summary import iter_live_eval_outputs
 from simulate.utils.eval_summary import (
     _build_template_statistics,
     _calculate_final_template_summaries,
     _get_completed_call_executions,
     _get_eval_configs_with_template,
+    iter_live_eval_outputs,
 )
 from simulate.utils.scenario_completeness import check_scenarios_incomplete
 from simulate.utils.sql_query import (
@@ -278,7 +279,7 @@ class RunTestListView(APIView):
     @validated_request(
         query_serializer=RunTestFilterSerializer,
         responses={
-            200: RunTestResponseSerializer(many=True),
+            200: RunTestListPaginatedResponseSerializer,
             500: RunTestErrorResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -1580,9 +1581,9 @@ class RunTestKPIsView(APIView):
                 config_choices_map = {}
                 for sec in simulate_eval_configs:
                     binding_config = sec.config or {}
-                    runtime_config = binding_config.get("run_config") or binding_config.get(
-                        "config", {}
-                    )
+                    runtime_config = binding_config.get(
+                        "run_config"
+                    ) or binding_config.get("config", {})
                     choices = (
                         runtime_config.get("choices")
                         or sec.eval_template.choices
@@ -3536,14 +3537,16 @@ class CallExecutionLogsView(APIView):
                         provider_call_id = None
                         provider_api_key = None
                         try:
-                            test_exec = getattr(
-                                call_execution, "test_execution", None
-                            )
+                            test_exec = getattr(call_execution, "test_execution", None)
                             version = (
-                                getattr(test_exec, "agent_version", None) if test_exec else None
+                                getattr(test_exec, "agent_version", None)
+                                if test_exec
+                                else None
                             )
                             if version is not None:
-                                from simulate.services.agent_definition import resolve_api_key_for_version
+                                from simulate.services.agent_definition import (
+                                    resolve_api_key_for_version,
+                                )
 
                                 provider_api_key = resolve_api_key_for_version(version)
                             provider_call_id = (

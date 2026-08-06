@@ -133,6 +133,17 @@ class TestAgentDefinitionCreateRequestSerializer:
         assert not serializer.is_valid()
         assert "contact_number" in serializer.errors
 
+    def test_provider_identity_without_secret_accepts_missing_contact_number(self):
+        serializer = AgentDefinitionCreateRequestSerializer(
+            data=_voice_agent_payload(
+                contact_number=None,
+                assistant_id="assistant_123",
+                api_key=None,
+            )
+        )
+
+        assert serializer.is_valid(), serializer.errors
+
     def test_invalid_contact_number_format(self):
         serializer = AgentDefinitionCreateRequestSerializer(
             data=_voice_agent_payload(contact_number="+123abc456")

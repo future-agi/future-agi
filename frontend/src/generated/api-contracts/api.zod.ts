@@ -29025,6 +29025,146 @@ export const SimulateApiAgentPromptOptimiserTrialTrialScenariosResponse = zod.ob
 
 
 /**
+ * Accept a multipart audio upload and hand it to the shared voice
+storage helper (``upload_audio_to_s3``). Matches the pattern the
+LiveKit and Vapi voice services already use for their recordings.
+ */
+export const SimulateApiAlkSimulateCallExecutionsRecordingUploadParams = zod.object({
+  "call_execution_id": zod.string()
+})
+
+
+/**
+ * Views here are intentionally minimal: they resolve the tenant-scoped
+target row, hand the parsed payload to
+`simulate.services.alk_simulate_ingestion`, and format the response.
+ * @summary Single view surface for all LiveKit sim ingestion HTTP endpoints.
+ */
+export const SimulateApiAlkSimulateCallExecutionsResultParams = zod.object({
+  "call_execution_id": zod.string()
+})
+
+export const simulateApiAlkSimulateCallExecutionsResultBodyDurationSecondsMin = 0;
+
+export const simulateApiAlkSimulateCallExecutionsResultBodyEndedReasonMax = 10000;
+
+export const simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemStartTimeMsDefault = 0;
+export const simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemStartTimeMsMin = 0;
+
+export const simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemEndTimeMsDefault = 0;
+export const simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemEndTimeMsMin = 0;
+
+export const simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemConfidenceScoreMin = 0;
+export const simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemConfidenceScoreMax = 1;
+
+export const simulateApiAlkSimulateCallExecutionsResultBodyRecordingUrlMax = 500;
+
+export const simulateApiAlkSimulateCallExecutionsResultBodyStereoRecordingUrlMax = 500;
+
+
+
+export const SimulateApiAlkSimulateCallExecutionsResultBody = zod.object({
+  "status": zod.enum(['completed', 'failed', 'cancelled']),
+  "started_at": zod.string().datetime({"offset":true}).optional(),
+  "ended_at": zod.string().datetime({"offset":true}).optional(),
+  "duration_seconds": zod.number().min(simulateApiAlkSimulateCallExecutionsResultBodyDurationSecondsMin).optional(),
+  "ended_reason": zod.string().max(simulateApiAlkSimulateCallExecutionsResultBodyEndedReasonMax).optional(),
+  "error_message": zod.string().optional(),
+  "call_summary": zod.string().optional(),
+  "transcript": zod.array(zod.object({
+  "speaker_role": zod.enum(['user', 'assistant', 'system', 'tool_calls', 'tool_call_result', 'unknown']),
+  "content": zod.string(),
+  "start_time_ms": zod.number().min(simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemStartTimeMsMin).default(simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemStartTimeMsDefault),
+  "end_time_ms": zod.number().min(simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemEndTimeMsMin).default(simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemEndTimeMsDefault),
+  "confidence_score": zod.number().min(simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemConfidenceScoreMin).max(simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemConfidenceScoreMax).optional()
+})).optional(),
+  "recording_url": zod.string().url().max(simulateApiAlkSimulateCallExecutionsResultBodyRecordingUrlMax).optional(),
+  "stereo_recording_url": zod.string().url().max(simulateApiAlkSimulateCallExecutionsResultBodyStereoRecordingUrlMax).optional(),
+  "costs": zod.object({
+  "stt_cost_cents": zod.number().optional(),
+  "llm_cost_cents": zod.number().optional(),
+  "tts_cost_cents": zod.number().optional(),
+  "storage_cost_cents": zod.number().optional(),
+  "cost_cents": zod.number().optional()
+}).optional(),
+  "provider_call_data": zod.object({
+
+}).passthrough().optional(),
+  "call_metadata": zod.object({
+
+}).passthrough().optional()
+})
+
+export const simulateApiAlkSimulateCallExecutionsResultResponseStatusDefault = true;
+
+
+export const SimulateApiAlkSimulateCallExecutionsResultResponse = zod.object({
+  "status": zod.boolean().default(simulateApiAlkSimulateCallExecutionsResultResponseStatusDefault),
+  "result": zod.object({
+  "call_execution_id": zod.string().uuid(),
+  "status": zod.string().min(1),
+  "eval_dispatched": zod.boolean()
+})
+})
+
+
+/**
+ * Views here are intentionally minimal: they resolve the tenant-scoped
+target row, hand the parsed payload to
+`simulate.services.alk_simulate_ingestion`, and format the response.
+ * @summary Single view surface for all LiveKit sim ingestion HTTP endpoints.
+ */
+export const SimulateApiAlkSimulateRunTestsStartTestExecutionParams = zod.object({
+  "run_test_id": zod.string()
+})
+
+export const SimulateApiAlkSimulateRunTestsStartTestExecutionBody = zod.object({
+  "scenario_ids": zod.array(zod.string().uuid()).optional(),
+  "simulator_agent_id": zod.string().uuid().optional()
+})
+
+export const simulateApiAlkSimulateRunTestsStartTestExecutionResponseStatusDefault = true;
+
+
+export const SimulateApiAlkSimulateRunTestsStartTestExecutionResponse = zod.object({
+  "status": zod.boolean().default(simulateApiAlkSimulateRunTestsStartTestExecutionResponseStatusDefault),
+  "result": zod.object({
+  "test_execution_id": zod.string().uuid(),
+  "run_test_id": zod.string().uuid(),
+  "scenario_ids": zod.array(zod.string().uuid()),
+  "total_scenarios": zod.number(),
+  "status": zod.string().min(1)
+})
+})
+
+
+/**
+ * Views here are intentionally minimal: they resolve the tenant-scoped
+target row, hand the parsed payload to
+`simulate.services.alk_simulate_ingestion`, and format the response.
+ * @summary Single view surface for all LiveKit sim ingestion HTTP endpoints.
+ */
+export const SimulateApiAlkSimulateTestExecutionsBatchParams = zod.object({
+  "test_execution_id": zod.string()
+})
+
+export const SimulateApiAlkSimulateTestExecutionsBatchBody = zod.object({
+
+})
+
+export const simulateApiAlkSimulateTestExecutionsBatchResponseStatusDefault = true;
+
+export const SimulateApiAlkSimulateTestExecutionsBatchResponse = zod.object({
+  "status": zod.boolean().default(simulateApiAlkSimulateTestExecutionsBatchResponseStatusDefault),
+  "result": zod.object({
+  "call_execution_ids": zod.array(zod.string().uuid()),
+  "has_more": zod.boolean(),
+  "batched_scenarios": zod.array(zod.string().uuid())
+})
+})
+
+
+/**
  * Get paginated list of call executions for the user's organization
 Query Parameters:
 - search: search string to filter call executions by phone number or scenario name
@@ -31562,19 +31702,25 @@ export const SimulateRunTestsListQueryParams = zod.object({
 
 
 
-export const simulateRunTestsListResponseDatasetRowIdsItemMax = 255;
 
 
-export const simulateRunTestsListResponseSimulateEvalConfigsDetailItemFiltersDefault = [];
+export const simulateRunTestsListResponseResultsItemDatasetRowIdsItemMax = 255;
 
 
-
-export const simulateRunTestsListResponseEvalsDetailItemFiltersDefault = [];
-
+export const simulateRunTestsListResponseResultsItemSimulateEvalConfigsDetailItemFiltersDefault = [];
 
 
 
-export const SimulateRunTestsListResponseItem = zod.object({
+export const simulateRunTestsListResponseResultsItemEvalsDetailItemFiltersDefault = [];
+
+
+
+
+export const SimulateRunTestsListResponse = zod.object({
+  "count": zod.number().optional(),
+  "next": zod.string().min(1).optional(),
+  "previous": zod.string().min(1).optional(),
+  "results": zod.array(zod.object({
   "id": zod.string().uuid().optional(),
   "name": zod.string().min(1).optional().describe('Name of the test run'),
   "description": zod.string().optional(),
@@ -31599,7 +31745,7 @@ export const SimulateRunTestsListResponseItem = zod.object({
   "scenarios_detail": zod.array(zod.object({
 
 }).passthrough()).optional(),
-  "dataset_row_ids": zod.array(zod.string().min(1).max(simulateRunTestsListResponseDatasetRowIdsItemMax)).optional().describe('IDs of dataset rows to run evaluations on'),
+  "dataset_row_ids": zod.array(zod.string().min(1).max(simulateRunTestsListResponseResultsItemDatasetRowIdsItemMax)).optional().describe('IDs of dataset rows to run evaluations on'),
   "simulator_agent": zod.string().uuid().optional().describe('Simulator agent for this test run (derived from scenarios)'),
   "simulator_agent_detail": zod.object({
 
@@ -31621,7 +31767,7 @@ export const SimulateRunTestsListResponseItem = zod.object({
   "filter_value": zod.unknown().optional().describe('Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.'),
   "col_type": zod.string().optional().describe('Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.')
 })
-})).default(simulateRunTestsListResponseSimulateEvalConfigsDetailItemFiltersDefault),
+})).default(simulateRunTestsListResponseResultsItemSimulateEvalConfigsDetailItemFiltersDefault),
   "error_localizer": zod.boolean().optional(),
   "model": zod.string().min(1).optional(),
   "status": zod.string().min(1).optional(),
@@ -31644,7 +31790,7 @@ export const SimulateRunTestsListResponseItem = zod.object({
   "filter_value": zod.unknown().optional().describe('Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.'),
   "col_type": zod.string().optional().describe('Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.')
 })
-})).default(simulateRunTestsListResponseEvalsDetailItemFiltersDefault),
+})).default(simulateRunTestsListResponseResultsItemEvalsDetailItemFiltersDefault),
   "error_localizer": zod.boolean().optional(),
   "model": zod.string().min(1).optional(),
   "status": zod.string().min(1).optional(),
@@ -31658,8 +31804,10 @@ export const SimulateRunTestsListResponseItem = zod.object({
   "last_run_at": zod.string().datetime({"offset":true}).optional(),
   "deleted": zod.boolean().optional(),
   "deleted_at": zod.string().datetime({"offset":true}).optional()
+})).optional(),
+  "total_pages": zod.number().optional(),
+  "current_page": zod.number().optional()
 })
-export const SimulateRunTestsListResponse = zod.array(SimulateRunTestsListResponseItem)
 
 
 /**

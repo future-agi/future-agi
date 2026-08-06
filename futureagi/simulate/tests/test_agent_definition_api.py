@@ -177,6 +177,28 @@ class TestCreateAgentDefinition:
         assert "agent" in data
         assert "id" in data["agent"]
 
+    def test_create_provider_target_without_secret_or_phone(self, auth_client):
+        response = auth_client.post(
+            "/simulate/agent-definitions/create/",
+            {
+                "agent_name": "Scenario-only Vapi Target",
+                "agent_type": "voice",
+                "provider": "vapi",
+                "assistant_id": "assistant_123",
+                "inbound": True,
+                "commit_message": "Created by Agent Learning Kit",
+                "languages": ["en"],
+                "description": "Healthcare scheduling assistant",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        agent = response.json()["agent"]
+        assert agent["provider"] == "vapi"
+        assert agent["assistant_id"] == "assistant_123"
+        assert not agent["api_key"]
+
     def test_create_voice_agent_response_masks_api_key(self, auth_client):
         raw_api_key = "sk-agent-definition-raw-secret-123456"
         payload = {

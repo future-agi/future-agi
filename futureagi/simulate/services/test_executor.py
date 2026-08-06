@@ -58,9 +58,9 @@ def _empty_call_log_summary(reason: str) -> dict:
 
 
 try:
-    from ee.evals.futureagi.eval_deterministic.evaluator import DeterministicEvaluator
+    from ee.evals.llm.agent_evaluator.evaluator import AgentEvaluator
 except ImportError:
-    DeterministicEvaluator = _ee_stub("DeterministicEvaluator")
+    AgentEvaluator = _ee_stub("AgentEvaluator")
 
 from model_hub.models.choices import StatusType
 from model_hub.models.develop_dataset import Cell, Column, Row
@@ -3277,7 +3277,6 @@ class TestExecutor:
                                     )
                                 )
 
-                            recording_url = [s3_url]
                             csat = {
                                 "name": "csat_score",
                                 "description": "Evaluates the Customer Satisfaction (CSAT) score for a call between the customer and the agent.",
@@ -3296,24 +3295,33 @@ class TestExecutor:
                                 ],
                                 "multi_choice": False,
                             }
-                            evaluator = DeterministicEvaluator(
-                                multi_choice=csat["multi_choice"],
-                                choices=csat["choices"],
-                                rule_prompt=csat["criteria"],
-                                input=recording_url,
-                                input_type=["audio"],
-                            )
-                            result = evaluator._evaluate()
                             try:
-                                csat_score = result.get("data", [])[0]
-                                call_execution.overall_score = float(csat_score)
+                                csat_rule_prompt = (
+                                    csat["criteria"]
+                                    + "\n\n## Inputs\n\n<output>{{output}}</output>"
+                                )
+                                evaluator = AgentEvaluator(
+                                    rule_prompt=csat_rule_prompt,
+                                    model="turing_large",
+                                    output_type="choices",
+                                    choices=csat["choices"],
+                                    agent_mode="agent",
+                                )
+                                batch_result = evaluator.run(
+                                    output=s3_url,
+                                    required_keys=["output"],
+                                )
+                                csat_score = float(
+                                    batch_result.eval_results[0]["data"]["result"]
+                                )
+                                call_execution.overall_score = csat_score
                                 logger.debug(
                                     "csat_evaluation_result",
                                     call_execution_id=str(call_execution.id),
                                     csat_score=csat_score,
                                 )
 
-                            except:
+                            except Exception:
                                 logger.warning(
                                     "csat_evaluation_parse_failed",
                                     call_execution_id=str(call_execution.id),

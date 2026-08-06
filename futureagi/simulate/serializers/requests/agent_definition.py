@@ -188,22 +188,17 @@ class AgentDefinitionCreateRequestSerializer(serializers.Serializer):
                         }
                     )
             else:
-                # Contact number is optional when api_key + assistant_id are
-                # provided (web bridge will be used instead of SIP/phone).
-                has_web_bridge_creds = bool(
-                    api_key
-                    and api_key.strip()
-                    and assistant_id
-                    and assistant_id.strip()
-                )
+                # Provider-backed targets can be registered by assistant ID
+                # before credentials are attached.
+                has_provider_identity = bool(assistant_id and assistant_id.strip())
                 if (
                     not contact_number or not contact_number.strip()
-                ) and not has_web_bridge_creds:
+                ) and not has_provider_identity:
                     raise serializers.ValidationError(
                         {
                             "contact_number": (
                                 "Contact number is required "
-                                "(or provide API Key and Assistant ID for web bridge)"
+                                "(or provide an Assistant ID for a provider target)"
                             )
                         }
                     )

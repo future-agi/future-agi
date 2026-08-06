@@ -15396,6 +15396,115 @@ export interface AgentPromptOptimiserTrialScenariosResponseApi {
   result: AgentPromptOptimiserTrialScenariosResultApi;
 }
 
+export type ALKSimulateResultApiStatus = typeof ALKSimulateResultApiStatus[keyof typeof ALKSimulateResultApiStatus];
+
+
+export const ALKSimulateResultApiStatus = {
+  completed: 'completed',
+  failed: 'failed',
+  cancelled: 'cancelled',
+} as const;
+
+export type ALKSimulateResultApiProviderCallData = { [key: string]: unknown };
+
+export type ALKSimulateResultApiCallMetadata = { [key: string]: unknown };
+
+export type ALKSimulateTranscriptSegmentApiSpeakerRole = typeof ALKSimulateTranscriptSegmentApiSpeakerRole[keyof typeof ALKSimulateTranscriptSegmentApiSpeakerRole];
+
+
+export const ALKSimulateTranscriptSegmentApiSpeakerRole = {
+  user: 'user',
+  assistant: 'assistant',
+  system: 'system',
+  tool_calls: 'tool_calls',
+  tool_call_result: 'tool_call_result',
+  unknown: 'unknown',
+} as const;
+
+export interface ALKSimulateTranscriptSegmentApi {
+  speaker_role: ALKSimulateTranscriptSegmentApiSpeakerRole;
+  content: string;
+  /** @minimum 0 */
+  start_time_ms?: number;
+  /** @minimum 0 */
+  end_time_ms?: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  confidence_score?: number;
+}
+
+export interface ALKSimulateCostBreakdownApi {
+  stt_cost_cents?: number;
+  llm_cost_cents?: number;
+  tts_cost_cents?: number;
+  storage_cost_cents?: number;
+  cost_cents?: number;
+}
+
+export interface ALKSimulateResultApi {
+  status: ALKSimulateResultApiStatus;
+  started_at?: string;
+  ended_at?: string;
+  /** @minimum 0 */
+  duration_seconds?: number;
+  /** @maxLength 10000 */
+  ended_reason?: string;
+  error_message?: string;
+  call_summary?: string;
+  transcript?: ALKSimulateTranscriptSegmentApi[];
+  /** @maxLength 500 */
+  recording_url?: string;
+  /** @maxLength 500 */
+  stereo_recording_url?: string;
+  costs?: ALKSimulateCostBreakdownApi;
+  provider_call_data?: ALKSimulateResultApiProviderCallData;
+  call_metadata?: ALKSimulateResultApiCallMetadata;
+}
+
+export interface ALKSimulateResultOutcomeApi {
+  call_execution_id: string;
+  /** @minLength 1 */
+  status: string;
+  eval_dispatched: boolean;
+}
+
+export interface ALKSimulateResultResponseApi {
+  status?: boolean;
+  result: ALKSimulateResultOutcomeApi;
+}
+
+export interface ALKSimulateStartTestExecutionRequestApi {
+  scenario_ids?: string[];
+  simulator_agent_id?: string;
+}
+
+export interface ALKSimulateStartTestExecutionResultApi {
+  test_execution_id: string;
+  run_test_id: string;
+  scenario_ids: string[];
+  total_scenarios: number;
+  /** @minLength 1 */
+  status: string;
+}
+
+export interface ALKSimulateStartTestExecutionResponseApi {
+  status?: boolean;
+  result: ALKSimulateStartTestExecutionResultApi;
+}
+
+export interface ALKSimulateBatchCreateResultApi {
+  call_execution_ids: string[];
+  has_more: boolean;
+  batched_scenarios: string[];
+}
+
+export interface ALKSimulateBatchCreateResponseApi {
+  status?: boolean;
+  result: ALKSimulateBatchCreateResultApi;
+}
+
 export type CallExecutionErrorResponseApiType = typeof CallExecutionErrorResponseApiType[keyof typeof CallExecutionErrorResponseApiType];
 
 
@@ -17005,6 +17114,17 @@ export interface ExecutePromptSimulationResultApi {
 export interface ExecutePromptSimulationResponseApi {
   status?: boolean;
   result: ExecutePromptSimulationResultApi;
+}
+
+export interface RunTestListPaginatedResponseApi {
+  readonly count?: number;
+  /** @minLength 1 */
+  readonly next?: string;
+  /** @minLength 1 */
+  readonly previous?: string;
+  readonly results?: readonly RunTestResponseApi[];
+  readonly total_pages?: number;
+  readonly current_page?: number;
 }
 
 export type AllActiveTestsApiActiveTests = {[key: string]: string};
