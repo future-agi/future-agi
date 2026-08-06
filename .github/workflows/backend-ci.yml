@@ -1,0 +1,231 @@
+name: Backend CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+  merge_group:
+
+permissions:
+  contents: read
+  pull-requests: read # dorny/paths-filter reads the PR's file list
+
+concurrency:
+  # PRs: one active run per PR, cancel stale. Push: per-SHA so dev/main runs
+  # never cancel each other (their checks gate release PRs and deploys).
+  # Keyed on github.ref, not head_ref: for PRs that is refs/pull/N/merge, unique
+  # per PR even across forks, whereas a fork branch also named "dev" would share
+  # a head_ref group with internal dev runs and cancel them.
+  group: backend-ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  SPLITS: "10"
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      backend: ${{ steps.filter.outputs.backend || steps.always.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            backend:
+              - 'futureagi/**'
+              - '.github/workflows/backend-ci.yml'
+      - id: always
+        if: github.event_name != 'pull_request'
+        run: echo "backend=true" >> "$GITHUB_OUTPUT"
+
+  plan:
+    # Pins one durations snapshot per run so re-runs shard identically —
+    # a floating cache can move a failed test to a shard that never
+    # re-runs, turning the gate green without re-executing it.
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore newest timing cache over the committed floor
+        uses: actions/cache/restore@v4
+        with:
+          path: futureagi/.test_durations
+          key: test-durations-${{ github.run_id }} # never matches; forces prefix restore
+          restore-keys: |
+            test-durations-
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-durations-plan
+          path: futureagi/.test_durations
+          # .test_durations is a dotfile and upload-artifact@v4 defaults
+          # include-hidden-files: false, dropping it even when named literally.
+          include-hidden-files: true
+          if-no-files-found: error
+
+  test:
+    name: pytest shard ${{ matrix.group }}
+    needs: [changes, plan]
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    defaults:
+      run:
+        working-directory: futureagi
+    env:
+      LITELLM_MODE: PRODUCTION
+      CH25_DATABASE: test_tfc
+      CH_DATABASE: test_tfc
+      PYTHONHASHSEED: "0"
+      FI_CH25_SCHEMA_APPLY_STRICT: "1"
+      EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
+      EE_BASE_REF: ${{ github.base_ref || 'dev' }}
+      IS_INTERNAL_RUN: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prefetch service images in the background
+        # Pull-only on purpose: compose has no cross-invocation locking, so a
+        # background `up` can race the health gate's `up` on container creation
+        # when pulls are cold and the uv cache is warm. Concurrent pulls of the
+        # same image are safe at the daemon level; the gate stays the only
+        # invocation that creates containers.
+        run: |
+          nohup docker compose -f docker-compose.test.yml -p futureagi-test \
+            pull --quiet > /tmp/compose-up.log 2>&1 &
+
+      - name: Checkout EE package (internal runs only)
+        if: env.IS_INTERNAL_RUN == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: future-agi/ee
+          path: futureagi/ee
+          token: ${{ secrets.EE_REPO_READ_TOKEN }}
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: Resolve the EE branch to test against
+        if: env.IS_INTERNAL_RUN == 'true'
+        working-directory: futureagi/ee
+        run: |
+          # EE's default branch trails its own dev, so never settle for whatever
+          # the checkout landed on: walk the same candidate chain the SDK
+          # compatibility workflow uses and take the first branch that exists.
+          for candidate in "${EE_REPO_BRANCH}" "${EE_BASE_REF}" dev main; do
+            if [ -z "${candidate}" ]; then
+              continue
+            fi
+            if git ls-remote --exit-code --heads origin "${candidate}" >/dev/null 2>&1; then
+              git fetch --depth=1 origin "${candidate}"
+              git checkout --detach FETCH_HEAD
+              echo "::notice::Using EE branch ${candidate}"
+              exit 0
+            fi
+          done
+          echo "::error::No EE branch found among ${EE_REPO_BRANCH}, ${EE_BASE_REF}, dev, main"
+          exit 1
+
+      - name: Drop EE checkout credentials
+        # always(): the branch-resolution step above hard-fails when no
+        # candidate branch exists, and the token must be scrubbed regardless.
+        if: ${{ always() && env.IS_INTERNAL_RUN == 'true' }}
+        working-directory: futureagi/ee
+        run: git config --unset-all http.https://github.com/.extraheader || true
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: futureagi/uv.lock
+
+      - name: Install dependencies (overlaps with service startup)
+        run: uv sync --frozen
+
+      - name: Gate on service health
+        # Blocks until every service is healthy; no need to wait on the
+        # background launcher's PID (which belongs to another step's shell).
+        run: |
+          docker compose -f docker-compose.test.yml -p futureagi-test \
+            up -d --wait --wait-timeout 180
+
+      - name: Apply pinned sharding plan
+        uses: actions/download-artifact@v4
+        with:
+          name: test-durations-plan
+          path: futureagi
+
+      - name: Run shard
+        id: run-shard
+        run: |
+          set +e
+          uv run pytest -q -ra --ignore=tests/stress \
+            --splits "$SPLITS" --group "${{ matrix.group }}" \
+            --splitting-algorithm least_duration \
+            --durations-path .test_durations \
+            --durations=25 --durations-min=1.0 \
+            ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' && '--store-durations' || '' }} \
+            --junitxml=junit-${{ matrix.group }}.xml
+          code=$?
+          set -e
+          if [ "$code" -eq 5 ]; then
+            echo "::warning::No tests collected for this shard — expected when splitting, but investigate if MANY shards report this"
+            exit 0
+          fi
+          exit $code
+
+      - name: Upload JUnit results
+        # Skip when the shard never ran: a missing-file error here would bury
+        # the real failure (EE checkout, service health, dependency install).
+        if: ${{ !cancelled() && steps.run-shard.conclusion != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-results-${{ matrix.group }}
+          path: futureagi/junit-${{ matrix.group }}.xml
+          overwrite: true
+          if-no-files-found: error
+
+      - name: Upload timing data (dev pushes only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        uses: actions/upload-artifact@v4
+        with:
+          name: timing-data-${{ matrix.group }}
+          path: futureagi/.test_durations
+          # .test_durations is a dotfile and upload-artifact@v4 defaults
+          # include-hidden-files: false, dropping it even when named literally.
+          include-hidden-files: true
+          overwrite: true
+
+      - name: Dump service logs on failure
+        if: failure()
+        run: |
+          cat /tmp/compose-up.log || true
+          docker compose -f docker-compose.test.yml -p futureagi-test ps
+          docker compose -f docker-compose.test.yml -p futureagi-test logs --tail 200
+
+  backend-tests:
+    name: Backend Tests Pass # the ONLY required status check
+    needs: [changes, plan, test]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail closed unless every dependency succeeded or was skipped
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          # No -e flag and a non-empty success output: `jq -e` exits 4 when a
+          # filter produces no output, which would fail the gate on green runs.
+          echo "$NEEDS" | jq 'with_entries(.value |= .result)
+            | to_entries
+            | map(select(.value != "success" and .value != "skipped"))
+            | if length > 0 then ("failing: " + (map(.key) | join(", ")) | halt_error)
+              else "all dependencies green (or legitimately skipped)" end'
