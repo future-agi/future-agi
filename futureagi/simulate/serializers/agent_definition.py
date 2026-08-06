@@ -59,6 +59,7 @@ class AgentDefinitionOperationSerializer(serializers.Serializer):
             ProviderChoices.VAPI,
             ProviderChoices.RETELL,
             ProviderChoices.ELEVEN_LABS,
+            ProviderChoices.BLAND,
             ProviderChoices.OTHERS,
         ],
         default=ProviderChoices.VAPI,

@@ -356,3 +356,4 @@ def test_export_stamps_error_status_for_failed_call(monkeypatch):
     op._export_provider_call_to_collector(span, "twilio", "c2")
     # Failed call must carry ERROR status (collector copies status_code -> spans.status).
     assert captured["spans"][0].get("status_code") == "ERROR"
+

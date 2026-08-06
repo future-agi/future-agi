@@ -20,7 +20,13 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import PropTypes from "prop-types";
-import React, { useCallback, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Iconify from "src/components/iconify";
 import KeysDrawer from "src/components/custom-model-dropdown/KeysDrawer";
 import { useDebounce } from "src/hooks/use-debounce";
@@ -149,6 +155,9 @@ const FAGI_MODELS = [
 ];
 
 export const FAGI_MODEL_VALUES = new Set(FAGI_MODELS.map((m) => m.value));
+
+const FAGI_MODEL_OSS_TOOLTIP =
+  "Turing models are not available on self-hosted (OSS) deployments. Select your own model, or upgrade your plan.";
 
 const CHIP_STYLES = {
   backgroundColor: (theme) =>
@@ -593,6 +602,11 @@ const ModelSelector = ({
   activeContextOptions: activeContextOptionsProp,
   onActiveContextOptionsChange,
   hideDatasetContextToggle = false,
+  // Bump this counter to pop the model menu open from the parent — used when
+  // an action is blocked because no model is picked, so the snackbar and the
+  // menu arrive together. A counter rather than a boolean so repeat attempts
+  // re-open it without the parent having to reset the flag.
+  openModelMenuSignal = 0,
 }) => {
   // For each field, pick "controlled" (parent-driven) or "uncontrolled" (local state).
   const [modeLocal, setModeLocal] = useState("agent");
@@ -604,6 +618,12 @@ const ModelSelector = ({
 
   const [modeAnchor, setModeAnchor] = useState(null);
   const [modelAnchor, setModelAnchor] = useState(null);
+  const modelPillRef = useRef(null);
+
+  useEffect(() => {
+    if (!openModelMenuSignal || disabled) return;
+    setModelAnchor(modelPillRef.current);
+  }, [openModelMenuSignal, disabled]);
   const [modelSearch, setModelSearch] = useState("");
   const debouncedModelSearch = useDebounce(modelSearch.trim(), 400);
   const [plusAnchor, setPlusAnchor] = useState(null);
@@ -666,7 +686,8 @@ const ModelSelector = ({
   const debouncedKbSearch = useDebounce(kbSearch.trim(), 400);
   const [keysDrawerModel, setKeysDrawerModel] = useState(null);
   const navigate = useNavigate();
-  const { isOSS } = useDeploymentMode();
+  const { isOSS, isLoading: deploymentModeLoading } = useDeploymentMode();
+  const fagiModelsLocked = isOSS && !deploymentModeLoading;
 
   const currentMode = MODES.find((m) => m.value === mode) || MODES[1];
 
@@ -780,12 +801,19 @@ const ModelSelector = ({
     );
   }, [connectors, connectorSearch]);
 
-  // Filter FAGI models by search — always shown in both OSS and EE
-  const filteredFagiModels = modelSearch
-    ? FAGI_MODELS.filter((m) =>
-        m.label.toLowerCase().includes(modelSearch.toLowerCase()),
-      )
-    : FAGI_MODELS;
+  const filteredFagiModels = useMemo(() => {
+    if (!modelSearch) return FAGI_MODELS;
+    return FAGI_MODELS.filter((m) =>
+      m.label.toLowerCase().includes(modelSearch.toLowerCase()),
+    );
+  }, [modelSearch]);
+
+  // OSS can't run Turing models, but callers still seed `model` with
+  // "turing_large". Drop it so the pill reads "Select model" instead of
+  // preselecting something the backend would 402 on save.
+  useEffect(() => {
+    if (fagiModelsLocked && FAGI_MODEL_VALUES.has(model)) onModelChange("");
+  }, [fagiModelsLocked, model, onModelChange]);
 
   return (
     <Box
@@ -835,6 +863,7 @@ const ModelSelector = ({
 
       {/* ── Model selector (right) ── */}
       <Box
+        ref={modelPillRef}
         onClick={(e) => !disabled && setModelAnchor(e.currentTarget)}
         sx={{
           display: "inline-flex",
@@ -1152,48 +1181,75 @@ const ModelSelector = ({
                 FutureAGI Models
               </Typography>
               {filteredFagiModels.map((m) => (
-                <MenuItem
+                <Tooltip
                   key={m.value}
-                  selected={m.value === model}
-                  onClick={() => {
-                    onModelChange(m.value);
-                    setModelAnchor(null);
-                    setModelSearch("");
-                  }}
-                  sx={{ mx: 0.5, borderRadius: "6px", py: 0.75, gap: 1 }}
+                  title={fagiModelsLocked ? FAGI_MODEL_OSS_TOOLTIP : ""}
+                  placement="right"
+                  arrow
                 >
-                  <Iconify
-                    icon={m.icon}
-                    width={18}
-                    sx={{
-                      color:
-                        m.value === model ? "primary.main" : "text.secondary",
-                      flexShrink: 0,
-                    }}
-                  />
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Typography
-                      variant="body2"
-                      sx={{ fontSize: "13px", fontWeight: 500 }}
+                  <span>
+                    <MenuItem
+                      selected={m.value === model}
+                      disabled={fagiModelsLocked}
+                      onClick={() => {
+                        onModelChange(m.value);
+                        setModelAnchor(null);
+                        setModelSearch("");
+                      }}
+                      sx={{
+                        mx: 0.5,
+                        borderRadius: "6px",
+                        py: 0.75,
+                        gap: 1,
+                        width: "auto",
+                      }}
                     >
-                      {m.label}
-                    </Typography>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ fontSize: "11px" }}
-                    >
-                      {m.description}
-                    </Typography>
-                  </Box>
-                  {m.value === model && (
-                    <Iconify
-                      icon="mdi:check"
-                      width={16}
-                      sx={{ color: "primary.main", flexShrink: 0 }}
-                    />
-                  )}
-                </MenuItem>
+                      <Iconify
+                        icon={m.icon}
+                        width={18}
+                        sx={{
+                          color:
+                            m.value === model
+                              ? "primary.main"
+                              : "text.secondary",
+                          flexShrink: 0,
+                        }}
+                      />
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Typography
+                          variant="body2"
+                          sx={{ fontSize: "13px", fontWeight: 500 }}
+                        >
+                          {m.label}
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ fontSize: "11px" }}
+                        >
+                          {fagiModelsLocked
+                            ? "Not available on self-host"
+                            : m.description}
+                        </Typography>
+                      </Box>
+                      {fagiModelsLocked ? (
+                        <Iconify
+                          icon="mdi:lock-outline"
+                          width={16}
+                          sx={{ color: "text.disabled", flexShrink: 0 }}
+                        />
+                      ) : (
+                        m.value === model && (
+                          <Iconify
+                            icon="mdi:check"
+                            width={16}
+                            sx={{ color: "primary.main", flexShrink: 0 }}
+                          />
+                        )
+                      )}
+                    </MenuItem>
+                  </span>
+                </Tooltip>
               ))}
             </>
           )}
@@ -1404,7 +1460,9 @@ const ModelSelector = ({
                   width: 12,
                   height: 12,
                   borderRadius: "50%",
-                  backgroundColor: "#fff",
+                  backgroundColor: useInternet
+                    ? "primary.contrastText"
+                    : "common.white",
                   position: "absolute",
                   top: 2,
                   left: useInternet ? 18 : 2,
@@ -1891,6 +1949,7 @@ ModelSelector.propTypes = {
   showMode: PropTypes.bool,
   showPlus: PropTypes.bool,
   hideDatasetContextToggle: PropTypes.bool,
+  openModelMenuSignal: PropTypes.number,
 };
 
 export default ModelSelector;

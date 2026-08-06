@@ -506,6 +506,7 @@ class ExperimentsTableView(APIView):
             **MODEL_HUB_ERROR_RESPONSES,
         },
         reject_unknown_fields=True,
+        serializer_context=lambda request: {"request": request},
     )
     def post(self, request):
         try:
@@ -558,6 +559,7 @@ class ExperimentsTableView(APIView):
             **MODEL_HUB_ERROR_RESPONSES,
         },
         reject_unknown_fields=True,
+        serializer_context=lambda request: {"request": request},
     )
     def put(self, request):
         try:

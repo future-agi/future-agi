@@ -50,6 +50,7 @@ except ImportError:  # pragma: no cover
 
 CH_HOST = os.environ.get("CH25_HOST", "127.0.0.1")
 CH_PORT = int(os.environ.get("CH25_HTTP_PORT", "19001"))
+CH_DATABASE = os.environ.get("CH25_DATABASE", "default")
 
 
 # NOTE (codex P3 finding 2026-05-26): the previous implementation called
@@ -278,10 +279,11 @@ def test_spans_table_attributes_extra_is_string(ch_client):
     """
     rows = ch_client.query(
         "SELECT type FROM system.columns "
-        "WHERE database = 'default' AND table = 'spans' "
-        "  AND name = 'attributes_extra'"
+        "WHERE database = %(db)s AND table = 'spans' "
+        "  AND name = 'attributes_extra'",
+        parameters={"db": CH_DATABASE},
     ).result_rows
-    assert rows, "spans.attributes_extra column missing"
+    assert rows, f"spans.attributes_extra column missing in database {CH_DATABASE!r}"
     actual_type = rows[0][0]
     assert actual_type == "String", (
         f"spans.attributes_extra is {actual_type!r}; expected 'String'. "
@@ -319,12 +321,15 @@ def test_spans_table_typed_json_contract(ch_client):
     """
     rows = ch_client.query(
         "SELECT name, type FROM system.columns "
-        "WHERE database = 'default' AND table = 'spans' "
-        "  AND name IN ('attributes_extra', 'resource_attrs', 'metadata')"
+        "WHERE database = %(db)s AND table = 'spans' "
+        "  AND name IN ('attributes_extra', 'resource_attrs', 'metadata')",
+        parameters={"db": CH_DATABASE},
     ).result_rows
     actual = {name: type_ for name, type_ in rows}
     missing = set(_EXPECTED_SPANS_TYPES) - set(actual)
-    assert not missing, f"spans table missing columns: {sorted(missing)}"
+    assert not missing, (
+        f"spans table missing columns {sorted(missing)} in database {CH_DATABASE!r}"
+    )
     for col, (kind, expected) in _EXPECTED_SPANS_TYPES.items():
         got = actual[col]
         if kind == "exact":
@@ -345,9 +350,10 @@ def test_spans_table_typed_json_contract(ch_client):
     # which embeds the column-level codec and default in the table DDL.
     ddl_rows = ch_client.query(
         "SELECT create_table_query FROM system.tables "
-        "WHERE database = 'default' AND name = 'spans'"
+        "WHERE database = %(db)s AND name = 'spans'",
+        parameters={"db": CH_DATABASE},
     ).result_rows
-    assert ddl_rows, "spans table missing from system.tables"
+    assert ddl_rows, f"spans table missing from system.tables in database {CH_DATABASE!r}"
     ddl = ddl_rows[0][0]
     # Be tolerant of CH's DDL canonicalization (whitespace, quoting) but pin
     # both substrings — if either is missing, the column was re-created

@@ -7,21 +7,6 @@ from dataclasses import dataclass
 
 
 @dataclass
-class DunningCheckInput:
-    """Input for the daily dunning checks activity."""
-
-    pass
-
-
-@dataclass
-class DunningCheckOutput:
-    """Output from the daily dunning checks activity."""
-
-    orgs_processed: int = 0
-    status: str = "COMPLETED"
-
-
-@dataclass
 class MonthlyInvoiceInput:
     """Input for the monthly invoice generation activity."""
 

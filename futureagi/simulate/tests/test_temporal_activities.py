@@ -482,6 +482,7 @@ class TestSetupTestExecutionActivity:
 
 
 @pytest.mark.integration
+@pytest.mark.requires_ee
 class TestCreateCallExecutionRecordsActivity:
     """Integration tests for create_call_execution_records activity."""
 
@@ -962,6 +963,7 @@ class TestFetchAndPersistCallResultActivity:
                 stereo_recording_url=None,
                 customer_recording_url=None,
                 assistant_recording_url=None,
+                provider_call_data=None,
             )
             mock_vsm.extract_and_persist_recordings = AsyncMock(
                 return_value=mock_recordings
@@ -1056,6 +1058,7 @@ class TestFetchAndPersistCallResultActivity:
                 stereo_recording_url=None,
                 customer_recording_url=None,
                 assistant_recording_url=None,
+                provider_call_data=None,
             )
             mock_vsm.extract_and_persist_recordings = AsyncMock(
                 return_value=mock_recordings
@@ -1376,6 +1379,23 @@ class TestRunSimulateEvaluationsActivity:
         assert call_execution.status == CallExecution.CallStatus.ANALYZING
 
 
+@pytest.mark.unit
+@pytest.mark.requires_ee
+def test_tool_evaluation_gate_invariant_bland_has_no_adapter():
+    """Locks the invariant the tool-eval gate in _run_tool_evaluation_standalone
+    relies on: a provider absent from ToolCallingSupportedProviders (e.g. Bland)
+    has no tool-call adapter, so get_tool_call_adapter raises. The gate skips
+    such providers up front instead of letting that raise into the broad except
+    (which silently no-ops tool evaluation). If a Bland adapter is ever added
+    this fails — a reminder to also add Bland to the supported list."""
+    from ee.agenthub.tool_eval_agent.adapters import get_tool_call_adapter
+    from simulate.semantics import ToolCallingSupportedProviders
+
+    assert ProviderChoices.BLAND not in ToolCallingSupportedProviders
+    with pytest.raises(ValueError):
+        get_tool_call_adapter(ProviderChoices.BLAND)
+
+
 @pytest.mark.integration
 class TestRunToolCallEvaluationActivity:
     """Integration tests for run_tool_call_evaluation activity."""
@@ -1640,6 +1660,7 @@ class TestCallExecutionWorkflowIntegration:
 
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio
+    @pytest.mark.requires_ee
     async def test_workflow_activity_sequence_inbound(self, call_execution):
         """Test that CallExecutionWorkflow calls activities in correct order for inbound calls."""
         from unittest.mock import call
@@ -1810,6 +1831,7 @@ class TestTestExecutionWorkflowIntegration:
 class TestCallExecutionRerunAPI:
     """Integration tests for the CallExecutionRerunView API."""
 
+    @pytest.mark.requires_ee
     @patch("simulate.temporal.client.rerun_call_executions")
     def test_rerun_call_and_eval_with_temporal(
         self, mock_rerun, auth_client, test_execution, call_execution

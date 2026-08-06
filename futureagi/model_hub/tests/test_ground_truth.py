@@ -444,52 +444,47 @@ class TestGroundTruthSetupAPI:
         ground_truth.refresh_from_db()
         assert ground_truth.enabled is True
 
-    def test_setup_rejects_unknown_field(self, auth_client, ground_truth):
-        payload = self._valid_payload()
-        payload["mystery_field"] = "should-fail"
-        response = auth_client.put(
-            self._setup_url(ground_truth.id), payload, format="json"
-        )
-        assert response.status_code == 400
-
-    def test_setup_rejects_non_boolean_enabled(self, auth_client, ground_truth):
-        payload = self._valid_payload()
-        payload["enabled"] = "yes-please"
-        response = auth_client.put(
-            self._setup_url(ground_truth.id), payload, format="json"
-        )
-        assert response.status_code == 400
-
-    def test_setup_rejects_missing_required_field(
-        self, auth_client, ground_truth
+    @pytest.mark.parametrize(
+        "mutator,expected_message_substring",
+        [
+            # (payload_mutator, expected_substring_in_message or None)
+            (lambda p: p.__setitem__("mystery_field", "should-fail"), None),
+            (lambda p: p.__setitem__("enabled", "yes-please"), None),
+            (lambda p: p.pop("max_examples"), None),
+            # empty variable mapping while enabled=True — the only variant
+            # whose response also asserts an error message substring.
+            (lambda p: p.__setitem__("variable_mapping", {}), "variable"),
+        ],
+        ids=[
+            "rejects_unknown_field",
+            "rejects_non_boolean_enabled",
+            "rejects_missing_required_field",
+            "rejects_empty_variable_mapping_when_enabled",
+        ],
+    )
+    def test_setup_rejects_invalid_payload(
+        self, auth_client, ground_truth, mutator, expected_message_substring
     ):
-        payload = self._valid_payload()
-        payload.pop("max_examples")
+        payload = self._valid_payload(enabled=True)
+        mutator(payload)
         response = auth_client.put(
             self._setup_url(ground_truth.id), payload, format="json"
         )
         assert response.status_code == 400
+        if expected_message_substring is not None:
+            assert expected_message_substring in response.data["message"].lower()
 
     def test_setup_rejects_unauthenticated_request(
         self, api_client, ground_truth
     ):
+        # Kept separate: uses api_client (no auth) instead of auth_client, so
+        # can't share the mutator harness above.
         response = api_client.put(
             self._setup_url(ground_truth.id),
             self._valid_payload(),
             format="json",
         )
         assert response.status_code in (401, 403)
-
-    def test_setup_rejects_empty_variable_mapping_when_enabled(
-        self, auth_client, ground_truth
-    ):
-        payload = self._valid_payload(enabled=True)
-        payload["variable_mapping"] = {}
-        response = auth_client.put(
-            self._setup_url(ground_truth.id), payload, format="json"
-        )
-        assert response.status_code == 400
-        assert "variable" in response.data["message"].lower()
 
     def test_setup_allows_empty_variable_mapping_when_disabled(
         self, auth_client, ground_truth
@@ -501,12 +496,51 @@ class TestGroundTruthSetupAPI:
         )
         assert response.status_code == 200
 
-    def test_setup_marks_stale_when_mapping_changes_with_prior_vectors(
-        self, auth_client, ground_truth
+    @pytest.mark.parametrize(
+        "initial_status,initial_row_count,expected_embeddings_stale,expected_final_status",
+        [
+            # mapping change WITH prior vectors → stale True; status flips to PENDING
+            (
+                "COMPLETED",
+                3,
+                True,
+                "PENDING",
+            ),
+            # mapping change WITHOUT prior vectors → stale False (nothing to invalidate)
+            (
+                "PENDING",
+                0,
+                False,
+                None,  # not asserted; the test doesn't check final status here
+            ),
+            # mapping change WHILE processing → stale True; status must stay PROCESSING
+            (
+                "PROCESSING",
+                1,
+                True,
+                "PROCESSING",
+            ),
+        ],
+        ids=[
+            "marks_stale_when_mapping_changes_with_prior_vectors",
+            "does_not_mark_stale_when_no_prior_vectors",
+            "preserves_processing_status_on_mapping_change",
+        ],
+    )
+    def test_setup_mapping_change_stale_matrix(
+        self,
+        auth_client,
+        ground_truth,
+        initial_status,
+        initial_row_count,
+        expected_embeddings_stale,
+        expected_final_status,
     ):
         ground_truth.variable_mapping = {"input": "input"}
-        ground_truth.embedding_status = EvalGroundTruth.EmbeddingStatus.COMPLETED
-        ground_truth.embedded_row_count = 3
+        ground_truth.embedding_status = getattr(
+            EvalGroundTruth.EmbeddingStatus, initial_status
+        )
+        ground_truth.embedded_row_count = initial_row_count
         ground_truth.save(
             update_fields=[
                 "variable_mapping",
@@ -521,63 +555,15 @@ class TestGroundTruthSetupAPI:
             self._setup_url(ground_truth.id), payload, format="json"
         )
         assert response.status_code == 200
-        assert response.data["result"]["embeddings_stale"] is True
-        ground_truth.refresh_from_db()
         assert (
-            ground_truth.embedding_status
-            == EvalGroundTruth.EmbeddingStatus.PENDING
+            response.data["result"]["embeddings_stale"]
+            is expected_embeddings_stale
         )
-
-    def test_setup_does_not_mark_stale_when_no_prior_vectors(
-        self, auth_client, ground_truth
-    ):
-        ground_truth.variable_mapping = {"input": "input"}
-        ground_truth.embedding_status = EvalGroundTruth.EmbeddingStatus.PENDING
-        ground_truth.embedded_row_count = 0
-        ground_truth.save(
-            update_fields=[
-                "variable_mapping",
-                "embedding_status",
-                "embedded_row_count",
-                "updated_at",
-            ]
-        )
-        payload = self._valid_payload(enabled=True)
-        payload["variable_mapping"] = {"input": "expected"}
-        response = auth_client.put(
-            self._setup_url(ground_truth.id), payload, format="json"
-        )
-        assert response.status_code == 200
-        assert response.data["result"]["embeddings_stale"] is False
-
-    def test_setup_preserves_processing_status_on_mapping_change(
-        self, auth_client, ground_truth
-    ):
-        ground_truth.variable_mapping = {"input": "input"}
-        ground_truth.embedding_status = (
-            EvalGroundTruth.EmbeddingStatus.PROCESSING
-        )
-        ground_truth.embedded_row_count = 1
-        ground_truth.save(
-            update_fields=[
-                "variable_mapping",
-                "embedding_status",
-                "embedded_row_count",
-                "updated_at",
-            ]
-        )
-        payload = self._valid_payload(enabled=True)
-        payload["variable_mapping"] = {"input": "expected"}
-        response = auth_client.put(
-            self._setup_url(ground_truth.id), payload, format="json"
-        )
-        assert response.status_code == 200
-        assert response.data["result"]["embeddings_stale"] is True
-        ground_truth.refresh_from_db()
-        assert (
-            ground_truth.embedding_status
-            == EvalGroundTruth.EmbeddingStatus.PROCESSING
-        )
+        if expected_final_status is not None:
+            ground_truth.refresh_from_db()
+            assert ground_truth.embedding_status == getattr(
+                EvalGroundTruth.EmbeddingStatus, expected_final_status
+            )
 
     def test_setup_returns_response_with_post_save_snapshot(
         self, auth_client, ground_truth

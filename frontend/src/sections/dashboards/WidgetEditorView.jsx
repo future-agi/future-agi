@@ -56,6 +56,7 @@ import {
   useDeleteWidget,
   useSimulationAgents,
 } from "src/hooks/useDashboards";
+import { useDebounce } from "src/hooks/use-debounce";
 import Iconify from "src/components/iconify";
 import FilterValueLabel, {
   useResolvedFilterOptions,
@@ -895,7 +896,16 @@ function FilterValuePickerPopup({
     Array.isArray(filter?.value) ? [...filter.value] : [],
   );
 
-  const { options, isLoading } = useResolvedFilterOptions(filter, source);
+  // Backend search (custom attributes) reaches values outside the fetched
+  // page and the default lookback; the client-side filter below stays as the
+  // instant layer on top of whatever is already loaded.
+  const debouncedSearch = useDebounce(search, 500);
+  const { options, isLoading } = useResolvedFilterOptions(
+    filter,
+    source,
+    true,
+    debouncedSearch,
+  );
 
   const filteredOptions = useMemo(() => {
     if (!search) return options;

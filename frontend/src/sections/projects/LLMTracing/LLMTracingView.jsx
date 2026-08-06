@@ -3296,7 +3296,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 textTransform: "none",
                 fontSize: 12,
                 fontWeight: 600,
-                color: "#573FCC",
+                color: (t) =>
+                  t.palette.mode === "dark" ? "text.primary" : "#573FCC",
                 minWidth: "auto",
                 p: 0,
                 "&:hover": { bgcolor: "transparent" },
@@ -4643,7 +4644,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       [
                         PROJECT_SOURCE.PROTOTYPE,
                         PROJECT_SOURCE.OBSERVE,
-                      ].includes(projectSource) && selectedTab === "trace"
+                      ].includes(projectSource) &&
+                      selectedTab === "trace" &&
+                      selectedGraph === "compare"
                     }
                   />
                 </Suspense>
@@ -4744,7 +4747,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       [
                         PROJECT_SOURCE.PROTOTYPE,
                         PROJECT_SOURCE.OBSERVE,
-                      ].includes(projectSource) && selectedTab === "spans"
+                      ].includes(projectSource) &&
+                      selectedTab === "spans" &&
+                      selectedGraph === "compare"
                     }
                   />
                 </Suspense>
@@ -4823,7 +4828,10 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 ref={compareCallLogsGridRef}
                 module="project"
                 id={observeId}
-                enabled={projectSource === PROJECT_SOURCE.SIMULATOR}
+                enabled={
+                  projectSource === PROJECT_SOURCE.SIMULATOR &&
+                  selectedGraph === "compare"
+                }
                 cellHeight={cellHeight}
                 columnVisibility={columns["compare-trace"]}
                 onColumnsChange={(next) =>

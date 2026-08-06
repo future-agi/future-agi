@@ -523,6 +523,7 @@ const DatasetsSelectRow = ({
                         />
                       }
                       disabled={
+                        button.disabled ||
                         !isData ||
                         (isSyntheticDataset && !processingComplete) ||
                         !RolePermission.DATASETS[PERMISSIONS.UPDATE][role]

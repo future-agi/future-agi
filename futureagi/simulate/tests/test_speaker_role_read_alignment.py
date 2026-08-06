@@ -36,6 +36,8 @@ def _vapi_inbound_call(*, transcripts=None, recordings=None):
     obj.call_metadata = {"call_direction": "inbound"}
     obj.call_type = "inboundPhoneCall"
     obj.simulation_call_type = "voice"
+    obj.recording_url = None
+    obj.stereo_recording_url = None
     if transcripts is None:
         obj.transcripts = MagicMock()
         obj.transcripts.exclude.return_value = []
@@ -56,6 +58,8 @@ def _vapi_outbound_call(*, transcripts=None, recordings=None):
     obj.call_metadata = {"call_direction": "outbound"}
     obj.call_type = "outboundPhoneCall"
     obj.simulation_call_type = "voice"
+    obj.recording_url = None
+    obj.stereo_recording_url = None
     if transcripts is None:
         obj.transcripts = MagicMock()
         obj.transcripts.exclude.return_value = []
@@ -68,10 +72,15 @@ def _vapi_outbound_call(*, transcripts=None, recordings=None):
 def _livekit_inbound_call(*, recordings=None):
     """LiveKit is direction-agnostic: worker normalises at write time."""
     obj = MagicMock()
-    obj.provider_call_data = {"livekit": {"recording": recordings or {}}}
+    obj.provider_call_data = {
+        "livekit": {"room_name": "test-room"},
+        "vapi": {"recording": recordings or {}},
+    }
     obj.call_metadata = {"call_direction": "inbound"}
     obj.call_type = "inboundPhoneCall"
     obj.simulation_call_type = "voice"
+    obj.recording_url = None
+    obj.stereo_recording_url = None
     obj.transcripts = MagicMock()
     obj.transcripts.exclude.return_value = []
     return obj
@@ -260,6 +269,32 @@ class TestEvalTranscriptLabels:
             == "customer"
         )
 
+    def test_bland_outbound_labels_are_direct(self):
+        # Bland is a customer-only OUTBOUND provider, so the tested agent is on
+        # `assistant` (same convention as VAPI outbound).
+        assert (
+            SpeakerRoleResolver.get_eval_role_label(
+                "assistant", provider=ProviderChoices.BLAND, is_outbound=True
+            )
+            == "agent"
+        )
+        assert (
+            SpeakerRoleResolver.get_eval_role_label(
+                "user", provider=ProviderChoices.BLAND, is_outbound=True
+            )
+            == "customer"
+        )
+
+    def test_bland_map_is_independent_of_vapi(self):
+        # Its own dict, not an alias — a future Bland payload change is edited on
+        # the Bland map without silently affecting VAPI.
+        assert (
+            SpeakerRoleResolver._BLAND_OUTBOUND is not SpeakerRoleResolver._VAPI_OUTBOUND
+        )
+        assert (
+            SpeakerRoleResolver._BLAND_INBOUND is not SpeakerRoleResolver._VAPI_INBOUND
+        )
+
     def test_system_role_is_never_conversational(self):
         """The persona system prompt must never appear in an eval input."""
         assert "system" not in SpeakerRoleResolver.get_conversational_roles()
@@ -270,6 +305,7 @@ class TestEvalTranscriptLabels:
 # -------------------------------------------------------------------
 
 
+@pytest.mark.requires_ee
 class TestMetricsNormalizeRoles:
     """conversation_metrics._normalize_roles_for_test_agent is the ONE
     write-time site that legitimately uses the resolver. Its purpose is

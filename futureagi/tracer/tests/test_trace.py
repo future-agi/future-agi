@@ -5,7 +5,6 @@ Tests for /tracer/trace/ endpoints.
 """
 
 import uuid
-from unittest.mock import patch
 
 import pytest
 from django.utils import timezone
@@ -58,7 +57,6 @@ class TestTraceRetrieveAPI:
         assert response.status_code == status.HTTP_200_OK
         data = get_result(response)
         # Spans may be in various locations in the response
-        spans = data.get("observation_spans", data.get("spans", []))
         # API may return spans elsewhere or spans may not be included inline
         # Just verify the response contains trace data
         trace_data = data.get("trace", data)
@@ -656,6 +654,68 @@ def test_get_span_trace_map_selects_from_spans(monkeypatch):
     assert "trace_id IN %(trace_ids)s" in captured["query"]
     assert "is_deleted = 0" in captured["query"]
     assert captured["params"] == {"trace_ids": ["t1"]}
+    assert "project_id" not in captured["query"]
+    assert "start_time" not in captured["query"]
+
+
+def _capture_span_trace_map_query(monkeypatch, **kwargs):
+    from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+    captured = {}
+
+    def fake_exec(self, query, params=None, timeout_ms=5000):
+        captured["query"] = query
+        captured["params"] = params
+
+        class R:
+            data = []
+
+        return R()
+
+    monkeypatch.setattr(AnalyticsQueryService, "execute_ch_query", fake_exec)
+    AnalyticsQueryService().get_span_trace_map(["t1"], **kwargs)
+    return captured
+
+
+def test_get_span_trace_map_scopes_project_id_only(monkeypatch):
+    captured = _capture_span_trace_map_query(monkeypatch, project_id="p1")
+
+    assert "trace_id IN %(trace_ids)s" in captured["query"]
+    assert "project_id = %(project_id)s" in captured["query"]
+    assert "start_time" not in captured["query"]
+    assert captured["params"] == {"trace_ids": ["t1"], "project_id": "p1"}
+
+
+def test_get_span_trace_map_bounds_start_time_window(monkeypatch):
+    from datetime import datetime
+
+    start = datetime(2026, 7, 1)
+    end = datetime(2026, 7, 8)
+    captured = _capture_span_trace_map_query(
+        monkeypatch, project_id="p1", start_date=start, end_date=end
+    )
+
+    assert "trace_id IN %(trace_ids)s" in captured["query"]
+    assert "project_id = %(project_id)s" in captured["query"]
+    assert "start_time >= %(start_date)s - INTERVAL 1 DAY" in captured["query"]
+    assert "start_time < %(end_date)s + INTERVAL 1 DAY" in captured["query"]
+    assert captured["params"] == {
+        "trace_ids": ["t1"],
+        "project_id": "p1",
+        "start_date": start,
+        "end_date": end,
+    }
+
+
+def test_get_span_trace_map_window_needs_both_bounds(monkeypatch):
+    from datetime import datetime
+
+    captured = _capture_span_trace_map_query(
+        monkeypatch, project_id="p1", start_date=datetime(2026, 7, 1)
+    )
+
+    assert "start_time" not in captured["query"]
+    assert captured["params"] == {"trace_ids": ["t1"], "project_id": "p1"}
 
 
 def test_build_annotation_map_pg_has_no_observation_span_join(monkeypatch):

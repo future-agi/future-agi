@@ -78,6 +78,7 @@ export default function ThemeProvider({ children }) {
     s.setProperty("--bg-neutral", p.background.neutral);
     s.setProperty("--bg-subtle", p.background.subtle);
     s.setProperty("--bg-elevated", p.background.neutral);
+    s.setProperty("--input-surface", p.background.paper);
     s.setProperty("--text-primary", p.text.primary);
     s.setProperty("--text-secondary", p.text.secondary);
     s.setProperty("--text-muted", p.text.muted);
@@ -91,6 +92,9 @@ export default function ThemeProvider({ children }) {
     s.setProperty("--surface-row-active", p.action.selected);
     s.setProperty("--surface-row-hover", p.action.hover);
     s.setProperty("--bg-input", p.background.neutral);
+    s.setProperty("--syntax-string", p.syntax.string);
+    s.setProperty("--syntax-number", p.syntax.number);
+    s.setProperty("--syntax-boolean", p.syntax.boolean);
   }, [theme.palette]);
 
   return (

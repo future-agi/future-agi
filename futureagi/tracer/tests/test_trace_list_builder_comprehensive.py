@@ -16,6 +16,7 @@ Focus areas (gaps):
 """
 
 import uuid
+from datetime import datetime
 from unittest.mock import Mock
 
 import pytest
@@ -86,6 +87,20 @@ class TestBuildContentQuery:
         assert "project_id IN %(project_ids)s" in query
         assert params["project_ids"] == tuple(pids)
 
+    def test_start_time_window_after_build(self, project_id, trace_ids):
+        builder = TraceListQueryBuilder(project_id=project_id)
+        builder.build()
+        query, params = builder.build_content_query(trace_ids)
+        assert "start_time >= %(start_date)s - INTERVAL 1 DAY" in query
+        assert "start_time < %(end_date)s + INTERVAL 1 DAY" in query
+        assert params["start_date"] == builder.start_date
+        assert params["end_date"] == builder.end_date
+
+    def test_no_window_standalone(self, project_id, trace_ids):
+        builder = TraceListQueryBuilder(project_id=project_id)
+        query, _ = builder.build_content_query(trace_ids)
+        assert "start_time" not in query
+
 
 # ---------------------------------------------------------------------------
 # build_span_attributes_query
@@ -128,6 +143,19 @@ class TestBuildSpanAttributesQuery:
         assert "project_id = %(project_id)s" in query
         assert "is_deleted = 0" in query
         assert "_peerdb_is_deleted" not in query
+
+    def test_start_time_window_after_build(self, project_id, trace_ids):
+        builder = TraceListQueryBuilder(project_id=project_id)
+        builder.build()
+        query, params = builder.build_span_attributes_query(trace_ids)
+        assert "start_time >= %(start_date)s - INTERVAL 1 DAY" in query
+        assert "start_time < %(end_date)s + INTERVAL 1 DAY" in query
+        assert params["start_date"] == builder.start_date
+
+    def test_no_window_standalone(self, project_id, trace_ids):
+        builder = TraceListQueryBuilder(project_id=project_id)
+        query, _ = builder.build_span_attributes_query(trace_ids)
+        assert "start_time" not in query
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +223,19 @@ class TestBuildUserIdQuery:
         assert "00000000-0000-0000-0000-000000000000" in query
         assert "GROUP BY trace_id" in query
         assert "user_id != ''" in query
+
+    def test_start_time_window_after_build(self, project_id, trace_ids):
+        builder = TraceListQueryBuilder(project_id=project_id)
+        builder.build()
+        query, params = builder.build_user_id_query(trace_ids)
+        assert "start_time >= %(start_date)s - INTERVAL 1 DAY" in query
+        assert "start_time < %(end_date)s + INTERVAL 1 DAY" in query
+        assert params["start_date"] == builder.start_date
+
+    def test_no_window_standalone(self, project_id, trace_ids):
+        builder = TraceListQueryBuilder(project_id=project_id)
+        query, _ = builder.build_user_id_query(trace_ids)
+        assert "start_time" not in query
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +331,37 @@ class TestBuildAnnotationQuery:
         assert "s._peerdb_is_deleted = 0" in query
         assert "s.deleted = false" in query
         assert "sp._peerdb_is_deleted = 0" in query
+
+    def test_spans_join_side_bounded_on_start_time(self, project_id, trace_ids):
+        builder = TraceListQueryBuilder(project_id=project_id)
+        builder.build()
+        query, params = builder.build_annotation_query(trace_ids, ["l1"])
+        # The spans-JOIN side is bounded on the sp alias so it prunes the
+        # scan of every page trace's spans.
+        assert "sp.start_time >= %(start_date)s - INTERVAL 1 DAY" in query
+        assert "sp.start_time < %(end_date)s + INTERVAL 1 DAY" in query
+        assert params["start_date"] == builder.start_date
+
+    def test_trailing_score_not_dropped(self, project_id, trace_ids):
+        """A score/annotation can be created arbitrarily later than the span
+        it targets. The score (s) side must therefore carry no time predicate
+        at all, so a row whose created_at falls after the window end still
+        resolves; only the spans (sp) join side is time-bounded."""
+        builder = TraceListQueryBuilder(project_id=project_id)
+        builder.build()
+        query, _ = builder.build_annotation_query(trace_ids, ["l1"])
+        # spans side bounded ...
+        assert "sp.start_time <" in query
+        # ... but the score side has no created_at bound of any kind, so a
+        # late-created score is never filtered out by time.
+        assert "s.created_at" not in query
+        assert "s.start_time" not in query
+
+    def test_no_window_standalone(self, project_id, trace_ids):
+        builder = TraceListQueryBuilder(project_id=project_id)
+        query, params = builder.build_annotation_query(trace_ids, ["l1"])
+        assert "start_time" not in query
+        assert set(params.keys()) == {"trace_ids", "label_ids"}
 
 
 # ---------------------------------------------------------------------------
@@ -409,11 +481,13 @@ class TestBuildCountQuery:
         assert "trace_name ILIKE %(search)s" in query
         assert params["search"] == "%boom%"
 
-    def test_created_at_lower_bound_pruning(self, project_id):
+    def test_start_time_window_no_created_at_skew(self, project_id):
         builder = TraceListQueryBuilder(project_id=project_id)
         builder.build()
         query, _ = builder.build_count_query()
-        assert "created_at >= %(start_date)s - INTERVAL 1 DAY" in query
+        assert "start_time >= %(start_date)s" in query
+        assert "start_time < %(end_date)s" in query
+        assert "created_at" not in query
 
     def test_multi_project_scoping(self):
         pids = [str(uuid.uuid4()), str(uuid.uuid4())]
@@ -422,6 +496,48 @@ class TestBuildCountQuery:
         query, params = builder.build_count_query()
         assert "project_id IN %(project_ids)s" in query
         assert params["project_ids"] == tuple(pids)
+
+
+# ---------------------------------------------------------------------------
+# Outer window bounds on start_time (Card A / T0 + T1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestOuterWindowStartTime:
+    def test_build_bounds_start_time_no_created_at(self, project_id):
+        builder = TraceListQueryBuilder(project_id=project_id)
+        query, _ = builder.build()
+        assert "start_time >= %(start_date)s" in query
+        assert "start_time < %(end_date)s" in query
+        assert "created_at" not in query
+
+    def test_id_query_bounds_start_time_no_created_at(self, project_id):
+        builder = TraceListQueryBuilder(project_id=project_id)
+        query, _ = builder.build_id_query()
+        assert "start_time >= %(start_date)s" in query
+        assert "start_time < %(end_date)s" in query
+        assert "created_at" not in query
+
+    def test_id_query_continuous_floor_windows_on_created_at(self, project_id):
+        floor = datetime(2026, 8, 1, 12, 0)
+        query, params = TraceListQueryBuilder(project_id=project_id).build_id_query(
+            created_at_floor=floor
+        )
+        # Arrival floor replaces the start_time window (root span can arrive late).
+        assert "created_at >= %(created_at_floor)s" in query
+        assert "start_time >= %(start_date)s" not in query
+        assert params["created_at_floor"] == floor
+
+    def test_id_query_continuous_ceiling_upper_bounds_arrival(self, project_id):
+        floor = datetime(2026, 8, 1, 12, 0)
+        ceil = datetime(2026, 8, 1, 12, 5)
+        query, params = TraceListQueryBuilder(project_id=project_id).build_id_query(
+            created_at_floor=floor, created_at_ceiling=ceil
+        )
+        assert "created_at >= %(created_at_floor)s" in query
+        assert "created_at < %(created_at_ceiling)s" in query
+        assert params["created_at_ceiling"] == ceil
 
 
 # ---------------------------------------------------------------------------

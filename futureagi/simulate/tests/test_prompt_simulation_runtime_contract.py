@@ -3,6 +3,7 @@ from unittest.mock import patch
 import pytest
 from rest_framework import status
 
+from accounts.models.workspace import Workspace
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 from simulate.models import RunTest, Scenarios
 
@@ -189,3 +190,40 @@ class TestPromptSimulationRuntimeContracts:
         assert mock_executor.execute_test.call_args.kwargs["scenario_ids"] == [
             str(scenario.id)
         ]
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestPromptSimulationScenariosWorkspaceScope:
+    def test_prompt_simulations_scenarios_excludes_other_workspace_scenarios(
+        self, auth_client, organization, user, scenario
+    ):
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other Scenarios Workspace",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_scenario = Scenarios.no_workspace_objects.create(
+            name="Hidden Scenario",
+            source="Hidden source",
+            organization=organization,
+            workspace=other_workspace,
+        )
+
+        response = auth_client.get("/simulate/prompt-simulations/scenarios/")
+
+        assert response.status_code == status.HTTP_200_OK
+        results = response.json()["result"]["results"]
+        listed_ids = {row["id"] for row in results}
+        assert str(scenario.id) in listed_ids
+        assert str(hidden_scenario.id) not in listed_ids
+
+    def test_prompt_simulations_scenarios_unauthenticated(self, api_client):
+        response = api_client.get("/simulate/prompt-simulations/scenarios/")
+
+        assert response.status_code in {
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        }

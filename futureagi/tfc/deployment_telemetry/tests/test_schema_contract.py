@@ -6,10 +6,8 @@ These run in the main repo, where both the sender schema
 if the two diverge, if a sender-built payload stops validating on the
 receiver, or if the HMAC signing computed by the two sides disagrees.
 
-CI REQUIREMENT: these must run in a gate that has both the main repo and
-``ee/`` checked out.  If ``ee`` is absent the import below errors (not
-skips), which is intentional — a silently-skipped contract test is no
-contract test.
+The receiver schema is ee-only, so these run on the ee lane and skip at
+collection on the OSS lane (``has_ee`` gate below).
 """
 
 from __future__ import annotations
@@ -17,8 +15,16 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from ee.usage import deployment_telemetry_schema as receiver_schema
-from tfc.deployment_telemetry import schema as sender_schema
+import pytest
+
+from tfc.ee_loader import has_ee
+
+# Skip on the OSS lane only; with ee present the import runs so divergence fails loud.
+if not has_ee("ee"):
+    pytest.skip("requires ee/ (OSS lane)", allow_module_level=True)
+
+from ee.usage import deployment_telemetry_schema as receiver_schema  # noqa: E402
+from tfc.deployment_telemetry import schema as sender_schema  # noqa: E402
 
 
 def _public_constants(module) -> dict:

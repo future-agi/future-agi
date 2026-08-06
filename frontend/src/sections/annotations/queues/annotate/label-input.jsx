@@ -710,7 +710,7 @@ function NumericInput({ settings, value, onChange, inputRef }) {
         inputRef={inputRef}
         type="number"
         size="small"
-        value={value ?? ""}
+        value={value ?? min}
         onChange={(e) => handleNumberChange(e.target.value)}
         inputProps={{ min, max, step }}
         sx={{

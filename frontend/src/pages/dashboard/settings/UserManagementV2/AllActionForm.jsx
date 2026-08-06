@@ -13,7 +13,8 @@ import {
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import ActionForm from "./ActionForm";
 import { enqueueSnackbar } from "notistack";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useWorkspacesList } from "src/api/workspaces/list";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -123,18 +124,15 @@ const AllActionForm = ({
   }, [isOwner, isAdmin]);
 
   // Fetch workspace list for the org
-  const { data: workspacesData } = useQuery({
-    queryKey: ["workspace-list-for-invite"],
-    queryFn: () => axios.get(endpoints.workspace.workspaceList),
-    staleTime: 30000,
-  });
-  const allWorkspaces = useMemo(() => {
-    const list =
-      workspacesData?.data?.result?.results ||
-      workspacesData?.data?.results ||
-      [];
-    return list.map((ws) => ({ id: String(ws.id), name: ws.name }));
-  }, [workspacesData]);
+  const { data: workspacesData } = useWorkspacesList();
+  const allWorkspaces = useMemo(
+    () =>
+      (workspacesData || []).map((ws) => ({
+        id: String(ws.id),
+        name: ws.name,
+      })),
+    [workspacesData],
+  );
 
   // Invite form
   const inviteForm = useForm({

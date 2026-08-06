@@ -51,6 +51,7 @@ const LLMPromptEditor = ({
   modelSelectorDisabled,
   model,
   onModelChange,
+  openModelMenuSignal = 0,
 }) => {
   const [aiOpen, setAiOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
@@ -423,6 +424,7 @@ const LLMPromptEditor = ({
         datasetJsonSchemas={datasetJsonSchemas}
         disabled={disabled}
         modelSelectorDisabled={modelSelectorDisabled}
+        openModelMenuSignal={openModelMenuSignal}
         aiBar={aiOpen ? aiBar : null}
         onFalconClick={() => setAiOpen(true)}
         aiOpen={aiOpen}
@@ -440,6 +442,7 @@ LLMPromptEditor.propTypes = {
   onModelChange: PropTypes.func,
   disabled: PropTypes.bool,
   modelSelectorDisabled: PropTypes.bool,
+  openModelMenuSignal: PropTypes.number,
 };
 
 export default LLMPromptEditor;

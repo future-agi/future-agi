@@ -4,7 +4,10 @@ import { Box, Skeleton, Stack, Typography } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
 import { ShowComponent } from "src/components/show";
 import { pluralize } from "src/utils/utils";
-import { useResolvedFilterOptions } from "./useResolvedFilterOptions";
+import {
+  filterLabelsMatchValues,
+  useResolvedFilterOptions,
+} from "./useResolvedFilterOptions";
 
 export default function FilterValueLabel({
   filter,
@@ -17,19 +20,27 @@ export default function FilterValueLabel({
     () => (Array.isArray(filter?.value) ? filter.value : []),
     [filter?.value],
   );
+  // When the backend's labels are just the values there is nothing to resolve,
+  // so skip the fetch — it would be a workspace-wide span scan to learn that
+  // "gpt-4o" is labelled "gpt-4o". It also keeps saved chips correct: the
+  // value list is time-windowed, so a filter on an older value would miss the
+  // lookup and fall back to the raw value anyway.
+  const labelsAreValues = filterLabelsMatchValues(filter);
   const { options, isLoading } = useResolvedFilterOptions(
     filter,
     source,
-    values.length > 0,
+    values.length > 0 && !labelsAreValues,
   );
 
   const labels = useMemo(() => {
+    if (labelsAreValues) return values;
     const byValue = new Map(options.map((o) => [o.value, o.label ?? o.value]));
     return values.map((v) => byValue.get(v) ?? v);
-  }, [options, values]);
+  }, [labelsAreValues, options, values]);
 
   const hasValue = values.length > 0;
-  const isResolving = hasValue && isLoading && options.length === 0;
+  const isResolving =
+    hasValue && !labelsAreValues && isLoading && options.length === 0;
   const extra = Math.max(labels.length - 1, 0);
   const entity = (filter?.name || "item").toLowerCase();
   const entityLabel = pluralize(entity, extra);

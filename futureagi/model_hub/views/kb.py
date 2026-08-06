@@ -65,6 +65,7 @@ class KnowledgeBaseViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewS
         request_serializer=KnowledgeBaseCreateSerializer,
         responses={201: KnowledgeBaseResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
         reject_unknown_fields=True,
+        serializer_context=lambda request: {"request": request},
     )
     def create(self, request: Request, *args: Any, **kwargs: Any) -> Response:
         from tfc.ee_gating import EEFeature, check_ee_feature
@@ -73,8 +74,8 @@ class KnowledgeBaseViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewS
         check_ee_feature(EEFeature.KNOWLEDGE_BASE, org_id=str(org.id))
 
         try:
-            serializer = self.get_serializer(data=request.validated_data)
-            serializer.is_valid(raise_exception=True)
+        
+            serializer = request.validated_serializer
             self.perform_create(serializer)
             return self._gm.success_response(serializer.data, status=201)
         except Exception as e:
