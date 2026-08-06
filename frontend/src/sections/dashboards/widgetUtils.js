@@ -212,3 +212,32 @@ export const formatValueWithConfig = (
     ? `${str}${separator}${unit}`
     : `${unit}${separator}${str}`;
 };
+
+// Stable identity for a chart series: metric id + aggregation + raw bucket
+// name. Survives metric renames and series reordering, unlike the display label.
+export const makeSeriesKey = (metric, bucketName) =>
+  `${metric?.id ?? ""}|${metric?.aggregation ?? ""}|${bucketName ?? ""}`;
+
+// Resolve a saved key list to the current series' indices. null => all visible.
+export const resolveVisibleSeries = (savedKeys, series) => {
+  if (savedKeys === null) return null;
+  const keyToIndex = new Map(series.map((s, i) => [s.key, i]));
+  return new Set(
+    savedKeys.map((k) => keyToIndex.get(k)).filter((i) => i !== undefined),
+  );
+};
+
+// Decide the visibleSeries state from a saved `visible_series` value, or return
+// `undefined` to tell the caller to apply its own default (top-10 / show-all):
+//   null            → show all (explicit "Select all")
+//   [] (hide all)   → empty Set (explicit)
+//   [keys] w/ match → Set of the matched indices (incl. a partial match)
+//   [keys] no match → undefined (selection is stale → caller's default)
+//   undefined       → undefined (nothing saved → caller's default)
+export const resolveSavedSelection = (savedKeys, series) => {
+  if (savedKeys === undefined) return undefined;
+  const resolved = resolveVisibleSeries(savedKeys, series);
+  if (resolved === null || resolved.size > 0) return resolved;
+  if (savedKeys.length === 0) return resolved; // intentional hide-all
+  return undefined; // stale → caller applies its default
+};

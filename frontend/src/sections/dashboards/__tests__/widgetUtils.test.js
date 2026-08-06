@@ -3,6 +3,9 @@ import {
   fromAxisConfigPayload,
   getAggColumnLabel,
   getYAxisRangeWarning,
+  makeSeriesKey,
+  resolveSavedSelection,
+  resolveVisibleSeries,
   seriesHasDataPoints,
   toAxisConfigPayload,
 } from "../widgetUtils";
@@ -209,5 +212,84 @@ describe("getYAxisRangeWarning", () => {
     expect(
       getYAxisRangeWarning(series([2, 7]), leftAxis({ min: "not-a-number" })),
     ).toBeNull();
+  });
+});
+
+describe("makeSeriesKey", () => {
+  it("builds id|aggregation|bucket", () => {
+    expect(makeSeriesKey({ id: "m1", aggregation: "avg" }, "us")).toBe(
+      "m1|avg|us",
+    );
+  });
+
+  it("does not throw on a nullish metric", () => {
+    expect(makeSeriesKey(null, "us")).toBe("||us");
+    expect(makeSeriesKey(undefined, undefined)).toBe("||");
+  });
+});
+
+const seriesWithKeys = (keys) => keys.map((key) => ({ key }));
+
+describe("resolveVisibleSeries", () => {
+  it("returns null unchanged (all visible)", () => {
+    expect(resolveVisibleSeries(null, seriesWithKeys(["a", "b"]))).toBeNull();
+  });
+
+  it("maps saved keys to their current indices", () => {
+    const result = resolveVisibleSeries(
+      ["b", "d"],
+      seriesWithKeys(["a", "b", "c", "d"]),
+    );
+    expect([...result]).toEqual([1, 3]);
+  });
+
+  it("drops saved keys whose series no longer exist", () => {
+    const result = resolveVisibleSeries(
+      ["a", "gone"],
+      seriesWithKeys(["a", "b"]),
+    );
+    expect([...result]).toEqual([0]);
+  });
+
+  it("returns an empty Set when a non-empty selection matches nothing", () => {
+    const result = resolveVisibleSeries(
+      ["old1", "old2"],
+      seriesWithKeys(["new1", "new2"]),
+    );
+    expect(result).toBeInstanceOf(Set);
+    expect(result.size).toBe(0);
+  });
+});
+
+describe("resolveSavedSelection", () => {
+  it("returns undefined when nothing was saved (caller applies default)", () => {
+    expect(
+      resolveSavedSelection(undefined, seriesWithKeys(["a"])),
+    ).toBeUndefined();
+  });
+
+  it("honors an explicit show-all (null)", () => {
+    expect(resolveSavedSelection(null, seriesWithKeys(["a", "b"]))).toBeNull();
+  });
+
+  it("honors an intentional hide-all (empty saved list)", () => {
+    const result = resolveSavedSelection([], seriesWithKeys(["a", "b"]));
+    expect(result).toBeInstanceOf(Set);
+    expect(result.size).toBe(0);
+  });
+
+  it("honors a saved selection that still matches (including partial)", () => {
+    const result = resolveSavedSelection(
+      ["b", "gone"],
+      seriesWithKeys(["a", "b", "c"]),
+    );
+    expect([...result]).toEqual([1]);
+  });
+
+  it("returns undefined for a fully-stale selection (falls through to default)", () => {
+    // Non-empty saved keys, none survive → caller applies its top-10/show-all default.
+    expect(
+      resolveSavedSelection(["old1", "old2"], seriesWithKeys(["new1", "new2"])),
+    ).toBeUndefined();
   });
 });
