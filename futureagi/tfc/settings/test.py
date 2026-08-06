@@ -15,6 +15,14 @@ if str(_project_root) not in sys.path:
 # env toggling; this only affects the pytest process.
 os.environ.setdefault("EE_LICENSE_KEY", "test-license-key")
 
+# Point Redis-using code at the test compose sidecar at localhost:16379
+# (per docker-compose.test.yml). Without this, modules fall through to the
+# dev `.env` host `redis://redis:6379/0` which doesn't resolve outside
+# Docker, and the payload_storage / distributed_locks helpers raise
+# "Redis is not available" mid-test.
+os.environ.setdefault("REDIS_URL", "redis://localhost:16379/0")
+os.environ.setdefault("REDIS_LOCK_URL", "redis://localhost:16379/2")
+
 from .settings import *  # noqa: F403,E402
 from .settings import INSTALLED_APPS  # noqa: E402
 
@@ -47,14 +55,6 @@ CLICKHOUSE = {
     "CH_DATABASE": os.environ.get("CH_DATABASE", "test_tfc"),
     "CH_ENABLED": os.environ.get("CH_ENABLED", "true").lower() in ("true", "1", "yes"),
 }
-
-# Point Redis-using code at the test compose sidecar at localhost:16379
-# (per docker-compose.test.yml). Without this, modules fall through to the
-# dev `.env` host `redis://redis:6379/0` which doesn't resolve outside
-# Docker, and the payload_storage / distributed_locks helpers raise
-# "Redis is not available" mid-test.
-os.environ.setdefault("REDIS_URL", "redis://localhost:16379/0")
-os.environ.setdefault("REDIS_LOCK_URL", "redis://localhost:16379/2")
 
 # CHSpanReader / CH25 v2 service uses clickhouse-connect over HTTP. The TCP
 # port lives in `CLICKHOUSE['CH_PORT']` (19000) but the HTTP listener is on

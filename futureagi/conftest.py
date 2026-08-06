@@ -135,6 +135,12 @@ def pytest_configure(config):
     _apply_ch25_schema_for_tests()
 
 
+def _strict_ch25_apply() -> bool:
+    import os as _os
+
+    return _os.getenv("FI_CH25_SCHEMA_APPLY_STRICT", "").lower() in ("1", "true", "yes")
+
+
 def _apply_ch25_schema_for_tests():
     """Apply CH 25.3 v2 schema (002-013) to the test ClickHouse BEFORE
     Django app startup runs `model_hub.apps._ensure_analytics_schema`.
@@ -152,7 +158,9 @@ def _apply_ch25_schema_for_tests():
     have that entrypoint, so we hook it in here.
 
     Skipped if not running tests with a configured CH host, or if
-    `FI_SKIP_CH25_SCHEMA_APPLY=1`.
+    `FI_SKIP_CH25_SCHEMA_APPLY=1`. Apply failures print a warning and
+    continue unless `FI_CH25_SCHEMA_APPLY_STRICT=1`, which re-raises them
+    (CI sets this so a broken schema apply fails the session loudly).
     """
     import os as _os
 
@@ -161,7 +169,10 @@ def _apply_ch25_schema_for_tests():
 
     # Outside Docker, the `clickhouse` hostname from the dev .env doesn't
     # resolve; force the test sidecar at localhost:18123.
-    is_test = _os.getenv("DJANGO_SETTINGS_MODULE", "").endswith(".test") or _os.getenv("TESTING") == "true"
+    is_test = (
+        _os.getenv("DJANGO_SETTINGS_MODULE", "").endswith(".test")
+        or _os.getenv("TESTING") == "true"
+    )
     ch_host = _os.getenv("CH25_HOST")
     if not ch_host:
         env_host = _os.getenv("CH_HOST")
@@ -173,15 +184,15 @@ def _apply_ch25_schema_for_tests():
         return
 
     ch_http_port = int(
-        _os.getenv("CH25_HTTP_PORT")
-        or _os.getenv("CH_HTTP_PORT")
-        or 18123
+        _os.getenv("CH25_HTTP_PORT") or _os.getenv("CH_HTTP_PORT") or 18123
     )
     ch_user = _os.getenv("CH25_USER") or _os.getenv("CH_USERNAME") or "default"
     ch_db = _os.getenv("CH25_DATABASE") or _os.getenv("CH_DATABASE") or "test_tfc"
     ch_password = _os.getenv("CH25_PASSWORD") or _os.getenv("CH_PASSWORD") or ""
 
-    schema_dir = Path(__file__).parent / "tracer" / "services" / "clickhouse" / "v2" / "schema"
+    schema_dir = (
+        Path(__file__).parent / "tracer" / "services" / "clickhouse" / "v2" / "schema"
+    )
     if not schema_dir.is_dir():
         return
 
@@ -190,21 +201,34 @@ def _apply_ch25_schema_for_tests():
 
         from tracer.services.clickhouse.v2 import apply_schema as _v2_apply
 
-        rc = _v2_apply.main([
-            "--schema-dir", str(schema_dir),
-            "--ch-host", ch_host,
-            "--ch-http-port", str(ch_http_port),
-            "--ch-user", ch_user,
-            "--ch-database", ch_db,
-        ])
+        rc = _v2_apply.main(
+            [
+                "--schema-dir",
+                str(schema_dir),
+                "--ch-host",
+                ch_host,
+                "--ch-http-port",
+                str(ch_http_port),
+                "--ch-user",
+                ch_user,
+                "--ch-database",
+                ch_db,
+            ]
+        )
         if rc not in (0, 2):
+            if _strict_ch25_apply():
+                raise RuntimeError(f"CH25 schema apply failed with rc={rc}")
             import sys as _sys
+
             print(
                 f"⚠️  CH25 schema apply returned rc={rc} during pytest_configure",
                 file=_sys.stderr,
             )
     except Exception as exc:
+        if _strict_ch25_apply():
+            raise
         import sys as _sys
+
         print(
             f"⚠️  CH25 schema apply skipped during pytest_configure: {exc}",
             file=_sys.stderr,
@@ -246,6 +270,31 @@ def _load_ch25_skip_set():
     return frozenset(ids)
 
 
+_QUARANTINE_PATH = Path(__file__).parent / ".test_quarantine.json"
+_QUARANTINE_REQUIRED_KEYS = ("id", "reason", "owner", "expires")
+
+
+def _load_quarantine_entries():
+    """Active (unexpired), well-formed quarantine entries. Fail-open: any
+    problem reading the file disables quarantine rather than breaking
+    collection, and a malformed entry is dropped rather than taking the whole
+    session down when the marker code subscripts it."""
+    import datetime as _dt
+    import json as _json
+
+    try:
+        raw = _json.loads(_QUARANTINE_PATH.read_text())
+        today = _dt.date.today().isoformat()
+        return [
+            e
+            for e in raw["entries"]
+            if all(isinstance(e.get(k), str) for k in _QUARANTINE_REQUIRED_KEYS)
+            and e["expires"] >= today
+        ]
+    except Exception:
+        return []
+
+
 def pytest_collection_modifyitems(config, items):
     """Auto-skip requires_ee tests when ee/ is absent + the CH25 frozen skip list."""
     import pytest as _pytest
@@ -257,15 +306,29 @@ def pytest_collection_modifyitems(config, items):
         if not EE_AVAILABLE
         else None
     )
+    quarantine = _load_quarantine_entries()
 
     for item in items:
         if ch25_marker is not None and item.nodeid in skip_ids:
             item.add_marker(ch25_marker)
         if ee_marker is not None and item.get_closest_marker("requires_ee") is not None:
             item.add_marker(ee_marker)
+        for entry in quarantine:
+            sel = entry["id"]
+            if item.nodeid == sel or item.nodeid.startswith(sel + "::"):
+                reason = f"quarantined: {entry['reason']} (owner {entry['owner']})"
+                if entry.get("mode", "run") == "skip":
+                    item.add_marker(_pytest.mark.skip(reason=reason))
+                else:
+                    # Strict unless the entry opts out with a literal JSON
+                    # ``false``; a quarantined test that starts passing then
+                    # fails the run as XPASS and the entry has to be removed.
+                    # ``is not False`` always yields a bool, so a hand-edited
+                    # non-bool value cannot crash the session.
+                    strict = entry.get("strict", True) is not False
+                    item.add_marker(_pytest.mark.xfail(reason=reason, strict=strict))
+                break
 
-
-from unittest.mock import patch
 
 import pytest
 from rest_framework.test import APIClient
@@ -286,10 +349,9 @@ def _drop_legacy_ch_spans_mvs():
     drop sticks; the same MVs are not re-created by anything else.
     """
     try:
-        import os as _os
+        import clickhouse_connect
 
         from tracer.services.clickhouse.v2 import get_v2_config
-        import clickhouse_connect
 
         cfg = get_v2_config()
         host = cfg["host"]
