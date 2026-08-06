@@ -149,8 +149,8 @@ services:
       # -> API_HOST_MAP[hostname] -> http://localhost:8000. Override per
       # deployment (e.g. https://api.example.com for split-domain).
       VITE_HOST_API: ${VITE_HOST_API:-}
-      # Empty -> the sidebar "Help" entry is hidden. Set to your own support
-      # channel (docs page, community Slack, ticket form) to show it.
+      # Empty -> the sidebar "Help" entry points at the community Discord.
+      # Set it to send users to your own support channel instead.
       VITE_HELP_LINK: ${VITE_HELP_LINK:-}
     depends_on:
       - backend

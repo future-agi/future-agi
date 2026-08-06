@@ -23,7 +23,7 @@ function resolveApiHost() {
 
 function resolveHelpLink() {
   // Runtime > build-time. Empty in OSS images unless the operator sets
-  // VITE_HELP_LINK; callers must hide the entry point when it's empty.
+  // VITE_HELP_LINK, which is why OSS callers need their own fallback.
   const runtime =
     (typeof window !== "undefined" && window.__FUTURE_AGI_CONFIG__) || {};
   const link = runtime.VITE_HELP_LINK || import.meta.env.VITE_HELP_LINK || "";

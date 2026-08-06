@@ -281,14 +281,22 @@ export function useNavData() {
   return data;
 }
 
+const DOCS_LINK = "https://docs.futureagi.com";
+const OSS_HELP_LINK = "https://discord.com/invite/n2tCUKBkAw";
+
 export function useNavUpgradeData() {
   const { user } = useAuthContext();
+  const { isOSS, isLoading: deploymentModeLoading } = useDeploymentMode();
   const getStartedCompleted = user?.getStartedCompleted;
   const data = useMemo(() => {
+    // OSS images ship without VITE_HELP_LINK, so point Help at the community
+    // Discord unless the operator configured a support channel of their own.
+    const helpLink =
+      isOSS && !deploymentModeLoading ? HELP_LINK || OSS_HELP_LINK : HELP_LINK;
     const items = [
       {
         title: "Docs",
-        path: "https://docs.futureagi.com",
+        path: DOCS_LINK,
         icon: ICONS.docs,
         eventTrigger: () => {
           trackEvent(Events.docLinkClicked, {
@@ -306,17 +314,16 @@ export function useNavUpgradeData() {
       });
     }
 
-    // Unset in OSS deployments unless the operator configures it. Without a
-    // path the item renders as a link to the current route, so drop it.
-    if (HELP_LINK) {
+    // Without a path the item renders as a link to the current route, so drop it.
+    if (helpLink) {
       items.push({
         title: "Help",
-        path: HELP_LINK,
+        path: helpLink,
         icon: ICONS.help,
       });
     }
     return [{ subheader: "RESOURCES", items }];
-  }, [getStartedCompleted]);
+  }, [getStartedCompleted, isOSS, deploymentModeLoading]);
 
   return data;
 }
