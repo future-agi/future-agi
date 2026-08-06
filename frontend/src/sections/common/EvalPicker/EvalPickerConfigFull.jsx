@@ -908,6 +908,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         config_snapshot: configSnapshot,
         criteria: evalType === "code" ? code : instructions,
         model,
+        ...(isComposite &&
+        Object.keys(compositeChildWeights || {}).length > 0
+          ? { composite_weight_overrides: compositeChildWeights }
+          : {}),
       });
       enqueueSnackbar(
         `Version V${newVersion?.version_number || newVersion?.versionNumber || ""} saved`,

@@ -2346,6 +2346,9 @@ class EvalTemplateVersionCreateRequestSerializer(serializers.Serializer):
     )
     model = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     config_snapshot = serializers.JSONField(required=False, allow_null=True)
+    composite_weight_overrides = serializers.JSONField(
+        required=False, allow_null=True
+    )
 
 
 class EvalTemplateVersionItemSerializer(serializers.Serializer):

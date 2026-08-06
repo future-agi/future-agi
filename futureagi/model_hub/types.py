@@ -308,6 +308,7 @@ class CreateVersionRequest(BaseModel):
     criteria: str | None = None
     model: str | None = None
     config_snapshot: dict | None = None
+    composite_weight_overrides: dict | None = None
 
 
 class CreateVersionResponse(BaseModel):

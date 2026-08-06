@@ -2955,6 +2955,9 @@ class EvalTemplateVersionCreateView(APIView):
                 organization=organization,
                 workspace=getattr(template, "workspace", None),
             )
+            if req.composite_weight_overrides is not None:
+                version.composite_weight_overrides = req.composite_weight_overrides
+                version.save(update_fields=["composite_weight_overrides"])
 
             # Only set as default if this is the first version (no existing default)
             has_default = (
