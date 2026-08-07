@@ -4,9 +4,15 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import CircularProgress from "@mui/material/CircularProgress";
 import Iconify from "src/components/iconify";
-import { useCapabilities } from "src/hooks/useCapabilities";
+import OSSUpgradeGate from "src/components/oss-upgrade-gate";
+import { CAPABILITY, useCapabilities } from "src/hooks/useCapabilities";
 
 const CONTACT_URL = "https://futureagi.com/talk-to-human";
+
+const CAPABILITY_PREVIEW = Object.freeze({
+  [CAPABILITY.ERROR_FEED]: "errorFeed",
+  [CAPABILITY.FALCON_AI]: "falconAI",
+});
 
 export default function CapabilityGate({ feature, children }) {
   const { data, isLoading, isError, refetch } = useCapabilities();
@@ -59,6 +65,11 @@ export default function CapabilityGate({ feature, children }) {
   }
 
   const reasonCode = featureData?.reason_code;
+
+  const previewFeature = CAPABILITY_PREVIEW[feature];
+  if (previewFeature) {
+    return <OSSUpgradeGate feature={previewFeature} reasonCode={reasonCode} />;
+  }
 
   return (
     <Stack

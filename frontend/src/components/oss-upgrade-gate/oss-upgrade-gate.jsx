@@ -1,6 +1,8 @@
 import React from "react";
 import PropTypes from "prop-types";
 import FeatureGateOverlay from "src/components/feature-gate/FeatureGateOverlay";
+import { useRouter } from "src/routes/hooks";
+import { paths } from "src/routes/paths";
 import { logger } from "src/utils/logger";
 import errorFeedPreview from "src/assets/oss-gate/error_feed_light.png";
 import errorFeedPreviewDark from "src/assets/oss-gate/error_feed_dark.png";
@@ -85,12 +87,57 @@ const FEATURES = {
   },
 };
 
-export default function OSSUpgradeGate({ feature, image, imageDark }) {
+const LICENSE_CTA = "Manage license";
+const CONTACT_CTA = "Talk to us";
+
+const REASONS = {
+  LICENSE_EXPIRED: {
+    note: "Your license has expired — renew it to restore access.",
+    label: LICENSE_CTA,
+    toLicense: true,
+  },
+  LICENSE_TRIAL_EXPIRED: {
+    note: "Your trial has ended — add a license key to restore access.",
+    label: LICENSE_CTA,
+    toLicense: true,
+  },
+  LICENSE_INVALID: {
+    note: "Your license key could not be validated.",
+    label: LICENSE_CTA,
+    toLicense: true,
+  },
+  FEATURE_NOT_IN_GRACE: {
+    note: "This feature is not available during your license's grace period.",
+    label: LICENSE_CTA,
+    toLicense: true,
+  },
+  LICENSE_VERSION_UNSUPPORTED: {
+    note: "Your license does not cover this version.",
+    label: LICENSE_CTA,
+    toLicense: true,
+  },
+  EE_CODE_UNAVAILABLE: {
+    note: "This deployment is running an image built without the EE package, so a license key alone will not enable this. Contact your administrator.",
+    label: CONTACT_CTA,
+  },
+  RESOLVER_UNAVAILABLE: {
+    note: "Feature access could not be resolved on this deployment. Contact your administrator.",
+    label: CONTACT_CTA,
+  },
+  FEATURE_UNKNOWN: {
+    note: "This server does not recognise the feature — it may be running an older version.",
+    label: CONTACT_CTA,
+  },
+};
+
+export default function OSSUpgradeGate({ feature, image, imageDark, reasonCode }) {
+  const router = useRouter();
   const config = FEATURES[feature];
   if (!config) {
     logger.warn(`OSSUpgradeGate: unknown feature "${feature}"`);
     return null;
   }
+  const reason = REASONS[reasonCode];
   return (
     <FeatureGateOverlay
       image={image || config.image}
@@ -99,9 +146,14 @@ export default function OSSUpgradeGate({ feature, image, imageDark }) {
       title={config.title}
       description={config.description}
       steps={config.steps}
-      footnote={config.footnote}
-      primaryLabel="Upgrade to EE license key"
-      primaryHref={CONTACT_URL}
+      footnote={reason?.note || config.footnote}
+      primaryLabel={reason?.label || "Upgrade to EE license key"}
+      primaryHref={reason?.toLicense ? undefined : CONTACT_URL}
+      onPrimary={
+        reason?.toLicense
+          ? () => router.push(paths.dashboard.settings.eeLicenses)
+          : undefined
+      }
       secondaryLabel="Read docs"
       secondaryHref={config.docsUrl || DOCS_URL}
     />
@@ -112,4 +164,5 @@ OSSUpgradeGate.propTypes = {
   feature: PropTypes.oneOf(Object.keys(FEATURES)).isRequired,
   image: PropTypes.string,
   imageDark: PropTypes.string,
+  reasonCode: PropTypes.string,
 };
