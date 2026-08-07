@@ -30,6 +30,7 @@ import PageErrorState from "./components/PageErrorState";
 import GettingStartedCard from "./components/GettingStartedCard";
 import { useApiKeys } from "./keys/hooks/useApiKeys";
 import SvgColor from "src/components/svg-color";
+import { formatProviderName } from "./providers/utils/formatProviderName";
 
 const STATUS_COLORS = {
   healthy: "success",
@@ -440,7 +441,7 @@ const GatewayOverviewSection = () => {
                     return (
                       <Chip
                         key={p.name || idx}
-                        label={p.name || `Provider ${idx + 1}`}
+                        label={formatProviderName(p, idx)}
                         color={isHealthy ? "success" : "error"}
                         variant="outlined"
                         size="small"

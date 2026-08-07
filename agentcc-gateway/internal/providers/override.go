@@ -203,6 +203,8 @@ func inferAPIFormat(providerID string) string {
 		return "gemini"
 	case "cohere":
 		return "cohere"
+	case "deepseek":
+		return "openai"
 	default:
 		return "openai"
 	}
