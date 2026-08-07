@@ -375,7 +375,7 @@ CHECKS = (
         "id": "ssl",
         "label": "SSL/TLS certificate",
         "down_detail": (
-            "Browser and SDK traffic travels unencrypted  point FRONTEND_URL "
+            "Browser and SDK traffic travels unencrypted — point FRONTEND_URL "
             "and VITE_HOST_API at https endpoints with a valid certificate"
         ),
         "probe": _tls_up,

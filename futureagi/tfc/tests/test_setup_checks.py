@@ -167,16 +167,18 @@ class TestVerdict:
         assert by_id(result, "storage")["status"] == WARNING
         assert by_id(result, "storage")["required"] is False
 
-    def test_optional_failure_does_not_block_in_live(self, api_client):
-        """code_executor fails loudly but is not required, and blocking needs
-        both, so it must not flip the verdict."""
+    def test_every_check_is_required_in_live(self, api_client):
+        """Live mode draws no line between stack-level and feature-level: a
+        deployment serving real traffic is expected to have all of it. Anything
+        down therefore blocks, and experiment mode is where that relaxes."""
         result = get_checks(
             api_client, mode=LIVE, probe_results=down_only("code_executor")
         )
 
         assert by_id(result, "code_executor")["status"] == FAILED
-        assert by_id(result, "code_executor")["required"] is False
-        assert result["status"] == "ok"
+        assert by_id(result, "code_executor")["required"] is True
+        assert result["status"] == "issues"
+        assert all(c[LIVE]["required"] for c in CHECKS)
 
     def test_issues_requires_a_check_that_is_both_required_and_failed(
         self, api_client
@@ -284,17 +286,25 @@ class TestSkipped:
         assert skipped, "expected experiment mode to skip at least one service"
         assert all(not c["required"] for c in skipped)
 
-    def test_model_serving_fails_in_live_rather_than_blocking(self, api_client):
-        """Feature-level, not stack-level. Running the platform for observability
-        alone is a legitimate live deployment, so a missing eval runtime is
-        reported loudly and left as the operator's call."""
-        result = get_checks(
+    def test_model_serving_blocks_in_live_and_only_warns_in_experiment(
+        self, api_client
+    ):
+        """The eval runtime is optional to experiment with and mandatory to serve
+        real traffic, so the same outage stops one mode and not the other."""
+        live = get_checks(
             api_client, mode=LIVE, probe_results=down_only("model_serving")
         )
+        experiment = get_checks(
+            api_client, mode=EXPERIMENT, probe_results=down_only("model_serving")
+        )
 
-        assert by_id(result, "model_serving")["status"] == FAILED
-        assert by_id(result, "model_serving")["required"] is False
-        assert result["status"] == "ok"
+        assert by_id(live, "model_serving")["status"] == FAILED
+        assert by_id(live, "model_serving")["required"] is True
+        assert live["status"] == "issues"
+
+        assert by_id(experiment, "model_serving")["status"] == WARNING
+        assert by_id(experiment, "model_serving")["required"] is False
+        assert experiment["status"] == "ok"
 
 
 @pytest.mark.integration
