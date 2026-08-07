@@ -18,6 +18,7 @@ import { LoadingButton } from "@mui/lab";
 import { enqueueSnackbar } from "notistack";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { FAGI_MODEL_VALUES } from "src/sections/evals/components/ModelSelector";
+import { shouldMintExperimentVersion } from "./shouldMintExperimentVersion";
 import PropTypes from "prop-types";
 import React, {
   useCallback,
@@ -79,6 +80,7 @@ import {
   extractCodeEvaluateParams,
   getSourceModeVariables,
   hasNonEmptyPromptMessage,
+  normalizePickerOutputType,
 } from "./evalPickerConfigUtils";
 import RequiredMark from "src/components/RequiredMark";
 
@@ -438,7 +440,12 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     }
 
     setModel(config.model || fullEval?.model || "turing_large");
-    if (config.output) setOutputType(config.output);
+    // Snapshots store display labels ("Pass/Fail" / "score" / "choices").
+    // Feeding those into OutputTypeConfig's MUI Select throws out-of-range
+    // and trips the picker's ErrorBoundary on re-edit / after Update.
+    if (config.output) {
+      setOutputType(normalizePickerOutputType(config.output));
+    }
     if (config.pass_threshold != null) setPassThreshold(config.pass_threshold);
     if (config.choice_scores) setChoiceScores(config.choice_scores);
     if (config.multi_choice != null) setMultiChoice(!!config.multi_choice);
@@ -466,6 +473,15 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     }
     if (config.error_localizer_enabled != null) {
       setErrorLocalizerEnabled(!!config.error_localizer_enabled);
+    }
+    if (Array.isArray(config.children)) {
+      const weights = {};
+      config.children.forEach((c) => {
+        if (c.child_id && c.weight != null) weights[c.child_id] = c.weight;
+      });
+      if (Object.keys(weights).length) setCompositeChildWeights(weights);
+    } else if (config.composite_weight_overrides) {
+      setCompositeChildWeights(config.composite_weight_overrides);
     }
 
     if (isEditMode) setEvalName(evalData?.name || fullEval?.name || "");
@@ -592,7 +608,12 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       setModel(
         config?.model || fullEval?.model || evalData?.model || "turing_large",
       );
-      setOutputType(fullEval.output_type || "pass_fail");
+      setOutputType(
+        normalizePickerOutputType(
+          fullEval.output_type || fullEval.outputType,
+          "pass_fail",
+        ),
+      );
       // Prefer user's saved run_config overrides (edit flow) over template defaults
       setPassThreshold(config.pass_threshold ?? fullEval.pass_threshold ?? 0.5);
       setChoiceScores(config.choice_scores || fullEval.choice_scores || {});
@@ -605,8 +626,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       } else if (_type === "llm" && promptText) {
         setMessages([{ role: "system", content: promptText }]);
       }
-      if (config.few_shot_examples) {
-        setFewShotExamples(config.few_shot_examples || []);
+      if (Array.isArray(config.few_shot_examples)) {
+        setFewShotExamples(config.few_shot_examples);
       }
 
       // Code-eval static params (e.g. `min_words`, `max_words` for
@@ -824,13 +845,13 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   // the user can Apply it to the dataset with the existing
   // "Add Evaluation" button.
   const handleSaveVersion = useCallback(async () => {
-    if (isSystemEval) return;
+    if (isSystemEval) return null;
     if (isOSS && evalType === "agent") {
       enqueueSnackbar(
         "Agent evaluations are not available on OSS. Use LLM-as-a-Judge or Code evaluations instead.",
         { variant: "error" },
       );
-      return;
+      return null;
     }
     if (isOSS && FAGI_MODEL_VALUES.has(model)) {
       enqueueSnackbar(
@@ -838,21 +859,22 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         { variant: "error" },
       );
       setOpenModelMenuSignal((n) => n + 1);
-      return;
+      return null;
     }
     if (isOSS && evalType !== "code" && !model) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
-      return;
+      return null;
     }
     try {
+      const normalizedOutputType = normalizePickerOutputType(outputType);
       const payload = {
         instructions:
           evalType === "code" ? undefined : instructions || undefined,
         code: evalType === "code" ? code : undefined,
         code_language: evalType === "code" ? codeLanguage : undefined,
         model,
-        output_type: outputType,
+        output_type: normalizedOutputType,
         pass_threshold: passThreshold,
         choice_scores:
           Object.keys(choiceScores || {}).length > 0 ? choiceScores : null,
@@ -876,7 +898,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             pass_fail: "Pass/Fail",
             percentage: "score",
             deterministic: "choices",
-          }[outputType] || "Pass/Fail",
+          }[normalizedOutputType] || "Pass/Fail",
         pass_threshold: passThreshold,
         choice_scores:
           Object.keys(choiceScores || {}).length > 0 ? choiceScores : undefined,
@@ -891,6 +913,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         config_snapshot: configSnapshot,
         criteria: evalType === "code" ? code : instructions,
         model,
+        ...(isComposite &&
+        Object.keys(compositeChildWeights || {}).length > 0
+          ? { composite_weight_overrides: compositeChildWeights }
+          : {}),
       });
       enqueueSnackbar(
         `Version V${newVersion?.version_number || newVersion?.versionNumber || ""} saved`,
@@ -901,6 +927,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       if (newVersion?.id) {
         setSelectedVersionId(newVersion.id);
       }
+      return newVersion;
     } catch (err) {
       const message =
         err?.response?.data?.result || err?.message || "Failed to save version";
@@ -908,6 +935,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         typeof message === "string" ? message : JSON.stringify(message),
         { variant: "error" },
       );
+      return null;
     }
   }, [
     isSystemEval,
@@ -960,7 +988,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     setTimeout(() => setIsTesting((v) => (v ? false : v)), 60000);
   }, [templateId, isOSS, evalType, model]);
 
-  const handleAdd = useCallback(() => {
+  const handleAdd = useCallback(async () => {
     if (isOSS && evalType !== "code" && !model) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
@@ -1038,12 +1066,30 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           ? evalName || evalData?.name
           : evalName || fullEval?.name || evalData?.name;
 
+    // Experiments (create + edit + manage drawer) mint via the template
+    // versions API — no dataset/metric binding required. Dataset hosts
+    // keep using edit_and_run_user_eval themselves.
+    let versionId = selectedVersionId;
+    let dirty = isDirty;
+    if (
+      shouldMintExperimentVersion({
+        source,
+        isDirty: dirty,
+        isSystemEval,
+      })
+    ) {
+      const newVersion = await handleSaveVersion();
+      if (!newVersion?.id) return;
+      versionId = newVersion.id;
+      dirty = false;
+    }
+
     if (templateType === "composite") {
       // Composite metrics don't carry prompt/model/output-type/choice-score
       // state — those live on each child template. Emit only the fields
       // the host needs to create a UserEvalMetric plus the per-binding
       // weight overrides.
-      onSave({
+      await onSave({
         templateId,
         evalTemplateId: templateId,
         userEvalId,
@@ -1053,15 +1099,17 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         evalType,
         templateType,
         config: fullEval?.config || evalData?.config,
-        versionId: selectedVersionId,
+        versionId,
         data_injection: dataInjection,
         error_localizer_enabled: errorLocalizerActive,
         composite_weight_overrides: compositeChildWeights,
+        // True if config fields were edited, vs. just a version pick.
+        isDirty: dirty,
       });
       return;
     }
 
-    onSave({
+    await onSave({
       templateId,
       evalTemplateId: templateId,
       userEvalId,
@@ -1073,7 +1121,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       templateType,
       outputType,
       config: resolvedConfig,
-      versionId: selectedVersionId,
+      versionId,
       instructions,
       messages,
       pass_threshold: passThreshold,
@@ -1096,6 +1144,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       knowledge_bases: knowledgeBaseIds,
       data_injection: dataInjection,
       error_localizer_enabled: errorLocalizerActive,
+      isDirty: dirty,
     });
   }, [
     templateId,
@@ -1134,6 +1183,9 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     source,
     onFiltersChange,
     localFilterForm,
+    isDirty,
+    isSystemEval,
+    handleSaveVersion,
   ]);
 
   if (isLoading) {
@@ -2252,7 +2304,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   variant="contained"
                   color="primary"
                   size="small"
-                  loading={isSaving}
+                  loading={
+                    isSaving ||
+                    updateEval.isPending ||
+                    createVersion.isPending
+                  }
                   onClick={handleAdd}
                   disabled={addDisabled}
                   sx={{ textTransform: "none" }}

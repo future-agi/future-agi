@@ -6,6 +6,19 @@ const OUTPUT_TYPE_CONFIG_MAP = {
   deterministic: "choices",
 };
 
+/** Map snapshot/display output labels back to the picker's select values. */
+const OUTPUT_TYPE_FROM_CONFIG = {
+  pass_fail: "pass_fail",
+  "Pass/Fail": "pass_fail",
+  percentage: "percentage",
+  score: "percentage",
+  deterministic: "deterministic",
+  choices: "deterministic",
+};
+
+export const normalizePickerOutputType = (value, fallback = "pass_fail") =>
+  OUTPUT_TYPE_FROM_CONFIG[value] || fallback;
+
 const ROW_TYPE_CONTEXT_OPTIONS = {
   spans: ["span_context"],
   traces: ["trace_context"],

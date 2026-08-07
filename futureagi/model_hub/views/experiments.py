@@ -4524,6 +4524,65 @@ def _with_default_reason_column(config):
     return config
 
 
+def _apply_entry_pinned_version_baseline(entry, metric):
+    """Re-baseline metric.pinned_version from entry's explicit pinned_version_id, if any."""
+    from model_hub.models.evals_metric import EvalTemplateVersion
+
+    ver_id = entry.get("pinned_version_id")
+    if not ver_id:
+        return
+    ver = EvalTemplateVersion.objects.filter(
+        id=ver_id, eval_template=metric.template
+    ).first()
+    if not ver:
+        raise ValueError(f"Selected eval version {ver_id} not found for template")
+    metric.pinned_version = ver
+
+
+def _pin_experiment_metric_version(metric, entry, user, organization, workspace):
+    """Create/dedup-pin an EvalTemplateVersion from a wizard eval entry.
+
+    The wizard stores a flat config blob on the form entry (mapping + template
+    fields + optional nested ``run_config``). ``maybe_pin_new_version`` expects
+    the dataset-drawer shape ``{mapping, config, run_config}``, so we re-nest
+    here. ``run_config`` is peeled off explicitly: if left inside ``inner_config``
+    it would land as ``snap[\"run_config\"] = {...}`` instead of merging runtime
+    keys at the snapshot top level, which breaks dedup against versions minted
+    by the dataset-side drawer (or the picker's eager create-version path).
+    """
+    from model_hub.services.eval_version_pinning import maybe_pin_new_version
+
+    flat_config = entry.get("config") or {}
+    mapping = flat_config.get("mapping") or {}
+    run_config = flat_config.get("run_config") or {}
+    inner_config = {
+        k: v
+        for k, v in flat_config.items()
+        if k not in ("mapping", "run_config")
+    }
+
+    maybe_pin_new_version(
+        metric,
+        {
+            "config": {
+                "mapping": mapping,
+                "config": inner_config,
+                **({"run_config": run_config} if run_config else {}),
+            },
+            "model": entry.get("model") or metric.model or "",
+            "composite_weight_overrides": entry.get("composite_weight_overrides"),
+            # Dedup baseline = version the user had open in the UI (not the
+            # metric's previously stored pin).
+            "pinned_version_id": entry.get("pinned_version_id"),
+        },
+        user=user,
+        organization=organization,
+        workspace=workspace,
+    )
+    if metric.pinned_version_id:
+        metric.save(update_fields=["pinned_version"])
+
+
 def _create_eval_metrics_inline(
     eval_entries,
     experiment,
@@ -4584,6 +4643,8 @@ def _create_eval_metrics_inline(
             # for single-template metrics. See Phase 7 wiring plan.
             composite_weight_overrides=entry.get("composite_weight_overrides"),
         )
+        _apply_entry_pinned_version_baseline(entry, metric)
+        _pin_experiment_metric_version(metric, entry, user, organization, workspace)
         created.append(metric)
     return created
 
@@ -5083,6 +5144,8 @@ def _has_eval_changed(metric, entry, translated_mapping):
     old_mapping = (metric.config or {}).get("mapping", {})
     old_config_inner = (metric.config or {}).get("config", {})
     new_config_inner = (entry.get("config") or {}).get("config", {})
+    old_run_config = (metric.config or {}).get("run_config") or {}
+    new_run_config = (entry.get("config") or {}).get("run_config") or {}
 
     if str(metric.template_id) != str(entry["template_id"]):
         return True
@@ -5094,6 +5157,13 @@ def _has_eval_changed(metric, entry, translated_mapping):
         new_config_inner, sort_keys=True
     ):
         return True
+    # Wizard stores runtime toggles under config.run_config (flat blob).
+    # Without this, run_config-only edits never hit the update/pin path and
+    # a lossy FE payload can silently drop them on the next unrelated save.
+    if json.dumps(old_run_config, sort_keys=True, default=str) != json.dumps(
+        new_run_config, sort_keys=True, default=str
+    ):
+        return True
     if (metric.model or "") != (entry.get("model") or ""):
         return True
     if bool(metric.error_localizer) != bool(entry.get("error_localizer", False)):
@@ -5101,6 +5171,13 @@ def _has_eval_changed(metric, entry, translated_mapping):
     if str(metric.kb_id or "") != str(entry.get("kb_id") or ""):
         return True
     if metric.name != entry.get("name", ""):
+        return True
+    if (metric.composite_weight_overrides or None) != (
+        entry.get("composite_weight_overrides") or None
+    ):
+        return True
+    entry_pin = entry.get("pinned_version_id")
+    if entry_pin and str(entry_pin) != str(metric.pinned_version_id or ""):
         return True
     return False
 
@@ -5152,7 +5229,15 @@ def _diff_and_update_evals(
                 metric.model = entry.get("model", "")
                 metric.error_localizer = entry.get("error_localizer", False)
                 metric.kb_id = entry.get("kb_id")
+                if "composite_weight_overrides" in entry:
+                    metric.composite_weight_overrides = entry.get(
+                        "composite_weight_overrides"
+                    )
                 metric.save()
+                _apply_entry_pinned_version_baseline(entry, metric)
+                _pin_experiment_metric_version(
+                    metric, entry, user, organization, workspace
+                )
                 rerun_ids.append(entry_id)
         else:
             # NEW metric — create and pre-create eval columns

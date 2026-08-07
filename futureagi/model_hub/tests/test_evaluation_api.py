@@ -1683,6 +1683,32 @@ class TestEditAndRunUserEvalView:
 
         assert response.status_code == status.HTTP_200_OK
 
+    def test_edit_and_run_user_eval_response_includes_id_and_pinned_version(
+        self, auth_client, dataset, user_eval_metric, output_column
+    ):
+        """Response must surface the eval id and resolved pinned_version_id
+        (TH-6979) so callers like the experiment wizard can sync form state
+        without a follow-up GET."""
+        payload = {
+            "name": "Updated Eval",
+            "run": False,
+            "config": {
+                "model": "gpt-4",
+                "mapping": {"output": "Output Column"},
+            },
+        }
+
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{user_eval_metric.id}/",
+            payload,
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["id"] == str(user_eval_metric.id)
+        assert "pinned_version_id" in result
+
     def test_edit_and_run_user_eval_without_name(
         self, auth_client, dataset, user_eval_metric, output_column
     ):

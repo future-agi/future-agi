@@ -8,3 +8,7 @@ export { useEvalPickerContext } from "./context/EvalPickerContext";
 export { default as EvalPickerProvider } from "./context/EvalPickerProvider";
 export { useEvalPickerData } from "./hooks/useEvalPickerData";
 export { serializeEvalConfig } from "./serializeEvalConfig";
+export {
+  buildEvalRunConfig,
+  resolveCompositeWeightOverrides,
+} from "./buildEvalRunConfig";

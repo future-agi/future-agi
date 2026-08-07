@@ -20,6 +20,17 @@ class DevelopDatasetMessageResponseSerializer(serializers.Serializer):
     result = serializers.CharField()
 
 
+class EditAndRunUserEvalResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    id = serializers.UUIDField()
+    pinned_version_id = serializers.UUIDField(allow_null=True)
+
+
+class EditAndRunUserEvalResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = EditAndRunUserEvalResultSerializer()
+
+
 class DatasetCopyResultSerializer(serializers.Serializer):
     message = serializers.CharField()
     dataset_id = serializers.UUIDField()

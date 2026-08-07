@@ -18070,7 +18070,11 @@ export const ModelHubDevelopsEditAndRunUserEvalCreateBody = zod.object({
 
 export const ModelHubDevelopsEditAndRunUserEvalCreateResponse = zod.object({
   "status": zod.boolean(),
-  "result": zod.string().min(1)
+  "result": zod.object({
+  "message": zod.string().min(1),
+  "id": zod.string().uuid(),
+  "pinned_version_id": zod.string().uuid()
+})
 })
 
 
@@ -20511,7 +20515,8 @@ export const ModelHubExperimentsV2CreateBody = zod.object({
   "kb_id": zod.string().uuid().optional(),
   "composite_weight_overrides": zod.object({
 
-}).passthrough().optional()
+}).passthrough().optional(),
+  "pinned_version_id": zod.string().uuid().optional()
 }))
 })
 
@@ -20660,6 +20665,9 @@ export const modelHubExperimentsV2ReadResponseResultNameMax = 255;
 
 
 
+
+
+
 export const ModelHubExperimentsV2ReadResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
@@ -20672,7 +20680,31 @@ export const ModelHubExperimentsV2ReadResponse = zod.object({
   "snapshot_dataset_id": zod.string().uuid().optional(),
   "prompt_configs": zod.string().optional(),
   "agent_configs": zod.string().optional(),
-  "user_eval_metrics": zod.string().optional(),
+  "user_eval_metrics": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "template_id": zod.string().uuid(),
+  "template_details": zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "description": zod.string(),
+  "config": zod.object({
+
+}).passthrough(),
+  "criteria": zod.string(),
+  "type": zod.string().min(1)
+}).optional(),
+  "name": zod.string().min(1),
+  "config": zod.object({
+
+}).passthrough(),
+  "model": zod.string().optional(),
+  "error_localizer": zod.boolean().optional(),
+  "kb_id": zod.string().uuid().optional(),
+  "pinned_version_id": zod.string().uuid().optional(),
+  "composite_weight_overrides": zod.object({
+
+}).passthrough().optional()
+})).optional(),
   "created_at": zod.string().datetime({"offset":true}).optional()
 })
 })
@@ -20762,11 +20794,15 @@ export const ModelHubExperimentsV2UpdateBody = zod.object({
   "kb_id": zod.string().uuid().optional(),
   "composite_weight_overrides": zod.object({
 
-}).passthrough().optional()
+}).passthrough().optional(),
+  "pinned_version_id": zod.string().uuid().optional()
 })).optional()
 })
 
 export const modelHubExperimentsV2UpdateResponseResultNameMax = 255;
+
+
+
 
 
 
@@ -20782,7 +20818,31 @@ export const ModelHubExperimentsV2UpdateResponse = zod.object({
   "snapshot_dataset_id": zod.string().uuid().optional(),
   "prompt_configs": zod.string().optional(),
   "agent_configs": zod.string().optional(),
-  "user_eval_metrics": zod.string().optional(),
+  "user_eval_metrics": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "template_id": zod.string().uuid(),
+  "template_details": zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "description": zod.string(),
+  "config": zod.object({
+
+}).passthrough(),
+  "criteria": zod.string(),
+  "type": zod.string().min(1)
+}).optional(),
+  "name": zod.string().min(1),
+  "config": zod.object({
+
+}).passthrough(),
+  "model": zod.string().optional(),
+  "error_localizer": zod.boolean().optional(),
+  "kb_id": zod.string().uuid().optional(),
+  "pinned_version_id": zod.string().uuid().optional(),
+  "composite_weight_overrides": zod.object({
+
+}).passthrough().optional()
+})).optional(),
   "created_at": zod.string().datetime({"offset":true}).optional()
 })
 })

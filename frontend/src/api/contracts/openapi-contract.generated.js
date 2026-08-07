@@ -16282,7 +16282,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/DevelopDatasetMessageResponse"
+            "$ref": "#/definitions/EditAndRunUserEvalResponse"
           },
           "400": {
             "$ref": "#/definitions/ModelHubErrorResponse"
@@ -52476,6 +52476,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "EditAndRunUserEvalResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/EditAndRunUserEvalResult"
+        }
+      }
+    },
     "EditRunPromptColumn": {
       "required": [
         "dataset_id",
@@ -79647,6 +79663,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "EditAndRunUserEvalResult": {
+      "required": [
+        "message",
+        "id",
+        "pinned_version_id"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "pinned_version_id": {
+          "title": "Pinned version id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        }
+      }
+    },
     "EmbeddingsResponseResult": {
       "type": "object",
       "properties": {
@@ -80855,6 +80897,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Composite weight overrides",
           "type": "object",
           "x-nullable": true
+        },
+        "pinned_version_id": {
+          "title": "Pinned version id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
         }
       }
     },
@@ -81405,8 +81453,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "readOnly": true
         },
         "user_eval_metrics": {
-          "title": "User eval metrics",
-          "type": "string",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ExperimentDetailEvalMetric"
+          },
           "readOnly": true
         },
         "created_at": {
@@ -94569,6 +94619,64 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "ExperimentDetailEvalMetric": {
+      "required": [
+        "id",
+        "template_id",
+        "name",
+        "config"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "template_id": {
+          "title": "Template id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "template_details": {
+          "$ref": "#/definitions/ExperimentDetailEvalTemplateDetails"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "config": {
+          "title": "Config",
+          "type": "object"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "error_localizer": {
+          "title": "Error localizer",
+          "type": "boolean"
+        },
+        "kb_id": {
+          "title": "Kb id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "pinned_version_id": {
+          "title": "Pinned version id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "composite_weight_overrides": {
+          "title": "Composite weight overrides",
+          "type": "object",
+          "x-nullable": true
+        }
+      }
+    },
     "FeedListRow": {
       "required": [
         "cluster_id",
@@ -99782,6 +99890,49 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true
         }
       }
+    },
+    "ExperimentDetailEvalTemplateDetails": {
+      "required": [
+        "id",
+        "name",
+        "description",
+        "config",
+        "criteria",
+        "type"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "title": "Description",
+          "type": "string",
+          "x-nullable": true
+        },
+        "config": {
+          "title": "Config",
+          "type": "object"
+        },
+        "criteria": {
+          "title": "Criteria",
+          "type": "string",
+          "x-nullable": true
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "x-nullable": true
     },
     "ErrorName": {
       "required": [

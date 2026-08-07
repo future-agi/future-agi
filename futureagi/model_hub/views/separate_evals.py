@@ -2944,7 +2944,15 @@ class EvalTemplateVersionCreateView(APIView):
                 return self._gm.not_found("Eval template not found or not editable.")
 
             # Use live template.config; FE-supplied snapshot is incomplete.
-            effective_config = template.config or {}
+            effective_config = dict(template.config or {})
+            if req.composite_weight_overrides and isinstance(
+                effective_config.get("children"), list
+            ):
+                overrides = req.composite_weight_overrides
+                effective_config["children"] = [
+                    {**child, "weight": overrides.get(child.get("child_id"), child.get("weight", 1.0))}
+                    for child in effective_config["children"]
+                ]
             version = EvalTemplateVersion.objects.create_version(
                 eval_template=template,
                 prompt_messages=effective_config.get("messages") or [],

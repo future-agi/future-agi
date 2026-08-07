@@ -6,7 +6,24 @@ import {
   contextOptionsForRowType,
   extractCodeEvaluateParams,
   getSourceModeVariables,
+  normalizePickerOutputType,
 } from "./evalPickerConfigUtils";
+
+describe("normalizePickerOutputType", () => {
+  it("maps snapshot display labels to select values", () => {
+    expect(normalizePickerOutputType("Pass/Fail")).toBe("pass_fail");
+    expect(normalizePickerOutputType("score")).toBe("percentage");
+    expect(normalizePickerOutputType("choices")).toBe("deterministic");
+  });
+
+  it("passes through already-normalized values and falls back", () => {
+    expect(normalizePickerOutputType("pass_fail")).toBe("pass_fail");
+    expect(normalizePickerOutputType("unknown")).toBe("pass_fail");
+    expect(normalizePickerOutputType("unknown", "percentage")).toBe(
+      "percentage",
+    );
+  });
+});
 
 describe("contextOptionsForRowType", () => {
   it("maps each known row type to its default data_injection flags", () => {

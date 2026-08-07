@@ -19,6 +19,10 @@ import { useParams } from "react-router";
 import { useSearchParams } from "react-router-dom";
 import axios, { endpoints } from "src/utils/axios";
 import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
+import {
+  buildEvalRunConfig,
+  resolveCompositeWeightOverrides,
+} from "src/sections/common/EvalPicker/buildEvalRunConfig";
 import { getVersionedEvalName } from "src/components/run-tests/common";
 import { ShowComponent } from "src/components/show";
 import { isUUID } from "src/utils/utils";
@@ -84,6 +88,7 @@ const EvaluationStepExperimentCreation = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userEvalList, replaceEvals]);
+
   const handleAddEvaluation = (evalConfig) => {
     // Build mapping: DatasetTestMode returns { variable: "column_name" }.
     // The backend expects { variable: "column_uuid" }.
@@ -100,13 +105,23 @@ const EvaluationStepExperimentCreation = ({
 
     // Merge full template config with the mapping so the backend knows
     // how to execute the eval (eval_type_id, rule_prompt, output, etc.)
+    // Nest run_config the same way EvaluationDrawer does — otherwise Run
+    // Experiment snapshots diverge from picker-minted versions and dedup
+    // mints duplicates.
+    const isComposite = evalConfig.templateType === "composite";
     const templateConfig =
       evalConfig.config || evalConfig.evalTemplate?.config || {};
+    const runConfig = buildEvalRunConfig(evalConfig, { isComposite });
     const fullConfig = {
       ...templateConfig,
       mapping: translatedMapping,
+      ...(Object.keys(runConfig).length ? { run_config: runConfig } : {}),
     };
+    const weightOverrides = resolveCompositeWeightOverrides(evalConfig);
 
+    // Version minting for dirty edits happens in EvalPicker (template
+    // versions/create). Create and edit both just pin whatever versionId
+    // the picker returns — no edit_and_run_user_eval on experiments.
     const evalEntry = {
       evalId: evalConfig.templateId,
       evalTemplateName: evalConfig.name,
@@ -120,21 +135,21 @@ const EvaluationStepExperimentCreation = ({
         evalConfig.evalTemplate?.requiredKeys ||
         templateConfig.requiredKeys ||
         [],
-      ...(evalConfig.templateType === "composite" &&
-      evalConfig.compositeWeightOverrides
-        ? { compositeWeightOverrides: evalConfig.compositeWeightOverrides }
+      pinnedVersionId: evalConfig.versionId ?? null,
+      ...(isComposite && weightOverrides
+        ? { compositeWeightOverrides: weightOverrides }
         : {}),
     };
 
     if (editingEval) {
-      // Edit mode: replace the existing field in place, keep the same name.
-      const idx = evalFields.findIndex((f) => {
-        const fid = f.actualEvalCreatedId || f.evalId || f.id;
-        return fid === editingEval.userEvalId;
-      });
+      // Match by the useFieldArray row id captured at edit-open time.
+      // Never spread that id into update() — RHF owns it and corrupting
+      // it breaks the next re-edit (idx === -1, silent no-op).
+      const idx = evalFields.findIndex((f) => f.id === editingEval.fieldKey);
       if (idx !== -1) {
+        const { id: _rhfId, ...existing } = evalFields[idx];
         update(idx, {
-          ...evalFields[idx],
+          ...existing,
           ...evalEntry,
           name: evalConfig.name,
         });
@@ -167,18 +182,27 @@ const EvaluationStepExperimentCreation = ({
       evalItem.id;
     setEditingEval({
       id: tplId,
-      // During creation the eval only has a local field id; during editing
-      // it may carry a backend-assigned id (actualEvalCreatedId).
+      // RHF useFieldArray row id — stable across local updates, unique even
+      // when two rows share the same templateId before the experiment exists.
+      fieldKey: evalItem.id,
       userEvalId:
         evalItem.actualEvalCreatedId || evalItem.evalId || evalItem.id,
       name: evalItem.name || evalItem.evalTemplateName,
       templateType: evalItem.templateType || evalItem.template_type,
       mapping: evalItem.config?.mapping || evalItem.mapping,
       model: evalItem.model || evalItem.selected_model,
-      run_config: evalItem.config,
-      compositeWeightOverrides:
+      // Seed template config + nested run_config separately. Passing the
+      // whole config as run_config made version hydrate treat display
+      // labels (config.output = "Pass/Fail") as the select value and crash.
+      config: evalItem.config,
+      run_config: evalItem.config?.run_config || evalItem.run_config || {},
+      // Picker reads snake; form state is camel after getExperimentDefaultValue.
+      composite_weight_overrides:
         evalItem.compositeWeightOverrides ||
         evalItem.composite_weight_overrides,
+      // Seeds the picker's preselected version.
+      pinned_version_id:
+        evalItem.pinnedVersionId || evalItem.pinned_version_id || null,
     });
     setOpenEvaluationDialog(true);
   };

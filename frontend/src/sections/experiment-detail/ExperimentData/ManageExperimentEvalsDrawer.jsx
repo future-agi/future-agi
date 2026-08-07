@@ -22,30 +22,40 @@ import { ShowComponent } from "src/components/show";
 import ConfirmRunEvaluations from "src/sections/common/EvaluationDrawer/ConfirmRunEvaluations";
 import { getVersionedEvalName } from "src/components/run-tests/common";
 import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
+import {
+  buildEvalRunConfig,
+  resolveCompositeWeightOverrides,
+} from "src/sections/common/EvalPicker/buildEvalRunConfig";
 
 const isUUID = (str) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 
 const transformEvals = (evalList) =>
-  evalList.map((evalItem) => ({
-    ...(evalItem?.actualEvalCreatedId &&
-      isUUID(evalItem?.actualEvalCreatedId) && {
-        id: evalItem?.actualEvalCreatedId,
-      }),
-    template_id: evalItem.templateId || evalItem.id,
-    name: evalItem.name || evalItem.evalTemplateName || "Unnamed Evaluation",
-    config: evalItem.config,
-    model: evalItem.model,
-    error_localizer: evalItem.errorLocalizer,
-    kb_id: evalItem.kbId || null,
-    // Forward composite per-binding weight overrides when the bound
-    // template is a composite. The experiment runner's composite branch
-    // (Phase C) reads this off `UserEvalMetric.composite_weight_overrides`
-    // and hands it to `CompositeEvaluationRunner` at run time.
-    ...(evalItem.compositeWeightOverrides
-      ? { composite_weight_overrides: evalItem.compositeWeightOverrides }
-      : {}),
-  }));
+  evalList.map((evalItem) => {
+    const pinnedVersionId =
+      evalItem.pinnedVersionId || evalItem.pinned_version_id;
+    const weightOverrides = resolveCompositeWeightOverrides(evalItem);
+    return {
+      ...(evalItem?.actualEvalCreatedId &&
+        isUUID(evalItem?.actualEvalCreatedId) && {
+          id: evalItem?.actualEvalCreatedId,
+        }),
+      template_id: evalItem.templateId || evalItem.id,
+      name: evalItem.name || evalItem.evalTemplateName || "Unnamed Evaluation",
+      config: evalItem.config,
+      model: evalItem.model,
+      error_localizer: evalItem.errorLocalizer,
+      kb_id: evalItem.kbId || null,
+      ...(pinnedVersionId ? { pinned_version_id: pinnedVersionId } : {}),
+      // Forward composite per-binding weight overrides when the bound
+      // template is a composite. The experiment runner's composite branch
+      // (Phase C) reads this off `UserEvalMetric.composite_weight_overrides`
+      // and hands it to `CompositeEvaluationRunner` at run time.
+      ...(weightOverrides
+        ? { composite_weight_overrides: weightOverrides }
+        : {}),
+    };
+  });
 
 const ManageExperimentEvalsDrawer = ({
   open,
@@ -180,17 +190,24 @@ const ManageExperimentEvalsDrawer = ({
 
     const templateConfig =
       evalConfig.config || evalConfig.evalTemplate?.config || {};
+    const isComposite = evalConfig.templateType === "composite";
+    const runConfig = buildEvalRunConfig(evalConfig, { isComposite });
+    const weightOverrides = resolveCompositeWeightOverrides(evalConfig);
 
     const builtEval = {
       templateId: evalConfig.templateId,
       evalTemplateName: evalConfig.name,
       model: evalConfig.model,
       mapping: translatedMapping,
-      config: { ...templateConfig, mapping: translatedMapping },
+      config: {
+        ...templateConfig,
+        mapping: translatedMapping,
+        ...(Object.keys(runConfig).length ? { run_config: runConfig } : {}),
+      },
       templateType: evalConfig.templateType,
-      ...(evalConfig.templateType === "composite" &&
-      evalConfig.compositeWeightOverrides
-        ? { compositeWeightOverrides: evalConfig.compositeWeightOverrides }
+      pinnedVersionId: evalConfig.versionId || undefined,
+      ...(isComposite && weightOverrides
+        ? { compositeWeightOverrides: weightOverrides }
         : {}),
     };
 
@@ -254,10 +271,13 @@ const ManageExperimentEvalsDrawer = ({
       templateType: evalItem.templateType || evalItem.template_type,
       mapping: evalItem.config?.mapping || evalItem.mapping,
       model: evalItem.model || evalItem.selected_model,
-      run_config: evalItem.config,
-      compositeWeightOverrides:
+      config: evalItem.config,
+      run_config: evalItem.config?.run_config || evalItem.run_config || {},
+      composite_weight_overrides:
         evalItem.compositeWeightOverrides ||
         evalItem.composite_weight_overrides,
+      pinned_version_id:
+        evalItem.pinnedVersionId || evalItem.pinned_version_id || null,
     });
     setOpenEvaluationDialog(true);
   };
