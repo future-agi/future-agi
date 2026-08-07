@@ -3838,8 +3838,13 @@ class TestExecutionBulkDeleteView(APIView):
             ]
             count = len(deleted_ids)
 
-            # Hard delete (cascades to call executions)
-            test_executions.delete()
+            with transaction.atomic():
+                now = timezone.now()
+                CallExecution.objects.filter(
+                    test_execution__in=test_executions,
+                    deleted=False,
+                ).update(deleted=True, deleted_at=now)
+                test_executions.update(deleted=True, deleted_at=now)
 
             logger.info(
                 f"Bulk deleted {count} test executions from run test {run_test_id}"

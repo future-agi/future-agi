@@ -1604,6 +1604,43 @@ class TestRunTestCallExecutionsView:
         listed_ids = {str(row.get("id")) for row in body["results"]}
         assert str(call_execution.id) in listed_ids
 
+    def test_get_run_test_call_executions_excludes_soft_deleted_calls(
+        self,
+        auth_client,
+        run_test_with_v10_scenario,
+        scenario_with_prompt_version,
+    ):
+        test_execution = TestExecution.objects.create(
+            run_test=run_test_with_v10_scenario,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=1,
+            total_calls=2,
+        )
+        active_call = CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario_with_prompt_version,
+            status=CallExecution.CallStatus.COMPLETED,
+            simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        )
+        deleted_call = CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario_with_prompt_version,
+            status=CallExecution.CallStatus.COMPLETED,
+            simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        )
+        deleted_call.delete()
+
+        response = auth_client.get(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/call-executions/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        body = response.json()
+        assert body["count"] == 1
+        listed_ids = {str(row.get("id")) for row in body["results"]}
+        assert str(active_call.id) in listed_ids
+        assert str(deleted_call.id) not in listed_ids
+
     def test_get_run_test_call_executions_unauthenticated_returns_401(
         self, api_client, run_test_with_v10_scenario
     ):
