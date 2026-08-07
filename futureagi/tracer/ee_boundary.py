@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from tracer.types.eval_cluster_types import ClusterableEvalResult, EvalClusterMeta
+    from tracer.types.scan_types import ClusterableIssue
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,20 @@ def distill_eval_failure_phrases(
     except Exception:
         logger.warning("distill_failure_phrases_failed", exc_info=True)
     return results
+
+
+def distill_scan_briefs(issues: list[ClusterableIssue]) -> list[ClusterableIssue]:
+    """Distill scanner issue briefs to canonical failure phrases.
+    Mutates each issue's .distilled in place. No-op on OSS."""
+    if not _ee_available:
+        return issues
+    try:
+        phrases = _distill_failure_phrases([(i.category, i.brief) for i in issues])
+        for issue, phrase in zip(issues, phrases, strict=True):
+            issue.distilled = phrase
+    except Exception:
+        logger.warning("distill_scan_briefs_failed", exc_info=True)
+    return issues
 
 
 def attribute_key_moments(

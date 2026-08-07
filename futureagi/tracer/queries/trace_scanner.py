@@ -131,7 +131,7 @@ def mark_traces_failed(trace_ids: list[str], project_id: str, reason: str) -> in
 # ---------------------------------------------------------------------------
 
 # Map our observation_type to the span role the scanner understands.
-# Kept vendor-neutral — compress_v2 reads span kind by suffix, not by
+# Kept vendor-neutral — the scanner reads span kind by suffix, not by
 # a specific SDK prefix, so we just emit plain "span.kind".
 _OBS_TYPE_TO_KIND = {
     "GENERATION": "LLM",
@@ -324,6 +324,13 @@ def write_scan_results(
     written = 0
 
     for result in results:
+        # A retryable result means the scan could not be completed, not that the
+        # trace is clean. Any row here is terminal — filter_already_scanned
+        # treats FAILED the same as COMPLETED — so writing one would hide the
+        # trace from every later sweep. Leave it unwritten and it gets picked up
+        # again.
+        if getattr(result, "retryable", False):
+            continue
         try:
             # Serialize dataclasses to JSON-safe dicts for JSONField storage.
             # role/span/status/is_failure are the deterministic span

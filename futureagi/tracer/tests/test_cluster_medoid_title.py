@@ -78,6 +78,45 @@ def _cluster_with(project, briefs):
 
 @pytest.mark.django_db
 class TestRetitleFromMembers:
+    """Medoid selection, with title generation held OFF.
+
+    ``_retitle_from_members`` prefers a generated group title and falls back to
+    the medoid only when one is unavailable. These tests are about the fallback,
+    so they pin the generator to None rather than letting the environment decide
+    — otherwise they assert the medoid while silently depending on EE being
+    absent, and start failing the moment it is present. That is not theoretical:
+    they pass in CI, where the EE symbol is missing, and fail against a checkout
+    where it resolves.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_generated_title(self):
+        with patch(
+            "tracer.ee_boundary.generate_scan_cluster_title", return_value=None
+        ):
+            yield
+
+    def test_a_generated_title_wins_over_the_medoid(self, project):
+        """The generator is the preferred source — the medoid is the fallback.
+
+        Without this, every test here runs with generation off and nothing
+        covers the path that actually executes when EE is present.
+        """
+        medoid = "Queried past month instead of requested quarterly performance"
+        cluster = _cluster_with(project, [medoid, "Queried past month, not the quarter"])
+        generated = "Agent used the wrong period when answering performance questions"
+
+        with patch(
+            "tracer.queries.scan_clustering.embed_texts",
+            side_effect=lambda briefs: [[1.0, 0.0] for _ in briefs],
+        ), patch(
+            "tracer.ee_boundary.generate_scan_cluster_title", return_value=generated
+        ):
+            _retitle_from_members(cluster)
+
+        cluster.refresh_from_db()
+        assert cluster.title == generated
+
     def test_medoid_is_chosen_over_first_arrival(self, project):
         """The core fix. The outlier arrived first and named the cluster; the
         medoid is the member the group is actually about."""
@@ -87,22 +126,50 @@ class TestRetitleFromMembers:
         cluster = _cluster_with(project, [outlier, typical_a, typical_b])
         assert cluster.title == outlier  # first arrival named it
 
-        # outlier sits far from the other two; centroid sits with the pair
+        # outlier sits far from the other two; the members' own mean sits with the pair
         vectors = {
             outlier: [1.0, 0.0, 0.0],
             typical_a: [0.0, 1.0, 0.0],
             typical_b: [0.0, 0.98, 0.2],
         }
-        centroid = [0.0, 1.0, 0.1]
 
         with patch(
             "tracer.queries.scan_clustering.embed_texts",
             side_effect=lambda briefs: [vectors[b] for b in briefs],
         ):
-            _retitle_from_members(cluster, centroid)
+            _retitle_from_members(cluster)
 
         cluster.refresh_from_db()
         assert cluster.title in (typical_a, typical_b)
+        assert cluster.title != outlier
+
+    def test_medoid_is_measured_among_the_briefs_it_selects_from(self, project):
+        """The stored centroid is built from ``embedding_text`` — the DISTILLED
+        phrase — while the title must be a raw brief a person would recognise.
+        Ranking raw briefs by distance to that centroid compares two different
+        embedding spaces, and the winner is then near-arbitrary.
+
+        Here the raw briefs cluster around the pair, so the medoid is one of
+        them. Nothing outside this set may decide that.
+        """
+        outlier = "Agent invented a client named Dana Whitfield out of nothing"
+        pair_a = "Answered with text instead of calling the portfolio tool"
+        pair_b = "Answered in prose instead of invoking the portfolio tool"
+        cluster = _cluster_with(project, [outlier, pair_a, pair_b])
+        vectors = {
+            outlier: [1.0, 0.0, 0.0],
+            pair_a: [0.0, 1.0, 0.0],
+            pair_b: [0.0, 0.99, 0.14],
+        }
+
+        with patch(
+            "tracer.queries.scan_clustering.embed_texts",
+            side_effect=lambda briefs: [vectors[b] for b in briefs],
+        ):
+            _retitle_from_members(cluster)
+
+        cluster.refresh_from_db()
+        assert cluster.title in (pair_a, pair_b)
         assert cluster.title != outlier
 
     def test_singleton_is_left_alone(self, project):
@@ -112,7 +179,7 @@ class TestRetitleFromMembers:
         cluster = _cluster_with(project, [only])
 
         with patch("tracer.queries.scan_clustering.embed_texts") as embed:
-            _retitle_from_members(cluster, [1.0, 0.0])
+            _retitle_from_members(cluster)
 
         embed.assert_not_called()
         cluster.refresh_from_db()
@@ -127,22 +194,25 @@ class TestRetitleFromMembers:
             "tracer.queries.scan_clustering.embed_texts",
             side_effect=RuntimeError("serving down"),
         ):
-            _retitle_from_members(cluster, [1.0, 0.0])
+            _retitle_from_members(cluster)
 
         cluster.refresh_from_db()
         assert cluster.title == first
 
     def test_no_write_when_medoid_is_already_the_title(self, project):
         keep = "Queried past month instead of requested quarterly performance"
+        near = "Queried past month rather than the requested quarter"
         other = "Something quite different about tool errors"
-        cluster = _cluster_with(project, [keep, other])
-        vectors = {keep: [0.0, 1.0], other: [1.0, 0.0]}
+        # three members, with `keep` sitting between the other two so it really
+        # is the medoid — two opposed vectors would tie and let position decide
+        cluster = _cluster_with(project, [keep, near, other])
+        vectors = {keep: [0.7, 0.714], near: [0.0, 1.0], other: [1.0, 0.0]}
 
         with patch(
             "tracer.queries.scan_clustering.embed_texts",
             side_effect=lambda briefs: [vectors[b] for b in briefs],
         ):
-            _retitle_from_members(cluster, [0.0, 1.0])
+            _retitle_from_members(cluster)
 
         cluster.refresh_from_db()
         assert cluster.title == keep

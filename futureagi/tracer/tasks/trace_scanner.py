@@ -26,6 +26,7 @@ from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.clickhouse.v2.query_settings import ch_query_settings
 from tracer.utils.trace_scanner import (
     cluster_issues,
+    merge_duplicate_clusters,
     embed_trace_inputs,
     match_success_traces,
     scan_and_write,
@@ -148,12 +149,23 @@ def cluster_scan_issues_task(project_id: str):
 
     summary = cluster_issues(project_id)
 
+    # Online assignment has no merge step, so two clusters describing one root cause can
+    # never join — measured at 14% of feed entries on production briefs. Collapse them
+    # after each clustering pass. Bounded internally, and deliberately fail-open: a merge
+    # problem must not cost us the clustering that just succeeded.
+    try:
+        merged = merge_duplicate_clusters(project_id)
+    except Exception:
+        logger.exception("cluster_merge_failed", project_id=project_id)
+        merged = 0
+
     logger.info(
         "cluster_scan_issues_task_completed",
         project_id=project_id,
         clustered=summary.clustered,
         new_clusters=summary.new_clusters,
         assigned=summary.assigned,
+        merged_duplicates=merged,
     )
 
     # Match success traces for all scanner clusters in this project

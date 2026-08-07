@@ -12,7 +12,7 @@ floor. Fix 7 stops claiming a trend below a threshold where there is none.
 Neither invents a model. They make the existing labels defensible.
 """
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -22,9 +22,7 @@ from tracer.models.trace_error_analysis import (
     TraceErrorGroup,
 )
 from tracer.queries.scan_clustering import (
-    _ESCALATING_MIN_TRACES,
     _refresh_severity,
-    _refresh_status,
     _volume_floor,
 )
 
@@ -46,6 +44,56 @@ def _cluster(project, *, traces=1, title="Queried the wrong period", **kwargs):
     )
 
 
+_EMBEDDING = [0.1] * 8
+
+
+def _ch_stub():
+    """ClickHouseVectorDB double whose reads return no rows.
+
+    The centroid SELECT is unpacked when it returns anything, so a bare
+    MagicMock fails on the unpack rather than on the behaviour under test.
+    """
+    db = MagicMock()
+    db.client.execute.return_value = []
+    return patch(
+        "tracer.queries.scan_clustering.ClickHouseVectorDB", return_value=db
+    )
+
+
+def _issue(project, brief="Queried the wrong period"):
+    """A real TraceScanIssue row plus the clustering view of it. Assignment
+    writes to both, so a fabricated id would make the test pass without
+    exercising the membership writes that sit beside the status field."""
+    from tracer.models.trace_scan import TraceScanIssue, TraceScanResult, TraceScanStatus
+    from tracer.types.scan_types import ClusterableIssue
+
+    trace_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    result = TraceScanResult.objects.create(
+        trace_id=trace_id,
+        project_id=project.id,
+        status=TraceScanStatus.COMPLETED,
+        has_issues=True,
+    )
+    row = TraceScanIssue.objects.create(
+        scan_result=result,
+        category="Context Handling Failures",
+        group="Context Handling Failures",
+        fix_layer="prompt",
+        confidence="H",
+        brief=brief,
+    )
+    return ClusterableIssue(
+        issue_id=str(row.id),
+        trace_id=trace_id,
+        project_id=str(project.id),
+        category="Context Handling Failures",
+        group="Context Handling Failures",
+        fix_layer="prompt",
+        brief=brief,
+        confidence="H",
+    )
+
+
 def _graded(severity):
     """Pin the cheap-LLM grade so only the volume floor is under test."""
     return patch(
@@ -59,7 +107,7 @@ class TestSeverityVolumeFloor:
         """A defect reproducing across many traces is at least a medium
         regardless of how its title reads — breadth is evidence the text alone
         cannot carry."""
-        cluster = _cluster(project, traces=_ESCALATING_MIN_TRACES)
+        cluster = _cluster(project, traces=5)
 
         with _graded("low"):
             _refresh_severity(cluster)
@@ -174,60 +222,59 @@ class TestVolumeFloorBands:
 
 
 @pytest.mark.django_db
-class TestStatusFloor:
-    def test_a_singleton_is_for_review_not_escalating(self, project):
-        """The headline defect: 138 clusters seen exactly once were labelled
-        escalating."""
-        cluster = _cluster(project, traces=1, status=FeedIssueStatus.ESCALATING)
+class TestStatusIsEscalatingAndOtherwiseHuman:
+    """Status is escalating by default; every other value belongs to a person.
 
-        _refresh_status(cluster)
+    Automation briefly downgraded low-volume clusters to for_review. That is a
+    triage state a user sets through PATCH /tracer/feed/issues/{cluster_id}/, so
+    writing it by machine both invented a review nobody did and — because the
+    guard only covered acknowledged/resolved — flipped a user's own for_review
+    back to escalating the moment the cluster gained a fifth trace.
+    """
 
-        cluster.refresh_from_db()
-        assert cluster.status == FeedIssueStatus.FOR_REVIEW
+    def test_a_new_cluster_is_escalating(self, project):
+        """Through create_cluster, not the model default — the downgrade this
+        replaces lived in create_cluster, so asserting the default would pass
+        with the downgrade restored."""
+        from tracer.queries.scan_clustering import create_cluster
 
-    def test_recurrence_earns_escalating(self, project):
-        cluster = _cluster(
-            project,
-            traces=_ESCALATING_MIN_TRACES,
-            status=FeedIssueStatus.FOR_REVIEW,
+        with _ch_stub(), \
+             patch("tracer.queries.scan_clustering.ensure_centroid_table"), \
+             _graded("medium"):
+            cluster_id = create_cluster(str(project.id), _issue(project), _EMBEDDING)
+
+        created = TraceErrorGroup.objects.get(
+            cluster_id=cluster_id, project_id=project.id
         )
-
-        _refresh_status(cluster)
-
-        cluster.refresh_from_db()
-        assert cluster.status == FeedIssueStatus.ESCALATING
-
-    def test_the_threshold_is_inclusive_at_its_boundary(self, project):
-        below = _cluster(
-            project,
-            traces=_ESCALATING_MIN_TRACES - 1,
-            cluster_id="S-BELOW01",
-            status=FeedIssueStatus.ESCALATING,
-        )
-
-        _refresh_status(below)
-
-        below.refresh_from_db()
-        assert below.status == FeedIssueStatus.FOR_REVIEW
+        assert created.status == FeedIssueStatus.ESCALATING
 
     @pytest.mark.parametrize(
-        "triaged", [FeedIssueStatus.ACKNOWLEDGED, FeedIssueStatus.RESOLVED]
+        "human",
+        [
+            FeedIssueStatus.FOR_REVIEW,
+            FeedIssueStatus.ACKNOWLEDGED,
+            FeedIssueStatus.RESOLVED,
+        ],
     )
-    def test_human_triage_is_never_overwritten(self, project, triaged):
-        """Someone looked at this and made a call. Growing past the threshold
-        must not silently reopen it underneath them."""
-        cluster = _cluster(project, traces=50, status=triaged)
+    def test_assignment_never_rewrites_a_human_status(self, project, human):
+        """Growing past any volume must not reopen or relabel a triaged cluster.
 
-        _refresh_status(cluster)
+        Drives the real assignment path rather than asserting a function is
+        absent: a rename would defeat a name check, and the point is that no
+        code path writes status, whatever it is called.
+        """
+        from tracer.queries.scan_clustering import assign_to_cluster
+
+        cluster = _cluster(project, traces=50, status=human)
+        issue = _issue(project)
+
+        with _ch_stub(), \
+             patch("tracer.queries.scan_clustering.ensure_centroid_table"):
+            assign_to_cluster(
+                cluster.cluster_id, str(project.id), issue, _EMBEDDING
+            )
 
         cluster.refresh_from_db()
-        assert cluster.status == triaged
-
-    def test_no_write_when_already_at_target(self, project):
-        cluster = _cluster(project, traces=1, status=FeedIssueStatus.FOR_REVIEW)
-        before = cluster.updated_at
-
-        _refresh_status(cluster)
-
-        cluster.refresh_from_db()
-        assert cluster.updated_at == before
+        assert cluster.status == human, (
+            f"assignment rewrote a status a person set ({human} -> {cluster.status})"
+        )

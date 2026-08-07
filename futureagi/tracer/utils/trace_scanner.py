@@ -19,8 +19,10 @@ try:
 except ImportError:
     ScanResult = _ee_stub("ScanResult")
     TraceScanner = _ee_stub("TraceScanner")
+from tracer.ee_boundary import distill_scan_briefs
 from tracer.models.trace_error_analysis import TraceErrorGroup
 from tracer.queries.scan_clustering import (
+    merge_duplicate_clusters,
     assign_to_cluster,
     create_cluster,
     delete_centroid,
@@ -202,6 +204,12 @@ def cluster_issues(project_id: str) -> ClusteringSummary:
     if not issues:
         logger.info("no_unclustered_issues", project_id=project_id)
         return ClusteringSummary()
+
+    # Distill each brief to a canonical failure phrase before embedding — briefs
+    # name this trace's ticker, client and feature, and those entities dominate
+    # the embedding, so one bug seeds a cluster per occurrence. Best-effort: a
+    # failed batch leaves ``distilled`` None and the raw brief is embedded.
+    distill_scan_briefs(issues)
 
     # Embed all issue texts in one batch
     texts = [issue.embedding_text for issue in issues]
