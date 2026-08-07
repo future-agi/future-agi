@@ -10,7 +10,11 @@ import {
   EvalPickerDrawer,
   serializeEvalConfig,
 } from "src/sections/common/EvalPicker";
-import { chatEvalColumns } from "src/components/run-tests/common";
+import {
+  chatEvalColumns,
+  voiceEvalColumns,
+} from "src/components/run-tests/common";
+import { AGENT_TYPES } from "src/sections/agents/constants";
 
 import SimulationEvaluationPage from "./SimulationEvaluationPage";
 import { useSimulationDetailContext } from "./context/SimulationDetailContext";
@@ -32,9 +36,16 @@ const SimulationEvaluationDrawer = ({ open, onClose, onSuccess }) => {
   const scenariosDetail =
     simulation?.scenarios_detail ?? simulation?.scenariosDetail ?? [];
 
+  // Determine agent type from simulation's agent definition.
+  const agentType =
+    simulation?.agent_definition_detail?.agent_type ??
+    simulation?.agentDefinitionDetail?.agentType;
+
   // Build eval columns from scenario column configs. Same shape as before:
-  // [{ id, name, type }] merged with the chatEvalColumns base set.
+  // [{ id, name, type }] merged with the base set (chat or voice).
   const evalColumns = useMemo(() => {
+    const base =
+      agentType === AGENT_TYPES.VOICE ? voiceEvalColumns : chatEvalColumns;
     const scenarioColumns = scenariosDetail.reduce((acc, detail) => {
       const columnConfig =
         detail?.dataset_column_config ?? detail?.datasetColumnConfig ?? {};
@@ -49,8 +60,8 @@ const SimulationEvaluationDrawer = ({ open, onClose, onSuccess }) => {
       });
       return acc;
     }, []);
-    return [...chatEvalColumns, ...scenarioColumns];
-  }, [scenariosDetail]);
+    return [...base, ...scenarioColumns];
+  }, [agentType, scenariosDetail]);
 
   const existingEvals =
     simulation?.simulate_eval_configs_detail ??
