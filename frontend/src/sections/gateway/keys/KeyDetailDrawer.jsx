@@ -24,7 +24,7 @@ import { useApiKeyDetail, useRevokeApiKey } from "./hooks/useApiKeys";
 import EditKeyDialog from "./EditKeyDialog";
 import { useAnalyticsOverview } from "../analytics/hooks/useAnalyticsOverview";
 import { useAnalyticsUsage } from "../analytics/hooks/useAnalyticsUsage";
-import { val } from "../utils/analyticsHelpers";
+import { computeGranularity, val } from "../utils/analyticsHelpers";
 import { formatCost, formatDateTime as formatDate } from "../utils/formatters";
 
 const STATUS_COLORS = {
@@ -86,7 +86,15 @@ const KeyDetailDrawer = ({ keyId, open, onClose, gatewayId }) => {
   );
 
   const { data: usageData } = useAnalyticsUsage(
-    resolvedKeyId ? { ...analyticsParams, granularity: "1h" } : {},
+    resolvedKeyId
+      ? {
+          ...analyticsParams,
+          granularity: computeGranularity(
+            analyticsParams.start,
+            analyticsParams.end,
+          ),
+        }
+      : {},
     { enabled: Boolean(resolvedKeyId) },
   );
 

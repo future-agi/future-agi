@@ -25,3 +25,14 @@ export function trend(obj) {
     return obj.trend;
   return null;
 }
+
+/** Map a time range to a bucket granularity the analytics API accepts: the backend only recognizes "minute" | "hour" | "day" | "week" | "month" and silently coerces anything else to "hour". */
+export function computeGranularity(start, end) {
+  if (!start || !end) return "hour";
+  const diffMs = new Date(end).getTime() - new Date(start).getTime();
+  const diffHours = diffMs / (1000 * 60 * 60);
+  if (diffHours <= 6) return "minute";
+  if (diffHours <= 168) return "hour"; // up to 7 days
+  if (diffHours <= 720) return "day"; // up to 30 days
+  return "week";
+}
