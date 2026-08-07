@@ -5502,6 +5502,20 @@ class UpdateCellValueView(APIView):
                         cell.status = CellStatus.PASS.value
                         cell.value = audio_url
 
+                        # Persist the freshly computed clip length so the audio
+                        # duration filter can match this row. Previously `duration`
+                        # was computed here and thrown away, leaving
+                        # column_metadata at its default {} with nothing for the
+                        # duration filter to compare against (#1767).
+                        if duration is not None:
+                            column_metadata = (
+                                cell.column_metadata
+                                if isinstance(cell.column_metadata, dict)
+                                else {}
+                            )
+                            column_metadata["audio_duration_seconds"] = duration
+                            cell.column_metadata = column_metadata
+
                 except Exception as e:
                     logger.error(f"ERROR: {e}")
                     cell.value = None
