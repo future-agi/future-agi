@@ -2,9 +2,11 @@ import base64
 import json
 import os
 import re
-import traceback
+import string
 import uuid
+from collections.abc import Collection, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
 from typing import Any
 
 import chevron
@@ -16,6 +18,7 @@ from django.db import close_old_connections
 from django.db.models import Q
 from django.http import Http404
 from drf_yasg.utils import swagger_auto_schema
+from jinja2 import StrictUndefined, TemplateSyntaxError, UndefinedError, meta, nodes
 from jinja2.sandbox import SandboxedEnvironment
 from rest_framework import viewsets
 from rest_framework.generics import CreateAPIView
@@ -84,10 +87,7 @@ from model_hub.utils.utils import (
     remove_empty_text_from_messages,
 )
 from model_hub.views.prompt_template import handle_media
-from model_hub.views.utils.utils import (
-    sanitize_uuid_for_jinja,
-    sanitize_uuids_in_template,
-)
+from model_hub.views.utils.utils import sanitize_uuid_for_jinja
 from tfc.telemetry import wrap_for_thread
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import (
@@ -117,8 +117,7 @@ def _request_organization(request):
     return getattr(request, "organization", None) or request.user.organization
 
 
-def _request_workspace_filter(request, field_name="workspace"):
-    workspace = getattr(request, "workspace", None)
+def _workspace_filter(workspace, field_name="workspace"):
     if not workspace:
         return Q()
 
@@ -135,6 +134,10 @@ def _request_workspace_filter(request, field_name="workspace"):
         )
 
     return Q(**{field_name: workspace})
+
+
+def _request_workspace_filter(request, field_name="workspace"):
+    return _workspace_filter(getattr(request, "workspace", None), field_name)
 
 
 def _request_dataset_queryset(request):
@@ -172,6 +175,39 @@ def _extract_tool_ids(tools):
         if tool_id:
             tool_ids.append(tool_id)
     return tool_ids
+
+
+RUN_PROMPT_UNAVAILABLE_TOOL_ERROR = (
+    "One or more tools are unavailable for this workspace."
+)
+
+
+def _resolve_tools_for_scope(tools, *, organization, workspace=None):
+    tool_ids = _extract_tool_ids(tools)
+    if not tool_ids:
+        return []
+
+    tools_queryset = list(
+        Tools.objects.filter(
+            _workspace_filter(workspace),
+            id__in=tool_ids,
+            organization=organization,
+            deleted=False,
+        )
+    )
+    requested_tool_ids = {str(tool_id) for tool_id in tool_ids}
+    resolved_tool_ids = {str(tool.id) for tool in tools_queryset}
+    if resolved_tool_ids != requested_tool_ids:
+        raise ValueError(RUN_PROMPT_UNAVAILABLE_TOOL_ERROR)
+    return tools_queryset
+
+
+def _resolve_request_tools(request, tools):
+    return _resolve_tools_for_scope(
+        tools,
+        organization=_request_organization(request),
+        workspace=getattr(request, "workspace", None),
+    )
 
 
 PROVIDERS_WITH_JSON = ["vertex_ai", "azure", "bedrock", "sagemaker"]
@@ -424,12 +460,1105 @@ TEMPLATE_FORMAT_MUSTACHE = "mustache"
 TEMPLATE_FORMAT_JINJA2 = "jinja2"
 DEFAULT_TEMPLATE_FORMAT = TEMPLATE_FORMAT_JINJA2
 
+
+def normalize_template_format(template_format: str | None) -> str | None:
+    """Normalize accepted aliases for internal rendering."""
+    if template_format == "jinja":
+        return TEMPLATE_FORMAT_JINJA2
+    return template_format
+
+
+def normalize_public_template_format(template_format: str | None) -> str | None:
+    """Normalize accepted aliases for the public run_prompt_config contract."""
+    if template_format == TEMPLATE_FORMAT_JINJA2:
+        return "jinja"
+    return template_format
+
+
+def get_run_prompt_template_format(config: dict | None) -> str | None:
+    """Return the canonical template format from current or legacy config."""
+    config = config or {}
+    run_prompt_config = config.get("run_prompt_config", {}) or {}
+    legacy_configuration = config.get("configuration", {}) or {}
+    return normalize_template_format(
+        run_prompt_config.get("template_format")
+        or legacy_configuration.get("template_format")
+    )
+
+
+def normalize_run_prompt_config(config: dict | None) -> dict:
+    """Persist legacy template-format aliases into run_prompt_config.
+
+    Preview and persisted execution must render with the same template format.
+    Older clients may still send ``config.configuration.template_format``;
+    normalize that value at the boundary so saved run prompts execute exactly
+    like their preview.
+    """
+    config = config or {}
+    run_prompt_config = dict(config.get("run_prompt_config", {}) or {})
+    template_format = normalize_public_template_format(
+        run_prompt_config.get("template_format")
+        or (config.get("configuration", {}) or {}).get("template_format")
+    )
+    if template_format:
+        run_prompt_config["template_format"] = template_format
+    return run_prompt_config
+
+
+def merge_run_prompt_config(existing_config: dict | None, config: dict | None) -> dict:
+    """Merge edit payload config without erasing stored run prompt settings."""
+    merged_config = dict(existing_config or {})
+    normalized_config = normalize_run_prompt_config(config)
+    if normalized_config:
+        merged_config.update(normalized_config)
+    return merged_config
+
+
 # Jinja2 environment (reusable, sandboxed for security)
 _jinja2_env = SandboxedEnvironment()
+_jinja2_strict_env = SandboxedEnvironment(undefined=StrictUndefined)
+
+
+class PromptTemplateSyntaxError(ValueError):
+    """Raised when prompt template syntax is invalid before provider dispatch."""
+
+
+class _MissingPromptValueError(ValueError):
+    def __init__(self, placeholder: str):
+        self.placeholder = placeholder
+        super().__init__(placeholder)
+
+
+class _MissingPromptValue:
+    def __init__(self, placeholder: str):
+        self.placeholder = placeholder
+
+    def _raise(self):
+        raise _MissingPromptValueError(self.placeholder)
+
+    def __str__(self):
+        self._raise()
+
+    def __repr__(self):
+        self._raise()
+
+    def __bool__(self):
+        self._raise()
+
+    def __iter__(self):
+        self._raise()
+
+    def __len__(self):
+        self._raise()
+
+    def __getattr__(self, name):
+        self._raise()
+
+    def __getitem__(self, key):
+        self._raise()
+
+    def __contains__(self, item):
+        self._raise()
+
+    def __hash__(self):
+        self._raise()
+
+    def __eq__(self, other):
+        self._raise()
+
+    def __ne__(self, other):
+        self._raise()
+
+    def __lt__(self, other):
+        self._raise()
+
+    def __le__(self, other):
+        self._raise()
+
+    def __gt__(self, other):
+        self._raise()
+
+    def __ge__(self, other):
+        self._raise()
+
+    def _binary_op(self, *args, **kwargs):
+        self._raise()
+
+    __add__ = __radd__ = _binary_op
+    __sub__ = __rsub__ = _binary_op
+    __mul__ = __rmul__ = _binary_op
+    __truediv__ = __rtruediv__ = _binary_op
+    __floordiv__ = __rfloordiv__ = _binary_op
+    __mod__ = __rmod__ = _binary_op
+    __pow__ = __rpow__ = _binary_op
+
+
+class UnresolvedPromptPlaceholdersError(ValueError):
+    """Raised when strict prompt rendering encounters unresolved placeholders."""
+
+    def __init__(self, placeholders):
+        if isinstance(placeholders, str):
+            placeholders = [placeholders]
+        self.placeholders = [placeholder for placeholder in placeholders if placeholder]
+        joined_placeholders = ", ".join(self.placeholders) or "unknown placeholder"
+        super().__init__(f"Unresolved prompt placeholders: {joined_placeholders}")
+
+
+RUN_PROMPT_LOCAL_VALIDATION_ERROR = (
+    "Run prompt failed before provider dispatch. Check prompt placeholders, "
+    "template syntax, and media support."
+)
+RUN_PROMPT_LOCAL_VALIDATION_PHASES = {
+    "placeholder_validation",
+    "media_validation",
+}
+
+
+def _is_run_prompt_local_validation_error(
+    error: Exception,
+    *,
+    is_llm_error: bool = False,
+    phase: str | None = None,
+) -> bool:
+    return phase in RUN_PROMPT_LOCAL_VALIDATION_PHASES or (
+        not is_llm_error
+        and isinstance(
+            error,
+            (
+                UnresolvedPromptPlaceholdersError,
+                PromptTemplateSyntaxError,
+            ),
+        )
+    )
+
+
+def _safe_run_prompt_error_message(
+    error: Exception,
+    *,
+    is_llm_error: bool = False,
+    phase: str | None = None,
+) -> str:
+    """Return a user-safe message for local run-prompt validation failures.
+
+    Strict placeholder/template/media validation runs before provider dispatch
+    and may include column names, raw template expressions, or media URLs in the
+    exception detail. Persisted cells and preview responses get a small
+    actionable allowlisted message instead of those raw details.
+    """
+
+    if _is_run_prompt_local_validation_error(
+        error,
+        is_llm_error=is_llm_error,
+        phase=phase,
+    ):
+        return RUN_PROMPT_LOCAL_VALIDATION_ERROR
+    return get_specific_error_message(error, is_llm_error)
+
+
+def _log_run_prompt_error(
+    event: str,
+    error: Exception,
+    *,
+    is_llm_error: bool = False,
+    phase: str | None = None,
+    **context,
+):
+    log_context = {
+        **context,
+        "error_type": type(error).__name__,
+        "phase": phase,
+        "is_llm_error": is_llm_error,
+    }
+    if _is_run_prompt_local_validation_error(
+        error,
+        is_llm_error=is_llm_error,
+        phase=phase,
+    ):
+        logger.warning(event, **log_context)
+        return
+    logger.exception(event, error=str(error), **log_context)
+
+
+def _build_placeholder_display_map(template_str: str) -> dict[str, str]:
+    """Map render-time variable names back to the original placeholder text."""
+    if not template_str:
+        return {}
+
+    placeholder_display_map: dict[str, str] = {}
+    for match in re.finditer(r"\{\{\s*([#^/]?)\s*([^{}]+?)\s*\}\}", template_str):
+        tag_prefix = match.group(1)
+        expression = match.group(2).strip()
+        if not expression:
+            continue
+        root_name = re.split(r"[.[]", expression, maxsplit=1)[0].strip()
+        if not root_name:
+            continue
+        display = f"{{{{{tag_prefix}{root_name}}}}}" if tag_prefix else match.group(0)
+        placeholder_display_map.setdefault(root_name, display)
+        placeholder_display_map.setdefault(sanitize_uuid_for_jinja(root_name), display)
+    return placeholder_display_map
+
+
+def _resolve_missing_placeholder_reference(
+    error_message: str, placeholder_display_map: dict[str, str] | None = None
+) -> str:
+    """Prefer the original placeholder text when Jinja reports an undefined variable."""
+    placeholder_display_map = placeholder_display_map or {}
+    undefined_match = re.search(r"'([^']+)' is undefined", error_message)
+    if undefined_match:
+        missing_name = undefined_match.group(1)
+        return placeholder_display_map.get(missing_name, missing_name)
+    return error_message
+
+
+_JINJA_PLACEHOLDER_PATTERN = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
+_UUID_PLACEHOLDER_WITH_WHITESPACE_PATTERN = re.compile(
+    r"\{\{\s*([#^/]?)\s*"
+    r"([a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-"
+    r"[a-fA-F0-9]{4}-[a-fA-F0-9]{12})"
+    r"(\.[\w.]+)?\s*\}\}",
+    re.IGNORECASE,
+)
+
+
+def _placeholder_display_name(
+    placeholder: str, placeholder_display_map: dict[str, str] | None = None
+) -> str:
+    if placeholder_display_map and placeholder in placeholder_display_map:
+        return placeholder_display_map[placeholder]
+    return placeholder
+
+
+def _format_unresolved_placeholder_error(
+    placeholders: list[str], placeholder_display_map: dict[str, str] | None = None
+) -> UnresolvedPromptPlaceholdersError:
+    display_placeholders = []
+    seen = set()
+    for placeholder in placeholders:
+        display_placeholder = _placeholder_display_name(
+            placeholder, placeholder_display_map
+        )
+        if display_placeholder in seen:
+            continue
+        seen.add(display_placeholder)
+        display_placeholders.append(display_placeholder)
+    return UnresolvedPromptPlaceholdersError(display_placeholders)
+
+
+@lru_cache(maxsize=512)
+def _extract_jinja_variable_expressions(template_str: str) -> tuple[str, ...]:
+    """Return actual Jinja print-expression text, excluding raw/data literals.
+
+    Regex scans over the raw template confuse literal text (for example raw
+    blocks or string constants that contain ``{{...}}``) with placeholders. The
+    Jinja lexer distinguishes real variable blocks from raw/data content, while
+    still letting us inspect human column-name placeholders that the parser
+    cannot represent as a normal AST reference.
+    """
+    if not template_str:
+        return ()
+
+    expressions: list[str] = []
+    current_tokens: list[str] | None = None
+    try:
+        tokens = list(_jinja2_env.lex(template_str))
+    except TemplateSyntaxError:
+        return tuple(
+            match.group(1).strip()
+            for match in _JINJA_PLACEHOLDER_PATTERN.finditer(template_str)
+            if match.group(1).strip()
+        )
+
+    for _, token_type, value in tokens:
+        if token_type == "variable_begin":
+            current_tokens = []
+            continue
+        if token_type == "variable_end":
+            if current_tokens is not None:
+                expression = "".join(current_tokens).strip()
+                if expression:
+                    expressions.append(expression)
+            current_tokens = None
+            continue
+        if current_tokens is not None:
+            current_tokens.append(value)
+
+    return tuple(expressions)
+
+
+_HUMAN_PLACEHOLDER_NAME_PATTERN = re.compile(r"^[\w][\w -]*$")
+_OPERATOR_WITH_WHITESPACE_PATTERN = re.compile(r"\s[-+*/%]\s*|[-+*/%]\s")
+_NUMERIC_DASH_EXPRESSION_PATTERN = re.compile(r"^[\d\s-]+$")
+
+
+def _human_named_placeholder_subject(
+    expression: str,
+    context: dict | None = None,
+    unresolved_placeholders: set[str] | None = None,
+) -> str | None:
+    """Return a single human-named placeholder subject, if expression is one.
+
+    Human dataset columns may be written as Jinja print expressions even when the
+    name is not a valid Jinja identifier, for example ``{{Input Column}}`` or
+    ``{{customer-name}}``. Those should be treated as one placeholder name, while
+    valid operator expressions like ``{{ foo - bar }}`` and literals like
+    ``{{ -1 }}`` must remain normal Jinja expressions.
+    """
+    filter_subject = expression.split("|", maxsplit=1)[0].strip()
+    if not filter_subject:
+        return None
+
+    # Exact dataset-column matches win before syntax heuristics. Column names are
+    # free-form strings, so resolved prompts like ``{{Cost ($)}}`` or
+    # ``{{Input / Output}}`` should render instead of being parsed as Jinja code.
+    if context is not None and filter_subject in context:
+        return filter_subject
+
+    has_human_name_syntax = " " in filter_subject or "-" in filter_subject
+    if not has_human_name_syntax:
+        return None
+
+    # A spaced arithmetic operator is an expression, not a column name. This
+    # deliberately rejects dotted arithmetic such as ``account.total - reserve``
+    # while preserving compact hyphenated human names like ``customer-name``.
+    if _OPERATOR_WITH_WHITESPACE_PATTERN.search(filter_subject):
+        return None
+
+    # Hyphens with dotted references are Jinja subtraction-shaped, e.g.
+    # ``account.total-reserve``; dotted human names are handled by normal Jinja
+    # references, not this unrenderable-name path.
+    if "." in filter_subject and "-" in filter_subject:
+        return None
+
+    # Negative numeric literals (and numeric subtraction written without spaces)
+    # are valid Jinja expressions, not human placeholders.
+    if filter_subject.startswith("-") or _NUMERIC_DASH_EXPRESSION_PATTERN.fullmatch(
+        filter_subject
+    ):
+        return None
+
+    if not _HUMAN_PLACEHOLDER_NAME_PATTERN.fullmatch(filter_subject):
+        return None
+
+    if _is_unresolved_placeholder_reference(filter_subject, unresolved_placeholders):
+        return filter_subject
+
+    if "-" in filter_subject and context is not None and filter_subject not in context:
+        try:
+            ast = _jinja2_env.parse("{{ " + expression + " }}")
+        except TemplateSyntaxError:
+            pass
+        else:
+            external_roots = meta.find_undeclared_variables(ast)
+            if external_roots and all(root in context for root in external_roots):
+                return None
+
+    return filter_subject
+
+
+def _extract_unrenderable_named_placeholders(
+    template_str: str,
+    context: dict | None = None,
+    unresolved_placeholders: set[str] | None = None,
+) -> list[str]:
+    if not template_str:
+        return []
+
+    placeholders = []
+    for expression in _extract_jinja_variable_expressions(template_str):
+        # Column names can contain spaces/hyphens, but bare Jinja identifiers
+        # cannot contain spaces and hyphenated names parse as subtraction. Detect
+        # only actual single human placeholder subjects so raw blocks, string
+        # constants, and arithmetic expressions remain valid Jinja.
+        placeholder = _human_named_placeholder_subject(
+            expression, context, unresolved_placeholders
+        )
+        if placeholder:
+            placeholders.append(placeholder)
+    return placeholders
+
+
+def _safe_identifier_for_human_placeholder(name: str, index: int) -> str:
+    safe_name = re.sub(r"\W+", "_", name).strip("_") or "placeholder"
+    return f"__prompt_placeholder_{index}_{safe_name}"
+
+
+def _rewrite_unrenderable_jinja_placeholders(
+    template_str: str,
+    context: dict,
+    unresolved_placeholders: set[str] | None = None,
+    placeholder_display_map: dict[str, str] | None = None,
+) -> tuple[str, dict, set[str]]:
+    """Rewrite human-named Jinja variables to safe identifiers token-wise.
+
+    Jinja cannot parse bare variable names containing spaces, and treats hyphens
+    as subtraction. Replacing the whole ``{{...}}`` text with the cell value is
+    unsafe because a value like ``{{secret}}`` becomes new template source. This
+    function rewrites only real Jinja variable blocks (not raw/data text or
+    string literals) so the cell value is passed through the render context and
+    emitted literally.
+    """
+    if not template_str:
+        return template_str or "", dict(context), set()
+
+    safe_ctx = dict(context)
+    synthetic_by_name: dict[str, str] = {}
+    rewritten_names: set[str] = set()
+    output: list[str] = []
+    current_tokens: list[str] | None = None
+
+    def rewrite_expression(expression: str) -> str:
+        filter_subject = expression.split("|", maxsplit=1)[0]
+        stripped = _human_named_placeholder_subject(
+            expression, context, unresolved_placeholders
+        )
+        if not stripped:
+            return expression
+
+        is_unresolved = _is_unresolved_placeholder_reference(
+            stripped, unresolved_placeholders
+        )
+        if stripped not in safe_ctx and not is_unresolved:
+            return expression
+
+        synthetic = synthetic_by_name.get(stripped)
+        if synthetic is None:
+            synthetic = _safe_identifier_for_human_placeholder(
+                stripped, len(synthetic_by_name)
+            )
+            while synthetic in safe_ctx:
+                synthetic = f"{synthetic}_{len(synthetic_by_name)}"
+            synthetic_by_name[stripped] = synthetic
+            if is_unresolved:
+                safe_ctx[synthetic] = _MissingPromptValue(
+                    _placeholder_display_name(stripped, placeholder_display_map)
+                )
+            else:
+                safe_ctx[synthetic] = safe_ctx[stripped]
+        rewritten_names.add(stripped)
+
+        prefix_length = len(filter_subject) - len(filter_subject.lstrip())
+        suffix_length = len(filter_subject) - len(filter_subject.rstrip())
+        prefix = filter_subject[:prefix_length]
+        suffix = (
+            filter_subject[len(filter_subject) - suffix_length :]
+            if suffix_length
+            else ""
+        )
+        return f"{prefix}{synthetic}{suffix}{expression[len(filter_subject):]}"
+
+    try:
+        tokens = list(_jinja2_env.lex(template_str))
+    except TemplateSyntaxError:
+        def replace_exact_match(match):
+            expression = match.group(1).strip()
+            stripped = _human_named_placeholder_subject(
+                expression, context, unresolved_placeholders
+            )
+            if not stripped:
+                return match.group(0)
+            is_unresolved = _is_unresolved_placeholder_reference(
+                stripped, unresolved_placeholders
+            )
+            if stripped not in safe_ctx and not is_unresolved:
+                return match.group(0)
+            synthetic = synthetic_by_name.get(stripped)
+            if synthetic is None:
+                synthetic = _safe_identifier_for_human_placeholder(
+                    stripped, len(synthetic_by_name)
+                )
+                while synthetic in safe_ctx:
+                    synthetic = f"{synthetic}_{len(synthetic_by_name)}"
+                synthetic_by_name[stripped] = synthetic
+                if is_unresolved:
+                    safe_ctx[synthetic] = _MissingPromptValue(
+                        _placeholder_display_name(stripped, placeholder_display_map)
+                    )
+                else:
+                    safe_ctx[synthetic] = safe_ctx[stripped]
+            rewritten_names.add(stripped)
+            suffix = expression[len(stripped) :]
+            return "{{ " + synthetic + suffix + " }}"
+
+        return (
+            _JINJA_PLACEHOLDER_PATTERN.sub(replace_exact_match, template_str),
+            safe_ctx,
+            rewritten_names,
+        )
+
+    for _, token_type, value in tokens:
+        if token_type == "variable_begin":
+            output.append(value)
+            current_tokens = []
+            continue
+        if token_type == "variable_end":
+            if current_tokens is not None:
+                output.append(rewrite_expression("".join(current_tokens)))
+            output.append(value)
+            current_tokens = None
+            continue
+        if current_tokens is not None:
+            current_tokens.append(value)
+        else:
+            output.append(value)
+
+    return "".join(output), safe_ctx, rewritten_names
+
+
+def _prompt_template_syntax_error(exc: TemplateSyntaxError) -> PromptTemplateSyntaxError:
+    detail = str(exc).strip() or exc.__class__.__name__
+    return PromptTemplateSyntaxError(f"Invalid prompt template syntax: {detail}")
+
+
+def _sanitize_uuid_placeholders_for_template(text: str) -> str:
+    if not text:
+        return text or ""
+
+    def replace_match(match):
+        tag_prefix = match.group(1) or ""
+        uuid_str = match.group(2)
+        suffix = match.group(3) or ""
+        return "{{" + tag_prefix + sanitize_uuid_for_jinja(uuid_str) + suffix + "}}"
+
+    return _UUID_PLACEHOLDER_WITH_WHITESPACE_PATTERN.sub(replace_match, text)
+
+
+def _jinja_reference_from_node(node: nodes.Node) -> str | None:
+    if isinstance(node, nodes.Name):
+        return node.name
+    if isinstance(node, nodes.Getattr):
+        base = _jinja_reference_from_node(node.node)
+        return f"{base}.{node.attr}" if base else None
+    if isinstance(node, nodes.Getitem):
+        base = _jinja_reference_from_node(node.node)
+        if not base:
+            return None
+        if isinstance(node.arg, nodes.Const) and isinstance(node.arg.value, str):
+            return f"{base}.{node.arg.value}"
+        return base
+    return None
+
+
+def _is_unresolved_placeholder_reference(
+    placeholder: str, unresolved_placeholders: set[str] | None
+) -> bool:
+    if not unresolved_placeholders:
+        return False
+    return any(
+        placeholder == unresolved
+        or placeholder.startswith(f"{unresolved}.")
+        for unresolved in unresolved_placeholders
+    )
+
+
+def _raise_for_undefined_tests_on_unresolved_references(
+    template_str: str,
+    context: dict,
+    unresolved_placeholders: set[str] | None,
+    placeholder_display_map: dict[str, str] | None = None,
+) -> None:
+    """Fail closed for ``is defined``/``is undefined`` checks on missing values.
+
+    Jinja considers any normal object "defined", including our strict missing
+    sentinel. Detect these tests from the AST before rendering so templates
+    cannot turn unknown or unresolved prompt values into silently successful
+    branches. This remains narrower than a source-wide missing-variable scan, so
+    dead branches like ``{% if false %}{{ missing }}{% endif %}`` still render.
+    """
+    try:
+        ast = _jinja2_env.parse(template_str)
+    except TemplateSyntaxError:
+        return
+
+    external_roots = set(meta.find_undeclared_variables(ast))
+    missing_references = []
+    seen = set()
+    for test_node in ast.find_all(nodes.Test):
+        if test_node.name not in {"defined", "undefined"}:
+            continue
+        reference = _jinja_reference_from_node(test_node.node)
+        if not reference:
+            continue
+        root = reference.split(".", maxsplit=1)[0]
+        if root not in external_roots:
+            continue
+        if root in context and not _is_unresolved_placeholder_reference(
+            reference, unresolved_placeholders
+        ):
+            continue
+        if reference in seen:
+            continue
+        seen.add(reference)
+        missing_references.append(reference)
+
+    if missing_references:
+        raise _format_unresolved_placeholder_error(
+            missing_references, placeholder_display_map
+        )
+
+
+def _iter_jinja_nodes_skipping_static_dead_branches(
+    node: nodes.Node, node_type: type[nodes.Node]
+):
+    """Yield nodes while ignoring branches Jinja can prove unreachable.
+
+    Most strict placeholder failures should happen at render time so dead
+    branches stay dead. The one source-level guard we still need is for
+    comparison/membership expressions that can otherwise convert a missing value
+    into a boolean without touching the missing-value sentinel. Keep that guard
+    narrow by skipping literal-false branches.
+    """
+    if isinstance(node, node_type):
+        yield node
+
+    if isinstance(node, nodes.If) and isinstance(node.test, nodes.Const):
+        selected_children = node.body if node.test.value else node.else_
+        for child in selected_children:
+            yield from _iter_jinja_nodes_skipping_static_dead_branches(
+                child, node_type
+            )
+        return
+
+    for child in node.iter_child_nodes():
+        yield from _iter_jinja_nodes_skipping_static_dead_branches(child, node_type)
+
+
+def _missing_external_reference(
+    node: nodes.Node,
+    context: dict,
+    unresolved_placeholders: set[str] | None,
+    external_roots: set[str],
+) -> str | None:
+    reference = _jinja_reference_from_node(node)
+    if not reference:
+        return None
+
+    root = reference.split(".", maxsplit=1)[0]
+    if root not in external_roots:
+        return None
+
+    if _is_unresolved_placeholder_reference(reference, unresolved_placeholders):
+        return reference
+
+    if root not in context:
+        return reference
+
+    return None
+
+
+def _raise_for_missing_value_comparisons(
+    template_str: str,
+    context: dict,
+    unresolved_placeholders: set[str] | None,
+    placeholder_display_map: dict[str, str] | None = None,
+) -> None:
+    """Fail closed when missing prompt values are used as branch decisions.
+
+    Render-time sentinels catch truthiness, stringification, iteration, and most
+    operations only when the expression is evaluated, preserving dead Jinja
+    branches. Comparisons and membership tests can otherwise turn a missing
+    value into a boolean without touching sentinel methods (for example
+    ``missing in []``), so guard those AST nodes explicitly.
+    """
+    try:
+        ast = _jinja2_env.parse(template_str)
+    except TemplateSyntaxError:
+        return
+
+    external_roots = set(meta.find_undeclared_variables(ast))
+    missing_references = []
+    seen = set()
+    for compare_node in _iter_jinja_nodes_skipping_static_dead_branches(
+        ast, nodes.Compare
+    ):
+        candidates = [compare_node.expr, *(operand.expr for operand in compare_node.ops)]
+        for candidate in candidates:
+            reference = _missing_external_reference(
+                candidate,
+                context,
+                unresolved_placeholders,
+                external_roots,
+            )
+            if not reference or reference in seen:
+                continue
+            seen.add(reference)
+            missing_references.append(reference)
+
+    if missing_references:
+        raise _format_unresolved_placeholder_error(
+            missing_references, placeholder_display_map
+        )
+
+
+def _apply_unresolved_prompt_sentinels(
+    context: dict,
+    unresolved_placeholders: set[str] | None,
+    placeholder_display_map: dict[str, str] | None = None,
+    external_roots: Collection[str] | None = None,
+) -> None:
+    """Install render-time sentinels for null/missing dataset-backed values."""
+    if not unresolved_placeholders:
+        return
+
+    for placeholder in unresolved_placeholders:
+        if not placeholder:
+            continue
+        parts = placeholder.split(".")
+        display = _placeholder_display_name(placeholder, placeholder_display_map)
+        sentinel = _MissingPromptValue(display)
+
+        if len(parts) == 1:
+            context[parts[0]] = sentinel
+            continue
+
+        root = parts[0]
+        if root not in context:
+            if external_roots is not None and root not in external_roots:
+                continue
+            context[root] = sentinel
+            continue
+
+        current = context[root]
+        for part in parts[1:-1]:
+            if isinstance(current, Mapping):
+                if part not in current or isinstance(
+                    current.get(part), _MissingPromptValue
+                ):
+                    current[part] = KeyPriorityDict()
+                current = current[part]
+                continue
+            try:
+                current = getattr(current, part)
+            except AttributeError:
+                context[root] = sentinel
+                break
+        else:
+            leaf = parts[-1]
+            if isinstance(current, Mapping):
+                current[leaf] = sentinel
+            else:
+                try:
+                    setattr(current, leaf, sentinel)
+                except Exception:
+                    context[root] = sentinel
+
+
+
+
+def _extract_unknown_jinja_external_roots(template_str: str, context: dict) -> list[str]:
+    """Return undeclared Jinja roots that are absent from the render context.
+
+    StrictUndefined catches ordinary missing names at render time, but filters such
+    as ``default`` can intentionally mask an undefined value. Strict prompt
+    rendering must still fail closed for unknown external variables while leaving
+    loop/set locals and human-named placeholders to their dedicated handling.
+    """
+    try:
+        ast = _jinja2_env.parse(template_str)
+    except TemplateSyntaxError:
+        return []
+
+    unknown_roots = [
+        root for root in meta.find_undeclared_variables(ast) if root not in context
+    ]
+    if not unknown_roots:
+        return []
+
+    human_expression_roots = set()
+    for expression in _extract_jinja_variable_expressions(template_str):
+        if not _human_named_placeholder_subject(expression, context):
+            continue
+        try:
+            expression_ast = _jinja2_env.parse("{{ " + expression + " }}")
+        except TemplateSyntaxError:
+            continue
+        human_expression_roots.update(meta.find_undeclared_variables(expression_ast))
+
+    unknown = []
+    seen = set()
+    for root in unknown_roots:
+        if root in human_expression_roots or root in seen:
+            continue
+        seen.add(root)
+        unknown.append(root)
+    return unknown
+
+
+@lru_cache(maxsize=512)
+def _extract_jinja_referenced_roots(template_str: str) -> frozenset[str]:
+    """Return top-level context roots referenced by a parsed Jinja template."""
+    try:
+        ast = _jinja2_env.parse(template_str)
+    except TemplateSyntaxError:
+        return frozenset()
+    return frozenset(meta.find_undeclared_variables(ast))
+
+
+@lru_cache(maxsize=512)
+def _mustache_tokens(template_str: str) -> tuple[tuple[str, str], ...]:
+    from chevron.tokenizer import tokenize as tokenize_mustache
+
+    return tuple(tokenize_mustache(template_str))
+
+
+@lru_cache(maxsize=512)
+def _extract_mustache_referenced_roots(template_str: str) -> frozenset[str]:
+    """Return top-level context roots referenced by Mustache tokens."""
+    referenced_roots: set[str] = set()
+    for tag, key in _mustache_tokens(template_str):
+        if tag not in ("variable", "no escape", "section", "inverted section"):
+            continue
+        key = key.strip()
+        if not key or key == ".":
+            continue
+        referenced_roots.add(key.split(".", maxsplit=1)[0])
+    return frozenset(referenced_roots)
+
+
+def _wrap_referenced_context_roots(
+    context: dict, referenced_roots: Collection[str]
+) -> dict:
+    """Shallow-copy context and recursively wrap only referenced root values."""
+    render_context = dict(context)
+    for root in referenced_roots:
+        if root in render_context:
+            render_context[root] = _wrap_mapping_attribute_values(render_context[root])
+    return render_context
+
+
+def _get_mustache_key_from_scopes(key: str, scopes: list[Any]) -> tuple[bool, Any]:
+    if key == ".":
+        return True, scopes[0] if scopes else None
+
+    for scope in scopes:
+        current = scope
+        try:
+            for child in key.split("."):
+                if isinstance(current, Mapping):
+                    current = current[child]
+                else:
+                    try:
+                        current = current[child]
+                    except (TypeError, AttributeError, KeyError):
+                        current = getattr(current, child)
+            return True, current
+        except (AttributeError, KeyError, IndexError, TypeError, ValueError):
+            continue
+    return False, None
+
+
+def _find_mustache_section_end(tokens: list[tuple[str, str]], start_index: int) -> int:
+    section_name = tokens[start_index][1]
+    depth = 0
+    for index in range(start_index + 1, len(tokens)):
+        tag, key = tokens[index]
+        if tag in ("section", "inverted section") and key == section_name:
+            depth += 1
+        elif tag == "end" and key == section_name:
+            if depth == 0:
+                return index
+            depth -= 1
+    return len(tokens)
+
+
+def _is_mustache_truthy(value: Any) -> bool:
+    return bool(value)
+
+
+def _validate_mustache_token_range(
+    tokens: list[tuple[str, str]],
+    scopes: list[Any],
+    start_index: int,
+    end_index: int,
+    missing_placeholders: list[str],
+    unresolved_placeholders: set[str] | None = None,
+) -> None:
+    index = start_index
+    while index < end_index:
+        tag, key = tokens[index]
+        if tag in ("variable", "no escape"):
+            if _is_unresolved_placeholder_reference(key, unresolved_placeholders):
+                missing_placeholders.append(key)
+            else:
+                exists, value = _get_mustache_key_from_scopes(key, scopes)
+                if not exists or value is None:
+                    missing_placeholders.append(key)
+            index += 1
+            continue
+
+        if tag == "section":
+            section_end = _find_mustache_section_end(tokens, index)
+            if _is_unresolved_placeholder_reference(key, unresolved_placeholders):
+                missing_placeholders.append(key)
+                index = section_end + 1
+                continue
+            exists, value = _get_mustache_key_from_scopes(key, scopes)
+            if not exists:
+                missing_placeholders.append(key)
+            elif _is_mustache_truthy(value):
+                if isinstance(value, list):
+                    for item in value:
+                        _validate_mustache_token_range(
+                            tokens,
+                            [item, *scopes],
+                            index + 1,
+                            section_end,
+                            missing_placeholders,
+                            unresolved_placeholders,
+                        )
+                elif isinstance(value, dict):
+                    _validate_mustache_token_range(
+                        tokens,
+                        [value, *scopes],
+                        index + 1,
+                        section_end,
+                        missing_placeholders,
+                        unresolved_placeholders,
+                    )
+                else:
+                    _validate_mustache_token_range(
+                        tokens,
+                        scopes,
+                        index + 1,
+                        section_end,
+                        missing_placeholders,
+                        unresolved_placeholders,
+                    )
+            index = section_end + 1
+            continue
+
+        if tag == "inverted section":
+            section_end = _find_mustache_section_end(tokens, index)
+            if _is_unresolved_placeholder_reference(key, unresolved_placeholders):
+                missing_placeholders.append(key)
+                index = section_end + 1
+                continue
+            exists, value = _get_mustache_key_from_scopes(key, scopes)
+            if not exists:
+                missing_placeholders.append(key)
+            elif not _is_mustache_truthy(value):
+                _validate_mustache_token_range(
+                    tokens,
+                    scopes,
+                    index + 1,
+                    section_end,
+                    missing_placeholders,
+                    unresolved_placeholders,
+                )
+            index = section_end + 1
+            continue
+
+        index += 1
+
+
+def _validate_mustache_placeholders(
+    template_str: str,
+    context: dict,
+    placeholder_display_map: dict[str, str] | None = None,
+    unresolved_placeholders: set[str] | None = None,
+) -> None:
+    missing_placeholders = []
+    tokens = list(_mustache_tokens(template_str))
+    _validate_mustache_token_range(
+        tokens,
+        [context],
+        0,
+        len(tokens),
+        missing_placeholders,
+        unresolved_placeholders,
+    )
+
+    if missing_placeholders:
+        raise _format_unresolved_placeholder_error(
+            missing_placeholders, placeholder_display_map
+        )
+
+
+def _resolve_fstring_missing_placeholder(
+    template_str: str, context: dict, exc: Exception
+) -> str:
+    if isinstance(exc, KeyError) and exc.args:
+        return str(exc.args[0])
+
+    formatter = string.Formatter()
+    try:
+        field_names = [
+            field_name
+            for _, field_name, _, _ in formatter.parse(template_str)
+            if field_name is not None
+        ]
+    except ValueError:
+        field_names = []
+
+    if isinstance(exc, IndexError):
+        for field_name in field_names:
+            root = field_name.split(".", maxsplit=1)[0].split("[", maxsplit=1)[0]
+            if field_name == "" or root.isdigit():
+                return field_name or str(exc)
+        return str(exc)
+
+    if isinstance(exc, AttributeError):
+        attr_match = re.search(r"attribute ['\"]([^'\"]+)['\"]", str(exc))
+        missing_attr = attr_match.group(1) if attr_match else None
+        if missing_attr:
+            for field_name in field_names:
+                if field_name.endswith(f".{missing_attr}"):
+                    return field_name
+            return missing_attr
+
+    return str(exc)
+
+
+@lru_cache(maxsize=512)
+def _extract_fstring_field_references(template_str: str) -> tuple[str, ...]:
+    formatter = string.Formatter()
+    references: list[str] = []
+    seen = set()
+    for _, field_name, _, _ in formatter.parse(template_str):
+        if field_name is None:
+            continue
+        # Empty positional fields (``{}``) are invalid with keyword-only
+        # formatting below; let ``str.format`` raise the normal IndexError.
+        if field_name == "":
+            continue
+        root = field_name.split(".", maxsplit=1)[0].split("[", maxsplit=1)[0]
+        for candidate in (field_name, root):
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                references.append(candidate)
+    return tuple(references)
+
+
+def _raise_for_fstring_unresolved_references(
+    template_str: str,
+    unresolved_placeholders: set[str] | None,
+    placeholder_display_map: dict[str, str] | None = None,
+) -> None:
+    if not unresolved_placeholders:
+        return
+
+    referenced_unresolved = []
+    seen = set()
+    for reference in _extract_fstring_field_references(template_str):
+        if reference in seen:
+            continue
+        seen.add(reference)
+        if _is_unresolved_placeholder_reference(reference, unresolved_placeholders):
+            referenced_unresolved.append(reference)
+
+    if referenced_unresolved:
+        raise _format_unresolved_placeholder_error(
+            referenced_unresolved, placeholder_display_map
+        )
 
 
 def render_template(
-    template_str: str, context: dict, template_format: str = None
+    template_str: str,
+    context: dict,
+    template_format: str = None,
+    strict: bool = False,
+    placeholder_display_map: dict[str, str] | None = None,
+    unresolved_placeholders: set[str] | None = None,
 ) -> str:
     """
     Render a template string with the given context.
@@ -439,6 +1568,12 @@ def render_template(
         template_str: The template string
         context: Dictionary of variables to substitute
         template_format: One of 'f-string', 'mustache', 'jinja2' (default: jinja2)
+        strict: When True, unresolved placeholders raise ValueError instead of
+            rendering as blank output.
+        placeholder_display_map: Optional mapping from sanitized placeholder
+            names back to their original display form for clearer errors.
+        unresolved_placeholders: Optional names that exist in the backing row but
+            are unresolved for strict rendering, such as null cell values.
 
     Returns:
         Rendered string
@@ -450,28 +1585,117 @@ def render_template(
         template_format = DEFAULT_TEMPLATE_FORMAT
 
     if template_format == TEMPLATE_FORMAT_FSTRING:
-        return template_str.format(**context)
+        try:
+            if strict:
+                _raise_for_fstring_unresolved_references(
+                    template_str,
+                    unresolved_placeholders,
+                    placeholder_display_map,
+                )
+            return template_str.format(**context)
+        except UnresolvedPromptPlaceholdersError:
+            raise
+        except ValueError as exc:
+            detail = str(exc).strip() or exc.__class__.__name__
+            raise PromptTemplateSyntaxError(
+                f"Invalid prompt template syntax: {detail}"
+            ) from exc
+        except (KeyError, IndexError, AttributeError) as exc:
+            missing_placeholder = _resolve_fstring_missing_placeholder(
+                template_str, context, exc
+            )
+            raise _format_unresolved_placeholder_error(
+                [missing_placeholder], placeholder_display_map
+            ) from exc
 
     elif template_format == TEMPLATE_FORMAT_MUSTACHE:
-        return chevron.render(template_str, context)
+        if strict and "{{" not in template_str:
+            return template_str
+        placeholder_display_map = placeholder_display_map or _build_placeholder_display_map(
+            template_str
+        )
+        template_str = _sanitize_uuid_placeholders_for_template(template_str)
+        if strict:
+            _validate_mustache_placeholders(
+                template_str,
+                context,
+                placeholder_display_map=placeholder_display_map,
+                unresolved_placeholders=unresolved_placeholders,
+            )
+        referenced_roots = _extract_mustache_referenced_roots(template_str)
+        render_context = _wrap_referenced_context_roots(context, referenced_roots)
+        return chevron.render(template_str, render_context)
 
     elif template_format == TEMPLATE_FORMAT_JINJA2:
-        # Pre-process: handle variable names with spaces (Jinja2 doesn't allow them)
-        import re
-
-        processed = template_str
-        safe_ctx = dict(context)
-        raw_vars = re.findall(r"\{\{\s*([^{}]+?)\s*\}\}", processed)
-        for var_name in raw_vars:
-            stripped = var_name.strip()
-            if " " in stripped and stripped in safe_ctx:
-                processed = processed.replace(
-                    "{{" + var_name + "}}", str(safe_ctx.pop(stripped))
+        if strict and "{{" not in template_str and "{%" not in template_str:
+            return template_str
+        placeholder_display_map = placeholder_display_map or _build_placeholder_display_map(
+            template_str
+        )
+        try:
+            processed, safe_ctx, rewritten_human_placeholders = (
+                _rewrite_unrenderable_jinja_placeholders(
+                    template_str,
+                    context,
+                    unresolved_placeholders=unresolved_placeholders,
+                    placeholder_display_map=placeholder_display_map,
                 )
-                processed = processed.replace(
-                    "{{ " + stripped + " }}", str(context.get(stripped, ""))
+            )
+            referenced_roots = _extract_jinja_referenced_roots(processed)
+            safe_ctx = _wrap_referenced_context_roots(safe_ctx, referenced_roots)
+            if strict:
+                _raise_for_undefined_tests_on_unresolved_references(
+                    template_str,
+                    context,
+                    unresolved_placeholders,
+                    placeholder_display_map,
                 )
-        return _jinja2_env.from_string(processed).render(**safe_ctx)
+                _raise_for_missing_value_comparisons(
+                    template_str,
+                    context,
+                    unresolved_placeholders,
+                    placeholder_display_map,
+                )
+                unknown_external_roots = _extract_unknown_jinja_external_roots(
+                    template_str, context
+                )
+                for root in unknown_external_roots:
+                    safe_ctx[root] = _MissingPromptValue(
+                        _placeholder_display_name(root, placeholder_display_map)
+                    )
+                _apply_unresolved_prompt_sentinels(
+                    safe_ctx,
+                    unresolved_placeholders,
+                    placeholder_display_map,
+                    referenced_roots,
+                )
+                unrenderable_placeholders = []
+                for filter_subject in _extract_unrenderable_named_placeholders(
+                    template_str, context, unresolved_placeholders
+                ):
+                    if (
+                        filter_subject not in context
+                        and filter_subject not in rewritten_human_placeholders
+                        and not _is_unresolved_placeholder_reference(
+                            filter_subject, unresolved_placeholders
+                        )
+                    ):
+                        unrenderable_placeholders.append(filter_subject)
+                if unrenderable_placeholders:
+                    raise _format_unresolved_placeholder_error(
+                        unrenderable_placeholders, placeholder_display_map
+                    )
+            jinja_env = _jinja2_strict_env if strict else _jinja2_env
+            return jinja_env.from_string(processed).render(**safe_ctx)
+        except TemplateSyntaxError as exc:
+            raise _prompt_template_syntax_error(exc) from exc
+        except _MissingPromptValueError as exc:
+            raise UnresolvedPromptPlaceholdersError(exc.placeholder) from exc
+        except UndefinedError as exc:
+            unresolved_placeholder = _resolve_missing_placeholder_reference(
+                str(exc), placeholder_display_map=placeholder_display_map
+            )
+            raise UnresolvedPromptPlaceholdersError(unresolved_placeholder) from exc
 
     else:
         raise ValueError(
@@ -480,12 +1704,47 @@ def render_template(
         )
 
 
-class JsonStr(dict):
+class KeyPriorityDict(dict):
+    """Dict whose dot access prefers explicit keys over dict methods.
+
+    Jinja resolves ``account.items`` with attribute lookup before item lookup for
+    dict-like objects, so method-like keys (``items``, ``keys``, ``values``)
+    otherwise render as bound methods. Only non-private names are key-prioritized
+    so Python internals and private state keep normal attribute behavior.
+    """
+
+    def __getattribute__(self, name):
+        if not name.startswith("_"):
+            try:
+                return dict.__getitem__(self, name)
+            except KeyError:
+                pass
+        return super().__getattribute__(name)
+
+
+def _wrap_mapping_attribute_values(value):
+    """Recursively wrap mappings so template dot access sees keys first."""
+    if isinstance(value, JsonStr):
+        return value
+    if isinstance(value, Mapping):
+        return KeyPriorityDict(
+            {key: _wrap_mapping_attribute_values(child) for key, child in value.items()}
+        )
+    if isinstance(value, list):
+        return [_wrap_mapping_attribute_values(child) for child in value]
+    if isinstance(value, tuple):
+        return tuple(_wrap_mapping_attribute_values(child) for child in value)
+    return value
+
+
+class JsonStr(KeyPriorityDict):
     """Dict subclass that renders as its original JSON string via str()/Jinja.
     Allows {{col.key}} via dict attribute access while {{col}} outputs the raw JSON."""
 
     def __init__(self, data, raw):
-        super().__init__(data)
+        super().__init__(
+            {key: _wrap_mapping_attribute_values(value) for key, value in data.items()}
+        )
         self._raw = raw
 
     def __str__(self):
@@ -493,12 +1752,21 @@ class JsonStr(dict):
 
 
 def populate_placeholders(
-    messages: list[dict], dataset_id, row_id, col_id, model_name, template_format=None
+    messages: list[dict],
+    dataset_id,
+    row_id,
+    col_id,
+    model_name,
+    template_format=None,
+    process_media=True,
+    fail_closed=False,
 ):
+    media_error = False
     try:
-        media_error = None
-        # Debug: Log input messages to see what template we're processing
-        logger.info(f"populate_placeholders called with messages: {messages}")
+        logger.debug(
+            "populate_placeholders called",
+            message_count=len(messages or []),
+        )
 
         dataset = Dataset.objects.get(id=dataset_id)
         column_ids = dataset.column_order
@@ -507,23 +1775,39 @@ def populate_placeholders(
         context: dict[str, Any] = {}
         column_info = {}  # For image handling
         raw_values = {}  # For debugging
+        unresolved_placeholders: set[str] = set()
 
         # Collect column values
         for column_id in column_ids:
             try:
                 if column_id != str(col_id):
-                    column = Column.objects.get(id=column_id)
+                    sanitized_col_id = sanitize_uuid_for_jinja(column_id)
+                    try:
+                        column = Column.objects.get(id=column_id)
+                    except ObjectDoesNotExist:
+                        unresolved_placeholders.add(sanitized_col_id)
+                        logger.warning(
+                            "Prompt placeholder column missing from column_order",
+                            dataset_id=str(dataset_id),
+                            column_id=str(column_id),
+                            row_id=str(row_id),
+                        )
+                        continue
                     cell = Cell.objects.filter(
                         dataset=dataset, column=column, row__id=row_id
                     ).first()
 
                     if not cell:
+                        unresolved_placeholders.update({column.name, sanitized_col_id})
                         continue
 
                     # Store raw values for debugging
                     raw_values[column.name] = (
                         cell.value if cell.value is not None else ""
                     )
+
+                    if cell.value is None:
+                        unresolved_placeholders.update({column.name, sanitized_col_id})
 
                     # Store column info for image handling
                     column_info[column_id] = {
@@ -568,27 +1852,31 @@ def populate_placeholders(
                             current = current[part]
 
                     # Store at sanitized column_id level (hyphens -> underscores for Jinja2)
-                    sanitized_col_id = sanitize_uuid_for_jinja(column_id)
                     context[sanitized_col_id] = cell_value
 
                     # Debug: Log what we're adding to context
-                    logger.info(
-                        f"Added to context: column_name={column.name}, data_type={column.data_type}, "
-                        f"value_type={type(cell_value).__name__}, "
-                        f"value_preview={str(cell_value)[:100] if cell_value else 'None'}"
+                    logger.debug(
+                        "Added prompt placeholder context entry",
+                        column_name=column.name,
+                        data_type=column.data_type,
+                        value_type=type(cell_value).__name__,
                     )
             except Exception as e:
                 logger.exception(
                     f"Error processing column {column_id} ({column.name if 'column' in locals() else 'unknown'}): {e}"
                 )
+                if fail_closed:
+                    raise
                 continue
 
         # Debug: Log final context structure
-        logger.info(f"Final context keys: {list(context.keys())}")
+        logger.debug("Final prompt placeholder context keys", keys=list(context.keys()))
         for key, value in context.items():
             if isinstance(value, dict):
-                logger.info(
-                    f"Context['{key}'] is a dict with keys: {list(value.keys())}"
+                logger.debug(
+                    "Prompt placeholder context nested keys",
+                    key=key,
+                    nested_keys=list(value.keys()),
                 )
 
         # Process messages
@@ -607,6 +1895,9 @@ def populate_placeholders(
                         image_counter,
                         model_name,
                         template_format=template_format,
+                        unresolved_placeholders=unresolved_placeholders,
+                        process_media=process_media,
+                        fail_closed=fail_closed,
                     )
                 elif isinstance(content, str):
                     processed_content = process_string_content(
@@ -616,6 +1907,9 @@ def populate_placeholders(
                         image_counter,
                         model_name,
                         template_format=template_format,
+                        unresolved_placeholders=unresolved_placeholders,
+                        process_media=process_media,
+                        fail_closed=fail_closed,
                     )
 
                 # If no content was processed, keep original
@@ -630,22 +1924,35 @@ def populate_placeholders(
 
             return processed_messages
 
-        except ValueError as e:
+        except (UnresolvedPromptPlaceholdersError, PromptTemplateSyntaxError):
             media_error = True
-            raise e
+            raise
+        except ValueError:
+            media_error = True
+            raise
 
+    except (UnresolvedPromptPlaceholdersError, PromptTemplateSyntaxError):
+        raise
     except Exception as e:
         if media_error:
-            raise e
-        else:
-            traceback.print_exc()
-            logger.exception(f"Fatal error processing messages: {e}")
-            # Return original messages as fallback
-            return messages
+            raise
+        if fail_closed:
+            raise
+        logger.exception("Fatal error processing messages", error_type=type(e).__name__)
+        # Return original messages as fallback
+        return messages
 
 
 def process_list_content(
-    content, column_info, context, image_counter, model_name, template_format=None
+    content,
+    column_info,
+    context,
+    image_counter,
+    model_name,
+    template_format=None,
+    unresolved_placeholders=None,
+    process_media=True,
+    fail_closed: bool = False,
 ):
     """Process list-type content with proper media handling"""
     processed_content = []
@@ -660,22 +1967,167 @@ def process_list_content(
                 image_counter,
                 model_name,
                 template_format=template_format,
+                unresolved_placeholders=unresolved_placeholders,
+                process_media=process_media,
+                fail_closed=fail_closed,
             )
             processed_content.extend(text_segments)
         else:
             # Handle other media types
             try:
-                processed_content.append(handle_media(item, model_name))
+                if process_media:
+                    processed_content.append(handle_media(item, model_name))
+                else:
+                    if fail_closed:
+                        _validate_media_item_support(item, model_name)
+                    processed_content.append(item)
             except Exception as e:
                 logger.exception(f"Error handling media item: {e}")
+                if fail_closed:
+                    raise
                 # Keep original item if processing fails
                 processed_content.append(item)
 
     return processed_content
 
 
+def _validate_media_item_support(item: dict, model_name: str) -> None:
+    item_type = item.get("type")
+    if item_type == "image_url":
+        if not litellm.utils.supports_vision(model=model_name):
+            raise ValueError(f"Model {model_name} does not support image input.")
+    elif item_type == "audio_url":
+        model_mode = get_model_mode(model_name)
+        if model_mode not in (
+            "audio",
+            "stt",
+            "tts",
+        ) and not litellm.utils.supports_audio_input(model=model_name):
+            raise ValueError(f"Model {model_name} does not support audio input.")
+    elif item_type == "pdf_url":
+        if not litellm.utils.supports_pdf_input(model=model_name):
+            raise ValueError(f"Model {model_name} does not support PDF input.")
+
+
+def _validate_media_marker_support(image_markers: dict, model_name: str) -> None:
+    for info in image_markers.values():
+        marker_type = info.get("type")
+        if marker_type == "image":
+            _validate_media_item_support({"type": "image_url"}, model_name)
+        elif marker_type == "audio":
+            _validate_media_item_support({"type": "audio_url"}, model_name)
+
+
+_MEDIA_MARKER_PATTERN = re.compile(r"__(?:IMAGE|AUDIO|PDF)_MARKER_[0-9a-f-]+__")
+
+
+def _messages_require_media_processing(messages: list[dict]) -> bool:
+    for message in messages or []:
+        content = message.get("content")
+        if isinstance(content, list):
+            for item in content:
+                if item.get("type") != "text":
+                    return True
+                if _MEDIA_MARKER_PATTERN.search(str(item.get("text", ""))):
+                    return True
+        elif isinstance(content, str) and _MEDIA_MARKER_PATTERN.search(content):
+            return True
+    return False
+
+
+def _replace_template_variable_placeholders(text, variable_names, replacement_factory):
+    """Replace standalone ``{{ variable }}`` blocks without touching literals.
+
+    Media placeholders are not rendered through the normal template context; they
+    are converted into synthetic markers before rendering. Plain string
+    replacement only handled ``{{Column}}`` and missed the common
+    ``{{ Column }}`` form. Tokenizing through Jinja keeps raw blocks and
+    expression-generated literal braces intact while still matching exact
+    variable blocks by their original name/UUID.
+    """
+    variable_names = {str(name) for name in variable_names if name is not None}
+    if not text or "{{" not in text or not variable_names:
+        return text, set()
+
+    escaped_names = "|".join(
+        re.escape(name) for name in sorted(variable_names, key=len, reverse=True)
+    )
+    exact_variable_pattern = re.compile(r"\{\{\s*(" + escaped_names + r")\s*\}\}")
+    replaced_names = set()
+
+    def replacement_for(expression):
+        if expression not in variable_names:
+            return None
+        replaced_names.add(expression)
+        return replacement_factory(expression)
+
+    def replacement_from_raw(raw_block):
+        match = exact_variable_pattern.fullmatch(raw_block)
+        if not match:
+            return None
+        return replacement_for(match.group(1))
+
+    try:
+        tokens = list(_jinja2_env.lex(text))
+    except TemplateSyntaxError:
+        return (
+            exact_variable_pattern.sub(
+                lambda match: replacement_for(match.group(1)) or match.group(0),
+                text,
+            ),
+            replaced_names,
+        )
+
+    output = []
+    current_tokens = None
+    current_source = None
+
+    for _, token_type, value in tokens:
+        if token_type == "variable_begin":
+            current_tokens = []
+            current_source = [value]
+            continue
+
+        if token_type == "variable_end" and current_tokens is not None:
+            raw_block = "".join(current_source) + value
+            expression = "".join(current_tokens).strip()
+            replacement = replacement_for(expression)
+            if replacement is None:
+                replacement = replacement_from_raw(raw_block)
+
+            if replacement is None:
+                output.append(raw_block)
+            else:
+                output.append(replacement)
+
+            current_tokens = None
+            current_source = None
+            continue
+
+        if current_tokens is not None:
+            current_tokens.append(value)
+            current_source.append(value)
+        else:
+            output.append(value)
+
+    if current_tokens is not None:
+        # Malformed variable block: leave the source untouched so the normal
+        # template-syntax path reports the failure consistently.
+        return text, set()
+
+    return "".join(output), replaced_names
+
+
 def process_string_content(
-    content, column_info, context, image_counter, model_name, template_format=None
+    content,
+    column_info,
+    context,
+    image_counter,
+    model_name,
+    template_format=None,
+    unresolved_placeholders=None,
+    process_media=True,
+    fail_closed: bool = False,
 ):
     """Process string-type content with proper media handling"""
     return process_text_with_media(
@@ -685,13 +2137,25 @@ def process_string_content(
         image_counter,
         model_name,
         template_format=template_format,
+        unresolved_placeholders=unresolved_placeholders,
+        process_media=process_media,
+        fail_closed=fail_closed,
     )
 
 
 def process_text_with_media(
-    text, column_info, context, image_counter, model_name, template_format=None
+    text,
+    column_info,
+    context,
+    image_counter,
+    model_name,
+    template_format=None,
+    unresolved_placeholders=None,
+    process_media=True,
+    fail_closed: bool = False,
 ):
     """Process text content, handling both templates and media placeholders"""
+    strict_render = False
     try:
         # Get the text and fix doubled-up quotes
         text = fix_double_quotes(text)
@@ -704,38 +2168,45 @@ def process_text_with_media(
         # Replace image/audio placeholders with unique markers
         for col_id, info in column_info.items():
             if info["data_type"] in ["image", "audio"] and info["value"]:
-                # Check for original UUID placeholder and column name placeholder
-                placeholder = create_placeholder(col_id)
-                alt_placeholder = create_placeholder(info["name"])
+                def make_media_marker(_placeholder_name):
+                    nonlocal image_counter
 
-                for ph in [placeholder, alt_placeholder]:
-                    if ph in text:
-                        marker = (
-                            f"__{info['data_type'].upper()}_MARKER_{uuid.uuid4()}__"
-                        )
-                        image_markers[marker] = {
-                            "url": info["value"],
-                            "counter": image_counter,
-                            "type": info["data_type"],
-                        }
-                        text = text.replace(ph, marker)
-                        image_counter += 1
+                    marker = f"__{info['data_type'].upper()}_MARKER_{uuid.uuid4()}__"
+                    image_markers[marker] = {
+                        "url": info["value"],
+                        "counter": image_counter,
+                        "type": info["data_type"],
+                    }
+                    image_counter += 1
+                    return marker
+
+                text, _ = _replace_template_variable_placeholders(
+                    text,
+                    {col_id, info["name"]},
+                    make_media_marker,
+                )
 
             if info["data_type"] == "document" and info["value"]:
-                # Check for original UUID placeholder and column name placeholder
-                placeholder = create_placeholder(col_id)
-                alt_placeholder = create_placeholder(info["name"])
+                def make_pdf_replacement(_placeholder_name):
+                    # During the no-fetch validation pass, keep a synthetic PDF
+                    # marker in the rendered text so callers know a second
+                    # post-quota media materialization pass is still required.
+                    if not process_media:
+                        return f"__PDF_MARKER_{uuid.uuid4()}__"
+                    return info["name"]
 
-                if placeholder in text or alt_placeholder in text:
+                text, replaced_document_placeholders = (
+                    _replace_template_variable_placeholders(
+                        text,
+                        {col_id, info["name"]},
+                        make_pdf_replacement,
+                    )
+                )
+
+                if replaced_document_placeholders:
                     is_pdf = True
                     pdf_url = info["value"]
                     pdf_name = info["name"]
-
-                    # Replace both UUID and column name placeholders
-                    if placeholder in text:
-                        text = text.replace(placeholder, info["name"])
-                    if alt_placeholder in text:
-                        text = text.replace(alt_placeholder, info["name"])
 
             # Handle multiple images (images data type)
             if info["data_type"] == "images" and info["value"]:
@@ -767,65 +2238,95 @@ def process_text_with_media(
                                 image_counter += 1
 
                     # Handle full array syntax: {{column}} - include ALL images
-                    placeholder = create_placeholder(col_id)
-                    alt_placeholder = create_placeholder(info["name"])
-                    for ph in [placeholder, alt_placeholder]:
-                        if ph in text:
-                            # Create markers for ALL images in array
-                            all_markers = ""
-                            for img_url in images_list:
-                                marker = f"__IMAGE_MARKER_{uuid.uuid4()}__"
-                                image_markers[marker] = {
-                                    "url": img_url,
-                                    "counter": image_counter,
-                                    "type": "image",
-                                }
-                                all_markers += marker
-                                image_counter += 1
-                            text = text.replace(ph, all_markers)
+                    def make_all_image_markers(_placeholder_name):
+                        nonlocal image_counter
+
+                        all_markers = ""
+                        for img_url in images_list:
+                            marker = f"__IMAGE_MARKER_{uuid.uuid4()}__"
+                            image_markers[marker] = {
+                                "url": img_url,
+                                "counter": image_counter,
+                                "type": "image",
+                            }
+                            all_markers += marker
+                            image_counter += 1
+                        return all_markers
+
+                    text, _ = _replace_template_variable_placeholders(
+                        text,
+                        {col_id, info["name"]},
+                        make_all_image_markers,
+                    )
                 except json.JSONDecodeError:
                     logger.warning(f"Failed to parse images array for column {col_id}")
 
-        # Debug: Log the context keys and template for troubleshooting
-        logger.debug(f"Template text (first 500 chars): {text[:500]}")
-        logger.debug(f"Context keys: {list(context.keys())}")
-        for key, value in context.items():
-            if isinstance(value, dict):
-                logger.debug(f"Context[{key}] is dict with keys: {list(value.keys())}")
+        # Debug metadata only: prompt text and context keys can include user data.
+        logger.debug(
+            "Prompt template render input",
+            template_length=len(text or ""),
+            context_key_count=len(context),
+            nested_context_count=sum(
+                1 for value in context.values() if isinstance(value, dict)
+            ),
+        )
 
         # IMPORTANT: Sanitize UUID placeholders BEFORE Jinja2 rendering
         # UUIDs contain hyphens which Jinja2 interprets as subtraction operators
         # e.g., {{a1b2c3d4-e5f6-...}} is parsed as "a1b2c3d4 - e5f6 - ..." (subtraction)
         # We replace hyphens with underscores to make valid Jinja2 identifiers
-        text = sanitize_uuids_in_template(text)
-        logger.debug(f"Template after UUID sanitization: {text[:500]}")
+        placeholder_display_map = _build_placeholder_display_map(text)
+        text = _sanitize_uuid_placeholders_for_template(text)
+        logger.debug(
+            "Prompt template UUID sanitization complete",
+            template_length=len(text or ""),
+        )
 
         # Render template using multi-format renderer
         # Map frontend format names to backend constants
-        effective_format = template_format
+        effective_format = template_format or DEFAULT_TEMPLATE_FORMAT
         if effective_format == "jinja":
             effective_format = TEMPLATE_FORMAT_JINJA2
+        strict_render = fail_closed and effective_format in (
+            TEMPLATE_FORMAT_FSTRING,
+            TEMPLATE_FORMAT_JINJA2,
+            TEMPLATE_FORMAT_MUSTACHE,
+        )
+        render_unresolved_placeholders = (
+            unresolved_placeholders if strict_render else None
+        )
         try:
             processed_text = render_template(
-                text, context, template_format=effective_format
+                text,
+                context,
+                template_format=effective_format,
+                strict=strict_render,
+                placeholder_display_map=placeholder_display_map,
+                unresolved_placeholders=render_unresolved_placeholders,
             )
+        except (UnresolvedPromptPlaceholdersError, PromptTemplateSyntaxError):
+            raise
         except Exception as render_error:
-            logger.exception(
-                f"Template rendering failed: {render_error}. Template: {text[:200]}..."
+            logger.warning(
+                "Template rendering failed during prompt rendering",
+                error_type=type(render_error).__name__,
+                fail_closed=fail_closed,
             )
             # Re-raise to see full error - template syntax issue
             raise
-        uuid_pattern = r"\{\{[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}\}\}"
-        if re.search(uuid_pattern, processed_text, re.IGNORECASE):
-            logger.warning(
-                f"Found unreplaced UUID placeholders in processed text: {processed_text}"
-            )
-            processed_text = re.sub(
-                uuid_pattern, "", processed_text, flags=re.IGNORECASE
-            )
+        if fail_closed and not process_media:
+            if image_markers:
+                _validate_media_marker_support(image_markers, model_name)
+            if is_pdf:
+                _validate_media_item_support({"type": "pdf_url"}, model_name)
         # Process media markers and create segments
-        if image_markers:
-            return process_media_markers(processed_text, image_markers, model_name)
+        if image_markers and process_media:
+            return process_media_markers(
+                processed_text,
+                image_markers,
+                model_name,
+                fail_closed=fail_closed,
+            )
         else:
             response = []
             # No media, just return processed text
@@ -834,7 +2335,7 @@ def process_text_with_media(
             else:
                 response.extend([{"type": "text", "text": ""}])
 
-            if is_pdf:
+            if is_pdf and process_media:
                 response.append(
                     handle_media(
                         {
@@ -850,16 +2351,40 @@ def process_text_with_media(
                 )
 
             return response
+    except UnresolvedPromptPlaceholdersError:
+        raise
+    except PromptTemplateSyntaxError:
+        raise
     except ValueError as e:
-        logger.exception(f"Error VALUEERROR text with media: {e}")
-        raise e
+        logger.warning(
+            "Prompt text media processing value error",
+            error_type=type(e).__name__,
+            fail_closed=fail_closed,
+        )
+        raise
     except Exception as e:
-        logger.exception(f"Error processing text with media: {e}")
-        logger.exception(f"Template text: {text[:200]}...")
-        logger.exception(f"Context keys: {list(context.keys())}")
+        logger.warning(
+            "Prompt text media processing error",
+            error_type=type(e).__name__,
+            fail_closed=fail_closed,
+            template_length=len(text or ""),
+            context_key_count=len(context),
+        )
+        if fail_closed:
+            raise
+        if strict_render:
+            remaining_placeholders = [
+                placeholder.strip()
+                for placeholder in _JINJA_PLACEHOLDER_PATTERN.findall(text)
+                if placeholder.strip()
+            ]
+            if remaining_placeholders:
+                raise _format_unresolved_placeholder_error(
+                    remaining_placeholders, locals().get("placeholder_display_map")
+                ) from e
         # Fallback to original text
         response = [{"type": "text", "text": text}]
-        if is_pdf:
+        if is_pdf and process_media:
             response.append(
                 handle_media(
                     {
@@ -876,7 +2401,7 @@ def process_text_with_media(
         return response
 
 
-def process_media_markers(text, image_markers, model_name):
+def process_media_markers(text, image_markers, model_name, fail_closed: bool = False):
     """Process media markers in text and create appropriate segments"""
     segments = []
     current_text = text
@@ -927,6 +2452,8 @@ def process_media_markers(text, image_markers, model_name):
                 )
             except Exception as e:
                 logger.exception(f"Error converting image to base64: {e}")
+                if fail_closed:
+                    raise
                 segments.append({"type": "image_url", "image_url": info["url"]})
 
         elif info["type"] == "audio":
@@ -964,7 +2491,13 @@ def process_media_markers(text, image_markers, model_name):
                 raise e
 
             except Exception as e:
-                logger.exception(f"Error processing audio from {info['url']}: {e}")
+                logger.warning(
+                    "Error processing audio placeholder",
+                    error_type=type(e).__name__,
+                    fail_closed=fail_closed,
+                )
+                if fail_closed:
+                    raise
                 # segments.append({
                 #     "type": "input_audio",
                 #     "input_audio": f"[Error loading audio from {info['url']}]"
@@ -987,16 +2520,22 @@ class LitellmAPIView(CreateAPIView):
     def process_row(self, row, validated_data, dataset, column, request):
         # Call litellm with the validated data
         status = CellStatus.PASS.value
+        error_phase = None
+        is_llm_error = False
         try:
+            error_phase = "media_validation"
             messages = populate_placeholders(
                 validated_data.get("messages"),
                 dataset_id=dataset.id,
                 row_id=row.id,
                 col_id=column.id,
                 model_name=validated_data.get("model"),
+                template_format=get_run_prompt_template_format(validated_data),
+                fail_closed=True,
             )
             messages = remove_empty_text_from_messages(messages)
 
+            error_phase = "provider_dispatch"
             run_prompt = RunPrompt(
                 model=validated_data.get("model"),
                 organization_id=getattr(request, "organization", None)
@@ -1015,12 +2554,22 @@ class LitellmAPIView(CreateAPIView):
                 workspace_id=dataset.workspace.id if dataset.workspace else None,
             )
 
+            is_llm_error = True
             response, value_info = run_prompt.litellm_response()
             value_info["reason"] = value_info.get("data", {}).get("response")
 
         except Exception as e:
-            logger.exception(f"Error in processing the row: {str(e)}")
-            error_message = get_specific_error_message(e)
+            _log_run_prompt_error(
+                "LitellmAPIView_process_row_error",
+                e,
+                is_llm_error=is_llm_error,
+                phase=error_phase,
+            )
+            error_message = _safe_run_prompt_error_message(
+                e,
+                is_llm_error=is_llm_error,
+                phase=error_phase,
+            )
             response = error_message
             value_info = {"reason": error_message}
             status = CellStatus.ERROR.value
@@ -1059,14 +2608,12 @@ class LitellmAPIView(CreateAPIView):
         )
         if not dataset:
             return self._gm.not_found("Dataset not found")
-        # Retrieve tools based on the IDs from the validated data
-        tool_ids = _extract_tool_ids(validated_data.get("tools"))
-        tools = Tools.objects.filter(
-            _request_workspace_filter(request),
-            id__in=tool_ids,
-            organization=organization,
-            deleted=False,
-        )
+        # Retrieve tools based on the IDs from the validated data, scoped to
+        # the request organization/workspace before they are attached.
+        try:
+            tools = _resolve_request_tools(request, validated_data.get("tools"))
+        except ValueError as e:
+            return self._gm.bad_request(str(e))
 
         # Use transaction to ensure atomicity
         with transaction.atomic():
@@ -1315,13 +2862,154 @@ class RunPrompts:
                 self.is_editing = True
             status = CellStatus.PASS.value
             is_llm_error = False
-            # api_call_log_row = None
+            api_call_log_row = None
+            api_call_error_status_attempted = False
+            cell_persisted = False
+            cell = None
+            error_phase = None
+
+            def persist_api_call_terminal_status(target_status):
+                nonlocal api_call_error_status_attempted
+                if not api_call_log_row:
+                    return False
+
+                current_status = api_call_log_row.status
+                if current_status != APICallStatusChoices.PROCESSING.value and not (
+                    target_status == APICallStatusChoices.ERROR.value
+                    and current_status == APICallStatusChoices.ERROR.value
+                ):
+                    return False
+
+                previous_status = current_status
+                api_call_log_row.status = target_status
+
+                for attempt in range(2):
+                    try:
+                        api_call_log_row.save()
+                        if target_status == APICallStatusChoices.ERROR.value:
+                            api_call_error_status_attempted = True
+                        return True
+                    except Exception:
+                        if attempt == 0:
+                            logger.warning(
+                                "RunPrompts_process_row_api_call_terminal_status_save_retry",
+                                run_prompt_id=str(self.run_prompt_id),
+                                row_id=row_id,
+                                target_status=target_status,
+                            )
+                            continue
+                        break
+
+                try:
+                    manager = getattr(type(api_call_log_row), "objects", None)
+                    if manager is not None and getattr(api_call_log_row, "id", None):
+                        updated = manager.filter(
+                            id=api_call_log_row.id,
+                            status=APICallStatusChoices.PROCESSING.value,
+                        ).update(status=target_status)
+                        if updated:
+                            if target_status == APICallStatusChoices.ERROR.value:
+                                api_call_error_status_attempted = True
+                            return True
+                except Exception:
+                    logger.exception(
+                        "RunPrompts_process_row_api_call_terminal_status_update_failed",
+                        run_prompt_id=str(self.run_prompt_id),
+                        row_id=row_id,
+                        target_status=target_status,
+                    )
+
+                if target_status == APICallStatusChoices.ERROR.value:
+                    logger.error(
+                        "RunPrompts_process_row_api_call_error_status_persist_failed",
+                        run_prompt_id=str(self.run_prompt_id),
+                        row_id=row_id,
+                    )
+                    raise RuntimeError("Failed to persist API call error status")
+
+                api_call_log_row.status = previous_status
+                logger.error(
+                    "RunPrompts_process_row_api_call_success_status_persist_failed",
+                    run_prompt_id=str(self.run_prompt_id),
+                    row_id=row_id,
+                    target_status=target_status,
+                )
+                raise RuntimeError("Failed to persist API call success status")
+
+            def mark_persisted_cell_error(error_message):
+                nonlocal status, response, value_info
+                if not cell_persisted or cell is None:
+                    raise RuntimeError(error_message)
+                status = CellStatus.ERROR.value
+                response = error_message
+                value_info = {"reason": error_message}
+                cell.value = str(response)
+                cell.value_infos = json.dumps(value_info)
+                cell.status = status
+                if hasattr(cell, "save"):
+                    cell.save()
+
+            def emit_usage_event():
+                # Dual-write: emit usage event for new billing system only after
+                # placeholder validation, provider dispatch, cell persistence, and
+                # SUCCESS api-call status persistence all succeed.
+                try:
+                    try:
+                        from ee.usage.schemas.events import UsageEvent
+                    except ImportError:
+                        UsageEvent = None
+                    try:
+                        from ee.usage.services.emitter import emit
+                    except ImportError:
+                        emit = None
+
+                    if emit is not None and UsageEvent is not None:
+                        emit(
+                            UsageEvent(
+                                org_id=str(self.run_prompt_model.organization.id),
+                                event_type=APICallTypeChoices.DATASET_RUN_PROMPT.value,
+                                properties={
+                                    "source": "dataset_run_prompt",
+                                    "source_id": str(self.run_prompt_id),
+                                },
+                            )
+                        )
+                except Exception:
+                    pass  # Metering failure must not break the action
+
             try:
+                logger.info(
+                    "RunPrompts_process_row_populating_placeholders",
+                    run_prompt_id=str(self.run_prompt_id),
+                    row_id=row_id,
+                )
+                error_phase = "placeholder_validation"
+                validated_messages = populate_placeholders(
+                    self.run_prompt_model.messages,
+                    dataset_id=self.run_prompt_model.dataset.id,
+                    row_id=row.id,
+                    col_id=column.id,
+                    model_name=self.run_prompt_model.model,
+                    template_format=normalize_template_format(
+                        (self.run_prompt_model.run_prompt_config or {}).get(
+                            "template_format"
+                        )
+                    ),
+                    process_media=False,
+                    fail_closed=True,
+                )
+                logger.info(
+                    "RunPrompts_process_row_placeholders_populated",
+                    run_prompt_id=str(self.run_prompt_id),
+                    row_id=row_id,
+                )
+
                 logger.info(
                     "RunPrompts_process_row_validating_api_call",
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                 )
+                error_phase = "api_validation"
                 if log_and_deduct_cost_for_api_request is not None:
                     try:
                         api_call_config = {"reference_id": str(self.run_prompt_id)}
@@ -1371,61 +3059,30 @@ class RunPrompts:
                     elif (
                         api_call_log_row.status == APICallStatusChoices.PROCESSING.value
                     ):
-                        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-                        api_call_log_row.save()
                         logger.info(
-                            "RunPrompts_process_row_api_call_status_set_success",
+                            "RunPrompts_process_row_api_call_status_processing",
                             run_prompt_id=str(self.run_prompt_id),
                             row_id=row_id,
                         )
 
-                # Dual-write: emit usage event for new billing system
-                try:
-                    try:
-                        from ee.usage.schemas.events import UsageEvent
-                    except ImportError:
-                        UsageEvent = None
-                    try:
-                        from ee.usage.services.emitter import emit
-                    except ImportError:
-                        emit = None
-
-                    if emit is not None and UsageEvent is not None:
-                        emit(
-                            UsageEvent(
-                                org_id=str(self.run_prompt_model.organization.id),
-                                event_type=APICallTypeChoices.DATASET_RUN_PROMPT.value,
-                                properties={
-                                    "source": "dataset_run_prompt",
-                                    "source_id": str(self.run_prompt_id),
-                                },
+                if _messages_require_media_processing(validated_messages):
+                    error_phase = "media_validation"
+                    messages = populate_placeholders(
+                        self.run_prompt_model.messages,
+                        dataset_id=self.run_prompt_model.dataset.id,
+                        row_id=row.id,
+                        col_id=column.id,
+                        model_name=self.run_prompt_model.model,
+                        template_format=normalize_template_format(
+                            (self.run_prompt_model.run_prompt_config or {}).get(
+                                "template_format"
                             )
-                        )
-                except Exception:
-                    pass  # Metering failure must not break the action
-
-                logger.info(
-                    "RunPrompts_process_row_populating_placeholders",
-                    run_prompt_id=str(self.run_prompt_id),
-                    row_id=row_id,
-                )
-                messages = populate_placeholders(
-                    self.run_prompt_model.messages,
-                    dataset_id=self.run_prompt_model.dataset.id,
-                    row_id=row.id,
-                    col_id=column.id,
-                    model_name=self.run_prompt_model.model,
-                    template_format=(self.run_prompt_model.run_prompt_config or {}).get(
-                        "template_format"
-                    ),
-                )
+                        ),
+                        fail_closed=True,
+                    )
+                else:
+                    messages = validated_messages
                 messages = remove_empty_text_from_messages(messages)
-                logger.info(
-                    "RunPrompts_process_row_placeholders_populated",
-                    run_prompt_id=str(self.run_prompt_id),
-                    row_id=row_id,
-                    message_count=len(messages),
-                )
 
                 logger.info(
                     "RunPrompts_process_row_creating_run_prompt",
@@ -1433,6 +3090,7 @@ class RunPrompts:
                     row_id=row_id,
                     model=self.run_prompt_model.model,
                 )
+                error_phase = "provider_dispatch"
 
                 run_prompt = RunPrompt(
                     model=self.run_prompt_model.model,
@@ -1471,21 +3129,26 @@ class RunPrompts:
                 value_info["reason"] = value_info.get("data", {}).get("response")
 
             except Exception as e:
-                logger.exception(
+                _log_run_prompt_error(
                     "RunPrompts_process_row_error",
+                    e,
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
-                    error=str(e),
                     is_llm_error=is_llm_error,
+                    phase=error_phase,
                 )
-                error_message = get_specific_error_message(e, is_llm_error)
+                error_message = _safe_run_prompt_error_message(
+                    e,
+                    is_llm_error=is_llm_error,
+                    phase=error_phase,
+                )
                 logger.error(
                     "RunPrompts_process_row_error_message",
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                     error_message=error_message,
                 )
-                response = str(e)
+                response = error_message
                 value_info = {"reason": error_message}
                 status = CellStatus.ERROR.value
 
@@ -1553,6 +3216,7 @@ class RunPrompts:
                         )
 
                     cell.save()
+                    cell_persisted = True
                     logger.info(
                         "cell_updated",
                         cell_id=str(cell.id),
@@ -1598,6 +3262,7 @@ class RunPrompts:
                         completion_tokens=completion_tokens,
                         response_time=response_time,
                     )
+                    cell_persisted = True
                     logger.info(
                         "cell_created_in_edit_mode",
                         cell_id=str(cell.id),
@@ -1644,6 +3309,7 @@ class RunPrompts:
                     completion_tokens=completion_tokens,
                     response_time=response_time,
                 )
+                cell_persisted = True
                 logger.info(
                     "cell_created",
                     cell_id=str(cell.id),
@@ -1651,6 +3317,45 @@ class RunPrompts:
                     run_prompt_id=str(self.run_prompt_id),
                     status=status,
                 )
+            if status == CellStatus.ERROR.value and cell_persisted:
+                if persist_api_call_terminal_status(APICallStatusChoices.ERROR.value):
+                    logger.info(
+                        "RunPrompts_process_row_api_call_status_set_error",
+                        run_prompt_id=str(self.run_prompt_id),
+                        row_id=row_id,
+                    )
+            elif status == CellStatus.PASS.value:
+                try:
+                    if persist_api_call_terminal_status(
+                        APICallStatusChoices.SUCCESS.value
+                    ):
+                        logger.info(
+                            "RunPrompts_process_row_api_call_status_set_success",
+                            run_prompt_id=str(self.run_prompt_id),
+                            row_id=row_id,
+                        )
+                        emit_usage_event()
+                except Exception as terminal_status_error:
+                    terminal_error_message = (
+                        "Provider response was saved, but final API call status "
+                        "could not be persisted."
+                    )
+                    logger.error(
+                        "RunPrompts_process_row_api_call_status_terminal_error",
+                        run_prompt_id=str(self.run_prompt_id),
+                        row_id=row_id,
+                        error_type=type(terminal_status_error).__name__,
+                    )
+                    mark_persisted_cell_error(terminal_error_message)
+                    if persist_api_call_terminal_status(
+                        APICallStatusChoices.ERROR.value
+                    ):
+                        logger.info(
+                            "RunPrompts_process_row_api_call_status_set_error",
+                            run_prompt_id=str(self.run_prompt_id),
+                            row_id=row_id,
+                        )
+
             logger.info(
                 "RunPrompts_process_row_completed",
                 run_prompt_id=str(self.run_prompt_id),
@@ -1664,6 +3369,25 @@ class RunPrompts:
                 row_id=row_id,
                 error=str(e),
             )
+            if (
+                "persist_api_call_terminal_status" in locals()
+                and not api_call_error_status_attempted
+            ):
+                try:
+                    if persist_api_call_terminal_status(
+                        APICallStatusChoices.ERROR.value
+                    ):
+                        logger.info(
+                            "RunPrompts_process_row_api_call_status_set_error",
+                            run_prompt_id=str(self.run_prompt_id),
+                            row_id=row_id,
+                        )
+                except Exception:
+                    logger.exception(
+                        "RunPrompts_process_row_api_call_error_status_after_fatal_failed",
+                        run_prompt_id=str(self.run_prompt_id),
+                        row_id=row_id,
+                    )
             raise
         finally:
             logger.info(
@@ -1707,7 +3431,7 @@ class AddRunPromptColumnView(APIView):
             config = validated_data[
                 "config"
             ]  # This is now a validated dict from PromptConfigSerializer
-            run_prompt_config = config.get("run_prompt_config", {})
+            run_prompt_config = normalize_run_prompt_config(config)
 
             # Get dataset and enforce organization isolation
             organization = (
@@ -1725,6 +3449,13 @@ class AddRunPromptColumnView(APIView):
                 name=name, dataset=dataset, deleted=False
             ).exists():
                 return self._gm.bad_request(get_error_message("COLUMN_NAME_EXISTS"))
+
+            try:
+                requested_tools = _resolve_request_tools(
+                    request, config.get("tools", [])
+                )
+            except ValueError as e:
+                return self._gm.bad_request(str(e))
 
             output_format = config.get("output_format")
             messages = config.get("messages", [])
@@ -1771,13 +3502,9 @@ class AddRunPromptColumnView(APIView):
                     dataset.column_order = column_order
                     dataset.save()
 
-                # Handle tools if provided in config
-                tools = config.get("tools", [])
-                if tools:
-                    tool_ids = [tool.get("id") for tool in tools if "id" in tool]
-                    if tool_ids:
-                        tools_queryset = Tools.objects.filter(id__in=tool_ids)
-                        run_prompter.tools.set(tools_queryset)
+                # Handle tools if provided in config.
+                if requested_tools:
+                    run_prompter.tools.set(requested_tools)
 
                 run_prompter_id = str(run_prompter.id)
 
@@ -1815,7 +3542,6 @@ class AddRunPromptColumnView(APIView):
             return self._gm.success_response("Run prompt column added successfully")
 
         except Exception as e:
-            traceback.print_exc()
             error_message = get_specific_error_message(e)
             logger.exception(f"Error in adding run prompt column: {error_message}")
             return self._gm.internal_server_error_response(error_message)
@@ -1874,13 +3600,14 @@ class PreviewRunPromptColumnView(APIView):
             if not rows:
                 return self._gm.bad_request(get_error_message("ROW_INDICES_NOT_EXIST"))
 
-            # Process tools if provided in config
-            tools_config = []
-            if config.get("tools"):
-                tool_ids = [tool.get("id") for tool in config["tools"] if "id" in tool]
-                if tool_ids:
-                    tools = Tools.objects.filter(id__in=tool_ids)
-                    tools_config = [tool.config for tool in tools]
+            # Process tools if provided in config.
+            try:
+                requested_tools = _resolve_request_tools(
+                    request, config.get("tools", [])
+                )
+            except ValueError as e:
+                return self._gm.bad_request(str(e))
+            tools_config = [tool.config for tool in requested_tools]
 
             rf = config.get("response_format")
             if rf and not isinstance(rf, dict):
@@ -1891,17 +3618,40 @@ class PreviewRunPromptColumnView(APIView):
                 except Exception:
                     pass
 
+            run_prompt_config = normalize_run_prompt_config(config)
             responses = []
             for row in rows:
+                row_error_phase = None
+                is_llm_error = False
                 try:
                     output_format = config.get("output_format", "string")
-                    messages = populate_placeholders(
+                    template_format = get_run_prompt_template_format(
+                        {"run_prompt_config": run_prompt_config}
+                    )
+                    row_error_phase = "placeholder_validation"
+                    validated_messages = populate_placeholders(
                         config.get("messages", []),
                         dataset_id=dataset_id,
                         row_id=row.id,
                         col_id=None,
                         model_name=config.get("model", ""),
+                        template_format=template_format,
+                        process_media=False,
+                        fail_closed=True,
                     )
+                    if _messages_require_media_processing(validated_messages):
+                        row_error_phase = "media_validation"
+                        messages = populate_placeholders(
+                            config.get("messages", []),
+                            dataset_id=dataset_id,
+                            row_id=row.id,
+                            col_id=None,
+                            model_name=config.get("model", ""),
+                            template_format=template_format,
+                            fail_closed=True,
+                        )
+                    else:
+                        messages = validated_messages
                     if output_format != "audio":
                         messages = remove_empty_text_from_messages(messages)
 
@@ -1919,17 +3669,18 @@ class PreviewRunPromptColumnView(APIView):
                         tool_choice=config.get("tool_choice"),
                         tools=tools_config,
                         output_format=config.get("output_format", "string"),
-                        run_prompt_config=config.get("run_prompt_config"),
+                        run_prompt_config=run_prompt_config,
                         workspace_id=(
                             dataset.workspace.id
                             if dataset and dataset.workspace
                             else None
                         ),
                     )
+                    row_error_phase = "provider_dispatch"
+                    is_llm_error = True
                     response, value_infos = run_prompt.litellm_response()
 
                     # Check if showReasoningProcess is enabled to include thinking content
-                    run_prompt_config = config.get("run_prompt_config", {})
                     reasoning_config = run_prompt_config.get("reasoning", {})
                     show_reasoning = reasoning_config.get(
                         "showReasoningProcess"
@@ -1945,7 +3696,13 @@ class PreviewRunPromptColumnView(APIView):
                         responses.append(response)
 
                 except Exception as e:
-                    responses.append(str(e))
+                    responses.append(
+                        _safe_run_prompt_error_message(
+                            e,
+                            is_llm_error=is_llm_error,
+                            phase=row_error_phase,
+                        )
+                    )
                     value_infos = {"metadata": {"usage": {}, "cost": {}}}
             return self._gm.success_response(
                 {
@@ -1980,9 +3737,12 @@ class EditRunPromptColumnView(APIView):
             validated_data = request.validated_data
             dataset_id = validated_data["dataset_id"]
             column_id = validated_data["column_id"]
-            config = validated_data["config"]
-            name = validated_data["name"]
-            run_prompt_config = config.get("run_prompt_config", {})
+            config_provided = (
+                "config" in validated_data and validated_data["config"] is not None
+            )
+            config = validated_data.get("config") or {}
+            name = validated_data.get("name")
+            should_rerun = config_provided and bool(config)
 
             dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
             if not dataset:
@@ -2014,6 +3774,22 @@ class EditRunPromptColumnView(APIView):
                         "Column or run prompt configuration not found"
                     )
 
+                if not should_rerun:
+                    if name is not None and name != run_prompter.name:
+                        run_prompter.name = name
+                        run_prompter.save(update_fields=["name"])
+                        update_column_for_rerun(
+                            column=column,
+                            output_format=run_prompter.output_format,
+                            response_format=run_prompter.response_format,
+                            name=name,
+                            status=None,
+                            extract_derived_vars=False,
+                        )
+                    return self._gm.success_response(
+                        "Run prompt column updated successfully"
+                    )
+
                 # Check if currently running - warn but allow edit
                 was_running = run_prompter.status == StatusType.RUNNING.value
                 if was_running:
@@ -2029,6 +3805,19 @@ class EditRunPromptColumnView(APIView):
                     status=CellStatus.RUNNING.value,
                 )
 
+                if "tools" in config:
+                    try:
+                        requested_tools = _resolve_request_tools(
+                            request, config.get("tools") or []
+                        )
+                    except ValueError as e:
+                        return self._gm.bad_request(str(e))
+                else:
+                    requested_tools = None
+
+                run_prompt_config = merge_run_prompt_config(
+                    run_prompter.run_prompt_config, config
+                )
                 messages = config.get("messages", run_prompter.messages)
                 output_format = config.get("output_format", run_prompter.output_format)
 
@@ -2068,20 +3857,12 @@ class EditRunPromptColumnView(APIView):
                     StatusType.RUNNING.value
                 )  # Set to RUNNING immediately
 
-                run_prompter.run_prompt_config = config.get(
-                    "run_prompt_config", run_prompter.run_prompt_config
-                )
+                run_prompter.run_prompt_config = run_prompt_config
 
-                # Handle tools update - first clear existing tools
-                run_prompter.tools.clear()
-
-                # Handle tools update if provided
-                tools = config.get("tools")
-                if tools:
-                    tool_ids = [tool.get("id") for tool in tools if "id" in tool]
-                    if tool_ids:
-                        tools_queryset = Tools.objects.filter(id__in=tool_ids)
-                        run_prompter.tools.set(tools_queryset)
+                # Replace tools only when the edit payload explicitly includes
+                # tools. Omitted config fields preserve the existing prompt.
+                if requested_tools is not None:
+                    run_prompter.tools.set(requested_tools)
 
                 run_prompter.save()
 
@@ -2115,9 +3896,17 @@ class EditRunPromptColumnView(APIView):
                     run_prompt_id=run_prompter_id,
                     error=str(e),
                 )
-                # Set status to FAILED if workflow couldn't start
+                # Set status to FAILED if workflow couldn't start and terminalize
+                # cells that were already blanked/requeued in the edit transaction.
                 RunPrompter.objects.filter(id=run_prompter_id).update(
                     status=StatusType.FAILED.value
+                )
+                Cell.objects.filter(column=column).update(
+                    value=None,
+                    value_infos=json.dumps(
+                        {"reason": "Failed to start run prompt workflow"}
+                    ),
+                    status=CellStatus.ERROR.value,
                 )
                 return self._gm.internal_server_error_response(
                     "Failed to start run prompt workflow"
@@ -2173,7 +3962,13 @@ class RetrieveRunPromptColumnConfigView(APIView):
                 tools.append(
                     {"id": str(tool.id), "name": tool.name, "config": tool.config}
                 )
-            base_run_prompt_config = run_prompter.run_prompt_config or {}
+            base_run_prompt_config = dict(run_prompter.run_prompt_config or {})
+            if base_run_prompt_config.get("template_format"):
+                base_run_prompt_config["template_format"] = (
+                    normalize_public_template_format(
+                        base_run_prompt_config["template_format"]
+                    )
+                )
 
             if not base_run_prompt_config.get("model_type"):
                 # Determine model_type based on output_format
@@ -2323,10 +4118,12 @@ class RetrieveRunPromptOptionsView(APIView):
                 provider = model.get("providers")
                 model["is_available"] = provider_has_key.get(provider, False)
 
-            # Get available tools for the organization
+            # Get available tools for the request organization/workspace.
             given_tools = Tools.objects.filter(
+                _request_workspace_filter(request),
                 organization=getattr(request, "organization", None)
-                or request.user.organization
+                or request.user.organization,
+                deleted=False,
             ).values("id", "name", "config", "config_type", "description")
             tools = []
             for tool in given_tools:

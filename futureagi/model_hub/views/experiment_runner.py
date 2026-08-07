@@ -20,14 +20,18 @@ from model_hub.models.experiments import (
     ExperimentsTable,
     PendingRowTask,
 )
-from model_hub.models.openai_tools import Tools
 from model_hub.models.run_prompt import UserResponseSchema
 from model_hub.models.tts_voices import TTSVoice
 from model_hub.services.column_service import create_experiment_column
 from model_hub.services.experiment_utils import is_experiment_cancelled
 from model_hub.utils.utils import remove_empty_text_from_messages
 from model_hub.views.eval_runner import EvaluationRunner, bulk_update_or_create_cells
-from model_hub.views.run_prompt import populate_placeholders
+from model_hub.views.run_prompt import (
+    _log_run_prompt_error,
+    _resolve_tools_for_scope,
+    _safe_run_prompt_error_message,
+    populate_placeholders,
+)
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_error_message
 
@@ -1270,15 +1274,19 @@ class ExperimentRunner:
     ):
         """Process individual row for a prompt"""
         status = CellStatus.PASS.value
+        error_phase = None
+        is_llm_error = False
 
         try:
             close_old_connections()
             unsupported_exception = False
-            tools_config = []
-            if model_config.get("tools"):
-                tools = Tools.objects.filter(id__in=model_config.get("tools")).all()
-                for tool in tools:
-                    tools_config.append(tool.config)
+            error_phase = "tool_validation"
+            tools = _resolve_tools_for_scope(
+                model_config.get("tools", []),
+                organization=self.experiment.dataset.organization,
+                workspace=self.experiment.dataset.workspace,
+            )
+            tools_config = [tool.config for tool in tools]
 
             rf = model_config.get("response_format")
             if rf and not isinstance(rf, dict):
@@ -1290,9 +1298,11 @@ class ExperimentRunner:
                     pass
 
             try:
+                error_phase = "placeholder_validation"
                 messages = populate_placeholders(
                     messages, self.dataset.id, row.id, column.id, model_name=model,
                     template_format=model_config.get("template_format"),
+                    fail_closed=True,
                 )
                 if output_format != "audio":
                     messages = remove_empty_text_from_messages(messages)
@@ -1302,6 +1312,7 @@ class ExperimentRunner:
                 unsupported_exception = True
                 raise e
 
+            error_phase = "provider_dispatch"
             run_prompt = RunPrompt(
                 model=model,
                 organization_id=self.experiment.dataset.organization.id,
@@ -1323,6 +1334,7 @@ class ExperimentRunner:
                 ),
             )
 
+            is_llm_error = True
             response, value_info = run_prompt.litellm_response()
             value_info["reason"] = value_info.get("data", {}).get("response")
 
@@ -1330,13 +1342,22 @@ class ExperimentRunner:
             # Expected, handled validation failure (empty messages) is user
             # misconfiguration; the row is persisted as a failed cell below.
             # Downgrade only that case to warning so real failures stay errors.
-            if "Messages are required" in str(e):
-                logger.warning(f"Error in processing the row: {str(e)}")
-            else:
-                logger.exception(f"Error in processing the row: {str(e)}")
+            _log_run_prompt_error(
+                "ExperimentRunner_process_row_error",
+                e,
+                row_id=str(row.id),
+                column_id=str(column.id),
+                is_llm_error=is_llm_error,
+                phase=error_phase,
+            )
             # if unsupported_exception:
-            response = str(e)
-            value_info = {"reason": str(e)}
+            error_message = _safe_run_prompt_error_message(
+                e,
+                is_llm_error=is_llm_error,
+                phase=error_phase,
+            )
+            response = error_message
+            value_info = {"reason": error_message}
             # else:
             #     response = get_error_message("FAILED_TO_PROCESS_ROW")
             #     value_info = {"reason": response}
@@ -1551,13 +1572,16 @@ def _process_row_impl(
         experiment = ExperimentsTable.objects.get(id=experiment_id, deleted=False)
 
         status = CellStatus.PASS.value
+        error_phase = None
+        is_llm_error = False
         unsupported_exception = False
-        tools_config = []
-
-        if model_config.get("tools"):
-            tools = Tools.objects.filter(id__in=model_config.get("tools")).all()
-            for tool in tools:
-                tools_config.append(tool.config)
+        error_phase = "tool_validation"
+        tools = _resolve_tools_for_scope(
+            model_config.get("tools", []),
+            organization=experiment.dataset.organization,
+            workspace=experiment.dataset.workspace,
+        )
+        tools_config = [tool.config for tool in tools]
 
         rf = model_config.get("response_format")
         if rf and not isinstance(rf, dict):
@@ -1569,9 +1593,11 @@ def _process_row_impl(
                 pass
 
         try:
+            error_phase = "placeholder_validation"
             messages = populate_placeholders(
                 messages, dataset_id, row_id, column_id, model_name=model,
                 template_format=model_config.get("template_format"),
+                fail_closed=True,
             )
             if output_format != "audio":
                 messages = remove_empty_text_from_messages(messages)
@@ -1580,6 +1606,7 @@ def _process_row_impl(
             unsupported_exception = True
             raise e
 
+        error_phase = "provider_dispatch"
         run_prompt = RunPrompt(
             model=model,
             organization_id=experiment.dataset.organization.id,
@@ -1601,6 +1628,7 @@ def _process_row_impl(
             ),
         )
 
+        is_llm_error = True
         response, value_info = run_prompt.litellm_response()
         value_info["reason"] = value_info.get("data", {}).get("response")
 
@@ -1608,13 +1636,22 @@ def _process_row_impl(
         # Expected, handled validation failure (empty messages) is user
         # misconfiguration; the row is persisted as a failed cell below.
         # Downgrade only that case to warning so real failures stay errors.
-        if "Messages are required" in str(e):
-            logger.warning(f"Error in processing the row: {str(e)}")
-        else:
-            logger.exception(f"Error in processing the row: {str(e)}")
+        _log_run_prompt_error(
+            "ExperimentRunner_process_row_task_error",
+            e,
+            row_id=str(row_id),
+            column_id=str(column_id),
+            is_llm_error=is_llm_error,
+            phase=error_phase,
+        )
         # if unsupported_exception:
-        response = str(e)
-        value_info = {"reason": str(e)}
+        error_message = _safe_run_prompt_error_message(
+            e,
+            is_llm_error=is_llm_error,
+            phase=error_phase,
+        )
+        response = error_message
+        value_info = {"reason": error_message}
         # else:
         #     response = get_error_message("FAILED_TO_PROCESS_ROW")
         #     value_info = {"reason": response}
