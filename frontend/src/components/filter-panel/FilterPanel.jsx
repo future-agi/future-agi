@@ -621,6 +621,22 @@ const QueryInput = forwardRef(function QueryInput(
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [focused, setFocused] = useState(false);
   const inputRef = useRef(null);
+  // TODO: currently the logic operator is UI-only — clicking the badge
+  // toggles the visual indicator but does not affect the actual query logic.
+  // When the backend/query builder adds AND/OR semantics, expose this via
+  // onApply (second arg) or a dedicated onOperatorChange callback so parent
+  // components can adjust the query accordingly.
+  const [logicOperator, setLogicOperator] = useState("AND");
+
+  // Tracks whether the current token change originated from inside this
+  // component (commit / edit / delete). Prevents the initialTokens sync
+  // effect from resetting logicOperator on self-triggered feedback-loop
+  // changes (onApply → parent setRows → new initialTokens → useEffect).
+  const internalTokensChangeRef = useRef(false);
+
+  const toggleLogicOperator = useCallback(() => {
+    setLogicOperator((prev) => (prev === "AND" ? "OR" : "AND"));
+  }, []);
   const initialTokensKey = useMemo(
     () => JSON.stringify(initialTokens || []),
     [initialTokens],
@@ -635,11 +651,22 @@ const QueryInput = forwardRef(function QueryInput(
       parsedTokens = [];
     }
     setTokens(parsedTokens);
-    setPartialField(null);
-    setPartialOp(null);
-    setInputValue("");
-    setRangeFrom("");
-    setRangeTo("");
+    // Guard partial-state resets the same way we guard logicOperator:
+    // internal changes (commit / edit / delete) set the ref before
+    // calling onApply, so the feedback loop through the parent's
+    // setRows → new initialTokens → this effect does not clobber the
+    // edit-in-progress state that editToken just set up.
+    if (!internalTokensChangeRef.current) {
+      setPartialField(null);
+      setPartialOp(null);
+      setInputValue("");
+      setRangeFrom("");
+      setRangeTo("");
+      // Only reset the operator when tokens truly change from outside
+      // (e.g. switching tabs, clearing filters).
+      setLogicOperator("AND");
+    }
+    internalTokensChangeRef.current = false;
   }, [initialTokensKey]);
 
   const phase = !partialField ? "field" : !partialOp ? "operator" : "value";
@@ -731,6 +758,7 @@ const QueryInput = forwardRef(function QueryInput(
         inputRef.current?.focus();
         setDropdownOpen(true);
       }, 0);
+      internalTokensChangeRef.current = true;
       onApply(updated);
     },
     [tokens, onApply],
@@ -787,6 +815,7 @@ const QueryInput = forwardRef(function QueryInput(
           setInputValue("");
           setRangeFrom("");
           setRangeTo("");
+          internalTokensChangeRef.current = true;
           return updated;
         }
         const v = inputValue.trim();
@@ -801,6 +830,7 @@ const QueryInput = forwardRef(function QueryInput(
         setPartialField(null);
         setPartialOp(null);
         setInputValue("");
+        internalTokensChangeRef.current = true;
         return updated;
       },
     }),
@@ -904,6 +934,7 @@ const QueryInput = forwardRef(function QueryInput(
         }
       }
       setTimeout(() => setDropdownOpen(true), 0);
+      internalTokensChangeRef.current = true;
       onApply(updated.length > 0 ? updated : []);
     },
     [tokens, onApply, opDefFor],
@@ -957,6 +988,7 @@ const QueryInput = forwardRef(function QueryInput(
       const updated = tokens.filter((_, i) => i !== index);
       setTokens(updated);
       setDropdownOpen(true);
+      internalTokensChangeRef.current = true;
       onApply(updated.length > 0 ? updated : []);
     },
     [tokens, onApply],
@@ -992,36 +1024,108 @@ const QueryInput = forwardRef(function QueryInput(
             ? "pick value..."
             : "type or pick value...";
 
-  // Shared chip/prefix render — used by both the Autocomplete renderInput
-  // startAdornment and the range-phase Box below.
-  const tokenChips = tokens.map((token, idx) => (
-    <Chip
-      key={idx}
-      label={`${fieldMap[token.field]?.label || token.field} ${opDefFor(token.field, token.operator)?.label || token.operator} ${Array.isArray(token.value) ? token.value.join(" – ") : token.value}`}
-      size="small"
-      onClick={() => editToken(idx)}
-      onDelete={() => handleDeleteToken(idx)}
-      deleteIcon={<Iconify icon="mdi:close" width={10} />}
-      sx={{
-        height: 22,
-        fontSize: 11,
-        mr: 0.25,
-        bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
-        color: "primary.main",
-        border: "1px solid",
-        borderColor: (theme) => alpha(theme.palette.primary.main, 0.2),
-        cursor: "pointer",
-        "&:hover": {
-          bgcolor: (theme) => alpha(theme.palette.primary.main, 0.16),
-          borderColor: (theme) => alpha(theme.palette.primary.main, 0.4),
-        },
-        "& .MuiChip-deleteIcon": {
-          color: "primary.main",
-          "&:hover": { color: "primary.dark" },
-        },
-      }}
-    />
-  ));
+  // Shared token rendering with AND/OR operator badges between adjacent chips.
+  // Used by both the Autocomplete renderInput startAdornment and the range-phase
+  // Box so operator badges are consistent everywhere.
+  const renderTokensWithOperator = useCallback(
+    () =>
+      tokens.map((token, idx) => (
+        <React.Fragment key={idx}>
+          {idx > 0 && (
+            <Box
+              component="button"
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleLogicOperator();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  toggleLogicOperator();
+                }
+              }}
+              aria-label={`Filter logic operator: ${logicOperator}. Click or press Space to toggle.`}
+              aria-pressed={logicOperator === "OR"}
+              sx={{
+                fontSize: 10,
+                fontWeight: 700,
+                color: "warning.main",
+                mx: 0.25,
+                cursor: "pointer",
+                px: 0.5,
+                py: 0.1,
+                borderRadius: "3px",
+                border: "1px solid",
+                borderColor: (theme) => alpha(theme.palette.warning.main, 0.3),
+                bgcolor: (theme) => alpha(theme.palette.warning.main, 0.08),
+                transition: (theme) =>
+                  theme.transitions.create(
+                    ["background-color", "border-color"],
+                    {
+                      duration: theme.transitions.duration.shortest,
+                    },
+                  ),
+                "&:hover": {
+                  bgcolor: (theme) => alpha(theme.palette.warning.main, 0.16),
+                  borderColor: (theme) =>
+                    alpha(theme.palette.warning.main, 0.5),
+                },
+                "&:focus-visible": {
+                  outline: "2px solid",
+                  outlineColor: (theme) =>
+                    alpha(theme.palette.warning.main, 0.5),
+                  outlineOffset: 1,
+                },
+                userSelect: "none",
+              }}
+            >
+              {logicOperator}
+            </Box>
+          )}
+          <Chip
+            key={idx}
+            label={`${fieldMap[token.field]?.label || token.field} ${opDefFor(token.field, token.operator)?.label || token.operator} ${Array.isArray(token.value) ? token.value.join(" – ") : token.value}`}
+            size="small"
+            onClick={() => editToken(idx)}
+            onDelete={() => handleDeleteToken(idx)}
+            deleteIcon={<Iconify icon="mdi:close" width={10} />}
+            sx={{
+              height: 22,
+              fontSize: 11,
+              mr: 0.25,
+              bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
+              color: "primary.main",
+              border: "1px solid",
+              borderColor: (theme) => alpha(theme.palette.primary.main, 0.2),
+              cursor: "pointer",
+              transition: (theme) =>
+                theme.transitions.create(["background-color", "border-color"], {
+                  duration: theme.transitions.duration.shortest,
+                }),
+              "&:hover": {
+                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.16),
+                borderColor: (theme) => alpha(theme.palette.primary.main, 0.4),
+              },
+              "& .MuiChip-deleteIcon": {
+                color: "primary.main",
+                "&:hover": { color: "primary.dark" },
+              },
+            }}
+          />
+        </React.Fragment>
+      )),
+    [
+      tokens,
+      logicOperator,
+      toggleLogicOperator,
+      fieldMap,
+      opDefFor,
+      editToken,
+      handleDeleteToken,
+    ],
+  );
 
   const prefixChips = inlinePrefix.map((p, i) => (
     <Box
@@ -1079,7 +1183,7 @@ const QueryInput = forwardRef(function QueryInput(
           "&:focus-within": { borderColor: "primary.main" },
         }}
       >
-        {tokenChips}
+        {renderTokensWithOperator()}
         {prefixChips}
         <TextField
           size="small"
@@ -1247,7 +1351,7 @@ const QueryInput = forwardRef(function QueryInput(
             ...params.InputProps,
             startAdornment: (
               <>
-                {tokenChips}
+                {renderTokensWithOperator()}
                 {prefixChips}
               </>
             ),

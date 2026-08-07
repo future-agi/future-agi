@@ -24,6 +24,7 @@ import React, {
   useState,
 } from "react";
 import Iconify from "src/components/iconify";
+import { alpha } from "@mui/material/styles";
 import { useAIFilter } from "src/hooks/use-ai-filter";
 
 // ---------------------------------------------------------------------------
@@ -231,6 +232,15 @@ function QueryInput({ onApply, initialTokens = [] }) {
   const [partialOp, setPartialOp] = useState(null);
   const [inputValue, setInputValue] = useState("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  // TODO: currently the logic operator is UI-only — clicking the badge
+  // toggles the visual indicator but does not affect the actual query logic.
+  // When the backend adds AND/OR semantics, expose this via the onApply
+  // callback so the parent component can adjust the query accordingly.
+  const [logicOperator, setLogicOperator] = useState("AND");
+
+  const toggleLogicOperator = useCallback(() => {
+    setLogicOperator((prev) => (prev === "AND" ? "OR" : "AND"));
+  }, []);
   const [focused, setFocused] = useState(false);
 
   const phase = !partialField ? "field" : !partialOp ? "operator" : "value";
@@ -316,7 +326,13 @@ function QueryInput({ onApply, initialTokens = [] }) {
       setTokens(updated);
       setPartialField(token.field);
       setPartialOp(token.operator);
-      setInputValue(token.value);
+      setInputValue(
+        Array.isArray(token.value)
+          ? token.value.join(", ")
+          : typeof token.value === "string"
+            ? token.value
+            : "",
+      );
       setTimeout(() => setDropdownOpen(true), 0);
       onApply(updated.length > 0 ? updated : []);
     },
@@ -470,32 +486,92 @@ function QueryInput({ onApply, initialTokens = [] }) {
             ...params.InputProps,
             startAdornment: (
               <>
-                {/* Completed filter chips */}
+                {/* Completed filter chips with AND/OR operator badges */}
                 {tokens.map((t, i) => (
-                  <Chip
-                    key={i}
-                    size="small"
-                    onClick={() => editToken(i)}
-                    onDelete={() => handleDeleteToken(i)}
-                    label={
-                      <span
-                        style={{ fontFamily: "monospace", fontSize: "12px" }}
+                  <React.Fragment key={i}>
+                    {i > 0 && (
+                      <Box
+                        component="button"
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleLogicOperator();
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            toggleLogicOperator();
+                          }
+                        }}
+                        aria-label={`Filter logic operator: ${logicOperator}. Click or press Space to toggle.`}
+                        aria-pressed={logicOperator === "OR"}
+                        sx={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          color: "warning.main",
+                          mx: 0.25,
+                          cursor: "pointer",
+                          px: 0.5,
+                          py: 0.1,
+                          borderRadius: "3px",
+                          border: "1px solid",
+                          borderColor: (theme) =>
+                            alpha(theme.palette.warning.main, 0.3),
+                          bgcolor: (theme) =>
+                            alpha(theme.palette.warning.main, 0.08),
+                          transition: (theme) =>
+                            theme.transitions.create(
+                              ["background-color", "border-color"],
+                              { duration: theme.transitions.duration.shortest },
+                            ),
+                          "&:hover": {
+                            bgcolor: (theme) =>
+                              alpha(theme.palette.warning.main, 0.16),
+                            borderColor: (theme) =>
+                              alpha(theme.palette.warning.main, 0.5),
+                          },
+                          "&:focus-visible": {
+                            outline: "2px solid",
+                            outlineColor: (theme) =>
+                              alpha(theme.palette.warning.main, 0.5),
+                            outlineOffset: 1,
+                          },
+                          userSelect: "none",
+                        }}
                       >
-                        <span style={{ fontWeight: 600 }}>
-                          {FIELD_MAP[t.field]?.label || t.field}
-                        </span>{" "}
-                        <span style={{ opacity: 0.6 }}>{t.operator}</span>{" "}
-                        <span style={{ fontWeight: 500 }}>{t.value}</span>
-                      </span>
-                    }
-                    sx={{
-                      height: 22,
-                      mr: 0.5,
-                      borderRadius: "4px",
-                      cursor: "pointer",
-                      "&:hover": { borderColor: "primary.main" },
-                    }}
-                  />
+                        {logicOperator}
+                      </Box>
+                    )}
+                    <Chip
+                      key={i}
+                      size="small"
+                      onClick={() => editToken(i)}
+                      onDelete={() => handleDeleteToken(i)}
+                      label={
+                        <span
+                          style={{ fontFamily: "monospace", fontSize: "12px" }}
+                        >
+                          <span style={{ fontWeight: 600 }}>
+                            {FIELD_MAP[t.field]?.label || t.field}
+                          </span>{" "}
+                          <span style={{ opacity: 0.6 }}>{t.operator}</span>{" "}
+                          <span style={{ fontWeight: 500 }}>
+                            {Array.isArray(t.value)
+                              ? t.value.join(", ")
+                              : t.value}
+                          </span>
+                        </span>
+                      }
+                      sx={{
+                        height: 22,
+                        mr: 0.5,
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        "&:hover": { borderColor: "primary.main" },
+                      }}
+                    />
+                  </React.Fragment>
                 ))}
                 {/* Partial clause tokens (field, operator typed but value pending) */}
                 {inlinePrefix.map((p, i) => (
@@ -895,16 +971,13 @@ const EvalFilterPanel = ({
     });
   }, []);
 
-  const handleApplyFromNlp = useCallback(
-    (nlpRows) => {
-      // Sync to Basic tab rows so user can see/edit them there too
-      setRows(nlpRows);
-      // Auto-apply immediately
-      onApply(rowsToApiFilters(nlpRows));
-      // Don't close — user can keep adding or switch to Basic to edit
-    },
-    [onApply],
-  );
+  const handleApplyFromNlp = useCallback((nlpRows) => {
+    // Sync to Basic tab rows so user can see/edit them there too.
+    // Let the auto-apply effect (debounced) fire the onApply call so
+    // we don't double-fire (once synchronously here and once from the
+    // rows-change effect below).
+    setRows(nlpRows);
+  }, []);
 
   const handleAiFilter = useCallback(async () => {
     if (!aiQuery.trim()) return;
@@ -1125,7 +1198,10 @@ const EvalFilterPanel = ({
 
             <QueryInput
               onApply={handleApplyFromNlp}
-              initialTokens={rows.filter((r) => r.value)}
+              initialTokens={rows.filter((r) => {
+                if (Array.isArray(r?.value)) return r.value.length > 0;
+                return Boolean(r?.value);
+              })}
             />
           </>
         )}
