@@ -32,6 +32,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/realtime"
+	"github.com/futureagi/agentcc-gateway/internal/redisstate"
 	"github.com/futureagi/agentcc-gateway/internal/responses"
 	"github.com/futureagi/agentcc-gateway/internal/rotation"
 	"github.com/futureagi/agentcc-gateway/internal/routing"
@@ -68,7 +69,11 @@ func (s *Server) SetKeyRevocationPublisher(pub KeyRevocationPublisher) {
 }
 
 // New creates a new gateway server.
-func New(cfg *config.Config, configPath string, registry *providers.Registry, engine *pipeline.Engine, keyStore *auth.KeyStore, guardrailEngine *guardrails.Engine, policyStore *policy.Store, metricsRegistry *metrics.Registry, modelDBPtr *atomic.Pointer[modeldb.ModelDB], tenantStore *tenant.Store, onOrgConfigChange func(string)) *Server {
+func New(cfg *config.Config, configPath string, registry *providers.Registry, engine *pipeline.Engine, keyStore *auth.KeyStore, guardrailEngine *guardrails.Engine, policyStore *policy.Store, metricsRegistry *metrics.Registry, modelDBPtr *atomic.Pointer[modeldb.ModelDB], tenantStore *tenant.Store, onOrgConfigChange func(string), redisClients ...*redisstate.Client) *Server {
+	var redisClient *redisstate.Client
+	if len(redisClients) > 0 {
+		redisClient = redisClients[0]
+	}
 	authEnabled := false
 	if cfg != nil {
 		authEnabled = cfg.Auth.Enabled
@@ -861,6 +866,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	var handler http.Handler = router
 	handler = middleware.Timeout(cfg.Server.DefaultRequestTimeout, "/v1/chat/completions")(handler)
 	handler = middleware.KeyAuth(authKeyStore, authEnabled)(handler)
+	handler = middleware.LicenseAuth(cfg.LicenseAuth, redisstate.NewLicenseStore(redisClient))(handler)
 	handler = middleware.RequestID(handler)
 	if cfg.CORS.Enabled {
 		handler = middleware.CORS(cfg.CORS)(handler)

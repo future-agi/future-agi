@@ -173,11 +173,16 @@ def filter_available_source_ids_for_annotation(
     as in-progress). FAIL OPEN on a CH error — a transient read must not silently
     drop every add. ``organization`` / ``workspace`` are already applied upstream by
     ``resolve_filtered_trace_ids``. Returns ``(available_ids, unavailable_count,
-    unavailable_message)`` preserving input order. Never query PG.
+    unavailable_message, previews_by_id)`` preserving input order. Never query PG.
+
+    ``previews_by_id`` ({trace_id: payload}) hands the caller the grid preview built
+    from the roots this function already read, so the add path can persist
+    ``QueueItem.source_preview`` without a second CH read (TH-7211). Empty for
+    non-trace types and whenever the roots could not be read.
     """
     ordered_ids = [str(source_id) for source_id in source_ids]
     if source_type != QueueItemSourceType.TRACE.value or not ordered_ids:
-        return ordered_ids, 0, None
+        return ordered_ids, 0, None, {}
 
     roots_by_trace = _batch_ch_trace_roots(
         ordered_ids,
@@ -192,9 +197,14 @@ def filter_available_source_ids_for_annotation(
         return root is None or _is_terminal_span_status(getattr(root, "status", None))
 
     available_ids = [sid for sid in ordered_ids if _available(sid)]
+    previews_by_id = {
+        trace_id: _trace_preview_payload(root)
+        for trace_id, root in roots_by_trace.items()
+        if root is not None
+    }
     unavailable_count = len(ordered_ids) - len(available_ids)
     if unavailable_count <= 0:
-        return available_ids, 0, None
+        return available_ids, 0, None, previews_by_id
 
     if unavailable_count == 1:
         message = (
@@ -205,7 +215,7 @@ def filter_available_source_ids_for_annotation(
             f"{unavailable_count} traces are still in progress and "
             "were not added to the annotation queue."
         )
-    return available_ids, unavailable_count, message
+    return available_ids, unavailable_count, message, previews_by_id
 
 
 def source_project(source_obj, organization=None):
@@ -734,7 +744,11 @@ def _ch_root_span_for_trace(trace_id):
 
     try:
         with get_reader() as reader:
-            roots = reader.roots_by_trace_ids([str(trace_id)], include_heavy=False)
+            roots = reader.roots_by_trace_ids(
+                [str(trace_id)],
+                include_heavy=False,
+                dedup_via_limit_by=True,  # see _batch_ch_trace_roots (TH-7226)
+            )
     except Exception as exc:
         logger.warning("ch_trace_render_error", trace_id=str(trace_id), error=str(exc))
         return None
@@ -780,6 +794,7 @@ def _batch_ch_spans(span_ids, *, project_id=None, include_heavy=True, caller="re
                 [str(s) for s in span_ids],
                 project_id=project_id,
                 include_heavy=include_heavy,
+                dedup_via_limit_by=True,  # see _batch_ch_trace_roots (TH-7226)
             )
     except Exception as exc:
         logger.warning(
@@ -827,7 +842,13 @@ def _batch_ch_trace_roots(trace_ids, *, project_id=None, caller="render"):
             for start in range(0, len(ids), _CH_TRACE_ID_BATCH):
                 chunk = ids[start : start + _CH_TRACE_ID_BATCH]
                 for span in reader.roots_by_trace_ids(
-                    chunk, include_heavy=False, project_id=project_id
+                    chunk,
+                    include_heavy=False,
+                    project_id=project_id,
+                    # Dedup without FINAL: 25-id page 179ms/221MiB -> 50ms/40MiB
+                    # on dev, 500-id export chunk 2,358ms/3.4GiB -> 123ms/67MiB,
+                    # same rows. The memory is what 504s an export (TH-7226).
+                    dedup_via_limit_by=True,
                 ):
                     roots_by_trace.setdefault(str(span.trace_id), []).append(span)
     except Exception as exc:
@@ -1245,6 +1266,79 @@ def _get_source_workspace(obj):
     return None
 
 
+def _trace_preview_payload(root_span):
+    """Grid payload for a trace, from its CH root span."""
+    return {
+        "type": "trace",
+        "name": root_span.name or "",
+        "project_id": str(root_span.project_id) if root_span.project_id else None,
+        "input_preview": _truncate(str(root_span.input or ""), 200),
+        "output_preview": _truncate(str(root_span.output or ""), 200),
+        # CH has no response_time column; latency is the only signal.
+        "latency_ms": root_span.latency_ms,
+        "response_time_ms": root_span.latency_ms,
+    }
+
+
+def _span_preview_payload(ch_span):
+    """Grid payload for an observation span."""
+    return {
+        "type": "observation_span",
+        "name": ch_span.name or "",
+        "observation_type": ch_span.observation_type or "",
+        "input_preview": _truncate(str(ch_span.input or ""), 200),
+        "output_preview": _truncate(str(ch_span.output or ""), 200),
+        # CH has no response_time column; latency is the only signal.
+        "latency_ms": ch_span.latency_ms,
+        "response_time_ms": ch_span.latency_ms,
+    }
+
+
+def _session_preview_payload(session_id, fields):
+    """Grid payload for a trace session, from its CH identity fields."""
+    return {
+        "type": "trace_session",
+        "session_id": str(session_id),
+        "name": fields.get("display_name") or fields.get("external_session_id") or "",
+        "project_id": (str(fields["project_id"]) if fields.get("project_id") else None),
+    }
+
+
+def preview_payload_for_source(source_type, source_obj):
+    """Grid payload for an ALREADY-RESOLVED source object, or ``None``.
+
+    Lets the add path persist ``QueueItem.source_preview`` from the object it has
+    just resolved, so rendering a page never re-reads ClickHouse (TH-7211). Shares
+    the payload builders with :func:`resolve_source_preview`, so the cached dict and
+    the live one cannot drift.
+
+    Only the three CH-backed source types are captured — they are the ones whose
+    render costs a ``spans FINAL`` merge. ``dataset_row`` / ``prototype_run`` /
+    ``call_execution`` resolve from prefetched Postgres rows and are already cheap,
+    so they return ``None`` and keep using the live path. ``None`` is also the
+    answer when the source did not resolve; the serializer then falls back.
+    """
+    if source_obj is None:
+        return None
+    try:
+        if source_type == QueueItemSourceType.TRACE.value:
+            root_span = getattr(source_obj, "root_span", None)
+            return _trace_preview_payload(root_span) if root_span is not None else None
+        if source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
+            return _span_preview_payload(source_obj)
+        if source_type == QueueItemSourceType.TRACE_SESSION.value:
+            return _session_preview_payload(
+                getattr(source_obj, "id", ""),
+                {
+                    "display_name": getattr(source_obj, "name", ""),
+                    "project_id": getattr(source_obj, "project_id", None),
+                },
+            )
+    except Exception as exc:  # never block an add on a preview
+        logger.warning("source_preview_capture_failed", error=str(exc))
+    return None
+
+
 def resolve_source_preview(item, *, ch_cache=None):
     """Return a standardized preview dict for a QueueItem's source.
 
@@ -1274,18 +1368,7 @@ def resolve_source_preview(item, *, ch_cache=None):
             )
             if root_span is None:
                 return {"type": "trace", "deleted": True}
-            return {
-                "type": "trace",
-                "name": root_span.name or "",
-                "project_id": (
-                    str(root_span.project_id) if root_span.project_id else None
-                ),
-                "input_preview": _truncate(str(root_span.input or ""), 200),
-                "output_preview": _truncate(str(root_span.output or ""), 200),
-                # CH has no response_time column; latency is the only signal.
-                "latency_ms": root_span.latency_ms,
-                "response_time_ms": root_span.latency_ms,
-            }
+            return _trace_preview_payload(root_span)
 
         elif item.source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
             # CH-only: resolve the span from CH by its soft id.
@@ -1296,16 +1379,7 @@ def resolve_source_preview(item, *, ch_cache=None):
             )
             if ch_span is None:
                 return {"type": "observation_span", "deleted": True}
-            return {
-                "type": "observation_span",
-                "name": ch_span.name or "",
-                "observation_type": ch_span.observation_type or "",
-                "input_preview": _truncate(str(ch_span.input or ""), 200),
-                "output_preview": _truncate(str(ch_span.output or ""), 200),
-                # CH has no response_time column; latency is the only signal.
-                "latency_ms": ch_span.latency_ms,
-                "response_time_ms": ch_span.latency_ms,
-            }
+            return _span_preview_payload(ch_span)
 
         elif item.source_type == QueueItemSourceType.PROTOTYPE_RUN.value:
             run = item.prototype_run
@@ -1339,16 +1413,7 @@ def resolve_source_preview(item, *, ch_cache=None):
             )
             if fields is None:
                 return {"type": "trace_session", "deleted": True}
-            return {
-                "type": "trace_session",
-                "session_id": str(item.trace_session_id),
-                "name": fields.get("display_name")
-                or fields.get("external_session_id")
-                or "",
-                "project_id": (
-                    str(fields["project_id"]) if fields.get("project_id") else None
-                ),
-            }
+            return _session_preview_payload(item.trace_session_id, fields)
 
     except Exception as e:
         logger.warning("source_preview_error", item_id=str(item.id), error=str(e))

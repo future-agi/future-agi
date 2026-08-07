@@ -24,8 +24,13 @@ describe("OpenAPI runtime contract", () => {
   });
 
   it("finds endpoints across the full Management API surface", () => {
-    expect(findOpenApiEndpoint("/usage/ee/licenses/", "get")).toMatchObject({
-      template: "/usage/ee/licenses/",
+    expect(
+      findOpenApiEndpoint(
+        "/v1/internal/licenses/2db3e0e8-5cec-4bb3-a358-ff1ea0671599",
+        "get",
+      ),
+    ).toMatchObject({
+      template: "/v1/internal/licenses/{grant_id}",
       method: "get",
     });
     expect(
@@ -263,9 +268,14 @@ describe("OpenAPI runtime contract", () => {
 
   it("does not infer an empty query contract when backend has not declared one", () => {
     const result = validateContractedRequestConfig({
-      url: "/usage/ee/licenses/?legacy=true",
+      url: "/v1/internal/licenses?legacy=true",
       method: "post",
-      data: { band: "team", billing_interval: "monthly" },
+      data: {
+        customer_name: "Test Corp",
+        license_type: "production",
+        band: "team",
+        expires_at: "2027-01-01T00:00:00Z",
+      },
     });
 
     expect(result).toMatchObject({ ok: true });
@@ -396,7 +406,10 @@ describe("OpenAPI runtime contract", () => {
   it("does not unwrap response envelopes to hide schema drift", () => {
     const response = {
       status: 200,
-      config: { url: "/usage/ee/licenses/", method: "get" },
+      config: {
+        url: "/v1/internal/licenses/2db3e0e8-5cec-4bb3-a358-ff1ea0671599",
+        method: "get",
+      },
       data: {
         result: {
           licenses: [],
@@ -410,14 +423,14 @@ describe("OpenAPI runtime contract", () => {
     expect(result.error.message).toContain(
       "response contract validation failed",
     );
-    expect(result.error.message).toContain("status");
+    expect(result.error.message).toContain("result");
   });
 
   it("validates default error responses instead of falling back to success schemas", () => {
     const response = {
       status: 404,
       config: {
-        url: "/usage/ee/licenses/2db3e0e8-5cec-4bb3-a358-ff1ea0671599/revoke/",
+        url: "/v1/internal/licenses/2db3e0e8-5cec-4bb3-a358-ff1ea0671599/status",
         method: "post",
       },
       data: {
@@ -429,7 +442,7 @@ describe("OpenAPI runtime contract", () => {
     expect(validateContractedResponse(response)).toMatchObject({
       ok: true,
       endpoint: {
-        template: "/usage/ee/licenses/{grant_id}/revoke/",
+        template: "/v1/internal/licenses/{grant_id}/status",
         method: "post",
       },
     });

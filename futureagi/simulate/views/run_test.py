@@ -16,12 +16,6 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework import status
-from rest_framework.exceptions import NotFound
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
-from rest_framework.views import APIView
-
 from model_hub.models.api_key import ApiKey
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.evals_metric import EvalTemplate
@@ -29,6 +23,11 @@ from model_hub.utils.function_eval_params import (
     normalize_eval_runtime_config,
     params_with_defaults_for_response,
 )
+from rest_framework import status
+from rest_framework.exceptions import NotFound
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
 from simulate.models import (
     AgentDefinition,
     CallExecution,
@@ -143,12 +142,12 @@ from simulate.utils.agent_optimiser import (
     get_or_create_optimiser_for_test_execution,
 )
 from simulate.utils.baseline import resolve_baseline_id
-from simulate.utils.eval_summary import iter_live_eval_outputs
 from simulate.utils.eval_summary import (
     _build_template_statistics,
     _calculate_final_template_summaries,
     _get_completed_call_executions,
     _get_eval_configs_with_template,
+    iter_live_eval_outputs,
 )
 from simulate.utils.scenario_completeness import check_scenarios_incomplete
 from simulate.utils.sql_query import (
@@ -233,6 +232,14 @@ def _voice_sim_gate_response(user_organization, gm):
             ),
             status=status.HTTP_402_PAYMENT_REQUIRED,
         )
+
+    from ee.usage.deployment import DeploymentMode
+
+    if not DeploymentMode.is_cloud():
+        # Voice sim is open on self-hosted (voice_sim is not in the
+        # oss_locked set), and plan entitlements are a cloud-only concept.
+        # Nothing to gate off-cloud.
+        return None
 
     feat_check = Entitlements.check_feature(str(user_organization.id), "has_voice_sim")
     if not feat_check.allowed:
@@ -633,6 +640,7 @@ class RunTestDetailView(APIView):
 
                 if "eval_config_ids" in validated_data:
                     eval_configs = SimulateEvalConfig.objects.filter(
+                        run_test_workspace_filter(request, "run_test"),
                         id__in=validated_data["eval_config_ids"],
                         run_test__organization=user_organization,
                     )
@@ -970,6 +978,7 @@ class TestExecutionCancelView(APIView):
                 # Verify user has access to this test execution
                 test_execution = get_object_or_404(
                     TestExecution,
+                    run_test_workspace_filter(request, "run_test"),
                     id=test_execution_id,
                     run_test__organization=user_organization,
                     run_test__deleted=False,
@@ -979,6 +988,7 @@ class TestExecutionCancelView(APIView):
                 # Verify user has access to this run test
                 get_object_or_404(
                     RunTest,
+                    run_test_workspace_filter(request),
                     id=run_test_id,
                     organization=user_organization,
                     deleted=False,
@@ -1256,9 +1266,11 @@ class TestExecutionAPIView(APIView):
             search_query = request.query_params.get("search", "").strip()
             status_filter = request.query_params.get("status", "").strip()
 
-            # Filter test executions by organization
+            # Filter test executions by organization and workspace
             test_executions = TestExecution.objects.filter(
-                run_test__organization=user_organization, run_test__deleted=False
+                run_test_workspace_filter(request, "run_test"),
+                run_test__organization=user_organization,
+                run_test__deleted=False,
             ).select_related("run_test", "run_test__agent_definition")
 
             # Apply search filter if search query is provided
@@ -1338,8 +1350,9 @@ class CallExecutionAPIView(APIView):
                 else ""
             )
 
-            # Filter call executions by organization
+            # Filter call executions by organization and workspace
             call_executions = CallExecution.objects.filter(
+                run_test_workspace_filter(request, "test_execution__run_test"),
                 test_execution__run_test__organization=user_organization,
                 test_execution__run_test__deleted=False,
                 simulation_call_type=CallExecution.SimulationCallType.VOICE,
@@ -1415,6 +1428,7 @@ class RunTestKPIsView(APIView):
             # Get the run test
             test_executor = get_object_or_404(
                 TestExecution,
+                run_test_workspace_filter(request, "run_test"),
                 id=test_execution_id,
                 run_test__organization=user_organization,
                 run_test__deleted=False,
@@ -1569,20 +1583,34 @@ class RunTestKPIsView(APIView):
             if choice_metric_ids:
                 simulate_eval_configs = SimulateEvalConfig.objects.filter(
                     id__in=list(choice_metric_ids)
-                )
+                ).select_related("eval_template")
                 config_choices_map = {}
                 for sec in simulate_eval_configs:
-                    cfg = (sec.config or {}).get("config", {})
-                    choices = cfg.get("choices", [])
+                    binding_config = sec.config or {}
+                    runtime_config = binding_config.get(
+                        "run_config"
+                    ) or binding_config.get("config", {})
+                    choices = (
+                        runtime_config.get("choices")
+                        or sec.eval_template.choices
+                        or list((sec.eval_template.choice_scores or {}).keys())
+                    )
                     if choices:
                         config_choices_map[str(sec.id)] = choices
 
                 for base_name, data in choice_counts.items():
                     mid = data.pop("_metric_id")
-                    eval_averages[base_name] = data
                     choices_list = config_choices_map.get(str(mid), [])
+                    if not choices_list:
+                        choices_list = list(data)
                     if choices_list:
+                        eval_averages[base_name] = {
+                            str(choice): data.get(str(choice).lower(), 0)
+                            for choice in choices_list
+                        }
                         eval_averages[base_name]["choices"] = choices_list
+                    else:
+                        eval_averages[base_name] = data
 
             # --- Scenario graphs ---
             scenario_graphs = {}
@@ -1653,6 +1681,8 @@ class RunTestKPIsView(APIView):
 
             return Response(kpi_data, status=status.HTTP_200_OK)
 
+        except Http404:
+            return _gm.not_found("Test execution not found.")
         except Exception as e:
             traceback.print_exc()
             return _gm.internal_server_error_response(
@@ -2569,9 +2599,9 @@ class PerformanceSummaryView(APIView):
 
                 # Get overall score if available
                 if call_execution.overall_score is not None:
-                    scenario_performance[scenario_id]["total_score"] += (
-                        call_execution.overall_score
-                    )
+                    scenario_performance[scenario_id][
+                        "total_score"
+                    ] += call_execution.overall_score
                     scenario_performance[scenario_id]["scores"].append(
                         call_execution.overall_score
                     )
@@ -2622,6 +2652,8 @@ class PerformanceSummaryView(APIView):
 
             return Response(serializer.data, status=status.HTTP_200_OK)
 
+        except Http404:
+            return _gm.not_found("Test execution not found.")
         except Exception as e:
             traceback.print_exc()
             return _gm.internal_server_error_response(
@@ -2695,6 +2727,7 @@ class TestExecutionAnalyticsView(APIView):
             # Get the test execution
             test_execution = get_object_or_404(
                 TestExecution,
+                run_test_workspace_filter(request, "run_test"),
                 id=test_execution_id,
                 run_test__organization=user_organization,
                 run_test__deleted=False,
@@ -2857,6 +2890,8 @@ class TestExecutionAnalyticsView(APIView):
 
             return Response(serializer.data, status=status.HTTP_200_OK)
 
+        except Http404:
+            return _gm.not_found("Test execution not found.")
         except Exception as e:
             traceback.print_exc()
             return _gm.internal_server_error_response(
@@ -3082,6 +3117,8 @@ class RunTestAnalyticsView(APIView):
 
             return Response(analytics_data, status=status.HTTP_200_OK)
 
+        except Http404:
+            return _gm.not_found("Run test not found.")
         except Exception as e:
             traceback.print_exc()
             return _gm.internal_server_error_response(
@@ -3121,6 +3158,7 @@ class CallExecutionDetailView(APIView):
             # Get the call execution
             call_execution = get_object_or_404(
                 CallExecution,
+                run_test_workspace_filter(request, "test_execution__run_test"),
                 id=call_execution_id,
                 test_execution__run_test__organization=user_organization,
                 test_execution__run_test__deleted=False,
@@ -3220,14 +3258,25 @@ class CallExecutionDetailView(APIView):
                     vapi_data, include_call_logs=False
                 )
             else:
-                # Fallback for other providers (retell etc.): ship the raw
-                # payload under `raw_log` so the Attributes tab at least
-                # renders the full object tree.
-                provider_data = next(
-                    (v for v in pcd.values() if isinstance(v, dict)), None
+                # Other providers (Bland, Retell, ElevenLabs, Twilio): reuse the
+                # same per-provider normalizer the ingest pipeline runs, so the
+                # Attributes tab renders flat eval attributes (call.duration,
+                # conversation.transcript.*, cost, ...) instead of a single
+                # collapsed raw_log tree. Falls back to raw_log if no normalizer
+                # matches the provider key.
+                from tracer.utils.observability_provider import (
+                    flatten_provider_call_attributes,
+                )
+
+                provider_key, provider_data = next(
+                    ((k, v) for k, v in pcd.items() if isinstance(v, dict)),
+                    (None, None),
                 )
                 if provider_data:
-                    response_data["attributes"] = {"raw_log": provider_data}
+                    attrs = flatten_provider_call_attributes(
+                        provider_key, provider_data
+                    )
+                    response_data["attributes"] = attrs or {"raw_log": provider_data}
 
             return Response(response_data, status=status.HTTP_200_OK)
 
@@ -3268,6 +3317,7 @@ class CallExecutionDetailView(APIView):
             # Get the call execution
             get_object_or_404(
                 CallExecution,
+                run_test_workspace_filter(request, "test_execution__run_test"),
                 id=call_execution_id,
                 test_execution__run_test__organization=user_organization,
                 test_execution__run_test__deleted=False,
@@ -3348,8 +3398,10 @@ class CallExecutionDetailView(APIView):
 
             return Response(serializer.data, status=status.HTTP_200_OK)
 
+        except Http404:
+            return self.gm.not_found("Call execution not found")
         except CallExecution.DoesNotExist:
-            return self.gm.bad_request("Call execution not found")
+            return self.gm.not_found("Call execution not found")
         except Exception as e:
             logger.exception(
                 "error_updating_call_execution_status",
@@ -3396,14 +3448,16 @@ class CallExecutionLogsView(APIView):
             }
             if customer_call_id:
                 call_execution = CallExecution.objects.filter(
+                    run_test_workspace_filter(request, "test_execution__run_test"),
                     customer_call_id=customer_call_id,
                     **call_execution_filters,
                 ).first()
                 if not call_execution:
-                    return self.gm.bad_request("Call execution not found.")
+                    return self.gm.not_found("Call execution not found.")
             else:
                 call_execution = get_object_or_404(
                     CallExecution,
+                    run_test_workspace_filter(request, "test_execution__run_test"),
                     id=call_execution_id,
                     **call_execution_filters,
                 )
@@ -3489,14 +3543,16 @@ class CallExecutionLogsView(APIView):
                         provider_call_id = None
                         provider_api_key = None
                         try:
-                            test_exec = getattr(
-                                call_execution, "test_execution", None
-                            )
+                            test_exec = getattr(call_execution, "test_execution", None)
                             version = (
-                                getattr(test_exec, "agent_version", None) if test_exec else None
+                                getattr(test_exec, "agent_version", None)
+                                if test_exec
+                                else None
                             )
                             if version is not None:
-                                from simulate.services.agent_definition import resolve_api_key_for_version
+                                from simulate.services.agent_definition import (
+                                    resolve_api_key_for_version,
+                                )
 
                                 provider_api_key = resolve_api_key_for_version(version)
                             provider_call_id = (
@@ -3576,6 +3632,8 @@ class CallExecutionLogsView(APIView):
             )
             return paginator.get_paginated_response(logs_serializer.data)
 
+        except Http404:
+            return self.gm.not_found("Call execution not found.")
         except Exception as e:  # noqa: BLE001
             logger.exception("Failed to fetch call execution logs")
             return self.gm.internal_server_error_response(
@@ -3618,6 +3676,7 @@ class TestExecutionColumnOrderView(APIView):
             # Get the test execution
             test_execution = get_object_or_404(
                 TestExecution,
+                run_test_workspace_filter(request, "run_test"),
                 id=test_execution_id,
                 run_test__organization=user_organization,
                 run_test__deleted=False,
@@ -4148,6 +4207,7 @@ class CallExecutionErrorLocalizerTasksView(APIView):
             # Get the call execution
             call_execution = get_object_or_404(
                 CallExecution,
+                run_test_workspace_filter(request, "test_execution__run_test"),
                 id=call_execution_id,
                 test_execution__run_test__organization=user_organization,
                 test_execution__run_test__deleted=False,
@@ -4449,9 +4509,13 @@ class DeleteEvalConfigView(APIView):
             if not user_organization:
                 return _gm.not_found("Organization not found for the user.")
 
-            # Get the run test and verify it belongs to the user's organization
+            # Get the run test and verify it belongs to the user's organization and workspace
             run_test = get_object_or_404(
-                RunTest, id=run_test_id, organization=user_organization, deleted=False
+                RunTest,
+                run_test_workspace_filter(request),
+                id=run_test_id,
+                organization=user_organization,
+                deleted=False,
             )
 
             with transaction.atomic():
@@ -4482,6 +4546,8 @@ class DeleteEvalConfigView(APIView):
                 status=status.HTTP_200_OK,
             )
 
+        except Http404:
+            return _gm.not_found("Run test not found.")
         except SimulateEvalConfig.DoesNotExist:
             return _gm.not_found("Evaluation config not found")
         except Exception as e:
@@ -4524,7 +4590,11 @@ class GetEvalConfigStructureView(APIView):
 
             # Get the run test and verify it belongs to the user's organization
             run_test = get_object_or_404(
-                RunTest, id=run_test_id, organization=user_organization, deleted=False
+                RunTest,
+                run_test_workspace_filter(request),
+                id=run_test_id,
+                organization=user_organization,
+                deleted=False,
             )
 
             # Get the eval config and verify it belongs to the run test
@@ -4539,6 +4609,8 @@ class GetEvalConfigStructureView(APIView):
                 eval_config, user_organization
             )
 
+        except Http404:
+            return self._gm.not_found("Evaluation config not found.")
         except Exception as e:
             logger.exception(f"Error in fetching eval config structure: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -4944,9 +5016,13 @@ class RunTestExecutionsView(APIView):
             if not user_organization:
                 return _gm.not_found("Organization not found for the user.")
 
-            # Get the run test and verify it belongs to the user's organization
+            # Get the run test and verify it belongs to the user's organization and workspace
             run_test = get_object_or_404(
-                RunTest, id=run_test_id, organization=user_organization, deleted=False
+                RunTest,
+                run_test_workspace_filter(request),
+                id=run_test_id,
+                organization=user_organization,
+                deleted=False,
             )
 
             # Get query parameters
@@ -5249,6 +5325,8 @@ class RunTestExecutionsView(APIView):
             )
             return paginator.get_paginated_response(execution_serializer.data)
 
+        except Http404:
+            return _gm.not_found("Run test not found.")
         except Exception as e:
             traceback.print_exc()
             return _gm.internal_server_error_response(
@@ -5355,6 +5433,7 @@ class CSVExportView(APIView):
                 # Export TestExecution data
                 test_execution = get_object_or_404(
                     TestExecution,
+                    run_test_workspace_filter(request, "run_test"),
                     id=item_id,
                     run_test__organization=user_organization,
                     run_test__deleted=False,
@@ -5559,8 +5638,12 @@ class RunTestEvalSummaryView(APIView):
             )
             execution_id = request.validated_query_data.get("execution_id")
 
-            run_test = RunTest.objects.get(
-                id=run_test_id, organization=user_organization
+            run_test = get_object_or_404(
+                RunTest,
+                run_test_workspace_filter(request),
+                id=run_test_id,
+                organization=user_organization,
+                deleted=False,
             )
             eval_configs = _get_eval_configs_with_template(run_test)
 
@@ -5573,6 +5656,8 @@ class RunTestEvalSummaryView(APIView):
 
             return self._gm.success_response(final_data)
 
+        except Http404:
+            return self._gm.not_found("Run test not found.")
         except Exception:
             print(traceback.format_exc())
             return self._gm.internal_server_error_response(
@@ -5613,8 +5698,12 @@ class RunTestEvalSummaryComparisonView(APIView):
 
             execution_ids = request.validated_query_data["execution_ids"]
 
-            run_test = RunTest.objects.get(
-                id=run_test_id, organization=user_organization
+            run_test = get_object_or_404(
+                RunTest,
+                run_test_workspace_filter(request),
+                id=run_test_id,
+                organization=user_organization,
+                deleted=False,
             )
 
             eval_configs = _get_eval_configs_with_template(run_test)
@@ -5634,6 +5723,8 @@ class RunTestEvalSummaryComparisonView(APIView):
 
             return self._gm.success_response(comparison_results)
 
+        except Http404:
+            return self._gm.not_found("Run test not found.")
         except Exception:
             print(traceback.format_exc())
             return self._gm.internal_server_error_response(

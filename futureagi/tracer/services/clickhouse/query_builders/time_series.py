@@ -94,7 +94,15 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
 
         # Determine if we have attribute filters that prevent using the
         # pre-aggregated table.
-        filter_builder = ClickHouseFilterBuilder(table=self.RAW_TABLE)
+        # Project + window scope must reach the filter compiler: without them
+        # the trace-membership subqueries it emits for SPAN_ATTRIBUTE /
+        # SYSTEM_METRIC filters scan every tenant's spans for all time.
+        filter_builder = ClickHouseFilterBuilder(
+            table=self.RAW_TABLE,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+            span_date_scope=True,
+        )
         extra_where, extra_params = filter_builder.translate(self.filters)
         self.params.update(extra_params)
 

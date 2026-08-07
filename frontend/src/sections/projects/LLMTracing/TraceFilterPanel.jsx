@@ -925,7 +925,8 @@ const SESSION_VALUE_FIELDS = new Set([
   "last_message",
 ]);
 
-const FREE_TEXT_NO_OPTIONS_TEXT = "No suggestions yet — type a value to add it";
+const FREE_TEXT_NO_OPTIONS_TEXT =
+  "No values in the last 7 days — type to search, or add an exact value";
 
 function normalizePickerValues(values) {
   const rawValues = Array.isArray(values) ? values : values ? [values] : [];
@@ -972,6 +973,15 @@ function ValuePicker({
 
   const isIdOnlyField = !hasStaticChoices && ID_ONLY_FIELDS.has(propertyId);
 
+  // Backend search: ID fields (as before) plus custom attributes, whose
+  // BE path is now ngram-index-backed. Server-side search matters because
+  // the value list is capped and time-windowed — a value outside the first
+  // page can only be found by the backend. Other field types keep
+  // client-side filtering of the fetched page.
+  const usesBackendSearch =
+    !hasStaticChoices &&
+    (isIdOnlyField || metricType === "custom_attribute");
+
   // Primary: dashboard API values
   const {
     data: dashboardOptions = [],
@@ -982,7 +992,7 @@ function ValuePicker({
     metricType,
     projectIds: projectId ? [projectId] : [],
     source,
-    search: isIdOnlyField ? debouncedSearch : "",
+    search: usesBackendSearch ? debouncedSearch : "",
     enabled:
       !hasStaticChoices &&
       Boolean(anchorEl) &&
@@ -1092,9 +1102,7 @@ function ValuePicker({
             {isLoading
               ? "Loading..."
               : options.length === 0
-                ? singleSelect
-                  ? "No value available"
-                  : "No values available"
+                ? "No recent values"
                 : singleSelect
                   ? "Select a value..."
                   : "Select values..."}

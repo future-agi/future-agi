@@ -8,6 +8,8 @@ import React, {
   useState,
 } from "react";
 import { Helmet } from "react-helmet-async";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { InviteLinkCell } from "./invite-links";
 import UserHeaders from "./UserHeaders";
 import GridTable from "./GridTable";
 import { getUserQueryOptions } from "./getUserQueryOptions";
@@ -59,6 +61,11 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
     role === "workspace_admin";
 
   const { allowed: canSendInvite } = useCanSendInvite(orgLevel, effectiveLevel);
+
+  const { isOSS, isSuccess: modeConfirmed } = useDeploymentMode();
+  // Gated on canManageUsers: the link embeds the accept token, so it is a
+  // shareable credential.
+  const useInviteLinks = modeConfirmed && isOSS && canManageUsers;
 
   const columnDefs = useMemo(
     () => [
@@ -114,6 +121,17 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
         valueFormatter: (params) =>
           params?.value ? format(new Date(params?.value), "dd/MM/yyyy") : "",
       },
+      ...(useInviteLinks
+        ? [
+            {
+              headerName: "Invite link",
+              field: "invite_link",
+              flex: 1.8,
+              sortable: false,
+              cellRenderer: InviteLinkCell,
+            },
+          ]
+        : []),
       ...(canManageUsers
         ? [
             {
@@ -127,7 +145,7 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
           ]
         : []),
     ],
-    [canManageUsers, workspaceScope],
+    [canManageUsers, workspaceScope, workspaceId, useInviteLinks],
   );
 
   // When workspaceScope is true, use workspace-specific member endpoint

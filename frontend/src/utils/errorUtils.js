@@ -19,6 +19,41 @@ function withRetryGuidance(message, retryAction) {
   return `${baseMessage}${hasTerminalPunctuation(baseMessage) ? " " : ". "}${guidance}`;
 }
 
+// Keys are `UserSignupSerializer.Meta.fields`, values the inputs the signup form
+// renders. Deliberately not a generic snake-to-camel transform: a backend field
+// with no input on screen has nowhere to show, so it falls through to the
+// form-level message instead.
+const SIGNUP_FIELD_TO_FORM_FIELD = {
+  email: "email",
+  password: "password",
+  full_name: "fullName",
+};
+
+export function getSignupFieldErrors(error) {
+  if (error?.result?.error_code !== "SIGNUP_VALIDATION_FAILED") return null;
+
+  const fieldErrors = error?.result?.field_errors;
+  if (!fieldErrors || typeof fieldErrors !== "object") return null;
+
+  const fields = [];
+  const messages = [];
+
+  Object.entries(fieldErrors).forEach(([key, value]) => {
+    const message = [].concat(value).join(" ");
+    const name = SIGNUP_FIELD_TO_FORM_FIELD[key];
+    if (name) {
+      fields.push({ name, message });
+    } else if (key === "non_field_errors") {
+      // DRF's bucket for errors belonging to no single field: show it unlabelled.
+      messages.push(message);
+    } else {
+      messages.push(`${key}: ${message}`);
+    }
+  });
+
+  return { fields, message: messages.join(" ") };
+}
+
 export function getRequestErrorMessage(
   error,
   fallback = "Something went wrong",

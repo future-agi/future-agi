@@ -252,11 +252,39 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         """
         return query, self.params
 
-    def build_id_query(self) -> tuple[str, dict[str, Any]]:
+    def build_id_query(
+        self,
+        *,
+        created_at_floor: datetime | None = None,
+        created_at_ceiling: datetime | None = None,
+    ) -> tuple[str, dict[str, Any]]:
         """Filtered trace ids only — same root-span predicate/window as build(),
         no pagination/order. Lets the eval resolver select the same traces this
-        list endpoint returns."""
+        list endpoint returns.
+
+        ``created_at_floor`` (continuous eval tasks only): floor the root-span
+        scan on CH arrival time (``created_at``) instead of event time
+        (``start_time``), so a trace whose root span landed in CH after its
+        ``start_time`` is still picked up. ``None`` keeps the ``start_time``
+        window used by the UI list and historical tasks.
+        """
         self.start_date, self.end_date = self.parse_time_range(self.filters)
+        if created_at_floor is not None:
+            # Window on arrival (created_at), not start_time. NOTE: cross-table
+            # filter membership subqueries (span_date_scope) still window on
+            # start_time, so a filtered task can miss an arrival whose start_time
+            # predates parse_time_range's window — pre-existing residual (worse
+            # before this change), tracked as a follow-up.
+            self.params["created_at_floor"] = created_at_floor
+            time_where = "AND created_at >= %(created_at_floor)s"
+            if created_at_ceiling is not None:
+                self.params["created_at_ceiling"] = created_at_ceiling
+                time_where += " AND created_at < %(created_at_ceiling)s"
+        else:
+            time_where = (
+                f"AND {TIME_FILTER_COLUMN} >= %(start_date)s "
+                f"AND {TIME_FILTER_COLUMN} < %(end_date)s"
+            )
         self.params["start_date"] = self.start_date
         self.params["end_date"] = self.end_date
 
@@ -291,8 +319,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         FROM {self.TABLE}
         {self.project_where()}
           AND (parent_span_id IS NULL OR parent_span_id = '')
-          AND {TIME_FILTER_COLUMN} >= %(start_date)s
-          AND {TIME_FILTER_COLUMN} < %(end_date)s
+          {time_where}
           {pv_fragment}
           {search_fragment}
           {filter_fragment}

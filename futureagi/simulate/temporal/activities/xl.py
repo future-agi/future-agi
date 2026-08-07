@@ -506,6 +506,41 @@ TRANSCRIPT_DOT_ALIASES = {
     "call.agent_prompt": "agent_prompt",
 }
 
+# Recording variable sources (bare transcript_data keys + their dot-form
+# aliases). An eval variable bound to one of these that resolves empty gets an
+# actionable error instead of the eval engine's opaque "No input received".
+_RECORDING_KEYS = frozenset(
+    {"voice_recording", "stereo_recording", "assistant_recording", "customer_recording"}
+)
+_RECORDING_SOURCES = _RECORDING_KEYS | frozenset(
+    dot for dot, legacy in TRANSCRIPT_DOT_ALIASES.items() if legacy in _RECORDING_KEYS
+)
+
+
+def assert_recording_slot_available(
+    mapping_key, source_value, resolved_value, transcript_data
+):
+    """Raise an actionable error when an eval variable is mapped to a recording
+    the call has no audio for. Combined-only providers (e.g. Bland) produce no
+    stereo or per-channel track, so a stereo/assistant/customer mapping resolves
+    empty; without this the eval engine only reports an opaque "No input
+    received for '<var>'". Whole-conversation evals should map to
+    call.voice_recording (the combined recording).
+    """
+    if source_value not in _RECORDING_SOURCES or resolved_value:
+        return
+    available = sorted(k for k in _RECORDING_KEYS if transcript_data.get(k))
+    hint = (
+        f"Available recordings: {', '.join(available)}."
+        if available
+        else "This call has no recordings."
+    )
+    raise ValueError(
+        f"'{mapping_key}' is mapped to '{source_value}', but this call has no such "
+        f"recording — combined-only providers produce no stereo or per-channel "
+        f"audio. {hint} Map it to call.voice_recording."
+    )
+
 
 def build_simulation_context_map(call_execution, agent_version):
     """
@@ -897,6 +932,14 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                 eval_config.status = StatusType.FAILED.value
                 eval_config.save()
                 raise ValueError(error_message)
+
+        # A recording variable that resolved empty (e.g. stereo on a
+        # combined-only provider) fails here with an actionable message instead
+        # of an opaque "No input received" from the eval engine downstream.
+        for map_key, map_value in mapping.items():
+            assert_recording_slot_available(
+                map_key, map_value, updated_mapping.get(map_key), transcript_data
+            )
 
         # Prepare config and run evaluation
         config = eval_config.config.copy() if eval_config.config else {}
@@ -1510,6 +1553,18 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
             logger.info(f"Using customer_call_id: {customer_call_id}")
 
             customer_provider = snapshot.get("provider", ProviderChoices.VAPI)
+            from simulate.semantics import ToolCallingSupportedProviders
+
+            provider_value = getattr(customer_provider, "value", customer_provider)
+            if provider_value not in [p.value for p in ToolCallingSupportedProviders]:
+                # Only some providers have a tool-call adapter; gate here so an
+                # unsupported provider (e.g. Bland) skips cleanly instead of
+                # raising into the broad except and silently no-op'ing.
+                logger.info(
+                    f"Tool evaluation not supported for provider "
+                    f"'{provider_value}' (call {call_execution.id}), skipping"
+                )
+                return
             adapter = get_tool_call_adapter(customer_provider)
             messages = adapter.get_tool_call_transcript(
                 call_execution=call_execution,

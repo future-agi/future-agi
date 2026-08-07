@@ -376,7 +376,7 @@ function Transcript({ lines, currentTime, onSeek, dense }) {
                   fontSize="10px"
                   fontWeight={700}
                   sx={{
-                    color: isAgent ? "#7857FC" : "text.secondary",
+                    color: isAgent ? "accent.brand" : "text.secondary",
                     textTransform: "uppercase",
                     letterSpacing: "0.06em",
                     mb: 0.2,

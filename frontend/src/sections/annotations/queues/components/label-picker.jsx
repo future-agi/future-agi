@@ -13,41 +13,8 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { useAnnotationLabelsList } from "src/api/annotation-labels/annotation-labels";
 import CreateLabelDrawer from "src/sections/annotations/labels/create-label-drawer";
+import LabelTypeChip from "src/components/label-type-chip/LabelTypeChip";
 
-const TYPE_CHIP_COLORS = {
-  text: { bg: "#f0f4ff", color: "#3b6ce7" },
-  numeric: { bg: "#f0faf4", color: "#1a8a4a" },
-  categorical: { bg: "#fef6ee", color: "#c4631a" },
-  thumbs_up_down: { bg: "#fdf2f8", color: "#c026a3" },
-  star: { bg: "#fffbeb", color: "#b45309" },
-};
-
-TypeChip.propTypes = {
-  type: PropTypes.string,
-};
-
-function TypeChip({ type }) {
-  const label = (type || "")
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-  const colors = TYPE_CHIP_COLORS[type] || { bg: "#f5f5f5", color: "#666" };
-  return (
-    <Box
-      sx={{
-        px: 1,
-        py: 0.25,
-        borderRadius: 0.5,
-        bgcolor: colors.bg,
-        fontSize: 11,
-        fontWeight: 500,
-        color: colors.color,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {label}
-    </Box>
-  );
-}
 
 function mergeLabelsById(...labelLists) {
   const labelsById = new Map();
@@ -235,7 +202,7 @@ export default function LabelPicker({
                 {label.name}
               </Typography>
             </Box>
-            <TypeChip type={label.type} />
+            <LabelTypeChip type={label.type} />
           </Box>
         ))}
         {filteredLabels.length === 0 && (

@@ -40,29 +40,6 @@ def _owner_membership(user, organization):
     )
 
 
-@pytest.fixture(autouse=True)
-def _bypass_plan_entitlement_check():
-    """Bypass plan-gating so role update tests don't require a paid plan.
-
-    MemberRoleUpdateAPIView checks ``Entitlements.check_feature("has_custom_roles")``
-    which is only enabled on scale/enterprise plans. Test orgs default to free.
-    Patch the check at its source so both org- and workspace-level role update
-    endpoints see an allowed result.
-    """
-    from unittest.mock import patch
-
-    try:
-        from ee.usage.schemas.events import CheckResult
-    except ImportError:
-        CheckResult = None
-
-    with patch(
-        "ee.usage.services.entitlements.Entitlements.check_feature",
-        return_value=CheckResult(allowed=True),
-    ):
-        yield
-
-
 # Track WorkspaceAwareAPIClient instances created by _make_client so the
 # autouse fixture below can tear down their injected APIView.initial patch
 # after each test. Without this cleanup, the patch leaks into every
@@ -175,22 +152,31 @@ class TestOwnerRoleUpdates:
             format="json",
         )
 
+    def _assert_org_level(self, target_user, organization, expected_level):
+        membership = OrganizationMembership.objects.get(
+            user=target_user, organization=organization
+        )
+        assert membership.level == expected_level
+
     # -- Admin target --
 
     def test_owner_changes_admin_to_owner(self, auth_client, organization, workspace):
         target = _make_user(organization, "admin1@futureagi.com", "Admin", Level.ADMIN)
         resp = self._update_role(auth_client, target, Level.OWNER)
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_org_level(target, organization, Level.OWNER)
 
     def test_owner_changes_admin_to_member(self, auth_client, organization, workspace):
         target = _make_user(organization, "admin2@futureagi.com", "Admin", Level.ADMIN)
         resp = self._update_role(auth_client, target, Level.MEMBER)
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_org_level(target, organization, Level.MEMBER)
 
     def test_owner_changes_admin_to_viewer(self, auth_client, organization, workspace):
         target = _make_user(organization, "admin3@futureagi.com", "Admin", Level.ADMIN)
         resp = self._update_role(auth_client, target, Level.VIEWER)
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_org_level(target, organization, Level.VIEWER)
 
     # -- Member target --
 
@@ -198,16 +184,19 @@ class TestOwnerRoleUpdates:
         target = _make_user(organization, "mem1@futureagi.com", "Member", Level.MEMBER)
         resp = self._update_role(auth_client, target, Level.ADMIN)
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_org_level(target, organization, Level.ADMIN)
 
     def test_owner_changes_member_to_owner(self, auth_client, organization, workspace):
         target = _make_user(organization, "mem2@futureagi.com", "Member", Level.MEMBER)
         resp = self._update_role(auth_client, target, Level.OWNER)
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_org_level(target, organization, Level.OWNER)
 
     def test_owner_changes_member_to_viewer(self, auth_client, organization, workspace):
         target = _make_user(organization, "mem3@futureagi.com", "Member", Level.MEMBER)
         resp = self._update_role(auth_client, target, Level.VIEWER)
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_org_level(target, organization, Level.VIEWER)
 
     # -- Viewer target --
 
@@ -215,16 +204,19 @@ class TestOwnerRoleUpdates:
         target = _make_user(organization, "view1@futureagi.com", "Viewer", Level.VIEWER)
         resp = self._update_role(auth_client, target, Level.MEMBER)
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_org_level(target, organization, Level.MEMBER)
 
     def test_owner_changes_viewer_to_admin(self, auth_client, organization, workspace):
         target = _make_user(organization, "view2@futureagi.com", "Viewer", Level.VIEWER)
         resp = self._update_role(auth_client, target, Level.ADMIN)
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_org_level(target, organization, Level.ADMIN)
 
     def test_owner_changes_viewer_to_owner(self, auth_client, organization, workspace):
         target = _make_user(organization, "view3@futureagi.com", "Viewer", Level.VIEWER)
         resp = self._update_role(auth_client, target, Level.OWNER)
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_org_level(target, organization, Level.OWNER)
 
     # -- Owner target --
 
@@ -232,16 +224,19 @@ class TestOwnerRoleUpdates:
         target = _make_user(organization, "own1@futureagi.com", "Owner", Level.OWNER)
         resp = self._update_role(auth_client, target, Level.ADMIN)
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_org_level(target, organization, Level.ADMIN)
 
     def test_owner_changes_owner_to_member(self, auth_client, organization, workspace):
         target = _make_user(organization, "own2@futureagi.com", "Owner", Level.OWNER)
         resp = self._update_role(auth_client, target, Level.MEMBER)
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_org_level(target, organization, Level.MEMBER)
 
     def test_owner_changes_owner_to_viewer(self, auth_client, organization, workspace):
         target = _make_user(organization, "own3@futureagi.com", "Owner", Level.OWNER)
         resp = self._update_role(auth_client, target, Level.VIEWER)
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_org_level(target, organization, Level.VIEWER)
 
 
 # ===================================================================
@@ -270,6 +265,12 @@ class TestAdminRoleUpdates:
             format="json",
         )
 
+    def _assert_org_level(self, target_user, organization, expected_level):
+        membership = OrganizationMembership.objects.get(
+            user=target_user, organization=organization
+        )
+        assert membership.level == expected_level
+
     # ALLOW: Admin manages Member (8 > 3) and target stays below admin
 
     def test_admin_changes_member_to_viewer(
@@ -278,6 +279,7 @@ class TestAdminRoleUpdates:
         target = _make_user(organization, "m2v@futureagi.com", "Member", Level.MEMBER)
         resp = self._update_role(admin_client, target, Level.VIEWER)
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_org_level(target, organization, Level.VIEWER)
 
     def test_admin_changes_viewer_to_member(
         self, admin_client, organization, workspace
@@ -285,6 +287,7 @@ class TestAdminRoleUpdates:
         target = _make_user(organization, "v2m@futureagi.com", "Viewer", Level.VIEWER)
         resp = self._update_role(admin_client, target, Level.MEMBER)
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_org_level(target, organization, Level.MEMBER)
 
     # ALLOW: Admin may assign their own level to lower-level members.
 
@@ -294,6 +297,7 @@ class TestAdminRoleUpdates:
         target = _make_user(organization, "m2a@futureagi.com", "Member", Level.MEMBER)
         resp = self._update_role(admin_client, target, Level.ADMIN)
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_org_level(target, organization, Level.ADMIN)
 
     def test_admin_can_promote_viewer_to_admin(
         self, admin_client, organization, workspace
@@ -301,6 +305,7 @@ class TestAdminRoleUpdates:
         target = _make_user(organization, "v2a@futureagi.com", "Viewer", Level.VIEWER)
         resp = self._update_role(admin_client, target, Level.ADMIN)
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_org_level(target, organization, Level.ADMIN)
 
     # DENY: escalation -- can't promote above own level
 
@@ -429,6 +434,12 @@ class TestWorkspaceRoleUpdates:
             format="json",
         )
 
+    def _assert_ws_level(self, target_user, workspace, expected_level):
+        membership = WorkspaceMembership.objects.get(
+            user=target_user, workspace=workspace
+        )
+        assert membership.level == expected_level
+
     # ALLOW: Org Owner changes WS roles
 
     def test_org_owner_changes_ws_member_to_ws_admin(
@@ -440,6 +451,7 @@ class TestWorkspaceRoleUpdates:
             auth_client, workspace, target, Level.WORKSPACE_ADMIN
         )
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_ws_level(target, workspace, Level.WORKSPACE_ADMIN)
 
     def test_org_owner_changes_ws_viewer_to_ws_member(
         self, auth_client, organization, workspace
@@ -450,6 +462,7 @@ class TestWorkspaceRoleUpdates:
             auth_client, workspace, target, Level.WORKSPACE_MEMBER
         )
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_ws_level(target, workspace, Level.WORKSPACE_MEMBER)
 
     # ALLOW: Org Admin changes WS roles
 
@@ -460,6 +473,7 @@ class TestWorkspaceRoleUpdates:
         client = _make_client(admin, workspace)
         resp = self._update_ws_role(client, workspace, target, Level.WORKSPACE_MEMBER)
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_ws_level(target, workspace, Level.WORKSPACE_MEMBER)
         client.stop_workspace_injection()
 
     def test_org_admin_changes_ws_member_to_ws_viewer(self, organization, workspace):
@@ -469,6 +483,7 @@ class TestWorkspaceRoleUpdates:
         client = _make_client(admin, workspace)
         resp = self._update_ws_role(client, workspace, target, Level.WORKSPACE_VIEWER)
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_ws_level(target, workspace, Level.WORKSPACE_VIEWER)
         client.stop_workspace_injection()
 
     # ALLOW: WS Admin (non-org-admin) changes WS roles
@@ -483,6 +498,7 @@ class TestWorkspaceRoleUpdates:
         client = _make_client(ws_admin, workspace)
         resp = self._update_ws_role(client, workspace, target, Level.WORKSPACE_VIEWER)
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_ws_level(target, workspace, Level.WORKSPACE_VIEWER)
         client.stop_workspace_injection()
 
     def test_ws_admin_changes_ws_viewer_to_ws_member(self, organization, workspace):
@@ -495,6 +511,7 @@ class TestWorkspaceRoleUpdates:
         client = _make_client(ws_admin, workspace)
         resp = self._update_ws_role(client, workspace, target, Level.WORKSPACE_MEMBER)
         assert resp.status_code == status.HTTP_200_OK, resp.json()
+        self._assert_ws_level(target, workspace, Level.WORKSPACE_MEMBER)
         client.stop_workspace_injection()
 
     # DENY: WS Member cannot change roles
@@ -1256,9 +1273,9 @@ class TestOrgRoleUpdateWorkspaceAccess:
 
         first = self._update_role(auth_client, payload)
         assert first.status_code == status.HTTP_200_OK, first.json()
-        assert (
-            first.json()["result"]["changes"].get("revoked_workspaces") == 1
-        ), first.json()
+        assert first.json()["result"]["changes"].get("revoked_workspaces") == 1, (
+            first.json()
+        )
 
         # Replay the exact same payload.
         second = self._update_role(auth_client, payload)
@@ -1271,9 +1288,9 @@ class TestOrgRoleUpdateWorkspaceAccess:
 
         # No spurious revoke on the replay — second_workspace was already
         # revoked, so the revoke filter must skip it.
-        assert (
-            second.json()["result"]["changes"].get("revoked_workspaces", 0) == 0
-        ), second.json()
+        assert second.json()["result"]["changes"].get("revoked_workspaces", 0) == 0, (
+            second.json()
+        )
 
     # Authz scope: the org-wide revoke is new in this PR and must not let an org
     # member who is merely a workspace admin strip a user out of workspaces they

@@ -10,12 +10,16 @@ const DEFAULT_OPTIONS = [
 
 // FilterValueLabel resolves ids -> names via useDashboardFilterValues; mock it
 // with a controllable result and drive behavior through the `filter` prop.
-const { mockState } = vi.hoisted(() => ({
+const { mockState, hookSpy } = vi.hoisted(() => ({
   mockState: { current: { data: [], isLoading: false } },
+  hookSpy: vi.fn(),
 }));
 
 vi.mock("src/hooks/useDashboards", () => ({
-  useDashboardFilterValues: () => mockState.current,
+  useDashboardFilterValues: (args) => {
+    hookSpy(args);
+    return mockState.current;
+  },
 }));
 
 const baseFilter = { name: "Project", type: "system", id: "project_id" };
@@ -25,6 +29,32 @@ const renderLabel = (filter, extra = {}) =>
 describe("FilterValueLabel", () => {
   beforeEach(() => {
     mockState.current = { data: DEFAULT_OPTIONS, isLoading: false };
+    hookSpy.mockClear();
+  });
+
+  // Custom-attribute labels are always the value, so resolving one costs a
+  // workspace-wide span scan and returns nothing new — and because that list
+  // is time-windowed, an older value would miss the lookup and fall back to
+  // the raw value anyway.
+  it("renders custom-attribute values without fetching the value list", () => {
+    renderLabel({
+      name: "Model",
+      type: "custom_attribute",
+      id: "gen_ai.request.model",
+      value: ["gpt-4o-mini"],
+    });
+    expect(screen.getByText("gpt-4o-mini")).toBeInTheDocument();
+    expect(hookSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: false }),
+    );
+  });
+
+  it("still fetches for system fields, which can relabel", () => {
+    renderLabel({ ...baseFilter, value: ["p1"] });
+    expect(screen.getByText("Project Alpha")).toBeInTheDocument();
+    expect(hookSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: true }),
+    );
   });
 
   it("shows the placeholder when nothing is selected", () => {

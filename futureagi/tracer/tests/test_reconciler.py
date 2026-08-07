@@ -15,8 +15,13 @@ from tracer.models.observation_span import (
     ObservationSpan,
 )
 from tracer.models.trace import Trace
+from tracer.models.trace_session import TraceSession
 from tracer.services.eval_tasks.entries import soft_delete_live
-from tracer.services.eval_tasks.reconciler import reconcile
+from tracer.services.eval_tasks.reconciler import (
+    _CONTINUOUS_CURSOR_OVERLAP,
+    _advance_continuous_cursor,
+    reconcile,
+)
 from tracer.tests._ch_seed import seed_ch_spans
 
 
@@ -39,6 +44,7 @@ def _task(
     run_type=RunType.HISTORICAL,
     spans_limit=1_000_000,
     filters=None,
+    row_type=RowType.SPANS,
 ):
     task = EvalTask.objects.create(
         project=project,
@@ -48,7 +54,7 @@ def _task(
         spans_limit=spans_limit,
         run_type=run_type,
         status=EvalTaskStatus.PENDING,
-        row_type=RowType.SPANS,
+        row_type=row_type,
     )
     for cfg in evals:
         task.evals.add(cfg)
@@ -96,6 +102,34 @@ def _make_spans_at(project, n, created_at, *, prefix="t"):
         spans.append(span)
     seed_ch_spans(spans)
     return spans
+
+
+def _make_span_with_gap(
+    project,
+    *,
+    start_time,
+    created_at,
+    observation_type="llm",
+    session=None,
+    prefix="gap",
+):
+    """Seed ONE root span with an explicit ``start_time`` != ``created_at`` gap
+    (ingestion lag) — both set, unlike ``_make_spans_at``. ``observation_type=
+    "conversation"`` yields a voiceCalls row; pass ``session`` for a sessions row."""
+    trace = Trace.objects.create(project=project, name=f"tr-{prefix}", session=session)
+    span = ObservationSpan.objects.create(
+        id=f"{prefix}-{uuid.uuid4().hex[:8]}",
+        project=project,
+        trace=trace,
+        name=f"sp-{prefix}",
+        observation_type=observation_type,
+        parent_span_id=None,
+        start_time=start_time,
+    )
+    ObservationSpan.objects.filter(id=span.id).update(created_at=created_at)
+    span.refresh_from_db()
+    seed_ch_spans([span])
+    return span
 
 
 def _live(task, **f):
@@ -426,6 +460,347 @@ class TestLifecycleFlows:
         task.refresh_from_db()
         assert task.continuous_cursor is not None
         assert task.continuous_cursor >= start
+
+    def test_continuous_voicecalls_ingest_lag_still_materialized(
+        self, project, custom_eval_config
+    ):
+        # Voice call arriving long after it started must still be evaluated: the
+        # floor tracks arrival (created_at), not start_time. Floor sits between the
+        # two timestamps, so this is RED while the floor binds on start_time.
+        t = timezone.now()
+        task = _task(
+            project,
+            evals=[custom_eval_config],
+            run_type=RunType.CONTINUOUS,
+            row_type=RowType.VOICE_CALLS,
+        )
+        EvalTask.objects.filter(id=task.id).update(
+            start_time=t - timedelta(minutes=60),
+            continuous_cursor=t - timedelta(minutes=5),  # the parked arrival floor
+        )
+        task.refresh_from_db()
+
+        # Positive: started 11m ago (below floor), arrived 1m ago (above floor).
+        hit = _make_span_with_gap(
+            project,
+            start_time=t - timedelta(minutes=11),
+            created_at=t - timedelta(minutes=1),
+            observation_type="conversation",
+            prefix="lag-hit",
+        )
+        # Negative: arrived 8m ago, genuinely before the floor -> excluded.
+        # Guards against over-correction (a removed lower bound would admit it).
+        miss = _make_span_with_gap(
+            project,
+            start_time=t - timedelta(minutes=8),
+            created_at=t - timedelta(minutes=8),
+            observation_type="conversation",
+            prefix="lag-miss",
+        )
+
+        reconcile(task)
+
+        materialized = set(_live(task).values_list("observation_span_id", flat=True))
+        assert hit.id in materialized  # arrival after floor -> evaluated
+        assert miss.id not in materialized  # arrival before floor -> excluded
+
+    def test_continuous_spans_ingest_lag_still_materialized(
+        self, project, custom_eval_config
+    ):
+        # Arrival floor for the spans row_type: late arrival materializes; one
+        # that truly arrived before the floor stays out (guards over-correction).
+        t = timezone.now()
+        task = _task(project, evals=[custom_eval_config], run_type=RunType.CONTINUOUS)
+        EvalTask.objects.filter(id=task.id).update(
+            start_time=t - timedelta(minutes=60),
+            continuous_cursor=t - timedelta(minutes=5),
+        )
+        task.refresh_from_db()
+
+        hit = _make_span_with_gap(
+            project,
+            start_time=t - timedelta(minutes=11),
+            created_at=t - timedelta(minutes=1),
+            prefix="s-lag-hit",
+        )
+        miss = _make_span_with_gap(
+            project,
+            start_time=t - timedelta(minutes=8),
+            created_at=t - timedelta(minutes=8),
+            prefix="s-lag-miss",
+        )
+
+        reconcile(task)
+
+        materialized = set(_live(task).values_list("observation_span_id", flat=True))
+        assert hit.id in materialized
+        assert miss.id not in materialized
+
+    def test_continuous_traces_ingest_lag_still_materialized(
+        self, project, custom_eval_config
+    ):
+        # Arrival-floor semantics for the traces row_type: a trace whose root span
+        # arrived after the floor but started before it must be materialized.
+        t = timezone.now()
+        task = _task(
+            project,
+            evals=[custom_eval_config],
+            run_type=RunType.CONTINUOUS,
+            row_type=RowType.TRACES,
+        )
+        EvalTask.objects.filter(id=task.id).update(
+            start_time=t - timedelta(minutes=60),
+            continuous_cursor=t - timedelta(minutes=5),
+        )
+        task.refresh_from_db()
+
+        hit = _make_span_with_gap(
+            project,
+            start_time=t - timedelta(minutes=11),
+            created_at=t - timedelta(minutes=1),
+            prefix="tr-lag-hit",
+        )
+        miss = _make_span_with_gap(
+            project,
+            start_time=t - timedelta(minutes=8),
+            created_at=t - timedelta(minutes=8),
+            prefix="tr-lag-miss",
+        )
+
+        reconcile(task)
+
+        # traces store the root span id in observation_span_id (see entries.py).
+        materialized = set(_live(task).values_list("observation_span_id", flat=True))
+        assert hit.id in materialized
+        assert miss.id not in materialized
+
+    def test_continuous_sessions_ingest_lag_still_materialized(
+        self, project, custom_eval_config
+    ):
+        # Arrival-floor semantics for the sessions row_type: a session whose spans
+        # arrived after the floor but started before it must be materialized.
+        t = timezone.now()
+        task = _task(
+            project,
+            evals=[custom_eval_config],
+            run_type=RunType.CONTINUOUS,
+            row_type=RowType.SESSIONS,
+        )
+        EvalTask.objects.filter(id=task.id).update(
+            start_time=t - timedelta(minutes=60),
+            continuous_cursor=t - timedelta(minutes=5),
+        )
+        task.refresh_from_db()
+
+        hit_session = TraceSession.objects.create(project=project, name="sess-hit")
+        miss_session = TraceSession.objects.create(project=project, name="sess-miss")
+        _make_span_with_gap(
+            project,
+            start_time=t - timedelta(minutes=11),
+            created_at=t - timedelta(minutes=1),
+            session=hit_session,
+            prefix="ss-lag-hit",
+        )
+        _make_span_with_gap(
+            project,
+            start_time=t - timedelta(minutes=8),
+            created_at=t - timedelta(minutes=8),
+            session=miss_session,
+            prefix="ss-lag-miss",
+        )
+
+        reconcile(task)
+
+        # sessions store the session id in trace_session_id (see entries.py).
+        materialized = set(
+            str(x) for x in _live(task).values_list("trace_session_id", flat=True)
+        )
+        assert str(hit_session.id) in materialized
+        assert str(miss_session.id) not in materialized
+
+    def test_continuous_evaluates_late_arrival_started_long_ago(
+        self, project, custom_eval_config
+    ):
+        # Spans can start long before they reach us (delayed delivery). A call
+        # started days ago but arriving now MUST still be evaluated — no start_time
+        # bound may gate the arrival floor, or the bug returns.
+        t = timezone.now()
+        task = _task(
+            project,
+            evals=[custom_eval_config],
+            run_type=RunType.CONTINUOUS,
+            row_type=RowType.VOICE_CALLS,
+        )
+        EvalTask.objects.filter(id=task.id).update(
+            start_time=t - timedelta(minutes=60),
+            continuous_cursor=t - timedelta(minutes=5),
+        )
+        task.refresh_from_db()
+
+        hit = _make_span_with_gap(
+            project,
+            start_time=t - timedelta(days=3),  # started long ago
+            created_at=t - timedelta(minutes=1),  # arrived just now
+            observation_type="conversation",
+            prefix="old-start-hit",
+        )
+
+        reconcile(task)
+
+        materialized = set(_live(task).values_list("observation_span_id", flat=True))
+        assert hit.id in materialized
+
+    def test_continuous_stale_date_range_does_not_recap_live_tail(
+        self, project, custom_eval_config
+    ):
+        # A past date_range on a continuous task must not cap the live tail: the
+        # arrival floor ignores date_range's end, so a just-arrived call still lands.
+        t = timezone.now()
+        task = _task(
+            project,
+            evals=[custom_eval_config],
+            run_type=RunType.CONTINUOUS,
+            row_type=RowType.VOICE_CALLS,
+            filters={
+                "date_range": [
+                    (t - timedelta(days=7)).isoformat(),
+                    (t - timedelta(days=1)).isoformat(),  # ends a day ago
+                ]
+            },
+        )
+        EvalTask.objects.filter(id=task.id).update(
+            start_time=t - timedelta(minutes=60),
+            continuous_cursor=t - timedelta(minutes=5),
+        )
+        task.refresh_from_db()
+
+        hit = _make_span_with_gap(
+            project,
+            start_time=t - timedelta(minutes=11),
+            created_at=t - timedelta(minutes=1),
+            observation_type="conversation",
+            prefix="dr-hit",
+        )
+
+        reconcile(task)
+
+        materialized = set(_live(task).values_list("observation_span_id", flat=True))
+        assert hit.id in materialized
+
+    def test_advance_cursor_derives_from_passed_now(self, project, custom_eval_config):
+        # The next cursor is computed from the frozen now passed into
+        # _advance_continuous_cursor, not a fresh wall-clock read — so a slow pass
+        # can't advance the watermark past rows it didn't scan.
+        task = _task(project, evals=[custom_eval_config], run_type=RunType.CONTINUOUS)
+        EvalTask.objects.filter(id=task.id).update(
+            start_time=timezone.now() - timedelta(hours=1)
+        )
+        task.refresh_from_db()
+
+        frozen = timezone.now() - timedelta(minutes=30)
+        _advance_continuous_cursor(task, frozen)
+
+        task.refresh_from_db()
+        assert task.continuous_cursor == frozen - _CONTINUOUS_CURSOR_OVERLAP
+
+    def test_continuous_ceiling_excludes_rows_arriving_after_now(
+        self, project, custom_eval_config
+    ):
+        # The window ceiling is the pass's frozen now: a row whose created_at is
+        # ahead of now (not yet "arrived") is held for a later pass, not dropped.
+        t = timezone.now()
+        task = _task(
+            project,
+            evals=[custom_eval_config],
+            run_type=RunType.CONTINUOUS,
+            row_type=RowType.VOICE_CALLS,
+        )
+        EvalTask.objects.filter(id=task.id).update(
+            start_time=t - timedelta(minutes=60),
+            continuous_cursor=t - timedelta(minutes=5),
+        )
+        task.refresh_from_db()
+
+        present = _make_span_with_gap(
+            project,
+            start_time=t - timedelta(minutes=11),
+            created_at=t - timedelta(minutes=1),
+            observation_type="conversation",
+            prefix="present",
+        )
+        future = _make_span_with_gap(
+            project,
+            start_time=t - timedelta(minutes=11),
+            created_at=t + timedelta(minutes=5),  # arrives after this pass's now
+            observation_type="conversation",
+            prefix="future",
+        )
+
+        reconcile(task)
+
+        materialized = set(_live(task).values_list("observation_span_id", flat=True))
+        assert present.id in materialized
+        assert future.id not in materialized
+
+    def test_two_pass_window_catches_later_arrival_no_loss_or_dup(
+        self, project, custom_eval_config
+    ):
+        # End-to-end: a call arriving between two reconcile passes is caught by the
+        # second (the frozen-now window steps forward), while pass-1 calls that were
+        # drained (completed) are kept — no loss, no duplicate materialization.
+        t = timezone.now()
+        task = _task(
+            project,
+            evals=[custom_eval_config],
+            run_type=RunType.CONTINUOUS,
+            row_type=RowType.VOICE_CALLS,
+        )
+        EvalTask.objects.filter(id=task.id).update(
+            start_time=t - timedelta(minutes=60),
+            continuous_cursor=t - timedelta(minutes=10),
+        )
+        task.refresh_from_db()
+
+        a = _make_span_with_gap(
+            project,
+            start_time=t - timedelta(hours=2),
+            created_at=t - timedelta(minutes=8),
+            observation_type="conversation",
+            prefix="callA",
+        )
+        b = _make_span_with_gap(
+            project,
+            start_time=t - timedelta(hours=2),
+            created_at=t - timedelta(minutes=3),
+            observation_type="conversation",
+            prefix="callB",
+        )
+
+        reconcile(task)  # pass 1
+        assert set(_live(task).values_list("observation_span_id", flat=True)) == {
+            a.id,
+            b.id,
+        }
+
+        # Drain: the workflow evaluates pending entries before the next reconcile.
+        _mark(task, EvalEntryStatus.COMPLETED)
+
+        # A new call arrives after pass 1.
+        c = _make_span_with_gap(
+            project,
+            start_time=t - timedelta(hours=2),
+            created_at=t - timedelta(seconds=30),
+            observation_type="conversation",
+            prefix="callC",
+        )
+
+        reconcile(task)  # pass 2
+
+        live = dict(_live(task).values_list("observation_span_id", "status"))
+        assert set(live) == {a.id, b.id, c.id}  # all present — no loss
+        assert _live(task).count() == 3  # one entry each — no duplicate
+        assert live[a.id] == EvalEntryStatus.COMPLETED  # paid work kept
+        assert live[c.id] == EvalEntryStatus.PENDING  # newly materialized
 
     def test_historical_to_continuous_keeps_entries(self, project, custom_eval_config):
         # Switching to continuous keeps existing entries (no wipe).

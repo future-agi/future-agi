@@ -391,6 +391,10 @@ def prepare_eval_config(
                 else None
             )
             config["api_key"] = _get_api_key(raw_model, org_id, ws_id)
+            if not config.get("provider"):
+                from model_hub.utils.llm_providers import get_provider_for_model
+
+                config["provider"] = get_provider_for_model(raw_model, org_id, ws_id)
 
         config["check_internet"] = eval_template.config.get("check_internet", False)
         config["multi_choice"] = eval_template.config.get("multi_choice")

@@ -67,9 +67,13 @@ class OptimizationDatasetSerializer(serializers.ModelSerializer):
         request = self.context.get("request") if self.context else None
         self.fields["dataset_id"].queryset = scoped_dataset_queryset(request)
         self.fields["column_id"].queryset = scoped_column_queryset(request)
-        self.fields[
-            "user_eval_template_ids"
-        ].queryset = scoped_user_eval_metric_queryset(request)
+        # `user_eval_template_ids` is many=True → the outer ManyRelatedField
+        # only stores queryset for validation of the list wrapper; the actual
+        # per-pk lookup runs on `child_relation`. Assign the scoped queryset
+        # to both so cross-request workspace scoping is enforced.
+        scoped_metrics = scoped_user_eval_metric_queryset(request)
+        self.fields["user_eval_template_ids"].queryset = scoped_metrics
+        self.fields["user_eval_template_ids"].child_relation.queryset = scoped_metrics
 
     def validate_messages(self, value):
         for message in value:

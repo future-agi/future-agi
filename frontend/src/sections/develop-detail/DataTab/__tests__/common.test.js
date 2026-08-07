@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { enhanceCol, getColumnConfig } from "../common";
+import { enhanceCol, getColumnConfig, normalizeEvalResult } from "../common";
 
 describe("enhanceCol", () => {
   it("preserves null data_type from snake_case input", () => {
@@ -88,5 +88,17 @@ describe("getColumnConfig valueGetter", () => {
       data: {},
     });
     expect(result).toBe(undefined);
+  });
+});
+
+describe("normalizeEvalResult", () => {
+  it("unwraps scored choices wrapped in an array", () => {
+    const result = normalizeEvalResult(
+      [{ score: 0.25, choices: ["Useless", "Non-Toxic"] }],
+      "choices",
+    );
+
+    expect(result).toMatchObject({ kind: "choices" });
+    expect(result.items).toEqual(["Useless", "Non-Toxic"]);
   });
 });

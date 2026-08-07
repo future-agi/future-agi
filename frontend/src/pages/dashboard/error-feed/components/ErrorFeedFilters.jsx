@@ -168,7 +168,7 @@ function BulkActionMenu({ count, selected, onClear }) {
           fontSize: "12px",
           fontWeight: 600,
           bgcolor: "primary.main",
-          color: "white",
+          color: "primary.contrastText",
           borderRadius: "4px",
         }}
         deleteIcon={<Iconify icon="mdi:close" width={14} />}

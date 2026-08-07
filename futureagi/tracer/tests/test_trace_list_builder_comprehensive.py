@@ -16,6 +16,7 @@ Focus areas (gaps):
 """
 
 import uuid
+from datetime import datetime
 from unittest.mock import Mock
 
 import pytest
@@ -517,6 +518,26 @@ class TestOuterWindowStartTime:
         assert "start_time >= %(start_date)s" in query
         assert "start_time < %(end_date)s" in query
         assert "created_at" not in query
+
+    def test_id_query_continuous_floor_windows_on_created_at(self, project_id):
+        floor = datetime(2026, 8, 1, 12, 0)
+        query, params = TraceListQueryBuilder(project_id=project_id).build_id_query(
+            created_at_floor=floor
+        )
+        # Arrival floor replaces the start_time window (root span can arrive late).
+        assert "created_at >= %(created_at_floor)s" in query
+        assert "start_time >= %(start_date)s" not in query
+        assert params["created_at_floor"] == floor
+
+    def test_id_query_continuous_ceiling_upper_bounds_arrival(self, project_id):
+        floor = datetime(2026, 8, 1, 12, 0)
+        ceil = datetime(2026, 8, 1, 12, 5)
+        query, params = TraceListQueryBuilder(project_id=project_id).build_id_query(
+            created_at_floor=floor, created_at_ceiling=ceil
+        )
+        assert "created_at >= %(created_at_floor)s" in query
+        assert "created_at < %(created_at_ceiling)s" in query
+        assert params["created_at_ceiling"] == ceil
 
 
 # ---------------------------------------------------------------------------
