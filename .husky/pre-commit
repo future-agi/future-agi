@@ -3,3 +3,15 @@
 [ -f "$(git rev-parse --git-path MERGE_HEAD 2>/dev/null)" ] && exit 0
 
 npx --no-install lint-staged
+
+# lint-staged only covers frontend/src/**; run pre-commit (black/isort/mypy)
+# on staged Python files here instead of installing pre-commit's own git hook,
+# which conflicts with husky's core.hooksPath (see CONTRIBUTING.md).
+staged_py=$(git diff --cached --name-only --diff-filter=ACM -- 'futureagi/*.py' | sed 's|^futureagi/||')
+if [ -n "$staged_py" ]; then
+  if command -v pre-commit >/dev/null 2>&1; then
+    (cd futureagi && pre-commit run --files $staged_py)
+  else
+    echo "⚠️  pre-commit not found — skipping Python checks (pip install pre-commit)"
+  fi
+fi
