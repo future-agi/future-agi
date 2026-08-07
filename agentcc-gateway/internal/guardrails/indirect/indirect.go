@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
@@ -94,7 +95,7 @@ func New(cfg map[string]interface{}) *IndirectInjectionGuardrail {
 	return g
 }
 
-func (g *IndirectInjectionGuardrail) Name() string           { return "indirect-prompt-injection" }
+func (g *IndirectInjectionGuardrail) Name() string            { return "indirect-prompt-injection" }
 func (g *IndirectInjectionGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check scans non-user messages (tool results, system messages, prior
@@ -141,12 +142,16 @@ func (g *IndirectInjectionGuardrail) Check(ctx context.Context, input *guardrail
 	var allMatches []categoryMatch
 	totalWeighted := 0.0
 
+	lowered := make([]string, len(texts))
+	for i, text := range texts {
+		lowered[i] = strings.ToLower(text)
+	}
+
 	for _, d := range g.detectors {
 		count := 0
 		var matchSources []string
 
-		for i, text := range texts {
-			lower := strings.ToLower(text)
+		for i, lower := range lowered {
 			for _, p := range d.patterns {
 				if p.MatchString(lower) {
 					count++
@@ -191,6 +196,7 @@ func (g *IndirectInjectionGuardrail) Check(ctx context.Context, input *guardrail
 	for s := range allSources {
 		sourceList = append(sourceList, s)
 	}
+	sort.Strings(sourceList) // map iteration order would make Message non-deterministic
 
 	return &guardrails.CheckResult{
 		Pass:  false,
@@ -260,7 +266,7 @@ func defaultDetectors() []indirectDetector {
 			weight:   1.8,
 			patterns: compileAll([]string{
 				`(?i)send\s+(?:all\s+)?(?:the\s+)?(?:data|info|information|contents?|conversation|history|context)\s+to`,
-			`(?i)send\s+.{0,40}(?:data|info|conversation|history|context)\s+to`,
+				`(?i)send\s+.{0,40}(?:data|info|conversation|history|context)\s+to`,
 				`(?i)forward\s+(?:this|all|the)\s+(?:to|data)`,
 				`(?i)(?:fetch|load|call|visit|navigate\s+to|open)\s+(?:this\s+)?(?:url|link|endpoint|webhook)\s*:?\s*https?://`,
 				`(?i)include\s+(?:this\s+)?(?:url|link|image)\s*:?\s*https?://`,
