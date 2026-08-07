@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import CustomAudioPlayer from "../../custom-audio/CustomAudioPlayer";
 import PropTypes from "prop-types";
 import { ShowComponent } from "src/components/show";
@@ -7,7 +7,16 @@ import { fileIconByMimeType } from "../../../utils/constants";
 
 // This component is embedded inside quill editor via createRoot and does NOT have
 // access to MUI ThemeProvider. All styling must use CSS variables or inline styles.
+
 const AudioEmbed = ({ isEmbed, id, name, size, onDelete, url, mimeType }) => {
+  // WaveSurfer's WebAudio fetch needs CORS headers, which external hosts
+  // often lack. Fall back to a plain <audio> element on the load error —
+  // browsers play cross-origin media fine without CORS.
+  const [useNativePlayer, setUseNativePlayer] = useState(false);
+
+  useEffect(() => {
+    setUseNativePlayer(false);
+  }, [url]);
   return (
     <div
       style={{
@@ -96,11 +105,20 @@ const AudioEmbed = ({ isEmbed, id, name, size, onDelete, url, mimeType }) => {
         </div>
       </div>
 
-      <CustomAudioPlayer
-        audioData={{
-          url: url,
-        }}
-      />
+      {useNativePlayer ? (
+        <audio
+          controls
+          src={url}
+          style={{ width: "100%", display: "block" }}
+        />
+      ) : (
+        <CustomAudioPlayer
+          audioData={{
+            url: url,
+          }}
+          onAudioError={() => setUseNativePlayer(true)}
+        />
+      )}
     </div>
   );
 };
