@@ -1,15 +1,54 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from agentcc.models.provider_credential import AgentccProviderCredential
+from agentcc.views.provider_credential import AgentccProviderCredentialViewSet
 from conftest import WorkspaceAwareAPIClient
 from integrations.services.credentials import CredentialManager
-from agentcc.models.provider_credential import AgentccProviderCredential
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
+
+
+def test_greenpt_model_discovery_uses_bearer_authentication():
+    response = MagicMock()
+    response.json.return_value = {
+        "data": [
+            {"id": "kimi-k2.7-code"},
+            {"id": "green-embedding"},
+            {"id": "glm-5.2"},
+        ]
+    }
+    session = MagicMock()
+    session.get.return_value = response
+
+    with (
+        patch(
+            "agentcc.views.provider_credential.ensure_public_http_url"
+        ) as ensure_safe,
+        patch(
+            "agentcc.views.provider_credential.build_ssrf_safe_session",
+            return_value=session,
+        ),
+    ):
+        models = AgentccProviderCredentialViewSet()._fetch_models_from_provider(
+            "greenpt",
+            "https://api.greenpt.ai/v1",
+            "greenpt-test-key",
+            "openai",
+        )
+
+    ensure_safe.assert_called_once_with("https://api.greenpt.ai/v1", "Invalid base URL")
+    session.get.assert_called_once_with(
+        "https://api.greenpt.ai/v1/models",
+        headers={"Authorization": "Bearer greenpt-test-key"},
+        timeout=15,
+    )
+    response.raise_for_status.assert_called_once_with()
+    assert models == ["glm-5.2", "green-embedding", "kimi-k2.7-code"]
 
 
 @pytest.fixture

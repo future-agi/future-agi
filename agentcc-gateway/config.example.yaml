@@ -182,6 +182,16 @@ providers:
   #     - llama-3.3-70b-versatile
   #     - mixtral-8x7b-32768
 
+  # greenpt:
+  #   api_key: "${GREENPT_API_KEY}"
+  #   type: "greenpt"                # auto-sets base_url + api_format
+  #   auto_discover: true             # authenticated GET /v1/models
+  #   # Or set auto_discover: false and use an explicit allow-list:
+  #   # models:
+  #     - glm-5.2
+  #     - kimi-k2.7-code
+  #     - green-embedding
+
   # mistral:
   #   api_key: "${MISTRAL_API_KEY}"
   #   type: "mistral"
