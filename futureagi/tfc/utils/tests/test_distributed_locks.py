@@ -517,13 +517,15 @@ class TestDistributedStateErrorHandling:
 
         tracker = DistributedEvaluationTracker()
 
-        if tracker.is_available:
-            with patch.object(
-                tracker, "get_all_running", side_effect=Exception("Redis error")
-            ):
-                # Should return 0 instead of raising
-                result = tracker.cleanup_stale()
-                assert result == 0
+        # Exercise the cleanup contract deterministically even when Redis is
+        # unavailable in the test environment.
+        tracker._redis_available = True
+        with patch.object(
+            tracker, "get_all_running", side_effect=Exception("Redis error")
+        ):
+            # Should return 0 instead of raising
+            result = tracker.cleanup_stale()
+            assert result == 0
 
 
 class TestLocalFallback:
