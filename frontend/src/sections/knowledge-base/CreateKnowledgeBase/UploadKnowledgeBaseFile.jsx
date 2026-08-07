@@ -5,6 +5,8 @@ import { RHFUpload } from "src/components/hook-form";
 import Iconify from "src/components/iconify";
 import { useController } from "react-hook-form";
 
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+
 const UploadKnowledgeBaseFile = ({ control, handleShowSdkInfo, isPending }) => {
   const { field } = useController({
     name: "file",
@@ -12,30 +14,24 @@ const UploadKnowledgeBaseFile = ({ control, handleShowSdkInfo, isPending }) => {
   });
 
   const handleFileChange = (acceptedFiles, rejected = []) => {
-    // const file = acceptedFiles;
-    const files = Array.from(acceptedFiles);
-    const maxSize = 5 * 1024 * 1024; // 5MB
+    const files = Array.from(acceptedFiles || []);
 
-    const filesLargerThanMaxSize = files.filter((file) => file?.size > maxSize);
-
-    if (filesLargerThanMaxSize.length > 0) {
+    const safeRejected = Array.isArray(rejected) ? rejected : [];
+    if (safeRejected.some((r) => r?.errors?.some?.((e) => e?.code === "file-too-large"))) {
       handleShowSdkInfo();
     }
 
     const existingFiles = field?.value?.file || [];
-    // const fileLists = files.map(file => allowedTypes.includes(file.type) ? )
-
-    const validFiles = files.filter((file) => file.size <= maxSize);
 
     const updatedFiles = [
       ...existingFiles,
-      ...validFiles.map((file) => ({ item: file, status: "not_started" })),
-      ...rejected.map((item) => {
-        const { file, errors } = item;
+      ...files.map((file) => ({ item: file, status: "not_started" })),
+      ...safeRejected.map((item) => {
+        const { file, errors = [] } = item || {};
         return {
           item: file,
           status: "error",
-          statusReason: errors?.[0]?.message,
+          statusReason: errors?.[0]?.message || "File was rejected",
         };
       }),
     ];
@@ -85,12 +81,13 @@ const UploadKnowledgeBaseFile = ({ control, handleShowSdkInfo, isPending }) => {
         showIllustration={false}
         accept={{
           "application/pdf": [".pdf"],
-          // "application/msword": [".doc"],
           "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
             [".docx"],
           "text/plain": [".txt"],
           "text/rtf": [".rtf"],
         }}
+        maxSize={MAX_FILE_SIZE}
+        minSize={1}
         sx={{ paddingY: 3 }}
         onDrop={handleFileChange}
       />
