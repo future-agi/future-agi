@@ -43,9 +43,12 @@ x-backend-env: &backend-env
   FUTURE_AGI_TELEMETRY_INTERVAL_HOURS: ${FUTURE_AGI_TELEMETRY_INTERVAL_HOURS:-6}
   FUTURE_AGI_TELEMETRY_TIMEOUT_SECONDS: ${FUTURE_AGI_TELEMETRY_TIMEOUT_SECONDS:-5}
 
-  # LLM gateway + code sandbox + embedding service
-  AGENTCC_INTERNAL_URL: ${AGENTCC_INTERNAL_URL:-http://agentcc-gateway:8080}
-  AGENTCC_GATEWAY_INTERNAL_URL: ${AGENTCC_GATEWAY_INTERNAL_URL:-http://agentcc-gateway:8080}
+  # LLM gateway + code sandbox + embedding service.
+  # Port comes from AGENTCC_GATEWAY_CONTAINER_PORT so it cannot drift from the
+  # published mapping below — set it to match server.port in whichever config
+  # AGENTCC_CONFIG_PATH mounts.
+  AGENTCC_INTERNAL_URL: ${AGENTCC_INTERNAL_URL:-http://agentcc-gateway:${AGENTCC_GATEWAY_CONTAINER_PORT:-8080}}
+  AGENTCC_GATEWAY_INTERNAL_URL: ${AGENTCC_GATEWAY_INTERNAL_URL:-http://agentcc-gateway:${AGENTCC_GATEWAY_CONTAINER_PORT:-8080}}
   AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
   AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:-local-dev-only-admin-token-replace-me}
   RECAPTCHA_ENABLED: ${RECAPTCHA_ENABLED:-false}
@@ -285,7 +288,7 @@ services:
   agentcc-gateway:
     image: futureagi/agentcc-gateway:${AGENTCC_GATEWAY_VERSION:-latest}
     ports:
-      - "${AGENTCC_GATEWAY_PORT:-8090}:8080"
+      - "${AGENTCC_GATEWAY_PORT:-8090}:${AGENTCC_GATEWAY_CONTAINER_PORT:-8080}"
     env_file:
       - path: .env
         required: false
