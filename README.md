@@ -51,13 +51,17 @@
 
 <!--
   [MARKETING] hero-demo (YouTube)
-  GitHub markdown does not render inline <iframe>/<video>, so we use a
-  clickable YouTube thumbnail that opens the video in a new tab.
-  Video: https://www.youtube.com/watch?v=Mdpn8ekFwQ0
+  Video: https://www.youtube.com/watch?v=6keOTAOUUWI
+  GitHub's markdown sanitizer strips <iframe>/<video> but leaves the raw tag
+  text behind, so an embed renders as a wall of markup on the repo page. We
+  use the video's still frame with a YouTube play button on it, linked to the
+  video. The asset filename carries the video ID on purpose: GitHub's image
+  CDN caches by URL path, so reusing a filename serves the old picture for
+  hours. New video => new ID => new filename => renders immediately.
 -->
 <div align="center">
-  <a href="https://www.youtube.com/watch?v=Mdpn8ekFwQ0&t=1s">
-    <img alt="Future AGI — trace an agent, run evals, simulate, and guardrail in one platform (watch on YouTube)" src="https://img.youtube.com/vi/Mdpn8ekFwQ0/maxresdefault.jpg" width="720">
+  <a href="https://www.youtube.com/watch?v=6keOTAOUUWI">
+    <img alt="Watch the demo — trace an agent, run evals, simulate, and guardrail on one platform" src="frontend/public/assets/readme/demo-6keOTAOUUWI-v4.png" width="100%">
   </a>
 </div>
 
