@@ -46,6 +46,7 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
         super().__init__(*args, **kwargs)
         self.session_uuid = None
         self.workspace_id = None
+        self._background_tasks = set()
 
     async def connect(self):
         self.user = self.scope.get("user")
@@ -76,6 +77,12 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
         logger.info(
             f"PromptStream connection closed: session={self.session_uuid}, code={close_code}"
         )
+        if self._background_tasks:
+            tasks = tuple(self._background_tasks)
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            self._background_tasks.difference_update(tasks)
 
     async def receive_json(self, content):
         message_type = content.get("type")
@@ -92,6 +99,12 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
             await self._send_ws_error(f"Unknown message type: {message_type}")
             return
         await handler(content)
+
+    def _create_background_task(self, coro):
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
 
     # ------------------------------------------------------------------
     # Access resolution — the single gate.
@@ -264,7 +277,7 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
                 "session_uuid": self.session_uuid,
             }
         )
-        asyncio.create_task(self.execute_template_async(content, template_id))
+        self._create_background_task(self.execute_template_async(content, template_id))
 
     async def execute_template_async(self, content, template_id):
         correlation = {"template_id": template_id}
@@ -344,7 +357,7 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
                 "session_uuid": self.session_uuid,
             }
         )
-        asyncio.create_task(
+        self._create_background_task(
             self.execute_improve_prompt_async(payload, payload["improve_id"])
         )
 
@@ -407,7 +420,9 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
                 "session_uuid": self.session_uuid,
             }
         )
-        asyncio.create_task(self.execute_generate_prompt_async(payload, generation_id))
+        self._create_background_task(
+            self.execute_generate_prompt_async(payload, generation_id)
+        )
 
     async def execute_generate_prompt_async(self, content, generation_id):
         correlation = {"generation_id": generation_id}
