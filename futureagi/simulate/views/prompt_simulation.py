@@ -7,6 +7,7 @@ that use prompts as the agent source instead of SDK-based agent definitions.
 
 import structlog
 from django.db import transaction
+from django.db.models import Max
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from drf_yasg.utils import swagger_auto_schema
@@ -98,7 +99,10 @@ class PromptSimulationListCreateView(APIView):
                     organization=user_organization,
                     deleted=False,
                 )
-                .prefetch_related("scenarios")
+                .prefetch_related("scenarios", "simulate_eval_configs")
+                # ponytail: last_run_at is not a column, annotated here like
+                # run_test.py:363 does it
+                .annotate(last_run_at=Max("executions__created_at"))
                 .order_by("-created_at")
             )
 
