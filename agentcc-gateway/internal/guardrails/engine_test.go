@@ -930,6 +930,56 @@ func TestPlugin_PostBlock(t *testing.T) {
 	}
 }
 
+func TestPlugin_PostBlockPropagatesThroughPipeline(t *testing.T) {
+	registry := map[string]Guardrail{
+		"toxicity": &mockGuardrail{
+			name:  "toxicity",
+			stage: StagePost,
+			result: &CheckResult{
+				Pass:    false,
+				Score:   0.92,
+				Action:  ActionBlock,
+				Message: "toxic response",
+			},
+		},
+	}
+	guardrailEngine := NewEngine(config.GuardrailsConfig{
+		Enabled:        true,
+		FailOpen:       true,
+		DefaultTimeout: 5 * time.Second,
+		Rules: []config.GuardrailRuleConfig{
+			{Name: "toxicity", Stage: "post", Mode: "sync", Action: "block", Threshold: 0.7},
+		},
+	}, registry)
+	pipelineEngine := pipeline.NewEngine(
+		NewPlugin(guardrailEngine, nil, nil, nil, nil),
+	)
+
+	rc := models.AcquireRequestContext()
+	defer rc.Release()
+	rc.Request = &models.ChatCompletionRequest{Model: "gpt-4o"}
+	rc.Model = "gpt-4o"
+
+	err := pipelineEngine.Process(
+		context.Background(),
+		rc,
+		func(ctx context.Context, rc *models.RequestContext) error {
+			rc.Response = &models.ChatCompletionResponse{ID: "test"}
+			return nil
+		},
+	)
+	apiErr, ok := err.(*models.APIError)
+	if !ok {
+		t.Fatalf("Process error = %T %v, want *models.APIError", err, err)
+	}
+	if apiErr.Status != 403 || apiErr.Code != "content_blocked" {
+		t.Errorf("Process error = %+v, want 403 content_blocked", apiErr)
+	}
+	if rc.Response != nil {
+		t.Error("blocked response should not escape the pipeline")
+	}
+}
+
 func TestPlugin_NoGuardrails(t *testing.T) {
 	engine := NewEngine(config.GuardrailsConfig{
 		Enabled:        true,

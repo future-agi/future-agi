@@ -15,8 +15,8 @@ type mockPlugin struct {
 	onResp   func(ctx context.Context, rc *models.RequestContext) PluginResult
 }
 
-func (m *mockPlugin) Name() string    { return m.name }
-func (m *mockPlugin) Priority() int   { return m.priority }
+func (m *mockPlugin) Name() string  { return m.name }
+func (m *mockPlugin) Priority() int { return m.priority }
 func (m *mockPlugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) PluginResult {
 	if m.onReq != nil {
 		return m.onReq(ctx, rc)
@@ -168,6 +168,46 @@ func TestEngineProviderError(t *testing.T) {
 	}
 	if !postPluginRan {
 		t.Error("post-plugins should run even when provider errors")
+	}
+}
+
+func TestEnginePostPluginError(t *testing.T) {
+	postErr := models.ErrForbidden("response blocked")
+	errorPlugin := &mockPlugin{
+		name:     "response-validator",
+		priority: 1,
+		onResp: func(ctx context.Context, rc *models.RequestContext) PluginResult {
+			return ResultError(postErr)
+		},
+	}
+
+	observerRan := false
+	observerPlugin := &mockPlugin{
+		name:     "observer",
+		priority: 2,
+		onResp: func(ctx context.Context, rc *models.RequestContext) PluginResult {
+			observerRan = true
+			return ResultContinue()
+		},
+	}
+
+	engine := NewEngine(errorPlugin, observerPlugin)
+	rc := models.AcquireRequestContext()
+	defer rc.Release()
+
+	err := engine.Process(context.Background(), rc, func(ctx context.Context, rc *models.RequestContext) error {
+		rc.Response = &models.ChatCompletionResponse{ID: "test"}
+		return nil
+	})
+
+	if err != postErr {
+		t.Fatalf("Process error = %v, want post-plugin error %v", err, postErr)
+	}
+	if !observerRan {
+		t.Error("later post-plugins should run after a post-plugin error")
+	}
+	if len(rc.Errors) != 1 || rc.Errors[0] != postErr {
+		t.Fatalf("request errors = %v, want [%v]", rc.Errors, postErr)
 	}
 }
 
