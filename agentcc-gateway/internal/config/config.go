@@ -293,10 +293,12 @@ type ServerConfig struct {
 	Port                  int           `yaml:"port" json:"port"`
 	Host                  string        `yaml:"host" json:"host"`
 	ReadTimeout           time.Duration `yaml:"read_timeout" json:"read_timeout"`
+	ReadHeaderTimeout     time.Duration `yaml:"read_header_timeout" json:"read_header_timeout"`
 	WriteTimeout          time.Duration `yaml:"write_timeout" json:"write_timeout"`
 	IdleTimeout           time.Duration `yaml:"idle_timeout" json:"idle_timeout"`
 	ShutdownTimeout       time.Duration `yaml:"shutdown_timeout" json:"shutdown_timeout"`
 	MaxRequestBodySize    int64         `yaml:"max_request_body_size" json:"max_request_body_size"`
+	MaxHeaderBytes        int           `yaml:"max_header_bytes" json:"max_header_bytes"`
 	DefaultRequestTimeout time.Duration `yaml:"default_request_timeout" json:"default_request_timeout"`
 }
 
@@ -596,7 +598,12 @@ type MirrorConfig struct {
 	CaptureResults   bool         `yaml:"capture_results" json:"capture_results"`
 	MaxStored        int          `yaml:"max_stored" json:"max_stored"`
 	FlushIntervalSec int          `yaml:"flush_interval_sec" json:"flush_interval_sec"`
-	Rules            []MirrorRule `yaml:"rules" json:"rules"`
+	// MaxConcurrent bounds the number of in-flight async mirror requests.
+	// Mirroring is fire-and-forget shadow traffic, so excess is dropped (not
+	// queued) once this budget is exhausted, preventing unbounded goroutine and
+	// upstream-connection growth under load. Defaults to 64 when unset.
+	MaxConcurrent int          `yaml:"max_concurrent" json:"max_concurrent"`
+	Rules         []MirrorRule `yaml:"rules" json:"rules"`
 }
 
 // MirrorRule defines a single traffic mirroring rule.
@@ -857,10 +864,12 @@ func DefaultConfig() *Config {
 			Port:                  8080,
 			Host:                  "0.0.0.0",
 			ReadTimeout:           5 * time.Second,
+			ReadHeaderTimeout:     5 * time.Second,
 			WriteTimeout:          300 * time.Second,
 			IdleTimeout:           120 * time.Second,
 			ShutdownTimeout:       30 * time.Second,
 			MaxRequestBodySize:    50 * 1024 * 1024, // 50MB
+			MaxHeaderBytes:        1 << 20,          // 1MB (matches Go's default)
 			DefaultRequestTimeout: 60 * time.Second,
 		},
 		Providers:    make(map[string]ProviderConfig),

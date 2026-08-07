@@ -56,6 +56,7 @@ type Server struct {
 	TenantStore      *tenant.Store
 	OrgProviderCache *providers.OrgProviderCache
 	asyncWorker      *async.Worker
+	rotationMgr      *rotation.Manager
 	ready            atomic.Bool
 }
 
@@ -560,6 +561,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	{
 		drainPeriod := 30 * time.Second                 // default
 		rotMgr := rotation.NewManager(drainPeriod, nil) // onRotate callback not wired for now
+		s.rotationMgr = rotMgr                          // tracked so Shutdown can stop drain timers
 
 		// Register each provider that has rotation enabled.
 		for name, pCfg := range cfg.Providers {
@@ -867,12 +869,27 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	}
 	handler = middleware.Recovery(handler)
 
+	// ReadHeaderTimeout bounds the time to read request headers independently of
+	// the full-body ReadTimeout (slowloris defense-in-depth). MaxHeaderBytes caps
+	// header size. Fall back to safe defaults for configs that predate these
+	// fields (they deserialize to 0).
+	readHeaderTimeout := cfg.Server.ReadHeaderTimeout
+	if readHeaderTimeout <= 0 {
+		readHeaderTimeout = 5 * time.Second
+	}
+	maxHeaderBytes := cfg.Server.MaxHeaderBytes
+	if maxHeaderBytes <= 0 {
+		maxHeaderBytes = 1 << 20 // 1MB
+	}
+
 	s.httpServer = &http.Server{
-		Addr:         cfg.Addr(),
-		Handler:      handler,
-		ReadTimeout:  cfg.Server.ReadTimeout,
-		WriteTimeout: cfg.Server.WriteTimeout,
-		IdleTimeout:  cfg.Server.IdleTimeout,
+		Addr:              cfg.Addr(),
+		Handler:           handler,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		ReadHeaderTimeout: readHeaderTimeout,
+		WriteTimeout:      cfg.Server.WriteTimeout,
+		IdleTimeout:       cfg.Server.IdleTimeout,
+		MaxHeaderBytes:    maxHeaderBytes,
 	}
 
 	return s
@@ -913,6 +930,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	// Stop async workers.
 	if s.asyncWorker != nil {
 		s.asyncWorker.Stop()
+	}
+
+	// Cancel any in-flight key-rotation drain timers.
+	if s.rotationMgr != nil {
+		s.rotationMgr.Stop()
 	}
 
 	if err := s.httpServer.Shutdown(ctx); err != nil {
