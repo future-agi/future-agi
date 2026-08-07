@@ -46,9 +46,32 @@ const EditScenarioDialog = ({ open, onClose, scenario, onEditSuccess }) => {
     setIsEditing(true);
     setError("");
 
+    const newName = scenarioName.trim();
+
     try {
+      // Check for duplicate names when the name has changed
+      if (newName !== (scenario?.name || "")) {
+        try {
+          const response = await axios.get(endpoints.scenarios.list, {
+            params: { search: newName, limit: 50 },
+          });
+          const results = response?.data?.results ?? [];
+          const duplicate = results.find(
+            (s) => s.name === newName && s.id !== scenario.id,
+          );
+          if (duplicate) {
+            setError(
+              "A scenario with this name already exists. Please choose another name.",
+            );
+            return;
+          }
+        } catch {
+          // Graceful degradation: allow edit if duplicate check fails
+        }
+      }
+
       const payload = {
-        name: scenarioName.trim(),
+        name: newName,
         description: scenarioDescription.trim(),
       };
 
