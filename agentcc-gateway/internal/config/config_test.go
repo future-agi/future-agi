@@ -1,6 +1,10 @@
 package config
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,6 +26,7 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 func TestValidate(t *testing.T) {
+	publicKey := testLicensePublicKey(t)
 	tests := []struct {
 		name    string
 		modify  func(*Config)
@@ -65,6 +70,54 @@ func TestValidate(t *testing.T) {
 				c.Providers["test"] = ProviderConfig{BaseURL: "http://localhost"}
 			},
 			wantErr: true,
+		},
+		{
+			name: "license auth requires key",
+			modify: func(c *Config) {
+				c.LicenseAuth.Enabled = true
+				c.Redis.Enabled = true
+				c.Redis.Address = "redis:6379"
+			},
+			wantErr: true,
+		},
+		{
+			name: "license auth requires runtime state",
+			modify: func(c *Config) {
+				c.LicenseAuth.Enabled = true
+				c.LicenseAuth.PublicKey = publicKey
+				c.LicenseAuth.RuntimeStateRequired = false
+				c.Redis.Enabled = true
+				c.Redis.Address = "redis:6379"
+			},
+			wantErr: true,
+		},
+		{
+			name: "license auth requires redis",
+			modify: func(c *Config) {
+				c.LicenseAuth.Enabled = true
+				c.LicenseAuth.PublicKey = publicKey
+			},
+			wantErr: true,
+		},
+		{
+			name: "license auth rejects malformed key",
+			modify: func(c *Config) {
+				c.LicenseAuth.Enabled = true
+				c.LicenseAuth.PublicKey = "not-pem"
+				c.Redis.Enabled = true
+				c.Redis.Address = "redis:6379"
+			},
+			wantErr: true,
+		},
+		{
+			name: "valid license auth",
+			modify: func(c *Config) {
+				c.LicenseAuth.Enabled = true
+				c.LicenseAuth.PublicKey = publicKey
+				c.Redis.Enabled = true
+				c.Redis.Address = "redis:6379"
+			},
+			wantErr: false,
 		},
 		{
 			name: "valid provider",
@@ -149,6 +202,19 @@ func TestLoadFromEnv(t *testing.T) {
 	if cfg.Admin.Token != "secret123" {
 		t.Errorf("admin token = %q, want %q", cfg.Admin.Token, "secret123")
 	}
+}
+
+func testLicensePublicKey(t *testing.T) string {
+	t.Helper()
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
 }
 
 func TestAddr(t *testing.T) {

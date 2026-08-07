@@ -47,7 +47,7 @@ class TestSpanAttrParity:
 
     @pytest.mark.parametrize(
         "ftype,op",
-        [(t, op) for t, ops in SPAN_ATTR_ALLOWED_OPS.items() for op in ops],
+        [(t, op) for t, ops in SPAN_ATTR_ALLOWED_OPS.items() for op in sorted(ops)],
     )
     def test_canonical_op_produces_non_empty_q(self, ftype, op):
         flt = _make_span_attr_filter(ftype, op)

@@ -640,9 +640,21 @@ export interface InviteCreateApi {
   workspace_access?: WorkspaceAccessInputApi[];
 }
 
+/**
+ * Accept-invite links for the invites just created. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud/EE.
+ */
+export interface InviteLinkApi {
+  /** @minLength 1 */
+  email: string;
+  /** @minLength 1 */
+  invite_link: string;
+}
+
 export interface InviteCreateResultApi {
   invited: string[];
   already_members?: string[];
+  /** Accept-invite links for the invites just created. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud/EE. */
+  invites?: InviteLinkApi[];
 }
 
 export interface InviteCreateResponseApi {
@@ -714,6 +726,11 @@ export interface MemberListItemApi {
   created_at: string;
   type: MemberListItemApiType;
   auto_access?: boolean;
+  /**
+     * Accept-invite link for a pending invite. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud/EE and on active-member rows.
+     * @minLength 1
+     */
+  invite_link?: string;
 }
 
 export interface MemberListResultApi {
@@ -978,6 +995,21 @@ export interface PasswordResetInitiateRequestApi {
   email: string;
 }
 
+export interface PasswordResetInitiateResultApi {
+  /** @minLength 1 */
+  message: string;
+  /**
+     * Password-reset link, returned on OSS deployments only, where SMTP is usually not configured and the emailed link would never arrive. Never present on Cloud/EE, and never present for an email with no matching account. Treat as a credential: anyone holding it can set that account's password.
+     * @minLength 1
+     */
+  reset_link?: string;
+}
+
+export interface PasswordResetInitiateResponseApi {
+  status: boolean;
+  result: PasswordResetInitiateResultApi;
+}
+
 export type RedisKeyRequestApiValue = { [key: string]: unknown };
 
 export interface RedisKeyRequestApi {
@@ -1026,6 +1058,21 @@ export interface SignupRequestApi {
   password?: string;
   allow_email?: boolean;
   recaptcha_response?: string;
+}
+
+export interface SignupResultApi {
+  /** @minLength 1 */
+  message?: string;
+  /** @minLength 1 */
+  access?: string;
+  /** @minLength 1 */
+  refresh?: string;
+  new_org?: boolean;
+}
+
+export interface SignupResponseApi {
+  status: boolean;
+  result: SignupResultApi;
 }
 
 export interface TeamWorkspaceSummaryApi {
@@ -1498,6 +1545,11 @@ export interface WorkspaceMemberRowApi {
   created_at: string;
   type: WorkspaceMemberRowApiType;
   auto_access?: boolean;
+  /**
+     * Accept-invite link for a pending invite. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud/EE, on active-member rows, and on Admin+ invites when the caller is only a workspace admin.
+     * @minLength 1
+     */
+  invite_link?: string;
 }
 
 export interface WorkspaceMemberListResultApi {
@@ -3619,6 +3671,113 @@ export interface ApiTextErrorResponseApi {
   details?: ApiTextErrorResponseApiDetails;
 }
 
+export type CapabilitiesResponseApiDeploymentFlavor = typeof CapabilitiesResponseApiDeploymentFlavor[keyof typeof CapabilitiesResponseApiDeploymentFlavor];
+
+
+export const CapabilitiesResponseApiDeploymentFlavor = {
+  oss_image: 'oss_image',
+  self_hosted_ee_image: 'self_hosted_ee_image',
+  cloud_image: 'cloud_image',
+} as const;
+
+export type CapabilitiesResponseApiDisplayMode = typeof CapabilitiesResponseApiDisplayMode[keyof typeof CapabilitiesResponseApiDisplayMode];
+
+
+export const CapabilitiesResponseApiDisplayMode = {
+  oss: 'oss',
+  oss_locked: 'oss_locked',
+  enterprise: 'enterprise',
+  cloud: 'cloud',
+} as const;
+
+export type CapabilitiesResponseApiLicenseState = typeof CapabilitiesResponseApiLicenseState[keyof typeof CapabilitiesResponseApiLicenseState];
+
+
+export const CapabilitiesResponseApiLicenseState = {
+  not_applicable: 'not_applicable',
+  missing: 'missing',
+  invalid: 'invalid',
+  active: 'active',
+  grace: 'grace',
+  expired: 'expired',
+  trial_active: 'trial_active',
+  trial_expired: 'trial_expired',
+} as const;
+
+export type CapabilityFeatureApiReasonCode = typeof CapabilityFeatureApiReasonCode[keyof typeof CapabilityFeatureApiReasonCode];
+
+
+export const CapabilityFeatureApiReasonCode = {
+  FEATURE_UNKNOWN: 'FEATURE_UNKNOWN',
+  LICENSE_MISSING: 'LICENSE_MISSING',
+  LICENSE_INVALID: 'LICENSE_INVALID',
+  LICENSE_EXPIRED: 'LICENSE_EXPIRED',
+  LICENSE_TRIAL_EXPIRED: 'LICENSE_TRIAL_EXPIRED',
+  LICENSE_FEATURE_MISSING: 'LICENSE_FEATURE_MISSING',
+  FEATURE_NOT_IN_GRACE: 'FEATURE_NOT_IN_GRACE',
+  EE_CODE_UNAVAILABLE: 'EE_CODE_UNAVAILABLE',
+  RESOLVER_UNAVAILABLE: 'RESOLVER_UNAVAILABLE',
+  QUOTA_EXCEEDED: 'QUOTA_EXCEEDED',
+  SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
+  NETWORK_REQUIRED: 'NETWORK_REQUIRED',
+  USAGE_LIMIT_REACHED: 'USAGE_LIMIT_REACHED',
+  PLAN_FEATURE_MISSING: 'PLAN_FEATURE_MISSING',
+  LICENSE_VERSION_UNSUPPORTED: 'LICENSE_VERSION_UNSUPPORTED',
+} as const;
+
+export interface CapabilityFeatureApi {
+  /** @minLength 1 */
+  display_name: string;
+  allowed: boolean;
+  reason_code: CapabilityFeatureApiReasonCode;
+  requires_network: boolean;
+  oss_baseline: boolean;
+}
+
+export type CapabilitiesResponseApiFeatures = {[key: string]: CapabilityFeatureApi};
+
+export type LicenseDetailsApiLicenseType = typeof LicenseDetailsApiLicenseType[keyof typeof LicenseDetailsApiLicenseType];
+
+
+export const LicenseDetailsApiLicenseType = {
+  production: 'production',
+  trial: 'trial',
+} as const;
+
+export type LicenseDetailsApiState = typeof LicenseDetailsApiState[keyof typeof LicenseDetailsApiState];
+
+
+export const LicenseDetailsApiState = {
+  not_applicable: 'not_applicable',
+  missing: 'missing',
+  invalid: 'invalid',
+  active: 'active',
+  grace: 'grace',
+  expired: 'expired',
+  trial_active: 'trial_active',
+  trial_expired: 'trial_expired',
+} as const;
+
+export interface LicenseDetailsApi {
+  issued_to: string;
+  band: string;
+  license_type: LicenseDetailsApiLicenseType;
+  expires_at: string;
+  grace_ends_at: string;
+  /** @minimum 0 */
+  features_count: number;
+  state: LicenseDetailsApiState;
+}
+
+export interface CapabilitiesResponseApi {
+  deployment_flavor: CapabilitiesResponseApiDeploymentFlavor;
+  display_mode: CapabilitiesResponseApiDisplayMode;
+  license_state: CapabilitiesResponseApiLicenseState;
+  features: CapabilitiesResponseApiFeatures;
+  license?: LicenseDetailsApi;
+  instance_id?: string;
+}
+
 export type DeploymentInfoResultApiMode = typeof DeploymentInfoResultApiMode[keyof typeof DeploymentInfoResultApiMode];
 
 
@@ -3771,6 +3930,53 @@ export interface LangfuseTracesMetaApi {
 export interface LangfuseTracesResponseApi {
   data: LangfuseTracesResponseApiDataItem[];
   meta: LangfuseTracesMetaApi;
+}
+
+export type SetupChecksResultApiStatus = typeof SetupChecksResultApiStatus[keyof typeof SetupChecksResultApiStatus];
+
+
+export const SetupChecksResultApiStatus = {
+  ok: 'ok',
+  issues: 'issues',
+} as const;
+
+export type SetupChecksResultApiMode = typeof SetupChecksResultApiMode[keyof typeof SetupChecksResultApiMode];
+
+
+export const SetupChecksResultApiMode = {
+  live: 'live',
+  experiment: 'experiment',
+} as const;
+
+export type SetupCheckApiStatus = typeof SetupCheckApiStatus[keyof typeof SetupCheckApiStatus];
+
+
+export const SetupCheckApiStatus = {
+  passed: 'passed',
+  warning: 'warning',
+  failed: 'failed',
+  skipped: 'skipped',
+} as const;
+
+export interface SetupCheckApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  label: string;
+  status: SetupCheckApiStatus;
+  required: boolean;
+  detail: string;
+}
+
+export interface SetupChecksResultApi {
+  status: SetupChecksResultApiStatus;
+  mode: SetupChecksResultApiMode;
+  checks: SetupCheckApi[];
+}
+
+export interface SetupChecksResponseApi {
+  status?: boolean;
+  result: SetupChecksResultApi;
 }
 
 export type SpanAttributeDetailResponseApiType = typeof SpanAttributeDetailResponseApiType[keyof typeof SpanAttributeDetailResponseApiType];
@@ -18282,6 +18488,138 @@ export interface TestExecutionTranscriptsResponseApi {
   readonly total_transcripts?: number;
 }
 
+export interface DeploymentHeartbeatApi {
+  schema_version?: number;
+  instance_id: string;
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  version: string;
+  window_start: string;
+  window_end: string;
+  /**
+     * @minimum 0
+     * @maximum 9223372036854776000
+     */
+  active_users_count: number;
+  /**
+     * @minimum 0
+     * @maximum 9223372036854776000
+     */
+  traces_count: number;
+  /**
+     * @minimum 0
+     * @maximum 9223372036854776000
+     */
+  spans_count: number;
+  /**
+     * @minimum 0
+     * @maximum 9223372036854776000
+     */
+  projects_count: number;
+  /**
+     * @minimum 0
+     * @maximum 9223372036854776000
+     */
+  eval_logger_count: number;
+  /**
+     * @minimum 0
+     * @maximum 9223372036854776000
+     */
+  model_hub_evaluations_count: number;
+  /**
+     * @minimum 0
+     * @maximum 9223372036854776000
+     */
+  dataset_eval_runs_count: number;
+  /**
+     * @minimum 0
+     * @maximum 9223372036854776000
+     */
+  total_evaluations_count: number;
+  /**
+     * @minimum 0
+     * @maximum 9223372036854776000
+     */
+  simulation_runs_count: number;
+  /**
+     * @minimum 0
+     * @maximum 9223372036854776000
+     */
+  simulation_calls_count: number;
+  /**
+     * @minimum 0
+     * @maximum 9223372036854776000
+     */
+  experiments_count: number;
+  /**
+     * @minimum 0
+     * @maximum 9223372036854776000
+     */
+  gateway_requests_count: number;
+  /**
+     * @minimum 0
+     * @maximum 9223372036854776000
+     */
+  datasets_count: number;
+}
+
+export type DeploymentHeartbeatResponseApiStatus = typeof DeploymentHeartbeatResponseApiStatus[keyof typeof DeploymentHeartbeatResponseApiStatus];
+
+
+export const DeploymentHeartbeatResponseApiStatus = {
+  ok: 'ok',
+} as const;
+
+export interface DeploymentHeartbeatResponseApi {
+  status: DeploymentHeartbeatResponseApiStatus;
+}
+
+export interface TelemetryUserApi {
+  /**
+     * @minLength 1
+     * @maxLength 254
+     */
+  email: string;
+  /**
+     * @minLength 1
+     * @maxLength 253
+     */
+  domain: string;
+}
+
+export interface DeploymentRegistrationApi {
+  schema_version?: number;
+  instance_id: string;
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  version: string;
+  /**
+     * @minLength 1
+     * @maxLength 50
+     */
+  deployment_type: string;
+  timestamp: string;
+  telemetry_disabled: boolean;
+  users?: TelemetryUserApi[];
+}
+
+export type DeploymentRegistrationResponseApiStatus = typeof DeploymentRegistrationResponseApiStatus[keyof typeof DeploymentRegistrationResponseApiStatus];
+
+
+export const DeploymentRegistrationResponseApiStatus = {
+  ok: 'ok',
+} as const;
+
+export interface DeploymentRegistrationResponseApi {
+  status: DeploymentRegistrationResponseApiStatus;
+  /** @minLength 1 */
+  instance_secret: string;
+}
+
 export interface BulkAnnotationAnnotationRequestApi {
   annotation_label_id: string;
   value?: string;
@@ -21959,96 +22297,6 @@ export interface DownloadInvoiceResponseApi {
   result: DownloadInvoiceResultApi;
 }
 
-export type EELicenseGrantApiBand = typeof EELicenseGrantApiBand[keyof typeof EELicenseGrantApiBand];
-
-
-export const EELicenseGrantApiBand = {
-  team: 'team',
-  business: 'business',
-  enterprise: 'enterprise',
-  enterprise_plus: 'enterprise_plus',
-} as const;
-
-export interface EELicenseGrantApi {
-  id: string;
-  /** @minLength 1 */
-  customer_name: string;
-  band: EELicenseGrantApiBand;
-  /** @minLength 1 */
-  billing_interval: string;
-  features: string[];
-  max_traces_monthly?: number;
-  max_gateway_monthly?: number;
-  issued_at: string;
-  expires_at: string;
-  /** @minLength 1 */
-  status: string;
-}
-
-export interface EELicenseListResultApi {
-  licenses: EELicenseGrantApi[];
-}
-
-export interface EELicenseListResponseApi {
-  status: boolean;
-  result: EELicenseListResultApi;
-}
-
-export type EELicenseCreateRequestApiBand = typeof EELicenseCreateRequestApiBand[keyof typeof EELicenseCreateRequestApiBand];
-
-
-export const EELicenseCreateRequestApiBand = {
-  team: 'team',
-  business: 'business',
-  enterprise: 'enterprise',
-  enterprise_plus: 'enterprise_plus',
-} as const;
-
-export type EELicenseCreateRequestApiBillingInterval = typeof EELicenseCreateRequestApiBillingInterval[keyof typeof EELicenseCreateRequestApiBillingInterval];
-
-
-export const EELicenseCreateRequestApiBillingInterval = {
-  monthly: 'monthly',
-  yearly: 'yearly',
-} as const;
-
-export interface EELicenseCreateRequestApi {
-  band: EELicenseCreateRequestApiBand;
-  customer_name?: string;
-  billing_interval?: EELicenseCreateRequestApiBillingInterval;
-}
-
-export interface EELicenseCreateResultApi {
-  grant_id: string;
-  /** @minLength 1 */
-  jwt_key: string;
-  /** @minLength 1 */
-  key_hash: string;
-  /** @minLength 1 */
-  band: string;
-  expires_at: string;
-  features: string[];
-}
-
-export interface EELicenseCreateResponseApi {
-  status: boolean;
-  result: EELicenseCreateResultApi;
-}
-
-export interface EELicenseRevokeRequestApi {
-  reason?: string;
-}
-
-export interface EELicenseRevokeResultApi {
-  revoked: boolean;
-  grant_id: string;
-}
-
-export interface EELicenseRevokeResponseApi {
-  status: boolean;
-  result: EELicenseRevokeResultApi;
-}
-
 export interface AutoReloadSettingsDataApi {
   autoreload_enabled: boolean;
   autoreload_wallet_amount: string;
@@ -23072,6 +23320,237 @@ export interface UsageWorkspaceBreakdownResultApi {
 export interface UsageWorkspaceBreakdownResponseApi {
   status: boolean;
   result: UsageWorkspaceBreakdownResultApi;
+}
+
+export type HeartbeatApiUsageData = {[key: string]: string};
+
+export interface HeartbeatApi {
+  instance_id: string;
+  /**
+     * @minLength 1
+     * @pattern ^lic_[A-Za-z0-9_-]{1,60}$
+     */
+  license_id: string;
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  version?: string;
+  /**
+     * @minLength 1
+     * @maxLength 50
+     */
+  deployment_type?: string;
+  timestamp: string;
+  /**
+     * @minLength 1
+     * @pattern ^[A-Za-z0-9_-]{16,64}$
+     */
+  nonce: string;
+  /** @minimum 0 */
+  sequence: number;
+  usage_data?: HeartbeatApiUsageData;
+}
+
+export type EnterpriseHeartbeatResponseApiStatus = typeof EnterpriseHeartbeatResponseApiStatus[keyof typeof EnterpriseHeartbeatResponseApiStatus];
+
+
+export const EnterpriseHeartbeatResponseApiStatus = {
+  accepted: 'accepted',
+  ignored: 'ignored',
+  rejected: 'rejected',
+} as const;
+
+export interface EnterpriseHeartbeatResponseApi {
+  status: EnterpriseHeartbeatResponseApiStatus;
+  /** @minLength 1 */
+  reason?: string;
+  /** @minLength 1 */
+  grant_status?: string;
+  expires_at?: string;
+  /** @minLength 1 */
+  renewal_notice?: string;
+}
+
+export type CreateGrantApiLicenseType = typeof CreateGrantApiLicenseType[keyof typeof CreateGrantApiLicenseType];
+
+
+export const CreateGrantApiLicenseType = {
+  production: 'production',
+  trial: 'trial',
+} as const;
+
+export type CreateGrantApiLimits = {[key: string]: number};
+
+export interface CreateGrantApi {
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  customer_name: string;
+  /**
+     * @minLength 1
+     * @maxLength 64
+     */
+  customer_id?: string;
+  /** @minLength 1 */
+  primary_contact_email?: string;
+  /**
+     * @minLength 1
+     * @maxLength 128
+     */
+  hubspot_deal_id?: string;
+  license_type: CreateGrantApiLicenseType;
+  /**
+     * @minLength 1
+     * @maxLength 64
+     */
+  band: string;
+  features?: string[];
+  limits?: CreateGrantApiLimits;
+  /** @minimum 1 */
+  max_instances?: number;
+  /**
+     * @minLength 1
+     * @maxLength 32
+     */
+  min_software_version?: string;
+  not_before?: string;
+  expires_at: string;
+  /** @minimum 0 */
+  grace_days?: number;
+}
+
+export type LicenseGrantApiLicenseType = typeof LicenseGrantApiLicenseType[keyof typeof LicenseGrantApiLicenseType];
+
+
+export const LicenseGrantApiLicenseType = {
+  production: 'production',
+  trial: 'trial',
+} as const;
+
+export type LicenseGrantApiFeatures = { [key: string]: unknown };
+
+export type LicenseGrantApiLimits = { [key: string]: unknown };
+
+export type LicenseGrantApiStatus = typeof LicenseGrantApiStatus[keyof typeof LicenseGrantApiStatus];
+
+
+export const LicenseGrantApiStatus = {
+  draft: 'draft',
+  pending_approval: 'pending_approval',
+  active: 'active',
+  suspended: 'suspended',
+  revoked: 'revoked',
+  expired: 'expired',
+} as const;
+
+export interface LicenseGrantApi {
+  readonly id?: string;
+  /** @minLength 1 */
+  readonly license_id?: string;
+  /** @minLength 1 */
+  readonly key_id?: string;
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  customer_name: string;
+  /** @maxLength 64 */
+  customer_id?: string;
+  /** @maxLength 254 */
+  primary_contact_email?: string;
+  /** @maxLength 128 */
+  hubspot_deal_id?: string;
+  license_type: LicenseGrantApiLicenseType;
+  /**
+     * @minLength 1
+     * @maxLength 64
+     */
+  band: string;
+  features?: LicenseGrantApiFeatures;
+  limits?: LicenseGrantApiLimits;
+  /**
+     * @minimum -2147483648
+     * @maximum 2147483647
+     */
+  max_instances?: number;
+  /** @maxLength 32 */
+  min_software_version?: string;
+  readonly issued_at?: string;
+  not_before?: string;
+  expires_at?: string;
+  /**
+     * @minimum -2147483648
+     * @maximum 2147483647
+     */
+  grace_days?: number;
+  readonly status?: LicenseGrantApiStatus;
+  /** @maxLength 255 */
+  status_reason?: string;
+  readonly status_changed_at?: string;
+  readonly drafted_by?: string;
+  readonly approved_by?: string;
+  readonly approved_at?: string;
+  readonly authorization_version?: number;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+}
+
+export interface LicenseActionRequestApi { [key: string]: unknown }
+
+export interface IssuedLicenseResponseApi {
+  grant: LicenseGrantApi;
+  /** @minLength 1 */
+  license_key: string;
+}
+
+export type UpdateStatusApiStatus = typeof UpdateStatusApiStatus[keyof typeof UpdateStatusApiStatus];
+
+
+export const UpdateStatusApiStatus = {
+  active: 'active',
+  suspended: 'suspended',
+  revoked: 'revoked',
+} as const;
+
+export interface UpdateStatusApi {
+  status: UpdateStatusApiStatus;
+  /** @maxLength 255 */
+  reason?: string;
+}
+
+export interface ActivationRequestApi {
+  instance_id: string;
+  /** @maxLength 100 */
+  version?: string;
+  /** @maxLength 50 */
+  deployment_type?: string;
+  /**
+     * @minLength 1
+     * @pattern ^[0-9a-f]{64}$
+     */
+  license_key_hash?: string;
+}
+
+export type ActivationResponseApiScope = typeof ActivationResponseApiScope[keyof typeof ActivationResponseApiScope];
+
+
+export const ActivationResponseApiScope = {
+  oss: 'oss',
+  enterprise: 'enterprise',
+} as const;
+
+export interface ActivationResponseApi {
+  /** @minLength 1 */
+  gateway_url: string;
+  /** @minLength 1 */
+  access_token: string;
+  /** @minimum 0 */
+  expires_in: number;
+  allowed_services: string[];
+  allowed_models: string[];
+  scope: ActivationResponseApiScope;
 }
 
 export type AccountsAwsMarketplaceLaunchSoftwareCreateBody = {

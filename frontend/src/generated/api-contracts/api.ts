@@ -36,6 +36,8 @@ import type {
   AccountsUserProfileResponseApi,
   AccountsWorkspaceListListParams,
   AccountsWorkspaceMembersListParams,
+  ActivationRequestApi,
+  ActivationResponseApi,
   AddAccessApi,
   AddApiColumnRequestApi,
   AddAsNewDatasetRequestApi,
@@ -233,6 +235,7 @@ import type {
   CallWebsocketRequestApi,
   CallWebsocketResponseApi,
   CancelTestExecutionResponseApi,
+  CapabilitiesResponseApi,
   CellErrorLocalizerResponseApi,
   CellUpdateApi,
   ChatSDKCodeResponseApi,
@@ -273,6 +276,7 @@ import type {
   CreateDatasetFromExperimentRequestApi,
   CreateDatasetFromLocalFileRequestApi,
   CreateEmptyDatasetRequestApi,
+  CreateGrantApi,
   CreateLinearIssueApi,
   CreateLinearIssueResponseApi,
   CreateNodeApi,
@@ -353,7 +357,11 @@ import type {
   DeleteEvalTemplateApi,
   DeleteUserApi,
   DeleteUserResponseApi,
+  DeploymentHeartbeatApi,
+  DeploymentHeartbeatResponseApi,
   DeploymentInfoResponseApi,
+  DeploymentRegistrationApi,
+  DeploymentRegistrationResponseApi,
   DerivedVariableDetailResponseApi,
   DerivedVariableExtractRequestApi,
   DerivedVariablePreviewRequestApi,
@@ -372,14 +380,10 @@ import type {
   DuplicateRowsResponseApi,
   DynamicColumnCreateResponseApi,
   DynamicColumnMessageResponseApi,
-  EELicenseCreateRequestApi,
-  EELicenseCreateResponseApi,
-  EELicenseListResponseApi,
-  EELicenseRevokeRequestApi,
-  EELicenseRevokeResponseApi,
   EditRunPromptColumnApi,
   EmbeddingsResponseApi,
   EmptyRequestApi,
+  EnterpriseHeartbeatResponseApi,
   ErrorResponseApi,
   EvalApiLogRowResponseApi,
   EvalApiLogTableResponseApi,
@@ -533,6 +537,7 @@ import type {
   GroundTruthUploadRequestApi,
   GroundTruthUploadResponseApi,
   HealthCheckResponseApi,
+  HeartbeatApi,
   HuggingFaceAddRowsRequestApi,
   HuggingFaceDatasetConfigRequestApi,
   HuggingFaceDatasetConfigResponseApi,
@@ -558,6 +563,7 @@ import type {
   InviteCreateApi,
   InviteCreateResponseApi,
   InviteResendApi,
+  IssuedLicenseResponseApi,
   KnowledgeBaseApi,
   KnowledgeBaseCreateApi,
   KnowledgeBaseEmbeddingModelsResponseApi,
@@ -581,6 +587,8 @@ import type {
   LegacyKnowledgeBaseMutationResponseApi,
   LegacyKnowledgeBaseSdkCodeResponseApi,
   LegacyKnowledgeBaseTableResponseApi,
+  LicenseActionRequestApi,
+  LicenseGrantApi,
   LinearTeamsResponseApi,
   LiteLLMModelVoicesResponseApi,
   LitellmApi,
@@ -793,6 +801,7 @@ import type {
   PasskeyRenameResponseApi,
   PasswordResetConfirmRequestApi,
   PasswordResetInitiateRequestApi,
+  PasswordResetInitiateResponseApi,
   PasswordValidationApi,
   PaymentMethodCheckoutResponseApi,
   PaymentMethodConfirmResponseApi,
@@ -988,6 +997,7 @@ import type {
   SecretKeysResponseApi,
   SendChatRequestApi,
   SessionComparisonResponseApi,
+  SetupChecksResponseApi,
   SetupIntentConfirmRequestApi,
   ShadowResultsWebhookRequestApi,
   SharedLinkCreateApi,
@@ -996,6 +1006,7 @@ import type {
   SharedLinkResolveResponseApi,
   SharedLinkUpdateApi,
   SignupRequestApi,
+  SignupResponseApi,
   SimulateAgentDefinitionsListParams,
   SimulateApiAgentDefinitionOperationsList200,
   SimulateApiAgentDefinitionOperationsListParams,
@@ -1235,6 +1246,7 @@ import type {
   UpdatePortApi,
   UpdateRunTestApi,
   UpdateScoreApi,
+  UpdateStatusApi,
   UpdateUserApi,
   UpgradeToPaygConfirmRequestApi,
   UpgradeToPaygPostResponseApi,
@@ -5587,7 +5599,7 @@ export const accountsPasswordResetConfirmCreate = async (uidb64: string,
 
 
 export type accountsPasswordResetInitiateCreateResponse200 = {
-  data: AccountsMessageResponseApi
+  data: PasswordResetInitiateResponseApi
   status: 200
 }
 
@@ -5851,7 +5863,7 @@ export const accountsResendInvitationEmailsCreate = async (userIdsRequestApi: Us
 
 
 export type accountsSignupCreateResponse200 = {
-  data: AccountsMessageResponseApi
+  data: SignupResponseApi
   status: 200
 }
 
@@ -17085,6 +17097,46 @@ export const aiToolsToolsList = async ( options?: RequestInit): Promise<aiToolsT
 
 
 
+export type apiCapabilitiesListResponse200 = {
+  data: CapabilitiesResponseApi
+  status: 200
+}
+
+export type apiCapabilitiesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type apiCapabilitiesListResponseSuccess = (apiCapabilitiesListResponse200) & {
+  headers: Headers;
+};
+export type apiCapabilitiesListResponseError = (apiCapabilitiesListResponseDefault) & {
+  headers: Headers;
+};
+
+export type apiCapabilitiesListResponse = (apiCapabilitiesListResponseSuccess | apiCapabilitiesListResponseError)
+
+export const getApiCapabilitiesListUrl = () => {
+
+
+
+
+  return `/api/capabilities/`
+}
+
+export const apiCapabilitiesList = async ( options?: RequestInit): Promise<apiCapabilitiesListResponse> => {
+
+  return apiMutator<apiCapabilitiesListResponse>(getApiCapabilitiesListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
 export type apiDeploymentInfoListResponse200 = {
   data: DeploymentInfoResponseApi
   status: 200
@@ -17359,6 +17411,63 @@ metadata so the credential check passes.
 export const apiPublicTracesList = async ( options?: RequestInit): Promise<apiPublicTracesListResponse> => {
 
   return apiMutator<apiPublicTracesListResponse>(getApiPublicTracesListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type apiSetupChecksListResponse200 = {
+  data: SetupChecksResponseApi
+  status: 200
+}
+
+export type apiSetupChecksListResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type apiSetupChecksListResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
+export type apiSetupChecksListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 500>
+}
+
+export type apiSetupChecksListResponseSuccess = (apiSetupChecksListResponse200) & {
+  headers: Headers;
+};
+export type apiSetupChecksListResponseError = (apiSetupChecksListResponse404 | apiSetupChecksListResponse500 | apiSetupChecksListResponseDefault) & {
+  headers: Headers;
+};
+
+export type apiSetupChecksListResponse = (apiSetupChecksListResponseSuccess | apiSetupChecksListResponseError)
+
+export const getApiSetupChecksListUrl = () => {
+
+
+
+
+  return `/api/setup-checks/`
+}
+
+/**
+ * Returns ``{"status": "ok"|"issues", "mode": ..., "checks": [...]}``. No auth —
+it runs before any account exists. Self-hosted only: on cloud and EE the
+route answers 404, so neither the internal service topology nor the outbound
+probes it triggers are reachable by an anonymous caller.
+ * @summary Public infrastructure probe for the OSS first-run setup screen.
+ */
+export const apiSetupChecksList = async ( options?: RequestInit): Promise<apiSetupChecksListResponse> => {
+
+  return apiMutator<apiSetupChecksListResponse>(getApiSetupChecksListUrl(),
   {
     ...options,
     method: 'GET'
@@ -57757,6 +57866,88 @@ export const simulateTestExecutionsTranscriptsList = async (testExecutionId: str
 
 
 
+export type telemetryHeartbeatCreateResponse200 = {
+  data: DeploymentHeartbeatResponseApi
+  status: 200
+}
+
+export type telemetryHeartbeatCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type telemetryHeartbeatCreateResponseSuccess = (telemetryHeartbeatCreateResponse200) & {
+  headers: Headers;
+};
+export type telemetryHeartbeatCreateResponseError = (telemetryHeartbeatCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type telemetryHeartbeatCreateResponse = (telemetryHeartbeatCreateResponseSuccess | telemetryHeartbeatCreateResponseError)
+
+export const getTelemetryHeartbeatCreateUrl = () => {
+
+
+
+
+  return `/telemetry/heartbeat/`
+}
+
+export const telemetryHeartbeatCreate = async (deploymentHeartbeatApi: DeploymentHeartbeatApi, options?: RequestInit): Promise<telemetryHeartbeatCreateResponse> => {
+
+  return apiMutator<telemetryHeartbeatCreateResponse>(getTelemetryHeartbeatCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      deploymentHeartbeatApi,)
+  }
+);}
+
+
+
+export type telemetryRegisterCreateResponse200 = {
+  data: DeploymentRegistrationResponseApi
+  status: 200
+}
+
+export type telemetryRegisterCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type telemetryRegisterCreateResponseSuccess = (telemetryRegisterCreateResponse200) & {
+  headers: Headers;
+};
+export type telemetryRegisterCreateResponseError = (telemetryRegisterCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type telemetryRegisterCreateResponse = (telemetryRegisterCreateResponseSuccess | telemetryRegisterCreateResponseError)
+
+export const getTelemetryRegisterCreateUrl = () => {
+
+
+
+
+  return `/telemetry/register/`
+}
+
+export const telemetryRegisterCreate = async (deploymentRegistrationApi: DeploymentRegistrationApi, options?: RequestInit): Promise<telemetryRegisterCreateResponse> => {
+
+  return apiMutator<telemetryRegisterCreateResponse>(getTelemetryRegisterCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      deploymentRegistrationApi,)
+  }
+);}
+
+
+
 export type tracerBulkAnnotationCreateResponse200 = {
   data: BulkAnnotationResponseApi
   status: 200
@@ -69882,138 +70073,6 @@ export const usageDownloadInvoiceCreate = async (downloadInvoiceRequestApi: Down
 
 
 
-export type usageEeLicensesListResponse200 = {
-  data: EELicenseListResponseApi
-  status: 200
-}
-
-export type usageEeLicensesListResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
-}
-
-export type usageEeLicensesListResponseSuccess = (usageEeLicensesListResponse200) & {
-  headers: Headers;
-};
-export type usageEeLicensesListResponseError = (usageEeLicensesListResponseDefault) & {
-  headers: Headers;
-};
-
-export type usageEeLicensesListResponse = (usageEeLicensesListResponseSuccess | usageEeLicensesListResponseError)
-
-export const getUsageEeLicensesListUrl = () => {
-
-
-
-
-  return `/usage/ee/licenses/`
-}
-
-/**
- * List or create EE licenses.
- */
-export const usageEeLicensesList = async ( options?: RequestInit): Promise<usageEeLicensesListResponse> => {
-
-  return apiMutator<usageEeLicensesListResponse>(getUsageEeLicensesListUrl(),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-export type usageEeLicensesCreateResponse200 = {
-  data: EELicenseCreateResponseApi
-  status: 200
-}
-
-export type usageEeLicensesCreateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
-}
-
-export type usageEeLicensesCreateResponseSuccess = (usageEeLicensesCreateResponse200) & {
-  headers: Headers;
-};
-export type usageEeLicensesCreateResponseError = (usageEeLicensesCreateResponseDefault) & {
-  headers: Headers;
-};
-
-export type usageEeLicensesCreateResponse = (usageEeLicensesCreateResponseSuccess | usageEeLicensesCreateResponseError)
-
-export const getUsageEeLicensesCreateUrl = () => {
-
-
-
-
-  return `/usage/ee/licenses/`
-}
-
-/**
- * List or create EE licenses.
- */
-export const usageEeLicensesCreate = async (eELicenseCreateRequestApi: EELicenseCreateRequestApi, options?: RequestInit): Promise<usageEeLicensesCreateResponse> => {
-
-  return apiMutator<usageEeLicensesCreateResponse>(getUsageEeLicensesCreateUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      eELicenseCreateRequestApi,)
-  }
-);}
-
-
-
-export type usageEeLicensesRevokeCreateResponse200 = {
-  data: EELicenseRevokeResponseApi
-  status: 200
-}
-
-export type usageEeLicensesRevokeCreateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
-}
-
-export type usageEeLicensesRevokeCreateResponseSuccess = (usageEeLicensesRevokeCreateResponse200) & {
-  headers: Headers;
-};
-export type usageEeLicensesRevokeCreateResponseError = (usageEeLicensesRevokeCreateResponseDefault) & {
-  headers: Headers;
-};
-
-export type usageEeLicensesRevokeCreateResponse = (usageEeLicensesRevokeCreateResponseSuccess | usageEeLicensesRevokeCreateResponseError)
-
-export const getUsageEeLicensesRevokeCreateUrl = (grantId: string,) => {
-
-
-
-
-  return `/usage/ee/licenses/${grantId}/revoke/`
-}
-
-/**
- * Revoke an EE license.
- */
-export const usageEeLicensesRevokeCreate = async (grantId: string,
-    eELicenseRevokeRequestApi: EELicenseRevokeRequestApi, options?: RequestInit): Promise<usageEeLicensesRevokeCreateResponse> => {
-
-  return apiMutator<usageEeLicensesRevokeCreateResponse>(getUsageEeLicensesRevokeCreateUrl(grantId),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      eELicenseRevokeRequestApi,)
-  }
-);}
-
-
-
 export type usageGetAutoReloadSettingsListResponse200 = {
   data: AutoReloadSettingsResponseApi
   status: 200
@@ -76085,6 +76144,47 @@ export const usageWorkspaceUsageSummaryList = async (params?: UsageWorkspaceUsag
 
 
 
+export type v1EnterpriseHeartbeatsCreateResponse200 = {
+  data: EnterpriseHeartbeatResponseApi
+  status: 200
+}
+
+export type v1EnterpriseHeartbeatsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type v1EnterpriseHeartbeatsCreateResponseSuccess = (v1EnterpriseHeartbeatsCreateResponse200) & {
+  headers: Headers;
+};
+export type v1EnterpriseHeartbeatsCreateResponseError = (v1EnterpriseHeartbeatsCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type v1EnterpriseHeartbeatsCreateResponse = (v1EnterpriseHeartbeatsCreateResponseSuccess | v1EnterpriseHeartbeatsCreateResponseError)
+
+export const getV1EnterpriseHeartbeatsCreateUrl = () => {
+
+
+
+
+  return `/v1/enterprise/heartbeats`
+}
+
+export const v1EnterpriseHeartbeatsCreate = async (heartbeatApi: HeartbeatApi, options?: RequestInit): Promise<v1EnterpriseHeartbeatsCreateResponse> => {
+
+  return apiMutator<v1EnterpriseHeartbeatsCreateResponse>(getV1EnterpriseHeartbeatsCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      heartbeatApi,)
+  }
+);}
+
+
+
 export type v1HealthListResponse200 = {
   data: OTLPHealthResponseApi
   status: 200
@@ -76128,5 +76228,253 @@ export const v1HealthList = async ( options?: RequestInit): Promise<v1HealthList
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export type v1InternalLicensesCreateResponse201 = {
+  data: LicenseGrantApi
+  status: 201
+}
+
+export type v1InternalLicensesCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type v1InternalLicensesCreateResponseSuccess = (v1InternalLicensesCreateResponse201) & {
+  headers: Headers;
+};
+export type v1InternalLicensesCreateResponseError = (v1InternalLicensesCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type v1InternalLicensesCreateResponse = (v1InternalLicensesCreateResponseSuccess | v1InternalLicensesCreateResponseError)
+
+export const getV1InternalLicensesCreateUrl = () => {
+
+
+
+
+  return `/v1/internal/licenses`
+}
+
+export const v1InternalLicensesCreate = async (createGrantApi: CreateGrantApi, options?: RequestInit): Promise<v1InternalLicensesCreateResponse> => {
+
+  return apiMutator<v1InternalLicensesCreateResponse>(getV1InternalLicensesCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      createGrantApi,)
+  }
+);}
+
+
+
+export type v1InternalLicensesReadResponse200 = {
+  data: void
+  status: 200
+}
+
+export type v1InternalLicensesReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type v1InternalLicensesReadResponseSuccess = (v1InternalLicensesReadResponse200) & {
+  headers: Headers;
+};
+export type v1InternalLicensesReadResponseError = (v1InternalLicensesReadResponseDefault) & {
+  headers: Headers;
+};
+
+export type v1InternalLicensesReadResponse = (v1InternalLicensesReadResponseSuccess | v1InternalLicensesReadResponseError)
+
+export const getV1InternalLicensesReadUrl = (grantId: string,) => {
+
+
+
+
+  return `/v1/internal/licenses/${grantId}`
+}
+
+export const v1InternalLicensesRead = async (grantId: string, options?: RequestInit): Promise<v1InternalLicensesReadResponse> => {
+
+  return apiMutator<v1InternalLicensesReadResponse>(getV1InternalLicensesReadUrl(grantId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type v1InternalLicensesApproveCreateResponse200 = {
+  data: LicenseGrantApi
+  status: 200
+}
+
+export type v1InternalLicensesApproveCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type v1InternalLicensesApproveCreateResponseSuccess = (v1InternalLicensesApproveCreateResponse200) & {
+  headers: Headers;
+};
+export type v1InternalLicensesApproveCreateResponseError = (v1InternalLicensesApproveCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type v1InternalLicensesApproveCreateResponse = (v1InternalLicensesApproveCreateResponseSuccess | v1InternalLicensesApproveCreateResponseError)
+
+export const getV1InternalLicensesApproveCreateUrl = (grantId: string,) => {
+
+
+
+
+  return `/v1/internal/licenses/${grantId}/approve`
+}
+
+export const v1InternalLicensesApproveCreate = async (grantId: string,
+    licenseActionRequestApi: LicenseActionRequestApi, options?: RequestInit): Promise<v1InternalLicensesApproveCreateResponse> => {
+
+  return apiMutator<v1InternalLicensesApproveCreateResponse>(getV1InternalLicensesApproveCreateUrl(grantId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      licenseActionRequestApi,)
+  }
+);}
+
+
+
+export type v1InternalLicensesIssueCreateResponse200 = {
+  data: IssuedLicenseResponseApi
+  status: 200
+}
+
+export type v1InternalLicensesIssueCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type v1InternalLicensesIssueCreateResponseSuccess = (v1InternalLicensesIssueCreateResponse200) & {
+  headers: Headers;
+};
+export type v1InternalLicensesIssueCreateResponseError = (v1InternalLicensesIssueCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type v1InternalLicensesIssueCreateResponse = (v1InternalLicensesIssueCreateResponseSuccess | v1InternalLicensesIssueCreateResponseError)
+
+export const getV1InternalLicensesIssueCreateUrl = (grantId: string,) => {
+
+
+
+
+  return `/v1/internal/licenses/${grantId}/issue`
+}
+
+export const v1InternalLicensesIssueCreate = async (grantId: string,
+    licenseActionRequestApi: LicenseActionRequestApi, options?: RequestInit): Promise<v1InternalLicensesIssueCreateResponse> => {
+
+  return apiMutator<v1InternalLicensesIssueCreateResponse>(getV1InternalLicensesIssueCreateUrl(grantId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      licenseActionRequestApi,)
+  }
+);}
+
+
+
+export type v1InternalLicensesStatusCreateResponse200 = {
+  data: LicenseGrantApi
+  status: 200
+}
+
+export type v1InternalLicensesStatusCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type v1InternalLicensesStatusCreateResponseSuccess = (v1InternalLicensesStatusCreateResponse200) & {
+  headers: Headers;
+};
+export type v1InternalLicensesStatusCreateResponseError = (v1InternalLicensesStatusCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type v1InternalLicensesStatusCreateResponse = (v1InternalLicensesStatusCreateResponseSuccess | v1InternalLicensesStatusCreateResponseError)
+
+export const getV1InternalLicensesStatusCreateUrl = (grantId: string,) => {
+
+
+
+
+  return `/v1/internal/licenses/${grantId}/status`
+}
+
+export const v1InternalLicensesStatusCreate = async (grantId: string,
+    updateStatusApi: UpdateStatusApi, options?: RequestInit): Promise<v1InternalLicensesStatusCreateResponse> => {
+
+  return apiMutator<v1InternalLicensesStatusCreateResponse>(getV1InternalLicensesStatusCreateUrl(grantId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      updateStatusApi,)
+  }
+);}
+
+
+
+export type v1SelfHostedActivationsCreateResponse200 = {
+  data: ActivationResponseApi
+  status: 200
+}
+
+export type v1SelfHostedActivationsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type v1SelfHostedActivationsCreateResponseSuccess = (v1SelfHostedActivationsCreateResponse200) & {
+  headers: Headers;
+};
+export type v1SelfHostedActivationsCreateResponseError = (v1SelfHostedActivationsCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type v1SelfHostedActivationsCreateResponse = (v1SelfHostedActivationsCreateResponseSuccess | v1SelfHostedActivationsCreateResponseError)
+
+export const getV1SelfHostedActivationsCreateUrl = () => {
+
+
+
+
+  return `/v1/self-hosted/activations`
+}
+
+export const v1SelfHostedActivationsCreate = async (activationRequestApi: ActivationRequestApi, options?: RequestInit): Promise<v1SelfHostedActivationsCreateResponse> => {
+
+  return apiMutator<v1SelfHostedActivationsCreateResponse>(getV1SelfHostedActivationsCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      activationRequestApi,)
   }
 );}

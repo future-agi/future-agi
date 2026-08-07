@@ -22,6 +22,7 @@ import React, {
   useState,
 } from "react";
 import Iconify from "src/components/iconify";
+import { useMapToVariable } from "./useMapToVariable";
 import axios, { endpoints } from "src/utils/axios";
 import { canonicalEntries, canonicalKeys } from "src/utils/utils";
 import CustomAudioPlayer from "src/components/custom-audio/CustomAudioPlayer";
@@ -270,6 +271,13 @@ const SimulationTestMode = React.forwardRef(
         ? { ...initialMapping }
         : {},
     );
+
+    // Shared click-to-map behaviour for the Columns/Value table rows.
+    const { renderRowMapAction, mapMenu, rowHoverSx } = useMapToVariable({
+      variables,
+      mapping,
+      setMapping,
+    });
     // displayKey ("scenario_<col_name>") -> scenario column UUID. The backend
     // resolver at run time only accepts scenario column UUIDs, not names, so
     // we persist the UUID while the dropdown still shows the friendly label.
@@ -1535,6 +1543,7 @@ const SimulationTestMode = React.forwardRef(
                             borderColor: "divider",
                             "&:last-child": { borderBottom: "none" },
                             "&:hover": { backgroundColor: "action.hover" },
+                            ...rowHoverSx,
                           }}
                         >
                           <Tooltip
@@ -1651,6 +1660,7 @@ const SimulationTestMode = React.forwardRef(
                               </Tooltip>
                             )}
                           </Box>
+                          {renderRowMapAction(key)}
                         </Box>
                       );
                     })}
@@ -1827,6 +1837,9 @@ const SimulationTestMode = React.forwardRef(
             </Box>
           </Box>
         )}
+
+        {/* Map-from-table menu — shared across mapping surfaces */}
+        {mapMenu}
 
         {/* Result */}
         {result && (

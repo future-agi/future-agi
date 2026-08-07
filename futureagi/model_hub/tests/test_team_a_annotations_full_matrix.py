@@ -25,12 +25,10 @@ import uuid
 from datetime import timedelta
 
 import pytest
-from django.utils import timezone
-from rest_framework import status
-
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from conftest import create_categorical_label
+from django.utils import timezone
 from model_hub.models.annotation_queues import (
     AnnotationQueue,
     AnnotationQueueLabel,
@@ -49,6 +47,7 @@ from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.develop_dataset import Dataset, Row
 from model_hub.models.score import Score
 from model_hub.serializers.annotation_queues import QueueExportQuerySerializer
+from rest_framework import status
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import set_workspace_context
@@ -1324,9 +1323,7 @@ class TestQueueStatusTransitions:
 
     def test_paused_to_completed(self, auth_client, queue):
 
-        auth_client.post(
-            _update_status_url(queue), {"status": "paused"}, format="json"
-        )
+        auth_client.post(_update_status_url(queue), {"status": "paused"}, format="json")
         r = auth_client.post(
             _update_status_url(queue), {"status": "completed"}, format="json"
         )
@@ -1369,9 +1366,7 @@ class TestQueueStatusTransitions:
     # --- "nothing returns to draft" invariant -----------------------------
 
     def test_paused_to_draft_invalid_400(self, auth_client, queue):
-        auth_client.post(
-            _update_status_url(queue), {"status": "paused"}, format="json"
-        )
+        auth_client.post(_update_status_url(queue), {"status": "paused"}, format="json")
         r = auth_client.post(
             _update_status_url(queue), {"status": "draft"}, format="json"
         )
@@ -1459,12 +1454,24 @@ class TestQueueLabelManagement:
     def test_add_required_label_blocked_by_entitlement(
         self, auth_client, queue, star_label
     ):
-        """required=True hits an EE entitlement on the free/test plan."""
-        resp = auth_client.post(
-            _add_label_url(queue),
-            {"label_id": str(star_label.id), "required": True},
-            format="json",
-        )
+        """A required-label capability denial propagates cleanly as 402.
+
+        required_labels is free self-hosted (not oss_locked), so simulate a
+        cloud-plan denial by patching the gate.
+        """
+        from unittest.mock import patch
+
+        from tfc.ee_gating import EEFeature, FeatureUnavailable
+
+        with patch(
+            "tfc.ee_gating.check_ee_feature",
+            side_effect=FeatureUnavailable(EEFeature.REQUIRED_LABELS),
+        ):
+            resp = auth_client.post(
+                _add_label_url(queue),
+                {"label_id": str(star_label.id), "required": True},
+                format="json",
+            )
         assert resp.status_code == status.HTTP_402_PAYMENT_REQUIRED, resp.data
         # Denied means no binding at all, not a binding with required=False.
         assert not AnnotationQueueLabel.objects.filter(
@@ -1780,9 +1787,7 @@ class TestQueueForSource:
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_source_type_without_source_id_400(self, auth_client):
-        resp = auth_client.get(
-            _queues_for_source_url(), {"source_type": "dataset_row"}
-        )
+        resp = auth_client.get(_queues_for_source_url(), {"source_type": "dataset_row"})
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_both_single_and_sources_400(self, auth_client, dataset_with_rows):
@@ -1935,6 +1940,7 @@ class TestAddItems:
         """Use selection.mode=filter for trace source type."""
         from tracer.models.observation_span import ObservationSpan
         from tracer.tests._ch_seed import seed_ch_span, seed_ch_trace
+
         seed_ch_trace(trace)
         seed_ch_span(
             ObservationSpan(
@@ -2045,9 +2051,7 @@ class TestListQueueItems:
         qi.status = QueueItemStatus.COMPLETED.value
         qi.save(update_fields=["status"])
 
-        resp = auth_client.get(
-            _items_url(queue), {"status": "pending,completed"}
-        )
+        resp = auth_client.get(_items_url(queue), {"status": "pending,completed"})
         assert resp.status_code == 200
         assert resp.data["count"] == 3
 
@@ -2177,7 +2181,7 @@ class TestListQueueItems:
 @pytest.mark.django_db
 @pytest.mark.integration
 class TestBulkRemoveItems:
-    def test_bulk_remove_soft_deletes(self, auth_client, queue, dataset_with_rows):        
+    def test_bulk_remove_soft_deletes(self, auth_client, queue, dataset_with_rows):
         _, rows = dataset_with_rows
         auth_client.post(
             _add_items_url(queue),
@@ -2501,11 +2505,7 @@ class TestSubmitAnnotations:
         item = self._setup(auth_client, queue, dataset_with_rows, categorical_label)
         resp = auth_client.post(
             _submit_url(queue, item.id),
-            {
-                "annotations": [
-                    {"label_id": str(star_label.id), "value": {"rating": 4}}
-                ]
-            },
+            {"annotations": [{"label_id": str(star_label.id), "value": {"rating": 4}}]},
             format="json",
         )
         assert resp.status_code == 200
@@ -2943,7 +2943,7 @@ class TestGetAnnotationLabelsLegacy:
             "should_use_clickhouse",
             lambda self, query_type: False,
         )
-    
+
         monkeypatch.setattr(
             TraceListQueryBuilder,
             "resolve_user_ids",
@@ -3143,9 +3143,7 @@ class TestQueuePermissionEnforcement:
             )
             assert resp.status_code == 403
             # Nothing was added despite a well-formed payload.
-            assert not QueueItem.objects.filter(
-                queue_id=queue, deleted=False
-            ).exists()
+            assert not QueueItem.objects.filter(queue_id=queue, deleted=False).exists()
         finally:
             c.stop_workspace_injection()
 
@@ -3180,7 +3178,12 @@ class TestQueuePermissionEnforcement:
             c.stop_workspace_injection()
 
     def test_non_annotator_cannot_submit(
-        self, auth_client, organization, workspace, queue, dataset_with_rows,
+        self,
+        auth_client,
+        organization,
+        workspace,
+        queue,
+        dataset_with_rows,
         categorical_label,
     ):
 

@@ -1,3 +1,6 @@
+from django.contrib.auth.password_validation import (
+    validate_password as django_validate_password,
+)
 from django.core.validators import EmailValidator
 from rest_framework import serializers
 
@@ -22,6 +25,10 @@ class UserSignupSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ["email", "full_name", "password", "company_name"]
+
+    def validate_password(self, value):
+        django_validate_password(value)
+        return value
 
     def create(self, validated_data):
         validated_data.pop("company_name")

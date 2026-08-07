@@ -1,10 +1,10 @@
 import React, { useMemo, useCallback, useEffect, useRef } from "react";
 import PropTypes from "prop-types";
+import { LoadingScreen } from "src/components/loading-screen";
 import {
   Box,
   Paper,
   useTheme,
-  CircularProgress,
   Alert,
   Button,
 } from "@mui/material";
@@ -36,17 +36,10 @@ import { resetTabStore } from "./LLMTracing/tabStore";
 
 // Loading component for tab content
 const TabContentLoader = () => (
-  <Box
-    sx={{
-      display: "flex",
-      justifyContent: "center",
-      alignItems: "center",
-      height: "200px",
-      backgroundColor: "background.paper",
-    }}
-  >
-    <CircularProgress />
-  </Box>
+  <LoadingScreen
+    variant="orbit"
+    sx={{ minHeight: "60vh", backgroundColor: "background.paper" }}
+  />
 );
 
 const TAB_ERROR_MESSAGE = "Could not load this tab";

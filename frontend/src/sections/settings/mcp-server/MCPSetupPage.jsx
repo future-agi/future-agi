@@ -3,12 +3,12 @@ import {
   Alert,
   Box,
   Button,
-  CircularProgress,
   Stack,
   Typography,
   useTheme,
 } from "@mui/material";
 import SvgColor from "src/components/svg-color";
+import { LoadingScreen } from "src/components/loading-screen";
 import { useMCPConfig } from "src/api/mcp";
 import ClientSetupGuide from "./ClientSetupGuide";
 import ToolGroupSelector from "./ToolGroupSelector";
@@ -19,9 +19,7 @@ export default function MCPSetupPage() {
 
   if (isLoading) {
     return (
-      <Box display="flex" justifyContent="center" py={8}>
-        <CircularProgress />
-      </Box>
+      <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />
     );
   }
 

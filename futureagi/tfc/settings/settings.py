@@ -129,7 +129,7 @@ INSTALLED_APPS = [
     "model_hub",
     "tracer",
     "simulate",
-    "agent_playground",
+    "agent_playground.apps.AgentPlaygroundConfig",
     "integrations",
     # AI tools shared layer (MCP + AI Assistant)
     "ai_tools",
@@ -137,6 +137,8 @@ INSTALLED_APPS = [
     "mcp_server",
     "agentcc",
     "tfc.deployment_telemetry",
+    "tfc.licensing",
+    "tfc.capabilities",
     # gRPC framework
     "django_socio_grpc",
     # "djstripe"
@@ -154,6 +156,14 @@ if ee_feature_enabled("ee.falcon_ai"):
     INSTALLED_APPS.append("ee.falcon_ai.apps.FalconAIConfig")
 if has_ee("ee.usage"):
     INSTALLED_APPS.append("ee.usage")
+if has_ee("ee.licensing"):
+    INSTALLED_APPS.append("ee.licensing")
+if has_ee("ee.cloud.control_plane") and os.environ.get("CLOUD_DEPLOYMENT", "") in (
+    "US",
+    "EU",
+    "DEV",
+):
+    INSTALLED_APPS.append("ee.cloud.control_plane.apps.CloudControlPlaneConfig")
 
 # Site ID for django.contrib.sites
 SITE_ID = 1
@@ -477,12 +487,34 @@ BILLING_CONFIG_PATH = os.environ.get(
 
 # EE license key (self-hosted only, JWT RS256)
 EE_LICENSE_KEY = os.environ.get("EE_LICENSE_KEY", "")
+EE_LICENSE_PUBLIC_KEY = os.environ.get("EE_LICENSE_PUBLIC_KEY", "").replace("\\n", "\n")
+EE_LICENSE_PUBLIC_KEYS = os.environ.get("EE_LICENSE_PUBLIC_KEYS", "")
+EE_LICENSE_CLOCK_SKEW_SECONDS = os.environ.get("EE_LICENSE_CLOCK_SKEW_SECONDS", "300")
+EE_LICENSE_KEY_ID = os.environ.get("EE_LICENSE_KEY_ID", "default")
 EE_LICENSE_PRIVATE_KEY = os.environ.get("EE_LICENSE_PRIVATE_KEY", "").replace(
     "\\n", "\n"
 )
 
 # Cloud API key for managed AI features (self-hosted → cloud Agentcc gateway)
 FUTUREAGI_CLOUD_API_KEY = os.environ.get("FUTUREAGI_CLOUD_API_KEY", "")
+
+# Activation signing key (cloud control plane uses this to mint service tokens)
+ACTIVATION_PRIVATE_KEY = os.environ.get("ACTIVATION_PRIVATE_KEY", "").replace("\\n", "\n")
+ACTIVATION_KEY_ID = os.environ.get("ACTIVATION_KEY_ID", "default")
+ACTIVATION_SIGNING_SERVICE_URL = os.environ.get("ACTIVATION_SIGNING_SERVICE_URL", "")
+ACTIVATION_TOKEN_ISSUER = os.environ.get(
+    "ACTIVATION_TOKEN_ISSUER", "https://licenses.futureagi.com"
+)
+ACTIVATION_TOKEN_AUDIENCE = os.environ.get(
+    "ACTIVATION_TOKEN_AUDIENCE", "futureagi-agentcc-gateway"
+)
+ACTIVATION_TOKEN_TYPE = os.environ.get(
+    "ACTIVATION_TOKEN_TYPE", "futureagi-managed-service-token"
+)
+ACTIVATION_TOKEN_TTL_SECONDS = os.environ.get("ACTIVATION_TOKEN_TTL_SECONDS", "3600")
+ACTIVATION_RUNTIME_STATE_REQUIRED = os.environ.get(
+    "ACTIVATION_RUNTIME_STATE_REQUIRED", "true"
+).lower() in ("1", "true", "yes")
 FUTUREAGI_CLOUD_GATEWAY_URL = os.environ.get(
     "FUTUREAGI_CLOUD_GATEWAY_URL", "https://gateway.futureagi.com"
 )

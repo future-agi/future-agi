@@ -865,11 +865,17 @@ export const AccountsOrganizationInviteCreateBody = zod.object({
 
 
 
+
+
 export const AccountsOrganizationInviteCreateResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
   "invited": zod.array(zod.string().email().min(1)),
-  "already_members": zod.array(zod.string().email().min(1)).optional()
+  "already_members": zod.array(zod.string().email().min(1)).optional(),
+  "invites": zod.array(zod.object({
+  "email": zod.string().email().min(1),
+  "invite_link": zod.string().min(1)
+}).describe('Accept-invite links for the invites just created. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud\/EE.')).optional().describe('Accept-invite links for the invites just created. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud\/EE.')
 })
 })
 
@@ -945,6 +951,7 @@ export const AccountsOrganizationMembersListQueryParams = zod.object({
 
 
 
+
 export const AccountsOrganizationMembersListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
@@ -966,7 +973,8 @@ export const AccountsOrganizationMembersListResponse = zod.object({
   "status": zod.string().min(1),
   "created_at": zod.string(),
   "type": zod.enum(['member', 'invite']),
-  "auto_access": zod.boolean().optional()
+  "auto_access": zod.boolean().optional(),
+  "invite_link": zod.string().min(1).optional().describe('Accept-invite link for a pending invite. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud\/EE and on active-member rows.')
 })),
   "total": zod.number(),
   "page": zod.number(),
@@ -1488,10 +1496,12 @@ export const AccountsPasswordResetInitiateCreateBody = zod.object({
 
 
 
+
 export const AccountsPasswordResetInitiateCreateResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
-  "message": zod.string().min(1)
+  "message": zod.string().min(1),
+  "reset_link": zod.string().min(1).optional().describe('Password-reset link, returned on OSS deployments only, where SMTP is usually not configured and the emailed link would never arrive. Never present on Cloud\/EE, and never present for an email with no matching account. Treat as a credential: anyone holding it can set that account\'s password.')
 })
 })
 
@@ -1585,10 +1595,15 @@ export const AccountsSignupCreateBody = zod.object({
 
 
 
+
+
 export const AccountsSignupCreateResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
-  "message": zod.string().min(1)
+  "message": zod.string().min(1).optional(),
+  "access": zod.string().min(1).optional(),
+  "refresh": zod.string().min(1).optional(),
+  "new_org": zod.boolean().optional()
 })
 })
 
@@ -2184,6 +2199,7 @@ export const AccountsWorkspaceMembersListQueryParams = zod.object({
 
 
 
+
 export const AccountsWorkspaceMembersListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
@@ -2198,7 +2214,8 @@ export const AccountsWorkspaceMembersListResponse = zod.object({
   "status": zod.string().min(1),
   "created_at": zod.string(),
   "type": zod.enum(['member', 'invite']),
-  "auto_access": zod.boolean().optional()
+  "auto_access": zod.boolean().optional(),
+  "invite_link": zod.string().min(1).optional().describe('Accept-invite link for a pending invite. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud\/EE, on active-member rows, and on Admin+ invites when the caller is only a workspace admin.')
 })),
   "total": zod.number(),
   "page": zod.number(),
@@ -9328,6 +9345,35 @@ export const AiToolsToolsListResponse = zod.object({
 })
 
 
+
+export const apiCapabilitiesListResponseLicenseFeaturesCountMin = 0;
+
+
+
+export const ApiCapabilitiesListResponse = zod.object({
+  "deployment_flavor": zod.enum(['oss_image', 'self_hosted_ee_image', 'cloud_image']),
+  "display_mode": zod.enum(['oss', 'oss_locked', 'enterprise', 'cloud']),
+  "license_state": zod.enum(['not_applicable', 'missing', 'invalid', 'active', 'grace', 'expired', 'trial_active', 'trial_expired']),
+  "features": zod.record(zod.string(), zod.object({
+  "display_name": zod.string().min(1),
+  "allowed": zod.boolean(),
+  "reason_code": zod.enum(['FEATURE_UNKNOWN', 'LICENSE_MISSING', 'LICENSE_INVALID', 'LICENSE_EXPIRED', 'LICENSE_TRIAL_EXPIRED', 'LICENSE_FEATURE_MISSING', 'FEATURE_NOT_IN_GRACE', 'EE_CODE_UNAVAILABLE', 'RESOLVER_UNAVAILABLE', 'QUOTA_EXCEEDED', 'SERVICE_UNAVAILABLE', 'NETWORK_REQUIRED', 'USAGE_LIMIT_REACHED', 'PLAN_FEATURE_MISSING', 'LICENSE_VERSION_UNSUPPORTED']),
+  "requires_network": zod.boolean(),
+  "oss_baseline": zod.boolean()
+})),
+  "license": zod.object({
+  "issued_to": zod.string(),
+  "band": zod.string(),
+  "license_type": zod.enum(['production', 'trial']),
+  "expires_at": zod.string().datetime({"offset":true}),
+  "grace_ends_at": zod.string().datetime({"offset":true}),
+  "features_count": zod.number().min(apiCapabilitiesListResponseLicenseFeaturesCountMin),
+  "state": zod.enum(['not_applicable', 'missing', 'invalid', 'active', 'grace', 'expired', 'trial_active', 'trial_expired'])
+}).optional(),
+  "instance_id": zod.string().uuid().optional()
+})
+
+
 /**
  * Returns ``{"mode": "oss"|"ee"|"cloud"}``. No auth — public config.
  * @summary Public deployment-mode probe used by the frontend to gate UI.
@@ -9423,6 +9469,33 @@ export const ApiPublicTracesListResponse = zod.object({
   "limit": zod.number(),
   "total_items": zod.number(),
   "total_pages": zod.number()
+})
+})
+
+
+/**
+ * Returns ``{"status": "ok"|"issues", "mode": ..., "checks": [...]}``. No auth —
+it runs before any account exists. Self-hosted only: on cloud and EE the
+route answers 404, so neither the internal service topology nor the outbound
+probes it triggers are reachable by an anonymous caller.
+ * @summary Public infrastructure probe for the OSS first-run setup screen.
+ */
+export const apiSetupChecksListResponseStatusDefault = true;
+
+
+
+export const ApiSetupChecksListResponse = zod.object({
+  "status": zod.boolean().default(apiSetupChecksListResponseStatusDefault),
+  "result": zod.object({
+  "status": zod.enum(['ok', 'issues']),
+  "mode": zod.enum(['live', 'experiment']),
+  "checks": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "label": zod.string().min(1),
+  "status": zod.enum(['passed', 'warning', 'failed', 'skipped']),
+  "required": zod.boolean(),
+  "detail": zod.string()
+}))
 })
 })
 
@@ -33749,6 +33822,109 @@ export const SimulateTestExecutionsTranscriptsListResponse = zod.object({
 })
 
 
+export const telemetryHeartbeatCreateBodySchemaVersionDefault = 1;
+export const telemetryHeartbeatCreateBodyVersionMax = 100;
+
+export const telemetryHeartbeatCreateBodyActiveUsersCountMin = 0;
+export const telemetryHeartbeatCreateBodyActiveUsersCountMax = 9223372036854776000;
+
+export const telemetryHeartbeatCreateBodyTracesCountMin = 0;
+export const telemetryHeartbeatCreateBodyTracesCountMax = 9223372036854776000;
+
+export const telemetryHeartbeatCreateBodySpansCountMin = 0;
+export const telemetryHeartbeatCreateBodySpansCountMax = 9223372036854776000;
+
+export const telemetryHeartbeatCreateBodyProjectsCountMin = 0;
+export const telemetryHeartbeatCreateBodyProjectsCountMax = 9223372036854776000;
+
+export const telemetryHeartbeatCreateBodyEvalLoggerCountMin = 0;
+export const telemetryHeartbeatCreateBodyEvalLoggerCountMax = 9223372036854776000;
+
+export const telemetryHeartbeatCreateBodyModelHubEvaluationsCountMin = 0;
+export const telemetryHeartbeatCreateBodyModelHubEvaluationsCountMax = 9223372036854776000;
+
+export const telemetryHeartbeatCreateBodyDatasetEvalRunsCountMin = 0;
+export const telemetryHeartbeatCreateBodyDatasetEvalRunsCountMax = 9223372036854776000;
+
+export const telemetryHeartbeatCreateBodyTotalEvaluationsCountMin = 0;
+export const telemetryHeartbeatCreateBodyTotalEvaluationsCountMax = 9223372036854776000;
+
+export const telemetryHeartbeatCreateBodySimulationRunsCountMin = 0;
+export const telemetryHeartbeatCreateBodySimulationRunsCountMax = 9223372036854776000;
+
+export const telemetryHeartbeatCreateBodySimulationCallsCountMin = 0;
+export const telemetryHeartbeatCreateBodySimulationCallsCountMax = 9223372036854776000;
+
+export const telemetryHeartbeatCreateBodyExperimentsCountMin = 0;
+export const telemetryHeartbeatCreateBodyExperimentsCountMax = 9223372036854776000;
+
+export const telemetryHeartbeatCreateBodyGatewayRequestsCountMin = 0;
+export const telemetryHeartbeatCreateBodyGatewayRequestsCountMax = 9223372036854776000;
+
+export const telemetryHeartbeatCreateBodyDatasetsCountMin = 0;
+export const telemetryHeartbeatCreateBodyDatasetsCountMax = 9223372036854776000;
+
+
+
+export const TelemetryHeartbeatCreateBody = zod.object({
+  "schema_version": zod.number().default(telemetryHeartbeatCreateBodySchemaVersionDefault),
+  "instance_id": zod.string().uuid(),
+  "version": zod.string().min(1).max(telemetryHeartbeatCreateBodyVersionMax),
+  "window_start": zod.string().datetime({"offset":true}),
+  "window_end": zod.string().datetime({"offset":true}),
+  "active_users_count": zod.number().min(telemetryHeartbeatCreateBodyActiveUsersCountMin).max(telemetryHeartbeatCreateBodyActiveUsersCountMax),
+  "traces_count": zod.number().min(telemetryHeartbeatCreateBodyTracesCountMin).max(telemetryHeartbeatCreateBodyTracesCountMax),
+  "spans_count": zod.number().min(telemetryHeartbeatCreateBodySpansCountMin).max(telemetryHeartbeatCreateBodySpansCountMax),
+  "projects_count": zod.number().min(telemetryHeartbeatCreateBodyProjectsCountMin).max(telemetryHeartbeatCreateBodyProjectsCountMax),
+  "eval_logger_count": zod.number().min(telemetryHeartbeatCreateBodyEvalLoggerCountMin).max(telemetryHeartbeatCreateBodyEvalLoggerCountMax),
+  "model_hub_evaluations_count": zod.number().min(telemetryHeartbeatCreateBodyModelHubEvaluationsCountMin).max(telemetryHeartbeatCreateBodyModelHubEvaluationsCountMax),
+  "dataset_eval_runs_count": zod.number().min(telemetryHeartbeatCreateBodyDatasetEvalRunsCountMin).max(telemetryHeartbeatCreateBodyDatasetEvalRunsCountMax),
+  "total_evaluations_count": zod.number().min(telemetryHeartbeatCreateBodyTotalEvaluationsCountMin).max(telemetryHeartbeatCreateBodyTotalEvaluationsCountMax),
+  "simulation_runs_count": zod.number().min(telemetryHeartbeatCreateBodySimulationRunsCountMin).max(telemetryHeartbeatCreateBodySimulationRunsCountMax),
+  "simulation_calls_count": zod.number().min(telemetryHeartbeatCreateBodySimulationCallsCountMin).max(telemetryHeartbeatCreateBodySimulationCallsCountMax),
+  "experiments_count": zod.number().min(telemetryHeartbeatCreateBodyExperimentsCountMin).max(telemetryHeartbeatCreateBodyExperimentsCountMax),
+  "gateway_requests_count": zod.number().min(telemetryHeartbeatCreateBodyGatewayRequestsCountMin).max(telemetryHeartbeatCreateBodyGatewayRequestsCountMax),
+  "datasets_count": zod.number().min(telemetryHeartbeatCreateBodyDatasetsCountMin).max(telemetryHeartbeatCreateBodyDatasetsCountMax)
+})
+
+export const TelemetryHeartbeatCreateResponse = zod.object({
+  "status": zod.enum(['ok'])
+})
+
+
+export const telemetryRegisterCreateBodySchemaVersionDefault = 1;
+export const telemetryRegisterCreateBodyVersionMax = 100;
+
+export const telemetryRegisterCreateBodyDeploymentTypeMax = 50;
+
+export const telemetryRegisterCreateBodyUsersItemEmailMax = 254;
+
+export const telemetryRegisterCreateBodyUsersItemDomainMax = 253;
+
+export const telemetryRegisterCreateBodyUsersDefault = [];
+
+export const TelemetryRegisterCreateBody = zod.object({
+  "schema_version": zod.number().default(telemetryRegisterCreateBodySchemaVersionDefault),
+  "instance_id": zod.string().uuid(),
+  "version": zod.string().min(1).max(telemetryRegisterCreateBodyVersionMax),
+  "deployment_type": zod.string().min(1).max(telemetryRegisterCreateBodyDeploymentTypeMax),
+  "timestamp": zod.string().datetime({"offset":true}),
+  "telemetry_disabled": zod.boolean(),
+  "users": zod.array(zod.object({
+  "email": zod.string().email().min(1).max(telemetryRegisterCreateBodyUsersItemEmailMax),
+  "domain": zod.string().min(1).max(telemetryRegisterCreateBodyUsersItemDomainMax)
+})).default(telemetryRegisterCreateBodyUsersDefault)
+})
+
+
+
+
+export const TelemetryRegisterCreateResponse = zod.object({
+  "status": zod.enum(['ok']),
+  "instance_secret": zod.string().min(1)
+})
+
+
 
 
 export const tracerBulkAnnotationCreateBodyRecordsItemAnnotationsDefault = [];
@@ -44249,82 +44425,6 @@ export const UsageDownloadInvoiceCreateResponse = zod.object({
 })
 
 
-/**
- * List or create EE licenses.
- */
-
-
-
-
-
-
-export const UsageEeLicensesListResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "licenses": zod.array(zod.object({
-  "id": zod.string().uuid(),
-  "customer_name": zod.string().min(1),
-  "band": zod.enum(['team', 'business', 'enterprise', 'enterprise_plus']),
-  "billing_interval": zod.string().min(1),
-  "features": zod.array(zod.string().min(1)),
-  "max_traces_monthly": zod.number().optional(),
-  "max_gateway_monthly": zod.number().optional(),
-  "issued_at": zod.string().datetime({"offset":true}),
-  "expires_at": zod.string().datetime({"offset":true}),
-  "status": zod.string().min(1)
-}))
-})
-})
-
-
-/**
- * List or create EE licenses.
- */
-export const UsageEeLicensesCreateBody = zod.object({
-  "band": zod.enum(['team', 'business', 'enterprise', 'enterprise_plus']),
-  "customer_name": zod.string().optional(),
-  "billing_interval": zod.enum(['monthly', 'yearly']).optional()
-})
-
-
-
-
-
-
-
-export const UsageEeLicensesCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "grant_id": zod.string().uuid(),
-  "jwt_key": zod.string().min(1),
-  "key_hash": zod.string().min(1),
-  "band": zod.string().min(1),
-  "expires_at": zod.string().datetime({"offset":true}),
-  "features": zod.array(zod.string().min(1))
-})
-})
-
-
-/**
- * Revoke an EE license.
- */
-export const UsageEeLicensesRevokeCreateParams = zod.object({
-  "grant_id": zod.string()
-})
-
-export const UsageEeLicensesRevokeCreateBody = zod.object({
-  "reason": zod.string().optional()
-})
-
-export const UsageEeLicensesRevokeCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
-  "revoked": zod.boolean(),
-  "grant_id": zod.string().uuid()
-})
-})
-
-
 
 
 
@@ -46469,6 +46569,47 @@ export const UsageWorkspaceUsageSummaryListResponse = zod.object({
 })
 
 
+
+
+export const v1EnterpriseHeartbeatsCreateBodyLicenseIdRegExp = new RegExp('^lic_[A-Za-z0-9_-]{1,60}$');
+export const v1EnterpriseHeartbeatsCreateBodyVersionDefault = ``;
+export const v1EnterpriseHeartbeatsCreateBodyVersionMax = 100;
+
+export const v1EnterpriseHeartbeatsCreateBodyDeploymentTypeDefault = ``;
+export const v1EnterpriseHeartbeatsCreateBodyDeploymentTypeMax = 50;
+
+
+
+export const v1EnterpriseHeartbeatsCreateBodyNonceRegExp = new RegExp('^[A-Za-z0-9_-]{16,64}$');
+export const v1EnterpriseHeartbeatsCreateBodySequenceMin = 0;
+
+export const v1EnterpriseHeartbeatsCreateBodyUsageDataDefault = {  };
+
+export const V1EnterpriseHeartbeatsCreateBody = zod.object({
+  "instance_id": zod.string().uuid(),
+  "license_id": zod.string().min(1).regex(v1EnterpriseHeartbeatsCreateBodyLicenseIdRegExp),
+  "version": zod.string().min(1).max(v1EnterpriseHeartbeatsCreateBodyVersionMax).default(v1EnterpriseHeartbeatsCreateBodyVersionDefault),
+  "deployment_type": zod.string().min(1).max(v1EnterpriseHeartbeatsCreateBodyDeploymentTypeMax).default(v1EnterpriseHeartbeatsCreateBodyDeploymentTypeDefault),
+  "timestamp": zod.string().datetime({"offset":true}),
+  "nonce": zod.string().min(1).regex(v1EnterpriseHeartbeatsCreateBodyNonceRegExp),
+  "sequence": zod.number().min(v1EnterpriseHeartbeatsCreateBodySequenceMin),
+  "usage_data": zod.record(zod.string(), zod.string()).default(v1EnterpriseHeartbeatsCreateBodyUsageDataDefault)
+})
+
+
+
+
+
+
+export const V1EnterpriseHeartbeatsCreateResponse = zod.object({
+  "status": zod.enum(['accepted', 'ignored', 'rejected']),
+  "reason": zod.string().min(1).optional(),
+  "grant_status": zod.string().min(1).optional(),
+  "expires_at": zod.string().datetime({"offset":true}).optional(),
+  "renewal_notice": zod.string().min(1).optional()
+})
+
+
 /**
  * Health check - always returns OK.
  */
@@ -46478,4 +46619,297 @@ export const UsageWorkspaceUsageSummaryListResponse = zod.object({
 export const V1HealthListResponse = zod.object({
   "status": zod.enum(['healthy']),
   "service": zod.string().min(1)
+})
+
+
+export const v1InternalLicensesCreateBodyCustomerNameMax = 255;
+
+export const v1InternalLicensesCreateBodyCustomerIdDefault = ``;
+export const v1InternalLicensesCreateBodyCustomerIdMax = 64;
+
+export const v1InternalLicensesCreateBodyPrimaryContactEmailDefault = ``;
+
+export const v1InternalLicensesCreateBodyHubspotDealIdDefault = ``;
+export const v1InternalLicensesCreateBodyHubspotDealIdMax = 128;
+
+export const v1InternalLicensesCreateBodyBandMax = 64;
+
+
+export const v1InternalLicensesCreateBodyFeaturesDefault = [];
+export const v1InternalLicensesCreateBodyLimitsMinOne = -1;
+
+export const v1InternalLicensesCreateBodyLimitsDefault = {  };
+export const v1InternalLicensesCreateBodyMaxInstancesDefault = 1;
+
+export const v1InternalLicensesCreateBodyMinSoftwareVersionDefault = ``;
+export const v1InternalLicensesCreateBodyMinSoftwareVersionMax = 32;
+
+export const v1InternalLicensesCreateBodyGraceDaysDefault = 90;
+export const v1InternalLicensesCreateBodyGraceDaysMin = 0;
+
+
+
+export const V1InternalLicensesCreateBody = zod.object({
+  "customer_name": zod.string().min(1).max(v1InternalLicensesCreateBodyCustomerNameMax),
+  "customer_id": zod.string().min(1).max(v1InternalLicensesCreateBodyCustomerIdMax).default(v1InternalLicensesCreateBodyCustomerIdDefault),
+  "primary_contact_email": zod.string().email().min(1).default(v1InternalLicensesCreateBodyPrimaryContactEmailDefault),
+  "hubspot_deal_id": zod.string().min(1).max(v1InternalLicensesCreateBodyHubspotDealIdMax).default(v1InternalLicensesCreateBodyHubspotDealIdDefault),
+  "license_type": zod.enum(['production', 'trial']),
+  "band": zod.string().min(1).max(v1InternalLicensesCreateBodyBandMax),
+  "features": zod.array(zod.string().min(1)).default(v1InternalLicensesCreateBodyFeaturesDefault),
+  "limits": zod.record(zod.string(), zod.number().min(v1InternalLicensesCreateBodyLimitsMinOne)).default(v1InternalLicensesCreateBodyLimitsDefault),
+  "max_instances": zod.number().min(1).default(v1InternalLicensesCreateBodyMaxInstancesDefault),
+  "min_software_version": zod.string().min(1).max(v1InternalLicensesCreateBodyMinSoftwareVersionMax).default(v1InternalLicensesCreateBodyMinSoftwareVersionDefault),
+  "not_before": zod.string().datetime({"offset":true}).optional(),
+  "expires_at": zod.string().datetime({"offset":true}),
+  "grace_days": zod.number().min(v1InternalLicensesCreateBodyGraceDaysMin).default(v1InternalLicensesCreateBodyGraceDaysDefault)
+})
+
+
+export const V1InternalLicensesReadParams = zod.object({
+  "grant_id": zod.string()
+})
+
+
+export const V1InternalLicensesApproveCreateParams = zod.object({
+  "grant_id": zod.string()
+})
+
+export const V1InternalLicensesApproveCreateBody = zod.object({
+
+}).passthrough()
+
+
+
+export const v1InternalLicensesApproveCreateResponseCustomerNameMax = 255;
+
+export const v1InternalLicensesApproveCreateResponseCustomerIdMax = 64;
+
+export const v1InternalLicensesApproveCreateResponsePrimaryContactEmailMax = 254;
+
+export const v1InternalLicensesApproveCreateResponseHubspotDealIdMax = 128;
+
+export const v1InternalLicensesApproveCreateResponseBandMax = 64;
+
+export const v1InternalLicensesApproveCreateResponseMaxInstancesMin = -2147483648;
+export const v1InternalLicensesApproveCreateResponseMaxInstancesMax = 2147483647;
+
+export const v1InternalLicensesApproveCreateResponseMinSoftwareVersionMax = 32;
+
+export const v1InternalLicensesApproveCreateResponseGraceDaysMin = -2147483648;
+export const v1InternalLicensesApproveCreateResponseGraceDaysMax = 2147483647;
+
+export const v1InternalLicensesApproveCreateResponseStatusReasonMax = 255;
+
+
+
+export const V1InternalLicensesApproveCreateResponse = zod.object({
+  "id": zod.string().uuid().optional(),
+  "license_id": zod.string().min(1).optional(),
+  "key_id": zod.string().min(1).optional(),
+  "customer_name": zod.string().min(1).max(v1InternalLicensesApproveCreateResponseCustomerNameMax),
+  "customer_id": zod.string().max(v1InternalLicensesApproveCreateResponseCustomerIdMax).optional(),
+  "primary_contact_email": zod.string().email().max(v1InternalLicensesApproveCreateResponsePrimaryContactEmailMax).optional(),
+  "hubspot_deal_id": zod.string().max(v1InternalLicensesApproveCreateResponseHubspotDealIdMax).optional(),
+  "license_type": zod.enum(['production', 'trial']),
+  "band": zod.string().min(1).max(v1InternalLicensesApproveCreateResponseBandMax),
+  "features": zod.object({
+
+}).passthrough().optional(),
+  "limits": zod.object({
+
+}).passthrough().optional(),
+  "max_instances": zod.number().min(v1InternalLicensesApproveCreateResponseMaxInstancesMin).max(v1InternalLicensesApproveCreateResponseMaxInstancesMax).optional(),
+  "min_software_version": zod.string().max(v1InternalLicensesApproveCreateResponseMinSoftwareVersionMax).optional(),
+  "issued_at": zod.string().datetime({"offset":true}).optional(),
+  "not_before": zod.string().datetime({"offset":true}).optional(),
+  "expires_at": zod.string().datetime({"offset":true}).optional(),
+  "grace_days": zod.number().min(v1InternalLicensesApproveCreateResponseGraceDaysMin).max(v1InternalLicensesApproveCreateResponseGraceDaysMax).optional(),
+  "status": zod.enum(['draft', 'pending_approval', 'active', 'suspended', 'revoked', 'expired']).optional(),
+  "status_reason": zod.string().max(v1InternalLicensesApproveCreateResponseStatusReasonMax).optional(),
+  "status_changed_at": zod.string().datetime({"offset":true}).optional(),
+  "drafted_by": zod.string().uuid().optional(),
+  "approved_by": zod.string().uuid().optional(),
+  "approved_at": zod.string().datetime({"offset":true}).optional(),
+  "authorization_version": zod.number().optional(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "updated_at": zod.string().datetime({"offset":true}).optional()
+})
+
+
+export const V1InternalLicensesIssueCreateParams = zod.object({
+  "grant_id": zod.string()
+})
+
+export const V1InternalLicensesIssueCreateBody = zod.object({
+
+}).passthrough()
+
+
+
+export const v1InternalLicensesIssueCreateResponseGrantCustomerNameMax = 255;
+
+export const v1InternalLicensesIssueCreateResponseGrantCustomerIdMax = 64;
+
+export const v1InternalLicensesIssueCreateResponseGrantPrimaryContactEmailMax = 254;
+
+export const v1InternalLicensesIssueCreateResponseGrantHubspotDealIdMax = 128;
+
+export const v1InternalLicensesIssueCreateResponseGrantBandMax = 64;
+
+export const v1InternalLicensesIssueCreateResponseGrantMaxInstancesMin = -2147483648;
+export const v1InternalLicensesIssueCreateResponseGrantMaxInstancesMax = 2147483647;
+
+export const v1InternalLicensesIssueCreateResponseGrantMinSoftwareVersionMax = 32;
+
+export const v1InternalLicensesIssueCreateResponseGrantGraceDaysMin = -2147483648;
+export const v1InternalLicensesIssueCreateResponseGrantGraceDaysMax = 2147483647;
+
+export const v1InternalLicensesIssueCreateResponseGrantStatusReasonMax = 255;
+
+
+
+
+export const V1InternalLicensesIssueCreateResponse = zod.object({
+  "grant": zod.object({
+  "id": zod.string().uuid().optional(),
+  "license_id": zod.string().min(1).optional(),
+  "key_id": zod.string().min(1).optional(),
+  "customer_name": zod.string().min(1).max(v1InternalLicensesIssueCreateResponseGrantCustomerNameMax),
+  "customer_id": zod.string().max(v1InternalLicensesIssueCreateResponseGrantCustomerIdMax).optional(),
+  "primary_contact_email": zod.string().email().max(v1InternalLicensesIssueCreateResponseGrantPrimaryContactEmailMax).optional(),
+  "hubspot_deal_id": zod.string().max(v1InternalLicensesIssueCreateResponseGrantHubspotDealIdMax).optional(),
+  "license_type": zod.enum(['production', 'trial']),
+  "band": zod.string().min(1).max(v1InternalLicensesIssueCreateResponseGrantBandMax),
+  "features": zod.object({
+
+}).passthrough().optional(),
+  "limits": zod.object({
+
+}).passthrough().optional(),
+  "max_instances": zod.number().min(v1InternalLicensesIssueCreateResponseGrantMaxInstancesMin).max(v1InternalLicensesIssueCreateResponseGrantMaxInstancesMax).optional(),
+  "min_software_version": zod.string().max(v1InternalLicensesIssueCreateResponseGrantMinSoftwareVersionMax).optional(),
+  "issued_at": zod.string().datetime({"offset":true}).optional(),
+  "not_before": zod.string().datetime({"offset":true}).optional(),
+  "expires_at": zod.string().datetime({"offset":true}).optional(),
+  "grace_days": zod.number().min(v1InternalLicensesIssueCreateResponseGrantGraceDaysMin).max(v1InternalLicensesIssueCreateResponseGrantGraceDaysMax).optional(),
+  "status": zod.enum(['draft', 'pending_approval', 'active', 'suspended', 'revoked', 'expired']).optional(),
+  "status_reason": zod.string().max(v1InternalLicensesIssueCreateResponseGrantStatusReasonMax).optional(),
+  "status_changed_at": zod.string().datetime({"offset":true}).optional(),
+  "drafted_by": zod.string().uuid().optional(),
+  "approved_by": zod.string().uuid().optional(),
+  "approved_at": zod.string().datetime({"offset":true}).optional(),
+  "authorization_version": zod.number().optional(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "updated_at": zod.string().datetime({"offset":true}).optional()
+}),
+  "license_key": zod.string().min(1)
+})
+
+
+export const V1InternalLicensesStatusCreateParams = zod.object({
+  "grant_id": zod.string()
+})
+
+export const v1InternalLicensesStatusCreateBodyReasonDefault = ``;
+export const v1InternalLicensesStatusCreateBodyReasonMax = 255;
+
+
+
+export const V1InternalLicensesStatusCreateBody = zod.object({
+  "status": zod.enum(['active', 'suspended', 'revoked']),
+  "reason": zod.string().max(v1InternalLicensesStatusCreateBodyReasonMax).default(v1InternalLicensesStatusCreateBodyReasonDefault)
+})
+
+
+
+export const v1InternalLicensesStatusCreateResponseCustomerNameMax = 255;
+
+export const v1InternalLicensesStatusCreateResponseCustomerIdMax = 64;
+
+export const v1InternalLicensesStatusCreateResponsePrimaryContactEmailMax = 254;
+
+export const v1InternalLicensesStatusCreateResponseHubspotDealIdMax = 128;
+
+export const v1InternalLicensesStatusCreateResponseBandMax = 64;
+
+export const v1InternalLicensesStatusCreateResponseMaxInstancesMin = -2147483648;
+export const v1InternalLicensesStatusCreateResponseMaxInstancesMax = 2147483647;
+
+export const v1InternalLicensesStatusCreateResponseMinSoftwareVersionMax = 32;
+
+export const v1InternalLicensesStatusCreateResponseGraceDaysMin = -2147483648;
+export const v1InternalLicensesStatusCreateResponseGraceDaysMax = 2147483647;
+
+export const v1InternalLicensesStatusCreateResponseStatusReasonMax = 255;
+
+
+
+export const V1InternalLicensesStatusCreateResponse = zod.object({
+  "id": zod.string().uuid().optional(),
+  "license_id": zod.string().min(1).optional(),
+  "key_id": zod.string().min(1).optional(),
+  "customer_name": zod.string().min(1).max(v1InternalLicensesStatusCreateResponseCustomerNameMax),
+  "customer_id": zod.string().max(v1InternalLicensesStatusCreateResponseCustomerIdMax).optional(),
+  "primary_contact_email": zod.string().email().max(v1InternalLicensesStatusCreateResponsePrimaryContactEmailMax).optional(),
+  "hubspot_deal_id": zod.string().max(v1InternalLicensesStatusCreateResponseHubspotDealIdMax).optional(),
+  "license_type": zod.enum(['production', 'trial']),
+  "band": zod.string().min(1).max(v1InternalLicensesStatusCreateResponseBandMax),
+  "features": zod.object({
+
+}).passthrough().optional(),
+  "limits": zod.object({
+
+}).passthrough().optional(),
+  "max_instances": zod.number().min(v1InternalLicensesStatusCreateResponseMaxInstancesMin).max(v1InternalLicensesStatusCreateResponseMaxInstancesMax).optional(),
+  "min_software_version": zod.string().max(v1InternalLicensesStatusCreateResponseMinSoftwareVersionMax).optional(),
+  "issued_at": zod.string().datetime({"offset":true}).optional(),
+  "not_before": zod.string().datetime({"offset":true}).optional(),
+  "expires_at": zod.string().datetime({"offset":true}).optional(),
+  "grace_days": zod.number().min(v1InternalLicensesStatusCreateResponseGraceDaysMin).max(v1InternalLicensesStatusCreateResponseGraceDaysMax).optional(),
+  "status": zod.enum(['draft', 'pending_approval', 'active', 'suspended', 'revoked', 'expired']).optional(),
+  "status_reason": zod.string().max(v1InternalLicensesStatusCreateResponseStatusReasonMax).optional(),
+  "status_changed_at": zod.string().datetime({"offset":true}).optional(),
+  "drafted_by": zod.string().uuid().optional(),
+  "approved_by": zod.string().uuid().optional(),
+  "approved_at": zod.string().datetime({"offset":true}).optional(),
+  "authorization_version": zod.number().optional(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "updated_at": zod.string().datetime({"offset":true}).optional()
+})
+
+
+export const v1SelfHostedActivationsCreateBodyVersionDefault = ``;
+export const v1SelfHostedActivationsCreateBodyVersionMax = 100;
+
+export const v1SelfHostedActivationsCreateBodyDeploymentTypeDefault = ``;
+export const v1SelfHostedActivationsCreateBodyDeploymentTypeMax = 50;
+
+
+
+export const v1SelfHostedActivationsCreateBodyLicenseKeyHashRegExp = new RegExp('^[0-9a-f]{64}$');
+
+
+export const V1SelfHostedActivationsCreateBody = zod.object({
+  "instance_id": zod.string().uuid(),
+  "version": zod.string().max(v1SelfHostedActivationsCreateBodyVersionMax).default(v1SelfHostedActivationsCreateBodyVersionDefault),
+  "deployment_type": zod.string().max(v1SelfHostedActivationsCreateBodyDeploymentTypeMax).default(v1SelfHostedActivationsCreateBodyDeploymentTypeDefault),
+  "license_key_hash": zod.string().min(1).regex(v1SelfHostedActivationsCreateBodyLicenseKeyHashRegExp).optional()
+})
+
+
+
+export const v1SelfHostedActivationsCreateResponseExpiresInMin = 0;
+
+
+
+
+
+export const V1SelfHostedActivationsCreateResponse = zod.object({
+  "gateway_url": zod.string().url().min(1),
+  "access_token": zod.string().min(1),
+  "expires_in": zod.number().min(v1SelfHostedActivationsCreateResponseExpiresInMin),
+  "allowed_services": zod.array(zod.string().min(1)),
+  "allowed_models": zod.array(zod.string().min(1)),
+  "scope": zod.enum(['oss', 'enterprise'])
 })

@@ -9,6 +9,8 @@ const ROOTS = {
 
 export const paths = {
   minimalUI: "https://mui.com/store/items/minimal-dashboard/",
+  // OSS self-hosted first-run flow (pre-auth, no dashboard layout)
+  ossSetup: "/setup",
   // AUTH
   auth: {
     jwt: {

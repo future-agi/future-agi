@@ -16,7 +16,7 @@ import {
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { LoadingButton } from "@mui/lab";
 import { enqueueSnackbar } from "notistack";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
 import { FAGI_MODEL_VALUES } from "src/sections/evals/components/ModelSelector";
 import PropTypes from "prop-types";
 import React, {
@@ -82,8 +82,8 @@ import {
 } from "./evalPickerConfigUtils";
 import RequiredMark from "src/components/RequiredMark";
 
-const ERROR_LOCALIZER_OSS_TOOLTIP =
-  "Error Localization is not available on self-hosted (OSS) deployments.";
+const ERROR_LOCALIZER_LOCKED_TOOLTIP =
+  "Error Localization isn't enabled for this workspace.";
 
 const build_tools_payload = (selected_tools) =>
   (selected_tools || []).reduce((acc, tool_name) => {
@@ -120,7 +120,16 @@ const getEvalPromptText = (evalData, config = {}) =>
   evalData?.instructions || config?.rule_prompt || "";
 
 const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
-  const { isOSS } = useDeploymentMode();
+  // Fail closed while capabilities load (both flags true) so gated controls
+  // never flash as available before the fetch resolves.
+  const { locked: fagiLocked, isLoading: capsLoading } = useFeatureLocked(
+    CAPABILITY.TURING_MODELS,
+  );
+  const { locked: agentEvalLocked } = useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  // Confirmed denial (loaded AND not allowed) — seed the model default raw and
+  // only strip it here, never off `locked` (true while loading), so entitled
+  // users keep "turing_large" through the fetch.
+  const fagiModelsDenied = fagiLocked && !capsLoading;
   const {
     source,
     sourceId,
@@ -158,7 +167,12 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState("");
   const [codeLanguage, setCodeLanguage] = useState("python");
-  const [model, setModel] = useState(isOSS ? "" : "turing_large");
+  const [model, setModel] = useState("turing_large");
+  // Drop the seeded Turing default only once denial is confirmed, so entitled
+  // users keep it through the capabilities fetch (and any config load).
+  useEffect(() => {
+    if (fagiModelsDenied && FAGI_MODEL_VALUES.has(model)) setModel("");
+  }, [fagiModelsDenied, model]);
   const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
@@ -177,7 +191,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [knowledgeBaseIds, setKnowledgeBaseIds] = useState([]);
   const [contextOptions, setContextOptions] = useState(["variables_only"]);
   const [errorLocalizerEnabled, setErrorLocalizerEnabled] = useState(false);
-  const errorLocalizerActive = errorLocalizerEnabled && !isOSS;
+  const errorLocalizerActive = errorLocalizerEnabled && !agentEvalLocked;
   // Name for the UserEvalMetric — defaults to template name, user can customise
   const [evalName, setEvalName] = useState("");
   const [dataReady, setDataReady] = useState(false);
@@ -825,22 +839,22 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   // "Add Evaluation" button.
   const handleSaveVersion = useCallback(async () => {
     if (isSystemEval) return;
-    if (isOSS && evalType === "agent") {
+    if (agentEvalLocked && evalType === "agent") {
       enqueueSnackbar(
-        "Agent evaluations are not available on OSS. Use LLM-as-a-Judge or Code evaluations instead.",
+        "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
         { variant: "error" },
       );
       return;
     }
-    if (isOSS && FAGI_MODEL_VALUES.has(model)) {
+    if (fagiLocked && FAGI_MODEL_VALUES.has(model)) {
       enqueueSnackbar(
-        "Turing models are not available in OSS. Please select your own model.",
+        "Turing models aren't enabled for this workspace. Please select your own model.",
         { variant: "error" },
       );
       setOpenModelMenuSignal((n) => n + 1);
       return;
     }
-    if (isOSS && evalType !== "code" && !model) {
+    if (fagiLocked && evalType !== "code" && !model) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
       return;
@@ -911,7 +925,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     }
   }, [
     isSystemEval,
-    isOSS,
+    agentEvalLocked,
+    fagiLocked,
     evalType,
     instructions,
     code,
@@ -947,7 +962,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   }, []);
 
   const handleTestEvaluation = useCallback(() => {
-    if (isOSS && evalType !== "code" && !model) {
+    if (fagiLocked && evalType !== "code" && !model) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
       return;
@@ -958,10 +973,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     sourceRef.current?.runTest?.(templateId);
     // Safety timeout
     setTimeout(() => setIsTesting((v) => (v ? false : v)), 60000);
-  }, [templateId, isOSS, evalType, model]);
+  }, [templateId, fagiLocked, evalType, model]);
 
   const handleAdd = useCallback(() => {
-    if (isOSS && evalType !== "code" && !model) {
+    if (fagiLocked && evalType !== "code" && !model) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
       return;
@@ -1103,7 +1118,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     evalData,
     evalName,
     isEditMode,
-    isOSS,
+    fagiLocked,
     model,
     sourceMapping,
     evalType,
@@ -1713,16 +1728,16 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   introspects model traces, which code evals don't produce. */}
               {!isComposite && evalType !== "code" && (
                 <CustomTooltip
-                  show={isOSS}
+                  show={agentEvalLocked}
                   type=""
                   arrow
-                  title={ERROR_LOCALIZER_OSS_TOOLTIP}
+                  title={ERROR_LOCALIZER_LOCKED_TOOLTIP}
                 >
                   <FormControlLabel
                     control={
                       <Checkbox
                         checked={errorLocalizerActive}
-                        disabled={isOSS}
+                        disabled={agentEvalLocked}
                         onChange={(e) => {
                           setErrorLocalizerEnabled(e.target.checked);
                           setIsDirty(true);
