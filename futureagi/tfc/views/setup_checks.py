@@ -36,6 +36,7 @@ experimenting one stays quiet.
 
 import os
 import socket
+import ssl
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 
@@ -182,6 +183,38 @@ def _model_serving_up() -> bool:
     return _http_ok(f"{base.rstrip('/')}/health")
 
 
+def _tls_verified(url: str) -> bool:
+    """Complete a handshake against the public endpoint with the default trust
+    store, which validates the chain, the hostname and the expiry in one go.
+    Anything not served over ``https`` is plaintext and cannot pass."""
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.hostname:
+        return False
+    context = ssl.create_default_context()
+    with socket.create_connection(
+        (parsed.hostname, parsed.port or 443), PROBE_TIMEOUT_SECONDS
+    ) as sock:
+        with context.wrap_socket(sock, server_hostname=parsed.hostname) as tls_sock:
+            return bool(tls_sock.getpeercert())
+
+
+def _tls_up() -> bool:
+    """The public URLs are the only TLS the backend can observe — it serves
+    plaintext behind the proxy, so what is checkable is whether the endpoints the
+    browser and the SDK are handed terminate a valid certificate. Both have to,
+    since either one left plaintext is traffic in the clear.
+
+    No configured URL counts as down: a deployment that never names an https
+    endpoint is serving its UI and its ingest unencrypted, which is the thing
+    this check exists to surface.
+    """
+    urls = [
+        url.strip()
+        for url in (os.environ.get("FRONTEND_URL"), os.environ.get("VITE_HOST_API"))
+        if url and url.strip()
+    ]
+    return bool(urls) and all(_tls_verified(url) for url in urls)
+
 
 CHECKS = (
     {
@@ -316,12 +349,12 @@ CHECKS = (
         "down_detail": "Built-in evaluations and guardrails will not run",
         "probe": _model_serving_up,
         LIVE: {
-            "required": False,
-            "on_down": WARNING,
+            "required": True,
+            "on_down": FAILED,
         },
         EXPERIMENT: {
             "required": False,
-            "on_down": SKIPPED,
+            "on_down": WARNING,
         },
     },
     {
@@ -330,8 +363,25 @@ CHECKS = (
         "down_detail": "Custom code evaluations will not run",
         "probe": _code_executor_up,
         LIVE: {
+            "required": True,
+            "on_down": FAILED,
+        },
+        EXPERIMENT: {
             "required": False,
             "on_down": WARNING,
+        },
+    },
+    {
+        "id": "ssl",
+        "label": "SSL/TLS certificate",
+        "down_detail": (
+            "Browser and SDK traffic travels unencrypted — point FRONTEND_URL "
+            "and VITE_HOST_API at https endpoints with a valid certificate"
+        ),
+        "probe": _tls_up,
+        LIVE: {
+            "required": True,
+            "on_down": FAILED,
         },
         EXPERIMENT: {
             "required": False,

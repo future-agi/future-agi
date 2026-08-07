@@ -167,15 +167,18 @@ class TestVerdict:
         assert by_id(result, "storage")["status"] == WARNING
         assert by_id(result, "storage")["required"] is False
 
-    def test_optional_failure_does_not_block_in_live(self, api_client):
-        """code_executor warns rather than fails, so it must not flip the verdict."""
+    def test_every_check_is_required_in_live(self, api_client):
+        """Live mode draws no line between stack-level and feature-level: a
+        deployment serving real traffic is expected to have all of it. Anything
+        down therefore blocks, and experiment mode is where that relaxes."""
         result = get_checks(
             api_client, mode=LIVE, probe_results=down_only("code_executor")
         )
 
-        assert by_id(result, "code_executor")["status"] == WARNING
-        assert by_id(result, "code_executor")["required"] is False
-        assert result["status"] == "ok"
+        assert by_id(result, "code_executor")["status"] == FAILED
+        assert by_id(result, "code_executor")["required"] is True
+        assert result["status"] == "issues"
+        assert all(c[LIVE]["required"] for c in CHECKS)
 
     def test_issues_requires_a_check_that_is_both_required_and_failed(
         self, api_client
@@ -263,11 +266,12 @@ class TestCoreServicesBlockInBothModes:
 @pytest.mark.integration
 @pytest.mark.api
 class TestSkipped:
-    @pytest.mark.parametrize("check_id", ["model_serving", "code_executor"])
+    @pytest.mark.parametrize("check_id", ["ssl"])
     def test_service_not_run_in_experiment_is_skipped_not_failed(
         self, api_client, check_id
     ):
-        """A container the mode never starts is expected to be down, not broken."""
+        """What the mode never expects to be there is expected to be down, not
+        broken — experimenting locally is not a certificate misconfiguration."""
         result = get_checks(
             api_client, mode=EXPERIMENT, probe_results=down_only(check_id)
         )
@@ -282,17 +286,25 @@ class TestSkipped:
         assert skipped, "expected experiment mode to skip at least one service"
         assert all(not c["required"] for c in skipped)
 
-    def test_model_serving_warns_in_live_rather_than_blocking(self, api_client):
-        """Feature-level, not stack-level. Running the platform for observability
-        alone is a legitimate live deployment, so a missing eval runtime is
-        reported loudly and left as the operator's call."""
-        result = get_checks(
+    def test_model_serving_blocks_in_live_and_only_warns_in_experiment(
+        self, api_client
+    ):
+        """The eval runtime is optional to experiment with and mandatory to serve
+        real traffic, so the same outage stops one mode and not the other."""
+        live = get_checks(
             api_client, mode=LIVE, probe_results=down_only("model_serving")
         )
+        experiment = get_checks(
+            api_client, mode=EXPERIMENT, probe_results=down_only("model_serving")
+        )
 
-        assert by_id(result, "model_serving")["status"] == WARNING
-        assert by_id(result, "model_serving")["required"] is False
-        assert result["status"] == "ok"
+        assert by_id(live, "model_serving")["status"] == FAILED
+        assert by_id(live, "model_serving")["required"] is True
+        assert live["status"] == "issues"
+
+        assert by_id(experiment, "model_serving")["status"] == WARNING
+        assert by_id(experiment, "model_serving")["required"] is False
+        assert experiment["status"] == "ok"
 
 
 @pytest.mark.integration
@@ -386,11 +398,11 @@ class TestSnapshotCache:
 class TestCheckInventory:
     """Regressions for checks that were deliberately removed."""
 
-    @pytest.mark.parametrize("removed_id", ["ssl", "ports", "email"])
+    @pytest.mark.parametrize("removed_id", ["ports", "email"])
     def test_unobservable_checks_are_not_reported(self, api_client, removed_id):
-        """These were dropped because none could be probed from the backend —
-        TLS and ports describe how the browser arrived, and mail delivery can
-        only be read from config. Re-adding one belongs in deployment-info."""
+        """These were dropped because neither could be probed from the backend —
+        ports describe how the browser arrived, and mail delivery can only be
+        read from config. Re-adding one belongs in deployment-info."""
         assert removed_id not in ALL_IDS
 
     @pytest.mark.parametrize("check_id", ["backend", "frontend"])
