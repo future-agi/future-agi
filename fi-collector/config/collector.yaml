@@ -35,6 +35,11 @@ server:
   http_addr: ":4318"
   batch_max_rows: 5000
   batch_max_age: 5s
+  # Max gRPC receive message size in MiB (FI_GRPC_MAX_RECV_MIB). The Go
+  # default (4 MiB) rejects large single-span exports — e.g. an ended voice
+  # call with a full transcript — with RESOURCE_EXHAUSTED. 16 matches the
+  # OTLP/HTTP body cap so both transports accept the same spans.
+  grpc_max_recv_mib: 16
 
 auth:
   # Auth is active when pg_write is set. Without it, spans land with
