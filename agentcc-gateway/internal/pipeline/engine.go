@@ -100,7 +100,9 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 			if result.Response != nil {
 				rc.Response = result.Response
 			}
-			e.RunPostPlugins(ctx, rc)
+			if err := e.RunPostPlugins(ctx, rc); err != nil {
+				return err
+			}
 			return nil
 		}
 	}
@@ -132,7 +134,9 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 	// Post-plugins — skip for streaming requests; the stream handler
 	// will call RunPostPlugins after the stream completes with final usage.
 	if !rc.IsStream {
-		e.RunPostPlugins(ctx, rc)
+		if err := e.RunPostPlugins(ctx, rc); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -142,10 +146,14 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 //  2. Parallel-safe plugins run concurrently after sequential ones complete.
 //  3. Plugins implementing SkipOnCacheHit are skipped on cache hits.
 //
+// Returns the first error from a sequential post-plugin after all post-plugins
+// have run. Errors from parallel observer plugins remain non-fatal.
+//
 // Exported so that streaming handlers can call it after the stream completes,
 // when rc.Response and usage data are populated.
-func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) {
+func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) *models.APIError {
 	isCacheHit := rc.Flags.ShortCircuited && rc.Metadata["cache_status"] == "hit_exact"
+	var firstErr *models.APIError
 
 	// Phase 1: Sequential post-plugins (e.g., cost → credits dependency chain).
 	for _, p := range e.postSequential {
@@ -160,6 +168,10 @@ func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) 
 		rc.RecordTiming("post_"+p.Name(), time.Since(start))
 
 		if result.Error != nil {
+			rc.AddError(result.Error)
+			if firstErr == nil {
+				firstErr = result.Error
+			}
 			slog.Warn("post-plugin error",
 				"plugin", p.Name(),
 				"error", result.Error.Message,
@@ -170,7 +182,7 @@ func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) 
 
 	// Phase 2: Parallel post-plugins (logging, audit, metrics, alerting, otel).
 	if len(e.postParallel) == 0 {
-		return
+		return firstErr
 	}
 
 	var wg sync.WaitGroup
@@ -199,6 +211,7 @@ func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) 
 		}(p)
 	}
 	wg.Wait()
+	return firstErr
 }
 
 // PluginCount returns the number of registered plugins.
