@@ -12,6 +12,9 @@ import { enqueueSnackbar } from "src/components/snackbar";
 import PineConeForm from "./PineConeForm";
 import QdrantForm from "./QdrantForm";
 import WeivateForm from "./WeivateForm";
+import ChromaForm from "./ChromaForm";
+import MilvusForm from "./MilvusForm";
+import PgvectorForm from "./PgvectorForm";
 import { RetrievalValidationSchema } from "./validation";
 import { LoadingButton } from "@mui/lab";
 import PreviewAddColumn from "../PreviewAddColumn";
@@ -39,7 +42,7 @@ export const RetrievalChild = ({
   const { refreshGrid } = useDevelopDetailContext();
   // Using individual store
 
-  const { control, handleSubmit, watch, reset } = useForm({
+  const { control, handleSubmit, watch, reset, setValue } = useForm({
     defaultValues: {
       newColumnName: "",
       subType: "",
@@ -48,6 +51,23 @@ export const RetrievalChild = ({
   });
 
   const subType = watch("subType");
+  const [prevSubType, setPrevSubType] = React.useState(null);
+
+  useEffect(() => {
+    if (prevSubType && prevSubType !== subType) {
+      const fieldsToClear = [
+        "apiKey",
+        "indexName",
+        "namespace",
+        "url",
+        "collectionName",
+        "searchType",
+        "queryKey",
+      ];
+      fieldsToClear.forEach((field) => setValue(field, ""));
+    }
+    setPrevSubType(subType);
+  }, [subType, prevSubType, setValue]);
 
   const { dataset } = useParams();
   const allColumns = useDatasetColumnConfig(dataset);
@@ -84,6 +104,12 @@ export const RetrievalChild = ({
       return <QdrantForm control={control} allColumns={allColumns} />;
     } else if (subType === "weaviate") {
       return <WeivateForm control={control} allColumns={allColumns} />;
+    } else if (subType === "chroma") {
+      return <ChromaForm control={control} allColumns={allColumns} />;
+    } else if (subType === "milvus") {
+      return <MilvusForm control={control} allColumns={allColumns} />;
+    } else if (subType === "pgvector") {
+      return <PgvectorForm control={control} allColumns={allColumns} />;
     }
   };
 
@@ -126,13 +152,36 @@ export const RetrievalChild = ({
   });
 
   const transformFormToApi = (formValues) => {
-    const { newColumnName, subType: st, columnId, kbId, ...rest } = formValues;
+    const {
+      newColumnName,
+      subType: st,
+      columnId,
+      kbId,
+      apiKey,
+      indexName,
+      collectionName,
+      searchType,
+      topK,
+      queryKey,
+      vectorLength,
+      embeddingConfig,
+      ...rest
+    } = formValues;
+
     return {
       ...rest,
       new_column_name: newColumnName,
       sub_type: st,
       ...(columnId && { column_id: columnId }),
       ...(kbId && { kb_id: kbId }),
+      ...(apiKey && { api_key: apiKey }),
+      ...(indexName && { index_name: indexName }),
+      ...(collectionName && { collection_name: collectionName }),
+      ...(searchType && { search_type: searchType }),
+      ...(topK !== undefined && { top_k: topK }),
+      ...(queryKey && { query_key: queryKey }),
+      ...(vectorLength !== undefined && { vector_length: vectorLength }),
+      ...(embeddingConfig && { embedding_config: embeddingConfig }),
     };
   };
 
@@ -223,6 +272,9 @@ export const RetrievalChild = ({
               { label: "Pinecone", value: "pinecone" },
               { label: "Qdrant", value: "qdrant" },
               { label: "Weaviate", value: "weaviate" },
+              { label: "Chroma", value: "chroma" },
+              { label: "Milvus", value: "milvus" },
+              { label: "pgvector", value: "pgvector" },
             ]}
             fullWidth
           />
