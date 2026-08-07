@@ -47,6 +47,10 @@ class CosineSimilarity(Comparator):
 
 class NormalisedLevenshteinSimilarity(Comparator):
     def compare(self, string1, string2):
+        if not string1 and not string2:
+            return 1.0
+        if not string1 or not string2:
+            return 0.0
         return 1 - self._normalised_levenshtein_distance(string1, string2)
 
     def _normalised_levenshtein_distance(self, str1, str2):
@@ -111,8 +115,12 @@ class JaccardSimilarity(Comparator):
         return self._jaccard_similarity(string1, string2)
 
     def _jaccard_similarity(self, str1, str2):
-        str1_tokens = set(str1.split())
-        str2_tokens = set(str2.split())
+        str1_tokens = set(str1.lower().split())
+        str2_tokens = set(str2.lower().split())
+        if not str1_tokens and not str2_tokens:
+            return 1.0
+        if not str1_tokens or not str2_tokens:
+            return 0.0
         return len(str1_tokens.intersection(str2_tokens)) / len(
             str1_tokens.union(str2_tokens)
         )
@@ -123,8 +131,12 @@ class SorensenDiceSimilarity(Comparator):
         return self._sorensen_dice_similarity(string1, string2)
 
     def _sorensen_dice_similarity(self, str1, str2):
-        str1_tokens = set(str1.split())
-        str2_tokens = set(str2.split())
+        str1_tokens = set(str1.lower().split())
+        str2_tokens = set(str2.lower().split())
+        if not str1_tokens and not str2_tokens:
+            return 1.0
+        if not str1_tokens or not str2_tokens:
+            return 0.0
         return (
             2
             * len(str1_tokens.intersection(str2_tokens))
