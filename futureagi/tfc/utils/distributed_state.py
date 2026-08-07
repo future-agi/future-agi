@@ -544,7 +544,15 @@ class DistributedEvaluationTracker(DistributedStateManager):
         cleaned = 0
         cutoff = datetime.utcnow().timestamp() - (max_age_hours * 3600)
 
-        for info in self.get_all_running():
+        try:
+            running = self.get_all_running()
+        except Exception as e:
+            # Cleanup is a best-effort safety mechanism. A state-store failure
+            # must not abort the caller that triggered maintenance.
+            logger.exception(f"Failed to enumerate running evaluations: {e}")
+            return 0
+
+        for info in running:
             try:
                 started = datetime.fromisoformat(info.started_at).timestamp()
                 if started < cutoff:
