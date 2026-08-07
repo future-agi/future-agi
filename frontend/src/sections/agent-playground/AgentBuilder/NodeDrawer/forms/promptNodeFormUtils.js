@@ -1,11 +1,12 @@
 import {
   normalizeResponseFormat,
-  extractResponseSchema,
+  resolveResponseSchema,
   resolveResponseFormatForApi,
   KNOWN_FORMAT_VALUES,
 } from "../nodeFormUtils";
 
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
+import { normalizePromptOutputPorts } from "../../../utils/promptPortUtils";
 
 /**
  * Extract variables from content blocks
@@ -96,17 +97,25 @@ export function buildPromptNodePayload(
     isCustomFormat && responseSchemaList
       ? responseSchemaList.find((s) => s.id === rawFormat) || rawFormat
       : rawFormat;
+  const resolvedSchema = resolveResponseSchema(
+    resolvedFormat,
+    formData.modelConfig.responseSchema,
+  );
 
   // Build configuration object matching workbench format
   const configuration = {
     model: formData.modelConfig.model,
     modelDetail: formData.modelConfig.modelDetail,
-    outputFormat: "string",
+    outputFormat: formData.outputFormat || "string",
     toolChoice: formData.modelConfig.toolChoice || "",
     tools: formData.modelConfig.tools || [],
     modelType: "llm",
     ...sliderValues,
     responseFormat: resolvedFormat,
+    ...(resolvedSchema && {
+      responseSchema: resolvedSchema,
+      response_schema: resolvedSchema,
+    }),
     reasoning,
     template_format: formData.templateFormat || "mustache",
   };
@@ -167,6 +176,14 @@ export function buildPatchPayload(nodeUpdate, config) {
       "responseFormat",
       "response_format",
     );
+    const responseSchema = resolveResponseSchema(
+      responseFormat ?? cfg.modelConfig?.responseFormat,
+      readConfigValue(
+        promptPayloadConfig,
+        "responseSchema",
+        "response_schema",
+      ) ?? cfg.modelConfig?.responseSchema,
+    );
 
     patch.prompt_template = {
       prompt_template_id: config?.prompt_template_id,
@@ -182,8 +199,10 @@ export function buildPatchPayload(nodeUpdate, config) {
       model_detail: cfg.modelConfig?.modelDetail || null,
       response_format:
         responseFormat ?? resolveResponseFormatForApi(cfg.modelConfig),
+      response_schema: responseSchema ?? null,
       output_format:
         readConfigValue(promptPayloadConfig, "outputFormat", "output_format") ||
+        cfg.outputFormat ||
         "string",
       temperature: readConfigValue(promptPayloadConfig, "temperature") ?? null,
       max_tokens:
@@ -233,28 +252,35 @@ export function mapPatchResponseToStoreData(response) {
   if (!response) return {};
 
   const pt = response.prompt_template;
+  const ports = (response.ports || []).map((p) => ({
+    id: p.id,
+    key: p.key,
+    display_name: p.display_name,
+    direction: p.direction,
+    data_schema: p.dataSchema || p.data_schema || {},
+    required: p.required,
+  }));
   const storeData = {
     label: response.name,
-    ports: (response.ports || []).map((p) => ({
-      id: p.id,
-      key: p.key,
-      display_name: p.display_name,
-      direction: p.direction,
-      data_schema: p.dataSchema || p.data_schema || {},
-      required: p.required,
-    })),
+    ports,
   };
 
   if (pt) {
+    const outputFormat = pt.output_format || pt.outputFormat || "string";
+
     storeData.config = {
       prompt_template_id: pt.prompt_template_id,
       prompt_version_id: pt.prompt_version_id,
+      outputFormat,
       templateFormat: pt.template_format || "mustache",
       modelConfig: {
         model: pt.model || "",
         modelDetail: pt.model_detail || {},
         responseFormat: normalizeResponseFormat(pt.response_format),
-        responseSchema: extractResponseSchema(pt.response_format),
+        responseSchema: resolveResponseSchema(
+          pt.response_format,
+          pt.response_schema,
+        ),
         toolChoice: pt.tool_choice || "auto",
         tools: pt.tools || [],
       },
@@ -277,6 +303,10 @@ export function mapPatchResponseToStoreData(response) {
               presencePenalty: pt.presence_penalty,
               tools: pt.tools || [],
               toolChoice: pt.tool_choice || "auto",
+              output_format: outputFormat,
+              ...(pt.response_schema && {
+                response_schema: pt.response_schema,
+              }),
               // Intentionally snake_case — mirrors API contract shape;
               // read by buildPatchPayload and getDefaultValues via configuration.template_format
               template_format: pt.template_format || "mustache",
@@ -285,6 +315,8 @@ export function mapPatchResponseToStoreData(response) {
         ],
       },
     };
+
+    storeData.ports = normalizePromptOutputPorts(ports, storeData.config);
   }
 
   return storeData;
