@@ -1,7 +1,9 @@
 """
-Trace compression for the scanner — kevinify, structural prefilter, compress_v2.
+Scanner trace payload — structural prefilter, full-span-tree payload, and the
+verbatim-recovery helpers behind key-moment breadcrumbs.
 
-Ported from experiments/trace_scanner/{scanner_v3.py, compress_trace.py}.
+No content selection happens here. The payload carries every span raw; the
+model identifies the user request and the final response itself.
 """
 
 import json
@@ -211,75 +213,19 @@ def recover_verbatim(kevinified_excerpt, raw_text, min_overlap=0.3):
     if best_score >= min_overlap:
         return best_sentence.strip()
 
-    return kevinified_excerpt
-
-
-def recover_key_moments(key_moments, raw_spans_text):
-    """Post-process key_moments: recover verbatim text for user_request/agent_response."""
-    if not key_moments:
-        return key_moments
-
-    result = dict(key_moments)
-
-    if result.get("user_request"):
-        result["user_request_raw"] = recover_verbatim(
-            result["user_request"],
-            raw_spans_text.get("all_inputs", ""),
-        )
-
-    if result.get("agent_response"):
-        result["agent_response_raw"] = recover_verbatim(
-            result["agent_response"],
-            raw_spans_text.get("all_outputs", ""),
-        )
-
-    return result
-
-
-# ---------------------------------------------------------------------------
-# TASK HINTS — Cheap keyword signals from root input
-# ---------------------------------------------------------------------------
-
-_TASK_PATTERNS = {
-    "needs_tool": re.compile(
-        r"\b(search|find|look\s*up|check|fetch|get|retrieve|download|browse|navigate|open)\b",
-        re.IGNORECASE,
-    ),
-    "has_format_constraint": re.compile(
-        r"\b(format\s+as|output\s+in|respond\s+with|return\s+as|json|csv|markdown|xml|table|list\s+of|bullet)\b",
-        re.IGNORECASE,
-    ),
-    "quantitative_answer": re.compile(
-        r"\b(how\s+many|count|number\s+of|total|sum|average|percentage|ratio)\b",
-        re.IGNORECASE,
-    ),
-    "specific_value": re.compile(
-        r"\b(what\s+is|what\'s|what\s+was|when\s+did|where\s+is|who\s+is|which)\b",
-        re.IGNORECASE,
-    ),
-}
-
-
-def extract_task_hints(root_input):
-    """Extract keyword-based task category hints from root span input."""
-    if not root_input:
-        return []
-    text = str(root_input)
-    return [hint for hint, pattern in _TASK_PATTERNS.items() if pattern.search(text)]
+    # No match: return nothing rather than the excerpt we were asked to find.
+    # Handing back the model's own paraphrase means the caller stores it in a
+    # field named `verbatim` and the UI renders it as a quote from the trace —
+    # so a breadcrumb points an engineer at words nobody ever said. Measured on
+    # a 2,107-trace corpus, 161 of 278 breadcrumbs (58%) were this fallback, and
+    # 31% quoted text that appears nowhere in their own trace. An absent quote is
+    # honest; an invented one costs more than it gives.
+    return ""
 
 
 # ---------------------------------------------------------------------------
 # HELPERS — span tree utilities
 # ---------------------------------------------------------------------------
-
-
-def _truncate(text, max_len=100):
-    if not text:
-        return ""
-    text = str(text).strip()
-    if len(text) <= max_len:
-        return text
-    return text[:max_len] + "..."
 
 
 def _parse_duration_seconds(duration_str):
@@ -404,7 +350,14 @@ def structural_prefilter(trace_data):
             spans_flat[i]["name"] == spans_flat[i - 1]["name"]
             and spans_flat[i]["depth"] == spans_flat[i - 1]["depth"]
         ):
-            signals["retry_spans"].append(s["id"])
+            # `s` here was the leftover loop variable from the error-span loop above,
+            # so every detected retry recorded the LAST span's id. The appends still
+            # happened, which is why the signal looked alive: on one real trace it
+            # fired 249 times. But `anomalous_ids` is a set, so 249 copies of one id
+            # collapse to a single entry and the other 248 retry spans are never
+            # flagged. Measured over 2,107 traces: 566 of the 844 traces carrying a
+            # retry (67%) had the signal collapse this way.
+            signals["retry_spans"].append(spans_flat[i]["id"])
 
     by_depth = {}
     for s in spans_flat:
@@ -533,7 +486,7 @@ def structural_prefilter_with_ids(trace_data):
 
 
 # ---------------------------------------------------------------------------
-# COMPRESS V2 — Adaptive budget, kevinified I/O, flow outline
+# FLOW OUTLINE — compact structural view of the whole tree
 # ---------------------------------------------------------------------------
 
 
@@ -564,119 +517,19 @@ def build_flow_outline(trace_data):
     return " > ".join(parts)
 
 
-def compress_v2(trace_data, prefilter_result):
-    """
-    Smart compression — kevinify all spans with adaptive token budget.
-    """
-    anomalous_ids = prefilter_result["anomalous_span_ids"]
+# Haystack caps for key-moment verbatim recovery. The model quotes from FULL
+# raw spans, so a head-only cap loses every quote of how a long output ENDS —
+# and recovery cost grows with the haystack, so the cap cannot simply be
+# removed. Head + tail covers where quotes actually land (openings and
+# endings) while keeping recovery time bounded.
+_RECOVERY_HEAD_CHARS = 3_000
+_RECOVERY_TAIL_CHARS = 1_000
 
-    all_flat = []
-    for top_span in trace_data["spans"]:
-        all_flat.extend(flatten_spans(top_span))
 
-    # Extract task (root input) and result (final output)
-    root_input = ""
-    final_output = ""
-    if all_flat:
-        root_attrs = all_flat[0][0].get("span_attributes", {})
-        root_input = root_attrs.get("input.value", "")
-        for span, depth in reversed(all_flat):
-            out = span.get("span_attributes", {}).get("output.value", "")
-            if out:
-                final_output = out
-                break
-        if not final_output:
-            final_output = root_attrs.get("output.value", "")
-
-    # Adaptive budget: ~3000 chars total, distributed by importance
-    TOTAL_IO_BUDGET = 3000
-    weights = []
-    span_meta = []
-    for span, depth in all_flat:
-        attrs = span.get("span_attributes", {})
-        sid = span["span_id"]
-        kind = _get_span_kind(attrs)
-        is_flagged = sid in anomalous_ids
-        is_decision = kind in {"LLM", "llm", "Tool", "TOOL", "Retriever", "RETRIEVER"}
-
-        w = 3 if is_flagged else (2 if is_decision else 1)
-        weights.append(w)
-        span_meta.append((span, depth, is_flagged, is_decision, kind))
-
-    total_weight = sum(weights) or 1
-    budgets = [max(50, int(TOTAL_IO_BUDGET * w / total_weight)) for w in weights]
-
-    spans = []
-    for i, (span, depth, is_flagged, is_decision, kind) in enumerate(span_meta):
-        attrs = span.get("span_attributes", {})
-        sid = span["span_id"]
-        status = span.get("status_code", "Unset")
-        duration = _parse_duration_seconds(span.get("duration"))
-        io_budget = budgets[i]
-
-        inp = kevinify(attrs.get("input.value", ""), io_budget)
-        out = kevinify(attrs.get("output.value", ""), io_budget)
-
-        has_content = inp or out or status != "Unset" or is_flagged
-        if not has_content:
-            continue
-
-        entry = {"n": span["span_name"], "d": depth}
-        if kind:
-            entry["k"] = kind
-        if status != "Unset":
-            entry["s"] = status
-        if duration and duration > 0.1:
-            entry["t"] = duration
-        if inp:
-            entry["in"] = inp
-        if out:
-            entry["out"] = out
-
-        if is_flagged:
-            flags = []
-            if sid in prefilter_result.get("_error_ids", set()):
-                flags.append("ERR")
-            if sid in prefilter_result.get("_retry_ids", set()):
-                flags.append("RETRY")
-            if sid in prefilter_result.get("_duration_ids", set()):
-                flags.append("SLOW")
-            if sid in prefilter_result.get("_tool_fail_ids", set()):
-                flags.append("TOOL_FAIL")
-            if not flags:
-                flags.append("FLAGGED")
-            entry["f"] = ",".join(flags)
-
-        pt = int(attrs.get("llm.token_count.prompt", 0) or 0)
-        ct = int(attrs.get("llm.token_count.completion", 0) or 0)
-        if pt:
-            entry["pt"] = pt
-        if ct:
-            entry["ct"] = ct
-
-        spans.append(entry)
-
-    trace_label = trace_data.get("_short_label", trace_data["trace_id"])
-    flow_outline = build_flow_outline(trace_data)
-
-    result = {
-        "tid": trace_label,
-        "task": kevinify(root_input, 300),
-        "result": kevinify(final_output, 300),
-        "flow": flow_outline,
-        "signals": prefilter_result["signal_summary"],
-        "spans": spans,
-    }
-
-    available_tools = prefilter_result.get("available_tools", [])
-    if available_tools:
-        result["tools_available"] = available_tools
-
-    task_hints = extract_task_hints(root_input)
-    if task_hints:
-        result["task_hints"] = task_hints
-
-    return result
+def _recovery_slice(text: str) -> str:
+    if len(text) <= _RECOVERY_HEAD_CHARS + _RECOVERY_TAIL_CHARS:
+        return text
+    return f"{text[:_RECOVERY_HEAD_CHARS]}\n{text[-_RECOVERY_TAIL_CHARS:]}"
 
 
 def extract_programmatic_metadata(trace_data, prefilter_result):
@@ -701,19 +554,6 @@ def extract_programmatic_metadata(trace_data, prefilter_result):
     ]
     turn_count = len(llm_spans)
 
-    raw_user_request = ""
-    raw_agent_response = ""
-    if flat_spans:
-        root_attrs = flat_spans[0][0].get("span_attributes", {})
-        raw_user_request = str(root_attrs.get("input.value", ""))[:500]
-        for span, depth in reversed(flat_spans):
-            out = span.get("span_attributes", {}).get("output.value", "")
-            if out:
-                raw_agent_response = str(out)[:500]
-                break
-        if not raw_agent_response:
-            raw_agent_response = str(root_attrs.get("output.value", ""))[:500]
-
     all_inputs = []
     all_outputs = []
     for span, depth in flat_spans:
@@ -721,16 +561,14 @@ def extract_programmatic_metadata(trace_data, prefilter_result):
         inp = str(attrs.get("input.value", ""))
         out = str(attrs.get("output.value", ""))
         if inp:
-            all_inputs.append(inp[:1000])
+            all_inputs.append(_recovery_slice(inp))
         if out:
-            all_outputs.append(out[:1000])
+            all_outputs.append(_recovery_slice(out))
 
     return {
         "tools_called": tools_called,
         "tools_available": prefilter_result.get("available_tools", []),
         "turn_count": turn_count,
-        "raw_user_request": raw_user_request,
-        "raw_agent_response": raw_agent_response,
         "raw_spans_text": {
             "all_inputs": "\n".join(all_inputs),
             "all_outputs": "\n".join(all_outputs),
@@ -820,3 +658,245 @@ def attribute_key_moments(quotes, trace_data):
         else:
             out.append({"role": "", "span": "", "status": "", "is_failure": False})
     return out
+
+
+# ---------------------------------------------------------------------------
+# TRACE PAYLOAD — every span, raw
+# ---------------------------------------------------------------------------
+# No selection. The payload used to pre-pick a `task` and a `result` span,
+# recover delivered answers, and demote session-log roots — every one of those
+# was a heuristic guessing which text was "the answer", and 8 of 18 confirmed
+# false positives on the audited corpus were the model correctly judging text
+# a heuristic had mislabelled as the agent's response. The model now receives
+# the whole tree and identifies the request and the final response itself.
+
+
+# Shared so the scanner can recognise our own truncation and never report it as
+# an agent that stopped early. It should now fire only on a pathological trace.
+SCANNER_TRUNCATION_MARK = "⟨trace truncated by the scanner"
+
+# Per-field runaway guard, not a budget: applied to each span input/output
+# individually, so no field is ever cut because of how many siblings it has.
+# The largest trace field observed sits far below this while the ceiling stays
+# well inside the model's context.
+FIELD_RUNAWAY_BUDGET = 2_000_000
+
+_ENVELOPE_HINTS = ("choices", "candidates", "generations", "usage", "object", "created")
+
+
+def _v3_plain(text, max_len):
+    """Truncation that preserves line structure. Grammar and negations preserved.
+
+    Collapsing every run of whitespace also collapses newlines, and line breaks
+    are the only evidence of output structure the model ever receives. That made
+    two things impossible: the taxonomy asks it to judge formatting, and V8 asks
+    it to quote verbatim — neither survives text whose line breaks were deleted
+    on the way in.
+
+    Measured on a 2,107-trace corpus: claims that fields had been "merged onto
+    one line", against outputs that were correctly formatted, were the single
+    largest class of false positive. The model was right about what it was
+    shown; it was shown the wrong thing.
+
+    Horizontal runs still collapse. The goal is faithful structure, not faithful
+    indentation.
+    """
+    if not text:
+        return ""
+    text = re.sub(r"[^\S\n]+", " ", str(text))  # spaces/tabs, never newlines
+    text = re.sub(r" *\n *", "\n", text)  # no trailing space around breaks
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    if len(text) <= max_len:
+        return text
+    # The whole budget is usable: the reserved character existed for a one-char
+    # ellipsis that no longer exists.
+    cut = text[:max_len]
+    # Cut on a line boundary when one is near the limit, so the tail of a
+    # truncated block doesn't itself read as a run-together line.
+    nl = cut.rfind("\n")
+    if nl > max_len * 0.6:
+        cut = cut[:nl]
+    # Say who did the truncating. An ellipsis is ambiguous: at the end of an
+    # agent response it reads as the agent stopping mid-sentence, which is a
+    # reportable failure, and the model has no way to tell that apart from our
+    # own budget running out. Name it explicitly so a cut of ours can never be
+    # mistaken for an incomplete answer of theirs.
+    return f"{cut}{SCANNER_TRUNCATION_MARK}, {len(text) - len(cut)} chars omitted⟩"
+
+
+def _v3_loads(v):
+    if isinstance(v, (dict, list)):
+        return v
+    if not isinstance(v, str):
+        return None
+    s = v.strip()
+    if not s or s[0] not in "[{":
+        return None
+    try:
+        return json.loads(s)
+    except Exception:
+        return None
+
+
+def _is_nontextual(d):
+    """True when a response legitimately carries no text: embeddings, rerank
+    scores, or a bare numeric payload. These must not be reported as empty."""
+    if not isinstance(d, dict):
+        return False
+    for k in ("data", "embedding", "embeddings", "predictions", "results", "scores"):
+        v = d.get(k)
+        if isinstance(v, list) and v:
+            head = v[0]
+            if isinstance(head, (int, float)):
+                return True
+            if isinstance(head, dict) and any(
+                isinstance(head.get(kk), list) and head.get(kk)
+                and isinstance(head[kk][0], (int, float))
+                for kk in ("embedding", "values", "vector", "scores")
+            ):
+                return True
+    if str(d.get("object", "")).lower() in ("list", "embedding"):
+        return True
+    return False
+
+
+def unwrap_output(raw):
+    """Pull the assistant's actual text out of a provider response envelope.
+
+    Handles OpenAI (choices[].message.content), Gemini
+    (candidates[].content.parts[].text), LangChain (generations[][].text),
+    Anthropic (content[].text). Returns the raw string unchanged when it is
+    already plain text or an unrecognised shape — never worse than the input.
+    """
+    d = _v3_loads(raw)
+    if d is None:
+        return raw or ""
+
+    def _txt(x):
+        if isinstance(x, str):
+            return x
+        if isinstance(x, list):
+            return " ".join(_txt(i) for i in x if _txt(i))
+        if isinstance(x, dict):
+            for k in ("text", "content", "output_text"):
+                if isinstance(x.get(k), str) and x[k].strip():
+                    return x[k]
+            # Structured-output agents answer ENTIRELY via function_call.arguments,
+            # with content=null. Without this the whole response reads as empty and
+            # the completion dimension fires. 11 corpus roots are function-call-only.
+            fc = x.get("function_call") or x.get("functionCall")
+            if isinstance(fc, dict) and str(fc.get("arguments") or "").strip():
+                return f"[function_call {fc.get('name','')}] {fc['arguments']}"
+            tcs = x.get("tool_calls")
+            if isinstance(tcs, list) and tcs:
+                got = []
+                for tc in tcs[:4]:
+                    # `(tc or {})` guarded None and empty but not a str, and some
+                    # producers emit tool_calls as a list of strings. Every other
+                    # branch in this function type-checks before descending; this one
+                    # did not, and it raised rather than degrading. The scanner fails
+                    # open, so the trace came back has_issues=False and was
+                    # indistinguishable from a clean one.
+                    if not isinstance(tc, dict):
+                        continue
+                    fn = tc.get("function")
+                    if not isinstance(fn, dict):
+                        continue
+                    if str(fn.get("arguments") or "").strip():
+                        got.append(f"[tool_call {fn.get('name','')}] {fn['arguments']}")
+                if got:
+                    return "\n".join(got)
+            if isinstance(x.get("content"), (list, dict)):
+                return _txt(x["content"])
+            if isinstance(x.get("parts"), list):
+                return _txt(x["parts"])
+            if isinstance(x.get("message"), dict):
+                return _txt(x["message"])
+        return ""
+
+    if isinstance(d, dict):
+        for key in ("choices", "candidates", "generations", "content", "messages"):
+            v = d.get(key)
+            if isinstance(v, list) and v:
+                t = _txt(v)
+                if t.strip():
+                    return t
+        t = _txt(d)
+        if t.strip():
+            return t
+        # Non-textual responses are NOT empty. An embeddings call returns a vector
+        # and a rerank returns scores; both legitimately have no text. Measured:
+        # 4 of 10 sampled v8 false positives were `completion` firing on
+        # "[empty model output]" for embedding responses and voice session roots.
+        if _is_nontextual(d):
+            return "[non-textual response: embedding/scores returned as expected]"
+        # recognised envelope but no text found (e.g. empty generation) — say so
+        if any(h in d for h in _ENVELOPE_HINTS):
+            err = d.get("error") or (d.get("response_metadata") or {}).get("error")
+            return f"[empty model output]{' error=' + _v3_plain(json.dumps(err), 300) if err else ''}"
+    elif isinstance(d, list):
+        t = _txt(d)
+        if t.strip():
+            return t
+    return raw or ""
+
+
+def build_trace_payload(trace_data, prefilter_result, retry_ids=()):
+    """The scanner model's input: every span, raw, in execution order.
+
+    Nothing here decides what the model gets to see. Structure (id, name,
+    depth, kind, status, prefilter flags) is annotated; content is passed
+    through verbatim apart from whitespace normalisation and the per-field
+    runaway guard. The model identifies the user request and the final
+    response itself — the pre-selection this replaces mislabelled working
+    agents' answers and produced the largest audited false-positive class.
+    """
+    all_flat = []
+    for top in trace_data.get("spans", []):
+        all_flat.extend(flatten_spans(top))
+
+    # `retry_ids` is an explicit parameter, but the only production caller
+    # (scanner.py) passes just (trace, prefilter), so it defaulted to () and the
+    # correctly-computed set that `structural_prefilter_with_ids` stores under
+    # `_retry_ids` never reached the flagged tier. Falling back to the dict
+    # fixes every caller rather than one call site.
+    flagged = set(prefilter_result.get("anomalous_span_ids") or []) | set(
+        retry_ids or prefilter_result.get("_retry_ids") or ()
+    )
+
+    spans = []
+    for span, depth in all_flat:
+        a = span.get("span_attributes") or {}
+        sid = span.get("span_id")
+        is_flagged = sid in flagged
+        inp = _v3_plain(a.get("input.value", ""), FIELD_RUNAWAY_BUDGET)
+        out = _v3_plain(a.get("output.value", ""), FIELD_RUNAWAY_BUDGET)
+        # A span with no content, no status and no flag adds nothing the flow
+        # outline doesn't already carry.
+        if not (inp or out or span.get("status_code") not in (None, "Unset") or is_flagged):
+            continue
+        entry = {
+            "id": sid,
+            "name": span.get("span_name"),
+            "depth": depth,
+            "status": span.get("status_code", "Unset"),
+            "in": inp,
+            "out": out,
+        }
+        kind = _get_span_kind(a)
+        if kind:
+            entry["kind"] = kind
+        if is_flagged:
+            entry["flagged"] = True
+        spans.append(entry)
+
+    res = {
+        "tid": trace_data.get("_short_label", trace_data.get("trace_id")),
+        "flow": build_flow_outline(trace_data),
+        "signals": prefilter_result.get("signal_summary"),
+        "spans": spans,
+    }
+    tools = prefilter_result.get("available_tools") or []
+    if tools:
+        res["tools_available"] = tools
+    return res

@@ -13,6 +13,7 @@ severity when this EE code is absent (OSS) or the call fails.
 """
 
 import json
+import re
 from typing import Optional
 
 import structlog
@@ -186,6 +187,81 @@ def generate_eval_cluster_meta(
 
 _DISTILL_BATCH_SIZE = 20
 _DISTILL_MAX_TOKENS = 800
+
+_CLUSTER_TITLE_SYSTEM = (
+    "You name a group of AI-agent failures that share ONE underlying bug.\n"
+    "You are given the individual failure descriptions from that group.\n"
+    "Write ONE title, 6-14 words, that describes the shared failure so it fits "
+    "EVERY member.\n"
+    "Name NO ticker, client, person, amount, date or id — those differ between "
+    "members and a title naming one of them describes a single member rather "
+    "than the group. Say what the agent did wrong and what it should have done "
+    "instead.\n"
+    "If the descriptions do NOT share one underlying failure, reply exactly: "
+    "MIXED\n"
+    "Output ONLY the title text, no quotes, no preamble."
+)
+
+_CLUSTER_TITLE_MAX_TOKENS = 60
+# A title is only useful if it generalises; these are the giveaways that the
+# model ignored the instruction and described one member.
+_ENTITY_GIVEAWAY = re.compile(
+    r"\b(?:[A-Z]{2,5}\b(?![a-z])|\$[\d,]+|£[\d,]+|\d{4}-\d{2}-\d{2}|CLI-\w+)"
+)
+
+
+def _spread(items: list[str], k: int) -> list[str]:
+    """Evenly spaced sample, in order.
+
+    The title has to fit EVERY member, so it must be written from a sample of
+    the group rather than the front of one. On this project's largest cluster
+    the first 25 members happened to be the fabricated-number variants and the
+    title came back "Fabricated quantitative data instead of calling tools",
+    which over-claims against the members that merely answered in prose; an
+    evenly spread 25 gave "provided text answers instead of executing required
+    data retrieval tools", which fits all of them. Deterministic rather than
+    random so a cluster does not get a different title on every recompute.
+    """
+    if len(items) <= k:
+        return list(items)
+    step = len(items) / k
+    return [items[int(i * step)] for i in range(k)]
+
+
+def generate_scan_cluster_title(briefs: list[str]) -> Optional[str]:
+    """One entity-free title describing what a cluster's members share.
+
+    Returns None when the model declines (MIXED), when the result still names a
+    ticker/amount/id, or on any failure — the caller then keeps its deterministic
+    medoid title. A wrong title is worse than a merely unrepresentative one.
+    """
+    if not briefs or len(briefs) < 2:
+        return None
+    sample = _spread(briefs, 25)
+    lines = "\n".join(f"- {b.strip()[:200]}" for b in sample)
+    try:
+        raw = _invoke(
+            [
+                {"role": "system", "content": _CLUSTER_TITLE_SYSTEM},
+                {"role": "user", "content": lines},
+            ],
+            "cluster_title",
+            max_tokens=_CLUSTER_TITLE_MAX_TOKENS,
+        )
+    except Exception:
+        logger.warning("scan_cluster_title_failed", exc_info=True)
+        return None
+
+    title = (raw or "").strip().strip('"').strip()
+    if not title or title.upper().startswith("MIXED"):
+        return None
+    if len(title.split()) > 20 or len(title) > 160:
+        return None
+    if _ENTITY_GIVEAWAY.search(title):
+        logger.info("scan_cluster_title_rejected_entity", title=title[:80])
+        return None
+    return title
+
 
 _DISTILL_SYSTEM = (
     "You normalize AI-agent evaluation failures for clustering. For EACH "

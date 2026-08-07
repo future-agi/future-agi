@@ -49,10 +49,6 @@ from ee.agenthub.cluster_rca.tools import (
     TERMINAL_TOOL_NAME,
     tool_error,
 )
-from ee.agenthub.cluster_rca.trace_summarizer import (
-    DEFAULT_SUMMARIZER_MODEL,
-    TraceSummarizer,
-)
 from ee.agenthub.cluster_rca.types import (
     ClusterAnalysisResult,
     ClusterFinding,
@@ -99,6 +95,12 @@ DEFAULT_MAX_TOKENS = 8100
 # into reflexive tool-spray and never converges. On by default; the gateway only
 # surfaces it as reasoning_content when this rides through (opt-in there).
 DEFAULT_THINKING_BUDGET = 2048
+# Per-turn client-side deadline. The gateway's own request timeout is 300s, so
+# without this a single wedged upstream call stalls a run for five minutes —
+# and the forced-synthesis fallback that follows can wedge for five more. A
+# turn that has not answered in this long is not going to produce a better
+# answer than the loop's own error path.
+_TURN_TIMEOUT_S = 90.0
 
 
 def _noop_event(event_type: str, payload: dict) -> None:
@@ -126,6 +128,18 @@ _ERROR_MARKER_RE = re.compile(
 )
 _ERROR_WINDOW_CHARS = 240   # verbatim context kept around each marker
 _ERROR_BLOCK_BUDGET = 24_000  # cap on the total verbatim-error block
+
+# Inline span I/O budgets for read(trace).
+#
+# The ceiling that matters is per TRACE, not per field: a per-field cap
+# multiplies by span count, and a trace's span count is unbounded. Retained
+# context is bounded independently by _compact_old_tool_results, which keeps
+# only the most recent CLUSTER_RCA_COMPACT_KEEP_RECENT tool results — so the
+# worst case the main model ever holds is that many trace payloads.
+_SPAN_IO_FIELD_CAP = 1024       # per span, per field, on a default read
+_TRACE_IO_BUDGET = 48_000       # total inline span I/O for one trace
+_TRACE_IO_BUDGET_FULL = 160_000  # same, for the opted-in forensic depth
+_MAX_SPANS_RENDERED = 400       # span-count ceiling; the tail is elided and counted
 
 
 def _clamp(value: Any, lo: int, hi: int) -> int:
@@ -179,6 +193,46 @@ def _verbatim(value: Any, cap: int = _DEFAULT_VERBATIM_CAP, expand: bool = False
         "value": s[:cap] + "…",
         "truncated": True,
         "full_chars": full_chars,
+    }
+
+
+def _as_text(value: Any) -> str:
+    """Stringify a JSONField value without collapsing whitespace."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, default=str, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _budgeted_field(value: Any, cap: int) -> dict:
+    """Verbatim span field, capped, carrying any failure past the cut.
+
+    Head-truncation alone drops the one thing a trace read exists to surface: a
+    failure that happens at the END of a long output. When the cut would lose a
+    failure marker, a verbatim window around the first marker past it rides
+    along with the head.
+    """
+    s = _as_text(value)
+    full = len(s)
+    # A negative cap would slice from the END and return almost everything —
+    # the opposite of a budget.
+    cap = max(0, cap)
+    if full <= cap:
+        return {"value": s, "truncated": False, "full_chars": full}
+    head = s[:cap]
+    marker = _ERROR_MARKER_RE.search(s, cap)
+    if marker is None:
+        return {"value": head + "…", "truncated": True, "full_chars": full}
+    start = max(cap, marker.start() - _ERROR_WINDOW_CHARS)
+    window = s[start : marker.end() + _ERROR_WINDOW_CHARS]
+    return {
+        "value": f"{head}…[{full - cap} chars elided]… {window}",
+        "truncated": True,
+        "full_chars": full,
     }
 
 
@@ -395,10 +449,9 @@ class ClusterAnalysisAgent:
         self._alias_counters: dict[str, int] = {}
 
         # --- Sub-tool state -------------------------------------------------
-        # Per-run trace audit cache: same trace_uuid asked twice is free.
-        # TraceSummarizer is lazy-init on first read(trace) call.
+        # Per-run trace read cache: same trace_uuid asked twice is free, and
+        # after compaction drops an old tool result a re-read costs nothing.
         self._trace_summary_cache: dict[tuple, dict] = {}
-        self._trace_summarizer: TraceSummarizer | None = None
         # Per-run cluster→trace_uuids cache (every aggregate / list-rollup
         # call wants this; one DB round-trip per cluster is enough).
         self._cluster_trace_uuids_cache: dict[str, list[str]] = {}
@@ -803,6 +856,7 @@ class ClusterAnalysisAgent:
                     create_kwargs["extra_body"] = {
                         "thinking_budget": self.thinking_budget
                     }
+                create_kwargs["timeout"] = _TURN_TIMEOUT_S
                 _result = call_llm_raw(self._gateway_client, **create_kwargs)
                 self.total_cost_usd += _result.cost_usd
                 response = _result.response
@@ -2262,12 +2316,16 @@ class ClusterAnalysisAgent:
 
         depth='summary' (default):
           - verbatim root I/O (default-truncated 2KB, expandable)
-          - deterministic span skeleton (ids, types, names, statuses, latency)
+          - span tree carrying budgeted verbatim I/O, ERROR spans served first
           - notable_attributes from ClickHouse (per-trace attr.* roll-up)
-          - LLM audit (apparent_goal / outcome / key_steps / audit_observations)
           - deterministic eval_scores join
-        depth='spans' — same minus the LLM audit (no summarizer call).
-        depth='full' — same as 'summary' but root.input/output expanded by default.
+        depth='spans' — the same tree with no payloads (cheapest lens).
+        depth='full' — raised I/O budgets, root.input/output expanded by default.
+
+        Every depth is deterministic. No LLM call happens on this path: the
+        model that reads this payload is a stronger reader than anything we
+        would pre-digest it with, and a blocking round-trip per trace read was
+        the dominant avoidable cost of a run.
 
         expand: dot-path set ("root.input", "root.output", "root.error").
         """
@@ -2330,9 +2388,68 @@ class ClusterAnalysisAgent:
         # Compress any expanded field that would blow the context window.
         self._cap_oversized_fields(root_block, ["input", "output", "error"], "root")
 
-        # ---- Deterministic span skeleton (no I/O — drillable via read(span)).
-        spans_skeleton = [
-            {
+        # ---- Span tree, with budgeted verbatim I/O at every depth but 'spans'.
+        #
+        # The I/O is rendered here deterministically rather than handed to a
+        # cheaper model to pre-digest first. The investigating model reads a
+        # ~1M-token window with thinking enabled and is by far the stronger
+        # reader of the two, so paraphrasing the evidence before it arrives
+        # costs fidelity and a blocking round-trip and buys nothing.
+        #
+        # ERROR spans claim budget first: on a long trace the failing span is
+        # the one that must survive truncation, and execution order does not
+        # put it first.
+        # Span-count ceiling. Failing spans are kept unconditionally: cutting
+        # on execution order alone drops the span the read exists to find when
+        # the failure happens late, which is where failures usually happen.
+        if len(spans_list) > _MAX_SPANS_RENDERED:
+            keep = {
+                i for i, s in enumerate(spans_list) if s.get("status") == "ERROR"
+            }
+            keep = set(sorted(keep)[:_MAX_SPANS_RENDERED])
+            for i in range(len(spans_list)):
+                if len(keep) >= _MAX_SPANS_RENDERED:
+                    break
+                keep.add(i)
+            rendered = [spans_list[i] for i in sorted(keep)]
+        else:
+            rendered = spans_list
+
+        io_by_index: dict[int, dict] = {}
+        budget_spent = 0
+        if depth in ("summary", "full"):
+            field_cap = (
+                _DEFAULT_VERBATIM_CAP if depth == "full" else _SPAN_IO_FIELD_CAP
+            )
+            budget = (
+                _TRACE_IO_BUDGET_FULL if depth == "full" else _TRACE_IO_BUDGET
+            )
+            for i in sorted(
+                range(len(rendered)),
+                key=lambda n: rendered[n].get("status") != "ERROR",
+            ):
+                if budget <= 0:
+                    break
+                s = rendered[i]
+                fields: dict[str, Any] = {}
+                for key in ("input", "output"):
+                    if budget <= 0:
+                        break
+                    f = _budgeted_field(s.get(key), min(field_cap, budget))
+                    if f["full_chars"]:
+                        fields[key] = f
+                        budget -= len(f["value"])
+                if s.get("status") == "ERROR" and s.get("status_message"):
+                    f = _budgeted_field(s["status_message"], field_cap)
+                    fields["error"] = f
+                    budget -= len(f["value"])
+                if fields:
+                    io_by_index[i] = fields
+            budget_spent = len(io_by_index)
+
+        spans_skeleton = []
+        for i, s in enumerate(rendered):
+            entry: dict[str, Any] = {
                 "span": self._mint_alias("span", s["span_id"]),
                 "type": s.get("observation_type"),
                 "name": s.get("name"),
@@ -2344,8 +2461,8 @@ class ClusterAnalysisAgent:
                     else None
                 ),
             }
-            for s in spans_list
-        ]
+            entry.update(io_by_index.get(i, {}))
+            spans_skeleton.append(entry)
 
         # ---- Notable attributes (ClickHouse per-trace lookup). Graceful no-op.
         notable_attributes: dict[str, Any] = {}
@@ -2365,25 +2482,6 @@ class ClusterAnalysisAgent:
                 trace_uuid=trace_uuid,
                 error=str(exc),
             )
-
-        # ---- LLM audit (skip for depth='spans' — that's the no-LLM lens).
-        summary = None
-        if depth in ("summary", "full"):
-            summarizer = self._get_trace_summarizer()
-            try:
-                summary = summarizer.summarize(trace_uuid)
-            except Exception as exc:
-                logger.exception(
-                    "trace_summarizer_call_failed",
-                    cluster_id=self.cluster_id,
-                    trace_uuid=trace_uuid,
-                )
-                return tool_error(
-                    ERROR_CODE_UNAVAILABLE,
-                    f"trace summarizer failed: {exc}",
-                )
-            if summary is not None:
-                self.total_cost_usd += summary.cost_usd
 
         # ---- Deterministic eval_scores join.
         eval_scores: list[dict[str, Any]] = []
@@ -2425,59 +2523,49 @@ class ClusterAnalysisAgent:
             "notable_attributes": notable_attributes,
             "eval_scores": eval_scores,
         }
-        if summary is not None:
-            payload["apparent_goal"] = summary.apparent_goal
-            payload["outcome"] = summary.outcome
-            payload["key_steps"] = summary.key_steps
-            payload["audit_observations"] = summary.audit_observations
-            payload["_summarizer_cost_usd"] = summary.cost_usd
+        # Say what was withheld. Silent elision reads as "that is the whole
+        # trace", which is exactly how a reader concludes nothing went wrong.
+        elided = len(spans_list) - len(rendered)
+        if elided > 0:
+            payload["spans_elided"] = elided
+        if depth in ("summary", "full") and budget_spent < len(rendered):
+            payload["spans_without_io"] = len(rendered) - budget_spent
+            payload["io_budget_note"] = (
+                "Inline I/O stopped at the per-trace budget; ERROR spans were "
+                "served first. Use read(span, id=...) for a specific span."
+            )
 
         self._trace_summary_cache[cache_key] = payload
         return payload
 
     def _compress_verbatim(self, text: str, label: str) -> str:
-        """Compress an oversized expanded field via the lite summarizer model.
+        """Shrink an oversized expanded field, deterministically.
 
         A single deep read (depth='full' / expand) can return a field large
-        enough to blow the main model's ~1M-token window over a run. Past the
-        ceiling we hand the field to gemini-3.1-flash-lite to squeeze out — it
-        preserves the diagnostic signal (errors, status codes, distinguishing
-        I/O) and drops boilerplate. Lossy by design; hard-truncates if the lite
-        call fails so we never inject the raw blob.
+        enough to blow the main model's context over a run. This used to be
+        squeezed by a cheaper model, which cost a blocking round-trip on the
+        largest fields — the ones most likely to matter — and whose failure
+        mode was dropping the evidence it was called to preserve.
+
+        The verbatim failure windows were already the part doing the real work,
+        so they are now the whole answer: every marker's context, plus a head
+        of the field for orientation. Nothing leaves here that was not in the
+        source, and what is dropped is stated.
         """
         src = text[:_READ_COMPRESS_INPUT_CAP]
-        # Deterministic first: pull verbatim windows around failure markers so an
-        # error survives even if the LLM summary below misses it.
         error_block = self._extract_error_windows(src)
-
-        prompt = (
-            "Summarize this oversized telemetry field for an investigator's "
-            "limited context window. Reproduce verbatim any error / status code "
-            "/ failing payload you see; summarize repeated filler and boilerplate "
-            "rather than reproducing it. Use as much of your ~6000-token budget "
-            "as the real signal needs.\n\n"
-            f"FIELD: {label}\n\nCONTENT:\n{src}"
-        )
-        summary = ""
-        try:
-            _result = call_llm_raw(
-                self._gateway_client,
-                model=DEFAULT_SUMMARIZER_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0,
-                max_tokens=6000,
-            )
-            self.total_cost_usd += _result.cost_usd
-            resp = _result.response
-            summary = (resp.choices[0].message.content or "").strip()
-        except Exception:
-            logger.warning("read_field_compress_failed", label=label)
-            summary = src[:_READ_COMPRESS_CHARS] + "…[summarizer unavailable]"
 
         parts = []
         if error_block:
-            parts.append("ERROR/FAILURE SIGNAL (verbatim, auto-extracted):\n" + error_block)
-        parts.append("FIELD SUMMARY:\n" + summary)
+            parts.append(
+                "ERROR/FAILURE SIGNAL (verbatim, auto-extracted):\n" + error_block
+            )
+        head_budget = max(0, _READ_COMPRESS_CHARS - len(error_block))
+        parts.append(
+            f"FIELD HEAD ({label}, {len(text)} chars total, "
+            f"{max(0, len(text) - head_budget)} elided):\n"
+            + src[:head_budget]
+        )
         return "\n\n".join(parts)
 
     def _extract_error_windows(self, src: str) -> str:
@@ -2530,18 +2618,6 @@ class ClusterAnalysisAgent:
             if isinstance(v, str) and len(v) > _READ_COMPRESS_CHARS:
                 block[f] = self._compress_verbatim(v, f"{prefix}.{f}")
                 block[f"{f}_compressed"] = True
-
-    def _get_trace_summarizer(self) -> "TraceSummarizer":
-        """Lazy-init the summarizer on first trace read."""
-        if self._trace_summarizer is None:
-            # Imported lazily so module-import time stays cheap and avoids
-            # circular import risk during scaffold.
-
-            self._trace_summarizer = TraceSummarizer(
-                alias_mint=self._mint_alias,
-                spans_provider=self._spans_for_trace,
-            )
-        return self._trace_summarizer
 
     def _read_span(self, id: str, expand: set[str] | None = None) -> dict:
         """Read one span (ClickHouse) with full attributes. I/O default-

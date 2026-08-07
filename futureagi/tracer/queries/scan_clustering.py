@@ -30,6 +30,7 @@ from tracer.services.clickhouse.clustering_tables import (
 )
 from tracer.services.clickhouse.v2 import get_reader
 from tracer.types.scan_types import ClusterableIssue, TraceInputData
+from tracer.utils.semantic_conventions import get_attribute
 
 logger = structlog.get_logger(__name__)
 
@@ -351,8 +352,9 @@ def get_trace_input_data(trace_ids: List[str], project_id: str) -> List[TraceInp
     are in an unknown state (not necessarily clean) and must not be embedded
     as "success traces" for KNN comparison.
 
-    Root span = span with no parent_span_id. Falls back to Trace.input if the
-    root span has no input.value attribute.
+    Root span = span with no parent_span_id. Input text comes from the root
+    span's normalised ``input`` column, with the aliased input attribute as a
+    fallback.
     """
     # has_issues from TraceScanResult. Only scanned traces pass the filter below.
     scan_results = TraceScanResult.objects.filter(
@@ -383,12 +385,22 @@ def get_trace_input_data(trace_ids: List[str], project_id: str) -> List[TraceInp
         trace_id_str = str(span.trace_id)
         if trace_id_str in input_texts:
             continue  # already captured first root for this trace
-        input_text = (span.attrs_string or {}).get("input.value", "")
+        # Read the normalised ``input`` COLUMN, not one convention's raw
+        # attribute. The collector resolves input across every convention it
+        # accepts and writes the result to that column; reading
+        # ``attrs_string["input.value"]`` only ever matched producers emitting
+        # the OpenInference key, which in practice was none of them — so this
+        # returned an empty list for every project, no root-input embedding was
+        # ever stored, and success-trace matching silently produced nothing.
+        # The aliased attribute stays as a fallback for rows whose column
+        # predates the extraction.
+        input_text = span.input or get_attribute(
+            span.attrs_string or {}, "input_value", ""
+        )
         if input_text:
             input_texts[trace_id_str] = str(input_text)
 
-    # The CH root span's ``input.value`` is the only source post-cutover; a trace
-    # with no root input simply contributes no text (handled below).
+    # A trace with no root input simply contributes no text (handled below).
 
     # Build typed results — only scanned traces with known has_issues state
     result = []

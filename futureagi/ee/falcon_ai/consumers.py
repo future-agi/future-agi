@@ -103,7 +103,8 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
                     {
                         "type": "error",
                         "data": {
-                            "error": "Rate limit exceeded. Please wait before sending more messages."
+                            "error": "Rate limit exceeded. Please wait before sending more messages.",
+                            "conversation_id": content.get("conversation_id"),
                         },
                     }
                 )
@@ -165,11 +166,24 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
                     rest = parts[1].strip() if len(parts) > 1 else ""
                     message_content = rest or f"Help me with: {slash_skill.name}"
                 else:
-                    logger.debug("unknown_slash_command", slug=slug)
+                    # An unresolved slug silently downgrades the turn to a plain
+                    # chat, so a skill that failed to seed looks like a feature
+                    # that quietly does nothing. Debug hides that in prod.
+                    logger.warning("unknown_slash_command", slug=slug)
 
+        # Every error below carries conversation_id: clients route inbound frames
+        # by it, so an untagged error matches no handler and is dropped. The run
+        # then sits in its loading state forever instead of reporting what went
+        # wrong — the failure is delivered to nobody.
         if not message_content and not file_ids:
             await self.send_json(
-                {"type": "error", "data": {"error": "Message is required"}}
+                {
+                    "type": "error",
+                    "data": {
+                        "error": "Message is required",
+                        "conversation_id": conversation_id,
+                    },
+                }
             )
             return
 
@@ -214,7 +228,13 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
         )
         if user_message is None:
             await self.send_json(
-                {"type": "error", "data": {"error": "Conversation not found"}}
+                {
+                    "type": "error",
+                    "data": {
+                        "error": "Conversation not found",
+                        "conversation_id": conversation_id,
+                    },
+                }
             )
             return
 
@@ -372,7 +392,13 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
             )
             if conversation is None:
                 await self.send_json(
-                    {"type": "error", "data": {"error": "Conversation not found"}}
+                    {
+                        "type": "error",
+                        "data": {
+                            "error": "Conversation not found",
+                            "conversation_id": conversation_id,
+                        },
+                    }
                 )
                 await database_sync_to_async(stream_buffer.set_status)("error")
                 return
@@ -385,10 +411,16 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
                 self.organization_id, BillingEventType.FALCON_AI_CHAT
             )
             if not usage_check.allowed:
+                # Deterministic for any org at its limit: untagged, this denial
+                # was dropped and the user watched a loader forever instead of
+                # being told they were out of credit.
                 await self.send_json(
                     {
                         "type": "error",
-                        "data": {"error": usage_check.reason or "Usage limit exceeded"},
+                        "data": {
+                            "error": usage_check.reason or "Usage limit exceeded",
+                            "conversation_id": conversation_id,
+                        },
                     }
                 )
                 await database_sync_to_async(stream_buffer.set_status)("error")
@@ -488,7 +520,13 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
             await database_sync_to_async(stream_buffer.set_status)("error")
             try:
                 await self.send_json(
-                    {"type": "error", "data": {"error": f"Agent error: {str(e)}"}}
+                    {
+                        "type": "error",
+                        "data": {
+                            "error": f"Agent error: {str(e)}",
+                            "conversation_id": conversation_id,
+                        },
+                    }
                 )
             except Exception:
                 pass

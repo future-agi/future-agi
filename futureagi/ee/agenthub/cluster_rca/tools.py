@@ -138,9 +138,10 @@ CLUSTER_RCA_TOOLS = [
             "description": (
                 "Read one entity at a chosen depth. "
                 "Depth ladder (trace only): "
-                "'summary' — kevinified I/O + key moments + eval score (~1-3K tokens, default); "
-                "'spans' — span tree skeleton, no payloads (~3-8K); "
-                "'full' — raw I/O of all spans (forensic, expensive). "
+                "'summary' — root I/O + span tree carrying verbatim span I/O, "
+                "failing spans served first (default); "
+                "'spans' — the same tree with no payloads (cheapest); "
+                "'full' — raised I/O budgets (forensic, large). "
                 "read(entity='cluster', id=X) returns scope + scanner-summary baseline by default."
             ),
             "parameters": {

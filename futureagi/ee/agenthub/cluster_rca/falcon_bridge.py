@@ -157,14 +157,55 @@ async def run_cluster_rca(
     ctx = context_info or {}
     label = ctx.get("entity_id") or ctx.get("cluster_id")
     project_id = ctx.get("project_id")
+    is_cluster_request = ctx.get("entity_type") == "error_cluster"
+
+    async def _fail(reason: str) -> dict:
+        """End the turn instead of handing it to the general Falcon loop.
+
+        Falling through looks harmless but is not: the general loop answers
+        "Help me with: Cluster RCA" into a hidden conversation nobody reads, so
+        the user is billed for a chat they never see, and it streams frames the
+        Fix tab's handler ignores. The run then ends with an empty thread, which
+        renders as the pre-run empty state — the cluster looks like it was never
+        analysed, and the failure is reported to nobody.
+        """
+        message_id = str(_uuid.uuid4())
+        await send_callback(
+            RcaErrorEvent(message_id=message_id, error=reason).to_frame()
+        )
+        return {
+            "id": message_id,
+            "content": "",
+            "tool_calls": [],
+            "completion_card": None,
+            "model_used": "cluster-rca",
+            "mode": "cluster_rca",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cost_usd": 0.0,
+            "title": None,
+        }
+
     if not label:
+        if is_cluster_request:
+            logger.warning("cluster_rca_bridge_no_entity_id", context=ctx)
+            return await _fail("No cluster was supplied to analyse.")
         return None
 
     resolved = await sync_to_async(_resolve_cluster, thread_sensitive=False)(
         tool_context.organization, tool_context.workspace, str(label), project_id
     )
     if resolved is None:
-        logger.info("cluster_rca_bridge_unresolved", label=label, project_id=project_id)
+        # Resolution is workspace-scoped, so a cluster whose project sits
+        # outside this socket's workspace fails here every time — reproducibly,
+        # for that cluster only, which reads as "this one can't be analysed".
+        logger.warning(
+            "cluster_rca_bridge_unresolved", label=label, project_id=project_id
+        )
+        if is_cluster_request:
+            return await _fail(
+                "That cluster isn't available in this workspace, so it can't be analysed."
+            )
         return None
 
     cluster_uuid, project_uuid, error_count = resolved
