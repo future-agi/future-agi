@@ -33,6 +33,7 @@ from model_hub.utils.annotation_queue_helpers import (
     resolve_source_object,
     resolve_source_preview,
 )
+from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.serializers.filters import StrictInputSerializer, filter_list_field
 
 
@@ -103,6 +104,11 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
     viewer_roles = serializers.SerializerMethodField()
     viewer_role = serializers.SerializerMethodField()
     deleted = serializers.BooleanField(read_only=True)
+    custom_eval_config = serializers.PrimaryKeyRelatedField(
+        queryset=CustomEvalConfig.objects.all(),
+        required=False,
+        allow_null=True,
+    )
 
     class Meta:
         model = AnnotationQueue
@@ -121,6 +127,7 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
             "project",
             "dataset",
             "agent_definition",
+            "custom_eval_config",
             "is_default",
             "labels",
             "annotators",
@@ -195,6 +202,21 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
             normalized[str(user_id)] = role_list
         return normalized
 
+    def validate_custom_eval_config(self, value):
+        if value is None:
+            return value
+        organization, _workspace = self._request_org_workspace()
+        if organization and value.project.organization_id != organization.id:
+            raise serializers.ValidationError(
+                "Evaluator does not belong to your organization."
+            )
+        queue_project_id = self._queue_project_id()
+        if queue_project_id and str(value.project_id) != queue_project_id:
+            raise serializers.ValidationError(
+                "Evaluator must belong to the same project as the queue."
+            )
+        return value
+
     def _request_org_workspace(self):
         request = self.context.get("request")
         if not request:
@@ -205,6 +227,20 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
             None,
         )
         return organization, getattr(request, "workspace", None)
+
+    def _queue_project_id(self):
+        if self.instance and getattr(self.instance, "project_id", None):
+            return str(self.instance.project_id)
+
+        request = self.context.get("request")
+        if not request:
+            return None
+
+        request_data = getattr(request, "data", None) or {}
+        project_id = request_data.get("project_id")
+        if project_id:
+            return str(project_id)
+        return None
 
     def _workspace_visibility_q(self, organization, workspace):
         if not workspace:
@@ -1096,10 +1132,27 @@ class QueueAgreementAnnotatorPairSerializer(serializers.Serializer):
     total_comparisons = serializers.IntegerField()
 
 
+class QueueAgreementJudgeVsHumanLabelSerializer(serializers.Serializer):
+    label_name = serializers.CharField()
+    label_type = serializers.CharField()
+    judge_human_agreement = serializers.FloatField(allow_null=True)
+    total_comparisons = serializers.IntegerField()
+
+
+class QueueAgreementJudgeVsHumanSerializer(serializers.Serializer):
+    evaluator_name = serializers.CharField()
+    overall_agreement = serializers.FloatField(allow_null=True)
+    total_comparisons = serializers.IntegerField()
+    labels = serializers.DictField(child=QueueAgreementJudgeVsHumanLabelSerializer())
+
+
 class QueueAgreementResultSerializer(serializers.Serializer):
     overall_agreement = serializers.FloatField(allow_null=True)
     labels = serializers.DictField(child=QueueAgreementLabelSerializer())
     annotator_pairs = QueueAgreementAnnotatorPairSerializer(many=True)
+    judge_vs_human = QueueAgreementJudgeVsHumanSerializer(
+        allow_null=True, required=False
+    )
 
 
 class QueueAgreementResponseSerializer(serializers.Serializer):

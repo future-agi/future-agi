@@ -2979,7 +2979,8 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             queryset = super().get_queryset()
 
         queryset = queryset.select_related(
-            "created_by", "organization", "workspace"
+            "created_by", "organization", "workspace",
+            "custom_eval_config__eval_template",
         ).prefetch_related(
             Prefetch(
                 "queue_labels",

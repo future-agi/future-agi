@@ -36,6 +36,7 @@ from model_hub.models.choices import (
     QueueItemStatus,
 )
 from model_hub.models.develop_annotations import AnnotationsLabels
+from model_hub.models.evals_metric import EvalTemplate
 from model_hub.views.annotation_queues import _related_count_subquery
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
@@ -44,6 +45,7 @@ from tfc.middleware.workspace_context import (
     clear_workspace_context,
     set_workspace_context,
 )
+from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project
 
 QUEUE_URL = "/model-hub/annotation-queues/"
@@ -516,6 +518,57 @@ class TestCreateQueue:
         assert not AnnotationQueue.objects.filter(
             name="Cross Workspace Label Queue",
             workspace=workspace,
+        ).exists()
+
+    def test_create_rejects_cross_project_evaluator(
+        self, auth_client, organization, workspace, user
+    ):
+        project = Project.objects.create(
+            name="Queue Project",
+            organization=organization,
+            workspace=workspace,
+            model_type="GenerativeLLM",
+            trace_type="observe",
+        )
+        other_project = Project.objects.create(
+            name="Evaluator Project",
+            organization=organization,
+            workspace=workspace,
+            model_type="GenerativeLLM",
+            trace_type="observe",
+        )
+        label_id = create_label_for_queue(auth_client, name="Project Queue Label")
+        eval_template = EvalTemplate.objects.create(
+            name=f"Queue Eval Template {uuid.uuid4().hex[:8]}",
+            organization=organization,
+            workspace=workspace,
+            output_type_normalized="pass_fail",
+        )
+        custom_eval_config = CustomEvalConfig.objects.create(
+            name="Evaluator Project Config",
+            project=other_project,
+            eval_template=eval_template,
+            config={},
+            mapping={},
+            filters={},
+        )
+
+        resp = auth_client.post(
+            QUEUE_URL,
+            {
+                "name": "Project Scoped Queue",
+                "project_id": str(project.id),
+                "label_ids": [str(label_id)],
+                "custom_eval_config": str(custom_eval_config.id),
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "project" in str(resp.data).lower()
+        assert not AnnotationQueue.objects.filter(
+            name="Project Scoped Queue",
+            organization=organization,
         ).exists()
 
     def test_create_rejects_annotator_without_workspace_membership(
