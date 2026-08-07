@@ -230,3 +230,5 @@ frontend/scripts/.artifacts/
 install-*.log
 uninstall-*.log
 *.core
+# Local compose override (developer testing, not shipped)
+docker-compose.override.yml

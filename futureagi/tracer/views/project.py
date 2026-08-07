@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta
 
+import redis
 import structlog
+from django.conf import settings
 from django.db import models, transaction
 from django.db.models import Count
 from django.utils import timezone
@@ -63,6 +65,34 @@ from tracer.utils.helper import get_default_project_version_config, get_sort_que
 
 logger = structlog.get_logger(__name__)
 
+FI_PROJECT_INVALIDATE_CHANNEL = "fi:project:invalidate"
+
+
+def _publish_project_invalidation(project_ids: list[str]) -> None:
+    """Publish deleted project ids so fi-collector drops them from its auth
+    cache. Best-effort with short timeouts; never blocks or fails the delete
+    (the on_commit callback runs inline in autocommit mode)."""
+    if not project_ids:
+        return
+    r = None
+    try:
+        r = redis.Redis.from_url(
+            getattr(settings, "REDIS_URL", "redis://localhost:6379/0"),
+            decode_responses=True,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
+        for pid in project_ids:
+            r.publish(FI_PROJECT_INVALIDATE_CHANNEL, str(pid))
+    except Exception:
+        logger.warning("fi_project_invalidate_publish_failed", exc_info=True)
+    finally:
+        if r is not None:
+            try:
+                r.close()
+            except Exception:
+                pass
+
 
 class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     permission_classes = [IsAuthenticated]
@@ -101,6 +131,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         return self._project_scope_queryset().filter(id=project_id).first()
 
     def _soft_delete_projects(self, projects, project_type):
+        project_ids = [str(pid) for pid in projects.values_list("id", flat=True)]
         with transaction.atomic():
             now = timezone.now()
             if project_type == "experiment":
@@ -127,6 +158,8 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             )
             eval_configs.update(deleted=True, deleted_at=now)
             projects.update(deleted=True, deleted_at=now)
+
+        transaction.on_commit(lambda: _publish_project_invalidation(project_ids))
 
     def get_queryset(self):
         # Get base queryset with automatic filtering from mixin

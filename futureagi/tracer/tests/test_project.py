@@ -394,6 +394,22 @@ class TestProjectDeleteAPI:
         project.refresh_from_db()
         assert project.deleted is True
 
+    def test_delete_project_publishes_cache_invalidation(
+        self, auth_client, project, django_capture_on_commit_callbacks, mocker
+    ):
+        """Deleting a project publishes a collector cache-invalidation for its id."""
+        publish = mocker.patch(
+            "tracer.views.project._publish_project_invalidation"
+        )
+        with django_capture_on_commit_callbacks(execute=True):
+            response = auth_client.delete(
+                "/tracer/project/",
+                {"project_ids": [str(project.id)], "project_type": "experiment"},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_200_OK
+        publish.assert_called_once_with([str(project.id)])
+
     def test_delete_project_cascades(
         self, auth_client, project, trace, observation_span
     ):
