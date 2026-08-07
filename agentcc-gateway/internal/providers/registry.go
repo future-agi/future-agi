@@ -71,7 +71,7 @@ func NewRegistry(cfg *config.Config) (*Registry, error) {
 
 		// Non-blocking connectivity check for local providers.
 		if IsLocalProvider(pcfg) {
-			go connectivityCheck(name, pcfg.BaseURL)
+			go connectivityCheck(name, pcfg)
 		}
 	}
 
@@ -354,11 +354,20 @@ func autoDiscoverModels(name string, cfg *config.ProviderConfig) []string {
 	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
-	baseURL := strings.TrimRight(cfg.BaseURL, "/")
-	resp, err := client.Get(baseURL + "/v1/models")
+	modelsURL := openai.CompatibleEndpoint(cfg.BaseURL, "/v1/models")
+	req, err := http.NewRequest(http.MethodGet, modelsURL, nil)
+	if err != nil {
+		slog.Warn("auto-discover: invalid provider URL",
+			"provider", name, "url", modelsURL, "error", err)
+		return nil
+	}
+	if cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		slog.Warn("auto-discover: failed to reach provider",
-			"provider", name, "url", baseURL+"/v1/models", "error", err)
+			"provider", name, "url", modelsURL, "error", err)
 		return nil
 	}
 	defer resp.Body.Close()
@@ -396,13 +405,22 @@ func autoDiscoverModels(name string, cfg *config.ProviderConfig) []string {
 
 // connectivityCheck performs a non-blocking health check against a provider.
 // Runs in a goroutine; logs result but never blocks startup.
-func connectivityCheck(name, baseURL string) {
+func connectivityCheck(name string, cfg config.ProviderConfig) {
 	client := &http.Client{Timeout: 3 * time.Second}
-	url := strings.TrimRight(baseURL, "/") + "/v1/models"
-	resp, err := client.Get(url)
+	modelsURL := openai.CompatibleEndpoint(cfg.BaseURL, "/v1/models")
+	req, err := http.NewRequest(http.MethodGet, modelsURL, nil)
+	if err != nil {
+		slog.Warn("connectivity check: invalid provider URL",
+			"provider", name, "url", modelsURL, "error", err)
+		return
+	}
+	if cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		slog.Warn("connectivity check: provider unreachable (may start later)",
-			"provider", name, "url", url, "error", err)
+			"provider", name, "url", modelsURL, "error", err)
 		return
 	}
 	resp.Body.Close()
