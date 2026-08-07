@@ -23,6 +23,7 @@ export default function UserTableRow({
   selected,
   onEditRow,
   onDeleteRow,
+  onClickRow,
 }) {
   const { name, avatar_url, company, role, status, email, phone_number } = row;
 
@@ -34,7 +35,7 @@ export default function UserTableRow({
 
   return (
     <>
-      <TableRow hover selected={selected}>
+      <TableRow hover selected={selected} onClick={onClickRow} sx={{ cursor: "pointer" }}>
         {/* <TableCell padding="checkbox">
           <Checkbox checked={selected} onClick={onSelectRow} />
         </TableCell> */}
@@ -144,6 +145,7 @@ export default function UserTableRow({
 UserTableRow.propTypes = {
   onDeleteRow: PropTypes.func,
   onEditRow: PropTypes.func,
+  onClickRow: PropTypes.func,
   row: PropTypes.object,
   selected: PropTypes.bool,
 };
