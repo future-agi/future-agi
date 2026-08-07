@@ -3,3 +3,13 @@
 [ -f "$(git rev-parse --git-path MERGE_HEAD 2>/dev/null)" ] && exit 0
 
 npx --no-install lint-staged
+
+# Run Python pre-commit hooks on staged Python files (if pre-commit is installed).
+# The config lives at the repo root so it covers both futureagi/ and any new
+# Python code in the top-level repo.
+if command -v pre-commit &> /dev/null; then
+  # Only run if there are staged Python files
+  if git diff --cached --name-only --diff-filter=ACM | grep -q '\.py$'; then
+    pre-commit run --color=always 2>/dev/null || true
+  fi
+fi
