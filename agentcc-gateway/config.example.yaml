@@ -250,22 +250,26 @@ providers:
 
 # Virtual API key authentication.
 # When enabled, all requests must include Authorization: Bearer sk-agentcc-xxx
-# Setting AGENTCC_INTERNAL_API_KEY in the environment turns this on automatically
-# and registers that key. Running with no key and no auth block leaves the
+# and the backend UI's "Gateway" page can create/manage keys via /-/keys
+# (which is only registered when enabled: true).
+# Setting AGENTCC_INTERNAL_API_KEY in the environment also auto-enables this
+# and registers that key; running with no key and no auth block leaves the
 # gateway open — only do that on a trusted, non-public network.
-# auth:
-#   enabled: true
-#   keys:
-#     - name: "dev-key"
-#       key: "sk-agentcc-dev-key-for-testing"
-#       owner: "dev-team"
-#       models:
-#         - gpt-4o
-#         - gpt-4o-mini
-#     - name: "prod-key"
-#       key: "sk-agentcc-prod-key-unrestricted"
-#       owner: "production"
-#       # no models = unrestricted access to all models
+# Static keys below are optional — the backend creates keys dynamically via
+# the admin-token-protected /-/keys endpoints, so none are listed by default.
+auth:
+  enabled: true
+  # keys:
+  #   - name: "dev-key"
+  #     key: "sk-agentcc-dev-key-for-testing"
+  #     owner: "dev-team"
+  #     models:
+  #       - gpt-4o
+  #       - gpt-4o-mini
+  #   - name: "prod-key"
+  #     key: "sk-agentcc-prod-key-unrestricted"
+  #     owner: "production"
+  #     # no models = unrestricted access to all models
 
 # Load balancing across multiple providers for the same model.
 # routing:
@@ -357,11 +361,11 @@ providers:
 
 logging:
   level: info
-  # request_logging:
-  #   enabled: true              # Log every request (default: true)
-  #   include_bodies: false      # Include full request/response bodies (default: false)
-  #   buffer_size: 4096          # Async buffer size (default: 4096)
-  #   workers: 2                 # Number of log worker goroutines (default: 2)
+  request_logging:
+    enabled: true              # Log every request (default: true)
+    include_bodies: false      # Include full request/response bodies (default: false)
+    buffer_size: 4096          # Async buffer size (default: 4096)
+    workers: 2                 # Number of log worker goroutines (default: 2)
 
 # guardrails:
 #   enabled: true
@@ -586,13 +590,15 @@ logging:
 #     default_ttl: 300                 # seconds
 #     max_size: 1048576                # 1MB per entry
 
-# Pull config (keys, budgets, RBAC) from a Django control plane.
-# control_plane:
-#   url: "http://localhost:8000"
-#   admin_token: "${CONTROL_PLANE_ADMIN_TOKEN}"
-#   webhook_secret: "${CONTROL_PLANE_WEBHOOK_SECRET}"
-#   sync_on_startup: true
-#   sync_interval: 5m                  # 0 = disabled
+# Pull config (keys, budgets, RBAC) from a Django control plane. Also starts
+# the log flusher that ships gateway request logs to the dashboard — without
+# a url configured here, request logs never leave the gateway.
+control_plane:
+  url: "http://backend:80"
+  admin_token: "${AGENTCC_ADMIN_TOKEN}"
+  webhook_secret: "${AGENTCC_WEBHOOK_SECRET}"
+  sync_on_startup: true
+  sync_interval: 5m                  # 0 = disabled
 
 # OpenAI-compatible Assistants API proxy.
 # assistants:
