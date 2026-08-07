@@ -22,6 +22,7 @@ import {
   useUpdateProvider,
   useFetchProviderModels,
 } from "./hooks/useGatewayConfig";
+import { GREENPT_ADD_PROVIDER_PRESET } from "./providerPresetData";
 import { parseTimeoutSeconds } from "./utils";
 
 const PROVIDER_PRESETS = {
@@ -74,6 +75,7 @@ const PROVIDER_PRESETS = {
     keyPlaceholder: "gsk_...",
     supportedFormats: ["openai"],
   },
+  greenpt: GREENPT_ADD_PROVIDER_PRESET,
   together: {
     label: "Together AI",
     baseUrl: "https://api.together.xyz/v1",

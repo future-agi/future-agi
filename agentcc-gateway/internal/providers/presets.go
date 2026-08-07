@@ -11,6 +11,7 @@ type ProviderPreset struct {
 // KnownProviders maps provider type names to their default configurations.
 var KnownProviders = map[string]ProviderPreset{
 	"groq":        {BaseURL: "https://api.groq.com/openai", APIFormat: "openai"},
+	"greenpt":     {BaseURL: "https://api.greenpt.ai", APIFormat: "openai"},
 	"mistral":     {BaseURL: "https://api.mistral.ai", APIFormat: "openai"},
 	"together":    {BaseURL: "https://api.together.xyz", APIFormat: "openai"},
 	"fireworks":   {BaseURL: "https://api.fireworks.ai/inference", APIFormat: "openai"},

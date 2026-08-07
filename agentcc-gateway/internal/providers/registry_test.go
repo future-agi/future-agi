@@ -204,6 +204,42 @@ func TestAutoDiscoverModels(t *testing.T) {
 		}
 	})
 
+	t.Run("uses bearer authentication when an API key is configured", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got := r.Header.Get("Authorization"); got != "Bearer greenpt-test-key" {
+				t.Errorf("Authorization = %q, want Bearer greenpt-test-key", got)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]string{
+					{"id": "glm-5.2"},
+					{"id": "kimi-k2.7-code"},
+					{"id": "green-embedding"},
+				},
+			})
+		}))
+		defer srv.Close()
+
+		cfg := config.ProviderConfig{
+			BaseURL:   srv.URL,
+			APIKey:    "greenpt-test-key",
+			APIFormat: "openai",
+		}
+		got := autoDiscoverModels("greenpt", &cfg)
+
+		sort.Strings(got)
+		want := []string{"glm-5.2", "green-embedding", "kimi-k2.7-code"}
+		if len(got) != len(want) {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("got[%d] = %q, want %q", i, got[i], want[i])
+			}
+		}
+	})
+
 	t.Run("skips when Models already populated", func(t *testing.T) {
 		srv := newModelsServer(t, []string{"model-a", "model-b"})
 		defer srv.Close()

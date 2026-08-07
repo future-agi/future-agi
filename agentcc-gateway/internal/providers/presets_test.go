@@ -67,6 +67,18 @@ func TestPreset_Groq(t *testing.T) {
 	}
 }
 
+func TestPreset_GreenPT(t *testing.T) {
+	cfg := &config.ProviderConfig{Type: "greenpt"}
+	applyProviderPreset(cfg)
+
+	if cfg.BaseURL != "https://api.greenpt.ai" {
+		t.Errorf("BaseURL = %q, want %q", cfg.BaseURL, "https://api.greenpt.ai")
+	}
+	if cfg.APIFormat != "openai" {
+		t.Errorf("APIFormat = %q, want %q", cfg.APIFormat, "openai")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // 4. applyProviderPreset — "azure" fills only APIFormat (no BaseURL in preset)
 // ---------------------------------------------------------------------------
@@ -135,6 +147,7 @@ func TestPreset_ExplicitAPIFormatPreserved(t *testing.T) {
 func TestPreset_KnownProvidersComplete(t *testing.T) {
 	expected := map[string]ProviderPreset{
 		"groq":        {BaseURL: "https://api.groq.com/openai", APIFormat: "openai"},
+		"greenpt":     {BaseURL: "https://api.greenpt.ai", APIFormat: "openai"},
 		"mistral":     {BaseURL: "https://api.mistral.ai", APIFormat: "openai"},
 		"together":    {BaseURL: "https://api.together.xyz", APIFormat: "openai"},
 		"fireworks":   {BaseURL: "https://api.fireworks.ai/inference", APIFormat: "openai"},

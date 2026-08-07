@@ -355,7 +355,16 @@ func autoDiscoverModels(name string, cfg *config.ProviderConfig) []string {
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	baseURL := strings.TrimRight(cfg.BaseURL, "/")
-	resp, err := client.Get(baseURL + "/v1/models")
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/v1/models", nil)
+	if err != nil {
+		slog.Warn("auto-discover: failed to create models request",
+			"provider", name, "url", baseURL+"/v1/models", "error", err)
+		return nil
+	}
+	if cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		slog.Warn("auto-discover: failed to reach provider",
 			"provider", name, "url", baseURL+"/v1/models", "error", err)
