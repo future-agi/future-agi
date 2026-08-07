@@ -15,7 +15,7 @@ import { useParams } from "react-router";
 import EmptyGraph from "src/assets/illustrations/empty-graph";
 import _ from "lodash";
 import { getRandomId, getUniqueColorPalette } from "src/utils/utils";
-import { add, format, sub } from "date-fns";
+import { add, format, isValid, parseISO, sub } from "date-fns";
 import {
   isDateRangeLessThan90Days,
   isDateRangeMoreThan7Days,
@@ -204,8 +204,12 @@ const GraphSection = ({
 
     for (const item of evalData) {
       if (item.timestamp != null) {
-        // Remove timezone suffix to normalize format
-        const normalizedTimestamp = item.timestamp.replace(/\+00:00$/, "");
+        const parsedDate =
+          typeof item.timestamp === "string"
+            ? parseISO(item.timestamp)
+            : new Date(item.timestamp);
+        if (!isValid(parsedDate)) continue;
+        const normalizedTimestamp = parsedDate.getTime();
 
         primaryData.push({ x: normalizedTimestamp, y: item.value ?? 0 });
         trafficData.push({
