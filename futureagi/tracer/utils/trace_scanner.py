@@ -23,6 +23,7 @@ from tracer.models.trace_error_analysis import TraceErrorGroup
 from tracer.queries.scan_clustering import (
     assign_to_cluster,
     create_cluster,
+    delete_centroid,
     embed_texts,
     find_nearest_centroid,
     find_nearest_success_trace,
@@ -208,13 +209,50 @@ def cluster_issues(project_id: str) -> ClusteringSummary:
 
     summary = ClusteringSummary()
 
+    def _create_counting(issue, embedding) -> None:
+        """Create a cluster for ``issue``, crediting a join as an assignment.
+
+        create_cluster returns an EXISTING cluster's id when the issue turns out
+        to be a repeat the centroid lookup failed to match. Counting that as a
+        new cluster hides exactly the signal this fix exists to expose, so
+        on_join reclassifies it.
+        """
+        joined = False
+
+        def _on_join() -> None:
+            nonlocal joined
+            joined = True
+
+        create_cluster(project_id, issue, embedding, on_join=_on_join)
+        if joined:
+            summary.assigned += 1
+        else:
+            summary.new_clusters += 1
+
     for issue, embedding in zip(issues, embeddings):
         try:
             match = find_nearest_centroid(embedding, project_id, issue.category)
 
             if match:
                 cluster_id, distance = match
-                assign_to_cluster(cluster_id, project_id, issue, embedding)
+                try:
+                    assign_to_cluster(cluster_id, project_id, issue, embedding)
+                except TraceErrorGroup.DoesNotExist:
+                    # The centroid outlived its cluster. Nothing deletes
+                    # centroids when a cluster goes away, so the store keeps
+                    # rows pointing at clusters that no longer exist; matching
+                    # one used to raise straight into the handler below and the
+                    # issue was dropped for good. Drop the stale centroid so the
+                    # store self-heals, then cluster the issue normally.
+                    logger.warning(
+                        "orphaned_centroid_matched",
+                        cluster_id=cluster_id,
+                        issue_id=issue.issue_id,
+                        distance=round(distance, 4),
+                    )
+                    delete_centroid(cluster_id, project_id)
+                    _create_counting(issue, embedding)
+                    continue
                 summary.assigned += 1
                 logger.debug(
                     "issue_matched",
@@ -223,8 +261,7 @@ def cluster_issues(project_id: str) -> ClusteringSummary:
                     distance=round(distance, 4),
                 )
             else:
-                create_cluster(project_id, issue, embedding)
-                summary.new_clusters += 1
+                _create_counting(issue, embedding)
         except Exception:
             logger.exception(
                 "cluster_issue_failed",

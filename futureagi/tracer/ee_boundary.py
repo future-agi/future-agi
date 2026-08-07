@@ -20,6 +20,7 @@ try:
         distill_failure_phrases as _distill_failure_phrases,
         generate_eval_cluster_meta as _generate_eval_cluster_meta,
         generate_scan_cluster_severity as _generate_scan_cluster_severity,
+        generate_scan_cluster_title as _generate_scan_cluster_title,
     )
     from ee.agenthub.trace_scanner.compress import (
         attribute_key_moments as _attribute_key_moments,
@@ -53,6 +54,22 @@ def generate_eval_cluster_meta(
         return _generate_eval_cluster_meta(eval_name, reasoning)
     except Exception:
         logger.warning("eval_cluster_meta_llm_failed", exc_info=True)
+        return None
+
+
+def generate_scan_cluster_title(briefs: list) -> str | None:
+    """One entity-free title describing what a scanner cluster's members share.
+
+    Returns None on OSS, on LLM failure, or when the model declines / produces a
+    title that still names a ticker or amount — the caller then keeps its
+    deterministic medoid title.
+    """
+    if not _ee_available:
+        return None
+    try:
+        return _generate_scan_cluster_title(briefs)
+    except Exception:
+        logger.warning("scan_cluster_title_llm_failed", exc_info=True)
         return None
 
 

@@ -7,6 +7,7 @@ All return typed dataclasses — no raw dicts at the boundary.
 
 import hashlib
 import json
+import re
 
 import structlog
 
@@ -14,6 +15,13 @@ from tracer.models.trace_scan import TraceScanConfig, TraceScanResult
 from tracer.types.scan_types import ScanConfig, SpanData, TraceData
 
 logger = structlog.get_logger(__name__)
+
+# Per-message attributes emitted by every ingest adapter, in either the OTel
+# GenAI (gen_ai.*) or OpenInference (llm.*) namespace.
+_MESSAGE_ATTR_RE = re.compile(
+    r"^(?:gen_ai\.(?:input|output)\.messages\.\d+\.message"
+    r"|llm\.(?:input|output)_messages\.\d+\.message)\.(?:role|content)$"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +271,15 @@ def _ch_span_to_span(span) -> SpanData:
         val = (span.attrs_string or {}).get(tool_key) or extra_attrs.get(tool_key)
         if val:
             attrs[tool_key] = val
+
+    # Per-message attributes, so the scanner can see the conversation as ordered
+    # turns instead of one flattened blob. Without these, input.value is the whole
+    # serialized message list and the scanner cannot tell which agent reply
+    # answered which user question — it pairs a question from one turn with an
+    # answer from another and reports failures that never happened.
+    for key, val in (span.attrs_string or {}).items():
+        if _MESSAGE_ATTR_RE.match(key):
+            attrs[key] = val
 
     for key in _TOKEN_KEYS:
         if key in metadata:
