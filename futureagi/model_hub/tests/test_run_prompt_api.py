@@ -859,6 +859,20 @@ class TestRunPromptForRowsView:
 
 @pytest.mark.django_db
 class TestProviderApiKeys:
+    @pytest.fixture(autouse=True)
+    def _skip_provider_key_probe(self):
+        """These tests cover key storage/masking, not provider authentication.
+
+        ``ApiKeyViewSet.create`` probes the provider's API so an invalid key is
+        rejected at save time. Unpatched, the dummy keys below would trigger a
+        live HTTPS call to the real provider, come back 401, and 400 the save.
+        """
+        with patch(
+            "model_hub.views.run_prompt.validate_provider_key",
+            return_value=(True, None),
+        ):
+            yield
+
     def test_text_provider_key_responses_are_masked_only(self, auth_client):
         raw_key = "secret-provider-key-value"
         updated_raw_key = "secret-provider-key-value-updated"
