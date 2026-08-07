@@ -54,12 +54,12 @@ const STATUS_META = {
   [PASSED]: {
     icon: "solar:check-circle-bold",
     color: "success.main",
-    label: "Validated",
+    label: "Ready",
   },
   [WARNING]: {
     icon: "solar:danger-triangle-bold",
     color: WARNING_COLOR,
-    label: "Warning",
+    label: "Caution",
   },
   [FAILED]: {
     icon: "solar:close-circle-bold",
@@ -225,14 +225,14 @@ export default function ValidationStep({
 
   const summary = useMemo(() => {
     if (!reachable) {
-      return "Waiting for the server to come up. This is normal on a first run.";
+      return "Waiting for your instance to power up. Normal on a first run.";
     }
     const parts = [];
-    if (counts.passed) parts.push(`${counts.passed} successful`);
-    if (counts.warning) parts.push(`${counts.warning} warning`);
+    if (counts.passed) parts.push(`${counts.passed} ready`);
+    if (counts.warning) parts.push(`${counts.warning} caution`);
     if (counts.failed) parts.push(`${counts.failed} failed`);
     if (counts.optional) parts.push(`${counts.optional} optional`);
-    return parts.join(", ") || "Running checks…";
+    return parts.join(" · ") || "Running pre-flight…";
   }, [counts, reachable]);
 
   const amberMain = theme.palette.amber[600];
@@ -291,23 +291,23 @@ export default function ValidationStep({
         fontWeight="fontWeightSemiBold"
         sx={{ color: "text.primary" }}
       >
-        Validate your setup
+        Pre-flight checks
       </Typography>
       <Typography
         variant="s1_2"
         sx={{ color: "text.secondary", maxWidth: PANEL_MAX_WIDTH, mt: 1 }}
       >
-        Validation runs immediately. You can re-run any check that fails. If you
-        get stuck, see the{" "}
+        We&apos;re running through your onboard systems now. Re-run anything
+        that needs attention. The{" "}
         <Link
-          href="https://docs.futureagi.com"
+          href="https://docs.futureagi.com/docs/self-hosting"
           target="_blank"
           rel="noopener"
           underline="always"
         >
-          self-host guide
-        </Link>
-        .
+          self-host docs
+        </Link>{" "}
+        are your co-pilot if a check needs a hand.
       </Typography>
     </Stack>
   );
@@ -357,7 +357,7 @@ export default function ValidationStep({
         </Stack>
 
         {canRerun && (
-          <Tooltip title="Re-run checks">
+          <Tooltip title="Re-run pre-flight">
             <span>
               <IconButton
                 size="small"
@@ -419,7 +419,7 @@ export default function ValidationStep({
             fontWeight="fontWeightSemiBold"
             sx={{ color: "text.primary" }}
           >
-            Validation checks
+            Onboard systems
           </Typography>
           <Typography variant="s2_1" sx={{ color: "text.secondary" }}>
             {summary}
@@ -462,7 +462,7 @@ export default function ValidationStep({
         >
           <Iconify icon="solar:refresh-linear" width={16} sx={spinSx} />
           <Typography variant="s2_1" fontWeight="fontWeightSemiBold">
-            {revalidating ? "Validating…" : "Validate requirements"}
+            {revalidating ? "Re-running…" : "Re-run pre-flight"}
           </Typography>
         </Stack>
       </Collapse>
@@ -490,7 +490,7 @@ export default function ValidationStep({
             variant="s2_1"
             sx={{ color: "error.main", textAlign: "center", pt: 0.5 }}
           >
-            Resolve the failed checks to continue in live mode.
+            Fix the failed systems to continue with a production launch.
           </Typography>
         )}
         <LoadingButton

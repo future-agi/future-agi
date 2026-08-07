@@ -15,14 +15,14 @@ export default function LaunchModeStep({ value, onChange, onContinue }) {
         fontWeight="fontWeightSemiBold"
         sx={{ color: "text.primary" }}
       >
-        Select a launch mode
+        Plan your launch
       </Typography>
       <Typography
         variant="s1_2"
         sx={{ color: "text.secondary", maxWidth: 440, mt: 1 }}
       >
-        What&apos;s your plan for this installation? We&apos;ll run the
-        infrastructure checks accordingly.
+        Tell us how you&apos;ll launch this instance and we&apos;ll run the
+        right pre-flight checks.
       </Typography>
     </Stack>
   );

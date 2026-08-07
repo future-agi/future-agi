@@ -10,16 +10,16 @@ export const LAUNCH_MODE = {
 export const LAUNCH_MODES = [
   {
     id: LAUNCH_MODE.LIVE,
-    title: "Live implementation",
+    title: "Production",
     description:
-      "Production-ready. All security and infrastructure requirements are enforced.",
+      "You're going live for real missions. Every security and infrastructure system is checked before liftoff.",
     icon: "solar:rocket-2-bold",
   },
   {
     id: LAUNCH_MODE.EXPERIMENT,
-    title: "Just experimenting",
+    title: "Test flight",
     description:
-      "Explore locally. Some security requirements are relaxed so you can get started fast.",
+      "You're taking it for a spin locally. A few non-critical systems are eased so you're off the ground in minutes.",
     icon: "solar:test-tube-bold",
   },
 ];
@@ -28,9 +28,9 @@ export const DEFAULT_LAUNCH_MODE = LAUNCH_MODE.LIVE;
 
 export const MODE_NOTE = {
   [LAUNCH_MODE.LIVE]:
-    "All security requirements will be enforced for a live implementation.",
+    "Every system has to pass pre-flight before you're cleared for launch.",
   [LAUNCH_MODE.EXPERIMENT]:
-    "We will not enforce some security requirements in experimentation mode.",
+    "Cautions won't hold you on the ground during a test flight.",
 };
 
 // Mirrors the server enum. No status gates the flow.
