@@ -37,6 +37,33 @@ describe("DatetimeCellRenderer", () => {
 
     expect(screen.getByText("Invalid Date")).toBeInTheDocument();
   });
+
+  it("drops the phantom 00:00 clock for a date-only value (#1766)", () => {
+    // A date-only string carries no time, so the cell must not invent one.
+    // The bug rendered "29/01/2026 00:00" for an uploaded "2026-01-29".
+    const { container } = render(
+      <DatetimeCellRenderer value="2026-01-29" {...rendererProps} />,
+    );
+
+    expect(container.textContent).toMatch(/\d{2}\/\d{2}\/\d{4}/);
+    expect(container.textContent).not.toMatch(/\d{1,2}:\d{2}/);
+  });
+
+  it("keeps the clock when the value carries a time", () => {
+    const { container } = render(
+      <DatetimeCellRenderer value="2026-01-29T14:30" {...rendererProps} />,
+    );
+
+    expect(container.textContent).toContain("29/01/2026 14:30");
+  });
+
+  it("preserves a genuine midnight that was explicitly provided", () => {
+    const { container } = render(
+      <DatetimeCellRenderer value="2026-01-29T00:00" {...rendererProps} />,
+    );
+
+    expect(container.textContent).toContain("29/01/2026 00:00");
+  });
 });
 
 describe("JsonCellRenderer", () => {
