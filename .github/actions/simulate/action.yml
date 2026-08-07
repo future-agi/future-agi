@@ -1,0 +1,78 @@
+name: 'Future AGI Simulate'
+description: 'Run Future AGI simulation and evaluation tests'
+author: 'Future AGI'
+inputs:
+  test-id:
+    description: 'Run-test ID to execute'
+    required: true
+  scenario-ids:
+    description: 'Comma-separated scenario IDs'
+    required: false
+  simulator-id:
+    description: 'Override simulator ID'
+    required: false
+  threshold:
+    description: 'Pass-rate gate (0.0-1.0)'
+    required: false
+    default: '0.8'
+  timeout:
+    description: 'Seconds to wait'
+    required: false
+    default: '1800'
+  base-url:
+    description: 'API base URL (set for self-hosted)'
+    required: false
+    default: 'https://app.futureagi.com'
+  api-key:
+    description: 'API key (use a repo/org secret)'
+    required: true
+  python-version:
+    description: 'Python version for the runner'
+    required: false
+    default: '3.11'
+
+outputs:
+  execution-id:
+    description: 'The execution ID'
+    value: ${{ steps.simulate.outputs.execution-id }}
+  pass-rate:
+    description: 'Aggregate pass rate (0.0-1.0)'
+    value: ${{ steps.simulate.outputs.pass-rate }}
+  summary-json:
+    description: 'The full eval summary as JSON'
+    value: ${{ steps.simulate.outputs.summary-json }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install fi-simulate
+      shell: bash
+      run: pip install fi-simulate
+
+    - name: Run fi-simulate
+      id: simulate
+      shell: bash
+      env:
+        FI_API_KEY: ${{ inputs.api-key }}
+        FI_BASE_URL: ${{ inputs.base-url }}
+      run: |
+        ARGS="--test-id ${{ inputs.test-id }} --output github"
+        if [ -n "${{ inputs.scenario-ids }}" ]; then
+          ARGS="$ARGS --scenario-ids ${{ inputs.scenario-ids }}"
+        fi
+        if [ -n "${{ inputs.simulator-id }}" ]; then
+          ARGS="$ARGS --simulator-id ${{ inputs.simulator-id }}"
+        fi
+        if [ -n "${{ inputs.threshold }}" ]; then
+          ARGS="$ARGS --threshold ${{ inputs.threshold }}"
+        fi
+        if [ -n "${{ inputs.timeout }}" ]; then
+          ARGS="$ARGS --timeout ${{ inputs.timeout }}"
+        fi
+        
+        fi-simulate run $ARGS
