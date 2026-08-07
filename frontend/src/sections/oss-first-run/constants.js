@@ -1,29 +1,36 @@
 // The check list itself comes from GET /api/setup-checks/ — nothing about it
 // lives here, so checks can change server-side without a frontend release.
 
+// Mirrors the server's launch modes. Sent as the `mode` query param.
+export const LAUNCH_MODE = {
+  LIVE: "live",
+  EXPERIMENT: "experiment",
+};
+
 export const LAUNCH_MODES = [
   {
-    id: "live",
-    title: "Live implementation",
+    id: LAUNCH_MODE.LIVE,
+    title: "Production",
     description:
-      "Production-ready. All security and infrastructure requirements are enforced.",
+      "You're going live for real missions. Every security and infrastructure system is checked before liftoff.",
     icon: "solar:rocket-2-bold",
   },
   {
-    id: "experiment",
-    title: "Just experimenting",
+    id: LAUNCH_MODE.EXPERIMENT,
+    title: "Test flight",
     description:
-      "Explore locally. Some security requirements are relaxed so you can get started fast.",
+      "You're taking it for a spin locally. A few non-critical systems are eased so you're off the ground in minutes.",
     icon: "solar:test-tube-bold",
   },
 ];
 
-export const DEFAULT_LAUNCH_MODE = "live";
+export const DEFAULT_LAUNCH_MODE = LAUNCH_MODE.LIVE;
 
 export const MODE_NOTE = {
-  live: "All security requirements will be enforced for a live implementation.",
-  experiment:
-    "We will not enforce some security requirements in experimentation mode.",
+  [LAUNCH_MODE.LIVE]:
+    "Every system has to pass pre-flight before you're cleared for launch.",
+  [LAUNCH_MODE.EXPERIMENT]:
+    "Cautions won't hold you on the ground during a test flight.",
 };
 
 // Mirrors the server enum. No status gates the flow.
