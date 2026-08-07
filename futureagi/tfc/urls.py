@@ -34,6 +34,7 @@ from tfc.views.health import (
 from tfc.views.setup_checks import SetupChecksView
 from tfc.views.socket import CallWebsocketView
 from tracer.views.clickhouse_health import ClickHouseHealthView
+from tracer.views.cekura_ingestion import CekuraIngestionView
 from tracer.views.langfuse_ingestion import LangfuseIngestionView
 from tracer.views.otlp import OTLPHealthView
 from tracer.views.span_attributes import (
@@ -95,6 +96,11 @@ urlpatterns = [
         "api/public/ingestion",
         LangfuseIngestionView.as_view(),
         name="api-public-ingestion",
+    ),
+    path(
+        "api/public/cekura/ingestion",
+        CekuraIngestionView.as_view(),
+        name="api-public-cekura-ingestion",
     ),
     path("integrations/", include("integrations.urls")),
     path("agentcc/", include("agentcc.urls")),
