@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
-import { Box, Typography, CircularProgress } from "@mui/material";
+import { Box, Typography } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { useParams } from "react-router-dom";
@@ -44,16 +45,7 @@ const AttributesView = () => {
 
   if (isLoading) {
     return (
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          height: "calc(100vh - 180px)",
-        }}
-      >
-        <CircularProgress />
-      </Box>
+      <LoadingScreen sx={{ height: "calc(100vh - 180px)" }} />
     );
   }
 

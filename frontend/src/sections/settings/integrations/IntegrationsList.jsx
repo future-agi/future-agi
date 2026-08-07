@@ -6,12 +6,12 @@ import {
   Card,
   CardActionArea,
   Chip,
-  CircularProgress,
   Grid,
   Typography,
   useTheme,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { LoadingScreen } from "src/components/loading-screen";
 import { useIntegrationConnections } from "src/api/integrations";
 import IntegrationCard from "./IntegrationCard";
 import PlatformLogo from "./PlatformLogo";
@@ -32,9 +32,7 @@ export default function IntegrationsList() {
 
   if (isLoading) {
     return (
-      <Box display="flex" justifyContent="center" py={8}>
-        <CircularProgress />
-      </Box>
+      <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />
     );
   }
 

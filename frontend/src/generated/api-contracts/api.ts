@@ -793,6 +793,7 @@ import type {
   PasskeyRenameResponseApi,
   PasswordResetConfirmRequestApi,
   PasswordResetInitiateRequestApi,
+  PasswordResetInitiateResponseApi,
   PasswordValidationApi,
   PaymentMethodCheckoutResponseApi,
   PaymentMethodConfirmResponseApi,
@@ -988,6 +989,7 @@ import type {
   SecretKeysResponseApi,
   SendChatRequestApi,
   SessionComparisonResponseApi,
+  SetupChecksResponseApi,
   SetupIntentConfirmRequestApi,
   ShadowResultsWebhookRequestApi,
   SharedLinkCreateApi,
@@ -996,6 +998,7 @@ import type {
   SharedLinkResolveResponseApi,
   SharedLinkUpdateApi,
   SignupRequestApi,
+  SignupResponseApi,
   SimulateAgentDefinitionsListParams,
   SimulateApiAgentDefinitionOperationsList200,
   SimulateApiAgentDefinitionOperationsListParams,
@@ -1036,7 +1039,6 @@ import type {
   StartEvalsProcessRequestApi,
   StopUserEvalRequestApi,
   StreamStatusResponseApi,
-  StripeWebhookLegacyResponseApi,
   StripeWebhookRequestApi,
   StripeWebhookResponseApi,
   SubmitAnnotationsApi,
@@ -2208,6 +2210,48 @@ export const accountsAcceptInvitationCreate = async (uidb64: string,
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
       acceptInvitationRequestApi,)
+  }
+);}
+
+
+
+export type accountsActivateReadResponse200 = {
+  data: void
+  status: 200
+}
+
+export type accountsActivateReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type accountsActivateReadResponseSuccess = (accountsActivateReadResponse200) & {
+  headers: Headers;
+};
+export type accountsActivateReadResponseError = (accountsActivateReadResponseDefault) & {
+  headers: Headers;
+};
+
+export type accountsActivateReadResponse = (accountsActivateReadResponseSuccess | accountsActivateReadResponseError)
+
+export const getAccountsActivateReadUrl = (uidb64: string,
+    token: string,) => {
+
+
+
+
+  return `/accounts/activate/${uidb64}/${token}/`
+}
+
+export const accountsActivateRead = async (uidb64: string,
+    token: string, options?: RequestInit): Promise<accountsActivateReadResponse> => {
+
+  return apiMutator<accountsActivateReadResponse>(getAccountsActivateReadUrl(uidb64,token),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 
@@ -5546,7 +5590,7 @@ export const accountsPasswordResetConfirmCreate = async (uidb64: string,
 
 
 export type accountsPasswordResetInitiateCreateResponse200 = {
-  data: AccountsMessageResponseApi
+  data: PasswordResetInitiateResponseApi
   status: 200
 }
 
@@ -5810,7 +5854,7 @@ export const accountsResendInvitationEmailsCreate = async (userIdsRequestApi: Us
 
 
 export type accountsSignupCreateResponse200 = {
-  data: AccountsMessageResponseApi
+  data: SignupResponseApi
   status: 200
 }
 
@@ -17318,6 +17362,63 @@ metadata so the credential check passes.
 export const apiPublicTracesList = async ( options?: RequestInit): Promise<apiPublicTracesListResponse> => {
 
   return apiMutator<apiPublicTracesListResponse>(getApiPublicTracesListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type apiSetupChecksListResponse200 = {
+  data: SetupChecksResponseApi
+  status: 200
+}
+
+export type apiSetupChecksListResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type apiSetupChecksListResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
+export type apiSetupChecksListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 500>
+}
+
+export type apiSetupChecksListResponseSuccess = (apiSetupChecksListResponse200) & {
+  headers: Headers;
+};
+export type apiSetupChecksListResponseError = (apiSetupChecksListResponse404 | apiSetupChecksListResponse500 | apiSetupChecksListResponseDefault) & {
+  headers: Headers;
+};
+
+export type apiSetupChecksListResponse = (apiSetupChecksListResponseSuccess | apiSetupChecksListResponseError)
+
+export const getApiSetupChecksListUrl = () => {
+
+
+
+
+  return `/api/setup-checks/`
+}
+
+/**
+ * Returns ``{"status": "ok"|"issues", "mode": ..., "checks": [...]}``. No auth —
+it runs before any account exists. Self-hosted only: on cloud and EE the
+route answers 404, so neither the internal service topology nor the outbound
+probes it triggers are reachable by an anonymous caller.
+ * @summary Public infrastructure probe for the OSS first-run setup screen.
+ */
+export const apiSetupChecksList = async ( options?: RequestInit): Promise<apiSetupChecksListResponse> => {
+
+  return apiMutator<apiSetupChecksListResponse>(getApiSetupChecksListUrl(),
   {
     ...options,
     method: 'GET'
@@ -75807,7 +75908,7 @@ export const usageV2UsageWorkspaceBreakdownList = async (params: UsageV2UsageWor
 
 
 export type usageWebhookCreateResponse200 = {
-  data: StripeWebhookLegacyResponseApi
+  data: StripeWebhookResponseApi
   status: 200
 }
 
@@ -75863,6 +75964,11 @@ export const getUsageWebhookCreateUrl = () => {
   return `/usage/webhook/`
 }
 
+/**
+ * No auth — Stripe authenticates via signature header.
+APIView.as_view() auto-applies csrf_exempt.
+ * @summary Handle Stripe webhook events.
+ */
 export const usageWebhookCreate = async (stripeWebhookRequestApi: StripeWebhookRequestApi, options?: RequestInit): Promise<usageWebhookCreateResponse> => {
 
   return apiMutator<usageWebhookCreateResponse>(getUsageWebhookCreateUrl(),

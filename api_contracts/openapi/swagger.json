@@ -816,6 +816,41 @@
                 }
             ]
         },
+        "/accounts/activate/{uidb64}/{token}/": {
+            "get": {
+                "operationId": "accounts_activate_read",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "accounts"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "uidb64",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "token",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/accounts/appsmith/users/": {
             "get": {
                 "operationId": "accounts_appsmith_users_list",
@@ -4073,7 +4108,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AccountsMessageResponse"
+                            "$ref": "#/definitions/PasswordResetInitiateResponse"
                         }
                     },
                     "400": {
@@ -4329,7 +4364,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AccountsMessageResponse"
+                            "$ref": "#/definitions/SignupResponse"
                         }
                     },
                     "400": {
@@ -15156,6 +15191,45 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiDetailErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "api"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/api/setup-checks/": {
+            "get": {
+                "operationId": "api_setup-checks_list",
+                "summary": "Public infrastructure probe for the OSS first-run setup screen.",
+                "description": "Returns ``{\"status\": \"ok\"|\"issues\", \"mode\": ..., \"checks\": [...]}``. No auth —\nit runs before any account exists. Self-hosted only: on cloud and EE the\nroute answers 404, so neither the internal service topology nor the outbound\nprobes it triggers are reachable by an anonymous caller.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SetupChecksResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
@@ -72011,7 +72085,8 @@
         "/usage/webhook/": {
             "post": {
                 "operationId": "usage_webhook_create",
-                "description": "",
+                "summary": "Handle Stripe webhook events.",
+                "description": "No auth — Stripe authenticates via signature header.\nAPIView.as_view() auto-applies csrf_exempt.",
                 "parameters": [
                     {
                         "name": "data",
@@ -72026,7 +72101,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/StripeWebhookLegacyResponse"
+                            "$ref": "#/definitions/StripeWebhookResponse"
                         }
                     },
                     "400": {
@@ -74019,6 +74094,27 @@
                 }
             }
         },
+        "InviteLink": {
+            "description": "Accept-invite links for the invites just created. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud/EE.",
+            "required": [
+                "email",
+                "invite_link"
+            ],
+            "type": "object",
+            "properties": {
+                "email": {
+                    "title": "Email",
+                    "type": "string",
+                    "format": "email",
+                    "minLength": 1
+                },
+                "invite_link": {
+                    "title": "Invite link",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
         "InviteCreateResult": {
             "required": [
                 "invited"
@@ -74039,6 +74135,13 @@
                         "type": "string",
                         "format": "email",
                         "minLength": 1
+                    }
+                },
+                "invites": {
+                    "description": "Accept-invite links for the invites just created. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud/EE.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/InviteLink"
                     }
                 }
             }
@@ -74233,6 +74336,12 @@
                 "auto_access": {
                     "title": "Auto access",
                     "type": "boolean"
+                },
+                "invite_link": {
+                    "title": "Invite link",
+                    "description": "Accept-invite link for a pending invite. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud/EE and on active-member rows.",
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -75021,6 +75130,41 @@
                 }
             }
         },
+        "PasswordResetInitiateResult": {
+            "required": [
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "reset_link": {
+                    "title": "Reset link",
+                    "description": "Password-reset link, returned on OSS deployments only, where SMTP is usually not configured and the emailed link would never arrive. Never present on Cloud/EE, and never present for an email with no matching account. Treat as a credential: anyone holding it can set that account's password.",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "PasswordResetInitiateResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/PasswordResetInitiateResult"
+                }
+            }
+        },
         "RedisKeyRequest": {
             "required": [
                 "access_token_id",
@@ -75158,6 +75302,46 @@
                 "recaptcha_response": {
                     "title": "Recaptcha response",
                     "type": "string"
+                }
+            }
+        },
+        "SignupResult": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "access": {
+                    "title": "Access",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "refresh": {
+                    "title": "Refresh",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "new_org": {
+                    "title": "New org",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SignupResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SignupResult"
                 }
             }
         },
@@ -76589,6 +76773,12 @@
                 "auto_access": {
                     "title": "Auto access",
                     "type": "boolean"
+                },
+                "invite_link": {
+                    "title": "Invite link",
+                    "description": "Accept-invite link for a pending invite. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud/EE, on active-member rows, and on Admin+ invites when the caller is only a workspace admin.",
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -82446,6 +82636,94 @@
                 },
                 "meta": {
                     "$ref": "#/definitions/LangfuseTracesMeta"
+                }
+            }
+        },
+        "SetupCheck": {
+            "required": [
+                "id",
+                "label",
+                "status",
+                "required",
+                "detail"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "passed",
+                        "warning",
+                        "failed",
+                        "skipped"
+                    ]
+                },
+                "required": {
+                    "title": "Required",
+                    "type": "boolean"
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string"
+                }
+            }
+        },
+        "SetupChecksResult": {
+            "required": [
+                "status",
+                "mode",
+                "checks"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "ok",
+                        "issues"
+                    ]
+                },
+                "mode": {
+                    "title": "Mode",
+                    "type": "string",
+                    "enum": [
+                        "live",
+                        "experiment"
+                    ]
+                },
+                "checks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SetupCheck"
+                    }
+                }
+            }
+        },
+        "SetupChecksResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/SetupChecksResult"
                 }
             }
         },
@@ -128718,6 +128996,7 @@
                     "enum": [
                         "active",
                         "past_due",
+                        "unpaid",
                         "canceled",
                         "inactive"
                     ]
@@ -128895,6 +129174,7 @@
                     "enum": [
                         "active",
                         "past_due",
+                        "unpaid",
                         "canceled",
                         "inactive"
                     ]
@@ -131315,21 +131595,6 @@
                 },
                 "result": {
                     "$ref": "#/definitions/UsageWorkspaceBreakdownResult"
-                }
-            }
-        },
-        "StripeWebhookLegacyResponse": {
-            "required": [
-                "status"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean"
-                },
-                "result": {
-                    "$ref": "#/definitions/StripeWebhookResult"
                 }
             }
         }

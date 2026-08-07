@@ -1,8 +1,9 @@
 import React, { useMemo } from "react";
 import PropTypes from "prop-types";
-import { Box, useTheme, CircularProgress } from "@mui/material";
+import { Box, useTheme } from "@mui/material";
 import { Outlet } from "react-router";
 import { useAuthContext } from "src/auth/hooks";
+import { LoadingScreen } from "src/components/loading-screen";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import SvgColor from "src/components/svg-color";
 
@@ -28,17 +29,7 @@ const ICONS = {
 
 // Loading component for tab content
 const TabContentLoader = () => (
-  <Box
-    sx={{
-      display: "flex",
-      justifyContent: "center",
-      alignItems: "center",
-      height: "200px",
-      backgroundColor: "background.paper",
-    }}
-  >
-    <CircularProgress />
-  </Box>
+  <LoadingScreen sx={{ height: "100%", backgroundColor: "background.paper" }} />
 );
 
 // Error boundary component

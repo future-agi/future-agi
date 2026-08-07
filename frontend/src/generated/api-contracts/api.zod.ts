@@ -351,6 +351,12 @@ export const AccountsAcceptInvitationCreateResponse = zod.object({
 })
 
 
+export const AccountsActivateReadParams = zod.object({
+  "uidb64": zod.string(),
+  "token": zod.string()
+})
+
+
 
 
 
@@ -859,11 +865,17 @@ export const AccountsOrganizationInviteCreateBody = zod.object({
 
 
 
+
+
 export const AccountsOrganizationInviteCreateResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
   "invited": zod.array(zod.string().email().min(1)),
-  "already_members": zod.array(zod.string().email().min(1)).optional()
+  "already_members": zod.array(zod.string().email().min(1)).optional(),
+  "invites": zod.array(zod.object({
+  "email": zod.string().email().min(1),
+  "invite_link": zod.string().min(1)
+}).describe('Accept-invite links for the invites just created. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud\/EE.')).optional().describe('Accept-invite links for the invites just created. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud\/EE.')
 })
 })
 
@@ -939,6 +951,7 @@ export const AccountsOrganizationMembersListQueryParams = zod.object({
 
 
 
+
 export const AccountsOrganizationMembersListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
@@ -960,7 +973,8 @@ export const AccountsOrganizationMembersListResponse = zod.object({
   "status": zod.string().min(1),
   "created_at": zod.string(),
   "type": zod.enum(['member', 'invite']),
-  "auto_access": zod.boolean().optional()
+  "auto_access": zod.boolean().optional(),
+  "invite_link": zod.string().min(1).optional().describe('Accept-invite link for a pending invite. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud\/EE and on active-member rows.')
 })),
   "total": zod.number(),
   "page": zod.number(),
@@ -1482,10 +1496,12 @@ export const AccountsPasswordResetInitiateCreateBody = zod.object({
 
 
 
+
 export const AccountsPasswordResetInitiateCreateResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
-  "message": zod.string().min(1)
+  "message": zod.string().min(1),
+  "reset_link": zod.string().min(1).optional().describe('Password-reset link, returned on OSS deployments only, where SMTP is usually not configured and the emailed link would never arrive. Never present on Cloud\/EE, and never present for an email with no matching account. Treat as a credential: anyone holding it can set that account\'s password.')
 })
 })
 
@@ -1579,10 +1595,15 @@ export const AccountsSignupCreateBody = zod.object({
 
 
 
+
+
 export const AccountsSignupCreateResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
-  "message": zod.string().min(1)
+  "message": zod.string().min(1).optional(),
+  "access": zod.string().min(1).optional(),
+  "refresh": zod.string().min(1).optional(),
+  "new_org": zod.boolean().optional()
 })
 })
 
@@ -2178,6 +2199,7 @@ export const AccountsWorkspaceMembersListQueryParams = zod.object({
 
 
 
+
 export const AccountsWorkspaceMembersListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
@@ -2192,7 +2214,8 @@ export const AccountsWorkspaceMembersListResponse = zod.object({
   "status": zod.string().min(1),
   "created_at": zod.string(),
   "type": zod.enum(['member', 'invite']),
-  "auto_access": zod.boolean().optional()
+  "auto_access": zod.boolean().optional(),
+  "invite_link": zod.string().min(1).optional().describe('Accept-invite link for a pending invite. Present on OSS deployments only, where SMTP may not be configured; omitted on Cloud\/EE, on active-member rows, and on Admin+ invites when the caller is only a workspace admin.')
 })),
   "total": zod.number(),
   "page": zod.number(),
@@ -9417,6 +9440,33 @@ export const ApiPublicTracesListResponse = zod.object({
   "limit": zod.number(),
   "total_items": zod.number(),
   "total_pages": zod.number()
+})
+})
+
+
+/**
+ * Returns ``{"status": "ok"|"issues", "mode": ..., "checks": [...]}``. No auth —
+it runs before any account exists. Self-hosted only: on cloud and EE the
+route answers 404, so neither the internal service topology nor the outbound
+probes it triggers are reachable by an anonymous caller.
+ * @summary Public infrastructure probe for the OSS first-run setup screen.
+ */
+export const apiSetupChecksListResponseStatusDefault = true;
+
+
+
+export const ApiSetupChecksListResponse = zod.object({
+  "status": zod.boolean().default(apiSetupChecksListResponseStatusDefault),
+  "result": zod.object({
+  "status": zod.enum(['ok', 'issues']),
+  "mode": zod.enum(['live', 'experiment']),
+  "checks": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "label": zod.string().min(1),
+  "status": zod.enum(['passed', 'warning', 'failed', 'skipped']),
+  "required": zod.boolean(),
+  "detail": zod.string()
+}))
 })
 })
 
@@ -44589,7 +44639,7 @@ export const UsageOrganizationSubscriptionListResponse = zod.object({
   "organization": zod.string().uuid(),
   "subscription_tier": zod.string().optional(),
   "custom_subscription_id": zod.string().max(usageOrganizationSubscriptionListResponseResultItemCustomSubscriptionIdMax).optional(),
-  "status": zod.enum(['active', 'past_due', 'canceled', 'inactive']).optional(),
+  "status": zod.enum(['active', 'past_due', 'unpaid', 'canceled', 'inactive']).optional(),
   "subscription_price": zod.string().optional().describe('Price of the subscription.'),
   "wallet_balance": zod.string().optional(),
   "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
@@ -44629,7 +44679,7 @@ export const UsageOrganizationSubscriptionCreateBody = zod.object({
   "subscription_future_tier": zod.enum(['free', 'basic', 'basic_yearly', 'custom']).optional(),
   "subscription_future_start_date": zod.string().date().optional().describe('Next due date for renewal.'),
   "subscription_future_price": zod.string().optional().describe('Price of the future subscription.'),
-  "status": zod.enum(['active', 'past_due', 'canceled', 'inactive']).optional(),
+  "status": zod.enum(['active', 'past_due', 'unpaid', 'canceled', 'inactive']).optional(),
   "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
   "wallet_balance": zod.string().optional(),
   "stripe_customer_id_test": zod.string().max(usageOrganizationSubscriptionCreateBodyStripeCustomerIdTestMax).optional().describe('Stripe customer ID for test mode. NULL values are allowed.'),
@@ -44661,7 +44711,7 @@ export const UsageOrganizationSubscriptionCreateResponse = zod.object({
   "subscription_future_tier": zod.enum(['free', 'basic', 'basic_yearly', 'custom']).optional(),
   "subscription_future_start_date": zod.string().date().optional().describe('Next due date for renewal.'),
   "subscription_future_price": zod.string().optional().describe('Price of the future subscription.'),
-  "status": zod.enum(['active', 'past_due', 'canceled', 'inactive']).optional(),
+  "status": zod.enum(['active', 'past_due', 'unpaid', 'canceled', 'inactive']).optional(),
   "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
   "wallet_balance": zod.string().optional(),
   "stripe_customer_id_test": zod.string().max(usageOrganizationSubscriptionCreateResponseResultStripeCustomerIdTestMax).optional().describe('Stripe customer ID for test mode. NULL values are allowed.'),
@@ -44697,7 +44747,7 @@ export const UsageOrganizationSubscriptionPartialUpdateBody = zod.object({
   "subscription_future_tier": zod.enum(['free', 'basic', 'basic_yearly', 'custom']).optional(),
   "subscription_future_start_date": zod.string().date().optional().describe('Next due date for renewal.'),
   "subscription_future_price": zod.string().optional().describe('Price of the future subscription.'),
-  "status": zod.enum(['active', 'past_due', 'canceled', 'inactive']).optional(),
+  "status": zod.enum(['active', 'past_due', 'unpaid', 'canceled', 'inactive']).optional(),
   "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
   "wallet_balance": zod.string().optional(),
   "stripe_customer_id_test": zod.string().max(usageOrganizationSubscriptionPartialUpdateBodyStripeCustomerIdTestMax).optional().describe('Stripe customer ID for test mode. NULL values are allowed.'),
@@ -44729,7 +44779,7 @@ export const UsageOrganizationSubscriptionPartialUpdateResponse = zod.object({
   "subscription_future_tier": zod.enum(['free', 'basic', 'basic_yearly', 'custom']).optional(),
   "subscription_future_start_date": zod.string().date().optional().describe('Next due date for renewal.'),
   "subscription_future_price": zod.string().optional().describe('Price of the future subscription.'),
-  "status": zod.enum(['active', 'past_due', 'canceled', 'inactive']).optional(),
+  "status": zod.enum(['active', 'past_due', 'unpaid', 'canceled', 'inactive']).optional(),
   "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
   "wallet_balance": zod.string().optional(),
   "stripe_customer_id_test": zod.string().max(usageOrganizationSubscriptionPartialUpdateResponseResultStripeCustomerIdTestMax).optional().describe('Stripe customer ID for test mode. NULL values are allowed.'),
@@ -44779,7 +44829,7 @@ export const UsageOrganizationSubscriptionReadResponse = zod.object({
   "organization": zod.string().uuid(),
   "subscription_tier": zod.string().optional(),
   "custom_subscription_id": zod.string().max(usageOrganizationSubscriptionReadResponseResultItemCustomSubscriptionIdMax).optional(),
-  "status": zod.enum(['active', 'past_due', 'canceled', 'inactive']).optional(),
+  "status": zod.enum(['active', 'past_due', 'unpaid', 'canceled', 'inactive']).optional(),
   "subscription_price": zod.string().optional().describe('Price of the subscription.'),
   "wallet_balance": zod.string().optional(),
   "wallet_refill_amount": zod.string().optional().describe('Amount to refill the wallet every month.'),
@@ -46403,6 +46453,11 @@ export const UsageV2UsageWorkspaceBreakdownListResponse = zod.object({
 })
 
 
+/**
+ * No auth — Stripe authenticates via signature header.
+APIView.as_view() auto-applies csrf_exempt.
+ * @summary Handle Stripe webhook events.
+ */
 
 
 
@@ -46413,8 +46468,11 @@ export const UsageWebhookCreateBody = zod.object({
   "data": zod.record(zod.string(), zod.string()).optional()
 })
 
+
+
+
 export const UsageWebhookCreateResponse = zod.object({
-  "status": zod.boolean(),
+  "status": zod.string().min(1),
   "result": zod.object({
   "event_type": zod.string().optional(),
   "action": zod.string().optional(),

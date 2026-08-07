@@ -211,6 +211,7 @@ def test_soft_delete_rebuild_equals_raw(ch, settings):
     raw = _avg_map(_query(ch, _raw_sql(), params))
     assert rollup == pytest.approx(raw)
     # The 5000ms doomed span is gone — avg reflects only the kept spans.
-    assert rollup[(str(_DAY + timedelta(hours=10)), "ok")] == pytest.approx(
-        sum(100 + i for i in range(3)) / 3
-    )
+    # CH `toStartOfHour` returns a tz-naive DateTime, so `_avg_map` keys the
+    # bucket without a tzinfo suffix; match that when building the lookup key.
+    bucket_key = (str((_DAY + timedelta(hours=10)).replace(tzinfo=None)), "ok")
+    assert rollup[bucket_key] == pytest.approx(sum(100 + i for i in range(3)) / 3)

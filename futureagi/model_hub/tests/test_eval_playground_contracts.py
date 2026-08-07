@@ -3,6 +3,9 @@ import json
 import pytest
 from rest_framework import status
 
+pytest.importorskip("ee.usage.models.usage", reason="requires ee/")
+pytestmark = pytest.mark.requires_ee
+
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
 from ee.usage.models.usage import APICallLog, APICallStatusChoices

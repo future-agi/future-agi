@@ -72,15 +72,21 @@ except ImportError:
 
 
 def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
-    """Flip RUNNING cells for this eval to ERROR when a usage pre-check fails.
+    """Write ERROR cells for this eval when a pre-check fails.
 
-    Without this, non-composite eval cells stay in RUNNING forever (the worker
-    raised before writing any result), leaving the UI stuck on a loading
-    skeleton. The structured `value_infos` lets the frontend render a
-    credit-limit-specific message + upgrade CTA instead of a generic error.
+    Used for credit/usage denials and OSS agent-eval entitlement blocks.
+    Pre-checks often fail *before* EvaluationRunner creates RUNNING cells, so
+    we must upsert ERROR cells for every dataset row — not only flip RUNNING.
+    Otherwise the UI shows empty columns instead of the same error treatment
+    as other eval failures.
+
+    Structured `value_infos` lets the frontend render a credit/entitlement
+    message + upgrade CTA (see ErrorCellRenderer).
     """
     try:
         from django.db.models import Q
+
+        from model_hub.views.eval_runner import bulk_update_or_create_cells
 
         # Dataset evals: Column.source_id == uem.id, source = 'evaluation'.
         # Experiment evals: one column per (prompt_config, dataset snapshot,
@@ -109,6 +115,18 @@ def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
             ).values_list("id", flat=True)
         )
 
+        dataset_id = user_eval_metric.dataset_id
+        if not dataset_id:
+            return
+
+        row_ids = list(
+            Row.objects.filter(dataset_id=dataset_id, deleted=False).values_list(
+                "id", flat=True
+            )
+        )
+        if not row_ids:
+            return
+
         upgrade_cta = None
         cta = getattr(usage_check, "upgrade_cta", None)
         if cta is not None:
@@ -123,20 +141,31 @@ def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
             "upgrade_cta": upgrade_cta,
         }
         display = usage_check.reason or "Usage limit exceeded"
+        new_values = {
+            "status": CellStatus.ERROR.value,
+            "value": display,
+            "value_infos": value_infos,
+        }
 
-        updated = Cell.objects.filter(
-            column_id__in=eval_column_ids + reason_column_ids,
-            deleted=False,
-            status=CellStatus.RUNNING.value,
-        ).update(
-            status=CellStatus.ERROR.value,
-            value=display,
-            value_infos=value_infos,
-        )
+        updated = 0
+        created = 0
+        for column_id in eval_column_ids + reason_column_ids:
+            u, c = bulk_update_or_create_cells(
+                row_ids,
+                column_id,
+                dataset_id,
+                new_values,
+                user_eval_metric_id=str(user_eval_metric.id),
+                skip_completed=True,
+            )
+            updated += u
+            created += c
+
         logger.info(
             "usage_limit_error_marked_on_cells",
             eval_id=str(user_eval_metric.id),
             cells_updated=updated,
+            cells_created=created,
             error_code=usage_check.error_code,
         )
     except Exception as exc:

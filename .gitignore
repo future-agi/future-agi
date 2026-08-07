@@ -188,6 +188,7 @@ media/
 # Claude Code — per-user permissions (team agents under .claude/agents/ are tracked)
 .claude/settings.local.json
 **/.claude/settings.local.json
+.claude/CLAUDE.md
 
 # MCP server configs — local dev tooling, not shipped with the repo.
 # If we ever expose a hosted product MCP, that config goes at repo root
