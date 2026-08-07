@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import CustomAudioPlayer from "../../custom-audio/CustomAudioPlayer";
 import PropTypes from "prop-types";
 import { ShowComponent } from "src/components/show";
@@ -11,12 +11,10 @@ import { fileIconByMimeType } from "../../../utils/constants";
 const AudioEmbed = ({ isEmbed, id, name, size, onDelete, url, mimeType }) => {
   // WaveSurfer's WebAudio fetch needs CORS headers, which external hosts
   // often lack. Fall back to a plain <audio> element on the load error —
-  // browsers play cross-origin media fine without CORS.
-  const [useNativePlayer, setUseNativePlayer] = useState(false);
-
-  useEffect(() => {
-    setUseNativePlayer(false);
-  }, [url]);
+  // browsers play cross-origin media fine without CORS. Deriving from the
+  // failed URL resets the fallback automatically when the source changes.
+  const [failedUrl, setFailedUrl] = useState(null);
+  const useNativePlayer = failedUrl === url;
   return (
     <div
       style={{
@@ -108,6 +106,7 @@ const AudioEmbed = ({ isEmbed, id, name, size, onDelete, url, mimeType }) => {
       {useNativePlayer ? (
         <audio
           controls
+          preload="metadata"
           src={url}
           style={{ width: "100%", display: "block" }}
         />
@@ -116,7 +115,11 @@ const AudioEmbed = ({ isEmbed, id, name, size, onDelete, url, mimeType }) => {
           audioData={{
             url: url,
           }}
-          onAudioError={() => setUseNativePlayer(true)}
+          onAudioError={(error) => {
+            // CORS-blocked and unreachable fetches reject with a TypeError;
+            // real HTTP errors (404/403/expired) keep the player's error text.
+            if (error instanceof TypeError) setFailedUrl(url);
+          }}
         />
       )}
     </div>
