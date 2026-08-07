@@ -136,6 +136,7 @@ class DatasetTableResultSerializer(serializers.Serializer):
         allow_null=True,
     )
     synthetic_regenerate = serializers.BooleanField(required=False)
+    failure_reason = serializers.CharField(required=False, allow_null=True)
     is_processing_data = serializers.BooleanField(required=False)
 
 
