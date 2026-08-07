@@ -1664,7 +1664,7 @@ class TestEditAndRunUserEvalView:
     ):
         """Test successfully editing and running a user evaluation."""
         payload = {
-            "name": "Updated Eval",
+            "name": "updated-eval",
             "output_column_id": str(output_column.id),
             "config": {
                 "model": "gpt-4",
@@ -1727,6 +1727,170 @@ class TestEditAndRunUserEvalView:
 
         # The API returns 404 when eval is not found
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_edit_persists_new_name(
+        self, auth_client, dataset, user_eval_metric, output_column
+    ):
+        """Renaming an eval writes the new name to the instance."""
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{user_eval_metric.id}/",
+            {
+                "name": "toxicity-check-v2",
+                "run": False,
+                "config": {"mapping": {"output": "Output Column"}},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        user_eval_metric.refresh_from_db()
+        assert user_eval_metric.name == "toxicity-check-v2"
+
+    def test_edit_renames_eval_and_reason_columns(
+        self, auth_client, dataset, user_eval_metric, output_column
+    ):
+        """A rename carries over to the grid columns that snapshot the eval name."""
+        eval_col = Column.objects.create(
+            name=user_eval_metric.name,
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(user_eval_metric.id),
+        )
+        reason_col = Column.objects.create(
+            name=f"{user_eval_metric.name}-reason",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION_REASON.value,
+            source_id=f"{eval_col.id}-sourceid-{user_eval_metric.id}",
+        )
+
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{user_eval_metric.id}/",
+            {
+                "name": "renamed-eval",
+                "run": False,
+                "config": {"mapping": {"output": "Output Column"}},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        eval_col.refresh_from_db()
+        reason_col.refresh_from_db()
+        assert eval_col.name == "renamed-eval"
+        assert reason_col.name == "renamed-eval-reason"
+
+    def test_edit_rejects_name_taken_by_another_eval(
+        self,
+        auth_client,
+        dataset,
+        organization,
+        workspace,
+        eval_template,
+        user_eval_metric,
+        output_column,
+    ):
+        """A rename cannot collide with another eval on the same dataset."""
+        UserEvalMetric.objects.create(
+            name="already-taken",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=eval_template,
+            status=StatusType.NOT_STARTED.value,
+            config={},
+        )
+        original_name = user_eval_metric.name
+
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{user_eval_metric.id}/",
+            {
+                "name": "already-taken",
+                "run": False,
+                "config": {"mapping": {"output": "Output Column"}},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        user_eval_metric.refresh_from_db()
+        assert user_eval_metric.name == original_name
+
+    def test_edit_rejects_invalid_name_format(
+        self, auth_client, dataset, user_eval_metric, output_column
+    ):
+        """The rename path applies the same name rules as creating an eval."""
+        original_name = user_eval_metric.name
+
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{user_eval_metric.id}/",
+            {
+                "name": "Has Spaces",
+                "run": False,
+                "config": {"mapping": {"output": "Output Column"}},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        user_eval_metric.refresh_from_db()
+        assert user_eval_metric.name == original_name
+
+    def test_edit_without_name_keeps_existing_name(
+        self, auth_client, dataset, user_eval_metric, output_column
+    ):
+        """Editing other fields must not blank out the name."""
+        original_name = user_eval_metric.name
+
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{user_eval_metric.id}/",
+            {
+                "name": "",
+                "run": False,
+                "model": "gpt-4o",
+                "config": {"mapping": {"output": "Output Column"}},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        user_eval_metric.refresh_from_db()
+        assert user_eval_metric.name == original_name
+
+    def test_edit_with_unchanged_name_is_not_a_collision(
+        self,
+        auth_client,
+        dataset,
+        organization,
+        workspace,
+        eval_template,
+        output_column,
+    ):
+        """Re-sending the eval's own name must not trip the uniqueness check."""
+        metric = UserEvalMetric.objects.create(
+            name="stable-name",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=eval_template,
+            status=StatusType.NOT_STARTED.value,
+            config={},
+        )
+
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{metric.id}/",
+            {
+                "name": "stable-name",
+                "run": False,
+                "config": {"mapping": {"output": "Output Column"}},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        metric.refresh_from_db()
+        assert metric.name == "stable-name"
 
     def test_edit_and_run_user_eval_unauthenticated(self, dataset, user_eval_metric):
         """Test that unauthenticated users cannot edit evaluations."""
