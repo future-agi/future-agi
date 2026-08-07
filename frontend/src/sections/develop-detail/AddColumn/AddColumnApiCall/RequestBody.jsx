@@ -395,10 +395,15 @@ const RequestBody = ({
             outline: "none",
             color: theme.palette.text.primary,
             caretColor: theme.palette.text.primary,
-            backgroundColor: "transparent",
             position: "relative",
             verticalAlign: "top",
             ...sx,
+            // The backdrop layer provides the visible background and syntax
+            // highlighting; the textarea must stay transparent so that layer
+            // shows through. Re-assert this after `...sx` so a caller-supplied
+            // background can't cover the backdrop and hide the typed text
+            // (#1586).
+            backgroundColor: "transparent",
           }}
           onKeyDown={onKeyDown}
         />
