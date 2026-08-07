@@ -22,6 +22,8 @@ import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
 
 // Session storage key for per-tab user tracking
 const SESSION_USER_ID_KEY = "currentUserId";
+// Session storage key for this tab's organization
+const SESSION_ORG_ID_KEY = "organizationId";
 
 // Helper to decode JWT and extract user ID (without verification)
 function decodeTokenUserId(token) {
@@ -41,6 +43,26 @@ function decodeTokenUserId(token) {
   } catch {
     return null;
   }
+}
+
+// Pin the backend-resolved org before `user` reaches the tree, so no consumer
+// can fire an org-scoped request before the org is known.
+function pinResolvedOrganization(user) {
+  const org = user?.organization;
+  const orgId = org?.id || sessionStorage.getItem(SESSION_ORG_ID_KEY);
+  if (!orgId) return null;
+
+  sessionStorage.setItem(SESSION_ORG_ID_KEY, orgId);
+  if (org?.id) {
+    if (org.name) sessionStorage.setItem("organizationName", org.name);
+    if (org.display_name)
+      sessionStorage.setItem("organizationDisplayName", org.display_name);
+    if (user?.organization_role)
+      sessionStorage.setItem("organizationRole", user.organization_role);
+    if (user?.org_level != null)
+      sessionStorage.setItem("orgLevel", String(user.org_level));
+  }
+  return orgId;
 }
 
 const initialState = {
@@ -77,9 +99,13 @@ export function AuthProvider({ children }) {
       const accessToken = localStorage.getItem(STORAGE_KEY);
 
       if (accessToken) {
+        // Without this the backend answers for whichever org was last switched
+        // to in any tab.
+        const storedOrgId = sessionStorage.getItem(SESSION_ORG_ID_KEY);
         const response = await axios.get(endpoints.auth.me, {
           headers: {
             Authorization: `Bearer ${accessToken}`,
+            ...(storedOrgId ? { "X-Organization-Id": storedOrgId } : {}),
           },
         });
 
@@ -100,7 +126,7 @@ export function AuthProvider({ children }) {
         // Store user ID in sessionStorage for cross-tab user detection
         sessionStorage.setItem(SESSION_USER_ID_KEY, user?.id);
 
-        setSession(accessToken, sessionStorage.getItem("organizationId"));
+        setSession(accessToken, pinResolvedOrganization(user));
         if (user?.remember_me) {
           setRememberMe(user.remember_me);
         }
@@ -212,12 +238,12 @@ export function AuthProvider({ children }) {
       },
     );
 
-    setSession(accessToken, sessionStorage.getItem("organizationId"));
+    const user = userResponse.data;
+
+    setSession(accessToken, pinResolvedOrganization(user));
     if (refreshToken) {
       setRefreshToken(refreshToken);
     }
-
-    const user = userResponse.data;
 
     // Store user ID in sessionStorage for cross-tab user detection
     sessionStorage.setItem(SESSION_USER_ID_KEY, user.id);

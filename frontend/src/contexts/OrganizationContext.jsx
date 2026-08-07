@@ -152,20 +152,26 @@ export function OrganizationProvider({ children }) {
       return;
     }
 
-    // No sessionStorage → fetch org list from membership and seed first org
+    // No sessionStorage → seed from the org list. `is_selected` is the
+    // backend's answer; orgs[0] is just DB order.
     const seedFromMembership = async () => {
       try {
         const response = await axios.get(endpoints.organizations.list);
         const orgs =
           response?.data?.result?.organizations || response?.data || [];
         if (orgs.length > 0) {
-          const first = orgs[0];
+          const selected = orgs.find((org) => org.is_selected) || orgs[0];
           const initial = {
-            id: first.id,
-            name: first.name || null,
-            displayName: first.display_name || null,
-            role: user.organization_role || null,
-            orgLevel: user.org_level != null ? user.org_level : null,
+            id: selected.id,
+            name: selected.name || null,
+            displayName: selected.display_name || null,
+            role: selected.role || user.organization_role || null,
+            orgLevel:
+              selected.level != null
+                ? selected.level
+                : user.org_level != null
+                  ? user.org_level
+                  : null,
           };
           setOrganization(initial);
           writeSessionOrganization(initial);
@@ -205,7 +211,7 @@ export function OrganizationProvider({ children }) {
       // 2. Update organization axios header
       setOrganizationHeader(newOrg.id);
 
-      // 3. If a workspace was returned, update workspace sessionStorage too
+      // 3. Re-point the workspace at the new org, or drop the old org's.
       if (wsData.id) {
         sessionStorage.setItem("workspaceId", wsData.id);
         sessionStorage.setItem("workspaceName", wsData.name || "");
@@ -213,7 +219,16 @@ export function OrganizationProvider({ children }) {
           "workspaceDisplayName",
           wsData.display_name || wsData.name || "",
         );
+        sessionStorage.setItem("workspaceOrgId", newOrg.id);
         axios.defaults.headers.common["X-Workspace-Id"] = wsData.id;
+      } else {
+        sessionStorage.removeItem("workspaceId");
+        sessionStorage.removeItem("workspaceName");
+        sessionStorage.removeItem("workspaceDisplayName");
+        sessionStorage.removeItem("workspaceRole");
+        sessionStorage.removeItem("wsLevel");
+        sessionStorage.removeItem("workspaceOrgId");
+        delete axios.defaults.headers.common["X-Workspace-Id"];
       }
 
       // 4. Hard refresh — clears all React state, query cache, component trees
