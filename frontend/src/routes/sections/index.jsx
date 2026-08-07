@@ -9,18 +9,30 @@ import { useAuthContext } from "src/auth/hooks";
 import { AuthGuard } from "src/auth/guard";
 import { SplashScreen } from "src/components/loading-screen";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
-import { useDeploymentMode, usePostLoginPath } from "src/hooks/useDeploymentMode";
+import {
+  useDeploymentMode,
+  usePostLoginPath,
+} from "src/hooks/useDeploymentMode";
 import SOSLoginPage from "src/pages/SOSLoginPage";
+import { paths } from "src/routes/paths";
+import { isValidationDone } from "src/sections/oss-first-run/ossFlowState";
 
 const OAuthConsent = lazyWithRetry(() => import("src/pages/mcp/OAuthConsent"));
 const SharedView = lazyWithRetry(() => import("src/pages/shared/SharedView"));
+const OssSetupView = lazyWithRetry(
+  () => import("src/sections/oss-first-run/OssSetupView"),
+);
 
 // ----------------------------------------------------------------------
 
 export default function Router() {
   const { user } = useAuthContext();
   const { currentWorkspaceRole } = useWorkspace();
-  const { isOSS, isLoading: isDeploymentModeLoading } = useDeploymentMode();
+  const {
+    isOSS,
+    isSuccess: isDeploymentModeConfirmed,
+    isLoading: isDeploymentModeLoading,
+  } = useDeploymentMode();
   const postLoginPath = usePostLoginPath();
 
   const dashboardRoutesArray = useMemo(
@@ -28,14 +40,23 @@ export default function Router() {
     [user, currentWorkspaceRole, isOSS],
   );
 
+  // Confirmed read required, or a failed probe sends cloud users to /setup.
+  let rootTarget = postLoginPath;
+  if (isDeploymentModeConfirmed && isOSS && !isValidationDone()) {
+    rootTarget = paths.ossSetup;
+  }
+
   const element = useRoutes([
     {
       path: "/",
+      element: <Navigate to={rootTarget} replace />,
+    },
+    {
+      path: paths.ossSetup,
       element: (
-        <Navigate
-          to={postLoginPath}
-          replace
-        />
+        <Suspense fallback={<SplashScreen />}>
+          <OssSetupView />
+        </Suspense>
       ),
     },
     {

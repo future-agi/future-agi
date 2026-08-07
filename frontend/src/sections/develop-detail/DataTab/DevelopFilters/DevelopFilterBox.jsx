@@ -78,106 +78,22 @@ const formatDateInputValue = (value) => {
   return stringValue;
 };
 
-// Store filterOp → panel operator (per field type)
-const opStoreToPanel = (storeOp, panelType) => {
-  if (panelType === "number") {
-    return (
-      {
-        equals: "equal_to",
-        not_equals: "not_equal_to",
-        greater_than: "greater_than",
-        less_than: "less_than",
-        greater_than_or_equal: "greater_than_or_equal",
-        less_than_or_equal: "less_than_or_equal",
-        between: "between",
-        not_in_between: "not_between",
-      }[storeOp] || "equal_to"
-    );
-  }
-  if (panelType === "date") {
-    return (
-      {
-        equals: "on",
-        less_than: "before",
-        greater_than: "after",
-        between: "between",
-        not_in_between: "not_between",
-      }[storeOp] || "on"
-    );
-  }
-  if (panelType === "boolean") return "is";
-  if (panelType === "array") {
-    return (
-      {
-        contains: "contains",
-        not_contains: "not_contains",
-        is_null: "is_empty",
-        is_not_null: "is_not_empty",
-      }[storeOp] || "contains"
-    );
-  }
-  // string
-  return (
-    {
-      equals: "is",
-      not_equals: "is_not",
-      contains: "contains",
-      not_contains: "not_contains",
-      starts_with: "starts_with",
-      // Legacy op without a direct panel equivalent falls back to contains.
-      ends_with: "contains",
-    }[storeOp] || "is"
-  );
+const DEFAULT_OP_BY_PANEL_TYPE = {
+  number: "equals",
+  date: "equals",
+  boolean: "equals",
+  array: "contains",
+  string: "in",
+  text: "in",
 };
 
-// Panel operator → store filterOp
+// The shared TraceFilterPanel stores canonical backend operator values.
+const opStoreToPanel = (storeOp, panelType) => {
+  return storeOp || DEFAULT_OP_BY_PANEL_TYPE[panelType] || "equals";
+};
+
 const opPanelToStore = (panelOp, panelType) => {
-  if (panelType === "number") {
-    return (
-      {
-        equal_to: "equals",
-        not_equal_to: "not_equals",
-        greater_than: "greater_than",
-        less_than: "less_than",
-        greater_than_or_equal: "greater_than_or_equal",
-        less_than_or_equal: "less_than_or_equal",
-        between: "between",
-        not_between: "not_in_between",
-      }[panelOp] || "equals"
-    );
-  }
-  if (panelType === "date") {
-    return (
-      {
-        on: "equals",
-        before: "less_than",
-        after: "greater_than",
-        between: "between",
-        not_between: "not_in_between",
-      }[panelOp] || "equals"
-    );
-  }
-  if (panelType === "boolean") return "equals";
-  if (panelType === "array") {
-    return (
-      {
-        contains: "contains",
-        not_contains: "not_contains",
-        is_empty: "is_null",
-        is_not_empty: "is_not_null",
-      }[panelOp] || "contains"
-    );
-  }
-  // string
-  return (
-    {
-      is: "equals",
-      is_not: "not_equals",
-      contains: "contains",
-      not_contains: "not_contains",
-      starts_with: "starts_with",
-    }[panelOp] || "equals"
-  );
+  return panelOp || DEFAULT_OP_BY_PANEL_TYPE[panelType] || "equals";
 };
 
 // Store filterValue → panel value (mostly a pass-through; normalize number/date arrays)
@@ -195,7 +111,7 @@ const valueStoreToPanel = (val, panelType) => {
 };
 
 const isNullish = (v) => v === undefined || v === null;
-const valuePanelToStore = (val, panelType) => {
+const valuePanelToStore = (val, panelType, operator) => {
   if (panelType === "boolean") return val === "true" || val === true;
   if (panelType === "date") {
     if (Array.isArray(val)) {
@@ -204,6 +120,10 @@ const valuePanelToStore = (val, panelType) => {
     return val ? new Date(val) : "";
   }
   if (Array.isArray(val)) {
+    if (operator === "in" || operator === "not_in") {
+      const clean = val.filter((v) => !isNullish(v) && v !== "");
+      return clean.length ? clean : "";
+    }
     if (panelType === "array") {
       const clean = val.filter((v) => !isNullish(v) && v !== "");
       return clean.length ? clean : "";
@@ -214,6 +134,10 @@ const valuePanelToStore = (val, panelType) => {
     return val;
   }
   if (isNullish(val)) return "";
+  // in/not_in require a list value; wrap a single typed scalar so it still applies.
+  if (operator === "in" || operator === "not_in") {
+    return val === "" ? "" : [val];
+  }
   return val;
 };
 
@@ -246,6 +170,10 @@ export const unwrapScalarValue = (value, fieldType, operator) => {
     return value;
   }
   if (fieldType === "array") return value;
+  if (operator === "in" || operator === "not_in") {
+    const clean = value.filter((item) => !isNullish(item) && item !== "");
+    return clean.length ? clean : "";
+  }
   if (operator === "between" || operator === "not_between") {
     return value.every(isNullish) ? "" : value;
   }
@@ -265,7 +193,11 @@ function normalizePickerValues(values) {
 
 export const panelFilterToStore = (panelFilter) => {
   const storeType = PANEL_TYPE_TO_STORE_TYPE[panelFilter.fieldType] || "text";
-  const rawValue = valuePanelToStore(panelFilter.value, panelFilter.fieldType);
+  const rawValue = valuePanelToStore(
+    panelFilter.value,
+    panelFilter.fieldType,
+    panelFilter.operator,
+  );
   const filterValue = unwrapScalarValue(
     rawValue,
     panelFilter.fieldType,
@@ -479,7 +411,7 @@ export const buildProperties = (allColumns) => {
   return allColumns
     .map((column) => {
       const colData = column?.col;
-      const dataType = colData?.data_type ?? colData?.dataType;
+      const dataType = colData?.data_type;
       if (!ALLOWED_DATA_TYPES.has(dataType)) return null;
       const panelType = DATA_TYPE_TO_PANEL_TYPE[dataType] || "string";
       const originType = colData?.origin_type;

@@ -96,6 +96,7 @@ export const AGENT_TYPES = {
 export const VOICE_CHAT_PROVIDERS = [
   { label: "Vapi", value: "vapi" },
   { label: "Retell", value: "retell" },
+  { label: "Bland.ai", value: "bland" },
   // Hidden until LiveKit server stability is restored.
   // { label: "LiveKit", value: "livekit_bridge" },
   // { label: "ElevenLabs", value: "elevenlabs" },
@@ -127,27 +128,53 @@ export const AUTH_METHODS_BY_PROVIDER = {
   vapi: AUTH_METHODS,
   retell: AUTH_METHODS,
   elevenlabs: AUTH_METHODS,
+  bland: AUTH_METHODS,
   others: OTHER_AUTH_METHODS,
 };
 
-export const stepsInfo = [
+/**
+ * Providers that offer a single selectable auth method (API Key) have nothing
+ * to choose, so preselect it rather than leaving a required field empty.
+ * Providers with a real menu return "" and the user picks.
+ *
+ * @param {string} provider
+ * @returns {string}
+ */
+export const defaultAuthMethodForProvider = (provider) => {
+  const byProvider =
+    /** @type {Record<string, {value: string, disabled?: boolean}[]>} */ (
+      AUTH_METHODS_BY_PROVIDER
+    );
+  const selectable = (byProvider[provider] || []).filter(
+    (method) => !method.disabled,
+  );
+  return selectable.length === 1 ? selectable[0].value : "";
+};
+
+export const getStepsInfo = (isDark) => [
   {
     title: "Select agent definition",
     description:
       "Start from scratch to create a clear, goal-oriented prompt tailored to your needs.",
-    imageSrc: "/assets/agents/help/select-agent-def.svg",
+    imageSrc: isDark
+      ? "/assets/agents/help/select-agent-def_dark.svg"
+      : "/assets/agents/help/select-agent-def.svg",
   },
   {
     title: "Generate workflow and add personas",
     description:
       "Start with a ready-made prompt template. Select an option and tailor it to fit your specific needs.",
-    imageSrc: "/assets/agents/help/gen-workkflow.svg",
+    imageSrc: isDark
+      ? "/assets/agents/help/gen-workkflow_dark.svg"
+      : "/assets/agents/help/gen-workkflow.svg",
   },
   {
     title: "Review scenarios for tests",
     description:
       "Refine what you have to make your output clearer, smarter, and more effective.",
-    imageSrc: "/assets/agents/help/review-scenatios.svg",
+    imageSrc: isDark
+      ? "/assets/agents/help/review-scenatios_dark.svg"
+      : "/assets/agents/help/review-scenatios.svg",
   },
 ];
 
@@ -253,10 +280,38 @@ export const LIVEKIT_STEPS = [
   },
 ];
 
+// Bland uses a Conversational Pathway as the "assistant": the pathway ID goes
+// in the Assistant ID field, and the API key is sent as a raw authorization
+// header (no Bearer prefix). Copy references Bland's stable product nouns only,
+// not exact dashboard menu labels, so the steps don't drift with UI changes.
+export const BLAND_STEPS = [
+  {
+    label: "1. Log in to",
+    linkText: "Bland.ai",
+    link: "https://app.bland.ai",
+  },
+  {
+    label:
+      "2. Copy your Bland API key from your account settings — it is sent as the raw authorization header (no 'Bearer' prefix).",
+  },
+  {
+    label: "3. Open the Conversational Pathway your agent runs.",
+  },
+  {
+    label:
+      "4. Copy the pathway's ID and paste it into the Assistant ID field — Bland uses the pathway ID as the assistant.",
+  },
+  {
+    label:
+      "5. Set a Contact Number — Bland has no web connector, so a phone number is required to simulate a Bland agent. For inbound tests, use a Bland number attached to that pathway that can receive calls.",
+  },
+];
+
 export const PROVIDER_STEPS_MAPPER = {
   vapi: VAPI_STEPS,
   retell: RETELL_STEPS,
   elevenlabs: ELEVENLABS_STEPS,
+  bland: BLAND_STEPS,
   livekit: LIVEKIT_STEPS,
   livekit_bridge: LIVEKIT_STEPS,
 };

@@ -1,15 +1,16 @@
 import React, { useEffect, useState } from "react";
 import { Helmet } from "react-helmet-async";
 import { useParams } from "react-router";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useWorkspaceFromList } from "src/api/workspaces/list";
 import {
   Box,
   Typography,
   TextField,
   Button,
-  CircularProgress,
 } from "@mui/material";
 import { useSnackbar } from "notistack";
+import { LoadingScreen } from "src/components/loading-screen";
 import axiosInstance, { endpoints } from "src/utils/axios";
 import { useAuthContext } from "src/auth/hooks";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
@@ -26,26 +27,16 @@ export default function WorkspaceGeneral() {
   const isOrgAdminPlus = role === "Owner" || role === "Admin";
 
   // Fetch workspace list and find this workspace
-  const { data, isLoading } = useQuery({
-    queryKey: ["workspace-detail", workspaceId],
-    queryFn: () => axiosInstance.get(endpoints.workspace.workspaceList),
-    enabled: !!workspaceId,
-  });
-
-  const workspace = (data?.data?.results || []).find(
-    (ws) => ws.id === workspaceId,
-  );
+  const { workspace, isLoading } = useWorkspaceFromList(workspaceId);
 
   useEffect(() => {
     if (workspace) {
-      setDisplayName(
-        workspace.display_name || workspace.displayName || workspace.name || "",
-      );
+      setDisplayName(workspace.display_name || workspace.name || "");
     }
   }, [workspace]);
 
   // Check if user is WS Admin for this workspace
-  const wsLevel = workspace?.user_ws_level ?? workspace?.userWsLevel ?? 0;
+  const wsLevel = workspace?.user_ws_level ?? 0;
   const isWsAdmin = isOrgAdminPlus || wsLevel >= 8;
   const canEdit = isWsAdmin;
 
@@ -61,9 +52,6 @@ export default function WorkspaceGeneral() {
       if (workspaceId === currentWorkspaceId) {
         updateWorkspaceName(displayName);
       }
-      queryClient.invalidateQueries({
-        queryKey: ["workspace-detail", workspaceId],
-      });
       queryClient.invalidateQueries({
         queryKey: ["user-workspaces-for-settings"],
       });
@@ -86,21 +74,11 @@ export default function WorkspaceGeneral() {
 
   const hasChanges =
     workspace &&
-    displayName !==
-      (workspace.display_name || workspace.displayName || workspace.name || "");
+    displayName !== (workspace.display_name || workspace.name || "");
 
   if (isLoading) {
     return (
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          height: 300,
-        }}
-      >
-        <CircularProgress />
-      </Box>
+      <LoadingScreen variant="orbit" sx={{ height: "100%", minHeight: "60vh" }} />
     );
   }
 

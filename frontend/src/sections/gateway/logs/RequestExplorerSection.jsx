@@ -149,6 +149,10 @@ const RequestExplorerSection = () => {
         if (filters.fallbackUsed) params.fallback_used = filters.fallbackUsed;
         if (filters.sort) params.ordering = filters.sort;
         if (filters.statusCode) params.status_code = filters.statusCode;
+        if (filters.statusCodeMin)
+          params.min_status_code = filters.statusCodeMin;
+        if (filters.statusCodeMax)
+          params.max_status_code = filters.statusCodeMax;
 
         params.export_format = format;
 

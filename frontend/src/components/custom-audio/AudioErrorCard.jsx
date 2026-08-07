@@ -43,12 +43,12 @@ const AudioErrorCard = ({ valueInfos, column }) => {
               <Typography
                 sx={{ mt: 1, ml: 1, fontSize: "12px", color: "text.disabled" }}
               >
-                {expanded[index] || item.description.length <= wordLimit
-                  ? item.description
-                  : `${item.description.substring(0, wordLimit)}...`}
+                {expanded[index] || (item.description || "").length <= wordLimit
+                  ? (item.description || "")
+                  : `${(item.description || "").substring(0, wordLimit)}...`}
               </Typography>
 
-              {item.description.length > wordLimit && (
+              {(item.description || "").length > wordLimit && (
                 <Box
                   sx={{ display: "flex", justifyContent: "flex-end", mt: 1 }}
                 >

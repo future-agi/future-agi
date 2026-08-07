@@ -1,6 +1,9 @@
 import { format, isValid } from "date-fns";
-import logger from "src/utils/logger";
-import { objectCamelToSnake } from "../../../../utils/utils";
+import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
+import {
+  LIST_FILTER_OPS,
+  NO_VALUE_FILTER_OPS,
+} from "src/api/contracts/filter-contract.generated";
 
 export const DefaultFilter = {
   columnId: "",
@@ -22,22 +25,29 @@ export const MapColumnTypeToFilterType = {
 };
 // Filter looks like this a valid filter should have columnId string length > 0 &
 // filterConfig.filterValue, filterConfig.filterOp, filterConfig.filterType should not be undefined
-// if filterOp is between or no_between then filterConfig.filterValue should be an array of 2 elements
+// if filterOp is between or not_between then filterConfig.filterValue should be an array of 2 elements
 export const validateFilter = (filter) => {
   const filterValue = filter.filterConfig.filterValue;
   const filterOp = filter.filterConfig.filterOp;
   const filterType = filter.filterConfig.filterType;
+  const requiresNoValue = NO_VALUE_FILTER_OPS.includes(filterOp);
+  const requiresListValue = LIST_FILTER_OPS.includes(filterOp);
+  const hasValue =
+    requiresNoValue ||
+    (requiresListValue
+      ? Array.isArray(filterValue) && filterValue.length > 0
+      : filterValue !== "");
 
   return (
     filter.columnId.length > 0 &&
-    filterValue !== "" &&
+    hasValue &&
     filterOp !== "" &&
     filterType !== "" &&
     (filterType === "datetime"
-      ? filterOp === "between" || filterOp === "not_in_between"
+      ? filterOp === "between" || filterOp === "not_between"
         ? isValid(filterValue[0]) && isValid(filterValue[1])
         : isValid(filterValue)
-      : filterOp === "between" || filterOp === "not_in_between"
+      : filterOp === "between" || filterOp === "not_between"
         ? Array.isArray(filterValue) && filterValue.length === 2
         : true)
   );
@@ -45,7 +55,6 @@ export const validateFilter = (filter) => {
 
 const transformFilterValue = (filterValue, filterType) => {
   if (filterType === "datetime") {
-    logger.debug({ filterValue });
     if (Array.isArray(filterValue)) {
       return [
         filterValue[0]
@@ -74,17 +83,16 @@ const transformFilterValue = (filterValue, filterType) => {
   return filterValue;
 };
 
-export const transformFilter = (filter) => ({
-  column_id: filter.columnId,
-  filter_config: objectCamelToSnake({
-    ...filter.filterConfig,
-    filterValue: transformFilterValue(
+export const transformFilter = (filter) =>
+  buildApiFilterFromPanelRow({
+    field: filter.columnId,
+    fieldType: filter.filterConfig.filterType,
+    operator: filter.filterConfig.filterOp,
+    value: transformFilterValue(
       filter.filterConfig.filterValue,
       filter.filterConfig.filterType,
-      filter.filterConfig.filterOp,
     ),
-  }),
-});
+  });
 
 export const compareFilterChange = (prevFilters, filters) => {
   if (!prevFilters || !filters) return false;

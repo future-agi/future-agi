@@ -62,7 +62,9 @@ function deriveVariablesFromDataset(dataset) {
   const variables = {};
   const cellMap = {};
   for (const col of dataset.columns) {
-    const cell = row?.cells?.find((c) => c.columnId === col.id);
+    const cell = row?.cells?.find(
+      (c) => (c.columnId || c.column_id) === col.id,
+    );
     variables[col.name] = cell?.value ?? "";
     if (cell) cellMap[col.name] = cell;
   }

@@ -14,21 +14,45 @@ from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.models.choices import ModelChoices
 from model_hub.models.develop_dataset import Column
-from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
+from model_hub.services.ground_truth_service import GroundTruthService
 from model_hub.views.eval_runner import (
     EvaluationRunner,
     _extract_column_id_and_path,
     process_mapping,
 )
 from sdk.utils.helpers import _get_api_call_type
+from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_organization
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_specific_error_message
-from tfc.constants.api_calls import APICallStatusChoices
+
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
     log_and_deduct_cost_for_api_request = None
+
+
+def _canonical_playground_output(value, response, template, api_call_log_row):
+    from model_hub.types import PlaygroundEvalResponse
+
+    payload = PlaygroundEvalResponse(
+        output=value,
+        reason=response.get("reason"),
+        model=response.get("model"),
+        metadata=response.get("metadata"),
+        output_type=template.config.get("output"),
+        log_id=(
+            str(api_call_log_row.log_id) if api_call_log_row is not None else None
+        ),
+        ground_truth_examples=response.get("ground_truth_examples"),
+        warnings=response.get("warnings") or None,
+    ).model_dump()
+    if payload.get("warnings") is None:
+        payload.pop("warnings", None)
+    if payload.get("ground_truth_examples") is None:
+        payload.pop("ground_truth_examples", None)
+    return payload
 
 
 def run_eval_func(
@@ -45,6 +69,7 @@ def run_eval_func(
         # Block agent-type evals in OSS mode — AgentEvaluator requires ee/
         if getattr(template, "eval_type", "") == "agent":
             from tfc.ee_loader import _is_oss_mode
+
             if _is_oss_mode():
                 raise ValueError(
                     "Agent evaluations are not available on OSS. "
@@ -214,6 +239,23 @@ def run_eval_func(
         if input_data_types:
             source_config.update({"input_data_types": input_data_types})
 
+        # Stamp which eval version produced this result so the Usage tab can
+        # show it per row. Callers that already resolved a version (e.g. a
+        # pinned composite child) pass it in; otherwise the template default.
+        tracked_version = kwargs.get("resolved_version")
+        if not tracked_version:
+            try:
+                tracked_version = EvalTemplateVersion.objects.get_default(template)
+            except Exception:
+                logger.warning(
+                    "version_tracking_failed",
+                    template_id=str(template.id),
+                    exc_info=True,
+                )
+        if tracked_version:
+            source_config["version_id"] = str(tracked_version.id)
+            source_config["version_number"] = tracked_version.version_number
+
         try:
             from ee.usage.schemas.event_types import BillingEventType
         except ImportError:
@@ -255,7 +297,9 @@ def run_eval_func(
             )
 
             if not api_call_log_row:
-                raise ValueError("API call not allowed : Error validating the api call.")
+                raise ValueError(
+                    "API call not allowed : Error validating the api call."
+                )
 
             if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
                 raise ValueError("API call not allowed : ", api_call_log_row.status)
@@ -286,50 +330,12 @@ def run_eval_func(
             if isinstance(code_eval_params, dict):
                 _run_kwargs.update(code_eval_params)
 
-        # Inject ground truth config if enabled on the template
-        gt_config_in_template = (
-            template.config.get("ground_truth") if template.config else None
+        GroundTruthService.inject_context(
+            _run_kwargs,
+            template,
+            organization_id=org.id if org else None,
+            workspace_id=workspace.id if workspace else None,
         )
-        if gt_config_in_template and gt_config_in_template.get("enabled"):
-            from model_hub.utils.ground_truth_retrieval import (
-                format_few_shot_examples,
-                get_ground_truth_few_shot_examples,
-                load_ground_truth_config,
-            )
-
-            gt_config = load_ground_truth_config(template)
-            if gt_config:
-                # Enrich with embedding_status from the GT model
-                gt_obj = None
-                try:
-                    from model_hub.models.evals_metric import EvalGroundTruth
-
-                    gt_obj = EvalGroundTruth.objects.filter(
-                        id=gt_config["ground_truth_id"], deleted=False
-                    ).first()
-                    if gt_obj:
-                        gt_config["embedding_status"] = gt_obj.embedding_status
-                except Exception:
-                    pass
-
-                if (
-                    eval_id == "CustomPromptEvaluator"
-                    and gt_obj
-                    and gt_obj.embedding_status == "completed"
-                ):
-                    gt_examples = get_ground_truth_few_shot_examples(
-                        gt_config, _run_kwargs
-                    )
-                    if gt_examples:
-                        injection_format = gt_config.get(
-                            "injection_format", "structured"
-                        )
-                        formatted = format_few_shot_examples(
-                            gt_examples, gt_obj.role_mapping, injection_format
-                        )
-                        _run_kwargs["ground_truth_few_shot"] = formatted
-                else:
-                    _run_kwargs["ground_truth_config"] = gt_config
 
         # Preprocess inputs for code evals that need external data (e.g. CLIP embeddings)
         if _is_code_eval:
@@ -345,9 +351,7 @@ def run_eval_func(
         # the caller omits unmapped variables.
         from model_hub.utils.eval_input_validation import validate_eval_inputs
 
-        partial_input_warning, _run_kwargs = validate_eval_inputs(
-            template, _run_kwargs
-        )
+        partial_input_warning, _run_kwargs = validate_eval_inputs(template, _run_kwargs)
 
         eval_result = eval_instance.run(**_run_kwargs)
         end_time = time.time()
@@ -371,7 +375,13 @@ def run_eval_func(
         }
         if partial_input_warning:
             response["warnings"] = [partial_input_warning]
-        # logger.info(f"response*******: {response}")
+
+        response["ground_truth_examples"] = GroundTruthService.resolve_preview_examples(
+            eval_template=template,
+            eval_inputs=_run_kwargs,
+            organization_id=org.id if org else None,
+            workspace_id=workspace.id if workspace else None,
+        )
 
         metadata = response.get("metadata")
         # Format the result based on output type
@@ -385,7 +395,7 @@ def run_eval_func(
                 metadata = {}
 
         if api_call_log_row is None:
-            return response
+            return _canonical_playground_output(value, response, template, None)
         config_dict = json.loads(api_call_log_row.config)
         output_payload = {"output": value, "reason": response["reason"]}
         # Mirror the dataset path: propagate partial-input warnings into
@@ -485,57 +495,59 @@ def run_eval_func(
                 token_usage=getattr(eval_instance, "token_usage", {}),
             )
 
-            credits = billing_config.calculate_ai_credits(actual_cost) if billing_config else 0
+            credits = (
+                billing_config.calculate_ai_credits(actual_cost)
+                if billing_config
+                else 0
+            )
 
-            if emit is not None and UsageEvent is not None and BillingEventType is not None:
-
+            if (
+                emit is not None
+                and UsageEvent is not None
+                and BillingEventType is not None
+            ):
 
                 emit(
-                UsageEvent(
-                    org_id=str(org.id),
-                    event_type=api_call_type,
-                    amount=credits,
-                    properties={
-                        "source": source,
-                        "source_id": str(template.id),
-                        "raw_cost_usd": str(actual_cost),
-                        **cost_properties,
-                        **token_usage_properties(_token_usage),
-                    },
+                    UsageEvent(
+                        org_id=str(org.id),
+                        event_type=api_call_type,
+                        amount=credits,
+                        properties={
+                            "source": source,
+                            "source_id": str(template.id),
+                            "raw_cost_usd": str(actual_cost),
+                            **cost_properties,
+                            **token_usage_properties(_token_usage),
+                        },
+                    )
                 )
-            )
         except Exception:
             pass  # Metering failure must not break the action
 
-        output = {}
-        output["output"] = value
-        output["reason"] = response.get("reason")
-        output["model"] = response.get("model")
-        output["metadata"] = response.get("metadata")
-        output["output_type"] = template.config.get("output")
-        output["log_id"] = str(api_call_log_row.log_id)
-        # Pass partial-input warning through to the playground UI so the
-        # yellow ⚠ badge can render alongside the result.
-        if response.get("warnings"):
-            output["warnings"] = response["warnings"]
+        output = _canonical_playground_output(
+            value, response, template, api_call_log_row
+        )
 
         if error_localizer:
             from model_hub.tasks.user_evaluation import (
-                _eval_passed,
                 trigger_error_localization_for_playground,
             )
 
-            if not _eval_passed(value):
-                logger.info(
-                    f"sending to error localizer: {api_call_log_row.log_id}, {value}, {param_values}, {response.get('reason')}"
-                )
-                trigger_error_localization_for_playground(
-                    eval_template=template,
-                    log=api_call_log_row,
-                    value=value,
-                    mapping=mappings,
-                    eval_explanation=response.get("reason"),
-                )
+            logger.info(
+                "error_localizer_dispatch",
+                log_id=api_call_log_row.log_id,
+                value=value,
+                params=param_values,
+                reason=response.get("reason"),
+            )
+            trigger_error_localization_for_playground(
+                eval_template=template,
+                log=api_call_log_row,
+                value=value,
+                mapping=mappings,
+                eval_explanation=response.get("reason"),
+                eval_config=config,
+            )
 
         return output
 
@@ -574,12 +586,16 @@ def process_eval_for_single_row(
     source,
     dataset_id,
     model=ModelChoices.TURING_LARGE.value,
+    runtime_config=None,
 ):
     try:
         close_old_connections()
         runner.eval_template = eval_template
         eval_instance = runner._create_eval_instance(
-            config=data_config, eval_class=eval_class, model=model
+            config=data_config,
+            eval_class=eval_class,
+            model=model,
+            runtime_config=runtime_config,
         )
 
         # Extract base column IDs from mappings (handle JSON paths like uuid.field)
@@ -598,24 +614,41 @@ def process_eval_for_single_row(
             mappings, row, run_prompt_column=run_prompt_column, runner=runner
         )
 
+        api_call_config = {
+            "preview": True,
+            "dataset_id": str(dataset_id),
+            "row_id": str(row.id),
+            "required_keys": required_field,
+        }
+        if isinstance(runtime_config, dict) and runtime_config.get("params"):
+            api_call_config["params"] = runtime_config.get("params")
+
         api_call_log_row = runner._handle_api_call(
             row,
             mappings,
-            config={
-                "preview": True,
-                "dataset_id": str(dataset_id),
-                "row_id": str(row.id),
-                "required_keys": required_field,
-            },
+            config=api_call_config,
             eval_template=eval_template,
             org=get_current_organization() or user.organization,
             preview=True,
             req_map={"required_field": required_field, "mapping": mapping},
         )
 
-        eval_result = eval_instance.run(
-            **runner.map_fields(required_field, mapping, eval_template)
+        eval_inputs = runner.map_fields(
+            required_field,
+            mapping,
+            eval_template,
+            config=(
+                runtime_config if isinstance(runtime_config, dict) else data_config
+            ),
         )
+        if (
+            getattr(eval_template, "eval_type", "") == "code"
+            and isinstance(runtime_config, dict)
+            and isinstance(runtime_config.get("params"), dict)
+        ):
+            eval_inputs.update(runtime_config["params"])
+
+        eval_result = eval_instance.run(**eval_inputs)
 
         response = {
             "data": eval_result.eval_results[0].get("data"),
@@ -674,6 +707,13 @@ def process_eval_for_single_row(
         output["metadata"] = response.get("metadata")
         output["output_type"] = eval_template.config.get("output")
         output["runtime"] = response.get("runtime")
+
+        output["ground_truth_examples"] = GroundTruthService.resolve_preview_examples(
+            eval_template=eval_template,
+            eval_inputs=eval_inputs,
+            organization_id=runner.organization_id,
+            workspace_id=runner.workspace_id,
+        )
 
         # if source == DatasetSourceChoices.SDK.value:
         #     response["output_type"] = eval_template.config.get("output")

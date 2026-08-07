@@ -320,7 +320,12 @@ class AddRunPromptColumnTool(BaseTool):
                     args=({"type": "not_started", "prompt_id": str(run_prompter.id)},)
                 )
                 workflow_started = True
-            except Exception:
+            except Exception as e:
+                logger.warning(
+                    "run_prompt_celery_dispatch_failed",
+                    run_prompter_id=str(run_prompter.id),
+                    error=str(e),
+                )
                 # Fallback: mark as not_started, will be picked up by polling
                 run_prompter.status = StatusType.NOT_STARTED.value
                 run_prompter.save(update_fields=["status"])

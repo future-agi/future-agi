@@ -4,12 +4,13 @@ import re
 import django_filters
 import structlog
 import yaml
+from django.db.models import Q
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
-logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
 from model_hub.models.choices import ProviderLogoUrls
-from model_hub.models.prompt_label import PromptLabel
+from model_hub.models.prompt_folders import PromptFolder
 from model_hub.models.run_prompt import (
     PromptTemplate,
     PromptVersion,
@@ -17,6 +18,12 @@ from model_hub.models.run_prompt import (
     UserResponseSchema,
 )
 from model_hub.utils.utils import get_model_mode
+from model_hub.utils.workspace_scope import (
+    request_organization,
+    request_workspace_filter,
+)
+
+logger = structlog.get_logger(__name__)
 
 
 class VersionDefaultSerializer(serializers.Serializer):
@@ -39,47 +46,105 @@ class UserResponseSchemaSerializer(serializers.ModelSerializer):
         fields = ["id", "name", "description", "schema", "organization", "schema_type"]
         read_only_fields = ["id", "organization"]
 
-    def create(self, validated_data):
-        validated_data["organization"] = self.context["request"].user.organization
+    def _request_organization(self):
+        request = self.context.get("request")
+        if request is None:
+            return None
+        return getattr(request, "organization", None) or getattr(
+            request.user, "organization", None
+        )
 
-        existing_names = UserResponseSchema.objects.filter(
-            organization=validated_data["organization"]
-        ).values_list("name", flat=True)
-        if validated_data["name"] in existing_names:
-            raise serializers.ValidationError(
-                "A Schema with this name already exists for your organization"
-            )
+    def _request_workspace(self):
+        request = self.context.get("request")
+        if request is None:
+            return None
+        return getattr(request, "workspace", None)
 
-        if not validated_data.get("schema_type"):
-            validated_data["schema_type"] = "json"
+    def _workspace_scope(self, workspace, organization):
+        if workspace is None:
+            return Q(workspace__isnull=True)
 
-        if validated_data["schema_type"] == SchemaTypeChoices.YAML.value:
+        scope = Q(workspace=workspace)
+        if getattr(workspace, "is_default", False):
+            scope |= Q(workspace__isnull=True)
+            if organization is not None:
+                scope |= Q(
+                    workspace__is_default=True,
+                    workspace__organization=organization,
+                )
+        return scope
+
+    def _normalize_schema(self, schema, schema_type):
+        if schema_type == SchemaTypeChoices.YAML.value:
             try:
-                validated_data["schema"] = yaml.safe_load(validated_data["schema"])
+                return yaml.safe_load(schema)
             except Exception:
                 raise serializers.ValidationError("Invalid Yaml Uploaded")  # noqa: B904
-        elif validated_data["schema_type"] == SchemaTypeChoices.JSON.value:
+
+        if schema_type == SchemaTypeChoices.JSON.value:
             try:
-                if isinstance(validated_data["schema"], str):
-                    validated_data["schema"] = json.loads(validated_data["schema"])
-                    if isinstance(validated_data["schema"], list):
+                if isinstance(schema, str):
+                    schema = json.loads(schema)
+                    if isinstance(schema, list):
                         raise serializers.ValidationError("Invalid Json")
-                elif isinstance(validated_data["schema"], dict):
-                    pass
+                    return schema
+                elif isinstance(schema, dict):
+                    return schema
                 else:
                     raise serializers.ValidationError("Invalid JSON")
             except Exception as e:
                 logger.exception(f"Error: {e}")
                 raise serializers.ValidationError("Invalid Json")  # noqa: B904
 
-        if UserResponseSchema.objects.filter(
-            organization=validated_data["organization"], name=validated_data["name"]
-        ).exists():
-            raise serializers.ValidationError(
-                "A response schema with this name already exists."
+        raise serializers.ValidationError("Invalid schema type")
+
+    def validate(self, attrs):
+        organization = self._request_organization()
+        workspace = self._request_workspace()
+
+        schema_type = attrs.get(
+            "schema_type",
+            getattr(self.instance, "schema_type", None) or SchemaTypeChoices.JSON.value,
+        )
+        attrs["schema_type"] = schema_type
+
+        if "schema" in attrs:
+            attrs["schema"] = self._normalize_schema(attrs["schema"], schema_type)
+
+        name = attrs.get("name", getattr(self.instance, "name", None))
+        if organization is not None and name:
+            duplicate_qs = UserResponseSchema.no_workspace_objects.filter(
+                self._workspace_scope(workspace, organization),
+                organization=organization,
+                name__iexact=name,
             )
-        # Add organization from request context
+            if self.instance is not None:
+                duplicate_qs = duplicate_qs.exclude(id=self.instance.id)
+
+            if duplicate_qs.exists():
+                raise serializers.ValidationError(
+                    {"name": "A response schema with this name already exists."}
+                )
+
+        return attrs
+
+    def create(self, validated_data):
+        organization = self._request_organization()
+        workspace = self._request_workspace()
+        if organization is not None:
+            validated_data["organization"] = organization
+        if workspace is not None:
+            validated_data["workspace"] = workspace
         return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        organization = self._request_organization()
+        workspace = self._request_workspace()
+        if organization is not None:
+            validated_data["organization"] = organization
+        if workspace is not None:
+            validated_data["workspace"] = workspace
+        return super().update(instance, validated_data)
 
 
 class CommitSerializer(serializers.Serializer):
@@ -166,7 +231,26 @@ class PromptTemplateSerializer(serializers.ModelSerializer):
             "placeholders",
             "created_by",
         ]
-        read_only_fields = ["id"]
+        read_only_fields = ["id", "organization", "created_by"]
+
+    def validate_prompt_folder(self, value):
+        if value is None:
+            return value
+
+        request = self.context.get("request")
+        organization = request_organization(request)
+        if organization is None:
+            raise serializers.ValidationError("Prompt folder not found")
+
+        if not PromptFolder.no_workspace_objects.filter(
+            request_workspace_filter(request),
+            organization=organization,
+            deleted=False,
+            id=value.id,
+        ).exists():
+            raise serializers.ValidationError("Prompt folder not found")
+
+        return value
 
 
 class PromptExecutionSerializer(serializers.ModelSerializer):
@@ -210,14 +294,15 @@ class PromptExecutionSerializer(serializers.ModelSerializer):
         Extract model and model_detail from prompt_config_snapshot.
         """
         if latest_execution:
-            if isinstance(latest_execution.prompt_config_snapshot, list):
-                config = latest_execution.prompt_config_snapshot[0].get(
-                    "configuration", {}
+            prompt_config_snapshot = latest_execution.prompt_config_snapshot or {}
+            if isinstance(prompt_config_snapshot, list):
+                prompt_config_snapshot = (
+                    prompt_config_snapshot[0] if prompt_config_snapshot else {}
                 )
+            if isinstance(prompt_config_snapshot, dict):
+                config = prompt_config_snapshot.get("configuration", {})
             else:
-                config = latest_execution.prompt_config_snapshot.get(
-                    "configuration", {}
-                )
+                config = {}
             return config.get("model"), config.get("model_detail")
         return None, None
 
@@ -363,6 +448,10 @@ class PromptHistoryExecutionSerializer(serializers.ModelSerializer):
     prompt_config_snapshot = serializers.SerializerMethodField()
     labels = serializers.SerializerMethodField()
 
+    output = serializers.JSONField(read_only=True, allow_null=True)
+    metadata = serializers.JSONField(read_only=True, allow_null=True)
+    evaluation_configs = serializers.JSONField(read_only=True, allow_null=True)
+
     class Meta:
         model = PromptVersion
         fields = [
@@ -391,9 +480,11 @@ class PromptHistoryExecutionSerializer(serializers.ModelSerializer):
         super().__init__(*args, **kwargs)
         self.model_manager = LiteLLMModelManager(model_name="", organization_id=None)
 
+    @swagger_serializer_method(serializer_or_field=serializers.CharField())
     def get_template_name(self, obj):
         return obj.original_template.name
 
+    @swagger_serializer_method(serializer_or_field=serializers.JSONField())
     def get_prompt_config_snapshot(self, obj):
         """
         Get prompt_config_snapshot with backward compatibility for modelDetail.
@@ -412,6 +503,7 @@ class PromptHistoryExecutionSerializer(serializers.ModelSerializer):
 
         return config_snapshot
 
+    @swagger_serializer_method(serializer_or_field=serializers.JSONField())
     def get_labels(self, obj):
         # Single optimized query: join through table with PromptLabel
         # Uses values() to avoid ORM object instantiation overhead
@@ -468,6 +560,7 @@ class PromptHistoryExecutionSerializer(serializers.ModelSerializer):
                             "type": "chat",
                         }
 
+    @swagger_serializer_method(serializer_or_field=serializers.JSONField())
     def get_variable_names(self, obj):
         var_names = obj.variable_names.copy()
         if isinstance(var_names, list):
@@ -564,6 +657,10 @@ class SingleEvaluationConfigSerializer(serializers.Serializer):
     config = serializers.JSONField(required=False, default=dict)
     mapping = serializers.JSONField(required=False, default=dict)
     params = serializers.JSONField(required=False, default=dict)
+    error_localizer = serializers.BooleanField(required=False, default=False)
+    kb_id = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True, default=None
+    )
 
     def validate(self, data):
         """Validate the evaluation configuration"""

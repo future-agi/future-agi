@@ -72,6 +72,21 @@ const CustomColLoadingSkeleton = () => (
   />
 );
 
+const TERMINAL_CALL_STATUSES = new Set([
+  "completed",
+  "dropped",
+  "ended",
+  "error",
+  "failed",
+  "not-connected",
+  "ok",
+]);
+
+const isSelectableForAnnotation = (row) => {
+  const status = String(row?.status || "").toLowerCase();
+  return TERMINAL_CALL_STATUSES.has(status);
+};
+
 const CallLogsGrid = React.forwardRef(function CallLogsGrid(
   {
     id,
@@ -96,7 +111,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
   const theme = useTheme();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
-  const [pageLimit, setPageLimit] = useState(25);
+  const [pageLimit, setPageLimit] = useState(15);
   const [totalPages, setTotalPages] = useState(1);
   const [lastFilters, setLastFilters] = useState(params?.filters);
   const { selectedVersion } = useAgentDetailsStore();
@@ -147,7 +162,6 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       suppressHeaderMenuButton: true,
       suppressHeaderContextMenu: true,
       minWidth: 180,
-      suppressMultiSort: true,
       cellStyle: {
         padding: "0px",
         display: "flex",
@@ -187,6 +201,12 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     enabled,
   });
 
+  useEffect(() => {
+    if (!isLoading) {
+      setTotalPages(data?.total_pages || 1);
+    }
+  }, [data?.total_pages, isLoading]);
+
   const rows = useMemo(() => {
     if (isLoading) {
       return Array.from({ length: 10 }, (_, index) => ({
@@ -197,8 +217,6 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
         overall_score: "",
         status: "",
       }));
-    } else {
-      setTotalPages(data?.total_pages || 1);
     }
     return data?.results || [];
   }, [data, isLoading]);
@@ -283,20 +301,17 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
         visMap[c.field] = c.isVisible !== false;
         orderIndex.set(c.field, i);
       }
-      if (c.groupBy === "Custom Columns") customCols.push(c);
+      if (c.groupBy === "Custom Columns") {
+        customCols.push(c);
+        // colId key so customs sort into their own store position.
+        orderIndex.set(c.id, i);
+      }
     });
 
-    const updated = callLogsColumnDefs
-      .map((col) => ({
-        ...col,
-        ...(col.field &&
-          col.field in visMap && { hide: !visMap[col.field] }),
-      }))
-      .sort((a, b) => {
-        const ai = orderIndex.get(a?.field) ?? Infinity;
-        const bi = orderIndex.get(b?.field) ?? Infinity;
-        return ai - bi;
-      });
+    const updated = callLogsColumnDefs.map((col) => ({
+      ...col,
+      ...(col.field && col.field in visMap && { hide: !visMap[col.field] }),
+    }));
 
     // Add column defs for custom columns not already in the grid
     const existingFields = new Set(callLogsColumnDefs.map((c) => c.field));
@@ -311,7 +326,9 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
         flex: 0,
         minWidth: 120,
         hide: c.isVisible === false,
-        cellRenderer: isLoading ? CustomColLoadingSkeleton : CustomColCellRenderer,
+        cellRenderer: isLoading
+          ? CustomColLoadingSkeleton
+          : CustomColCellRenderer,
         valueGetter: (params) => {
           if (!params.data) return null;
           let value = params.data[c.id];
@@ -341,14 +358,14 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
         },
       }));
 
-    // Group under a "Custom Columns" header for parity with the other grids.
-    if (newCustomDefs.length > 0) {
-      return [
-        ...updated,
-        { headerName: "Custom Columns", children: newCustomDefs },
-      ];
-    }
-    return updated;
+    // Sort base + custom together so customs sit flat at their own positions.
+    const combined = [...updated, ...newCustomDefs];
+    combined.sort((a, b) => {
+      const ai = orderIndex.get(a?.field ?? a?.colId) ?? Infinity;
+      const bi = orderIndex.get(b?.field ?? b?.colId) ?? Infinity;
+      return ai - bi;
+    });
+    return combined;
   }, [callLogsColumnDefs, columnVisibility, isLoading]);
   useEffect(() => {
     return () => {
@@ -359,7 +376,15 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
   // Propagate reorder to parent so the View columns dropdown stays in sync.
   const onColumnMoved = useCallback(
     (params) => {
-      if (!params?.finished || !params?.api || typeof onColumnsChange !== "function") return;
+      if (
+        !params?.finished ||
+        !params?.api ||
+        typeof onColumnsChange !== "function"
+      )
+        return;
+      // User drags only — a programmatic move would rebuild the shared trace
+      // `columns` from this grid's voice-only state and corrupt it.
+      if (params.source !== "uiColumnMoved") return;
       const newOrder = (params?.api?.getColumnState() ?? [])
         .map((s) => s.colId)
         .filter((id) => id !== APP_CONSTANTS.AG_GRID_SELECTION_COLUMN);
@@ -374,8 +399,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       const sameOrder =
         next.length === cols.length &&
         next.every(
-          (c, i) =>
-            (c?.field || c?.id) === (cols[i]?.field || cols[i]?.id),
+          (c, i) => (c?.field || c?.id) === (cols[i]?.field || cols[i]?.id),
         );
       if (!sameOrder) onColumnsChange(next);
     },
@@ -423,15 +447,17 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
             defaultColDef={defaultColDef}
             rowData={rows}
             suppressServerSideFullWidthLoadingRow={true}
-            suppressRowClickSelection
-            rowSelection={onSelectionChanged ? { mode: "multiRow" } : undefined}
+            rowSelection={
+              onSelectionChanged
+                ? { mode: "multiRow", enableClickSelection: false }
+                : undefined
+            }
             selectionColumnDef={
               onSelectionChanged
                 ? { pinned: true, lockPinned: true }
                 : undefined
             }
             pagination={false}
-            serverSideInitialRowCount={5}
             noRowsOverlayComponent={() =>
               NoRowsOverlay(
                 <Typography
@@ -465,8 +491,14 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
                       // the banner by up to `pageLimit - 1` rows.
                       const totalMatching =
                         typeof data?.count === "number" ? data.count : null;
+                      const unavailableSelectedCount = selectedRows.filter(
+                        (row) =>
+                          row?.trace_id && !isSelectableForAnnotation(row),
+                      ).length;
                       onSelectionMeta({
                         traceIds,
+                        selectedCount: traceIds.length,
+                        unavailableSelectedCount,
                         isAllOnPageSelected:
                           currentPageSize > 0 &&
                           selectedRows.length === currentPageSize,
@@ -520,7 +552,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
               }}
               sx={{ height: 36, bgcolor: "background.paper" }}
             >
-              {[10, 25, 50].map((size) => (
+              {[10, 15, 25, 50].map((size) => (
                 <MenuItem key={size} value={size}>
                   {size}
                 </MenuItem>

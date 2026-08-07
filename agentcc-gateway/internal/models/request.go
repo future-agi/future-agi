@@ -114,6 +114,10 @@ type Message struct {
 	// "thinking_blocks" (omitempty) so round-trips through providers that do not
 	// understand it are silent.
 	ThinkingBlocks json.RawMessage `json:"thinking_blocks,omitempty"`
+	// ReasoningContent carries the model's surfaced thinking summary (Gemini
+	// thought summaries, DeepSeek/LiteLLM convention). Non-standard OpenAI
+	// field, omitempty so it's silent for providers that don't emit it.
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
 
 type ToolCall struct {

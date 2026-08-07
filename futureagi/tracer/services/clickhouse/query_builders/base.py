@@ -6,7 +6,7 @@ query builders inherit from.
 """
 
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, Generator, List, Optional, Tuple
 
 # ClickHouse zero-value for UUID columns. dictGetOrDefault on Nullable(UUID)
@@ -113,9 +113,13 @@ class BaseQueryBuilder(ABC):
             A ``WHERE`` clause fragment.
         """
         prefix = f"{table_alias}." if table_alias else ""
+        # CH25 close-out: the v2 spans table uses `is_deleted` (UInt8 column
+        # from schema 002_spans_v2.sql) rather than the PeerDB-managed
+        # `_peerdb_is_deleted` of the legacy CDC mirror. All query builders
+        # that inherit from BaseQueryBuilder target the v2 spans table.
         return (
             f"WHERE {self.project_filter_sql(table_alias)} "
-            f"AND {prefix}_peerdb_is_deleted = 0"
+            f"AND {prefix}is_deleted = 0"
         )
 
     def project_filter_sql(self, table_alias: str = "") -> str:
@@ -165,7 +169,7 @@ class BaseQueryBuilder(ABC):
         - ``"less_than"`` -- sets *end_date*.
         - ``"between"`` -- sets both from a two-element list.
 
-        If no start date is found the default is *now - 7 days*.  If no end
+        If no start date is found the default is *now - 30 days*. If no end
         date is found the default is *now*.
 
         Args:
@@ -179,7 +183,7 @@ class BaseQueryBuilder(ABC):
 
         for f in filters:
             col_id = f.get("column_id") or f.get("columnId")
-            config = f.get("filter_config") or f.get("filterConfig", {})
+            config = f.get("filter_config") or f.get("filterConfig") or {}
             if col_id not in ("created_at", "start_time"):
                 continue
 
@@ -194,23 +198,48 @@ class BaseQueryBuilder(ABC):
                 start_date = _parse_dt(val[0])
                 end_date = _parse_dt(val[1])
 
+        # Default window when no time filter supplied: 30 days back from now.
+        # Was previously 3650 days (10 years) — that bypassed partition pruning
+        # and forced full-history scans for every dashboard-default page-load
+        # (regression caught in kartik perf sweep; 100ms+ p95 just from the
+        # un-bounded window). 30 days matches the dashboard's default view
+        # range; users wanting older data set an explicit filter, which uses
+        # the path above and gets accurate pruning anyway.
         if not start_date:
-            start_date = datetime.utcnow() - timedelta(days=3650)
+            start_date = datetime.utcnow() - timedelta(days=30)
         if not end_date:
             end_date = datetime.utcnow()
         return start_date, end_date
+
+    @staticmethod
+    def window_days_covering(filters: List[Dict]) -> int:
+        """Look-back days (from ``now()``) that cover the requested time window.
+
+        Eval-config discovery bounds its scan to ``created_at >= now() - N
+        days``. To surface every config with data anywhere in the *requested*
+        range — not a fixed 30 days — ``N`` must reach back to the window start.
+        Returns the ceil day-count from the parsed start to now (min 1); with no
+        explicit time filter the parsed default is ``now - 30d``, so the default
+        view stays ~30. Pair with ``candidate_config_ids`` so the scan stays
+        bounded by the eval table's leading sort key regardless of depth.
+        """
+        start_date, _ = BaseQueryBuilder.parse_time_range(filters)
+        delta = datetime.utcnow() - start_date
+        return max(1, delta.days + (1 if (delta.seconds or delta.microseconds) else 0))
 
     # ------------------------------------------------------------------
     # Time-series zero-fill helpers
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _normalize_timestamp(ts: datetime, interval: str) -> datetime:
+    def _normalize_timestamp(ts: date | datetime, interval: str) -> datetime:
         """Normalize *ts* to the start of its time bucket.
 
         Strips timezone info and truncates to the start of the given
         interval bucket.
         """
+        if isinstance(ts, date) and not isinstance(ts, datetime):
+            ts = datetime(ts.year, ts.month, ts.day)
         if ts.tzinfo:
             ts = ts.replace(tzinfo=None)
 

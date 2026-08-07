@@ -61,21 +61,26 @@ func TestMultimodalEmbedding_InvalidJSON(t *testing.T) {
 }
 
 func TestMultimodalEmbedding_ProviderNotSupported(t *testing.T) {
-	mock := startMockOpenAI(t)
+	mock := startMockAnthropicNative(t)
 	defer mock.Close()
 
-	srv := createTestServer(t, mock.URL)
+	srv := createAnthropicAuthTestServer(t, mock.URL)
 
-	// OpenAI provider now implements EmbeddingProvider; the mock doesn't handle
-	// the endpoint, so the upstream returns a non-JSON 404 → gateway 502.
-	body := `{"model":"gpt-4o","input":"Hello world"}`
+	body := `{"model":"claude-haiku-4-5","input":"Hello world"}`
 	req := httptest.NewRequest("POST", "/v1/embeddings", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", "test-api-key")
 	w := httptest.NewRecorder()
 	srv.httpServer.Handler.ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadGateway {
-		t.Errorf("status = %d, want %d. Body: %s", w.Code, http.StatusBadGateway, w.Body.String())
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("status = %d, want %d. Body: %s", w.Code, http.StatusNotImplemented, w.Body.String())
+	}
+
+	var errResp models.ErrorResponse
+	json.Unmarshal(w.Body.Bytes(), &errResp)
+	if errResp.Error.Code != "not_supported" {
+		t.Errorf("error code = %q, want %q", errResp.Error.Code, "not_supported")
 	}
 }
 
@@ -613,6 +618,9 @@ func TestMultimodalValidation_TableDriven(t *testing.T) {
 	defer mock.Close()
 
 	srv := createTestServer(t, mock.URL)
+	unsupportedEmbeddingMock := startMockAnthropicNative(t)
+	defer unsupportedEmbeddingMock.Close()
+	unsupportedEmbeddingSrv := createAnthropicAuthTestServer(t, unsupportedEmbeddingMock.URL)
 
 	tests := []struct {
 		name       string
@@ -639,9 +647,9 @@ func TestMultimodalValidation_TableDriven(t *testing.T) {
 		{
 			name:       "embedding/provider_not_supported",
 			endpoint:   "/v1/embeddings",
-			body:       `{"model":"gpt-4o","input":"test"}`,
-			wantStatus: http.StatusBadGateway, // OpenAI now implements EmbeddingProvider; mock returns 404
-			wantCode:   "provider_404",
+			body:       `{"model":"claude-haiku-4-5","input":"test"}`,
+			wantStatus: http.StatusNotImplemented,
+			wantCode:   "not_supported",
 		},
 
 		// Image validations.
@@ -760,8 +768,13 @@ func TestMultimodalValidation_TableDriven(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("POST", tt.endpoint, bytes.NewBufferString(tt.body))
 			req.Header.Set("Content-Type", "application/json")
+			targetSrv := srv
+			if tt.name == "embedding/provider_not_supported" {
+				targetSrv = unsupportedEmbeddingSrv
+				req.Header.Set("x-api-key", "test-api-key")
+			}
 			w := httptest.NewRecorder()
-			srv.httpServer.Handler.ServeHTTP(w, req)
+			targetSrv.httpServer.Handler.ServeHTTP(w, req)
 
 			if w.Code != tt.wantStatus {
 				t.Errorf("status = %d, want %d. Body: %s", w.Code, tt.wantStatus, w.Body.String())
@@ -1135,9 +1148,9 @@ func TestMultimodalUnknownModel(t *testing.T) {
 			srv.httpServer.Handler.ServeHTTP(w, req)
 
 			// Unknown models handled by the mock return a non-JSON 404, which may
-		// surface as: 404 (model not found in registry), 501 (provider doesn't
-		// implement the interface), or 502 (upstream returned non-JSON error
-		// body and ErrUpstreamProvider defaults to 502).
+			// surface as: 404 (model not found in registry), 501 (provider doesn't
+			// implement the interface), or 502 (upstream returned non-JSON error
+			// body and ErrUpstreamProvider defaults to 502).
 			if w.Code != http.StatusNotFound && w.Code != http.StatusNotImplemented && w.Code != http.StatusBadGateway {
 				t.Errorf("status = %d, want 404, 501, or 502 for unknown model. Body: %s", w.Code, w.Body.String())
 			}

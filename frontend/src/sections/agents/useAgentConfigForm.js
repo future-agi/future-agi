@@ -64,7 +64,7 @@ export const useAgentSubmit = ({
   const onSubmit = async (data) => {
     try {
       // Build payload with snake_case keys for the backend
-      const payload = {
+      let payload = {
         agent_type: data.agentType,
         agent_name: data.agentName,
         languages: data.languages,
@@ -73,7 +73,6 @@ export const useAgentSubmit = ({
         assistant_id: data.assistantId,
         description: data.description,
         knowledge_base: data.knowledgeBase || null,
-        country_code: data.countryCode,
         contact_number: data.contactNumber,
         inbound: data.inbound,
         commit_message: data.commitMessage,
@@ -138,12 +137,11 @@ export const useAgentSubmit = ({
         // Remove voice-specific fields for non-voice agents
         delete payload.country_code;
         payload["contact_number"] = ""; //dummy number
-        // delete payload.provider;
-        // delete payload.api_key;
+        delete payload.provider;
+        delete payload.api_key;
         delete payload.assistant_id;
         delete payload.observability_enabled;
-        // delete payload.inbound;
-        // delete payload.authentication_method;
+        delete payload.authentication_method;
         delete payload.livekit_url;
         delete payload.livekit_api_key;
         delete payload.livekit_api_secret;
@@ -185,6 +183,10 @@ export const useAgentSubmit = ({
         delete payload.password;
         delete payload.token;
       }
+
+      payload = Object.fromEntries(
+        Object.entries(payload).filter(([, value]) => value !== ""),
+      );
 
       const { livekit_api_key, livekit_api_secret, ...safePayload } = payload;
       trackEvent(Events.updateAgentDefClicked, {

@@ -1,0 +1,321 @@
+name: SDK Compatibility
+
+on:
+  pull_request:
+    branches:
+      - dev
+      - main
+  push:
+    branches:
+      - dev
+      - main
+  workflow_dispatch:
+    inputs:
+      sdk-ref:
+        description: Optional futureagi-sdk branch, tag, or SHA to test
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  sdk-compatibility:
+    name: SDK compatibility from backend OpenAPI
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PG_HOST: localhost
+      PG_PORT: 5432
+      PG_DB: postgres
+      PG_TEST_DB: test_tfc_test
+      PG_USER: postgres
+      PG_PASSWORD: postgres
+      TESTING: "false"
+      EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN || secrets.ORG_READ_TOKEN }}
+      EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
+      EE_BASE_REF: ${{ github.base_ref || github.ref_name || 'dev' }}
+      SDK_REPO_READ_TOKEN: ${{ secrets.SDK_REPO_READ_TOKEN || '' }}
+      SDK_REF_INPUT: ${{ github.event.inputs['sdk-ref'] || '' }}
+      SDK_HEAD_REF: ${{ github.head_ref || github.ref_name }}
+      SDK_BASE_REF: ${{ github.base_ref || github.ref_name }}
+    steps:
+      - name: Checkout future-agi
+        uses: actions/checkout@v4
+
+      - name: Validate repository access tokens
+        run: |
+          if [ -z "${EE_REPO_READ_TOKEN}" ]; then
+            echo "::notice::EE_REPO_READ_TOKEN or ORG_READ_TOKEN is not configured; generating the OSS OpenAPI contract only."
+          fi
+          if [ -z "${SDK_REPO_READ_TOKEN}" ]; then
+            echo "::notice::SDK_REPO_READ_TOKEN is not configured; using public access for SDK compatibility repositories."
+          fi
+
+      - name: Checkout EE package when available
+        id: ee-checkout
+        run: |
+          if [ -z "${EE_REPO_READ_TOKEN}" ]; then
+            echo "mode=oss" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          AUTH_HEADER="$(printf 'x-access-token:%s' "${EE_REPO_READ_TOKEN}" | base64 | tr -d '\n')"
+          EE_REPO_URL="https://github.com/future-agi/ee.git"
+          EE_TMP_DIR="$(mktemp -d)"
+          git init "${EE_TMP_DIR}"
+          cd "${EE_TMP_DIR}"
+          git remote add origin "${EE_REPO_URL}"
+          for candidate in "${EE_REPO_BRANCH}" "${EE_BASE_REF}" dev main; do
+            if [ -z "${candidate}" ]; then
+              continue
+            fi
+            if git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH_HEADER}" \
+              ls-remote --exit-code --heads origin "${candidate}" >/dev/null 2>&1; then
+              git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH_HEADER}" \
+                fetch --depth=1 origin "${candidate}"
+              git checkout --detach FETCH_HEAD
+              cd "${GITHUB_WORKSPACE}"
+              mkdir -p futureagi
+              rm -rf futureagi/ee
+              mv "${EE_TMP_DIR}" futureagi/ee
+              echo "Using EE branch ${candidate}"
+              echo "mode=ee" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "::notice::Could not checkout future-agi/ee with the configured read token; generating the OSS OpenAPI contract only."
+          echo "mode=oss" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.1
+          run_install: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install backend dependencies
+        working-directory: futureagi
+        run: uv sync --frozen
+
+      - name: Generate backend OpenAPI contract
+        run: |
+          if ! ./scripts/generate-openapi-schema.sh > /tmp/openapi-generation.log 2>&1; then
+            echo "::error::OpenAPI generation failed. Logs are suppressed here because the workflow may include internal EE context; run locally for details."
+            exit 1
+          fi
+          if ! git diff --quiet api_contracts/openapi/swagger.json; then
+            echo "::notice::Generated OpenAPI differs from the committed contract; using the generated contract for SDK compatibility."
+            git diff --stat api_contracts/openapi/swagger.json
+          fi
+
+      - name: Resolve SDK ref
+        id: resolve-sdk-ref
+        run: |
+          SDK_AUTH_ARGS=()
+          if [ -n "${SDK_REPO_READ_TOKEN}" ]; then
+            AUTH_HEADER="$(printf 'x-access-token:%s' "${SDK_REPO_READ_TOKEN}" | base64 | tr -d '\n')"
+            SDK_AUTH_ARGS=(-c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH_HEADER}")
+          fi
+          SDK_REPO_URL="https://github.com/future-agi/futureagi-sdk.git"
+          for candidate in "${SDK_REF_INPUT}" "${SDK_HEAD_REF}" "${SDK_BASE_REF}" main; do
+            if [ -z "${candidate}" ]; then
+              continue
+            fi
+            if git "${SDK_AUTH_ARGS[@]}" \
+              ls-remote --exit-code --heads --tags "${SDK_REPO_URL}" "${candidate}" >/dev/null 2>&1; then
+              echo "sdk-ref=${candidate}" >> "$GITHUB_OUTPUT"
+              echo "Using futureagi-sdk ref ${candidate}"
+              exit 0
+            fi
+            if echo "${candidate}" | grep -Eq '^[0-9a-fA-F]{7,40}$'; then
+              echo "sdk-ref=${candidate}" >> "$GITHUB_OUTPUT"
+              echo "Using futureagi-sdk ref ${candidate}"
+              exit 0
+            fi
+          done
+          echo "::error::Could not resolve a futureagi-sdk ref to test."
+          exit 1
+
+      - name: Checkout futureagi-sdk
+        uses: actions/checkout@v4
+        with:
+          repository: future-agi/futureagi-sdk
+          ref: ${{ steps.resolve-sdk-ref.outputs.sdk-ref }}
+          path: futureagi-sdk
+          token: ${{ env.SDK_REPO_READ_TOKEN || github.token }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Checkout SDK compliance harness
+        uses: actions/checkout@v4
+        with:
+          repository: future-agi/futureagi-sdk-test-harness
+          path: futureagi-sdk-test-harness
+          token: ${{ env.SDK_REPO_READ_TOKEN || github.token }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Generate SDK clients from backend OpenAPI
+        working-directory: futureagi-sdk
+        run: |
+          ln -sfn "${GITHUB_WORKSPACE}" "${GITHUB_WORKSPACE}/future-agi"
+          ./scripts/generate-oss-sdk.sh "${GITHUB_WORKSPACE}/api_contracts/openapi/swagger.json"
+          if ! git diff --quiet \
+            openapi/sdk/generated \
+            python/fi/generated/openapi_client \
+            typescript/futureagi/src/generated/openapi; then
+            echo "::notice::Generated SDK clients differ from the checked-out SDK ref; testing the generated clients from this backend contract."
+            git diff --stat \
+              openapi/sdk/generated \
+              python/fi/generated/openapi_client \
+              typescript/futureagi/src/generated/openapi
+          fi
+
+      - name: Install Python SDK test dependencies
+        working-directory: futureagi-sdk
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ./python pytest
+
+      - name: Run Python SDK tests
+        working-directory: futureagi-sdk
+        run: PYTHONPATH=python pytest -q python/tests
+
+      - name: Install TypeScript SDK dependencies
+        working-directory: futureagi-sdk/typescript/futureagi
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Type check TypeScript SDK
+        working-directory: futureagi-sdk/typescript/futureagi
+        run: pnpm run typecheck
+
+      - name: Run TypeScript SDK tests
+        working-directory: futureagi-sdk/typescript/futureagi
+        run: pnpm test --runInBand
+
+      - name: Build TypeScript SDK
+        working-directory: futureagi-sdk/typescript/futureagi
+        run: pnpm run build
+
+      - name: Install compliance harness
+        working-directory: futureagi-sdk-test-harness
+        run: python -m pip install -e .
+
+      - name: Build Python compliance adapter
+        run: >
+          docker build
+          -f futureagi-sdk/tests/compliance/python/Dockerfile
+          -t futureagi-sdk-python-adapter:test
+          futureagi-sdk
+
+      - name: Run Python compliance adapter
+        run: |
+          docker rm -f futureagi-sdk-python-adapter >/dev/null 2>&1 || true
+          docker run -d --name futureagi-sdk-python-adapter -p 8080:8080 \
+            --add-host=host.docker.internal:host-gateway \
+            futureagi-sdk-python-adapter:test
+          for attempt in $(seq 1 30); do
+            echo "Waiting for Python compliance adapter (${attempt}/30)..."
+            if curl -fsS http://127.0.0.1:8080/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs futureagi-sdk-python-adapter
+          exit 1
+
+      - name: Run Python SDK compliance
+        working-directory: futureagi-sdk-test-harness
+        run: |
+          futureagi-sdk-test-harness run \
+            --adapter-url http://127.0.0.1:8080 \
+            --mock-bind-host 0.0.0.0 \
+            --mock-public-host host.docker.internal \
+            | tee python-sdk-compliance-report.md
+
+      - name: Stop Python compliance adapter
+        if: always()
+        run: docker rm -f futureagi-sdk-python-adapter >/dev/null 2>&1 || true
+
+      - name: Build TypeScript compliance adapter
+        run: >
+          docker build
+          -f futureagi-sdk/typescript/futureagi/tests/compliance/Dockerfile
+          -t futureagi-sdk-typescript-adapter:test
+          futureagi-sdk
+
+      - name: Run TypeScript compliance adapter
+        run: |
+          docker rm -f futureagi-sdk-typescript-adapter >/dev/null 2>&1 || true
+          docker run -d --name futureagi-sdk-typescript-adapter -p 8081:8080 \
+            --add-host=host.docker.internal:host-gateway \
+            futureagi-sdk-typescript-adapter:test
+          for attempt in $(seq 1 30); do
+            echo "Waiting for TypeScript compliance adapter (${attempt}/30)..."
+            if curl -fsS http://127.0.0.1:8081/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs futureagi-sdk-typescript-adapter
+          exit 1
+
+      - name: Run TypeScript SDK compliance
+        working-directory: futureagi-sdk-test-harness
+        run: |
+          futureagi-sdk-test-harness run \
+            --adapter-url http://127.0.0.1:8081 \
+            --mock-bind-host 0.0.0.0 \
+            --mock-public-host host.docker.internal \
+            | tee typescript-sdk-compliance-report.md
+
+      - name: Stop TypeScript compliance adapter
+        if: always()
+        run: docker rm -f futureagi-sdk-typescript-adapter >/dev/null 2>&1 || true
+
+      - name: Upload SDK compatibility reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: future-agi-sdk-compatibility-reports
+          path: |
+            futureagi-sdk-test-harness/python-sdk-compliance-report.md
+            futureagi-sdk-test-harness/typescript-sdk-compliance-report.md
+          if-no-files-found: ignore

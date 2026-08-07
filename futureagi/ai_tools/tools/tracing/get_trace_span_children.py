@@ -26,8 +26,8 @@ class GetTraceSpanChildrenTool(BaseTool):
     def execute(
         self, params: GetTraceSpanChildrenInput, context: ToolContext
     ) -> ToolResult:
-        from tracer.models.observation_span import ObservationSpan
         from tracer.models.trace import Trace
+        from tracer.services.clickhouse.v2 import get_reader
 
         try:
             Trace.objects.get(
@@ -37,11 +37,13 @@ class GetTraceSpanChildrenTool(BaseTool):
         except Trace.DoesNotExist:
             return ToolResult.not_found("Trace", str(params.trace_id))
 
-        children = ObservationSpan.objects.filter(
-            trace_id=params.trace_id,
-            parent_span_id=params.span_id,
-            deleted=False,
-        ).order_by("start_time", "created_at")[:50]
+        # Children read from CH 25.3 — was ObservationSpan.objects.filter(
+        # trace_id=, parent_span_id=, deleted=False). `list_by_parent` already
+        # filters is_deleted=0; cap at 50 (same as the Django slice). The
+        # trace_id filter is redundant: a parent_span_id uniquely identifies
+        # one span, whose children all share the same trace by construction.
+        with get_reader() as reader:
+            children = reader.list_by_parent(str(params.span_id), limit=50)
 
         if not children:
             return ToolResult(

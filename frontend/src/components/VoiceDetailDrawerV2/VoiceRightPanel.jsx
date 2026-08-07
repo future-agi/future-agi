@@ -9,6 +9,7 @@ import {
   getLoadingStateWithRespectiveStatus,
   TestRunExecutionStatus,
 } from "src/sections/test-detail/common";
+import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import CallAnalyticsView from "./CallAnalyticsView";
 import { isLiveKitProvider } from "src/sections/agents/constants";
@@ -49,6 +50,7 @@ const VoiceRightPanel = ({
   data,
   onCompareBaseline,
   onAction,
+  hiddenActionIds = [],
   hideAnnotationTab,
 }) => {
   const [currentTab, setCurrentTab] = useState(TABS.ANALYTICS);
@@ -79,7 +81,7 @@ const VoiceRightPanel = ({
     if (Array.isArray(data?.messages)) return data.messages;
     if (Array.isArray(data?.transcript)) {
       return data.transcript.map((t) => ({
-        role: t.speakerRole || t.role,
+        role: t.speaker_role || t.role,
         content: t.message || t.content || t.text,
         ...t,
       }));
@@ -237,10 +239,19 @@ const VoiceRightPanel = ({
           scoreLabel =
             rawValue.length > 24 ? `${rawValue.slice(0, 24)}…` : rawValue;
         }
-      } else if (Array.isArray(rawValue) && rawValue.length > 0) {
-        // Choices-type results surface their selected labels as an array —
-        // keep them as items so the table can render one chip per label.
-        scoreItems = rawValue.map((v) => String(v));
+      } else if (rawValue && typeof rawValue === "object") {
+        const result = normalizeEvalResult(rawValue, e?.type || e?.output_type);
+        if (result?.kind === "choices" && Array.isArray(result.items)) {
+          scoreItems = result.items;
+        } else if (
+          result?.kind === "score" &&
+          typeof result.score === "number"
+        ) {
+          score =
+            result.score <= 1
+              ? Math.round(result.score * 100)
+              : Math.round(result.score);
+        }
       }
 
       return {
@@ -249,13 +260,18 @@ const VoiceRightPanel = ({
         score,
         score_label: scoreLabel,
         score_items: scoreItems,
-        explanation: e?.reason || e?.explanation,
+        explanation: e?.reason || e?.explanation || e?.skipped_reason,
         error: e?.error === true,
-        skipped: e?.skipped === true,
+        skipped: e?.skipped === true || e?.status === "skipped",
+        // Lifecycle status (pending/running/skipped) so EvalsTabView renders a
+        // loading / queued / skipped state for not-yet-completed voice evals.
+        status: e?.status,
+        skipped_reason: e?.skipped_reason,
         // Error localization fields — pulled from whatever key the
         // backend used. Makes the shared EvalsTabView render the
         // dropdown / "Run" UX for failed voice evals.
         cell_id: e?.cell_id || e?.cellId,
+        template_type: e?.template_type,
         error_analysis:
           e?.error_analysis || e?.errorAnalysis || e?.error_details,
         error_localizer_status:
@@ -318,7 +334,11 @@ const VoiceRightPanel = ({
       {/* Call details — chips + tags + Actions button live at the top of
           the right panel, matching the trace drawer's span-detail-pane
           layout. */}
-      <CallDetailsBar data={data} onAction={onAction} />
+      <CallDetailsBar
+        data={data}
+        onAction={onAction}
+        hiddenActionIds={hiddenActionIds}
+      />
 
       <Stack
         direction="row"
@@ -502,6 +522,7 @@ VoiceRightPanel.propTypes = {
   data: PropTypes.object.isRequired,
   onCompareBaseline: PropTypes.func,
   onAction: PropTypes.func,
+  hiddenActionIds: PropTypes.arrayOf(PropTypes.string),
   hideAnnotationTab: PropTypes.bool,
 };
 

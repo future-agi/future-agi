@@ -5,8 +5,10 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 const TalkRatioCell = (params) => {
   const data = params?.data;
-  const ratio = data?.talk_ratio;
-  if (ratio == null) {
+  // Backend-sourced integer split (user_talk_pct / bot_talk_pct) — no client-side rounding.
+  const userPct = data?.user_talk_pct;
+  const botPct = data?.bot_talk_pct;
+  if (userPct == null || botPct == null) {
     return (
       <Typography
         variant="body2"
@@ -17,26 +19,7 @@ const TalkRatioCell = (params) => {
     );
   }
 
-  // talk_ratio may arrive as a scalar (bot_time / user_time) or as an object
-  // ({user, bot, user_pct, bot_pct}). Normalize both shapes to userPct/botPct.
-  let userPct;
-  let botPct;
-  let userSec;
-  let botSec;
-  if (typeof ratio === "number") {
-    botPct = Math.round((ratio / (ratio + 1)) * 100);
-    userPct = 100 - botPct;
-  } else {
-    userPct = ratio.user_pct ?? 0;
-    botPct = ratio.bot_pct ?? 0;
-    userSec = ratio.user;
-    botSec = ratio.bot;
-  }
-
-  const tooltip =
-    userSec != null || botSec != null
-      ? `User: ${userSec ?? 0}s (${userPct}%) | Bot: ${botSec ?? 0}s (${botPct}%)`
-      : `User: ${userPct}% | Bot: ${botPct}%`;
+  const tooltip = `User: ${userPct}% | Bot: ${botPct}%`;
 
   return (
     <CustomTooltip title={tooltip} arrow placement="bottom" show>

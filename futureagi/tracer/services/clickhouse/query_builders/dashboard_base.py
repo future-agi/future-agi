@@ -70,16 +70,24 @@ class DashboardQueryBuilderBase:
         results = []
         for metric in self.metrics:
             sql, params = self.build_metric_query(metric)
-            metric_info = {
-                "id": metric.get("id", ""),
-                "name": metric.get("displayName")
-                or metric.get("display_name")
-                or metric.get("name", ""),
-                "type": metric.get("type", "system_metric"),
-                "aggregation": metric.get("aggregation", "avg"),
-            }
-            results.append((sql, params, metric_info))
+            results.append((sql, params, self.metric_info(metric)))
         return results
+
+    def metric_info(self, metric: dict) -> dict:
+        """Build the response metadata for a single metric.
+
+        Exposed so callers can construct a metric's ``metric_info`` without
+        building its SQL — e.g. to attach a per-metric error when the build or
+        execution fails, keeping the rest of the dashboard's widgets intact.
+        """
+        return {
+            "id": metric.get("id", ""),
+            "name": metric.get("display_name")
+            or metric.get("displayName")
+            or metric.get("name", ""),
+            "type": metric.get("type", "system_metric"),
+            "aggregation": metric.get("aggregation", "avg"),
+        }
 
     def build_metric_query(self, metric: dict) -> Tuple[str, dict]:
         """Build ClickHouse SQL for a single metric. Subclasses must override."""
@@ -134,14 +142,16 @@ class DashboardQueryBuilderBase:
         if not series_data:
             series_data["total"] = {}
 
-        # Limit breakdown series
+        # Keep the highest-volume series first.
         MAX_SERIES = 100
-        if len(series_data) > MAX_SERIES and "total" not in series_data:
+        if "total" not in series_data:
             ranked = sorted(
                 series_data.items(),
                 key=lambda kv: sum(v for v in kv[1].values() if v is not None),
                 reverse=True,
-            )[:MAX_SERIES]
+            )
+            if len(ranked) > MAX_SERIES:
+                ranked = ranked[:MAX_SERIES]
             series_data = dict(ranked)
 
         return series_data
@@ -176,8 +186,7 @@ class DashboardQueryBuilderBase:
         series_data = self._build_series_data(rows, name_map, name_map_breakdown)
 
         series = []
-        for name in sorted(series_data.keys()):
-            data_map = series_data[name]
+        for name, data_map in series_data.items():
             filled = []
             for bucket_ts in all_buckets:
                 filled.append(
@@ -192,10 +201,15 @@ class DashboardQueryBuilderBase:
                 )
             series.append({"name": name, "data": filled})
 
-        return {
+        result = {
             "id": metric_info.get("id", ""),
             "name": metric_name,
             "aggregation": metric_info.get("aggregation", "avg"),
             "unit": unit,
             "series": series,
         }
+        # Surface a per-metric error (e.g. an invalid metric/aggregation combo)
+        # so one bad widget doesn't fail the whole dashboard query.
+        if metric_info.get("error"):
+            result["error"] = metric_info["error"]
+        return result

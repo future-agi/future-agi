@@ -15,6 +15,8 @@ stays in RunTestSerializer in simulate.serializers.run_test.
 from rest_framework import serializers
 
 from simulate.models import RunTest
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
+from tracer.serializers.filters import filter_list_field, json_object_field
 
 
 class SimulateEvalConfigResponseSerializer(serializers.Serializer):
@@ -26,9 +28,9 @@ class SimulateEvalConfigResponseSerializer(serializers.Serializer):
 
     id = serializers.UUIDField(read_only=True)
     name = serializers.CharField(read_only=True, allow_null=True)
-    config = serializers.DictField(read_only=True, allow_null=True)
-    mapping = serializers.DictField(read_only=True, allow_null=True)
-    filters = serializers.DictField(read_only=True, allow_null=True)
+    config = json_object_field(read_only=True, allow_null=True)
+    mapping = json_object_field(read_only=True, allow_null=True)
+    filters = filter_list_field(read_only=True, default=list)
     error_localizer = serializers.BooleanField(read_only=True)
     model = serializers.CharField(read_only=True, allow_null=True)
     status = serializers.CharField(read_only=True, allow_null=True)
@@ -46,20 +48,23 @@ class RunTestResponseSerializer(serializers.ModelSerializer):
     agent_version snapshot handling, etc.) continues to use RunTestSerializer.
     """
 
-    agent_definition_detail = serializers.DictField(read_only=True, allow_null=True)
+    description = serializers.CharField(
+        read_only=True, allow_null=True, allow_blank=True
+    )
+    agent_definition_detail = serializers.JSONField(read_only=True, allow_null=True)
     source_type_display = serializers.CharField(read_only=True, allow_null=True)
     scenarios_detail = serializers.ListField(
-        child=serializers.DictField(), read_only=True
+        child=serializers.JSONField(), read_only=True
     )
-    simulator_agent_detail = serializers.DictField(read_only=True, allow_null=True)
+    simulator_agent_detail = serializers.JSONField(read_only=True, allow_null=True)
     simulate_eval_configs_detail = SimulateEvalConfigResponseSerializer(
         many=True, read_only=True
     )
     evals_detail = SimulateEvalConfigResponseSerializer(many=True, read_only=True)
     last_run_at = serializers.DateTimeField(read_only=True, allow_null=True)
-    prompt_template_detail = serializers.DictField(read_only=True, allow_null=True)
-    prompt_version_detail = serializers.DictField(read_only=True, allow_null=True)
-    agent_version = serializers.DictField(read_only=True, allow_null=True)
+    prompt_template_detail = serializers.JSONField(read_only=True, allow_null=True)
+    prompt_version_detail = serializers.JSONField(read_only=True, allow_null=True)
+    agent_version = serializers.JSONField(read_only=True, allow_null=True)
 
     class Meta:
         model = RunTest
@@ -137,9 +142,17 @@ class TestExecutionItemResponseSerializer(serializers.Serializer):
     source_type = serializers.CharField(read_only=True)
 
 
-# Kept for backward compatibility — the swagger decorator references this name.
-# The actual per-item shape is TestExecutionItemResponseSerializer above.
-RunTestExecutionsResponseSerializer = TestExecutionItemResponseSerializer
+class RunTestExecutionsResponseSerializer(serializers.Serializer):
+    """Paginated envelope returned by GET /run-tests/{run_test_id}/executions/.
+
+    Runtime shape comes from ``paginator.get_paginated_response(...)``:
+    ``{count, next, previous, results: [TestExecutionItem, ...]}``.
+    """
+
+    count = serializers.IntegerField(read_only=True)
+    next = serializers.CharField(read_only=True, allow_null=True)
+    previous = serializers.CharField(read_only=True, allow_null=True)
+    results = TestExecutionItemResponseSerializer(many=True, read_only=True)
 
 
 class RunTestScenarioItemResponseSerializer(serializers.Serializer):
@@ -162,12 +175,30 @@ class RunTestMessageResponseSerializer(serializers.Serializer):
     message = serializers.CharField(read_only=True)
 
 
-class RunTestErrorResponseSerializer(serializers.Serializer):
+class RunTestExecutionResponseSerializer(serializers.Serializer):
+    """Response for POST /run-tests/{run_test_id}/execute/."""
+
+    message = serializers.CharField(read_only=True)
+    execution_id = serializers.UUIDField(read_only=True)
+    run_test_id = serializers.UUIDField(read_only=True)
+    status = serializers.CharField(read_only=True)
+    total_scenarios = serializers.IntegerField(read_only=True)
+    total_calls = serializers.IntegerField(read_only=True)
+    scenario_ids = serializers.ListField(child=serializers.UUIDField(), read_only=True)
+
+
+class RunTestCallExecutionsResponseSerializer(serializers.Serializer):
+    """Paginated response for call executions attached to a run test."""
+
+    count = serializers.IntegerField(read_only=True)
+    next = serializers.CharField(read_only=True, allow_null=True)
+    previous = serializers.CharField(read_only=True, allow_null=True)
+    results = serializers.ListField(child=serializers.DictField(), read_only=True)
+    total_pages = serializers.IntegerField(read_only=True)
+    current_page = serializers.IntegerField(read_only=True)
+
+
+class RunTestErrorResponseSerializer(ApiTextErrorResponseSerializer):
     """
     Standard error response shape for all run-test endpoints.
-    Used for @swagger_auto_schema documentation only — not applied to actual responses.
-    Shape: {"error": "...", "details": {...}}  — details only present on HTTP 400.
     """
-
-    error = serializers.CharField(read_only=True)
-    details = serializers.DictField(required=False, read_only=True)

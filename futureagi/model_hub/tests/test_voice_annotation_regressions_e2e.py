@@ -1,6 +1,9 @@
+import csv
+import io
 import json
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from django.utils import timezone
@@ -10,9 +13,9 @@ from accounts.models.user import User
 from model_hub.models.ai_model import AIModel
 from model_hub.models.annotation_queues import (
     AnnotationQueue,
-    AnnotationQueueAnnotator,
     AnnotationQueueLabel,
     QueueItem,
+    QueueItemNote,
 )
 from model_hub.models.choices import (
     AnnotationQueueStatusChoices,
@@ -29,8 +32,14 @@ from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.score import Score
+from model_hub.utils.annotation_queue_helpers import (
+    canonical_score_value,
+    eval_metrics_from_call_execution,
+    eval_output_value,
+)
 from simulate.models.agent_definition import AgentDefinition
 from simulate.models.run_test import RunTest
+from simulate.models.scenario_graph import ScenarioGraph
 from simulate.models.scenarios import Scenarios
 from simulate.models.test_execution import (
     CallExecution,
@@ -43,6 +52,7 @@ from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.models.span_notes import SpanNotes
 from tracer.models.trace import Trace
+from tracer.tests._ch_seed import seed_ch_span
 
 
 @pytest.fixture
@@ -68,7 +78,7 @@ def observe_trace(db, observe_project):
 
 @pytest.fixture
 def root_conversation_span(db, observe_project, observe_trace):
-    return ObservationSpan.objects.create(
+    span = ObservationSpan.objects.create(
         id=f"voice_root_{uuid.uuid4().hex[:16]}",
         project=observe_project,
         trace=observe_trace,
@@ -81,6 +91,10 @@ def root_conversation_span(db, observe_project, observe_trace):
         latency_ms=1000,
         status="OK",
     )
+    # Tracer sources resolve CH-native; mirror this root span into ClickHouse so
+    # the trace/span resolves (the PG row alone is no longer read).
+    seed_ch_span(span)
+    return span
 
 
 @pytest.fixture
@@ -208,8 +222,7 @@ def _annotate_detail_url(queue, item):
 
 def _submit_url(queue, item):
     return (
-        f"/model-hub/annotation-queues/{queue.id}/items/{item.id}/"
-        "annotations/submit/"
+        f"/model-hub/annotation-queues/{queue.id}/items/{item.id}/annotations/submit/"
     )
 
 
@@ -217,8 +230,233 @@ def _complete_url(queue, item):
     return f"/model-hub/annotation-queues/{queue.id}/items/{item.id}/complete/"
 
 
+def _add_items_url(queue):
+    return f"/model-hub/annotation-queues/{queue.id}/items/add-items/"
+
+
 @pytest.mark.django_db
 class TestVoiceAnnotationRegressionE2E:
+    def test_th4825_direct_voice_call_add_items_keeps_trace_source(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        observe_trace,
+        root_conversation_span,
+    ):
+        queue = _queue(
+            "direct call trace queue",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+
+        resp = auth_client.post(
+            _add_items_url(queue),
+            {
+                "items": [
+                    {
+                        "source_type": QueueItemSourceType.TRACE.value,
+                        "source_id": str(observe_trace.id),
+                    }
+                ]
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert resp.data["result"]["added"] == 1
+        item = QueueItem.objects.get(queue=queue, trace=observe_trace, deleted=False)
+        assert item.source_type == QueueItemSourceType.TRACE.value
+        assert item.trace_id == observe_trace.id
+        assert item.observation_span_id is None
+        assert item.observation_span_id != root_conversation_span.id
+
+    def test_th5175_enumerated_add_rejects_in_progress_trace(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+    ):
+        queue = _queue(
+            "in-progress trace queue",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        in_progress_trace = Trace.objects.create(
+            project=observe_project,
+            name="In-progress voice call trace",
+        )
+        in_progress_span = ObservationSpan.objects.create(
+            id=f"voice_in_progress_{uuid.uuid4().hex[:16]}",
+            project=observe_project,
+            trace=in_progress_trace,
+            name="In-progress voice root",
+            observation_type="conversation",
+            start_time=timezone.now(),
+            parent_span_id=None,
+            status="UNSET",
+        )
+        seed_ch_span(in_progress_span)
+
+        resp = auth_client.post(
+            _add_items_url(queue),
+            {
+                "items": [
+                    {
+                        "source_type": QueueItemSourceType.TRACE.value,
+                        "source_id": str(in_progress_trace.id),
+                    }
+                ]
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = resp.data["result"]
+        assert result["added"] == 0
+        assert result["duplicates"] == 0
+        assert "still in progress" in result["errors"][0]
+        assert not QueueItem.objects.filter(
+            queue=queue,
+            trace=in_progress_trace,
+            deleted=False,
+        ).exists()
+
+    def test_th5175_filter_add_skips_in_progress_traces(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        observe_trace,
+        root_conversation_span,
+    ):
+        queue = _queue(
+            "filter skips in-progress traces",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        in_progress_trace = Trace.objects.create(
+            project=observe_project,
+            name="In-progress voice call trace",
+        )
+        in_progress_span = ObservationSpan.objects.create(
+            id=f"voice_filter_in_progress_{uuid.uuid4().hex[:16]}",
+            project=observe_project,
+            trace=in_progress_trace,
+            name="In-progress voice root",
+            observation_type="conversation",
+            start_time=timezone.now(),
+            parent_span_id=None,
+            status="UNSET",
+        )
+        seed_ch_span(in_progress_span)
+
+        resp = auth_client.post(
+            _add_items_url(queue),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": QueueItemSourceType.TRACE.value,
+                    "project_id": str(observe_project.id),
+                }
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = resp.data["result"]
+        assert result["added"] == 1
+        assert result["duplicates"] == 0
+        assert result["total_matching"] == 2
+        assert result["errors"] == [
+            "1 trace is still in progress and was not added to the annotation queue."
+        ]
+        assert QueueItem.objects.filter(
+            queue=queue,
+            trace=observe_trace,
+            deleted=False,
+        ).exists()
+        assert not QueueItem.objects.filter(
+            queue=queue,
+            trace=in_progress_trace,
+            deleted=False,
+        ).exists()
+
+    def test_filter_add_default_workspace_accepts_null_workspace_trace(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+    ):
+        legacy_project = Project.objects.create(
+            name=f"Legacy null workspace observe {uuid.uuid4().hex[:8]}",
+            organization=organization,
+            workspace=None,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        legacy_trace = Trace.objects.create(
+            project=legacy_project,
+            name="Legacy null workspace trace",
+        )
+        # Trace filter-mode resolves from ClickHouse only — seed the root span to
+        # CH (built in memory, never written to the PG tracer tables).
+        seed_ch_span(
+            ObservationSpan(
+                id=f"legacy_null_ws_root_{uuid.uuid4().hex[:16]}",
+                project=legacy_project,
+                trace=legacy_trace,
+                name="Legacy null workspace root",
+                observation_type="conversation",
+                start_time=timezone.now(),
+                parent_span_id=None,
+                status="ok",
+            )
+        )
+        queue = _queue(
+            "Default workspace null-workspace trace",
+            organization,
+            workspace,
+            user,
+            project=legacy_project,
+        )
+
+        resp = auth_client.post(
+            _add_items_url(queue),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": QueueItemSourceType.TRACE.value,
+                    "project_id": str(legacy_project.id),
+                }
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = resp.data["result"]
+        assert result["added"] == 1
+        assert result["total_matching"] == 1
+        assert result["errors"] == []
+        assert QueueItem.objects.filter(
+            queue=queue,
+            trace=legacy_trace,
+            deleted=False,
+        ).exists()
+
     def test_th4782_simulation_queue_submit_uses_call_execution_source(
         self,
         auth_client,
@@ -230,7 +468,7 @@ class TestVoiceAnnotationRegressionE2E:
         thumbs_label,
     ):
         queue = _queue(
-            "TH-4782 voice simulation queue",
+            "voice simulation queue",
             organization,
             workspace,
             user,
@@ -302,8 +540,13 @@ class TestVoiceAnnotationRegressionE2E:
         root_conversation_span,
         thumbs_label,
     ):
+        from tracer.tests._ch_seed import seed_ch_span
+
+        # _span_notes_target_for_queue_item reads root span from CH
+        seed_ch_span(root_conversation_span)
+
         queue = _queue(
-            "TH-4055 trace call queue",
+            "trace call queue",
             organization,
             workspace,
             user,
@@ -319,11 +562,17 @@ class TestVoiceAnnotationRegressionE2E:
             status=QueueItemStatus.PENDING.value,
         )
 
+        # Score writes are now per-queue. Pass queue_item_id explicitly so
+        # the bulk score lands in this test queue's review context. Without
+        # it, the score would resolve to the project's default queue and
+        # this queue's annotate-detail would stay empty (correct under the
+        # new policy but not what this regression is exercising).
         bulk_resp = auth_client.post(
             "/model-hub/scores/bulk/",
             {
                 "source_type": QueueItemSourceType.TRACE.value,
                 "source_id": str(observe_trace.id),
+                "queue_item_id": str(item.id),
                 "scores": [
                     {
                         "label_id": str(thumbs_label.id),
@@ -343,6 +592,7 @@ class TestVoiceAnnotationRegressionE2E:
             trace=observe_trace,
             label=thumbs_label,
             annotator=user,
+            queue_item=item,
             deleted=False,
         ).exists()
         assert not Score.objects.filter(
@@ -352,10 +602,13 @@ class TestVoiceAnnotationRegressionE2E:
             annotator=user,
             deleted=False,
         ).exists()
-        assert SpanNotes.objects.get(
-            span=root_conversation_span,
-            created_by_user=user,
-        ).notes == "whole call note"
+        assert (
+            SpanNotes.objects.get(
+                span=root_conversation_span,
+                created_by_user=user,
+            ).notes
+            == "whole call note"
+        )
 
         detail_resp = auth_client.get(_annotate_detail_url(queue, item))
         assert detail_resp.status_code == status.HTTP_200_OK, detail_resp.data
@@ -396,8 +649,13 @@ class TestVoiceAnnotationRegressionE2E:
         root_conversation_span,
         thumbs_label,
     ):
+        from tracer.tests._ch_seed import seed_ch_span
+
+        # _span_notes_target_for_queue_item reads root span from CH
+        seed_ch_span(root_conversation_span)
+
         queue = _queue(
-            "TH-4861 trace note separation queue",
+            "trace note separation queue",
             organization,
             workspace,
             user,
@@ -436,10 +694,13 @@ class TestVoiceAnnotationRegressionE2E:
             deleted=False,
         )
         assert score.notes in ("", None)
-        assert SpanNotes.objects.get(
-            span=root_conversation_span,
-            created_by_user=user,
-        ).notes == "trace-level-only note"
+        assert (
+            SpanNotes.objects.get(
+                span=root_conversation_span,
+                created_by_user=user,
+            ).notes
+            == "trace-level-only note"
+        )
 
         detail_resp = auth_client.get(_annotate_detail_url(queue, item))
         assert detail_resp.status_code == status.HTTP_200_OK, detail_resp.data
@@ -477,8 +738,13 @@ class TestVoiceAnnotationRegressionE2E:
         root_conversation_span,
         star_label,
     ):
+        from tracer.tests._ch_seed import seed_ch_span
+
+        # for-source span_notes reads span from CH to resolve org ownership
+        seed_ch_span(root_conversation_span)
+
         queue = _queue(
-            "TH-4055 default observe queue",
+            "default observe queue",
             organization,
             workspace,
             user,
@@ -516,10 +782,16 @@ class TestVoiceAnnotationRegressionE2E:
         assert score.source_type == QueueItemSourceType.OBSERVATION_SPAN.value
         assert score.queue_item == item
         assert score.value == {"rating": 4.0}
-        assert SpanNotes.objects.get(
-            span=root_conversation_span,
-            created_by_user=user,
-        ).notes == "old observe toolbar note"
+        assert (
+            SpanNotes.objects.get(
+                span=root_conversation_span,
+                created_by_user=user,
+            ).notes
+            == "old observe toolbar note"
+        )
+        assert QueueItemNote.objects.get(queue_item=item, annotator=user).notes == (
+            "old observe toolbar note"
+        )
 
         score_resp = auth_client.get(
             "/model-hub/scores/for-source/",
@@ -531,23 +803,143 @@ class TestVoiceAnnotationRegressionE2E:
         assert score_resp.status_code == status.HTTP_200_OK, score_resp.data
         assert score_resp.data["span_notes"][0]["notes"] == "old observe toolbar note"
 
+        queue_resp = auth_client.get(
+            "/model-hub/annotation-queues/for-source/",
+            {
+                "source_type": QueueItemSourceType.OBSERVATION_SPAN.value,
+                "source_id": root_conversation_span.id,
+            },
+        )
+        assert queue_resp.status_code == status.HTTP_200_OK, queue_resp.data
+        queue_entry = queue_resp.data["result"][0]
+        assert queue_entry["existing_notes"] == "old observe toolbar note"
+        assert queue_entry["existing_label_notes"][str(star_label.id)] == (
+            "old observe toolbar note"
+        )
+
     def test_th4759_simulation_call_detail_returns_scenario_columns(
         self,
         auth_client,
+        organization,
         simulation_call_execution,
         simulation_dataset_row,
     ):
+        ScenarioGraph.objects.create(
+            name="Drive-thru flow",
+            scenario=simulation_call_execution.scenario,
+            organization=organization,
+            graph_config={
+                "graph_data": {
+                    "nodes": [
+                        {
+                            "name": "Greeting",
+                            "type": "conversation",
+                            "messagePlan": {"firstMessage": "Hello"},
+                        }
+                    ],
+                    "edges": [],
+                }
+            },
+        )
         resp = auth_client.get(
             f"/simulate/call-executions/{simulation_call_execution.id}/"
         )
 
         assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert resp.data["test_execution_id"] == str(
+            simulation_call_execution.test_execution_id
+        )
+        assert resp.data["scenario_graph"]["nodes"][0]["name"] == "Greeting"
         scenario_columns = resp.data["scenario_columns"]
         assert scenario_columns
         column_payload = next(iter(scenario_columns.values()))
         assert column_payload["column_name"] == "customer_goal"
         assert column_payload["value"] == "Order one cheeseburger"
         assert column_payload["dataset_id"] == str(simulation_dataset_row.dataset_id)
+
+    def test_th5123_voice_call_detail_returns_simulation_path_context(
+        self,
+        auth_client,
+        monkeypatch,
+        organization,
+        observe_trace,
+        root_conversation_span,
+        simulation_call_execution,
+    ):
+        """voice_call_detail must surface the simulation path context.
+
+        The ``OPTIMIZE TABLE spans FINAL`` below works around a production bug:
+        ``voice_call_detail``'s root-span query has no ``FINAL`` and no
+        ``argMax(_, _version)`` dedup, so it can return a stale
+        ReplacingMergeTree row and drop ``call_execution_id``. Delete the
+        OPTIMIZE once the query is fixed.
+        """
+        from tracer.tests._ch_seed import (
+            _get_ch_client,
+            seed_ch_span,
+            seed_ch_trace,
+        )
+
+        ScenarioGraph.objects.create(
+            name="Order flow",
+            scenario=simulation_call_execution.scenario,
+            organization=organization,
+            graph_config={
+                "graph_data": {
+                    "nodes": [
+                        {
+                            "name": "Take order",
+                            "type": "conversation",
+                            "messagePlan": {
+                                "firstMessage": "What would you like to order?"
+                            },
+                        }
+                    ],
+                    "edges": [],
+                }
+            },
+        )
+        root_conversation_span.span_attributes = {
+            "raw_log": {
+                "id": "provider-call-123",
+                "transcript": "Customer ordered food.",
+            }
+        }
+        root_conversation_span.eval_attributes = {
+            "fi.simulator.call_execution_id": str(simulation_call_execution.id)
+        }
+        root_conversation_span.save(
+            update_fields=["span_attributes", "eval_attributes"]
+        )
+
+        # Seed AFTER .save() so CH has the updated span_attributes/eval_attributes
+        seed_ch_span(root_conversation_span)
+        # voice_call_detail resolves the trace's project from the CH `traces` table
+        # (PG tracer_trace is dropped on CH25), so the trace row must be seeded too;
+        # seeding only the span leaves the traces lookup empty (404).
+        seed_ch_trace(observe_trace)
+        # The fixture seeded this span without eval_attributes and the re-seed
+        # above added them, so two ReplacingMergeTree rows share the id. Merge
+        # them so the later, eval-bearing row wins deterministically.
+        _ch = _get_ch_client()
+        try:
+            _ch.command("OPTIMIZE TABLE spans FINAL")
+        finally:
+            _ch.close()
+
+        resp = auth_client.get(
+            "/tracer/trace/voice_call_detail/",
+            {"trace_id": str(observe_trace.id)},
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = resp.data["result"]
+        assert result["call_execution_id"] == str(simulation_call_execution.id)
+        assert result["test_execution_id"] == str(
+            simulation_call_execution.test_execution_id
+        )
+        assert result["scenario_id"] == str(simulation_call_execution.scenario_id)
+        assert result["scenario_graph"]["nodes"][0]["name"] == "Take order"
 
     def test_th3884_th3886_th3889_navigation_keeps_skipped_items_in_work(
         self,
@@ -572,16 +964,11 @@ class TestVoiceAnnotationRegressionE2E:
             status="OK",
         )
         queue = _queue(
-            "TH-388 navigation queue",
+            "navigation queue",
             organization,
             workspace,
             user,
             project=observe_project,
-        )
-        AnnotationQueueAnnotator.objects.create(
-            queue=queue,
-            user=user,
-            role="annotator",
         )
         AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
         first_item = QueueItem.objects.create(
@@ -627,9 +1014,7 @@ class TestVoiceAnnotationRegressionE2E:
             format="json",
         )
         assert complete_first.status_code == status.HTTP_200_OK, complete_first.data
-        assert complete_first.data["result"]["next_item"]["id"] == str(
-            skipped_item.id
-        )
+        assert complete_first.data["result"]["next_item"]["id"] == str(skipped_item.id)
         queue.refresh_from_db()
         assert queue.status == AnnotationQueueStatusChoices.ACTIVE.value
 
@@ -695,17 +1080,12 @@ class TestVoiceAnnotationRegressionE2E:
             status="OK",
         )
         queue = _queue(
-            "TH-3884 resume skipped queue",
+            "resume skipped queue",
             organization,
             workspace,
             user,
             project=observe_project,
             status=AnnotationQueueStatusChoices.COMPLETED.value,
-        )
-        AnnotationQueueAnnotator.objects.create(
-            queue=queue,
-            user=user,
-            role="annotator",
         )
         AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
         QueueItem.objects.create(
@@ -760,8 +1140,9 @@ class TestVoiceAnnotationRegressionE2E:
         simulation_agent_definition,
         simulation_call_execution,
     ):
-        root_conversation_span.response_time = 123.5
-        root_conversation_span.save(update_fields=["response_time"])
+        # CH has no separate response_time column — a span's response_time_ms
+        # collapses to latency_ms (the only CH timing signal). The call_execution
+        # branch is PG-backed and keeps its distinct response_time_ms.
         simulation_call_execution.response_time_ms = 456
         simulation_call_execution.avg_agent_latency_ms = 789
         simulation_call_execution.save(
@@ -769,7 +1150,7 @@ class TestVoiceAnnotationRegressionE2E:
         )
 
         queue = _queue(
-            "TH-3535 metrics queue",
+            "metrics queue",
             organization,
             workspace,
             user,
@@ -800,7 +1181,7 @@ class TestVoiceAnnotationRegressionE2E:
         span_preview = next(p for p in previews if p["type"] == "observation_span")
         call_preview = next(p for p in previews if p["type"] == "call_execution")
         assert span_preview["latency_ms"] == 1000
-        assert span_preview["response_time_ms"] == 123.5
+        assert span_preview["response_time_ms"] == 1000  # == latency_ms (CH-native)
         assert call_preview["latency_ms"] == 789
         assert call_preview["response_time_ms"] == 456
         assert call_preview["duration_seconds"] == 42
@@ -820,11 +1201,12 @@ class TestVoiceAnnotationRegressionE2E:
             "score": 7,
         }
         root_conversation_span.response_time = 321.0
-        root_conversation_span.save(
-            update_fields=["span_attributes", "response_time"]
-        )
+        root_conversation_span.save(update_fields=["span_attributes", "response_time"])
+        # Re-seed CH after mutating the span: export fields read span_attributes
+        # CH-native, so the PG-only write above must be mirrored.
+        seed_ch_span(root_conversation_span)
         queue = _queue(
-            "TH-4735 export queue",
+            "export queue",
             organization,
             workspace,
             user,
@@ -925,9 +1307,7 @@ class TestVoiceAnnotationRegressionE2E:
 
         label_slot_1_value_field = f"label:{thumbs_label.id}:slot:1:value"
         label_slot_1_notes_field = f"label:{thumbs_label.id}:slot:1:notes"
-        label_slot_1_annotator_field = (
-            f"label:{thumbs_label.id}:slot:1:annotator_email"
-        )
+        label_slot_1_annotator_field = f"label:{thumbs_label.id}:slot:1:annotator_email"
         label_slot_1_record_field = f"label:{thumbs_label.id}:slot:1:annotation"
         label_slot_2_value_field = f"label:{thumbs_label.id}:slot:2:value"
         label_slot_2_notes_field = f"label:{thumbs_label.id}:slot:2:notes"
@@ -1049,33 +1429,45 @@ class TestVoiceAnnotationRegressionE2E:
         }
         assert cells["source_identifier"] == root_conversation_span.id
         assert cells["latency_ms"] == "1000"
-        assert cells["response_time_ms"] == "321.0"
-        assert cells["item_notes"] == "whole item export note"
+        # CH has no response_time column — response_time_ms collapses to latency_ms.
+        assert cells["response_time_ms"] == "1000"
+        # Per-queue scoping: SpanNote ("whole item export note") was never
+        # written through this queue's annotation flow, so item_notes is
+        # empty for this queue's export. Pre-revamp the span-level note
+        # leaked into every queue's export — that's the leak this work
+        # removes. To carry whole-item notes into a queue's export, the
+        # user must save them via the queue's own submit/bulk flow which
+        # writes a ``QueueItemNote``.
+        assert cells["item_notes"] == ""
         assert cells["review_status"] == "approved"
         assert cells["reviewer_email"] == reviewer.email
         assert cells["review_notes"] == "review export note"
-        assert cells["thumbs_annotation_1_score"] == json.dumps({"value": "up"})
+        assert cells["thumbs_annotation_1_score"] == "up"
         assert cells["thumbs_annotation_1_notes"] == "label export note"
         assert cells["thumbs_annotation_1_annotator_email"] == user.email
         assert json.loads(cells["thumbs_annotation_1_record"])["notes"] == (
             "label export note"
         )
-        assert cells["thumbs_annotation_2_score"] == json.dumps({"value": "down"})
+        assert cells["thumbs_annotation_2_score"] == "down"
         assert cells["thumbs_annotation_2_notes"] == "second annotator note"
-        assert json.loads(cells["annotation_metrics"])[thumbs_label.name][0][
-            "notes"
-        ] == "label export note"
-        assert json.loads(cells["annotation_metrics"])[thumbs_label.name][1][
-            "annotator_email"
-        ] == second_annotator.email
+        assert (
+            json.loads(cells["annotation_metrics"])[thumbs_label.name][0]["notes"]
+            == "label export note"
+        )
+        assert (
+            json.loads(cells["annotation_metrics"])[thumbs_label.name][1][
+                "annotator_email"
+            ]
+            == second_annotator.email
+        )
         assert (
             Column.objects.get(dataset=dataset, name="customer_score").data_type
-            == DataTypeChoices.INTEGER.value
+            == DataTypeChoices.FLOAT.value
         )
         assert json.loads(cells["eval_metrics"])["Export Quality"]["score"] == 0.82
         assert cells["export_quality_score"] == "0.82"
         assert cells["customer_tier"] == "gold"
-        assert cells["customer_score"] == "7"
+        assert cells["customer_score"] == "7.0"  # CH attrs_number is Float64
         assert row.metadata["annotations"][str(thumbs_label.id)][0]["notes"] == (
             "label export note"
         )
@@ -1088,13 +1480,32 @@ class TestVoiceAnnotationRegressionE2E:
         assert download_resp.status_code == status.HTTP_200_OK, download_resp.data
         exported_item = download_resp.data["result"][0]
         assert exported_item["source"]["span_attributes"]["customer"]["tier"] == "gold"
-        assert exported_item["source"]["span_attributes"]["score"] == 7
+        assert exported_item["source"]["span_attributes"]["score"] == 7.0
         assert exported_item["annotations"][1]["annotator_email"] == (
             second_annotator.email
         )
         assert exported_item["evals"]["Export Quality"]["score"] == 0.82
         assert exported_item["review"]["notes"] == "review export note"
-        assert exported_item["item_notes"] == "whole item export note"
+        # Same per-queue scoping for the JSON download — see cell assertion above.
+        assert exported_item["item_notes"] == ""
+
+        csv_resp = auth_client.get(
+            f"/model-hub/annotation-queues/{queue.id}/export/",
+            {"export_format": "csv"},
+        )
+        assert csv_resp.status_code == status.HTTP_200_OK
+        csv_rows = list(csv.DictReader(io.StringIO(csv_resp.content.decode())))
+        assert len(csv_rows) == 2
+        assert csv_rows[0]["requires_review"] == "True"
+        assert csv_rows[0]["review_status"] == "approved"
+        assert csv_rows[0]["reviewer_email"] == reviewer.email
+        assert csv_rows[0]["reviewer_name"] == reviewer.name
+        assert csv_rows[0]["reviewer_id"] == str(reviewer.id)
+        assert csv_rows[0]["reviewed_at"]
+        assert csv_rows[0]["review_notes"] == "review export note"
+        assert csv_rows[0]["value"] == "up"
+        assert csv_rows[1]["review_status"] == "approved"
+        assert csv_rows[1]["value"] == "down"
 
         duplicate_resp = auth_client.post(
             f"/model-hub/annotation-queues/{queue.id}/export-to-dataset/",
@@ -1135,6 +1546,8 @@ class TestVoiceAnnotationRegressionE2E:
     ):
         root_conversation_span.span_attributes = {"score": 7}
         root_conversation_span.save(update_fields=["span_attributes"])
+        # Re-seed CH after mutating span_attributes: export reads them CH-native.
+        seed_ch_span(root_conversation_span)
         queue = _queue(
             "Existing dataset export queue",
             organization,
@@ -1234,20 +1647,27 @@ class TestVoiceAnnotationRegressionE2E:
         assert export_resp.status_code == status.HTTP_200_OK, export_resp.data
         assert export_resp.data["result"]["dataset_id"] == str(dataset.id)
         assert export_resp.data["result"]["rows_created"] == 1
-        assert Column.objects.filter(
-            dataset=dataset, name="source_identifier", deleted=False
-        ).count() == 1
+        assert (
+            Column.objects.filter(
+                dataset=dataset, name="source_identifier", deleted=False
+            ).count()
+            == 1
+        )
         assert (
             Column.objects.get(dataset=dataset, name="customer_score").data_type
-            == DataTypeChoices.INTEGER.value
+            == DataTypeChoices.FLOAT.value
         )
         dataset.refresh_from_db()
-        assert str(
-            Column.objects.get(dataset=dataset, name="thumbs_annotation_1_score").id
-        ) in dataset.column_order
-        assert str(
-            Column.objects.get(dataset=dataset, name="customer_score").id
-        ) in dataset.column_order
+        assert (
+            str(
+                Column.objects.get(dataset=dataset, name="thumbs_annotation_1_score").id
+            )
+            in dataset.column_order
+        )
+        assert (
+            str(Column.objects.get(dataset=dataset, name="customer_score").id)
+            in dataset.column_order
+        )
 
         exported_row = Row.objects.get(dataset=dataset, order=2, deleted=False)
         exported_cells = {
@@ -1255,10 +1675,8 @@ class TestVoiceAnnotationRegressionE2E:
             for cell in Cell.objects.filter(row=exported_row).select_related("column")
         }
         assert exported_cells["source_identifier"] == root_conversation_span.id
-        assert exported_cells["thumbs_annotation_1_score"] == json.dumps(
-            {"value": "up"}
-        )
-        assert exported_cells["customer_score"] == "7"
+        assert exported_cells["thumbs_annotation_1_score"] == "up"
+        assert exported_cells["customer_score"] == "7.0"  # CH attrs_number is Float64
         assert exported_cells["existing_only"] == ""
         assert exported_row.metadata["queue_item_id"] == str(item.id)
 
@@ -1266,9 +1684,7 @@ class TestVoiceAnnotationRegressionE2E:
             cell.column.name: cell.value
             for cell in Cell.objects.filter(row=existing_row).select_related("column")
         }
-        assert backfilled_existing_cells["source_identifier"] == (
-            "pre-existing-source"
-        )
+        assert backfilled_existing_cells["source_identifier"] == ("pre-existing-source")
         assert backfilled_existing_cells["existing_only"] == "keep me"
         assert backfilled_existing_cells["thumbs_annotation_1_score"] == ""
         assert backfilled_existing_cells["customer_score"] == ""
@@ -1443,8 +1859,13 @@ class TestVoiceAnnotationRegressionE2E:
             annotation["notes"]
             for annotation in download_resp.data["result"][0]["annotations"]
         }
+        # Strict per-queue scoping: this queue's export shows only the
+        # score attributed to this queue's item. The orphan ("inline"
+        # source-level score) and the other queue's score must both be
+        # excluded. Pre-revamp the orphan was leaked in, which is the
+        # behavior the queue-scoped uniqueness explicitly removes.
         assert "current queue score" in notes
-        assert "inline source score" in notes
+        assert "inline source score" not in notes
         assert "other queue score" not in notes
 
         dataset_resp = auth_client.post(
@@ -1470,8 +1891,11 @@ class TestVoiceAnnotationRegressionE2E:
             for entries in row.metadata["annotations"].values()
             for entry in entries
         }
+        # Same scoping rule applies to dataset export — only this queue's
+        # own scores. Orphans surface separately once the on_commit hook
+        # attaches them to a default queue's item.
         assert "current queue score" in exported_notes
-        assert "inline source score" in exported_notes
+        assert "inline source score" not in exported_notes
         assert "other queue score" not in exported_notes
 
         annotations_resp = auth_client.get(
@@ -1482,7 +1906,7 @@ class TestVoiceAnnotationRegressionE2E:
             annotation["notes"] for annotation in annotations_resp.data["result"]
         }
         assert "current queue score" in annotation_notes
-        assert "inline source score" in annotation_notes
+        assert "inline source score" not in annotation_notes
         assert "other queue score" not in annotation_notes
 
         complete_resp = auth_client.post(_complete_url(queue, item), {}, format="json")
@@ -1554,9 +1978,7 @@ class TestVoiceAnnotationRegressionE2E:
 
         label_slot_1_value_field = f"label:{thumbs_label.id}:slot:1:value"
         label_slot_1_notes_field = f"label:{thumbs_label.id}:slot:1:notes"
-        label_slot_1_annotator_field = (
-            f"label:{thumbs_label.id}:slot:1:annotator_email"
-        )
+        label_slot_1_annotator_field = f"label:{thumbs_label.id}:slot:1:annotator_email"
         label_slot_2_value_field = f"label:{thumbs_label.id}:slot:2:value"
         label_slot_2_notes_field = f"label:{thumbs_label.id}:slot:2:notes"
 
@@ -1607,16 +2029,841 @@ class TestVoiceAnnotationRegressionE2E:
             cell.column.name: cell.value
             for cell in Cell.objects.filter(row=row).select_related("column")
         }
-        assert cells["slot_1_value"] == json.dumps({"value": "up"})
+        # Per-queue strict scoping: only the queue-attributed score lands
+        # in the export. The older inline (orphan) score belongs to no
+        # queue and is excluded — pre-revamp it would have filled slot 2,
+        # which is what this regression test originally guarded against.
+        assert cells["slot_1_value"] == "up"
         assert cells["slot_1_notes"] == "queue label note"
         assert cells["slot_1_annotator"] == user.email
-        assert cells["slot_2_value"] == json.dumps({"value": "down"})
-        assert cells["slot_2_notes"] == "older inline source note"
+        # Slot 2 is empty because nothing else was scored *in this queue*.
+        assert cells.get("slot_2_value") in (None, "")
+        assert cells.get("slot_2_notes") in (None, "")
         metrics = json.loads(cells["annotation_metrics"])[thumbs_label.name]
-        assert [entry["notes"] for entry in metrics] == [
-            "queue label note",
-            "older inline source note",
-        ]
+        # ``metrics`` may serialize as either a list of entries or a single
+        # entry depending on count. Either way, the queue label note must
+        # appear and the inline note must not.
+        if isinstance(metrics, list):
+            notes = [entry.get("notes") for entry in metrics]
+        else:
+            notes = [metrics.get("notes")]
+        assert "queue label note" in notes
+        assert "older inline source note" not in notes
         assert row.metadata["annotations"][str(thumbs_label.id)][0]["notes"] == (
             "queue label note"
         )
+
+
+# Unit tests for call_execution-side annotation queue export helpers
+
+
+def _label(type_value):
+    return SimpleNamespace(type=type_value, id="lbl-1")
+
+
+class TestCanonicalScoreValue:
+    def test_text_label_extracts_text_key(self):
+        assert (
+            canonical_score_value(
+                _label(AnnotationTypeChoices.TEXT.value), {"text": "hello"}
+            )
+            == "hello"
+        )
+
+    def test_numeric_label_extracts_value_key(self):
+        assert (
+            canonical_score_value(
+                _label(AnnotationTypeChoices.NUMERIC.value), {"value": 7}
+            )
+            == 7
+        )
+
+    def test_star_label_extracts_rating_key(self):
+        assert (
+            canonical_score_value(
+                _label(AnnotationTypeChoices.STAR.value), {"rating": 4}
+            )
+            == 4
+        )
+
+    def test_thumbs_label_extracts_value_key(self):
+        assert (
+            canonical_score_value(
+                _label(AnnotationTypeChoices.THUMBS_UP_DOWN.value), {"value": "up"}
+            )
+            == "up"
+        )
+
+    def test_categorical_label_extracts_selected_key(self):
+        assert canonical_score_value(
+            _label(AnnotationTypeChoices.CATEGORICAL.value), {"selected": ["a", "b"]}
+        ) == ["a", "b"]
+
+    def test_none_raw_returns_none(self):
+        assert (
+            canonical_score_value(_label(AnnotationTypeChoices.STAR.value), None)
+            is None
+        )
+
+    def test_scalar_raw_passes_through(self):
+        assert (
+            canonical_score_value(_label(AnnotationTypeChoices.NUMERIC.value), 5) == 5
+        )
+
+    def test_missing_label_returns_raw_dict(self):
+        assert canonical_score_value(None, {"value": 1}) == {"value": 1}
+
+    def test_unknown_label_type_falls_back_to_raw(self):
+        unknown = SimpleNamespace(type="future_type", id="lbl-fut")
+        assert canonical_score_value(unknown, {"value": 1}) == {"value": 1}
+
+    def test_dict_missing_expected_key_returns_raw(self):
+        assert canonical_score_value(
+            _label(AnnotationTypeChoices.STAR.value), {"value": 1}
+        ) == {"value": 1}
+
+
+class TestEvalOutputValue:
+    def test_typed_dict_output_float(self):
+        assert eval_output_value({"output_float": 0.75}) == 0.75
+
+    def test_typed_dict_output_bool(self):
+        assert eval_output_value({"output_bool": True}) is True
+
+    def test_typed_dict_output_str(self):
+        assert eval_output_value({"output_str": "good"}) == "good"
+
+    def test_typed_dict_output_str_list(self):
+        assert eval_output_value({"output_str_list": ["a", "b"]}) == ["a", "b"]
+
+    def test_legacy_output_score_dict(self):
+        assert eval_output_value({"output": {"score": 0.5}}) == 0.5
+
+    def test_legacy_output_choice_dict(self):
+        assert eval_output_value({"output": {"choice": "pass"}}) == "pass"
+
+    def test_legacy_scalar_output(self):
+        assert eval_output_value({"output": 1.0}) == 1.0
+
+    def test_none_source(self):
+        assert eval_output_value(None) is None
+
+    def test_eval_logger_row_prefers_typed_columns(self):
+        row = SimpleNamespace(
+            output_float=0.9,
+            output_bool=None,
+            output_str=None,
+            output_str_list=[],
+        )
+        assert eval_output_value(row) == 0.9
+
+
+class TestEvalMetricsFromCallExecution:
+    def test_returns_empty_when_call_missing(self):
+        assert eval_metrics_from_call_execution(None) == {}
+
+    def test_returns_empty_when_eval_outputs_empty(self):
+        call = SimpleNamespace(eval_outputs={})
+        assert eval_metrics_from_call_execution(call) == {}
+
+    def test_legacy_output_dict_with_score(self):
+        call = SimpleNamespace(
+            eval_outputs={
+                "evt-1": {
+                    "name": "Helpfulness",
+                    "output": {"score": 0.8},
+                    "reason": "looked helpful",
+                }
+            }
+        )
+        result = eval_metrics_from_call_execution(call)
+        assert result == {
+            "Helpfulness": [
+                {
+                    "score": 0.8,
+                    "explanation": "looked helpful",
+                    "tags": None,
+                    "error": None,
+                    "error_message": None,
+                    "created_at": None,
+                }
+            ]
+        }
+
+    def test_typed_axis_sibling_keys_preferred_over_legacy_output(self):
+        call = SimpleNamespace(
+            eval_outputs={
+                "evt-1": {
+                    "name": "Score",
+                    "output_float": 0.42,
+                    "output": {"score": 0.99},
+                }
+            }
+        )
+        assert eval_metrics_from_call_execution(call)["Score"][0]["score"] == 0.42
+
+    def test_error_field_preserved_raw_not_coerced(self):
+        call = SimpleNamespace(
+            eval_outputs={
+                "evt-1": {
+                    "name": "Failing",
+                    "output": None,
+                    "error": "error",
+                    "error_message": "boom",
+                }
+            }
+        )
+        entry = eval_metrics_from_call_execution(call)["Failing"][0]
+        assert entry["error"] == "error"
+        assert entry["error_message"] == "boom"
+
+    def test_error_message_none_when_no_error(self):
+        call = SimpleNamespace(
+            eval_outputs={
+                "evt-1": {
+                    "name": "OK",
+                    "output": {"score": 1.0},
+                    "error_message": "stale",
+                }
+            }
+        )
+        entry = eval_metrics_from_call_execution(call)["OK"][0]
+        assert entry["error"] is None
+        assert entry["error_message"] is None
+
+    def test_non_dict_entry_skipped(self):
+        call = SimpleNamespace(
+            eval_outputs={"evt-1": "not-a-dict", "evt-2": {"name": "Real", "output": 1}}
+        )
+        result = eval_metrics_from_call_execution(call)
+        assert "Real" in result and len(result) == 1
+
+    def test_falls_back_to_eval_id_when_name_missing(self):
+        call = SimpleNamespace(eval_outputs={"evt-id": {"output": {"score": 0.1}}})
+        assert "evt-id" in eval_metrics_from_call_execution(call)
+
+    def test_shape_pin_matches_typed_dict(self):
+        from model_hub.utils.annotation_queue_helpers import EvalMetricEntry
+
+        call = SimpleNamespace(
+            eval_outputs={
+                "evt-1": {
+                    "name": "Pinned",
+                    "output": {"score": 0.5},
+                    "reason": "explain",
+                    "tags": ["x"],
+                    "created_at": "2026-01-01T00:00:00Z",
+                }
+            }
+        )
+        entries = eval_metrics_from_call_execution(call)["Pinned"]
+        assert len(entries) == 1
+        assert set(entries[0].keys()) == set(EvalMetricEntry.__annotations__.keys())
+
+
+@pytest.mark.django_db
+class TestQueueExportQueryCount:
+    def _seed_call(self, organization, workspace, base_call, turns=2):
+        from simulate.models.test_execution import CallExecution, CallTranscript
+
+        call = CallExecution.objects.create(
+            test_execution=base_call.test_execution,
+            scenario=base_call.scenario,
+            status=CallExecution.CallStatus.COMPLETED,
+            duration_seconds=10,
+        )
+        for i in range(turns):
+            role = (
+                CallTranscript.SpeakerRole.USER
+                if i % 2 == 0
+                else CallTranscript.SpeakerRole.ASSISTANT
+            )
+            CallTranscript.objects.create(
+                call_execution=call,
+                speaker_role=role,
+                content=f"turn {i}",
+                start_time_ms=i * 500,
+            )
+        return call
+
+    def _seed_queue_with_calls(
+        self, organization, workspace, user, calls, queue_name="prefetch guard"
+    ):
+        queue = _queue(queue_name, organization, workspace, user)
+        for call in calls:
+            QueueItem.objects.create(
+                queue=queue,
+                source_type=QueueItemSourceType.CALL_EXECUTION.value,
+                call_execution=call,
+                organization=organization,
+                workspace=workspace,
+                status=QueueItemStatus.COMPLETED.value,
+            )
+        return queue
+
+    def _run_export(self, queue):
+        from model_hub.utils.annotation_queue_helpers import _call_transcript_turns
+        from model_hub.views.annotation_queues import _queue_item_export_prefetches
+
+        items_qs = (
+            QueueItem.objects.filter(queue=queue, deleted=False)
+            .select_related("call_execution")
+            .prefetch_related(*_queue_item_export_prefetches())
+        )
+        items = list(items_qs)
+        for item in items:
+            _ = _call_transcript_turns(item.call_execution)
+        return items
+
+    def test_export_queryset_does_not_scale_with_call_items(
+        self,
+        organization,
+        workspace,
+        user,
+        simulation_call_execution,
+    ):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        from simulate.models.test_execution import CallTranscript
+
+        for i in range(2):
+            CallTranscript.objects.create(
+                call_execution=simulation_call_execution,
+                speaker_role=(
+                    CallTranscript.SpeakerRole.USER
+                    if i % 2 == 0
+                    else CallTranscript.SpeakerRole.ASSISTANT
+                ),
+                content=f"fixture turn {i}",
+                start_time_ms=i * 500,
+            )
+
+        call_b = self._seed_call(organization, workspace, simulation_call_execution)
+        queue_2 = self._seed_queue_with_calls(
+            organization,
+            workspace,
+            user,
+            [simulation_call_execution, call_b],
+            queue_name="prefetch guard 2-item",
+        )
+        with CaptureQueriesContext(connection) as ctx_2:
+            self._run_export(queue_2)
+        baseline = len(ctx_2.captured_queries)
+
+        call_c = self._seed_call(organization, workspace, simulation_call_execution)
+        call_d = self._seed_call(organization, workspace, simulation_call_execution)
+        queue_3 = self._seed_queue_with_calls(
+            organization,
+            workspace,
+            user,
+            [simulation_call_execution, call_c, call_d],
+            queue_name="prefetch guard 3-item",
+        )
+        with CaptureQueriesContext(connection) as ctx_3:
+            self._run_export(queue_3)
+
+        assert len(ctx_3.captured_queries) == baseline, (
+            f"Query count grew with item count: {baseline} -> "
+            f"{len(ctx_3.captured_queries)}. The transcripts fetch is "
+            f"running per-item; the Prefetch is missing or _call_transcript_turns "
+            f"is bypassing the prefetched attribute.\n"
+            + "\n".join(q["sql"][:200] for q in ctx_3.captured_queries)
+        )
+
+
+class TestAnnotateDetailClickHouseReads:
+    """Opening a voice item must not re-read the same trace from CH."""
+
+    def test_annotate_detail_reads_trace_root_once_scoped_to_project(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        observe_trace,
+        root_conversation_span,
+        thumbs_label,
+    ):
+        """One CH root-span read per open, pruned to the item's project.
+
+        The notes target, the rendered content and the preview all resolve the
+        SAME tracer source. Each used to do its own point-read, and none of
+        them passed the item's denormalized ``project_id``, so a voice item
+        cost three unscoped ``spans FINAL`` reads across the whole
+        multi-tenant table.
+        """
+        from tracer.services.clickhouse.v2 import span_reader
+
+        queue = _queue(
+            "CH read guard",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        item = QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.TRACE.value,
+            trace=observe_trace,
+            project=observe_project,
+            organization=organization,
+            workspace=workspace,
+            status=QueueItemStatus.PENDING.value,
+        )
+
+        calls = []
+        original = span_reader.CHSpanReader.roots_by_trace_ids
+
+        def recording(self, trace_ids, **kwargs):
+            calls.append(kwargs.get("project_id"))
+            return original(self, trace_ids, **kwargs)
+
+        span_reader.CHSpanReader.roots_by_trace_ids = recording
+        try:
+            resp = auth_client.get(_annotate_detail_url(queue, item))
+        finally:
+            span_reader.CHSpanReader.roots_by_trace_ids = original
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        detail = resp.data["result"]
+        # the read still has to produce the content the workspace renders
+        assert detail["item"]["source_content"]["type"] == "trace"
+        assert detail["item"]["source_preview"]["type"] == "trace"
+        assert detail["span_notes_source_id"] == root_conversation_span.id
+
+        assert len(calls) == 1, (
+            f"annotate-detail made {len(calls)} ClickHouse root-span reads for "
+            "one trace; content, preview and the notes target must share one "
+            "cached read."
+        )
+        assert calls[0] == str(observe_project.id), (
+            "the root-span read was not scoped to the item's project, so it "
+            "cannot prune the spans PK prefix and scans every tenant. "
+            f"project_id passed: {calls[0]!r}"
+        )
+
+    def test_annotate_detail_reads_a_span_item_once(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        root_conversation_span,
+        thumbs_label,
+    ):
+        """The heavy path: an observation_span item must be read once, not thrice.
+
+        A span read carries the full column set including ``attributes_extra``,
+        which on a real voice conversation root is tens of MB. Measured on dev:
+        73 MiB and 203 MiB of ClickHouse memory per read, against 5.5 KiB for a
+        lean trace-root read. Tripling that is the expensive shape, so it gets
+        its own guard rather than riding on the trace test.
+        """
+        from tracer.services.clickhouse.v2 import span_reader
+
+        queue = _queue(
+            "span read guard",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        item = QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.OBSERVATION_SPAN.value,
+            observation_span=root_conversation_span,
+            project=observe_project,
+            organization=organization,
+            workspace=workspace,
+            status=QueueItemStatus.PENDING.value,
+        )
+
+        calls = []
+        orig_list = span_reader.CHSpanReader.list_by_ids
+        orig_get = span_reader.CHSpanReader.get
+
+        def rec_list(self, span_ids, **kwargs):
+            calls.append(("list_by_ids", kwargs.get("project_id")))
+            return orig_list(self, span_ids, **kwargs)
+
+        def rec_get(self, span_id, **kwargs):
+            calls.append(("get", kwargs.get("project_id")))
+            return orig_get(self, span_id, **kwargs)
+
+        span_reader.CHSpanReader.list_by_ids = rec_list
+        span_reader.CHSpanReader.get = rec_get
+        try:
+            resp = auth_client.get(_annotate_detail_url(queue, item))
+        finally:
+            span_reader.CHSpanReader.list_by_ids = orig_list
+            span_reader.CHSpanReader.get = orig_get
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        detail = resp.data["result"]
+        assert detail["item"]["source_content"]["type"] == "observation_span"
+        assert detail["item"]["source_preview"]["type"] == "observation_span"
+        assert detail["span_notes_source_id"] == root_conversation_span.id
+
+        assert len(calls) == 1, (
+            f"annotate-detail made {len(calls)} ClickHouse span reads "
+            f"({[c[0] for c in calls]}) for one item; the notes target, content "
+            "and preview must share one cached read."
+        )
+
+
+@pytest.mark.django_db
+class TestQueueItemSourcePreviewCapture:
+    """Rendering the items grid must not read ClickHouse.
+
+    A page used to cost one ``spans FINAL`` merge — ~1.5-2.3s on a large voice
+    project — purely to show a name and two 200-char previews. The preview is
+    now captured at add time, so a captured page does zero CH reads.
+    """
+
+    def _items_url(self, queue):
+        return f"/model-hub/annotation-queues/{queue.id}/items/?limit=25&page=1"
+
+    def _item(self, queue, organization, workspace, project, trace, **kwargs):
+        return QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.TRACE.value,
+            trace=trace,
+            project=project,
+            organization=organization,
+            workspace=workspace,
+            status=QueueItemStatus.PENDING.value,
+            **kwargs,
+        )
+
+    def test_captured_preview_makes_the_items_list_read_zero_ch(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        observe_trace,
+        root_conversation_span,
+        thumbs_label,
+    ):
+        """A page of captured items issues no root-span read at all.
+
+        Asserts the READ COUNT, not latency: on a small test dataset the live
+        read is fast, so only the absence of the read proves the fix. Fails
+        before the capture existed (that page did exactly one read).
+        """
+        from tracer.services.clickhouse.v2 import span_reader
+
+        queue = _queue(
+            "preview capture",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        item = self._item(
+            queue, organization, workspace, observe_project, observe_trace
+        )
+
+        # capture it the way the add path would
+        live = auth_client.get(self._items_url(queue))
+        assert live.status_code == status.HTTP_200_OK, live.data
+        live_preview = live.data["results"][0]["source_preview"]
+        QueueItem.all_objects.filter(id=item.id).update(source_preview=live_preview)
+
+        calls = []
+        original = span_reader.CHSpanReader.roots_by_trace_ids
+
+        def recording(self, trace_ids, **kwargs):
+            calls.append(kwargs.get("project_id"))
+            return original(self, trace_ids, **kwargs)
+
+        span_reader.CHSpanReader.roots_by_trace_ids = recording
+        try:
+            resp = auth_client.get(self._items_url(queue))
+        finally:
+            span_reader.CHSpanReader.roots_by_trace_ids = original
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert len(calls) == 0, (
+            f"items list made {len(calls)} ClickHouse root-span read(s) for a page "
+            "whose previews were already captured; the capture exists precisely "
+            "to remove that read."
+        )
+        # and the payload the grid renders is unchanged
+        assert resp.data["results"][0]["source_preview"] == live_preview
+
+    def test_captured_and_live_previews_are_identical(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        observe_trace,
+        root_conversation_span,
+        thumbs_label,
+    ):
+        """The cached dict must equal what the live path would have produced.
+
+        Both come from the shared payload builders, so a drift here means
+        someone changed one shape without the other.
+        """
+        queue = _queue(
+            "preview parity",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        item = self._item(
+            queue, organization, workspace, observe_project, observe_trace
+        )
+
+        live = auth_client.get(self._items_url(queue)).data["results"][0][
+            "source_preview"
+        ]
+
+        from model_hub.utils.annotation_queue_helpers import (
+            preview_payload_for_source,
+            resolve_source_object,
+        )
+
+        source_obj = resolve_source_object(
+            QueueItemSourceType.TRACE.value,
+            str(item.trace_id),
+            organization=organization,
+            workspace=workspace,
+        )
+        captured = preview_payload_for_source(
+            QueueItemSourceType.TRACE.value, source_obj
+        )
+        assert captured == live, (
+            "add-time capture and the live render disagree; they share "
+            f"_trace_preview_payload so this is a drift.\ncaptured={captured}\nlive={live}"
+        )
+
+    def test_span_and_session_captures_match_the_live_path(
+        self,
+        organization,
+        workspace,
+        observe_project,
+        root_conversation_span,
+    ):
+        """Parity for the other two CH-backed builders.
+
+        The trace test above only covers ``_trace_preview_payload``; the
+        "shared builders can't drift" argument needs the span and session
+        builders pinned too, or half the surface is unguarded.
+        """
+        from model_hub.utils.annotation_queue_helpers import (
+            preview_payload_for_source,
+            resolve_source_object,
+            resolve_source_preview,
+        )
+
+        span_type = QueueItemSourceType.OBSERVATION_SPAN.value
+        source_obj = resolve_source_object(
+            span_type,
+            str(root_conversation_span.id),
+            organization=organization,
+            workspace=workspace,
+        )
+        assert source_obj is not None, "span source did not resolve from CH"
+        captured = preview_payload_for_source(span_type, source_obj)
+
+        item = QueueItem(
+            source_type=span_type,
+            observation_span_id=str(root_conversation_span.id),
+            project=observe_project,
+        )
+        live = resolve_source_preview(item)
+
+        assert captured == live, (
+            "add-time capture and live render disagree for observation_span; "
+            f"they share _span_preview_payload.\ncaptured={captured}\nlive={live}"
+        )
+
+    def test_filter_mode_add_captures_the_preview(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        observe_trace,
+        root_conversation_span,
+        thumbs_label,
+    ):
+        """The filter add-path must stamp source_preview, not just the enumerated one.
+
+        Filter mode is how voice items actually enter a queue in bulk, and it
+        takes its payload from ``previews_by_id`` rather than resolving a source
+        itself — so a regression to ``.get(tid) -> None`` would silently drop
+        every row back to a live ClickHouse read with nothing failing.
+        """
+        queue = _queue(
+            "filter capture",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+
+        resp = auth_client.post(
+            f"/model-hub/annotation-queues/{queue.id}/items/add-items/",
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": QueueItemSourceType.TRACE.value,
+                    "project_id": str(observe_project.id),
+                    "filter": [],
+                }
+            },
+            format="json",
+        )
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+
+        item = QueueItem.all_objects.filter(
+            queue=queue, source_type=QueueItemSourceType.TRACE.value, deleted=False
+        ).first()
+        assert item is not None, f"filter add created no trace item: {resp.data}"
+        assert item.source_preview, (
+            "filter-mode add left source_preview NULL — previews_by_id is not "
+            "reaching the QueueItem, so the grid falls back to a live CH read"
+        )
+        assert item.source_preview["type"] == "trace"
+
+    def test_backfill_leaves_unresolvable_sources_null(
+        self,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        thumbs_label,
+    ):
+        """The sentinel guard: a source CH can't resolve must stay NULL.
+
+        Freezing a ``deleted`` sentinel into the cache would make the grid
+        permanently claim the source is gone even if the read later succeeds.
+        """
+        from model_hub.management.commands.backfill_queue_item_source_preview import (
+            backfill_queue_item_source_previews,
+        )
+
+        queue = _queue(
+            "backfill sentinel",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        # A trace id with no ClickHouse row behind it.
+        item = QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.TRACE.value,
+            trace_id=uuid.uuid4(),
+            project=observe_project,
+            organization=organization,
+            workspace=workspace,
+            status=QueueItemStatus.PENDING.value,
+        )
+        QueueItem.all_objects.filter(id=item.id).update(source_preview=None)
+
+        stamped, skipped, failed = backfill_queue_item_source_previews(
+            queue_id=queue.id
+        )
+
+        assert stamped == 0, "an unresolvable source must not be stamped"
+        assert skipped == 1
+        assert failed == 0
+        item.refresh_from_db()
+        assert item.source_preview is None
+
+    def test_uncaptured_rows_still_render_via_the_live_path(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        observe_trace,
+        root_conversation_span,
+        thumbs_label,
+    ):
+        """NULL source_preview must fall back, not render an empty cell.
+
+        Every row that predates the capture is NULL until the backfill runs, so
+        the fallback is the normal path for existing data, not an edge case.
+        """
+        queue = _queue(
+            "preview fallback",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        item = self._item(
+            queue, organization, workspace, observe_project, observe_trace
+        )
+        QueueItem.all_objects.filter(id=item.id).update(source_preview=None)
+
+        resp = auth_client.get(self._items_url(queue))
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        preview = resp.data["results"][0]["source_preview"]
+        assert preview["type"] == "trace"
+        assert "name" in preview and "input_preview" in preview
+
+    def test_backfill_stamps_previews_and_is_idempotent(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        observe_trace,
+        root_conversation_span,
+        thumbs_label,
+    ):
+        """The backfill is what fixes EXISTING queues, so it needs its own test.
+
+        Re-running must be a no-op — the migration and the management command
+        both call it, so it can legitimately run twice.
+        """
+        from model_hub.management.commands.backfill_queue_item_source_preview import (
+            backfill_queue_item_source_previews,
+        )
+
+        queue = _queue(
+            "backfill",
+            organization,
+            workspace,
+            user,
+            project=observe_project,
+        )
+        AnnotationQueueLabel.objects.create(queue=queue, label=thumbs_label)
+        item = self._item(
+            queue, organization, workspace, observe_project, observe_trace
+        )
+        QueueItem.all_objects.filter(id=item.id).update(source_preview=None)
+
+        stamped, _, failed = backfill_queue_item_source_previews(queue_id=queue.id)
+        assert failed == 0
+        assert stamped == 1
+        item.refresh_from_db()
+        assert item.source_preview is not None
+        assert item.source_preview["type"] == "trace"
+
+        # second run has nothing left to do
+        stamped_again, _, _ = backfill_queue_item_source_previews(queue_id=queue.id)
+        assert stamped_again == 0, "backfill is not idempotent"

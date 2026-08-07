@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import re
 import time
 import traceback
 from datetime import datetime, timedelta
@@ -11,7 +12,7 @@ from cryptography.fernet import Fernet
 from django.conf import settings
 from django.core.cache import cache
 from django.db import IntegrityError
-from django.http import HttpResponseForbidden, JsonResponse
+from django.http import JsonResponse
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.authentication import BaseAuthentication
@@ -26,16 +27,91 @@ from accounts.models.auth_token import (
 )
 from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from accounts.services.workspace_membership import create_workspace_membership
 from tfc.constants.roles import OrganizationRoles
+from tfc.utils.api_errors import (
+    build_error_envelope,
+    error_details,
+    exception_code,
+)
 
 logger = structlog.get_logger(__name__)
 
 # Rate limiting settings with defaults
 MAX_LOGIN_ATTEMPTS_PER_HOUR: int = getattr(settings, "MAX_LOGIN_ATTEMPTS_PER_HOUR", 10)
 IP_BLOCK_DURATION: int = getattr(settings, "IP_BLOCK_DURATION", 3600)
+RATE_LIMIT_WINDOW_SECONDS: int = 3600
+
+ANNOTATION_QUEUE_ROLE_SCOPED_WRITE_PATHS = (
+    re.compile(
+        r"/model-hub/annotation-queues/[^/]+/items/" r"(?:assign|bulk-review)/?$"
+    ),
+    re.compile(
+        r"/model-hub/annotation-queues/[^/]+/items/[^/]+/"
+        r"(?:annotations/submit|complete|skip|release|review)/?$"
+    ),
+    re.compile(r"/model-hub/annotation-queues/[^/]+/items/[^/]+/" r"discussion/?$"),
+    re.compile(
+        r"/model-hub/annotation-queues/[^/]+/items/[^/]+/"
+        r"discussion/comments/[^/]+(?:/reaction)?/?$"
+    ),
+    re.compile(
+        r"/model-hub/annotation-queues/[^/]+/items/[^/]+/"
+        r"discussion/[^/]+/(?:resolve|reopen)/?$"
+    ),
+)
+
+
+def _is_annotation_queue_role_scoped_write_path(path):
+    """Allow queue-role checks in the annotation views to own these writes."""
+    return any(
+        pattern.search(path or "")
+        for pattern in ANNOTATION_QUEUE_ROLE_SCOPED_WRITE_PATHS
+    )
+
+
+def workspace_read_only(view_cls):
+    """Mark a view whose write-method requests perform NO workspace writes.
+
+    Some read-only endpoints use a POST body only to carry filters or a
+    search query — they read, they don't mutate. Decorate those views with
+    ``@workspace_read_only`` so the workspace write-permission check skips
+    them and read-only roles (viewers) can reach them.
+
+    Prefer this over adding the path to a string allow-list: the intent
+    lives at the view definition, so it cannot drift out of sync when the
+    route changes, and it is impossible to add a read-only POST endpoint
+    without the marker travelling with it.
+    """
+    view_cls.workspace_write_exempt = True
+    return view_cls
+
+
+def _resolve_view_class(request):
+    """Return the class-based view handling this request, if resolvable.
+
+    Django attaches ``.cls`` to the function produced by ``View.as_view()``;
+    by the time authentication runs the URL is already resolved, so
+    ``request.resolver_match`` is populated.
+    """
+    match = getattr(request, "resolver_match", None)
+    return getattr(getattr(match, "func", None), "cls", None)
+
+
+def _is_workspace_write_exempt_view(request):
+    """True when the resolved view is marked ``@workspace_read_only``.
+
+    Fail-closed: if the view cannot be resolved, returns ``False`` so the
+    write check still runs — a resolution failure can never grant write
+    access.
+    """
+    return bool(getattr(_resolve_view_class(request), "workspace_write_exempt", False))
 
 
 class APIKeyAuthentication(BaseAuthentication):
+    def authenticate_header(self, request):
+        return "ApiKey"
+
     def _bind_user_context(self, user):
         """Bind user context to structlog for all subsequent logs in this request."""
         structlog.contextvars.bind_contextvars(user_id=str(user.id))
@@ -87,7 +163,12 @@ class APIKeyAuthentication(BaseAuthentication):
         try:
             org_api_key = OrgApiKey.objects.select_related(
                 "organization", "workspace"
-            ).get(api_key=api_key, secret_key=secret_key, enabled=True)
+            ).get(
+                api_key=api_key,
+                secret_key=secret_key,
+                enabled=True,
+                deleted=False,
+            )
 
             # Validate that the API key has a valid organization
             if not org_api_key.organization:
@@ -155,12 +236,18 @@ class APIKeyAuthentication(BaseAuthentication):
         excluded_paths = [
             "workspace/switch/",
             "organizations/switch/",
-            "get-eval-templates",
             "update-user-full-name",  # Users can always update their own profile
+            "onboarding/",  # Users can always update their own onboarding profile
+            "logout/",  # Users can always invalidate their own access token
+            "2fa/",  # Users can always manage their own second factor state
+            "passkey/",  # Users can always manage their own passkey challenges
+            "passkeys/",  # Users can always manage their own passkey records
         ]
 
-        should_skip_write_check = any(
-            excluded_path in request.path for excluded_path in excluded_paths
+        should_skip_write_check = (
+            _is_workspace_write_exempt_view(request)
+            or any(excluded_path in request.path for excluded_path in excluded_paths)
+            or _is_annotation_queue_role_scoped_write_path(request.path)
         )
 
         if (
@@ -432,7 +519,7 @@ class APIKeyAuthentication(BaseAuthentication):
             user=user, workspace=default_workspace, is_active=True
         ).exists():
             try:
-                WorkspaceMembership.no_workspace_objects.create(
+                create_workspace_membership(
                     workspace=default_workspace,
                     user=user,
                     role=OrganizationRoles.WORKSPACE_ADMIN,
@@ -488,7 +575,12 @@ class LangfuseBasicAuthentication(APIKeyAuthentication):
         try:
             org_api_key = OrgApiKey.objects.select_related(
                 "organization", "workspace"
-            ).get(api_key=public_key, secret_key=secret_key, enabled=True)
+            ).get(
+                api_key=public_key,
+                secret_key=secret_key,
+                enabled=True,
+                deleted=False,
+            )
         except OrgApiKey.DoesNotExist as e:
             raise AuthenticationFailed("Invalid API key or secret key") from e
 
@@ -608,7 +700,9 @@ class AuthMonitoringMiddleware:
             now = time.time()
 
             # Remove requests older than 1 hour
-            requests = [req for req in requests if now - req < 1000]
+            requests = [
+                req for req in requests if now - req < RATE_LIMIT_WINDOW_SECONDS
+            ]
 
             if len(requests) >= MAX_LOGIN_ATTEMPTS_PER_HOUR:
                 cache.set(f"rate_limit_{client_ip}", True, IP_BLOCK_DURATION)
@@ -618,7 +712,9 @@ class AuthMonitoringMiddleware:
                 )
 
             requests.append(now)
-            cache.set(f"rate_limit_requests_{client_ip}", requests, 1200)
+            cache.set(
+                f"rate_limit_requests_{client_ip}", requests, RATE_LIMIT_WINDOW_SECONDS
+            )
 
         if (
             request.path.endswith("login/")
@@ -638,7 +734,9 @@ class AuthMonitoringMiddleware:
             now = time.time()
 
             # Remove requests older than 1 hour
-            requests = [req for req in requests if now - req < 1000]
+            requests = [
+                req for req in requests if now - req < RATE_LIMIT_WINDOW_SECONDS
+            ]
 
             if len(requests) >= MAX_LOGIN_ATTEMPTS_PER_HOUR:
                 cache.set(f"blocked_ip_{client_ip}", True, IP_BLOCK_DURATION)
@@ -649,7 +747,7 @@ class AuthMonitoringMiddleware:
                 )
 
             requests.append(now)
-            cache.set(f"ip_requests_{client_ip}", requests, 1200)
+            cache.set(f"ip_requests_{client_ip}", requests, RATE_LIMIT_WINDOW_SECONDS)
 
         return self.get_response(request)
 
@@ -815,22 +913,29 @@ def decode_token(token: str):
         raise AuthenticationFailed(f"Invalid Token parsed: {e}") from e
 
 
+def _pydantic_error_response(exc):
+    errors = exc.errors()
+    details = {}
+    for err in errors[:10]:
+        attr = ".".join(str(loc) for loc in err.get("loc", []))
+        key = attr or "non_field_errors"
+        details.setdefault(key, []).append(err.get("msg", str(exc)))
+    code = errors[0].get("type", "invalid_input") if errors else "invalid_input"
+    return build_error_envelope(
+        details or str(exc),
+        status_code=status.HTTP_400_BAD_REQUEST,
+        code=code,
+        error_type="validation_error",
+        details=details,
+    )
+
+
 def custom_exception_handler(exc, context):
     """
     Global DRF exception handler.
 
-    Handles:
-    - AuthenticationFailed → 401
-    - Pydantic ValidationError → 400 with structured error response
-    - Everything else → default DRF handler
-
-    Error format:
-    {
-        "type": "validation_error",
-        "code": "invalid_input",
-        "detail": "filters.tags: Input should be a valid list",
-        "attr": "filters.tags"
-    }
+    API errors return the same public envelope:
+    {status: false, type, code, detail, message, result, attr?, details?}.
     """
     from rest_framework.views import exception_handler
 
@@ -838,17 +943,22 @@ def custom_exception_handler(exc, context):
 
     response = exception_handler(exc, context)
 
-    if isinstance(exc, AuthenticationFailed):
-        return Response({"detail": str(exc)}, status=status.HTTP_401_UNAUTHORIZED)
-
     if isinstance(exc, FeatureUnavailable):
         detail = {"feature": exc.feature}
         detail.update(getattr(exc, "metadata", {}) or {})
+        code = getattr(exc, "error_code", exc.default_code)
+        message = str(exc.detail)
         body = {
-            "status": False,
+            **build_error_envelope(
+                message,
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                error_type="entitlement_error",
+                code=code,
+                details={"feature": [exc.feature], **error_details(detail)},
+            ),
             "error": {
-                "code": getattr(exc, "error_code", exc.default_code),
-                "message": str(exc.detail),
+                "code": code,
+                "message": message,
                 "detail": detail,
             },
             "upgrade_required": True,
@@ -863,41 +973,19 @@ def custom_exception_handler(exc, context):
             from pydantic import ValidationError as PydanticValidationError
 
             if isinstance(exc, PydanticValidationError):
-                errors = exc.errors()
-                if len(errors) == 1:
-                    err = errors[0]
-                    attr = ".".join(str(loc) for loc in err.get("loc", []))
-                    return Response(
-                        {
-                            "type": "validation_error",
-                            "code": err.get("type", "invalid_input"),
-                            "detail": err.get("msg", str(exc)),
-                            "attr": attr or None,
-                        },
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-                else:
-                    items = []
-                    for err in errors[:5]:
-                        attr = ".".join(str(loc) for loc in err.get("loc", []))
-                        items.append(
-                            {
-                                "type": "validation_error",
-                                "code": err.get("type", "invalid_input"),
-                                "detail": err.get("msg", ""),
-                                "attr": attr or None,
-                            }
-                        )
-                    return Response(
-                        {
-                            "type": "validation_error",
-                            "code": "invalid_input",
-                            "detail": f"{len(errors)} validation error(s)",
-                            "errors": items,
-                        },
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
+                return Response(
+                    _pydantic_error_response(exc),
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
         except ImportError:
             pass
+
+    if response is not None:
+        response.data = build_error_envelope(
+            response.data,
+            status_code=response.status_code,
+            code=exception_code(exc),
+            details=error_details(response.data),
+        )
 
     return response

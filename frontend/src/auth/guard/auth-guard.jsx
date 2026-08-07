@@ -57,7 +57,6 @@ function Container({ children }) {
     const refreshToken = queryParams.get("refresh_token");
     const isNewOAuthUser = queryParams.get("is_new_user") === "true";
     const returnTo = localStorage.getItem("redirectUrl");
-    
 
     if (!authenticated) {
       if (sso_token) {
@@ -65,7 +64,7 @@ function Container({ children }) {
           localStorage.setItem("refreshToken", refreshToken);
         }
         localStorage.setItem("accessToken", sso_token);
-    
+
         if (isNewOAuthUser) {
           localStorage.setItem("isNewOAuthSignup", "1");
           localStorage.setItem("isNewOAuthSignupAt", String(Date.now()));
@@ -77,6 +76,7 @@ function Container({ children }) {
         const isRelativePath =
           returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//");
         if (isRelativePath) {
+          localStorage.setItem("initial-render", "done");
           localStorage.removeItem("redirectUrl");
           window.location.href = returnTo;
         } else {
@@ -122,12 +122,9 @@ function Container({ children }) {
     // Skip redirect logic for standalone pages (e.g. MCP OAuth consent)
     if (window.location.pathname.startsWith("/mcp/")) return;
     if (!user) return;
-    const isNewOAuthSignup =
-      localStorage.getItem("isNewOAuthSignup") === "1";
+    const isNewOAuthSignup = localStorage.getItem("isNewOAuthSignup") === "1";
     if (isNewOAuthSignup) {
-      const stampedAt = Number(
-        localStorage.getItem("isNewOAuthSignupAt") || 0,
-      );
+      const stampedAt = Number(localStorage.getItem("isNewOAuthSignupAt") || 0);
       const fresh = Date.now() - stampedAt < 10 * 60 * 1000;
       const provider = localStorage.getItem("signupProvider") || "oauth";
       if (fresh && user?.email && user?.id && provider !== "email") {
@@ -216,7 +213,7 @@ function Container({ children }) {
     // Once onboarding is complete, users with an organization_role are fully
     // set up — leave them where they are.
     if (user?.organization_role && user?.onboarding_completed) return;
-    if( user?.default_workspace_role===ROLES.WORKSPACE_VIEWER) return;
+    if (user?.default_workspace_role === ROLES.WORKSPACE_VIEWER) return;
     let orgName = currentOrganizationName;
     if (!orgName || orgName.trim() === "") {
       orgName = currentOrganizationDisplayName;

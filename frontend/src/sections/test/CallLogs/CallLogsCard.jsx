@@ -23,18 +23,18 @@ const CallLogsCard = ({ log }) => {
   const { testId } = useParams();
   const [open, setOpen] = useState(false);
   const simulationCallType =
-    log?.simulation_call_type ?? log?.simulationCallType;
-  const callType = log?.call_type ?? log?.callType;
+    log?.simulation_call_type;
+  const callType = log?.call_type;
   const agentDefinitionUsedName =
-    log?.agent_definition_used_name ?? log?.agentDefinitionUsedName;
+    log?.agent_definition_used_name;
   const simulatorAgentName =
-    log?.simulator_agent_name ?? log?.simulatorAgentName;
-  const overallScore = log?.overall_score ?? log?.overallScore;
-  const audioUrl = log?.audio_url ?? log?.audioUrl;
+    log?.simulator_agent_name;
+  const overallScore = log?.overall_score ;
+  const audioUrl = log?.audio_url;
   const filteredTranscript = useMemo(() => {
     const originalTranscript = log?.transcript;
     return originalTranscript?.filter(
-      (item) => (item.speaker_role ?? item.speakerRole) !== "system",
+      (item) => item.speaker_role !== "system",
     );
   }, [log]);
 

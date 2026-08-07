@@ -76,6 +76,14 @@ class TestAgentDefinitionCreateRequestSerializer:
         serializer = AgentDefinitionCreateRequestSerializer(data=_text_agent_payload())
         assert serializer.is_valid(), serializer.errors
 
+    def test_valid_bland_inbound_voice_agent(self):
+        # Bland has no web bridge, so an inbound Bland agent is reached over the
+        # phone path — a contact_number is the only provider-specific requirement.
+        serializer = AgentDefinitionCreateRequestSerializer(
+            data=_voice_agent_payload(provider="bland")
+        )
+        assert serializer.is_valid(), serializer.errors
+
     def test_missing_agent_name(self):
         data = _voice_agent_payload()
         del data["agent_name"]
@@ -344,6 +352,17 @@ class TestFetchAssistantRequestSerializer:
         )
         assert not serializer.is_valid()
         assert "provider" in serializer.errors
+
+    def test_bland_provider_accepted(self):
+        # Bland is a supported voice provider; assistant_id carries the pathway id.
+        serializer = FetchAssistantRequestSerializer(
+            data={
+                "assistant_id": "a0f0d4ed-f5f5-4f16-b3f9-22166594d7a7",
+                "api_key": "bland_key_123",
+                "provider": "bland",
+            }
+        )
+        assert serializer.is_valid(), serializer.errors
 
 
 # ============================================================================

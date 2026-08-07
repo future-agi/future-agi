@@ -1,0 +1,77 @@
+name: AgentCC Gateway CI
+
+on:
+  pull_request:
+    branches: [main, develop, dev]
+    paths:
+      - "agentcc-gateway/**"
+      - "api_contracts/gateway/**"
+      - "futureagi/agentcc/contracts/**"
+      - "futureagi/agentcc/tests/fixtures/gateway_org_config.full.json"
+      - "scripts/generate-agentcc-gateway-contracts.py"
+      - ".github/workflows/agentcc-gateway-ci.yml"
+  push:
+    branches: [main, develop, dev]
+    paths:
+      - "agentcc-gateway/**"
+      - "api_contracts/gateway/**"
+      - "futureagi/agentcc/contracts/**"
+      - "futureagi/agentcc/tests/fixtures/gateway_org_config.full.json"
+      - "scripts/generate-agentcc-gateway-contracts.py"
+      - ".github/workflows/agentcc-gateway-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gateway:
+    name: Gateway contracts and tests
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      TEST_REDIS_ADDR: localhost:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agentcc-gateway/go.mod
+          cache-dependency-path: agentcc-gateway/go.sum
+
+      - name: Check generated gateway contracts
+        run: python3 scripts/generate-agentcc-gateway-contracts.py --check
+
+      - name: Download gateway deps
+        working-directory: agentcc-gateway
+        run: go mod download
+
+      - name: Check generated Go formatting
+        working-directory: agentcc-gateway
+        run: test -z "$(gofmt -l internal/contracts/generated)"
+
+      - name: Run gateway tests
+        working-directory: agentcc-gateway
+        run: make test
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build gateway image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./agentcc-gateway
+          file: ./agentcc-gateway/Dockerfile
+          push: false
+          tags: agentcc-gateway:ci

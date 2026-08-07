@@ -1,8 +1,8 @@
 #!/bin/sh
 # entrypoint.sh
 
-# Print a message indicating the script is running
-echo "Starting FastAPI application with Gunicorn..."
+GUNICORN_TIMEOUT="${GUNICORN_TIMEOUT:-300}"
 
-# Command to run the FastAPI app using Gunicorn
-exec gunicorn -w 1 -t 100 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8080 app.main:app
+echo "Starting FastAPI application with Gunicorn (timeout=${GUNICORN_TIMEOUT}s)..."
+
+exec gunicorn -w 1 -t "${GUNICORN_TIMEOUT}" -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8080 app.main:app

@@ -79,7 +79,7 @@ describe("getPromptNodeFormSchema", () => {
           content: [
             {
               type: "image_url",
-              imageUrl: { url: "https://example.com/img.png" },
+              image_url: { url: "https://example.com/img.png" },
             },
           ],
         },
@@ -98,7 +98,7 @@ describe("getPromptNodeFormSchema", () => {
           content: [
             {
               type: "pdf_url",
-              pdfUrl: { url: "https://example.com/doc.pdf" },
+              pdf_url: { url: "https://example.com/doc.pdf" },
             },
           ],
         },
@@ -117,7 +117,7 @@ describe("getPromptNodeFormSchema", () => {
           content: [
             {
               type: "audio_url",
-              audioUrl: { url: "https://example.com/audio.mp3" },
+              audio_url: { url: "https://example.com/audio.mp3" },
             },
           ],
         },

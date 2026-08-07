@@ -73,6 +73,29 @@ def _make_ref_port(graph_version, direction, display_name="port"):
     return port
 
 
+def _make_prompt_template_with_version(
+    organization,
+    workspace,
+    user=None,
+    *,
+    name="Scoped Prompt",
+    is_draft=True,
+):
+    pt = PromptTemplate.no_workspace_objects.create(
+        name=name,
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
+    )
+    pv = PromptVersion.no_workspace_objects.create(
+        original_template=pt,
+        template_version="v1",
+        prompt_config_snapshot={"messages": [{"role": "user", "content": "Hello"}]},
+        is_draft=is_draft,
+    )
+    return pt, pv
+
+
 # ── create_node ────────────────────────────────────────────────────────
 
 
@@ -194,6 +217,71 @@ class TestCreateNode:
         # Should create a new draft PV (not reuse the committed one)
         assert ptn.prompt_version_id != prompt_version.id
         assert ptn.prompt_version.is_draft is True
+
+    def test_create_llm_node_rejects_other_workspace_prompt_template(
+        self, db, graph_version, llm_node_template, user, organization, workspace
+    ):
+        from accounts.models.workspace import Workspace
+
+        other_workspace = Workspace.objects.create(
+            name="Other Prompt Workspace",
+            organization=organization,
+            is_active=True,
+            created_by=user,
+        )
+        foreign_pt, _ = _make_prompt_template_with_version(
+            organization,
+            other_workspace,
+            user,
+            name="Foreign Workspace Prompt",
+        )
+        data = {
+            "id": uuid.uuid4(),
+            "type": NodeType.ATOMIC,
+            "name": "LLM Node",
+            "node_template_id": llm_node_template.id,
+            "prompt_template": _base_prompt_data(
+                prompt_template_id=foreign_pt.id,
+            ),
+        }
+
+        with pytest.raises(ValidationError, match="active workspace"):
+            create_node(graph_version, data, user, organization, workspace)
+
+        assert not PromptTemplateNode.no_workspace_objects.filter(
+            node_id=data["id"]
+        ).exists()
+
+    def test_create_llm_node_rejects_prompt_version_from_another_template(
+        self,
+        db,
+        graph_version,
+        llm_node_template,
+        prompt_template,
+        other_prompt_version,
+        user,
+        organization,
+        workspace,
+    ):
+        data = {
+            "id": uuid.uuid4(),
+            "type": NodeType.ATOMIC,
+            "name": "LLM Node",
+            "node_template_id": llm_node_template.id,
+            "prompt_template": _base_prompt_data(
+                prompt_template_id=prompt_template.id,
+                prompt_version_id=other_prompt_version.id,
+            ),
+        }
+
+        with pytest.raises(ValidationError, match="specified prompt template"):
+            create_node(graph_version, data, user, organization, workspace)
+
+        other_prompt_version.refresh_from_db()
+        assert other_prompt_version.prompt_config_snapshot == []
+        assert not PromptTemplateNode.no_workspace_objects.filter(
+            node_id=data["id"]
+        ).exists()
 
     def test_create_llm_node_creates_ports_from_variables(
         self, db, graph_version, llm_node_template, user, organization, workspace
@@ -555,9 +643,9 @@ class TestCreateNode:
             source_node=source_node,
             target_node=node,
         )
-        assert (
-            not nc.exists()
-        ), "NodeConnection should NOT be auto-created from input_mappings"
+        assert not nc.exists(), (
+            "NodeConnection should NOT be auto-created from input_mappings"
+        )
 
         # No edge should be created without a NodeConnection
         edges = Edge.no_workspace_objects.filter(target_port__node=node)
@@ -686,6 +774,36 @@ class TestUpdateNode:
         )
         assert updated.position == {"x": 42, "y": 99}
 
+    def test_update_name_rejects_other_workspace_prompt_link(
+        self, db, node, prompt_template_node, user, organization, workspace
+    ):
+        from accounts.models.workspace import Workspace
+
+        other_workspace = Workspace.objects.create(
+            name="Other Prompt Workspace",
+            organization=organization,
+            is_active=True,
+            created_by=user,
+        )
+        foreign_pt, foreign_pv = _make_prompt_template_with_version(
+            organization,
+            other_workspace,
+            user,
+            name="Foreign Workspace Prompt",
+        )
+        prompt_template_node.prompt_template = foreign_pt
+        prompt_template_node.prompt_version = foreign_pv
+        prompt_template_node.save()
+        original_name = node.name
+
+        with pytest.raises(ValidationError, match="active workspace"):
+            update_node(node, {"name": "Renamed"}, user, organization, workspace)
+
+        node.refresh_from_db()
+        foreign_pt.refresh_from_db()
+        assert node.name == original_name
+        assert foreign_pt.name == "Foreign Workspace Prompt"
+
     def test_update_prompt_template_updates_pv(
         self,
         db,
@@ -723,6 +841,86 @@ class TestUpdateNode:
         )
         draft_prompt_version.refresh_from_db()
         assert draft_prompt_version.prompt_config_snapshot["messages"] == new_messages
+
+    def test_update_prompt_template_rejects_other_workspace_template(
+        self,
+        db,
+        node,
+        draft_prompt_version,
+        prompt_template_node,
+        user,
+        organization,
+        workspace,
+    ):
+        from accounts.models.workspace import Workspace
+
+        other_workspace = Workspace.objects.create(
+            name="Other Prompt Workspace",
+            organization=organization,
+            is_active=True,
+            created_by=user,
+        )
+        foreign_pt, foreign_pv = _make_prompt_template_with_version(
+            organization,
+            other_workspace,
+            user,
+            name="Foreign Workspace Prompt",
+        )
+        prompt_template_node.prompt_version = draft_prompt_version
+        prompt_template_node.save()
+
+        with pytest.raises(ValidationError, match="active workspace"):
+            update_node(
+                node,
+                {
+                    "prompt_template": _base_prompt_data(
+                        prompt_template_id=foreign_pt.id,
+                        prompt_version_id=foreign_pv.id,
+                    )
+                },
+                user,
+                organization,
+                workspace,
+            )
+
+        foreign_pv.refresh_from_db()
+        prompt_template_node.refresh_from_db()
+        assert foreign_pv.prompt_config_snapshot["messages"][0]["content"] == "Hello"
+        assert prompt_template_node.prompt_version_id == draft_prompt_version.id
+
+    def test_update_prompt_template_rejects_version_from_another_template(
+        self,
+        db,
+        node,
+        prompt_template,
+        draft_prompt_version,
+        other_prompt_version,
+        prompt_template_node,
+        user,
+        organization,
+        workspace,
+    ):
+        prompt_template_node.prompt_version = draft_prompt_version
+        prompt_template_node.save()
+
+        with pytest.raises(ValidationError, match="specified prompt template"):
+            update_node(
+                node,
+                {
+                    "prompt_template": _base_prompt_data(
+                        prompt_template_id=prompt_template.id,
+                        prompt_version_id=other_prompt_version.id,
+                    )
+                },
+                user,
+                organization,
+                workspace,
+            )
+
+        other_prompt_version.refresh_from_db()
+        prompt_template_node.refresh_from_db()
+        assert other_prompt_version.prompt_config_snapshot == []
+        assert prompt_template_node.prompt_version_id == draft_prompt_version.id
 
     def test_update_prompt_reconciles_ports_add_new(
         self,

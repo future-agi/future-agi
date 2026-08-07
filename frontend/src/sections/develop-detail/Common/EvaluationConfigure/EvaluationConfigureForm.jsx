@@ -46,8 +46,10 @@ import {
   getEvalBaseName,
   DEFAULT_EVAL_MODEL,
 } from "src/sections/common/EvaluationDrawer/common";
+import { FAGI_MODEL_VALUES } from "src/sections/evals/components/ModelSelector";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 
-const getDefaultValues = (evalConfig, editMode, allColumns) => {
+const getDefaultValues = (evalConfig, editMode, allColumns, isOSS) => {
   const mapping = {};
   const config = {};
   const allColumnsMap = allColumns?.reduce((acc, col) => {
@@ -63,19 +65,25 @@ const getDefaultValues = (evalConfig, editMode, allColumns) => {
   }
   for (const key of Object.keys(evalConfig?.config || {})) {
     const defaultVal = evalConfig?.config[key]?.default;
-    // Auto-select preferred model (turing_large) for model field
+    // Auto-select preferred model (turing_large) for model field. OSS has no
+    // Turing/Protect access, so it starts blank and the user must pick.
     if (key === "model") {
       const modelOptions =
         evalConfig?.configParamsOption?.[key] ||
         evalConfig?.config_params_option?.[key] ||
         [];
-      const hasTuringLarge = modelOptions.includes(DEFAULT_EVAL_MODEL);
+      const allowed = modelOptions.filter(
+        (m) => !isOSS || !FAGI_MODEL_VALUES.has(m),
+      );
+      const safeDefault =
+        isOSS && FAGI_MODEL_VALUES.has(defaultVal) ? "" : defaultVal;
+      const hasTuringLarge = !isOSS && allowed.includes(DEFAULT_EVAL_MODEL);
       config[key] = editMode
-        ? defaultVal ||
-          (hasTuringLarge ? DEFAULT_EVAL_MODEL : modelOptions[0] || "")
+        ? safeDefault ||
+          (hasTuringLarge ? DEFAULT_EVAL_MODEL : allowed[0] || "")
         : hasTuringLarge
           ? DEFAULT_EVAL_MODEL
-          : defaultVal || modelOptions[0] || "";
+          : safeDefault || allowed[0] || "";
       continue;
     }
     if (evalConfig?.config[key]?.default !== undefined) {
@@ -179,6 +187,7 @@ const EvaluationConfigureFormChild = ({
     () => allowedColumnFilter(evalConfig, allColumns),
     [allColumns, evalConfig],
   );
+  const { isOSS } = useDeploymentMode();
   const [rulePromptData, setRulePromptData] = useState("");
   const [isRulePrompt, setIsRulePrompt] = useState(false);
 
@@ -202,7 +211,12 @@ const EvaluationConfigureFormChild = ({
     handleSubmit,
     formState: { isDirty },
   } = useForm({
-    defaultValues: getDefaultValues(evalConfig, editMode, allowedColumns),
+    defaultValues: getDefaultValues(
+      evalConfig,
+      editMode,
+      allowedColumns,
+      isOSS,
+    ),
     resolver: zodResolver(validationSchema),
   });
 
