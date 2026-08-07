@@ -15722,6 +15722,7 @@ export const ModelHubDatasetOptimizationListResponse = zod.object({
   "trial_count": zod.string().optional(),
   "optimizer_algorithm": zod.enum(['random_search', 'bayesian', 'metaprompt', 'protegi', 'promptwizard', 'gepa']).optional(),
   "optimizer_model_id": zod.string().optional(),
+  "model_deprecated": zod.boolean().optional(),
   "column_id": zod.string().uuid().optional(),
   "status": zod.enum(['not_started', 'pending', 'running', 'completed', 'failed', 'cancelled']).optional(),
   "error_message": zod.string().optional(),
@@ -15785,6 +15786,7 @@ export const ModelHubDatasetOptimizationReadResponse = zod.object({
   "optimiser_name": zod.string().min(1).optional(),
   "optimiser_type": zod.string().min(1).optional(),
   "model": zod.string().min(1).optional(),
+  "model_deprecated": zod.boolean().optional(),
   "provider_logo": zod.string().min(1).optional(),
   "configuration": zod.object({
 
