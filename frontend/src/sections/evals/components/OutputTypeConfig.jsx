@@ -17,6 +17,7 @@ import PropTypes from "prop-types";
 import React, { useCallback } from "react";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import RequiredMark from "src/components/RequiredMark";
 
 const OutputTypeConfig = ({
   outputType,
@@ -86,7 +87,8 @@ const OutputTypeConfig = ({
       {/* Output Type Selection */}
       <Box>
         <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
-          Output Type<span style={{ color: "#d32f2f" }}>*</span>
+          Output Type
+          <RequiredMark />
         </Typography>
         <Typography
           variant="caption"
@@ -117,8 +119,8 @@ const OutputTypeConfig = ({
           </Box>
         )}
         <CustomTooltip
-        size="small"
-        type="black"
+          size="small"
+          type="black"
           show={radioDisabled}
           title="Output type is fixed for this evaluation and can't be changed."
           arrow
@@ -294,7 +296,6 @@ const OutputTypeConfig = ({
                 size="small"
                 valueLabelDisplay="auto"
                 valueLabelFormat={(v) => `${Math.round(v)}%`}
-                disabled={disabled}
               />
               <Typography variant="caption">100%</Typography>
             </Box>
@@ -471,7 +472,7 @@ const OutputTypeConfig = ({
                   Allow multiple choices (LLM can select more than one)
                 </Typography>
               }
-              sx={{ mt: 0.5, px:0.25 }}
+              sx={{ mt: 0.5, px: 0.25 }}
             />
           </Box>
         </Box>

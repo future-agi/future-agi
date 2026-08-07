@@ -30,7 +30,7 @@ class SearchTraceSpansTool(BaseTool):
     def execute(
         self, params: SearchTraceSpansInput, context: ToolContext
     ) -> ToolResult:
-        from tracer.models.observation_span import ObservationSpan
+        from tracer.services.clickhouse.v2 import get_reader
         from tracer.models.trace import Trace
 
         try:
@@ -41,9 +41,11 @@ class SearchTraceSpansTool(BaseTool):
         except Trace.DoesNotExist:
             return ToolResult.not_found("Trace", str(params.trace_id))
 
-        spans = ObservationSpan.objects.filter(
-            trace_id=params.trace_id, deleted=False
-        ).order_by("start_time", "created_at")
+        # CH read replaces ObservationSpan.objects.filter(trace_id=,
+        # deleted=False). list_by_trace already filters is_deleted=0 and
+        # orders by start_time, id.
+        with get_reader() as reader:
+            spans = reader.list_by_trace(str(params.trace_id))
 
         keyword_lower = params.keyword.lower()
         matches = []

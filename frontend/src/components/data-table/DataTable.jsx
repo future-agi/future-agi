@@ -30,13 +30,18 @@ export default function DataTable({
   // Convert our column format → MUI DataGrid columns
   const muiColumns = useMemo(() => {
     return columns.map((col) => {
+      const field = col.id || col.accessorKey;
+      const dataKey = col.accessorKey || col.id;
       const muiCol = {
-        field: col.id || col.accessorKey,
+        field,
         headerName: col.header,
         sortable: col.enableSorting !== false,
         disableColumnMenu: true,
         resizable: true,
       };
+      if (dataKey !== field) {
+        muiCol.valueGetter = (params) => params.row[dataKey];
+      }
 
       // Width
       if (col.meta?.flex) {

@@ -1,0 +1,51 @@
+# fi-collector default config (also used by docker-compose.standalone.yml).
+#
+# Override any field via the corresponding FI_* env var (see cmd/fi-collector/main.go
+# applyEnvOverrides) without rebuilding the image.
+
+writer:
+  # Hostname `clickhouse` resolves inside the docker-compose network. For
+  # local dev outside docker use http://127.0.0.1:8123. Production sets
+  # this to the CH 25.3 cluster's HTTP load-balancer.
+  url: http://clickhouse:8123
+  database: default
+  table: spans
+  # Retry policy. 5 retries with exponential backoff (100ms → 10s capped)
+  # tolerates the 99.9p HTTP latency spike from CH compaction. After that
+  # we dead-letter to disk — no silent drops, no infinite loop on a
+  # malformed payload (4xx skips the retry budget).
+  max_retries: 5
+  initial_backoff: 100ms
+  max_backoff: 10s
+  request_timeout: 30s
+  # Local path inside the container; bind-mount to /var/lib/fi-collector
+  # on the host in compose so a container restart preserves the queue.
+  dead_letter_file: /var/lib/fi-collector/dead_letter.jsonl
+  # We default async_insert OFF — our own batching is the primary
+  # backpressure mechanism. Flip on under acute write spikes only.
+  async_insert: false
+
+server:
+  # OTLP gRPC receiver (every server-side OTel SDK).
+  grpc_addr: ":4317"
+  # OTLP/HTTP receiver (browser SDKs + lightweight clients).
+  # Accepts POST /v1/traces with application/x-protobuf or application/json
+  # per https://opentelemetry.io/docs/specs/otlp/#otlphttp.
+  # Set "" (or FI_HTTP_ADDR=disable) to turn the listener off.
+  http_addr: ":4318"
+  batch_max_rows: 5000
+  batch_max_age: 5s
+
+auth:
+  # Auth is active when pg_write is set. Without it, spans land with
+  # empty project_id and are unqueryable.
+  pg_write: postgres://user:password@db:5432/tfc
+  # Falls back to pg_write if empty. In prod, point to read replica.
+  pg_read: ""
+  cache_ttl: 5m
+  warm_ttl: 1h
+  # Redis for rate limiting + usage event emission. Empty disables both.
+  redis_addr: ""
+
+admin:
+  addr: ":9464" # /healthz and /metrics

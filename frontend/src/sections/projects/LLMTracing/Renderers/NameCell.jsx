@@ -8,7 +8,7 @@ const NameCell = ({ value, colDef, applyQuickFilters }) => {
     <QuickFilter
       onClick={() =>
         applyQuickFilters({
-          col: colDef?.col,
+          col: colDef?.context?.sourceColumn,
           value,
           filterAnchor: {},
         })

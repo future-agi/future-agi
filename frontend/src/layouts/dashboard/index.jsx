@@ -21,14 +21,14 @@ import CreateWorkspaceModal from "./WorkspaceSwitcher/CreateWorkspaceModal";
 import TwoFactorBanner from "src/components/two-factor-enforcement/TwoFactorBanner";
 import { Typography } from "@mui/material";
 import { ShowComponent } from "../../components/show";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useFeatureAllowed } from "src/hooks/useCapabilities";
 
 // ----------------------------------------------------------------------
 
 export default function DashboardLayout({ children }) {
   const settings = useSettingsContext();
   const isSOSMode = localStorage.getItem("sosMode");
-  const { isOSS } = useDeploymentMode();
+  const { allowed: falconAllowed } = useFeatureAllowed("falcon_ai");
   const router = useRouter();
   const pendingNavigation = useFalconStore((s) => s.pendingNavigation);
   const clearPendingNavigation = useFalconStore(
@@ -109,7 +109,7 @@ export default function DashboardLayout({ children }) {
         {navComponent}
         <NavGatewayPanel />
         <Main>{children}</Main>
-        {!isOSS && <FalconAISidebar />}
+        {falconAllowed && <FalconAISidebar />}
       </Box>
       <FalconAIFab />
     </>

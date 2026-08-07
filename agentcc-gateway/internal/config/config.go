@@ -1,6 +1,9 @@
 package config
 
 import (
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"os"
 	"strconv"
@@ -16,6 +19,7 @@ type Config struct {
 	Providers     map[string]ProviderConfig `yaml:"providers" json:"providers"`
 	ModelMap      map[string]string         `yaml:"model_map" json:"model_map"`
 	Auth          AuthConfig                `yaml:"auth" json:"auth"`
+	LicenseAuth   LicenseAuthConfig         `yaml:"license_auth" json:"license_auth"`
 	CostTracking  CostTrackingConfig        `yaml:"cost_tracking" json:"cost_tracking"`
 	RateLimiting  RateLimitConfig           `yaml:"rate_limiting" json:"rate_limiting"`
 	Cache         CacheConfig               `yaml:"cache" json:"cache"`
@@ -257,6 +261,24 @@ type AuthConfig struct {
 	Keys    []AuthKeyConfig `yaml:"keys" json:"keys"`
 }
 
+type LicenseAuthConfig struct {
+	Enabled              bool                   `yaml:"enabled" json:"enabled"`
+	PublicKey            string                 `yaml:"public_key" json:"-"`
+	PublicKeys           []LicenseAuthPublicKey `yaml:"public_keys" json:"-"`
+	Issuer               string                 `yaml:"issuer" json:"issuer"`
+	Audience             string                 `yaml:"audience" json:"audience"`
+	TokenType            string                 `yaml:"token_type" json:"token_type"`
+	ClockSkewSeconds     int                    `yaml:"clock_skew_seconds" json:"clock_skew_seconds"`
+	RuntimeStateRequired bool                   `yaml:"runtime_state_required" json:"runtime_state_required"`
+	RateLimitRPM         int                    `yaml:"rate_limit_rpm" json:"rate_limit_rpm"`
+	MonthlyUsageLimit    int                    `yaml:"monthly_usage_limit" json:"monthly_usage_limit"`
+}
+
+type LicenseAuthPublicKey struct {
+	KID       string `yaml:"kid" json:"kid"`
+	PublicKey string `yaml:"public_key" json:"-"`
+}
+
 // AuthKeyConfig is a single API key definition in config.
 type AuthKeyConfig struct {
 	Name          string                    `yaml:"name" json:"name"`
@@ -348,9 +370,9 @@ type RequestLoggingConfig struct {
 
 // CostTrackingConfig controls per-request cost calculation.
 type CostTrackingConfig struct {
-	Enabled          bool                       `yaml:"enabled" json:"enabled"`
-	CustomPricing    map[string]CustomPricing   `yaml:"custom_pricing" json:"custom_pricing"`
-	AliasCostFactors map[string]float64         `yaml:"alias_cost_factors" json:"alias_cost_factors"`
+	Enabled          bool                     `yaml:"enabled" json:"enabled"`
+	CustomPricing    map[string]CustomPricing `yaml:"custom_pricing" json:"custom_pricing"`
+	AliasCostFactors map[string]float64       `yaml:"alias_cost_factors" json:"alias_cost_factors"`
 }
 
 // CustomPricing allows overriding model pricing.
@@ -863,8 +885,15 @@ func DefaultConfig() *Config {
 			MaxRequestBodySize:    50 * 1024 * 1024, // 50MB
 			DefaultRequestTimeout: 60 * time.Second,
 		},
-		Providers:    make(map[string]ProviderConfig),
-		ModelMap:     make(map[string]string),
+		Providers: make(map[string]ProviderConfig),
+		ModelMap:  make(map[string]string),
+		LicenseAuth: LicenseAuthConfig{
+			Issuer:               "https://licenses.futureagi.com",
+			Audience:             "futureagi-agentcc-gateway",
+			TokenType:            "futureagi-managed-service-token",
+			ClockSkewSeconds:     300,
+			RuntimeStateRequired: true,
+		},
 		CostTracking: CostTrackingConfig{Enabled: true},
 		RateLimiting: RateLimitConfig{Enabled: true},
 		Cache: CacheConfig{
@@ -939,6 +968,18 @@ func loadFromFile(cfg *Config, path string) error {
 	return yaml.Unmarshal([]byte(expanded), cfg)
 }
 
+// authKeyConfigured reports whether an auth key with the given raw value is
+// already present (e.g. loaded from config.yaml), so env seeding doesn't
+// clobber an operator's explicit entry.
+func authKeyConfigured(keys []AuthKeyConfig, raw string) bool {
+	for i := range keys {
+		if keys[i].Key == raw {
+			return true
+		}
+	}
+	return false
+}
+
 func loadFromEnv(cfg *Config) {
 	if v := os.Getenv("AGENTCC_PORT"); v != "" {
 		if port, err := strconv.Atoi(v); err == nil {
@@ -977,6 +1018,34 @@ func loadFromEnv(cfg *Config) {
 	}
 	if v := os.Getenv("AGENTCC_WEBHOOK_SECRET"); v != "" {
 		cfg.ControlPlane.WebhookSecret = v
+	}
+
+	// Auth env overrides. Evaluate the explicit toggle first, then let a present
+	// internal API key have the final say: it seeds the key store and forces auth
+	// on. A configured key can therefore never leave the gateway open, even if
+	// AGENTCC_AUTH_ENABLED=false is also set (fail closed).
+	if v := os.Getenv("AGENTCC_AUTH_ENABLED"); v != "" {
+		if enabled, err := strconv.ParseBool(v); err == nil {
+			cfg.Auth.Enabled = enabled
+		}
+	}
+	if v := os.Getenv("AGENTCC_INTERNAL_API_KEY"); v != "" {
+		cfg.Auth.Enabled = true
+		// Seed as an "internal" key: byok (the keystore's default type) is barred
+		// from the global, FutureAGI-credentialed providers, so a mistyped seed
+		// authenticates and then 403s the backend's own LLM route.
+		//
+		// Skip when this key is already configured (e.g. in config.yaml): the
+		// keystore is last-write-wins by hash, so appending here would override
+		// — and could re-type — an operator's explicit entry.
+		if !authKeyConfigured(cfg.Auth.Keys, v) {
+			cfg.Auth.Keys = append(cfg.Auth.Keys, AuthKeyConfig{
+				Name:    "internal-backend",
+				Key:     v,
+				Owner:   "futureagi-backend",
+				KeyType: "internal",
+			})
+		}
 	}
 
 	// Redis state env overrides.
@@ -1018,11 +1087,78 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if err := c.validateLicenseAuth(); err != nil {
+		return err
+	}
+
 	validLevels := map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
 	if !validLevels[strings.ToLower(c.Logging.Level)] {
 		return fmt.Errorf("logging.level must be one of debug, info, warn, error; got %q", c.Logging.Level)
 	}
 
+	return nil
+}
+
+func (c *Config) validateLicenseAuth() error {
+	cfg := c.LicenseAuth
+	if !cfg.Enabled {
+		return nil
+	}
+	if !cfg.RuntimeStateRequired {
+		return fmt.Errorf("license_auth.runtime_state_required must be true")
+	}
+	if !c.Redis.Enabled || c.Redis.Address == "" {
+		return fmt.Errorf("license_auth requires enabled Redis with an address")
+	}
+	if cfg.Issuer == "" || cfg.Audience == "" || cfg.TokenType == "" {
+		return fmt.Errorf("license_auth issuer, audience, and token_type are required")
+	}
+	if cfg.ClockSkewSeconds < 0 {
+		return fmt.Errorf("license_auth.clock_skew_seconds must be non-negative")
+	}
+
+	keyCount := 0
+	if cfg.PublicKey != "" {
+		if err := validateLicenseRSAPublicKey(cfg.PublicKey); err != nil {
+			return fmt.Errorf("license_auth.public_key: %w", err)
+		}
+		keyCount++
+	}
+	seen := make(map[string]struct{}, len(cfg.PublicKeys))
+	for _, entry := range cfg.PublicKeys {
+		if entry.KID == "" {
+			return fmt.Errorf("license_auth.public_keys entries require kid")
+		}
+		if _, ok := seen[entry.KID]; ok {
+			return fmt.Errorf("license_auth.public_keys contains duplicate kid %q", entry.KID)
+		}
+		seen[entry.KID] = struct{}{}
+		if err := validateLicenseRSAPublicKey(entry.PublicKey); err != nil {
+			return fmt.Errorf("license_auth.public_keys[%s]: %w", entry.KID, err)
+		}
+		keyCount++
+	}
+	if keyCount == 0 {
+		return fmt.Errorf("license_auth requires at least one RSA public key")
+	}
+	return nil
+}
+
+func validateLicenseRSAPublicKey(raw string) error {
+	block, _ := pem.Decode([]byte(raw))
+	if block == nil {
+		return fmt.Errorf("invalid PEM public key")
+	}
+	parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		if _, pkcs1Err := x509.ParsePKCS1PublicKey(block.Bytes); pkcs1Err != nil {
+			return err
+		}
+		return nil
+	}
+	if _, ok := parsed.(*rsa.PublicKey); !ok {
+		return fmt.Errorf("public key is not RSA")
+	}
 	return nil
 }
 

@@ -16,7 +16,8 @@ from tfc.ee_stub import _ee_stub
 try:
     from ee.agenthub.traceerroragent.token_utils import estimate_tokens_text
 except ImportError:
-    estimate_tokens_text = _ee_stub("estimate_tokens_text")
+    def estimate_tokens_text(text) -> int:
+        return 0
 
 try:
     from ee.evals.futureagi.eval_deterministic.evaluator import DeterministicEvaluator

@@ -46,7 +46,7 @@ export const useEvalsList = (id, payload, module = "dataset", experimentId) => {
       const result = res?.data?.result;
       if (module === "workbench") {
         return {
-          evals: result.evaluationConfigs,
+          evals: result.evaluation_configs,
         };
       }
       if (payload?.search_text) {
@@ -69,23 +69,32 @@ export const useRunEvalMutation = (
   onSuccessCallback,
   module = "dataset",
 ) => {
-  const endpoint = useMemo(() => {
+  const getEndpoint = useMemo(() => {
     switch (module) {
       case "experiment":
-        return endpoints.develop.experiment.runEvaluation(id);
+        return (targetId) =>
+          endpoints.develop.experiment.runEvaluation(targetId);
       case "workbench":
-        return endpoints.develop.runPrompt.runEvalsOnMultipleVersions(id);
+        return (targetId) =>
+          endpoints.develop.runPrompt.runEvalsOnMultipleVersions(targetId);
       default:
-        return endpoints.develop.eval.runEvals(id);
+        return (targetId) => endpoints.develop.eval.runEvals(targetId);
     }
-  }, [id, module]);
+  }, [module]);
   return useMutation({
     /**
      *
      * @param {Object} payload
      * @returns
      */
-    mutationFn: (payload) => axios.post(endpoint, payload),
+    mutationFn: (payload) => {
+      if (!id) {
+        return Promise.reject(
+          new Error("Cannot run evaluations without an id."),
+        );
+      }
+      return axios.post(getEndpoint(id), payload);
+    },
     onSuccess: () => {
       enqueueSnackbar("Evaluation started successfully", {
         variant: "success",

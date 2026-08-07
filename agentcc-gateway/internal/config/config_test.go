@@ -1,6 +1,10 @@
 package config
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,6 +26,7 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 func TestValidate(t *testing.T) {
+	publicKey := testLicensePublicKey(t)
 	tests := []struct {
 		name    string
 		modify  func(*Config)
@@ -65,6 +70,54 @@ func TestValidate(t *testing.T) {
 				c.Providers["test"] = ProviderConfig{BaseURL: "http://localhost"}
 			},
 			wantErr: true,
+		},
+		{
+			name: "license auth requires key",
+			modify: func(c *Config) {
+				c.LicenseAuth.Enabled = true
+				c.Redis.Enabled = true
+				c.Redis.Address = "redis:6379"
+			},
+			wantErr: true,
+		},
+		{
+			name: "license auth requires runtime state",
+			modify: func(c *Config) {
+				c.LicenseAuth.Enabled = true
+				c.LicenseAuth.PublicKey = publicKey
+				c.LicenseAuth.RuntimeStateRequired = false
+				c.Redis.Enabled = true
+				c.Redis.Address = "redis:6379"
+			},
+			wantErr: true,
+		},
+		{
+			name: "license auth requires redis",
+			modify: func(c *Config) {
+				c.LicenseAuth.Enabled = true
+				c.LicenseAuth.PublicKey = publicKey
+			},
+			wantErr: true,
+		},
+		{
+			name: "license auth rejects malformed key",
+			modify: func(c *Config) {
+				c.LicenseAuth.Enabled = true
+				c.LicenseAuth.PublicKey = "not-pem"
+				c.Redis.Enabled = true
+				c.Redis.Address = "redis:6379"
+			},
+			wantErr: true,
+		},
+		{
+			name: "valid license auth",
+			modify: func(c *Config) {
+				c.LicenseAuth.Enabled = true
+				c.LicenseAuth.PublicKey = publicKey
+				c.Redis.Enabled = true
+				c.Redis.Address = "redis:6379"
+			},
+			wantErr: false,
 		},
 		{
 			name: "valid provider",
@@ -151,9 +204,93 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 }
 
+func testLicensePublicKey(t *testing.T) string {
+	t.Helper()
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+}
+
 func TestAddr(t *testing.T) {
 	cfg := DefaultConfig()
 	if addr := cfg.Addr(); addr != "0.0.0.0:8080" {
 		t.Errorf("Addr() = %q, want %q", addr, "0.0.0.0:8080")
+	}
+}
+
+// A present internal API key must force auth ON, even when AGENTCC_AUTH_ENABLED=false
+// is also set. Before the precedence fix the toggle ran last and could silently
+// re-open a gateway that had a key configured.
+func TestLoadFromEnvAuthFailsClosedWhenKeyPresent(t *testing.T) {
+	t.Setenv("AGENTCC_AUTH_ENABLED", "false")
+	t.Setenv("AGENTCC_INTERNAL_API_KEY", "test-internal-key")
+
+	cfg := DefaultConfig()
+	loadFromEnv(cfg)
+
+	if !cfg.Auth.Enabled {
+		t.Fatal("auth must be enabled when AGENTCC_INTERNAL_API_KEY is set, even with AGENTCC_AUTH_ENABLED=false")
+	}
+	var seeded *AuthKeyConfig
+	for i := range cfg.Auth.Keys {
+		if cfg.Auth.Keys[i].Key == "test-internal-key" {
+			seeded = &cfg.Auth.Keys[i]
+		}
+	}
+	if seeded == nil {
+		t.Fatal("internal API key must be seeded into the key store")
+	}
+	// Must be typed "internal": a byok key (the keystore default) is barred from
+	// the global providers, so the backend would authenticate then 403 its own route.
+	if seeded.KeyType != "internal" {
+		t.Fatalf("seeded key KeyType = %q, want \"internal\"", seeded.KeyType)
+	}
+}
+
+// The explicit toggle still applies on its own when no key is configured.
+func TestLoadFromEnvAuthToggleHonoredWhenNoKey(t *testing.T) {
+	t.Setenv("AGENTCC_INTERNAL_API_KEY", "")
+	t.Setenv("AGENTCC_AUTH_ENABLED", "false")
+
+	cfg := DefaultConfig()
+	loadFromEnv(cfg)
+
+	if cfg.Auth.Enabled {
+		t.Fatal("auth should stay off when no key is set and the toggle is false")
+	}
+}
+
+// An explicit config.yaml entry for the same key must not be clobbered by the
+// env seed — the keystore is last-write-wins by hash, so a duplicate would
+// override (and could re-type) the operator's entry.
+func TestLoadFromEnvDoesNotClobberExplicitInternalKey(t *testing.T) {
+	t.Setenv("AGENTCC_INTERNAL_API_KEY", "test-internal-key")
+
+	cfg := DefaultConfig()
+	cfg.Auth.Keys = []AuthKeyConfig{{
+		Name:    "ops-configured",
+		Key:     "test-internal-key",
+		Owner:   "ops",
+		KeyType: "internal",
+	}}
+	loadFromEnv(cfg)
+
+	n := 0
+	for _, k := range cfg.Auth.Keys {
+		if k.Key == "test-internal-key" {
+			n++
+			if k.Name != "ops-configured" {
+				t.Fatalf("explicit config entry overwritten: Name = %q, want \"ops-configured\"", k.Name)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("got %d entries for the key, want 1 (env seed must not duplicate an explicit config key)", n)
 	}
 }

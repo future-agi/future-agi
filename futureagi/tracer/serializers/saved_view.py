@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from tracer.models.saved_view import SavedView
+from tracer.serializers.filters import StrictInputSerializer, filter_list_field
 
 
 class SavedViewCreatorSerializer(serializers.Serializer):
@@ -66,7 +67,75 @@ class SavedViewDetailSerializer(serializers.ModelSerializer):
         ]
 
 
-class SavedViewCreateSerializer(serializers.Serializer):
+class SavedViewDefaultTabSerializer(serializers.Serializer):
+    key = serializers.CharField()
+    label = serializers.CharField()
+    tab_type = serializers.CharField()
+
+
+class SavedViewListResultSerializer(serializers.Serializer):
+    default_tabs = SavedViewDefaultTabSerializer(many=True)
+    custom_views = SavedViewListSerializer(many=True)
+
+
+class SavedViewListResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = SavedViewListResultSerializer()
+
+
+class SavedViewDetailResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = SavedViewDetailSerializer()
+
+
+class SavedViewMessageResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+
+
+class SavedViewMessageResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = SavedViewMessageResultSerializer()
+
+
+FILTER_CONFIG_KEYS = (
+    "filters",
+    "compare_filters",
+    "extra_filters",
+    "compare_extra_filters",
+)
+SAVED_VIEW_CONFIG_KEYS = {
+    "filters",
+    "columns",
+    "sort",
+    "display",
+    "widgets",
+    "conversation_id",
+    "sub_tab",
+    "compare_filters",
+    "compare_date_filter",
+    "extra_filters",
+    "compare_extra_filters",
+}
+
+
+def validate_saved_view_config(value):
+    if not isinstance(value, dict):
+        raise serializers.ValidationError("config must be a JSON object.")
+    invalid_keys = set(value.keys()) - SAVED_VIEW_CONFIG_KEYS
+    if invalid_keys:
+        raise serializers.ValidationError(
+            f"Invalid config keys: {', '.join(invalid_keys)}. "
+            f"Allowed: {', '.join(SAVED_VIEW_CONFIG_KEYS)}"
+        )
+
+    validated = dict(value)
+    for key in FILTER_CONFIG_KEYS:
+        if key in validated and validated[key] is not None:
+            validated[key] = filter_list_field().run_validation(validated[key])
+    return validated
+
+
+class SavedViewCreateSerializer(StrictInputSerializer):
     project_id = serializers.UUIDField(required=False, allow_null=True)
     name = serializers.CharField(max_length=255)
     tab_type = serializers.ChoiceField(
@@ -92,31 +161,10 @@ class SavedViewCreateSerializer(serializers.Serializer):
         return value.strip()
 
     def validate_config(self, value):
-        if not isinstance(value, dict):
-            raise serializers.ValidationError("config must be a JSON object.")
-        allowed_keys = {
-            "filters",
-            "columns",
-            "sort",
-            "display",
-            "widgets",
-            "conversation_id",
-            "sub_tab",
-            "compareFilters",
-            "compareDateFilter",
-            "extraFilters",
-            "compareExtraFilters",
-        }
-        invalid_keys = set(value.keys()) - allowed_keys
-        if invalid_keys:
-            raise serializers.ValidationError(
-                f"Invalid config keys: {', '.join(invalid_keys)}. "
-                f"Allowed: {', '.join(allowed_keys)}"
-            )
-        return value
+        return validate_saved_view_config(value)
 
 
-class SavedViewUpdateSerializer(serializers.Serializer):
+class SavedViewUpdateSerializer(StrictInputSerializer):
     name = serializers.CharField(max_length=255, required=False)
     visibility = serializers.ChoiceField(
         choices=["personal", "project"], required=False
@@ -132,28 +180,7 @@ class SavedViewUpdateSerializer(serializers.Serializer):
         return value.strip() if value else value
 
     def validate_config(self, value):
-        if not isinstance(value, dict):
-            raise serializers.ValidationError("config must be a JSON object.")
-        allowed_keys = {
-            "filters",
-            "columns",
-            "sort",
-            "display",
-            "widgets",
-            "conversation_id",
-            "sub_tab",
-            "compareFilters",
-            "compareDateFilter",
-            "extraFilters",
-            "compareExtraFilters",
-        }
-        invalid_keys = set(value.keys()) - allowed_keys
-        if invalid_keys:
-            raise serializers.ValidationError(
-                f"Invalid config keys: {', '.join(invalid_keys)}. "
-                f"Allowed: {', '.join(allowed_keys)}"
-            )
-        return value
+        return validate_saved_view_config(value)
 
 
 class ReorderItemSerializer(serializers.Serializer):

@@ -23,6 +23,7 @@ class _FakeResult:
     def __init__(self, i: int):
         self.eval_logger_id = f"el-{i}"
         self.eval_name = "prosody_and_intonation"
+        self.target_type = "session"  # read by eval_clustering.py:62
 
     @property
     def embedding_text(self) -> str:

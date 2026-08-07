@@ -4,10 +4,9 @@ ClickHouse Consistency Monitoring
 Monitors PG-CH data consistency, CDC replication lag, and query performance.
 """
 
-import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any
 
 import structlog
 from django.conf import settings
@@ -40,16 +39,19 @@ class HealthStatus:
 
     status: str  # "healthy", "degraded", "unhealthy"
     clickhouse_connected: bool
-    cdc_lag: Dict[str, float]  # table -> lag_seconds
-    last_consistency_check: Optional[Dict] = None
-    details: Dict[str, Any] = field(default_factory=dict)
+    cdc_lag: dict[str, float]  # table -> lag_seconds
+    last_consistency_check: dict | None = None
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 class ConsistencyChecker:
     """Checks data consistency between PostgreSQL and ClickHouse."""
 
+    # CH25 close-out (2026-05-28): `tracer_observation_span` removed —
+    # spans live in the v2 typed-JSON `spans` table populated by
+    # fi-collector via OTLP. No CDC mirror means no PG↔CH consistency
+    # check is meaningful for spans.
     MONITORED_TABLES = [
-        ("tracer_observation_span", "tracer_observation_span"),
         ("tracer_trace", "tracer_trace"),
         ("trace_session", "trace_session"),
         ("tracer_eval_logger", "tracer_eval_logger"),
@@ -64,7 +66,7 @@ class ConsistencyChecker:
         start_date: datetime,
         end_date: datetime,
         threshold_pct: float = 1.0,
-    ) -> List[ConsistencyResult]:
+    ) -> list[ConsistencyResult]:
         """Compare row counts between PG and CH for each table."""
         results = []
         for pg_table, ch_table in self.MONITORED_TABLES:
@@ -111,11 +113,10 @@ class ConsistencyChecker:
                 )
         return results
 
-    def get_cdc_lag(self) -> Dict[str, float]:
+    def get_cdc_lag(self) -> dict[str, float]:
         """Get CDC replication lag per table in seconds."""
         lag = {}
         tables = [
-            "tracer_observation_span",
             "tracer_trace",
             "trace_session",
             "tracer_eval_logger",

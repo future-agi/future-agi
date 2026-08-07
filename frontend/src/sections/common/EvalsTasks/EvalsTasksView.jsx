@@ -8,6 +8,7 @@ import {
   IconButton,
   Typography,
 } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import React, { useEffect, useRef, useState } from "react";
 import Iconify from "src/components/iconify";
 import EvalsGrid from "./EvalsGrid";
@@ -33,11 +34,11 @@ import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { handleOnDocsClicked } from "src/utils/Mixpanel";
 
 const defaultFilter = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
   },
 };
 
@@ -157,9 +158,10 @@ const EvalsTasksView = ({ observeId = null }) => {
 
   const hasActiveFilter = React.useMemo(() => {
     return filters?.some((f) =>
-      f.filterConfig?.filterValue && Array.isArray(f.filterConfig.filterValue)
-        ? f.filterConfig.filterValue.length > 0
-        : f.filterConfig.filterValue !== "",
+      f.filter_config?.filter_value &&
+      Array.isArray(f.filter_config.filter_value)
+        ? f.filter_config.filter_value.length > 0
+        : f.filter_config.filter_value !== "",
     );
   }, [filters]);
 
@@ -221,16 +223,10 @@ const EvalsTasksView = ({ observeId = null }) => {
           )
         }
       />
-      <Box
-        sx={{
-          flex: 1,
-          display: shouldShowLoading ? "flex" : "none",
-          justifyContent: "center",
-          alignItems: "center",
-        }}
-      >
-        <CircularProgress />
-      </Box>
+      <LoadingScreen
+        variant="orbit"
+        sx={{ flex: 1, display: shouldShowLoading ? "flex" : "none" }}
+      />
       <Box
         sx={{
           flex: 1,

@@ -1,7 +1,6 @@
 import React, { useCallback } from "react";
 import CreateSyntheticDataView from "../CreateSyntheticDataView";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getDatasetQueryOptions } from "src/api/develop/develop-detail";
 import { useParams } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
 import { useEditSyntheticDataStore } from "./state";
@@ -31,18 +30,10 @@ export default function EditSyntheticDataDrawer() {
   }, [queryClient, refreshGrid, dataset]);
   const { openSummaryDrawer } = useEditSyntheticDataStore();
 
-  const { data: tableData } = useQuery(
-    getDatasetQueryOptions(dataset, 0, [], [], "", { enabled: false }),
-  );
-
   const { data, isLoading: _isLoading } = useQuery({
-    queryKey: [
-      dataset,
-      tableData?.data?.result?.syntheticDataset,
-      openSummaryDrawer,
-    ],
+    queryKey: ["synthetic-config", dataset, openSummaryDrawer],
     queryFn: () => axios.get(endpoints.develop.getSyntheticConfig(dataset)),
-    enabled: !!dataset && !!tableData?.data?.result?.syntheticDataset,
+    enabled: Boolean(dataset),
     select: (d) => d.data?.result?.data,
   });
   return (

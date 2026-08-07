@@ -72,6 +72,21 @@ const CustomColLoadingSkeleton = () => (
   />
 );
 
+const TERMINAL_CALL_STATUSES = new Set([
+  "completed",
+  "dropped",
+  "ended",
+  "error",
+  "failed",
+  "not-connected",
+  "ok",
+]);
+
+const isSelectableForAnnotation = (row) => {
+  const status = String(row?.status || "").toLowerCase();
+  return TERMINAL_CALL_STATUSES.has(status);
+};
+
 const CallLogsGrid = React.forwardRef(function CallLogsGrid(
   {
     id,
@@ -96,7 +111,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
   const theme = useTheme();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
-  const [pageLimit, setPageLimit] = useState(25);
+  const [pageLimit, setPageLimit] = useState(15);
   const [totalPages, setTotalPages] = useState(1);
   const [lastFilters, setLastFilters] = useState(params?.filters);
   const { selectedVersion } = useAgentDetailsStore();
@@ -147,7 +162,6 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       suppressHeaderMenuButton: true,
       suppressHeaderContextMenu: true,
       minWidth: 180,
-      suppressMultiSort: true,
       cellStyle: {
         padding: "0px",
         display: "flex",
@@ -187,6 +201,12 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     enabled,
   });
 
+  useEffect(() => {
+    if (!isLoading) {
+      setTotalPages(data?.total_pages || 1);
+    }
+  }, [data?.total_pages, isLoading]);
+
   const rows = useMemo(() => {
     if (isLoading) {
       return Array.from({ length: 10 }, (_, index) => ({
@@ -197,8 +217,6 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
         overall_score: "",
         status: "",
       }));
-    } else {
-      setTotalPages(data?.total_pages || 1);
     }
     return data?.results || [];
   }, [data, isLoading]);
@@ -429,15 +447,17 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
             defaultColDef={defaultColDef}
             rowData={rows}
             suppressServerSideFullWidthLoadingRow={true}
-            suppressRowClickSelection
-            rowSelection={onSelectionChanged ? { mode: "multiRow" } : undefined}
+            rowSelection={
+              onSelectionChanged
+                ? { mode: "multiRow", enableClickSelection: false }
+                : undefined
+            }
             selectionColumnDef={
               onSelectionChanged
                 ? { pinned: true, lockPinned: true }
                 : undefined
             }
             pagination={false}
-            serverSideInitialRowCount={5}
             noRowsOverlayComponent={() =>
               NoRowsOverlay(
                 <Typography
@@ -471,8 +491,14 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
                       // the banner by up to `pageLimit - 1` rows.
                       const totalMatching =
                         typeof data?.count === "number" ? data.count : null;
+                      const unavailableSelectedCount = selectedRows.filter(
+                        (row) =>
+                          row?.trace_id && !isSelectableForAnnotation(row),
+                      ).length;
                       onSelectionMeta({
                         traceIds,
+                        selectedCount: traceIds.length,
+                        unavailableSelectedCount,
                         isAllOnPageSelected:
                           currentPageSize > 0 &&
                           selectedRows.length === currentPageSize,
@@ -526,7 +552,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
               }}
               sx={{ height: 36, bgcolor: "background.paper" }}
             >
-              {[10, 25, 50].map((size) => (
+              {[10, 15, 25, 50].map((size) => (
                 <MenuItem key={size} value={size}>
                   {size}
                 </MenuItem>

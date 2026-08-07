@@ -1,6 +1,7 @@
 import React, { useEffect } from "react";
 import { useParams, useNavigate, Navigate } from "react-router-dom";
-import { Box, CircularProgress, Typography } from "@mui/material";
+import { Box, Typography } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import { useGetScenarioDetail } from "src/api/scenarios/scenarios";
 
 const DatasetScenarioView = () => {
@@ -12,23 +13,14 @@ const DatasetScenarioView = () => {
 
   useEffect(() => {
     // If scenario is loaded and it's not a dataset type, redirect back
-    if (scenario && scenario.scenarioType !== "dataset") {
+    if (scenario && scenario.scenario_type !== "dataset") {
       navigate("/dashboard/simulate/scenarios");
     }
   }, [scenario, navigate]);
 
   if (isLoading) {
     return (
-      <Box
-        sx={{
-          height: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <CircularProgress />
-      </Box>
+      <LoadingScreen sx={{ height: "100vh" }} />
     );
   }
 

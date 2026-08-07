@@ -13,6 +13,7 @@ from .call_execution import (
     CallExecutionStatusUpdateSerializer,
 )
 from .run_test import (
+    CreatePromptSimulationRequestSerializer,
     CreatePromptSimulationSerializer,
     CreateRunTestSerializer,
     RunTestFilterSerializer,
@@ -72,6 +73,7 @@ __all__ = [
     "RunTestFilterSerializer",
     "CreateRunTestSerializer",
     "UpdateRunTestSerializer",
+    "CreatePromptSimulationRequestSerializer",
     "CreatePromptSimulationSerializer",
     "CallExecutionFilterSerializer",
     "CallExecutionStatusUpdateSerializer",

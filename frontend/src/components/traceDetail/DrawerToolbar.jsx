@@ -16,10 +16,12 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 
 // Shared 24px bordered pill button
-const ToolbarPill = ({ icon, label, onClick, sx }) => (
+export const ToolbarPill = React.forwardRef(({ icon, label, onClick, sx }, ref) => (
   <ButtonBase
+    ref={ref}
     onClick={onClick}
     sx={{
       display: "inline-flex",
@@ -47,7 +49,9 @@ const ToolbarPill = ({ icon, label, onClick, sx }) => (
     {icon && <Iconify icon={icon} width={14} />}
     {label && <span>{label}</span>}
   </ButtonBase>
-);
+));
+
+ToolbarPill.displayName = "ToolbarPill";
 
 ToolbarPill.propTypes = {
   icon: PropTypes.string,
@@ -133,7 +137,6 @@ const TabPill = ({
       placement="bottom"
       arrow
       size="small"
-      type="black"
     >
       {pill}
     </CustomTooltip>
@@ -205,6 +208,7 @@ const DrawerToolbar = ({
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   );
   const displayRef = useRef(null);
+  const { isOSS } = useDeploymentMode();
 
   const effectiveTabs = tabs?.length
     ? tabs
@@ -348,7 +352,6 @@ const DrawerToolbar = ({
             placement="bottom"
             arrow
             size="small"
-            type="black"
           >
             <ButtonBase
               onClick={(e) => onCreateTab?.(e)}
@@ -374,14 +377,19 @@ const DrawerToolbar = ({
         {!readOnly && onCreateImagineTab && (
           <CustomTooltip
             show
-            title="Imagine with Falcon"
+            title={
+              isOSS ? "Imagine is not available in OSS" : "Imagine with Falcon"
+            }
             placement="bottom"
             arrow
             size="small"
-            type="black"
           >
+            {/* Kept mounted rather than `disabled` so the tooltip still fires on hover */}
             <ButtonBase
-              onClick={() => onCreateImagineTab?.()}
+              onClick={() => {
+                if (!isOSS) onCreateImagineTab?.();
+              }}
+              disableRipple={isOSS}
               sx={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -392,11 +400,15 @@ const DrawerToolbar = ({
                 ml: 0.5,
                 flexShrink: 0,
                 color: "text.disabled",
-                "&:hover": {
-                  background:
-                    "linear-gradient(135deg, rgba(123,86,219,0.08) 0%, rgba(26,188,254,0.08) 100%)",
-                  color: "#7B56DB",
-                },
+                opacity: isOSS ? 0.5 : 1,
+                cursor: isOSS ? "not-allowed" : "pointer",
+                "&:hover": isOSS
+                  ? {}
+                  : {
+                      background:
+                        "linear-gradient(135deg, rgba(123,86,219,0.08) 0%, rgba(26,188,254,0.08) 100%)",
+                      color: "accent.brand",
+                    },
               }}
             >
               <Iconify icon="mdi:creation" width={14} />

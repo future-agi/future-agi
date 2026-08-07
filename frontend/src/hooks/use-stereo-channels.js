@@ -41,7 +41,7 @@ function extractPeaks(channelData, numPeaks = 800) {
  * @param {string} stereoUrl - URL of the stereo recording
  * @returns {{ assistantUrl: string, customerUrl: string, assistantPeaks: number[]|null, customerPeaks: number[]|null, loading: boolean, error: string|null }}
  */
-export default function useStereoChannels(stereoUrl) {
+export default function useStereoChannels(stereoUrl, isInbound = false) {
   const [state, setState] = useState({
     assistantUrl: "",
     customerUrl: "",
@@ -92,17 +92,21 @@ export default function useStereoChannels(stereoUrl) {
         const leftData = decoded.getChannelData(0);
         const rightData =
           numChannels >= 2 ? decoded.getChannelData(1) : leftData;
+        // Base: left=sim, right=agent; inbound flips.
+        const [aData, cData] = isInbound
+          ? [leftData, rightData]
+          : [rightData, leftData];
 
         // Extract real peaks now while we have the decoded PCM data.
         // Passing these to WaveSurfer means it renders the waveform instantly
         // without needing to decode the blob URL a second time.
-        const assistantPeaks = extractPeaks(leftData);
+        const assistantPeaks = extractPeaks(aData);
         const customerPeaks =
-          numChannels >= 2 ? extractPeaks(rightData) : assistantPeaks;
+          numChannels >= 2 ? extractPeaks(cData) : assistantPeaks;
 
-        const assistantBlob = encodeWav(leftData, sampleRate);
+        const assistantBlob = encodeWav(aData, sampleRate);
         const customerBlob =
-          numChannels >= 2 ? encodeWav(rightData, sampleRate) : assistantBlob;
+          numChannels >= 2 ? encodeWav(cData, sampleRate) : assistantBlob;
 
         const assistantBlobUrl = URL.createObjectURL(assistantBlob);
         const customerBlobUrl = URL.createObjectURL(customerBlob);

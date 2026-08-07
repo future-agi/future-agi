@@ -65,6 +65,10 @@ const PROMPT_DEFAULT_MODEL_CONFIG = {
   responseSchema: null,
 };
 
+function firstDefined(...values) {
+  return values.find((value) => value !== undefined && value !== null);
+}
+
 /**
  * Get default form values for a node by type.
  * Merges transient _initialConfig (from imports) over saved config.
@@ -180,11 +184,11 @@ export function mapNodeDetailToNodeData(apiNode, existingNode) {
   const nodeType = existingNode?.type;
 
   if (nodeType === NODE_TYPES.LLM_PROMPT) {
-    const pt = apiNode.promptTemplate;
+    const pt = apiNode.promptTemplate || apiNode.prompt_template;
     const storeData = {
       label: apiNode.name || existingNode?.data?.label,
       ports: (apiNode.ports || [])
-        .filter((p) => (p.direction || p.direction) === "output")
+        .filter((p) => p.direction === "output")
         .map((p) => ({
           id: p.id,
           key: p.key,
@@ -196,23 +200,42 @@ export function mapNodeDetailToNodeData(apiNode, existingNode) {
     };
 
     if (pt) {
+      const responseFormat = firstDefined(
+        pt.responseFormat,
+        pt.response_format,
+      );
+      const existingConfig = existingNode?.data?.config;
       storeData.config = {
-        prompt_template_id: pt.promptTemplateId,
-        prompt_version_id: pt.promptVersionId,
-        outputFormat: pt.outputFormat || "string",
-        templateFormat: pt.templateFormat || pt.template_format || "mustache",
+        prompt_template_id: firstDefined(
+          pt.promptTemplateId,
+          pt.prompt_template_id,
+          existingConfig?.prompt_template_id,
+          existingConfig?.promptTemplateId,
+        ),
+        prompt_version_id: firstDefined(
+          pt.promptVersionId,
+          pt.prompt_version_id,
+          existingConfig?.prompt_version_id,
+          existingConfig?.promptVersionId,
+        ),
+        outputFormat:
+          firstDefined(pt.outputFormat, pt.output_format) || "string",
+        templateFormat:
+          firstDefined(pt.templateFormat, pt.template_format) || "mustache",
         modelConfig: {
           model: pt.model || "",
           modelDetail:
-            existingNode?.data?.config?.modelConfig?.modelDetail || {},
-          responseFormat: normalizeResponseFormat(pt.response_format),
-          responseSchema: extractResponseSchema(pt.response_format),
+            firstDefined(pt.modelDetail, pt.model_detail) ||
+            existingConfig?.modelConfig?.modelDetail ||
+            {},
+          responseFormat: normalizeResponseFormat(responseFormat),
+          responseSchema: extractResponseSchema(responseFormat),
           toolChoice:
-            pt.tool_choice ??
-            existingNode?.data?.config?.model_config?.tool_choice ??
+            firstDefined(pt.toolChoice, pt.tool_choice) ??
+            existingConfig?.modelConfig?.toolChoice ??
+            existingConfig?.model_config?.tool_choice ??
             "auto",
-          tools:
-            pt.tools ?? existingNode?.data?.config?.modelConfig?.tools ?? [],
+          tools: pt.tools ?? existingConfig?.modelConfig?.tools ?? [],
         },
         messages: (() => {
           const mapped = (pt.messages || []).map((m, idx) => ({
@@ -246,10 +269,21 @@ export function mapNodeDetailToNodeData(apiNode, existingNode) {
             {
               configuration: {
                 temperature: pt.temperature,
-                maxTokens: pt.max_tokens,
-                topP: pt.top_p,
-                frequencyPenalty: pt.frequencyPenalty,
-                presencePenalty: pt.presencePenalty,
+                maxTokens: firstDefined(pt.maxTokens, pt.max_tokens),
+                topP: firstDefined(pt.topP, pt.top_p),
+                frequencyPenalty: firstDefined(
+                  pt.frequencyPenalty,
+                  pt.frequency_penalty,
+                ),
+                presencePenalty: firstDefined(
+                  pt.presencePenalty,
+                  pt.presence_penalty,
+                ),
+                tools: pt.tools || [],
+                toolChoice: firstDefined(pt.toolChoice, pt.tool_choice),
+                template_format:
+                  firstDefined(pt.templateFormat, pt.template_format) ||
+                  "mustache",
               },
             },
           ],
@@ -268,32 +302,41 @@ export function mapNodeDetailToNodeData(apiNode, existingNode) {
   }
 
   if (nodeType === NODE_TYPES.AGENT) {
+    const refGraphId = firstDefined(
+      apiNode.refGraphId,
+      apiNode.ref_graph_id,
+      existingNode?.data?.graphId,
+    );
+    const refGraphVersionId = firstDefined(
+      apiNode.refGraphVersionId,
+      apiNode.ref_graph_version_id,
+      existingNode?.data?.version_id,
+    );
+    const inputMappings = firstDefined(
+      apiNode.inputMappings,
+      apiNode.input_mappings,
+      existingNode?.data?.config?.payload?.inputMappings,
+      [],
+    );
+
     return {
       ...existingNode,
       data: {
         ...existingNode?.data,
         label: apiNode.name || existingNode?.data?.label,
         ports: apiNode.ports || existingNode?.data?.ports || [],
-        versionId:
-          apiNode.ref_graph_version_id || existingNode?.data?.version_id || "",
-        graphId: apiNode.refGraphId || existingNode?.data?.graphId || "",
+        versionId: refGraphVersionId || "",
+        graphId: refGraphId || "",
         ref_graph_version_id:
-          apiNode.ref_graph_version_id ||
-          existingNode?.data?.ref_graph_version_id ||
-          "",
+          refGraphVersionId || existingNode?.data?.ref_graph_version_id || "",
         config: {
           ...existingNode?.data?.config,
-          graphId:
-            apiNode.refGraphId || existingNode?.data?.config?.graphId || "",
+          graphId: refGraphId || existingNode?.data?.config?.graphId || "",
           versionId:
-            apiNode.ref_graph_version_id ||
-            existingNode?.data?.config?.version_id ||
-            "",
+            refGraphVersionId || existingNode?.data?.config?.version_id || "",
           payload: {
             ...existingNode?.data?.config?.payload,
-            inputMappings: apiNode.inputMappings
-              ? apiNode.inputMappings
-              : existingNode?.data?.config?.payload?.inputMappings || [],
+            inputMappings,
           },
         },
       },

@@ -178,8 +178,10 @@ func main() {
 		}
 	}
 
-	// Create keystore and auth plugin.
-	var keyStore *auth.KeyStore
+	// Create the keystore even when request auth is disabled. Admin key
+	// lifecycle routes still need a store, while /v1 auth remains controlled
+	// by cfg.Auth.Enabled.
+	keyStore := auth.NewKeyStore(cfg.Auth)
 	var plugins []pipeline.Plugin
 
 	// Create IP ACL plugin (priority 50: runs before auth).
@@ -191,7 +193,6 @@ func main() {
 	}
 
 	if cfg.Auth.Enabled {
-		keyStore = auth.NewKeyStore(cfg.Auth)
 		plugins = append(plugins, authplugin.New(keyStore, true))
 		slog.Info("auth enabled", "config_keys", keyStore.Count())
 	}
@@ -626,7 +627,7 @@ func main() {
 	engine := pipeline.NewEngine(plugins...)
 
 	// Create and start server (shares the same ModelDB pointer for hot-reload).
-	srv := server.New(cfg, *configPath, registry, engine, keyStore, grEngine, policyStore, metricsRegistry, &sharedModelDB, tenantStore, onOrgConfigChange)
+	srv := server.New(cfg, *configPath, registry, engine, keyStore, grEngine, policyStore, metricsRegistry, &sharedModelDB, tenantStore, onOrgConfigChange, redisClient)
 
 	// Register onChange callback on tenantStore so that periodic sync (MergeBulk)
 	// evicts the OrgProviderCache for any org whose config changed. Without this,

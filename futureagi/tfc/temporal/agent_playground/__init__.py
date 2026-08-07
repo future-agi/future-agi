@@ -27,6 +27,7 @@ Usage:
 """
 
 from tfc.temporal.agent_playground.client import (
+    GraphExecutionWorkflowStartError,
     cancel_graph_execution,
     cancel_graph_execution_async,
     get_graph_execution_status,
@@ -56,6 +57,7 @@ def get_activities():
 
 __all__ = [
     # Client API
+    "GraphExecutionWorkflowStartError",
     "start_graph_execution",
     "start_graph_execution_async",
     "get_graph_execution_status",

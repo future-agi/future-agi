@@ -3,7 +3,11 @@ import { useMemo } from "react";
 import { useExtractAllVariables } from "./use-extract-all-variables";
 import { normalizeForComparison } from "../Playground/common";
 
-export const useIsVariablesDefined = (prompts, variableData, templateFormat) => {
+export const useIsVariablesDefined = (
+  prompts,
+  variableData,
+  templateFormat,
+) => {
   const variables = useExtractAllVariables(prompts, templateFormat);
 
   return useMemo(() => {

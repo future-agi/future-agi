@@ -47,35 +47,39 @@ export default function ContactsPopover() {
       >
         <Typography variant="h6" sx={{ p: 1.5 }}>
           Contacts{" "}
-          <Typography component="span">({/* _contacts */ [].length})</Typography>
+          <Typography component="span">
+            ({/* _contacts */ [].length})
+          </Typography>
         </Typography>
 
         <Scrollbar sx={{ height: 320 }}>
-          {/* _contacts */ [].map((contact) => (
-            <MenuItem key={contact.id} sx={{ p: 1 }}>
-              <Badge
-                variant={contact.status}
-                anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-                sx={{ mr: 2 }}
-              >
-                <Avatar alt={contact.name} src={contact.avatarUrl} />
-              </Badge>
+          {
+            /* _contacts */ [].map((contact) => (
+              <MenuItem key={contact.id} sx={{ p: 1 }}>
+                <Badge
+                  variant={contact.status}
+                  anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+                  sx={{ mr: 2 }}
+                >
+                  <Avatar alt={contact.name} src={contact.avatarUrl} />
+                </Badge>
 
-              <ListItemText
-                primary={contact.name}
-                secondary={
-                  contact.status === "offline"
-                    ? fToNow(contact.lastActivity)
-                    : ""
-                }
-                primaryTypographyProps={{ typography: "subtitle2" }}
-                secondaryTypographyProps={{
-                  typography: "caption",
-                  color: "text.disabled",
-                }}
-              />
-            </MenuItem>
-          ))}
+                <ListItemText
+                  primary={contact.name}
+                  secondary={
+                    contact.status === "offline"
+                      ? fToNow(contact.lastActivity)
+                      : ""
+                  }
+                  primaryTypographyProps={{ typography: "subtitle2" }}
+                  secondaryTypographyProps={{
+                    typography: "caption",
+                    color: "text.disabled",
+                  }}
+                />
+              </MenuItem>
+            ))
+          }
         </Scrollbar>
       </CustomPopover>
     </>

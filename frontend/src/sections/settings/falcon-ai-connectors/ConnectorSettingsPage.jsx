@@ -4,7 +4,7 @@ import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
-import CircularProgress from "@mui/material/CircularProgress";
+import { LoadingScreen } from "src/components/loading-screen";
 import Alert from "@mui/material/Alert";
 import TextField from "@mui/material/TextField";
 import InputAdornment from "@mui/material/InputAdornment";
@@ -29,6 +29,7 @@ import {
   authenticateConnector,
   updateConnectorTools,
 } from "src/sections/falcon-ai/hooks/useFalconAPI";
+import { buildConnectorSavePayload } from "./utils";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -191,9 +192,7 @@ export default function ConnectorSettingsPage() {
 
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" py={8}>
-        <CircularProgress />
-      </Box>
+      <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />
     );
   }
 
@@ -907,10 +906,13 @@ function ConnectorEditor({ connector, onSaved, onCancel }) {
     setSaving(true);
     setError(null);
     try {
+      const payload = buildConnectorSavePayload(form, {
+        preserveEmptySecret: isEdit,
+      });
       if (isEdit) {
-        await updateConnector(connector.id, form);
+        await updateConnector(connector.id, payload);
       } else {
-        await createConnector(form);
+        await createConnector(payload);
       }
       onSaved();
     } catch (err) {

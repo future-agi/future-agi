@@ -1,7 +1,7 @@
-import React from'react';
-import AddedEvaluationCard from './AddedEvaluationCard';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter, Route, Routes, useParams } from'react-router-dom';
+import React from "react";
+import AddedEvaluationCard from "./AddedEvaluationCard";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter, Route, Routes, useParams } from "react-router-dom";
 
 const queryClient = new QueryClient();
 
@@ -21,12 +21,7 @@ const Template = (args) => {
         <Routes>
           <Route
             path="/dataset/:dataset"
-            element={
-              <AddedEvaluationCard
-                dataset={params.dataset}
-                {...args}
-              />
-            }
+            element={<AddedEvaluationCard dataset={params.dataset} {...args} />}
           />
         </Routes>
       </MemoryRouter>
@@ -41,8 +36,8 @@ Default.args = {
   selectedUserEvalList: [],
   userEval: {
     id: 1,
-    name: 'Evaluation 1',
-    description: 'This is evaluation 1',
+    name: "Evaluation 1",
+    description: "This is evaluation 1",
   },
   selected: true,
   onChange: () => {},
@@ -50,10 +45,10 @@ Default.args = {
     checkbox: true,
     run: true,
   },
-  requiredKeys: 'key1, key2',
-  model: 'Model 1',
-  name: 'Evaluation 1',
-  description: 'This is evaluation 1',
+  requiredKeys: "key1, key2",
+  model: "Model 1",
+  name: "Evaluation 1",
+  description: "This is evaluation 1",
   onRemove: () => {},
   experimentEval: {
     experimentId: 1,
@@ -68,8 +63,8 @@ WithoutCheckbox.args = {
   selectedUserEvalList: [],
   userEval: {
     id: 1,
-    name: 'Evaluation 1',
-    description: 'This is evaluation 1',
+    name: "Evaluation 1",
+    description: "This is evaluation 1",
   },
   selected: true,
   onChange: () => {},
@@ -77,10 +72,10 @@ WithoutCheckbox.args = {
     checkbox: false,
     run: true,
   },
-  requiredKeys: 'key1, key2',
-  model: 'Model 1',
-  name: 'Evaluation 1',
-  description: 'This is evaluation 1',
+  requiredKeys: "key1, key2",
+  model: "Model 1",
+  name: "Evaluation 1",
+  description: "This is evaluation 1",
   onRemove: () => {},
   experimentEval: {
     experimentId: 1,
@@ -95,8 +90,8 @@ WithoutRun.args = {
   selectedUserEvalList: [],
   userEval: {
     id: 1,
-    name: 'Evaluation 1',
-    description: 'This is evaluation 1',
+    name: "Evaluation 1",
+    description: "This is evaluation 1",
   },
   selected: true,
   onChange: () => {},
@@ -104,10 +99,10 @@ WithoutRun.args = {
     checkbox: true,
     run: false,
   },
-  requiredKeys: 'key1, key2',
-  model: 'Model 1',
-  name: 'Evaluation 1',
-  description: 'This is evaluation 1',
+  requiredKeys: "key1, key2",
+  model: "Model 1",
+  name: "Evaluation 1",
+  description: "This is evaluation 1",
   onRemove: () => {},
   experimentEval: {
     experimentId: 1,

@@ -1,7 +1,10 @@
 /* eslint-disable react-refresh/only-export-components */
 import React from "react";
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import {
+  useWorkspaceFromList,
+  useWorkspacesList,
+} from "src/api/workspaces/list";
 import { paths } from "src/routes/paths";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
@@ -14,7 +17,6 @@ import {
   showRoleSpecific,
   RoutesName,
 } from "src/utils/rolePermissionMapping";
-import axiosInstance, { endpoints } from "src/utils/axios";
 
 const icon = (name) => (
   <SvgColor src={`/assets/icons/navbar/${name}.svg`} />
@@ -60,10 +62,8 @@ const ICONS = {
 export function useNavData() {
   const { user } = useAuthContext();
   const { currentWorkspaceRole } = useWorkspace();
-  const { isOSS } = useDeploymentMode();
-  const userOrgRole = user?.organization_role ?? user?.organizationRole;
-  const userDefaultWsRole =
-    user?.default_workspace_role ?? user?.defaultWorkspaceRole;
+  const userOrgRole = user?.organization_role;
+  const userDefaultWsRole = user?.default_workspace_role;
   const isOwner = userOrgRole === "Owner";
   const effectiveWsRole = currentWorkspaceRole || userDefaultWsRole;
   const isAdmin =
@@ -100,16 +100,16 @@ export function useNavData() {
         //   });
         // },
       },
-      {
-        title: "Prototype",
-        path: paths.dashboard.prototype,
-        icon: ICONS.prototype,
-        eventTrigger: () => {
-          trackEvent(Events.navigationPrototypeClicked, {
-            [PropertyName.click]: true,
-          });
-        },
-      },
+      // {
+      //   title: "Prototype",
+      //   path: paths.dashboard.prototype,
+      //   icon: ICONS.prototype,
+      //   eventTrigger: () => {
+      //     trackEvent(Events.navigationPrototypeClicked, {
+      //       [PropertyName.click]: true,
+      //     });
+      //   },
+      // },
       {
         title: "Knowledge base",
         path: paths.dashboard.knowledge_base,
@@ -176,16 +176,16 @@ export function useNavData() {
             path: paths.dashboard.annotations.queues,
             icon: ICONS.annotate,
           },
-          {
-            title: "Alerts",
-            path: paths.dashboard.alerts,
-            icon: ICONS.alerts,
-            eventTrigger: () => {
-              trackEvent(Events.navigationAlertTabClicked, {
-                [PropertyName.click]: true,
-              });
-            },
-          },
+          // {
+          //   title: "Alerts",
+          //   path: paths.dashboard.alerts,
+          //   icon: ICONS.alerts,
+          //   eventTrigger: () => {
+          //     trackEvent(Events.navigationAlertTabClicked, {
+          //       [PropertyName.click]: true,
+          //     });
+          //   },
+          // },
           {
             title: "Dashboards",
             path: paths.dashboard.dashboards.root,
@@ -271,14 +271,12 @@ export function useNavData() {
           title: "Falcon AI",
           path: paths.dashboard.falconAI,
           icon: ICONS.falconAI,
-          disabled: isOSS,
-          disabledTooltip: "Not available on self-hosted",
         },
       ],
     });
 
     return sections;
-  }, [isOwner, isAdmin, isOSS]);
+  }, [isOwner, isAdmin]);
   return data;
 }
 
@@ -342,25 +340,21 @@ const SettingsIcons = {
 
 export function useNavSettingsData() {
   const { user } = useAuthContext();
-  const { isOSS } = useDeploymentMode();
+  const { isCloud } = useDeploymentMode();
   const { currentWorkspaceRole } = useWorkspace();
 
-  const { data: workspaces = [] } = useQuery({
-    queryKey: ["workspaces-list", "settings"],
-    queryFn: () => axiosInstance.get(endpoints.workspace.workspaceList),
-    select: (res) => res.data?.results || [],
-    enabled: !!(user?.ws_enabled ?? user?.wsEnabled),
-    staleTime: 30_000,
+  const { data: workspaces = [] } = useWorkspacesList({
+    enabled: !!user?.ws_enabled,
   });
 
   // Use organization role for org-level settings
   // Workspace role is only relevant for workspace-specific tabs
-  const effectiveRole = user?.organization_role ?? user?.organizationRole;
+  const effectiveRole = user?.organization_role;
   const isOrgAdminPlus =
     effectiveRole === ROLES.OWNER || effectiveRole === ROLES.ADMIN;
   const isWsAdmin =
     isOrgAdminPlus || currentWorkspaceRole === ROLES.WORKSPACE_ADMIN;
-  const wsEnabled = user?.ws_enabled ?? user?.wsEnabled;
+  const wsEnabled = user?.ws_enabled;
 
   const sections = useMemo(() => {
     // Wait for user role to be loaded before rendering tabs
@@ -418,7 +412,7 @@ export function useNavSettingsData() {
       });
     }
     // Falcon AI Connectors — same access as integrations
-    if (!isOSS && canAccess(RoutesName.integrations)) {
+    if (canAccess(RoutesName.integrations)) {
       wsSettingsItems.push({
         title: "Falcon AI Connectors",
         path: "/dashboard/settings/falcon-ai-connectors",
@@ -434,21 +428,21 @@ export function useNavSettingsData() {
 
     // Section 3: Organization (based on role permissions for each item)
     const orgItems = [];
-    if (canAccess(RoutesName.usageSummary)) {
+    if (isCloud && canAccess(RoutesName.usageSummary)) {
       orgItems.push({
         title: "Usage Summary",
         path: "/dashboard/settings/usage-summary",
         icon: SettingsIcons.Summary,
       });
     }
-    if (!isOSS && canAccess(RoutesName.planAndPricing)) {
+    if (isCloud && canAccess(RoutesName.planAndPricing)) {
       orgItems.push({
         title: "Plans & Pricing",
         path: "/dashboard/settings/pricing",
         icon: SettingsIcons.Pricing,
       });
     }
-    if (!isOSS && canAccess(RoutesName.billing)) {
+    if (isCloud && canAccess(RoutesName.billing)) {
       orgItems.push({
         title: "Billing",
         path: "/dashboard/settings/billing",
@@ -478,14 +472,13 @@ export function useNavSettingsData() {
         icon: SettingsIcons.Security,
       });
     }
-    // EE Licenses - hidden (feature not available yet)
-    // if (effectiveRole === ROLES.OWNER) {
-    //   orgItems.push({
-    //     title: "EE Licenses",
-    //     path: "/dashboard/settings/ee-licenses",
-    //     icon: SettingsIcons.Keys,
-    //   });
-    // }
+    if (!isCloud && isOrgAdminPlus) {
+      orgItems.push({
+        title: "License",
+        path: "/dashboard/settings/ee-licenses",
+        icon: SettingsIcons.Keys,
+      });
+    }
     if (wsEnabled && canAccess(RoutesName.workspace)) {
       orgItems.push({
         title: "Workspaces",
@@ -505,7 +498,7 @@ export function useNavSettingsData() {
       result.push({
         subheader: "Your Workspaces",
         items: workspaces.map((ws) => ({
-          title: ws.display_name || ws.displayName || ws.name,
+          title: ws.display_name || ws.name,
           path: `/dashboard/settings/workspace/${ws.id}`,
           icon: SettingsIcons.Workspaces,
         })),
@@ -520,7 +513,7 @@ export function useNavSettingsData() {
     user,
     wsEnabled,
     workspaces,
-    isOSS,
+    isCloud,
   ]);
 
   return sections;
@@ -529,24 +522,17 @@ export function useNavSettingsData() {
 export function useWorkspaceSettingsNav(workspaceId) {
   const { user } = useAuthContext();
 
-  const { data: workspace = null } = useQuery({
-    queryKey: ["workspaces-list", "settings"],
-    queryFn: () => axiosInstance.get(endpoints.workspace.workspaceList),
-    select: (res) =>
-      (res.data?.results || []).find((w) => w.id === workspaceId) || null,
-    enabled: !!workspaceId,
-    staleTime: 30_000,
-  });
+  const { workspace } = useWorkspaceFromList(workspaceId);
 
   if (!workspaceId || !workspace) return null;
 
-  // Check org role using organizationRole, not workspace role
-  const userOrgRole = user?.organization_role ?? user?.organizationRole;
+  // Check org role using the canonical user-info organization_role field.
+  const userOrgRole = user?.organization_role;
   const isOrgAdminPlus =
     userOrgRole === ROLES.OWNER || userOrgRole === ROLES.ADMIN;
 
   // Workspace level thresholds: 8=admin, 3=member, 1=viewer (from backend Level constants)
-  const wsLevel = workspace.user_ws_level ?? workspace.userWsLevel ?? 0;
+  const wsLevel = workspace.user_ws_level ?? 0;
   const isWsAdmin = isOrgAdminPlus || wsLevel >= 8;
   const isWsViewer = !isOrgAdminPlus && wsLevel < 3;
 
@@ -588,11 +574,7 @@ export function useWorkspaceSettingsNav(workspaceId) {
   }
 
   return {
-    name:
-      workspace.display_name ||
-      workspace.displayName ||
-      workspace.name ||
-      "Workspace",
+    name: workspace.display_name || workspace.name || "Workspace",
     data: [{ items }],
   };
 }

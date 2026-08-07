@@ -1,6 +1,8 @@
 import structlog
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.utils.decorators import method_decorator
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
@@ -10,6 +12,7 @@ from agent_playground.models.graph_version import GraphVersion
 from agent_playground.models.node import Node
 from agent_playground.models.node_connection import NodeConnection
 from agent_playground.models.port import Port
+from agent_playground.serializers.contracts import AGENT_PLAYGROUND_ERROR_RESPONSES
 from agent_playground.serializers.edge import SourceNodeOutputPortsSerializer
 from agent_playground.serializers.node import (
     CreateNodeSerializer,
@@ -28,7 +31,16 @@ from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
 
+agent_playground_errors = swagger_auto_schema(
+    responses=AGENT_PLAYGROUND_ERROR_RESPONSES
+)
 
+
+@method_decorator(name="create", decorator=agent_playground_errors)
+@method_decorator(name="retrieve", decorator=agent_playground_errors)
+@method_decorator(name="partial_update", decorator=agent_playground_errors)
+@method_decorator(name="destroy", decorator=agent_playground_errors)
+@method_decorator(name="possible_edge_mappings", decorator=agent_playground_errors)
 class NodeCrudViewSet(ModelViewSet):
     """Granular CRUD for nodes within a graph version."""
 

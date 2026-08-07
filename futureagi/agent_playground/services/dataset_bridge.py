@@ -165,10 +165,9 @@ def activate_version_and_sync(
     Promote a version to active and sync dataset columns.
 
     Handles the full activation flow:
-    1. Capture old active version ID
-    2. Deactivate current active version
-    3. Set the given version to active
-    4. Sync dataset columns with new version's input ports
+    1. Deactivate current active version
+    2. Set the given version to active
+    3. Sync dataset columns with new version's input ports
     """
 
     validate_version_for_activation(version)
@@ -177,7 +176,6 @@ def activate_version_and_sync(
         old_active_qs = GraphVersion.no_workspace_objects.filter(
             graph=graph, status=GraphVersionStatus.ACTIVE
         )
-        old_active_version_id = old_active_qs.values_list("id", flat=True).first()
         old_active_qs.update(status=GraphVersionStatus.INACTIVE)
 
         version.status = GraphVersionStatus.ACTIVE
@@ -231,7 +229,10 @@ def _build_payload_from_cells(port_keys: set[str], cells: list[Cell]) -> dict[st
 
 
 def execute_rows(
-    graph_version: GraphVersion, dataset, row_ids: list[UUID] | None = None
+    graph_version: GraphVersion,
+    dataset,
+    row_ids: list[UUID] | None = None,
+    task_queue: str = "tasks_l",
 ) -> list[str]:
     """
     Execute dataset rows as individual graph executions.
@@ -240,6 +241,7 @@ def execute_rows(
         graph_version: The active GraphVersion to execute.
         dataset: The Dataset containing rows.
         row_ids: Optional list of specific row IDs to execute. If None, executes all rows.
+        task_queue: Temporal task queue used for dispatch.
 
     Returns:
         List of graph_execution_id strings.
@@ -258,7 +260,9 @@ def execute_rows(
 
         if not port_keys:
             execution_id = start_graph_execution(
-                graph_version_id=str(graph_version.id), input_payload={}
+                graph_version_id=str(graph_version.id),
+                input_payload={},
+                task_queue=task_queue,
             )
             return [execution_id]
 
@@ -277,7 +281,9 @@ def execute_rows(
     for row in rows:
         payload = _build_payload_from_cells(port_keys, cells_by_row.get(row.id, []))
         execution_id = start_graph_execution(
-            graph_version_id=str(graph_version.id), input_payload=payload
+            graph_version_id=str(graph_version.id),
+            input_payload=payload,
+            task_queue=task_queue,
         )
         execution_ids.append(execution_id)
 

@@ -35,6 +35,7 @@ _SAFE_KEY_RE = re.compile(r"^[a-zA-Z0-9._\-]+$")
 _RATE_INDICATOR_METRICS = frozenset({"success_rate", "failure_rate"})
 _STRING_DIMENSION_METRICS = frozenset(
     {
+        "simulation",
         "scenario",
         "agent_definition",
         "agent_version",
@@ -83,6 +84,12 @@ _PERSONA_NAME_EXPR = (
 )
 
 _PERSONA_FIELD = lambda field: (f"JSONExtractString({_PERSONA_JSON_EXPR}, '{field}')")
+
+_SIMULATION_NAME_EXPR = (
+    "dictGetOrDefault('simulate_run_test_dict', 'name', "
+    "dictGetOrDefault('simulate_test_execution_dict', 'run_test_id', "
+    "c.test_execution_id, toUUID('00000000-0000-0000-0000-000000000000')), '')"
+)
 _CUSTOMER_LATENCY_FIELD = lambda field: (
     f"JSONExtractFloat(c.customer_latency_metrics, 'systemMetrics', '{field}')"
 )
@@ -161,6 +168,9 @@ SIMULATION_SYSTEM_METRICS: Dict[str, Tuple[str, str]] = {
         "avg_stop_time_after_interruption_ms",
     ),
     # --- String dimensions (used as metrics with count_distinct) ---
+    # "simulation" is a user-facing alias for "run_test" (same expression) —
+    # dashboards created against either name resolve to the run-test's name.
+    "simulation": ("simulate_call_execution", _SIMULATION_NAME_EXPR),
     "scenario": (
         "simulate_call_execution",
         "dictGetOrDefault('simulate_scenario_dict', 'name', c.scenario_id, '')",
@@ -188,12 +198,7 @@ SIMULATION_SYSTEM_METRICS: Dict[str, Tuple[str, str]] = {
         "simulate_call_execution",
         "dictGetOrDefault('simulate_scenario_dict', 'scenario_type', c.scenario_id, '')",
     ),
-    "run_test": (
-        "simulate_call_execution",
-        "dictGetOrDefault('simulate_run_test_dict', 'name', "
-        "dictGetOrDefault('simulate_test_execution_dict', 'run_test_id', "
-        "c.test_execution_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",
-    ),
+    "run_test": ("simulate_call_execution", _SIMULATION_NAME_EXPR),
     "test_execution": ("simulate_call_execution", "toString(c.test_execution_id)"),
     # Persona attributes
     "persona_gender": ("simulate_call_execution", _PERSONA_FIELD("gender")),
@@ -239,6 +244,7 @@ SIMULATION_METRIC_UNITS: Dict[str, str] = {
     "talk_ratio": "%",
     "stop_time_after_interruption": "ms",
     # String dimension metrics (used with count/count_distinct)
+    "simulation": "",
     "scenario": "",
     "agent_definition": "",
     "agent_version": "",
@@ -278,6 +284,7 @@ SIMULATION_AGGREGATIONS: Dict[str, str] = {
 
 # Breakdown dimensions for simulation
 SIMULATION_BREAKDOWN_COLUMNS: Dict[str, str] = {
+    "simulation": _SIMULATION_NAME_EXPR,
     "scenario": "dictGetOrDefault('simulate_scenario_dict', 'name', c.scenario_id, '')",
     "agent_definition": (
         "dictGetOrDefault('simulate_agent_dict', 'agent_name', "
@@ -307,16 +314,13 @@ SIMULATION_BREAKDOWN_COLUMNS: Dict[str, str] = {
     "persona_language": _PERSONA_FIELD("language"),
     "persona_conversation_speed": _PERSONA_FIELD("conversation_speed"),
     # Test & Run dimensions (chain: call -> test_execution -> run_test)
-    "run_test": (
-        "dictGetOrDefault('simulate_run_test_dict', 'name', "
-        "dictGetOrDefault('simulate_test_execution_dict', 'run_test_id', "
-        "c.test_execution_id, toUUID('00000000-0000-0000-0000-000000000000')), '')"
-    ),
+    "run_test": _SIMULATION_NAME_EXPR,
     "test_execution": "toString(c.test_execution_id)",
 }
 
 # Filter dimensions for simulation
 SIMULATION_FILTER_COLUMNS: Dict[str, str] = {
+    "simulation": _SIMULATION_NAME_EXPR,
     "scenario": "dictGetOrDefault('simulate_scenario_dict', 'name', c.scenario_id, '')",
     "agent_definition": (
         "dictGetOrDefault('simulate_agent_dict', 'agent_name', "
@@ -346,11 +350,7 @@ SIMULATION_FILTER_COLUMNS: Dict[str, str] = {
     "persona_language": _PERSONA_FIELD("language"),
     "persona_conversation_speed": _PERSONA_FIELD("conversation_speed"),
     # Test & Run dimensions
-    "run_test": (
-        "dictGetOrDefault('simulate_run_test_dict', 'name', "
-        "dictGetOrDefault('simulate_test_execution_dict', 'run_test_id', "
-        "c.test_execution_id, toUUID('00000000-0000-0000-0000-000000000000')), '')"
-    ),
+    "run_test": _SIMULATION_NAME_EXPR,
     "test_execution": "toString(c.test_execution_id)",
     # Numeric columns — needed so range operators (>, <, between, …) on
     # call.duration / latencies / costs actually filter instead of being

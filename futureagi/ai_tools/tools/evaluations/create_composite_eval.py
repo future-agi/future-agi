@@ -1,11 +1,14 @@
 from typing import Literal, Optional
 
+import structlog
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field, field_validator
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import format_datetime, key_value_block, section
 from ai_tools.registry import register_tool
+
+logger = structlog.get_logger(__name__)
 
 
 class CreateCompositeEvalInput(PydanticBaseModel):
@@ -230,8 +233,8 @@ class CreateCompositeEvalTool(BaseTool):
                 organization=context.organization,
                 workspace=context.workspace,
             )
-        except Exception:
-            pass  # Non-fatal
+        except Exception as e:
+            logger.warning("composite_eval_version_create_failed", error=str(e))
 
         # ── 8. Build response ──
         children_summary = "\n".join(

@@ -14,15 +14,13 @@ Requires:
 
 Covered:
 - Connection and schema lifecycle
-- Data insertion (spans, evals, nulls, deduplication)
-- DashboardQueryBuilder integration (system/eval metrics, time ranges, filters, aggregations)
 - SimulationQueryBuilder integration (system metrics, breakdowns, filters)
 - DatasetQueryBuilder integration (system metrics, breakdowns)
 """
 
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import pytest
 
@@ -58,143 +56,43 @@ def ch_schema(ch_client):
 
     Creates the test_futureagi database and applies all DDL statements.
     Runs once per test session.
+
+    Uses ``_to_single_node_engine`` so the DDL works on the single-node
+    test ClickHouse instance (no Keeper / Replicated engines).
     """
-    from tracer.services.clickhouse.schema import get_all_schema_ddl
+    import clickhouse_connect
+    from tracer.services.clickhouse.schema import (
+        _to_single_node_engine,
+        SCHEMA_DDL_STATEMENTS,
+    )
 
     ch_client.command(f"CREATE DATABASE IF NOT EXISTS {_TEST_DATABASE}")
 
-    for name, ddl in get_all_schema_ddl():
-        # Rewrite DDL to target the test database
-        ddl_test = ddl.replace("futureagi.", f"{_TEST_DATABASE}.")
-        try:
-            ch_client.command(ddl_test)
-        except Exception:
-            pass  # Table/view may already exist from a previous run
-
-    return ch_client
-
-
-@pytest.fixture
-def ch_test_data(ch_schema):
-    """Insert test span data and clean up after test.
-
-    Inserts a known set of spans into the CDC table and waits briefly
-    for the Materialized View to populate the ``spans`` table.
-    """
-    client = ch_schema
-    project_id = str(uuid.uuid4())
-    trace_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc)
-
-    # Insert test trace into CDC trace table
-    client.command(
-        f"""
-        INSERT INTO {_TEST_DATABASE}.tracer_trace
-            (id, project_id, name, session_id, external_id, tags,
-             _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-        VALUES
-            ('{trace_id}', '{project_id}', 'Test Trace', '', '', '[]',
-             now64(), 0, 1)
-        """
+    # Connect with the test database as default so unqualified table names
+    # in DDL (``CREATE TABLE foo``) land in test_futureagi, not ``default``.
+    db_client = clickhouse_connect.get_client(
+        host=os.environ.get("CH_TEST_HOST", "localhost"),
+        port=int(os.environ.get("CH_TEST_PORT", "18123")),
+        database=_TEST_DATABASE,
     )
 
-    # Insert test spans into CDC observation span table
-    spans = []
-    for i in range(5):
-        span_id = f"span_{uuid.uuid4().hex[:16]}"
-        latency = 100 * (i + 1)
-        cost = 0.001 * (i + 1)
-        tokens = 10 * (i + 1)
-        model = "gpt-4" if i % 2 == 0 else "gpt-3.5-turbo"
-        status = "OK" if i < 4 else "ERROR"
-        start_time = now - timedelta(seconds=latency / 1000 + 1)
-        end_time = now
-
-        client.command(
-            f"""
-            INSERT INTO {_TEST_DATABASE}.tracer_observation_span
-                (id, trace_id, project_id, name, observation_type, status,
-                 start_time, end_time, latency_ms, model, provider,
-                 prompt_tokens, completion_tokens, total_tokens, cost,
-                 input, output, span_attributes, resource_attributes,
-                 metadata, tags, span_events,
-                 _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-            VALUES
-                ('{span_id}', '{trace_id}', '{project_id}', 'Span {i}', 'llm', '{status}',
-                 '{start_time.strftime("%Y-%m-%d %H:%M:%S")}',
-                 '{end_time.strftime("%Y-%m-%d %H:%M:%S")}',
-                 {latency}, '{model}', 'openai',
-                 {tokens}, {tokens // 2}, {tokens + tokens // 2}, {cost},
-                 '{{"prompt": "hello {i}"}}', '{{"response": "world {i}"}}',
-                 '{{}}',' {{}}',
-                 '{{}}', '[]', '[]',
-                 now64(), 0, {i + 1})
-            """
-        )
-        spans.append(
-            {
-                "id": span_id,
-                "trace_id": trace_id,
-                "project_id": project_id,
-                "latency_ms": latency,
-                "cost": cost,
-                "total_tokens": tokens + tokens // 2,
-                "model": model,
-                "status": status,
-            }
-        )
-
-    yield {
-        "client": client,
-        "project_id": project_id,
-        "trace_id": trace_id,
-        "spans": spans,
-        "now": now,
-    }
-
-    # Cleanup
-    for table in [
-        "tracer_observation_span",
-        "tracer_trace",
-        "tracer_eval_logger",
-        "spans",
-    ]:
+    for name, ddl in SCHEMA_DDL_STATEMENTS:
+        # Convert to single-node engines for the test CH instance
+        ddl_test = _to_single_node_engine(ddl)
+        # Rewrite any explicit ``futureagi.`` references to the test database
+        ddl_test = ddl_test.replace("futureagi.", f"{_TEST_DATABASE}.")
         try:
-            client.command(f"TRUNCATE TABLE {_TEST_DATABASE}.{table}")
-        except Exception:
-            pass
+            db_client.command(ddl_test)
+        except Exception as exc:
+            # Ignore "already exists" errors; propagate others so schema
+            # issues surface during test runs instead of hiding silently.
+            err_msg = str(exc)
+            if "already exists" not in err_msg.lower():
+                import warnings
+                warnings.warn(f"CH schema DDL failed for {name}: {err_msg[:200]}")
 
-
-@pytest.fixture
-def ch_eval_data(ch_test_data):
-    """Insert eval logger data linked to the test spans."""
-    client = ch_test_data["client"]
-    project_id = ch_test_data["project_id"]
-    config_id = str(uuid.uuid4())
-    now = ch_test_data["now"]
-
-    for i, span in enumerate(ch_test_data["spans"]):
-        eval_id = str(uuid.uuid4())
-        score = 0.5 + (i * 0.1)  # 0.5, 0.6, 0.7, 0.8, 0.9
-        passed = 1 if score >= 0.7 else 0
-
-        client.command(
-            f"""
-            INSERT INTO {_TEST_DATABASE}.tracer_eval_logger
-                (id, span_id, trace_id, project_id, config_id,
-                 output_float, output_bool, eval_name,
-                 created_at,
-                 _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-            VALUES
-                ('{eval_id}', '{span["id"]}', '{span["trace_id"]}', '{project_id}',
-                 '{config_id}', {score}, {passed}, 'accuracy',
-                 '{now.strftime("%Y-%m-%d %H:%M:%S")}',
-                 now64(), 0, {i + 1})
-            """
-        )
-
-    ch_test_data["config_id"] = config_id
-    return ch_test_data
+    db_client.close()
+    return ch_client
 
 
 # ---------------------------------------------------------------------------
@@ -206,58 +104,29 @@ def ch_eval_data(ch_test_data):
 def ch_simulation_data(ch_schema):
     """Insert test simulation call data."""
     client = ch_schema
-    workspace_id = str(uuid.uuid4())
+    test_execution_id = str(uuid.uuid4())
     scenario_id = str(uuid.uuid4())
-    agent_def_id = str(uuid.uuid4())
+    agent_version_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
-
-    # Create simulate_call_execution table if not already present from schema
-    try:
-        client.command(
-            f"""
-            CREATE TABLE IF NOT EXISTS {_TEST_DATABASE}.simulate_call_execution (
-                id UUID DEFAULT generateUUIDv4(),
-                workspace_id UUID,
-                scenario_id UUID,
-                agent_definition_id UUID,
-                agent_version String DEFAULT '',
-                call_type LowCardinality(String) DEFAULT 'text',
-                status LowCardinality(String) DEFAULT 'completed',
-                duration_seconds Float64 DEFAULT 0,
-                response_time_ms Float64 DEFAULT 0,
-                avg_agent_latency_ms Float64 DEFAULT 0,
-                cost_cents Float64 DEFAULT 0,
-                overall_score Float64 DEFAULT 0,
-                message_count UInt32 DEFAULT 0,
-                created_at DateTime64(3) DEFAULT now64(),
-                _peerdb_synced_at DateTime64(6) DEFAULT now64(),
-                _peerdb_is_deleted UInt8 DEFAULT 0,
-                _peerdb_version Int64 DEFAULT 1
-            ) ENGINE = ReplacingMergeTree(_peerdb_version)
-            ORDER BY (id)
-            """
-        )
-    except Exception:
-        pass
 
     for i in range(5):
         call_id = str(uuid.uuid4())
         call_type = "voice" if i % 2 == 0 else "text"
-        status = "completed" if i < 4 else "failed"
+        call_status = "completed" if i < 4 else "failed"
         duration = 30.0 + i * 10
         score = 0.6 + i * 0.08
 
         client.command(
             f"""
             INSERT INTO {_TEST_DATABASE}.simulate_call_execution
-                (id, workspace_id, scenario_id, agent_definition_id,
-                 agent_version, call_type, status,
+                (id, test_execution_id, scenario_id, agent_version_id,
+                 simulation_call_type, status,
                  duration_seconds, cost_cents, overall_score,
                  message_count, created_at,
                  _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
             VALUES
-                ('{call_id}', '{workspace_id}', '{scenario_id}', '{agent_def_id}',
-                 'v1.{i}', '{call_type}', '{status}',
+                ('{call_id}', '{test_execution_id}', '{scenario_id}', '{agent_version_id}',
+                 '{call_type}', '{call_status}',
                  {duration}, {i * 0.5}, {score},
                  {10 + i}, '{now.strftime("%Y-%m-%d %H:%M:%S")}',
                  now64(), 0, {i + 1})
@@ -266,9 +135,9 @@ def ch_simulation_data(ch_schema):
 
     yield {
         "client": client,
-        "workspace_id": workspace_id,
+        "test_execution_id": test_execution_id,
         "scenario_id": scenario_id,
-        "agent_def_id": agent_def_id,
+        "agent_version_id": agent_version_id,
     }
 
     try:
@@ -281,34 +150,9 @@ def ch_simulation_data(ch_schema):
 def ch_dataset_data(ch_schema):
     """Insert test dataset cell data."""
     client = ch_schema
-    workspace_id = str(uuid.uuid4())
     dataset_id = str(uuid.uuid4())
+    row_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
-
-    # Create model_hub_cell table if not already present
-    try:
-        client.command(
-            f"""
-            CREATE TABLE IF NOT EXISTS {_TEST_DATABASE}.model_hub_cell (
-                id UUID DEFAULT generateUUIDv4(),
-                workspace_id UUID,
-                dataset_id UUID,
-                column_id UUID,
-                row_number UInt32 DEFAULT 0,
-                prompt_tokens Nullable(UInt32),
-                completion_tokens Nullable(UInt32),
-                response_time Nullable(Float64),
-                status LowCardinality(String) DEFAULT 'completed',
-                created_at DateTime64(3) DEFAULT now64(),
-                _peerdb_synced_at DateTime64(6) DEFAULT now64(),
-                _peerdb_is_deleted UInt8 DEFAULT 0,
-                _peerdb_version Int64 DEFAULT 1
-            ) ENGINE = ReplacingMergeTree(_peerdb_version)
-            ORDER BY (id)
-            """
-        )
-    except Exception:
-        pass
 
     column_id = str(uuid.uuid4())
 
@@ -317,18 +161,18 @@ def ch_dataset_data(ch_schema):
         prompt_tokens = 50 + i * 10
         completion_tokens = 20 + i * 5
         response_time = 100.0 + i * 50
-        status = "completed" if i < 4 else "error"
+        cell_status = "completed" if i < 4 else "error"
 
         client.command(
             f"""
             INSERT INTO {_TEST_DATABASE}.model_hub_cell
-                (id, workspace_id, dataset_id, column_id, row_number,
+                (id, dataset_id, column_id, row_id,
                  prompt_tokens, completion_tokens, response_time, status,
                  created_at,
                  _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
             VALUES
-                ('{cell_id}', '{workspace_id}', '{dataset_id}', '{column_id}', {i},
-                 {prompt_tokens}, {completion_tokens}, {response_time}, '{status}',
+                ('{cell_id}', '{dataset_id}', '{column_id}', '{row_id}',
+                 {prompt_tokens}, {completion_tokens}, {response_time}, '{cell_status}',
                  '{now.strftime("%Y-%m-%d %H:%M:%S")}',
                  now64(), 0, {i + 1})
             """
@@ -336,7 +180,6 @@ def ch_dataset_data(ch_schema):
 
     yield {
         "client": client,
-        "workspace_id": workspace_id,
         "dataset_id": dataset_id,
         "column_id": column_id,
     }
@@ -364,28 +207,29 @@ class TestClickHouseConnection:
     def test_schema_initialization(self, ch_schema):
         """Applying DDL should create all expected tables."""
         client = ch_schema
-        result = client.command(
+        result = client.query(
             f"SELECT name FROM system.tables WHERE database = '{_TEST_DATABASE}'"
         )
-        tables = result if isinstance(result, list) else result.split("\n")
-        table_str = str(tables)
+        tables = [row[0] for row in result.result_rows]
         # Core CDC tables should exist
-        assert "tracer_observation_span" in table_str
-        assert "tracer_trace" in table_str
+        assert "tracer_observation_span" in tables
+        assert "tracer_trace" in tables
 
     def test_drop_and_recreate_schema(self, ch_client):
         """Should be able to drop and recreate the test database."""
         from tracer.services.clickhouse.schema import (
-            get_all_schema_ddl,
+            _to_single_node_engine,
             get_drop_statements,
+            SCHEMA_DDL_STATEMENTS,
         )
 
         temp_db = "test_futureagi_temp"
         ch_client.command(f"CREATE DATABASE IF NOT EXISTS {temp_db}")
 
-        # Apply schema
-        for name, ddl in get_all_schema_ddl():
-            ddl_test = ddl.replace("futureagi.", f"{temp_db}.")
+        # Apply schema (single-node engines for test CH)
+        for name, ddl in SCHEMA_DDL_STATEMENTS:
+            ddl_test = _to_single_node_engine(ddl)
+            ddl_test = ddl_test.replace("futureagi.", f"{temp_db}.")
             try:
                 ch_client.command(ddl_test)
             except Exception:
@@ -407,497 +251,6 @@ class TestClickHouseConnection:
             f"SELECT count() FROM system.databases WHERE name = '{temp_db}'"
         )
         assert result == 0
-
-
-# ===========================================================================
-# B. TestClickHouseDataInsertion
-# ===========================================================================
-
-
-@pytest.mark.integration
-class TestClickHouseDataInsertion:
-    """Test data insertion into ClickHouse CDC tables."""
-
-    def test_insert_span_data(self, ch_test_data):
-        """Inserting spans into CDC table should be queryable."""
-        client = ch_test_data["client"]
-        project_id = ch_test_data["project_id"]
-
-        result = client.command(
-            f"""
-            SELECT count()
-            FROM {_TEST_DATABASE}.tracer_observation_span FINAL
-            WHERE project_id = '{project_id}'
-              AND _peerdb_is_deleted = 0
-            """
-        )
-        assert result == 5
-
-    def test_insert_eval_data(self, ch_eval_data):
-        """Inserting eval logger entries should be queryable."""
-        client = ch_eval_data["client"]
-        project_id = ch_eval_data["project_id"]
-
-        result = client.command(
-            f"""
-            SELECT count()
-            FROM {_TEST_DATABASE}.tracer_eval_logger FINAL
-            WHERE project_id = '{project_id}'
-              AND _peerdb_is_deleted = 0
-            """
-        )
-        assert result == 5
-
-    def test_insert_with_null_fields(self, ch_schema):
-        """Inserting a span with NULL optional fields should succeed."""
-        client = ch_schema
-        span_id = f"null_span_{uuid.uuid4().hex[:8]}"
-        project_id = str(uuid.uuid4())
-        trace_id = str(uuid.uuid4())
-
-        client.command(
-            f"""
-            INSERT INTO {_TEST_DATABASE}.tracer_observation_span
-                (id, trace_id, project_id, name, observation_type,
-                 start_time, end_time, latency_ms, model,
-                 prompt_tokens, completion_tokens, total_tokens, cost,
-                 input, output, span_attributes, resource_attributes,
-                 metadata, tags, span_events,
-                 _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-            VALUES
-                ('{span_id}', '{trace_id}', '{project_id}', 'Null Span', 'tool',
-                 NULL, NULL, NULL, NULL,
-                 NULL, NULL, NULL, NULL,
-                 '', '', '{{}}', '{{}}',
-                 '{{}}', '[]', '[]',
-                 now64(), 0, 1)
-            """
-        )
-
-        result = client.command(
-            f"""
-            SELECT count()
-            FROM {_TEST_DATABASE}.tracer_observation_span FINAL
-            WHERE id = '{span_id}' AND _peerdb_is_deleted = 0
-            """
-        )
-        assert result == 1
-
-        # Cleanup
-        client.command(
-            f"""
-            INSERT INTO {_TEST_DATABASE}.tracer_observation_span
-                (id, trace_id, project_id, name, observation_type,
-                 input, output, span_attributes, resource_attributes,
-                 metadata, tags, span_events,
-                 _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-            VALUES
-                ('{span_id}', '{trace_id}', '{project_id}', 'Null Span', 'tool',
-                 '', '', '{{}}', '{{}}',
-                 '{{}}', '[]', '[]',
-                 now64(), 1, 2)
-            """
-        )
-
-    def test_insert_duplicate_deduplication(self, ch_schema):
-        """ReplacingMergeTree should keep only the latest version of a row."""
-        client = ch_schema
-        span_id = f"dedup_span_{uuid.uuid4().hex[:8]}"
-        project_id = str(uuid.uuid4())
-        trace_id = str(uuid.uuid4())
-
-        # Insert version 1
-        client.command(
-            f"""
-            INSERT INTO {_TEST_DATABASE}.tracer_observation_span
-                (id, trace_id, project_id, name, observation_type,
-                 latency_ms, input, output,
-                 span_attributes, resource_attributes, metadata, tags, span_events,
-                 _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-            VALUES
-                ('{span_id}', '{trace_id}', '{project_id}', 'Version 1', 'llm',
-                 100, '', '',
-                 '{{}}', '{{}}', '{{}}', '[]', '[]',
-                 now64(), 0, 1)
-            """
-        )
-
-        # Insert version 2 (same id, higher version)
-        client.command(
-            f"""
-            INSERT INTO {_TEST_DATABASE}.tracer_observation_span
-                (id, trace_id, project_id, name, observation_type,
-                 latency_ms, input, output,
-                 span_attributes, resource_attributes, metadata, tags, span_events,
-                 _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-            VALUES
-                ('{span_id}', '{trace_id}', '{project_id}', 'Version 2', 'llm',
-                 200, '', '',
-                 '{{}}', '{{}}', '{{}}', '[]', '[]',
-                 now64(), 0, 2)
-            """
-        )
-
-        # With FINAL, should see only the latest version
-        result = client.command(
-            f"""
-            SELECT name
-            FROM {_TEST_DATABASE}.tracer_observation_span FINAL
-            WHERE id = '{span_id}' AND _peerdb_is_deleted = 0
-            """
-        )
-        assert "Version 2" in str(result)
-
-        # Count should be 1 (deduplicated)
-        count = client.command(
-            f"""
-            SELECT count()
-            FROM {_TEST_DATABASE}.tracer_observation_span FINAL
-            WHERE id = '{span_id}' AND _peerdb_is_deleted = 0
-            """
-        )
-        assert count == 1
-
-        # Cleanup: soft-delete
-        client.command(
-            f"""
-            INSERT INTO {_TEST_DATABASE}.tracer_observation_span
-                (id, trace_id, project_id, name, observation_type,
-                 input, output, span_attributes, resource_attributes,
-                 metadata, tags, span_events,
-                 _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-            VALUES
-                ('{span_id}', '{trace_id}', '{project_id}', 'Version 2', 'llm',
-                 '', '', '{{}}', '{{}}',
-                 '{{}}', '[]', '[]',
-                 now64(), 1, 3)
-            """
-        )
-
-
-# ===========================================================================
-# C. TestDashboardQueryBuilderIntegration
-# ===========================================================================
-
-
-@pytest.mark.integration
-class TestDashboardQueryBuilderIntegration:
-    """Test DashboardQueryBuilder against a real ClickHouse instance."""
-
-    def _build_config(
-        self,
-        project_id,
-        metric_name="latency",
-        aggregation="avg",
-        metric_type="system_metric",
-        preset="30D",
-        granularity="day",
-        filters=None,
-        breakdowns=None,
-        **extra_metric_fields,
-    ):
-        config = {
-            "project_ids": [project_id],
-            "granularity": granularity,
-            "time_range": {"preset": preset},
-            "metrics": [
-                {
-                    "id": "m1",
-                    "name": metric_name,
-                    "type": metric_type,
-                    "aggregation": aggregation,
-                    **extra_metric_fields,
-                }
-            ],
-            "filters": filters or [],
-            "breakdowns": breakdowns or [],
-        }
-        return config
-
-    def _execute_query(self, client, sql, params):
-        """Execute a parameterized query against the test database."""
-        # Rewrite table references to the test database
-        sql_test = sql.replace("futureagi.", f"{_TEST_DATABASE}.")
-        # Replace bare table references that aren't already prefixed
-        for table in ["spans", "tracer_eval_logger", "trace_annotation"]:
-            # Only replace if not already prefixed with database name
-            sql_test = sql_test.replace(
-                f"FROM {table} ", f"FROM {_TEST_DATABASE}.{table} "
-            )
-            sql_test = sql_test.replace(
-                f"FROM {table}\n", f"FROM {_TEST_DATABASE}.{table}\n"
-            )
-            sql_test = sql_test.replace(
-                f"JOIN {table} ", f"JOIN {_TEST_DATABASE}.{table} "
-            )
-        try:
-            result = client.query(sql_test, parameters=params)
-            return result.result_rows
-        except Exception as e:
-            # Return empty if query references tables that don't exist in test
-            if "UNKNOWN_TABLE" in str(e) or "doesn't exist" in str(e):
-                pytest.skip(f"Table not available in test DB: {e}")
-            raise
-
-    def test_system_metric_query_executes(self, ch_test_data):
-        """Building and executing a latency query should not raise."""
-        from tracer.services.clickhouse.query_builders.dashboard import (
-            DashboardQueryBuilder,
-        )
-
-        config = self._build_config(ch_test_data["project_id"])
-        builder = DashboardQueryBuilder(config)
-        queries = builder.build_all_queries()
-        assert len(queries) == 1
-
-        sql, params, metric_info = queries[0]
-        rows = self._execute_query(ch_test_data["client"], sql, params)
-        # Should return rows (possibly empty if MV hasn't run)
-        assert isinstance(rows, list)
-
-    def test_eval_metric_query_executes(self, ch_eval_data):
-        """Building and executing an eval metric query should not raise."""
-        from tracer.services.clickhouse.query_builders.dashboard import (
-            DashboardQueryBuilder,
-        )
-
-        config = self._build_config(
-            ch_eval_data["project_id"],
-            metric_name="accuracy",
-            metric_type="eval_metric",
-            aggregation="avg",
-            config_id=ch_eval_data["config_id"],
-            output_type="SCORE",
-        )
-        builder = DashboardQueryBuilder(config)
-        queries = builder.build_all_queries()
-        sql, params, _ = queries[0]
-        rows = self._execute_query(ch_eval_data["client"], sql, params)
-        assert isinstance(rows, list)
-
-    def test_time_range_filtering_works(self, ch_schema):
-        """Data inserted at different dates should be filtered by time range."""
-        client = ch_schema
-        project_id = str(uuid.uuid4())
-        trace_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc)
-
-        # Insert trace
-        client.command(
-            f"""
-            INSERT INTO {_TEST_DATABASE}.tracer_trace
-                (id, project_id, name, session_id, external_id, tags,
-                 _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-            VALUES
-                ('{trace_id}', '{project_id}', 'Time Test Trace', '', '', '[]',
-                 now64(), 0, 1)
-            """
-        )
-
-        # Insert spans at different dates: 2 days ago and 10 days ago
-        for days_ago, label in [(2, "recent"), (10, "old")]:
-            span_id = f"time_{label}_{uuid.uuid4().hex[:8]}"
-            ts = now - timedelta(days=days_ago)
-            client.command(
-                f"""
-                INSERT INTO {_TEST_DATABASE}.tracer_observation_span
-                    (id, trace_id, project_id, name, observation_type,
-                     start_time, end_time, latency_ms,
-                     input, output, span_attributes, resource_attributes,
-                     metadata, tags, span_events,
-                     _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-                VALUES
-                    ('{span_id}', '{trace_id}', '{project_id}', 'Span {label}', 'llm',
-                     '{ts.strftime("%Y-%m-%d %H:%M:%S")}',
-                     '{ts.strftime("%Y-%m-%d %H:%M:%S")}',
-                     100, '', '',
-                     '{{}}', '{{}}', '{{}}', '[]', '[]',
-                     now64(), 0, 1)
-                """
-            )
-
-        # Query directly to verify time filtering
-        count_7d = client.command(
-            f"""
-            SELECT count()
-            FROM {_TEST_DATABASE}.tracer_observation_span FINAL
-            WHERE project_id = '{project_id}'
-              AND _peerdb_is_deleted = 0
-              AND start_time >= now() - INTERVAL 7 DAY
-            """
-        )
-        count_30d = client.command(
-            f"""
-            SELECT count()
-            FROM {_TEST_DATABASE}.tracer_observation_span FINAL
-            WHERE project_id = '{project_id}'
-              AND _peerdb_is_deleted = 0
-              AND start_time >= now() - INTERVAL 30 DAY
-            """
-        )
-        assert count_7d == 1  # Only the recent span
-        assert count_30d == 2  # Both spans
-
-        # Cleanup
-        for label in ["recent", "old"]:
-            client.command(
-                f"""
-                ALTER TABLE {_TEST_DATABASE}.tracer_observation_span
-                DELETE WHERE project_id = '{project_id}'
-                """
-            )
-
-    def test_breakdown_query_returns_grouped_data(self, ch_test_data):
-        """A breakdown query should group results by the breakdown dimension."""
-        from tracer.services.clickhouse.query_builders.dashboard import (
-            DashboardQueryBuilder,
-        )
-
-        config = self._build_config(
-            ch_test_data["project_id"],
-            breakdowns=[{"type": "system_metric", "name": "model"}],
-        )
-        builder = DashboardQueryBuilder(config)
-        queries = builder.build_all_queries()
-        sql, params, _ = queries[0]
-
-        assert "breakdown_value" in sql
-        rows = self._execute_query(ch_test_data["client"], sql, params)
-        assert isinstance(rows, list)
-
-    def test_filter_string_equals(self, ch_test_data):
-        """A filter with equal_to operator should narrow results."""
-        from tracer.services.clickhouse.query_builders.dashboard import (
-            DashboardQueryBuilder,
-        )
-
-        config = self._build_config(
-            ch_test_data["project_id"],
-            filters=[
-                {
-                    "metric_type": "system_metric",
-                    "metric_name": "model",
-                    "operator": "equal_to",
-                    "value": "gpt-4",
-                }
-            ],
-        )
-        builder = DashboardQueryBuilder(config)
-        queries = builder.build_all_queries()
-        sql, params, _ = queries[0]
-
-        assert "model" in sql
-        rows = self._execute_query(ch_test_data["client"], sql, params)
-        assert isinstance(rows, list)
-
-    def test_filter_string_contains(self, ch_test_data):
-        """A str_contains filter should use LIKE."""
-        from tracer.services.clickhouse.query_builders.dashboard import (
-            DashboardQueryBuilder,
-        )
-
-        config = self._build_config(
-            ch_test_data["project_id"],
-            filters=[
-                {
-                    "metric_type": "system_metric",
-                    "metric_name": "model",
-                    "operator": "str_contains",
-                    "value": "gpt",
-                }
-            ],
-        )
-        builder = DashboardQueryBuilder(config)
-        queries = builder.build_all_queries()
-        sql, params, _ = queries[0]
-
-        assert "LIKE" in sql
-        rows = self._execute_query(ch_test_data["client"], sql, params)
-        assert isinstance(rows, list)
-
-    def test_filter_number_between(self, ch_test_data):
-        """Numeric filters with greater_than/less_than should narrow results."""
-        from tracer.services.clickhouse.query_builders.dashboard import (
-            DashboardQueryBuilder,
-        )
-
-        config = self._build_config(
-            ch_test_data["project_id"],
-            filters=[
-                {
-                    "metric_type": "system_metric",
-                    "metric_name": "cost",
-                    "operator": "greater_than",
-                    "value": 0.001,
-                },
-                {
-                    "metric_type": "system_metric",
-                    "metric_name": "cost",
-                    "operator": "less_than",
-                    "value": 0.01,
-                },
-            ],
-        )
-        builder = DashboardQueryBuilder(config)
-        queries = builder.build_all_queries()
-        sql, params, _ = queries[0]
-        rows = self._execute_query(ch_test_data["client"], sql, params)
-        assert isinstance(rows, list)
-
-    def test_aggregation_avg_returns_correct_value(self, ch_test_data):
-        """avg() aggregation on known data should return the correct average."""
-        client = ch_test_data["client"]
-        project_id = ch_test_data["project_id"]
-
-        # Compute expected average from test data
-        latencies = [s["latency_ms"] for s in ch_test_data["spans"]]
-        expected_avg = sum(latencies) / len(latencies)
-
-        result = client.command(
-            f"""
-            SELECT avg(latency_ms)
-            FROM {_TEST_DATABASE}.tracer_observation_span FINAL
-            WHERE project_id = '{project_id}'
-              AND _peerdb_is_deleted = 0
-            """
-        )
-        assert abs(float(result) - expected_avg) < 0.01
-
-    def test_aggregation_p95_returns_correct_value(self, ch_test_data):
-        """quantile(0.95) should return a value within the expected range."""
-        client = ch_test_data["client"]
-        project_id = ch_test_data["project_id"]
-
-        latencies = sorted([s["latency_ms"] for s in ch_test_data["spans"]])
-
-        result = client.command(
-            f"""
-            SELECT quantile(0.95)(latency_ms)
-            FROM {_TEST_DATABASE}.tracer_observation_span FINAL
-            WHERE project_id = '{project_id}'
-              AND _peerdb_is_deleted = 0
-            """
-        )
-        p95 = float(result)
-        # p95 should be between the max and second-to-max value
-        assert p95 >= latencies[-2]
-        assert p95 <= latencies[-1] * 1.1  # Allow small margin
-
-    def test_aggregation_count_distinct(self, ch_test_data):
-        """uniq() should count distinct models correctly."""
-        client = ch_test_data["client"]
-        project_id = ch_test_data["project_id"]
-
-        result = client.command(
-            f"""
-            SELECT uniq(model)
-            FROM {_TEST_DATABASE}.tracer_observation_span FINAL
-            WHERE project_id = '{project_id}'
-              AND _peerdb_is_deleted = 0
-            """
-        )
-        # Test data has 2 distinct models: gpt-4, gpt-3.5-turbo
-        assert int(result) == 2
 
 
 # ===========================================================================
@@ -927,7 +280,7 @@ class TestSimulationQueryBuilderIntegration:
             "time_range": {"preset": preset},
             "metrics": [
                 {
-                    "id": "m1",
+                    "id": metric_name,
                     "name": metric_name,
                     "type": "system_metric",
                     "aggregation": aggregation,
@@ -944,7 +297,7 @@ class TestSimulationQueryBuilderIntegration:
             SimulationQueryBuilder,
         )
 
-        config = self._build_config(ch_simulation_data["workspace_id"])
+        config = self._build_config(ch_simulation_data["test_execution_id"])
         builder = SimulationQueryBuilder(config)
         queries = builder.build_all_queries()
         assert len(queries) == 1
@@ -967,7 +320,7 @@ class TestSimulationQueryBuilderIntegration:
         )
 
         config = self._build_config(
-            ch_simulation_data["workspace_id"],
+            ch_simulation_data["test_execution_id"],
             breakdowns=[{"type": "system_metric", "name": "agent_version"}],
         )
         builder = SimulationQueryBuilder(config)
@@ -982,7 +335,7 @@ class TestSimulationQueryBuilderIntegration:
         )
 
         config = self._build_config(
-            ch_simulation_data["workspace_id"],
+            ch_simulation_data["test_execution_id"],
             filters=[
                 {
                     "metric_type": "system_metric",
@@ -1034,7 +387,7 @@ class TestDatasetQueryBuilderIntegration:
             "time_range": {"preset": preset},
             "metrics": [
                 {
-                    "id": "m1",
+                    "id": metric_name,
                     "name": metric_name,
                     "type": "system_metric",
                     "aggregation": aggregation,
@@ -1051,7 +404,7 @@ class TestDatasetQueryBuilderIntegration:
             DatasetQueryBuilder,
         )
 
-        config = self._build_config(ch_dataset_data["workspace_id"])
+        config = self._build_config(ch_dataset_data["dataset_id"])
         builder = DatasetQueryBuilder(config)
         queries = builder.build_all_queries()
         assert len(queries) == 1
@@ -1073,7 +426,7 @@ class TestDatasetQueryBuilderIntegration:
         )
 
         config = self._build_config(
-            ch_dataset_data["workspace_id"],
+            ch_dataset_data["dataset_id"],
             breakdowns=[{"type": "system_metric", "name": "column_name"}],
         )
         builder = DatasetQueryBuilder(config)

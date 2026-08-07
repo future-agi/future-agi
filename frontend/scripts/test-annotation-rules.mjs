@@ -3,6 +3,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer-core";
+import { apiPath } from "../src/api/contracts/api-surface.js";
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3032";
 const QUEUE_ID = process.env.ANNOTATION_QUEUE_ID;
@@ -25,6 +26,11 @@ if (_missing.length) {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ARTIFACT_DIR = path.join(__dirname, ".artifacts");
+
+const queueApiPath = (template, params = {}) =>
+  apiPath(template, { queue_id: QUEUE_ID, ...params });
+
+const withQuery = (pathName, query) => `${pathName}?${query}`;
 
 const SOURCE_SCENARIOS = [
   {
@@ -302,7 +308,7 @@ async function cleanupExistingTestRules(apiBase, accessToken) {
   const rules = await apiGet(
     apiBase,
     accessToken,
-    `/model-hub/annotation-queues/${QUEUE_ID}/automation-rules/`,
+    queueApiPath("/model-hub/annotation-queues/{queue_id}/automation-rules/"),
   );
   if (!Array.isArray(rules)) return;
 
@@ -314,7 +320,9 @@ async function cleanupExistingTestRules(apiBase, accessToken) {
     await apiDelete(
       apiBase,
       accessToken,
-      `/model-hub/annotation-queues/${QUEUE_ID}/automation-rules/${rule.id}/`,
+      queueApiPath("/model-hub/annotation-queues/{queue_id}/automation-rules/{id}/", {
+        id: rule.id,
+      }),
     );
     console.log(`CLEANUP existing test rule ${rule.id} ${name}`);
   }
@@ -330,7 +338,9 @@ async function cleanupCreatedRule(
   await apiDelete(
     apiBase,
     accessToken,
-    `/model-hub/annotation-queues/${QUEUE_ID}/automation-rules/${ruleId}/`,
+    queueApiPath("/model-hub/annotation-queues/{queue_id}/automation-rules/{id}/", {
+      id: ruleId,
+    }),
   );
   const index = createdRuleIds.indexOf(ruleId);
   if (index >= 0) createdRuleIds.splice(index, 1);
@@ -347,7 +357,7 @@ async function cleanupCreatedQueueItems(apiBase, accessToken, items = []) {
     await apiPost(
       apiBase,
       accessToken,
-      `/model-hub/annotation-queues/${QUEUE_ID}/items/bulk-remove/`,
+      queueApiPath("/model-hub/annotation-queues/{queue_id}/items/bulk-remove/"),
       { item_ids: chunk },
     );
   }
@@ -393,7 +403,7 @@ async function getProject(apiBase, accessToken, queue) {
   const projectResponse = await apiGet(
     apiBase,
     accessToken,
-    "/tracer/project/list_project_ids/?project_type=observe",
+    withQuery(apiPath("/tracer/project/list_project_ids/"), "project_type=observe"),
   );
   const projects = projectResponse?.projects || [];
   const project =
@@ -1568,7 +1578,7 @@ async function listQueueItems(apiBase, accessToken, sourceType) {
     await apiGet(
       apiBase,
       accessToken,
-      `/model-hub/annotation-queues/${QUEUE_ID}/items/?${params}`,
+      withQuery(queueApiPath("/model-hub/annotation-queues/{queue_id}/items/"), params),
     ),
   );
 }
@@ -1577,7 +1587,9 @@ async function getAnnotateDetail(apiBase, accessToken, itemId) {
   return apiGet(
     apiBase,
     accessToken,
-    `/model-hub/annotation-queues/${QUEUE_ID}/items/${itemId}/annotate-detail/`,
+    queueApiPath("/model-hub/annotation-queues/{queue_id}/items/{id}/annotate-detail/", {
+      id: itemId,
+    }),
   );
 }
 
@@ -1596,7 +1608,7 @@ async function getQueueItemForSource(
     await apiGet(
       apiBase,
       accessToken,
-      `/model-hub/annotation-queues/for-source/?${params}`,
+      withQuery(apiPath("/model-hub/annotation-queues/for-source/"), params),
     ),
   );
   const match = queueMatches.find((entry) => entry?.queue?.id === QUEUE_ID);
@@ -1617,7 +1629,9 @@ async function evaluateRuleAndCollectItems({
   const evaluation = await apiPost(
     apiBase,
     accessToken,
-    `/model-hub/annotation-queues/${QUEUE_ID}/automation-rules/${ruleId}/evaluate/`,
+    queueApiPath("/model-hub/annotation-queues/{queue_id}/automation-rules/{id}/evaluate/", {
+      id: ruleId,
+    }),
     {},
   );
   await sleep(500);
@@ -1756,7 +1770,7 @@ async function createRuleScenario({
   const apiRules = await apiGet(
     apiBase,
     accessToken,
-    `/model-hub/annotation-queues/${QUEUE_ID}/automation-rules/`,
+    queueApiPath("/model-hub/annotation-queues/{queue_id}/automation-rules/"),
   );
   assert(
     Array.isArray(apiRules) &&
@@ -1906,7 +1920,7 @@ async function ensureCompletedVoiceCallInQueue(apiBase, accessToken) {
   const addResult = await apiPost(
     apiBase,
     accessToken,
-    `/model-hub/annotation-queues/${QUEUE_ID}/items/add-items/`,
+    queueApiPath("/model-hub/annotation-queues/{queue_id}/items/add-items/"),
     {
       items: [{ source_type: "call_execution", source_id: call.id }],
     },
@@ -1970,7 +1984,7 @@ async function ensureCompletedChatCallInQueue(apiBase, accessToken) {
   const addResult = await apiPost(
     apiBase,
     accessToken,
-    `/model-hub/annotation-queues/${QUEUE_ID}/items/add-items/`,
+    queueApiPath("/model-hub/annotation-queues/{queue_id}/items/add-items/"),
     {
       items: [{ source_type: "call_execution", source_id: call.id }],
     },
@@ -1998,7 +2012,7 @@ async function findTraceSessionCandidate(
   const projectResponse = await apiGet(
     apiBase,
     accessToken,
-    "/tracer/project/list_project_ids/?project_type=observe",
+    withQuery(apiPath("/tracer/project/list_project_ids/"), "project_type=observe"),
   );
   const projects = asArray(projectResponse?.projects);
   const orderedProjects = [
@@ -2011,7 +2025,10 @@ async function findTraceSessionCandidate(
       const response = await apiGet(
         apiBase,
         accessToken,
-        `/tracer/trace-session/list_sessions/?project_id=${project.id}&page=1&page_size=5`,
+        withQuery(
+          apiPath("/tracer/trace-session/list_sessions/"),
+          `project_id=${encodeURIComponent(project.id)}&page=1&page_size=5`,
+        ),
       );
       const row = asArray(response?.table).find((item) => item?.session_id);
       if (row) {
@@ -2060,7 +2077,7 @@ async function ensureTraceSessionInQueue(
   const addResult = await apiPost(
     apiBase,
     accessToken,
-    `/model-hub/annotation-queues/${QUEUE_ID}/items/add-items/`,
+    queueApiPath("/model-hub/annotation-queues/{queue_id}/items/add-items/"),
     {
       items: [{ source_type: "trace_session", source_id: candidate.sourceId }],
     },
@@ -2089,7 +2106,7 @@ async function ensureQueueItemsViaApiRule({
   const beforeItems = await listQueueItems(apiBase, accessToken, sourceType);
   const beforeItemIds = new Set(beforeItems.map((item) => item.id));
   const rule = await fetchJson(
-    `${apiBase}/model-hub/annotation-queues/${QUEUE_ID}/automation-rules/`,
+    `${apiBase}${queueApiPath("/model-hub/annotation-queues/{queue_id}/automation-rules/")}`,
     {
       method: "POST",
       headers: authHeaders(accessToken),
@@ -2114,7 +2131,9 @@ async function ensureQueueItemsViaApiRule({
     await apiDelete(
       apiBase,
       accessToken,
-      `/model-hub/annotation-queues/${QUEUE_ID}/automation-rules/${rule.id}/`,
+      queueApiPath("/model-hub/annotation-queues/{queue_id}/automation-rules/{id}/", {
+        id: rule.id,
+      }),
     );
   }
 }
@@ -2604,7 +2623,7 @@ async function main() {
   const queue = await apiGet(
     apiBase,
     accessToken,
-    `/model-hub/annotation-queues/${QUEUE_ID}/`,
+    apiPath("/model-hub/annotation-queues/{id}/", { id: QUEUE_ID }),
   );
   await cleanupExistingTestRules(apiBase, accessToken);
   const project = await getProject(apiBase, accessToken, queue);
@@ -2725,7 +2744,9 @@ async function main() {
         await apiDelete(
           apiBase,
           accessToken,
-          `/model-hub/annotation-queues/${QUEUE_ID}/automation-rules/${ruleId}/`,
+          queueApiPath("/model-hub/annotation-queues/{queue_id}/automation-rules/{id}/", {
+            id: ruleId,
+          }),
         );
       }
     }

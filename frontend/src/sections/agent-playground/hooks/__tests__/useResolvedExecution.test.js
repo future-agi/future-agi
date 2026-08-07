@@ -61,6 +61,18 @@ describe("useResolvedExecution", () => {
     expect(resolvedExecutionId).toBe(EXEC_ID);
   });
 
+  it("resolves top-level node_execution snake_case variant", () => {
+    const snakeCaseData = {
+      nodes: [{ id: "node-snake", node_execution: { id: "ne-snake" } }],
+    };
+    const { nodeExecutionId, resolvedExecutionId } = run(
+      "node-snake",
+      snakeCaseData,
+    );
+    expect(nodeExecutionId).toBe("ne-snake");
+    expect(resolvedExecutionId).toBe(EXEC_ID);
+  });
+
   it("returns null nodeExecutionId for pending top-level node", () => {
     const { nodeExecutionId, resolvedExecutionId } = run("node-3");
     expect(nodeExecutionId).toBeNull();
@@ -110,7 +122,7 @@ describe("useResolvedExecution", () => {
           id: "node-s",
           sub_graph: {
             id: "sg-snake",
-            nodes: [{ id: "s-inner", nodeExecution: { id: "ne-s-inner" } }],
+            nodes: [{ id: "s-inner", node_execution: { id: "ne-s-inner" } }],
           },
         },
       ],
