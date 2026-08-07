@@ -101,6 +101,7 @@ from tracer.utils.eval import (
     evaluate_observation_span,
     evaluate_observation_span_observe,
 )
+from tracer.utils.eval_tags import span_type_eval_tags
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import (
     FieldConfig,
@@ -841,14 +842,19 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             )
             eval_tags = observation_span_obj.project_version.eval_tags
 
+            # Both structures must come from the SAME filtered list: the
+            # mapping is keyed only by span-type tags, so building the id set
+            # from every tag pulls in configs that have no mapping entry, and
+            # the .lower() below then runs on None.
+            span_type_tags = span_type_eval_tags(eval_tags)
+
             eval_config_mapping = {
                 str(eval_tag["custom_eval_config_id"]): eval_tag["value"]
-                for eval_tag in eval_tags
-                if eval_tag["type"] == "OBSERVATION_SPAN_TYPE"
+                for eval_tag in span_type_tags
             }
 
             custom_eval_config_ids = {
-                eval_tag["custom_eval_config_id"] for eval_tag in eval_tags
+                eval_tag["custom_eval_config_id"] for eval_tag in span_type_tags
             }
             custom_eval_configs = CustomEvalConfig.objects.filter(
                 id__in=custom_eval_config_ids, deleted=False

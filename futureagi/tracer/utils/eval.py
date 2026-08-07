@@ -33,6 +33,7 @@ from tracer.models.observation_span import (
 )
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
+from tracer.utils.eval_tags import span_type_eval_tags
 from tracer.utils.helper import (
     FieldConfig,
     get_default_project_version_config,
@@ -2188,15 +2189,13 @@ def eval_observation_span_runner(observation_span_id, eval_tags):
                     "eval_tags JSON decode failed, defaulting to empty dict."
                 )
 
-        for eval_tag in eval_tags:
-            type = eval_tag.get("type")
-
+        # span_type_eval_tags drops entries whose type/value the client never
+        # sent — otel.py persists those as None, and .lower() below would
+        # raise AttributeError, silently skipping every remaining tag.
+        for eval_tag in span_type_eval_tags(eval_tags):
             custom_eval_config_id = eval_tag.get("custom_eval_config_id")
 
-            if (
-                type == "OBSERVATION_SPAN_TYPE"
-                and eval_tag.get("value").lower() == observation_span.observation_type
-            ):
+            if eval_tag["value"].lower() == observation_span.observation_type:
                 try:
                     evaluate_observation_span(
                         observation_span.id, custom_eval_config_id
