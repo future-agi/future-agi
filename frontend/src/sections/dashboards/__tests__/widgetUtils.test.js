@@ -1,8 +1,14 @@
 import { describe, it, expect } from "vitest";
 import {
+  buildDistributionQueryConfig,
+  formatDistributionBucketLabel,
+  formatDistributionCount,
   fromAxisConfigPayload,
   getAggColumnLabel,
+  getDistributionConfigError,
+  getSeriesTotal,
   getYAxisRangeWarning,
+  isDistributionMetric,
   seriesHasDataPoints,
   toAxisConfigPayload,
 } from "../widgetUtils";
@@ -37,6 +43,77 @@ describe("axis config contract", () => {
 
   it("restores legacy camelCase axis configs during rollout", () => {
     expect(fromAxisConfigPayload(uiConfig)).toEqual(uiConfig);
+  });
+});
+
+describe("distribution chart helpers", () => {
+  const numericEval = {
+    type: "eval_metric",
+    source: "traces",
+    outputType: "SCORE",
+  };
+
+  it("accepts a numeric trace eval as a distribution metric", () => {
+    expect(isDistributionMetric(numericEval)).toBe(true);
+    expect(isDistributionMetric({ ...numericEval, outputType: "CHOICE" })).toBe(
+      false,
+    );
+    expect(
+      isDistributionMetric({ ...numericEval, output_type: "CHOICE" }),
+    ).toBe(false);
+    expect(
+      isDistributionMetric({ ...numericEval, outputType: "NUMERIC" }),
+    ).toBe(true);
+    expect(
+      isDistributionMetric({ ...numericEval, outputType: "Pass/Fail" }),
+    ).toBe(false);
+    expect(isDistributionMetric({ ...numericEval, outputType: "REASON" })).toBe(
+      false,
+    );
+    expect(isDistributionMetric({ type: "system", source: "traces" })).toBe(
+      false,
+    );
+  });
+
+  it("rejects invalid distribution configurations before the request", () => {
+    expect(getDistributionConfigError([numericEval], [])).toBeNull();
+    expect(getDistributionConfigError([], [])).toMatch(/exactly one/i);
+    expect(
+      getDistributionConfigError([numericEval], [{ id: "model" }]),
+    ).toMatch(/breakdowns/i);
+  });
+
+  it("sends a count query and formats explicit bucket bounds", () => {
+    expect(
+      buildDistributionQueryConfig({
+        metrics: [{ id: "quality", aggregation: "avg" }],
+      }),
+    ).toEqual({
+      query_mode: "distribution",
+      metrics: [{ id: "quality", aggregation: "count" }],
+    });
+    expect(
+      formatDistributionBucketLabel({ bucket_start: 0, bucket_end: 0.5 }),
+    ).toBe("0 - 0.5");
+    expect(
+      formatDistributionBucketLabel({ bucket_start: null, bucket_end: 0.5 }),
+    ).toBe("Unknown range");
+  });
+
+  it("formats distribution counts as whole numbers", () => {
+    expect(formatDistributionCount(1200)).toBe("1,200");
+    expect(formatDistributionCount("3")).toBe("3");
+    expect(formatDistributionCount(undefined)).toBe("-");
+  });
+});
+
+describe("getSeriesTotal", () => {
+  it("sums numeric distribution bucket counts without averaging them", () => {
+    expect(getSeriesTotal([{ y: 3 }, { y: 7 }, { y: null }])).toBe(10);
+  });
+
+  it("returns null when a series has no numeric values", () => {
+    expect(getSeriesTotal([{ y: null }, { y: "not-a-number" }])).toBeNull();
   });
 });
 
