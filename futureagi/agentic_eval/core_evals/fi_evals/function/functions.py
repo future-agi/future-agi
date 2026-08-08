@@ -40,6 +40,61 @@ def _standardize_url(url):
         return "http://" + url
 
 
+# Deliberately short. These evaluators run inside eval activities, and requests
+# defaults to no timeout at all — a half-open host would hold a worker slot until
+# the surrounding activity timeout fired.
+_LINK_CHECK_TIMEOUT_SECONDS = 5
+
+# A server that does not implement HEAD typically answers 405; some CDNs and
+# WAFs answer 403 or 501 instead. None of these mean the URL is broken, so the
+# check retries with GET before giving up.
+_HEAD_UNSUPPORTED_STATUSES = frozenset({403, 405, 501})
+
+# api_call() posts to a user-supplied endpoint that does real work, so it gets a
+# longer budget than the link liveness probe above.
+_API_CALL_TIMEOUT_SECONDS = 30
+
+
+def _link_is_reachable(url):
+    """
+    Report whether the URL resolves to a non-error HTTP response.
+
+    HEAD is tried first because it avoids transferring a body, with a GET
+    fallback for servers that refuse it.
+
+    allow_redirects has to be passed explicitly: requests defaults it to False
+    for HEAD (unlike GET), so without it every http -> https upgrade and every
+    bare-domain -> www redirect returns a 3xx and reads as a broken link.
+
+    Args:
+        url (str): An already-standardized absolute URL.
+
+    Returns:
+        bool: True if the final response status is below 400.
+    """
+    try:
+        response = requests.head(
+            url, timeout=_LINK_CHECK_TIMEOUT_SECONDS, allow_redirects=True
+        )
+        if response.status_code in _HEAD_UNSUPPORTED_STATUSES:
+            # stream=True keeps the body off the wire; the context manager
+            # releases the connection back to the pool.
+            with requests.get(
+                url,
+                timeout=_LINK_CHECK_TIMEOUT_SECONDS,
+                allow_redirects=True,
+                stream=True,
+            ) as get_response:
+                return get_response.status_code < 400
+        return response.status_code < 400
+    except requests.RequestException:
+        # Only network-layer failures count as unreachable. A bare `except`
+        # here would also swallow KeyboardInterrupt/SystemExit on worker
+        # shutdown, and would hide genuine bugs inside this function as though
+        # the remote host were down.
+        return False
+
+
 def _preprocess_strings(keywords, text, case_sensitive):
     """
     Preprocess the keywords based on the case_sensitive flag.
@@ -1332,23 +1387,15 @@ def contains_valid_link(text, **kwargs):
         matched_url = link_match.group()
         if matched_url:
             standardized_url = _standardize_url(matched_url)
-            try:
-                text = requests.head(standardized_url)
-                if text.status_code == 200:
-                    return {
-                        "result": True,
-                        "reason": f"link {matched_url} found in output and is valid",
-                    }
-                else:
-                    return {
-                        "result": False,
-                        "reason": f"link {matched_url} found in output but is invalid",
-                    }
-            except:
+            if _link_is_reachable(standardized_url):
                 return {
-                    "result": False,
-                    "reason": f"link {matched_url} found in output but is invalid",
+                    "result": True,
+                    "reason": f"link {matched_url} found in output and is valid",
                 }
+            return {
+                "result": False,
+                "reason": f"link {matched_url} found in output but is invalid",
+            }
     return {"result": False, "reason": "no link found in output"}
 
 
@@ -1368,23 +1415,15 @@ def no_invalid_links(text, **kwargs):
         matched_url = link_match.group()
         if matched_url:
             standardized_url = _standardize_url(matched_url)
-            try:
-                text = requests.head(standardized_url)
-                if text.status_code == 200:
-                    return {
-                        "result": True,
-                        "reason": f"link {matched_url} found in output and is valid",
-                    }
-                else:
-                    return {
-                        "result": False,
-                        "reason": f"link {matched_url} found in output but is invalid",
-                    }
-            except:
+            if _link_is_reachable(standardized_url):
                 return {
-                    "result": False,
-                    "reason": f"link {matched_url} found in output but is invalid",
+                    "result": True,
+                    "reason": f"link {matched_url} found in output and is valid",
                 }
+            return {
+                "result": False,
+                "reason": f"link {matched_url} found in output but is invalid",
+            }
     return {"result": True, "reason": "no invalid link found in output"}
 
 
@@ -1425,7 +1464,11 @@ def api_call(
         payload["expected_response"] = expected_response
     # Check the status code and set the reason accordingly
     try:
-        api_response = requests.post(url, json=payload, headers=headers)
+        # Bounded so a user-supplied endpoint that never responds cannot pin
+        # the eval activity indefinitely.
+        api_response = requests.post(
+            url, json=payload, headers=headers, timeout=_API_CALL_TIMEOUT_SECONDS
+        )
         if api_response.status_code == 200:
             # Success
             result = api_response.json().get("result")

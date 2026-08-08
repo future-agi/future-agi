@@ -17,10 +17,18 @@ def pytest_configure(config):
     if backend_root not in sys.path:
         sys.path.insert(0, backend_root)
 
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings")
+    # tfc.settings is a package whose __init__.py is a one-line stub — the real
+    # settings live in tfc.settings.settings, which manage.py, asgi.py, wsgi.py
+    # and celery.py all use. Pointing Django at the package configured an empty
+    # settings object, so INSTALLED_APPS was empty and importing any app model
+    # raised "doesn't declare an explicit app_label". The blanket `except
+    # Exception: pass` below then swallowed it, and collection failed later at
+    # the import site instead.
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.settings")
 
     try:
         import django
+
         django.setup()
     except RuntimeError:
         pass  # Already set up (e.g. running under the root conftest)
