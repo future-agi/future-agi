@@ -1,4 +1,3 @@
-
 name: futureagi
 
 # PeerDB CDC shared config — used by 5 PeerDB containers
@@ -151,6 +150,9 @@ services:
       # -> API_HOST_MAP[hostname] -> http://localhost:8000. Override per
       # deployment (e.g. https://api.example.com for split-domain).
       VITE_HOST_API: ${VITE_HOST_API:-}
+      # Empty -> the sidebar "Help" entry points at the community Discord.
+      # Set it to send users to your own support channel instead.
+      VITE_HELP_LINK: ${VITE_HELP_LINK:-}
     depends_on:
       - backend
     restart: unless-stopped
@@ -209,7 +211,6 @@ services:
       rabbitmq:
         condition: service_healthy
     restart: unless-stopped
-
 
   worker-default:
     <<: &queue-worker
@@ -514,7 +515,6 @@ services:
       retries: 15
       start_period: 90s
     restart: unless-stopped
-
 
   temporal-ui:
     image: temporalio/ui:2.43.3

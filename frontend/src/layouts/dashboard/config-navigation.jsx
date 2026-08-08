@@ -6,6 +6,7 @@ import {
   useWorkspacesList,
 } from "src/api/workspaces/list";
 import { paths } from "src/routes/paths";
+import { HELP_LINK } from "src/config-global";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
@@ -280,26 +281,28 @@ export function useNavData() {
   return data;
 }
 
+const DOCS_LINK = "https://docs.futureagi.com";
+const OSS_HELP_LINK = "https://discord.com/invite/n2tCUKBkAw";
+
 export function useNavUpgradeData() {
   const { user } = useAuthContext();
+  const { isOSS, isLoading: deploymentModeLoading } = useDeploymentMode();
   const getStartedCompleted = user?.getStartedCompleted;
   const data = useMemo(() => {
+    // OSS images ship without VITE_HELP_LINK, so point Help at the community
+    // Discord unless the operator configured a support channel of their own.
+    const helpLink =
+      isOSS && !deploymentModeLoading ? HELP_LINK || OSS_HELP_LINK : HELP_LINK;
     const items = [
       {
         title: "Docs",
-        path: "https://docs.futureagi.com",
+        path: DOCS_LINK,
         icon: ICONS.docs,
         eventTrigger: () => {
           trackEvent(Events.docLinkClicked, {
             [PropertyName.source]: "side_navigation",
           });
         },
-      },
-
-      {
-        title: "Help",
-        path: import.meta.env.VITE_HELP_LINK,
-        icon: ICONS.help,
       },
     ];
 
@@ -310,8 +313,17 @@ export function useNavUpgradeData() {
         icon: ICONS.getStarted,
       });
     }
+
+    // Without a path the item renders as a link to the current route, so drop it.
+    if (helpLink) {
+      items.push({
+        title: "Help",
+        path: helpLink,
+        icon: ICONS.help,
+      });
+    }
     return [{ subheader: "RESOURCES", items }];
-  }, [getStartedCompleted]);
+  }, [getStartedCompleted, isOSS, deploymentModeLoading]);
 
   return data;
 }
