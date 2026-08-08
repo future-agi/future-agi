@@ -236,8 +236,8 @@ class UserIdFilterTests(unittest.TestCase):
         self.assertIsNotNone(sql)
         self.assertIn("trace_id IN (", sql)
         self.assertIn("FROM tracer_enduser", sql)
-        self.assertIn("user_id LIKE", sql)
-        self.assertEqual(b._params.get("col_1"), "%admin%")
+        self.assertIn("positionUTF8(toString(user_id)", sql)
+        self.assertEqual(b._params.get("col_1"), "admin")
 
     def test_user_id_not_contains_flips_outer(self):
         b = self._build()
@@ -250,9 +250,9 @@ class UserIdFilterTests(unittest.TestCase):
         )
         self.assertIsNotNone(sql)
         self.assertIn("trace_id NOT IN (", sql)
-        self.assertIn("user_id LIKE", sql)
-        self.assertNotIn("user_id NOT LIKE", sql)
-        self.assertEqual(b._params.get("col_1"), "%admin%")
+        self.assertIn("positionUTF8(toString(user_id)", sql)
+        self.assertNotIn("positionUTF8(toString(user_id), toString(%(col_1)s)) = 0", sql)
+        self.assertEqual(b._params.get("col_1"), "admin")
 
     def test_user_id_null_ops_do_not_query_end_users(self):
         # Null ops compare end_user_id against the zero-UUID directly — no

@@ -124,27 +124,10 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
   useEffect(() => {
     if (lastAppliedTabRef.current === activeTab) return;
 
-    // Fixed tab (sessions/traces): hard-reset the URL down to just `userTab`
-    // so any filter/date/display params left over from a previous saved view
-    // are wiped. useUrlState's external-sync then resets each sub-view's
-    // state to its default.
-    //
-    // The FixedTab onClick handler below already runs this reset
-    // synchronously in the click event tick — that's the primary path and
-    // is what guarantees `setActiveViewConfig(null)` lands in the same
-    // commit as the subTab swap (a `useEffect` reset would be one commit
-    // too late and the newly-mounted sub-view would read the stale custom
-    // config). This branch survives as a safety net for non-click activeTab
-    // transitions, e.g. handleClose at line ~230 calling
-    // `onTabChange("sessions","sessions")` after deleting an active view.
+    // Fixed-tab clicks clear saved-view state synchronously in their action
+    // handler below. Do not rewrite the URL here: this effect also runs for
+    // direct links and browser history, where explicit filters must survive.
     if (FIXED_TABS.some((t) => t.key === activeTab)) {
-      // Preserve selectedTab (the trace/span grouping) — not a stale saved-view param.
-      const next = new URLSearchParams({ userTab: activeTab });
-      const selectedTab = searchParams.get("selectedTab");
-      if (selectedTab) next.set("selectedTab", selectedTab);
-      setSearchParams(next, {
-        replace: true,
-      });
       lastAppliedTabRef.current = activeTab;
       setActiveViewConfig(null);
       return;
@@ -179,8 +162,6 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
     // refetch will land and customViews will include the new view).
   }, [
     activeTab,
-    searchParams,
-    setSearchParams,
     setActiveViewConfig,
     onTabChange,
     customViews,
@@ -243,12 +224,22 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
       deleteSavedView(viewId, {
         onSuccess: () => {
           if (activeTab === `view-${viewId}`) {
+            setActiveViewConfig(null);
+            setSearchParams(new URLSearchParams({ userTab: "sessions" }), {
+              replace: true,
+            });
             onTabChange?.("sessions", "sessions");
           }
         },
       });
     },
-    [deleteSavedView, activeTab, onTabChange],
+    [
+      deleteSavedView,
+      activeTab,
+      onTabChange,
+      setActiveViewConfig,
+      setSearchParams,
+    ],
   );
 
   const handleRenameSubmit = useCallback(

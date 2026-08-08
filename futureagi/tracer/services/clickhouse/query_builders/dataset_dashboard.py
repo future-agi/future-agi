@@ -13,12 +13,9 @@ Supports four metric types:
 """
 
 import re
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from tracer.services.clickhouse.query_builders.dashboard import (
-    _get_operator_symbol,
-)
 from tracer.services.clickhouse.query_builders.dashboard_base import (
     FILTER_OPERATORS,
     GRANULARITY_TO_CH,
@@ -44,7 +41,7 @@ def _sanitize_key(key: str) -> str:
 # Metric resolution tables
 # ---------------------------------------------------------------------------
 
-DATASET_SYSTEM_METRICS: Dict[str, Tuple[str, str]] = {
+DATASET_SYSTEM_METRICS: dict[str, tuple[str, str]] = {
     "row_count": ("model_hub_cell", "1"),
     "prompt_tokens": ("model_hub_cell", "prompt_tokens"),
     "completion_tokens": ("model_hub_cell", "completion_tokens"),
@@ -89,7 +86,7 @@ DATASET_SYSTEM_METRICS.update(
     }
 )
 
-DATASET_METRIC_UNITS: Dict[str, str] = {
+DATASET_METRIC_UNITS: dict[str, str] = {
     "row_count": "",
     "prompt_tokens": "tokens",
     "completion_tokens": "tokens",
@@ -104,19 +101,19 @@ DATASET_METRIC_UNITS: Dict[str, str] = {
 }
 
 # Extend base aggregations with dataset-specific ones
-DATASET_AGGREGATIONS: Dict[str, str] = {
+DATASET_AGGREGATIONS: dict[str, str] = {
     "avg": "avg({col})",
-    "median": "quantile(0.5)({col})",
+    "median": "quantileExact(0.5)({col})",
     "max": "max({col})",
     "min": "min({col})",
-    "p25": "quantile(0.25)({col})",
-    "p50": "quantile(0.5)({col})",
-    "p75": "quantile(0.75)({col})",
-    "p90": "quantile(0.9)({col})",
-    "p95": "quantile(0.95)({col})",
-    "p99": "quantile(0.99)({col})",
+    "p25": "quantileExact(0.25)({col})",
+    "p50": "quantileExact(0.5)({col})",
+    "p75": "quantileExact(0.75)({col})",
+    "p90": "quantileExact(0.9)({col})",
+    "p95": "quantileExact(0.95)({col})",
+    "p99": "quantileExact(0.99)({col})",
     "count": "count()",
-    "count_distinct": "uniq({col})",
+    "count_distinct": "uniqExact({col})",
     "sum": "sum({col})",
     # Dataset-specific aggregations for pass/fail and boolean.
     # Rate aggregations return 0–100 (percentage) so widgets that display
@@ -137,7 +134,7 @@ DATASET_AGGREGATIONS: Dict[str, str] = {
 }
 
 # Breakdown dimensions for dataset workflow
-DATASET_BREAKDOWN_COLUMNS: Dict[str, str] = {
+DATASET_BREAKDOWN_COLUMNS: dict[str, str] = {
     "dataset": _DATASET_NAME_EXPR,
     "eval_template": _COLUMN_NAME_EXPR,
     "column_name": _COLUMN_NAME_EXPR,
@@ -146,7 +143,7 @@ DATASET_BREAKDOWN_COLUMNS: Dict[str, str] = {
 }
 
 # Filter dimensions for dataset workflow
-DATASET_FILTER_COLUMNS: Dict[str, str] = {
+DATASET_FILTER_COLUMNS: dict[str, str] = {
     "dataset": "toString(c.dataset_id)",
     "column_name": "dictGet('column_dict', 'name', c.column_id)",
     "column_source": "dictGet('column_dict', 'source', c.column_id)",
@@ -170,12 +167,12 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
     # Time range
     # ------------------------------------------------------------------
 
-    def parse_time_range(self) -> Tuple[datetime, datetime]:
+    def parse_time_range(self) -> tuple[datetime, datetime]:
         tr = self.config.get("time_range", {})
         preset = tr.get("preset")
         custom_start = tr.get("custom_start")
         custom_end = tr.get("custom_end")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         if custom_start and custom_end:
             return _parse_dt(custom_start), _parse_dt(custom_end)
@@ -198,7 +195,7 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
     # Single-metric query
     # ------------------------------------------------------------------
 
-    def build_metric_query(self, metric: dict) -> Tuple[str, dict]:
+    def build_metric_query(self, metric: dict) -> tuple[str, dict]:
         metric_type = metric.get("type", "system_metric")
         metric_name = metric.get("id") or metric.get("name", "")
         aggregation = metric.get("aggregation", "avg")
@@ -207,7 +204,7 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
         start_date, end_date = self.parse_time_range()
         bucket_fn = GRANULARITY_TO_CH.get(self.granularity, "toStartOfDay")
 
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "start_date": start_date,
             "end_date": end_date,
         }
@@ -218,23 +215,88 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
             params["dataset_ids"] = self.dataset_ids
 
         if metric_type == "system_metric":
-            return self._build_system_metric_query(
+            query, params = self._build_system_metric_query(
                 metric_name, aggregation, bucket_fn, per_metric_filters, params
             )
         elif metric_type == "eval_metric":
-            return self._build_eval_metric_query(
+            query, params = self._build_eval_metric_query(
                 metric, aggregation, bucket_fn, per_metric_filters, params
             )
         elif metric_type == "annotation_metric":
-            return self._build_annotation_metric_query(
+            query, params = self._build_annotation_metric_query(
                 metric, aggregation, bucket_fn, per_metric_filters, params
             )
         elif metric_type == "custom_column":
-            return self._build_custom_column_query(
+            query, params = self._build_custom_column_query(
                 metric, aggregation, bucket_fn, per_metric_filters, params
             )
         else:
             raise ValueError(f"Unknown metric type: {metric_type}")
+        if self.config.get("exact_snapshot_dimensions"):
+            query = self._replace_dictionary_dimensions(query)
+        return query, params
+
+    @staticmethod
+    def _replace_dictionary_dimensions(query: str) -> str:
+        """Read mutable dataset dimensions directly in the metric statement.
+
+        ClickHouse dictionaries refresh independently and cannot participate in
+        statement-level latest-state resolution. Exact dashboard workers replace
+        every dictionary lookup with an explicitly joined CDC table read using
+        ``FINAL`` so facts and dimensions resolve together.
+        """
+
+        needs_dataset = "'dataset_dict'" in query
+        needs_column = "'column_dict'" in query
+        if needs_dataset:
+            query = re.sub(
+                r"dictGetOrDefault\(\s*'dataset_dict'\s*,\s*'name'\s*,\s*"
+                r"c\.dataset_id\s*,\s*''\s*\)",
+                "ifNull(exact_dataset.name, '')",
+                query,
+            )
+        if needs_column:
+            column_lookup = re.compile(
+                r"dictGet(?P<default>OrDefault)?\(\s*'column_dict'\s*,\s*"
+                r"'(?P<column>name|source|source_id)'\s*,\s*c\.column_id"
+                r"(?:\s*,\s*''\s*)?\)"
+            )
+
+            def replace_column(match: re.Match) -> str:
+                expression = f"exact_column.{match.group('column')}"
+                return (
+                    f"ifNull({expression}, '')"
+                    if match.group("default")
+                    else expression
+                )
+
+            query = column_lookup.sub(replace_column, query)
+        if "dictGet" in query and (
+            "'dataset_dict'" in query or "'column_dict'" in query
+        ):
+            raise ValueError("unsupported mutable dataset dictionary lookup")
+
+        joins = []
+        if needs_dataset:
+            joins.append(
+                "LEFT JOIN model_hub_dataset AS exact_dataset FINAL "
+                "ON exact_dataset.id = c.dataset_id "
+                "AND exact_dataset._peerdb_is_deleted = 0 "
+                "AND exact_dataset.deleted = 0"
+            )
+        if needs_column:
+            joins.append(
+                "LEFT JOIN model_hub_column AS exact_column FINAL "
+                "ON exact_column.id = c.column_id "
+                "AND exact_column._peerdb_is_deleted = 0 "
+                "AND exact_column.deleted = 0"
+            )
+        if joins:
+            source = "FROM model_hub_cell AS c FINAL"
+            if source not in query:
+                raise ValueError("dataset exact query has no mutable source")
+            query = query.replace(source, f"{source}\n" + "\n".join(joins), 1)
+        return query
 
     # ------------------------------------------------------------------
     # System metric
@@ -245,9 +307,9 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
         metric_name: str,
         aggregation: str,
         bucket_fn: str,
-        per_metric_filters: List[dict],
+        per_metric_filters: list[dict],
         params: dict,
-    ) -> Tuple[str, dict]:
+    ) -> tuple[str, dict]:
         if metric_name not in DATASET_SYSTEM_METRICS:
             raise ValueError(f"Unknown dataset system metric: {metric_name}")
         _, col_expr = DATASET_SYSTEM_METRICS[metric_name]
@@ -261,7 +323,7 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
             if aggregation == "count":
                 agg_expr = f"countIf({is_present})"
             else:
-                agg_expr = f"uniqIf({col_expr}, {is_present})"
+                agg_expr = f"uniqExactIf({col_expr}, {is_present})"
         else:
             agg_expr = DATASET_AGGREGATIONS.get(aggregation, "avg({col})").format(
                 col=col_expr
@@ -305,9 +367,9 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
         metric: dict,
         aggregation: str,
         bucket_fn: str,
-        per_metric_filters: List[dict],
+        per_metric_filters: list[dict],
         params: dict,
-    ) -> Tuple[str, dict]:
+    ) -> tuple[str, dict]:
         config_id = metric.get("config_id", "")
         output_type = metric.get("output_type", "SCORE")
         params["eval_config_id"] = config_id
@@ -379,9 +441,9 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
         metric: dict,
         aggregation: str,
         bucket_fn: str,
-        per_metric_filters: List[dict],
+        per_metric_filters: list[dict],
         params: dict,
-    ) -> Tuple[str, dict]:
+    ) -> tuple[str, dict]:
         label_id = metric.get("label_id", metric.get("config_id", ""))
         output_type = metric.get("output_type", "numeric")
         params["annotation_label_id"] = label_id
@@ -450,9 +512,9 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
         metric: dict,
         aggregation: str,
         bucket_fn: str,
-        per_metric_filters: List[dict],
+        per_metric_filters: list[dict],
         params: dict,
-    ) -> Tuple[str, dict]:
+    ) -> tuple[str, dict]:
         column_id = metric.get("column_id", metric.get("config_id", ""))
         data_type = metric.get("data_type", "float")
         params["custom_column_id"] = column_id
@@ -506,8 +568,8 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
 
     def format_results(
         self,
-        metric_results: List[Tuple[dict, List[dict]]],
-        dataset_name_map: Optional[Dict[str, str]] = None,
+        metric_results: list[tuple[dict, list[dict]]],
+        dataset_name_map: dict[str, str] | None = None,
     ) -> dict:
         start_date, end_date = self.parse_time_range()
         all_buckets = _generate_time_buckets(start_date, end_date, self.granularity)
@@ -538,7 +600,7 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _breakdown_select(self) -> Optional[str]:
+    def _breakdown_select(self) -> str | None:
         if not self.breakdowns:
             return None
         bd = self.breakdowns[0]
@@ -574,7 +636,7 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
             "WHERE _peerdb_is_deleted = 0 AND deleted = 0"
         )
 
-    def _build_base_where(self, params: dict) -> List[str]:
+    def _build_base_where(self, params: dict) -> list[str]:
         clauses = [
             "c._peerdb_is_deleted = 0",
             "c.created_at >= %(start_date)s",
@@ -593,10 +655,10 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
 
     def _apply_filters(
         self,
-        clauses: List[str],
-        filters: List[dict],
+        clauses: list[str],
+        filters: list[dict],
         params: dict,
-    ) -> List[str]:
+    ) -> list[str]:
         idx = 0
         for f in filters:
             f_type = f.get("metric_type", "")

@@ -74,7 +74,9 @@ export const isDatasetFilterValid = (filter) => {
   if (!hasValue) return false;
 
   if (type === "datetime") {
-    return isRange ? isValid(value?.[0]) && isValid(value?.[1]) : isValid(value);
+    return isRange
+      ? isValid(value?.[0]) && isValid(value?.[1])
+      : isValid(value);
   }
   return isRange ? Array.isArray(value) && value.length === 2 : true;
 };
@@ -122,6 +124,38 @@ export function getSubmittableFilters(filters) {
     .map(({ id, ...filter }) => filter);
 }
 
+export function removeSubmittableFilterAtIndex(filters, chipIndex) {
+  let submittableIndex = -1;
+  let removed = false;
+
+  return (filters || []).filter((filter) => {
+    if (!filterWithValue(filter)) return true;
+    submittableIndex += 1;
+    if (!removed && submittableIndex === chipIndex) {
+      removed = true;
+      return false;
+    }
+    return true;
+  });
+}
+
+export function getTraceRulePanelMode(
+  sourceType,
+  { isVoiceProject = false } = {},
+) {
+  if (sourceType === "trace_session") {
+    return { source: "sessions", tab: undefined, isSpansView: false };
+  }
+  if (sourceType === "observation_span") {
+    return { source: "traces", tab: "spans", isSpansView: true };
+  }
+  return {
+    source: "traces",
+    tab: isVoiceProject ? "voiceCalls" : "trace",
+    isSpansView: false,
+  };
+}
+
 function snakeFilterToUi(filter) {
   const config = filter?.filter_config || {};
   const filterType = config.filter_type || "";
@@ -142,6 +176,9 @@ function snakeFilterToUi(filter) {
       filter_op: config.filter_op || "",
       filter_value: filterValue,
       ...(config.col_type ? { col_type: config.col_type } : {}),
+      ...(Array.isArray(config.attribute_value_types)
+        ? { attribute_value_types: [...config.attribute_value_types] }
+        : {}),
     },
   };
 }
@@ -256,7 +293,12 @@ export function isScopeReady(sourceType, scope, queue) {
   return true;
 }
 
-export function getRuleSubmitDisabledTooltipTitle(sourceType, scope, queue, name) {
+export function getRuleSubmitDisabledTooltipTitle(
+  sourceType,
+  scope,
+  queue,
+  name,
+) {
   if (!name.trim()) return "Enter a rule name";
   if (!isScopeReady(sourceType, scope, queue)) {
     if (sourceType === "dataset_row") return "Choose a dataset";

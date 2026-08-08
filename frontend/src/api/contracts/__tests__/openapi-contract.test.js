@@ -595,4 +595,76 @@ describe("OpenAPI runtime contract", () => {
       ),
     ).toMatchObject({ ok: false });
   });
+
+  it("accepts array span attributes and JSON scalar picker values", () => {
+    const readState = {
+      query_complete: true,
+      query_status: "complete",
+      query_window_start: "2026-01-01T00:00:00Z",
+      query_window_end: "2026-01-08T00:00:00Z",
+    };
+
+    expect(
+      validateContractedResponse({
+        status: 200,
+        config: {
+          url: "/api/traces/span-attribute-keys/?project_id=p1",
+          method: "get",
+        },
+        data: {
+          result: [{ key: "json_choices", type: "array", count: 4 }],
+          ...readState,
+        },
+      }),
+    ).toMatchObject({ ok: true });
+
+    expect(
+      validateContractedResponse({
+        status: 200,
+        config: {
+          url: "/api/traces/span-attribute-values/?project_id=p1&key=json_choices",
+          method: "get",
+        },
+        data: {
+          result: [
+            { value: "Rejected", type: "array", count: 4 },
+            { value: 7, type: "array", count: 3 },
+            { value: false, type: "array", count: 2 },
+            { value: null, type: "array", count: 1 },
+          ],
+          ...readState,
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("accepts every JSON value shape in dashboard filter-picker options", () => {
+    expect(
+      OPENAPI_CONTRACT.definitions.DashboardFilterValueOption.properties.value[
+        "x-json-value"
+      ],
+    ).toBe(true);
+
+    expect(
+      validateContractedResponse({
+        status: 200,
+        config: {
+          url: "/tracer/dashboard/filter_values/?metric_name=final_status",
+          method: "get",
+        },
+        data: {
+          status: true,
+          result: {
+            values: [
+              { value: "Rechazado", label: "Rechazado" },
+              { value: 7, label: "7" },
+              { value: false, label: "false" },
+              { value: ["nested", 1], label: "nested array" },
+              { value: { nested: true }, label: "nested object" },
+            ],
+          },
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
 });

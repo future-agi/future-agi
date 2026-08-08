@@ -8753,7 +8753,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "required": true,
             "schema": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          "refresh": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
             }
           }
         },
@@ -8791,6 +8799,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          "q": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          "page_size": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          },
+          "cursor": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
             }
           }
         },
@@ -8834,13 +8866,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "required": true,
             "schema": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "maxLength": 512
             }
           },
           "q": {
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 512
             }
           },
           "limit": {
@@ -17968,6 +18002,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "schema": {
               "type": "string",
               "format": "date-time"
+            }
+          },
+          "refresh": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
             }
           }
         },
@@ -30372,8 +30413,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/dashboard/filter_values/": {
       "get": {
         "operationId": "tracer_dashboard_filter_values",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "page": {
@@ -30387,36 +30428,107 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "schema": {
               "type": "integer"
             }
+          },
+          "metric_name": {
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "metric_type": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "system_metric",
+                "eval_metric",
+                "annotation_metric",
+                "custom_attribute",
+                "custom_column"
+              ],
+              "default": "system_metric"
+            }
+          },
+          "source": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "traces",
+                "sessions",
+                "datasets",
+                "dataset_column",
+                "simulation"
+              ],
+              "default": "traces"
+            }
+          },
+          "project_ids": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": ""
+            }
+          },
+          "dataset_id": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "search": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 512,
+              "default": ""
+            }
+          },
+          "page_size": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          },
+          "cursor": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16384
+            }
+          },
+          "attribute_type": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "string",
+                "number",
+                "boolean",
+                "array",
+                "map",
+                "json"
+              ]
+            }
           }
         },
         "responses": {
           "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/Dashboard"
-                }
-              }
-            }
+            "$ref": "#/definitions/DashboardFilterValuesResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -30471,6 +30583,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/DashboardQueryApiResponse"
           },
           "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
             "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
@@ -30622,6 +30740,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "400": {
             "$ref": "#/definitions/ApiErrorResponse"
           },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -30735,7 +30859,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeRequestValidation": true,
         "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/EmptyRequest"
+          "$ref": "#/definitions/DashboardSampleOptIn"
         },
         "queryParameters": {},
         "responses": {
@@ -30743,6 +30867,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/DashboardQueryApiResponse"
           },
           "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
             "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
@@ -31053,6 +31183,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "200": {
             "$ref": "#/definitions/EvalTaskCreateResponse"
           },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -31063,7 +31199,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "tracer_eval-task_get_eval_details",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "page": {
@@ -31107,6 +31243,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -31118,7 +31263,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "tracer_eval-task_get_eval_task_logs",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "page": {
@@ -31162,6 +31307,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -31173,7 +31324,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "tracer_eval-task_get_usage",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "page": {
@@ -31218,6 +31369,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
               }
             }
           },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -31228,7 +31385,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "tracer_eval-task_list_eval_tasks",
         "runtimeRequestValidation": true,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "project_id": {
@@ -31285,6 +31442,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "$ref": "#/definitions/EvalTask"
             }
           },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -31295,7 +31458,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "tracer_eval-task_list_eval_tasks_with_project_name",
         "runtimeRequestValidation": true,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "project_id": {
@@ -31352,6 +31515,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "$ref": "#/definitions/EvalTask"
             }
           },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -31370,6 +31539,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/EvalTaskMessageResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -31398,6 +31573,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "200": {
             "$ref": "#/definitions/EvalTaskMessageResponse"
           },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -31425,6 +31606,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "200": {
             "$ref": "#/definitions/EvalTaskMessageResponse"
           },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -31443,6 +31630,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/EvalTaskUpdateResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -32519,11 +32712,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
               ],
               "default": "spans"
             }
+          },
+          "q": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
           }
         },
         "responses": {
           "200": {
             "$ref": "#/definitions/ObservationAttributeListResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -32535,7 +32748,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "tracer_observation-span_get_evaluation_details",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "page": {
@@ -32580,6 +32793,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
               }
             }
           },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -32594,10 +32816,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "requestBody": {
           "$ref": "#/definitions/ObserveGraphDataRequest"
         },
-        "queryParameters": {},
+        "queryParameters": {
+          "allow_sampled": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "refresh": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        },
         "responses": {
           "200": {
             "$ref": "#/definitions/ObserveGraphDataResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -32698,11 +32944,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
               ],
               "default": "spans"
             }
+          },
+          "q": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
           }
         },
         "responses": {
           "200": {
             "$ref": "#/definitions/ObservationAttributeListResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -32929,7 +33195,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "tracer_observation-span_list_spans",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "page": {
@@ -32974,6 +33240,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
               }
             }
           },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "422": {
+            "$ref": "#/definitions/PageDepthExceededError"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -32984,7 +33262,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "tracer_observation-span_list_spans_observe",
         "runtimeRequestValidation": true,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "page": {
@@ -33036,36 +33314,44 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "maximum": 500,
               "default": 30
             }
+          },
+          "cursor": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            }
+          },
+          "cursor_mode": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "allow_sampled": {
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         },
         "responses": {
           "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/ObservationSpan"
-                }
-              }
-            }
+            "$ref": "#/definitions/TraceObserveListResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "422": {
+            "$ref": "#/definitions/PageDepthExceededError"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -33239,12 +33525,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "tracer_observation-span_read",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
           "200": {
             "$ref": "#/definitions/ObservationSpan"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -33861,6 +34156,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "minLength": 1,
               "default": "[]"
             }
+          },
+          "allow_sampled": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "refresh": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
           }
         },
         "responses": {
@@ -33959,7 +34268,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "requestBody": {
           "$ref": "#/definitions/ProjectUsersAggregateGraphDataRequest"
         },
-        "queryParameters": {},
+        "queryParameters": {
+          "allow_sampled": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "refresh": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        },
         "responses": {
           "201": {
             "$ref": "#/definitions/ProjectUsersAggregateGraphDataRequest"
@@ -34917,51 +35241,70 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/trace-session/get_session_filter_values/": {
       "get": {
         "operationId": "tracer_trace-session_get_session_filter_values",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
+          "project_id": {
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "column": {
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "session_id",
+                "user_id",
+                "first_message",
+                "last_message"
+              ]
+            }
+          },
+          "search": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 512,
+              "default": ""
+            }
+          },
           "page": {
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
             }
           },
-          "limit": {
+          "page_size": {
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 50
             }
           }
         },
         "responses": {
           "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/TraceSession"
-                }
-              }
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/TraceSession"
             }
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -34973,14 +35316,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "post": {
         "operationId": "tracer_trace-session_get_session_graph_data",
         "runtimeRequestValidation": true,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": {
           "$ref": "#/definitions/TraceSessionGraphDataRequest"
         },
-        "queryParameters": {},
+        "queryParameters": {
+          "allow_sampled": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "refresh": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        },
         "responses": {
-          "201": {
-            "$ref": "#/definitions/TraceSessionGraphDataRequest"
+          "200": {
+            "$ref": "#/definitions/ObserveGraphDataResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
+            "$ref": "#/definitions/ObserveGraphDataErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -35047,7 +35414,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "tracer_trace-session_list_sessions",
         "runtimeRequestValidation": true,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "page": {
@@ -35114,41 +35481,49 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "default": 30
             }
           },
+          "cursor": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            }
+          },
+          "cursor_mode": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
           "interval": {
             "required": false,
             "schema": {
               "type": "string"
             }
+          },
+          "allow_sampled": {
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         },
         "responses": {
           "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/TraceSession"
-                }
-              }
-            }
+            "$ref": "#/definitions/TraceObserveListResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "422": {
+            "$ref": "#/definitions/PageDepthExceededError"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -35312,7 +35687,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "tracer_trace_agent_graph",
         "runtimeRequestValidation": true,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "page": {
@@ -35340,6 +35715,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "type": "string",
               "minLength": 1,
               "default": "[]"
+            }
+          },
+          "refresh": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
             }
           }
         },
@@ -35371,6 +35753,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -35420,7 +35811,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "tracer_trace_get_eval_names",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "page": {
@@ -35465,6 +35856,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
               }
             }
           },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -35479,10 +35879,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "requestBody": {
           "$ref": "#/definitions/ObserveGraphDataRequest"
         },
-        "queryParameters": {},
+        "queryParameters": {
+          "allow_sampled": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "refresh": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        },
         "responses": {
           "200": {
             "$ref": "#/definitions/ObserveGraphDataResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -35758,7 +36182,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "tracer_trace_list_traces",
         "runtimeRequestValidation": true,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "page": {
@@ -35819,6 +36243,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "maximum": 500,
               "default": 30
             }
+          },
+          "allow_sampled": {
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         },
         "responses": {
@@ -35849,6 +36279,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "422": {
+            "$ref": "#/definitions/PageDepthExceededError"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -35921,6 +36363,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "default": 30
             }
           },
+          "cursor": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            }
+          },
+          "cursor_mode": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "attribute_keys": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "allow_sampled": {
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
           "interval": {
             "required": false,
             "schema": {
@@ -35935,7 +36404,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "400": {
             "$ref": "#/definitions/ApiErrorResponse"
           },
+          "422": {
+            "$ref": "#/definitions/PageDepthExceededError"
+          },
           "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
             "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
@@ -35947,51 +36422,89 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/trace/list_voice_calls/": {
       "get": {
         "operationId": "tracer_trace_list_voice_calls",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
+          "project_id": {
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "filters": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "default": "[]"
+            }
+          },
           "page": {
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
             }
           },
-          "limit": {
+          "page_size": {
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 30
+            }
+          },
+          "remove_simulation_calls": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "cursor": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            }
+          },
+          "cursor_mode": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "allow_sampled": {
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         },
         "responses": {
           "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/Trace"
-                }
-              }
-            }
+            "$ref": "#/definitions/TraceVoiceCallListResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "422": {
+            "$ref": "#/definitions/PageDepthExceededError"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -36069,6 +36582,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/ApiErrorResponse"
           },
           "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "503": {
             "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
@@ -36774,6 +37290,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "schema": {
               "type": "boolean",
               "default": false
+            }
+          },
+          "cursor": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            }
+          },
+          "cursor_mode": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "requested_columns": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": []
+            }
+          },
+          "attribute_keys": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": []
             }
           }
         },
@@ -51104,6 +51649,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "DashboardFilterValuesResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/DashboardFilterValuesResult"
+        }
+      }
+    },
     "DashboardMetricsCatalogResponse": {
       "required": [
         "result"
@@ -51128,6 +51689,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "properties": {
         "query_config": {
           "$ref": "#/definitions/DashboardQuery"
+        },
+        "allow_sampled": {
+          "title": "Allow sampled",
+          "description": "Deprecated compatibility parameter; accepted but ignored. Dashboard aggregates are always exact.",
+          "type": "boolean",
+          "default": false
         }
       },
       "additionalProperties": false
@@ -51204,7 +51771,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 "properties": {
                   "filter_type": {
                     "type": "string",
-                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
                   },
                   "filter_op": {
                     "type": "string",
@@ -51216,6 +51783,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   "col_type": {
                     "type": "string",
                     "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                  },
+                  "attribute_value_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "string",
+                        "number",
+                        "boolean"
+                      ],
+                      "x-nullable": true
+                    },
+                    "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                   }
                 },
                 "required": [
@@ -51239,6 +51819,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/DashboardBreakdown"
           },
           "default": []
+        },
+        "allow_sampled": {
+          "title": "Allow sampled",
+          "description": "Deprecated compatibility parameter; accepted but ignored. Dashboard aggregates are always exact.",
+          "type": "boolean",
+          "default": false
         }
       },
       "additionalProperties": false
@@ -51258,6 +51844,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "$ref": "#/definitions/DashboardQueryResult"
         }
       }
+    },
+    "DashboardSampleOptIn": {
+      "type": "object",
+      "properties": {
+        "allow_sampled": {
+          "title": "Allow sampled",
+          "description": "Deprecated compatibility parameter; accepted but ignored. Dashboard aggregates are always exact.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
     },
     "DashboardWidget": {
       "type": "object",
@@ -51960,7 +52558,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 "properties": {
                   "filter_type": {
                     "type": "string",
-                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
                   },
                   "filter_op": {
                     "type": "string",
@@ -51972,6 +52570,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   "col_type": {
                     "type": "string",
                     "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                  },
+                  "attribute_value_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "string",
+                        "number",
+                        "boolean"
+                      ],
+                      "x-nullable": true
+                    },
+                    "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                   }
                 },
                 "required": [
@@ -53280,7 +53891,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 "properties": {
                   "filter_type": {
                     "type": "string",
-                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
                   },
                   "filter_op": {
                     "type": "string",
@@ -53292,6 +53903,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   "col_type": {
                     "type": "string",
                     "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                  },
+                  "attribute_value_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "string",
+                        "number",
+                        "boolean"
+                      ],
+                      "x-nullable": true
+                    },
+                    "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                   }
                 },
                 "required": [
@@ -53693,7 +54317,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 "properties": {
                   "filter_type": {
                     "type": "string",
-                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
                   },
                   "filter_op": {
                     "type": "string",
@@ -53705,6 +54329,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   "col_type": {
                     "type": "string",
                     "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                  },
+                  "attribute_value_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "string",
+                        "number",
+                        "boolean"
+                      ],
+                      "x-nullable": true
+                    },
+                    "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                   }
                 },
                 "required": [
@@ -54076,11 +54713,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
               },
               "minItems": 2,
               "maxItems": 2,
-              "description": "Inclusive start/end ISO timestamps."
+              "description": "Half-open [start, end) ISO timestamps, normalized to UTC."
             },
             "created_at": {
               "type": "string",
-              "description": "Lower-bound ISO timestamp for legacy task filters."
+              "description": "Exclusive lower-bound ISO timestamp for legacy task filters, normalized to UTC."
             },
             "session_id": {
               "type": "array",
@@ -54136,7 +54773,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                     "properties": {
                       "filter_type": {
                         "type": "string",
-                        "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                        "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
                       },
                       "filter_op": {
                         "type": "string",
@@ -54148,6 +54785,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
                       "col_type": {
                         "type": "string",
                         "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                      },
+                      "attribute_value_types": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "string",
+                            "number",
+                            "boolean"
+                          ],
+                          "x-nullable": true
+                        },
+                        "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                       }
                     },
                     "required": [
@@ -54190,7 +54840,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                     "properties": {
                       "filter_type": {
                         "type": "string",
-                        "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                        "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
                       },
                       "filter_op": {
                         "type": "string",
@@ -54202,6 +54852,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
                       "col_type": {
                         "type": "string",
                         "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                      },
+                      "attribute_value_types": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "string",
+                            "number",
+                            "boolean"
+                          ],
+                          "x-nullable": true
+                        },
+                        "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                       }
                     },
                     "required": [
@@ -54398,11 +55061,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
               },
               "minItems": 2,
               "maxItems": 2,
-              "description": "Inclusive start/end ISO timestamps."
+              "description": "Half-open [start, end) ISO timestamps, normalized to UTC."
             },
             "created_at": {
               "type": "string",
-              "description": "Lower-bound ISO timestamp for legacy task filters."
+              "description": "Exclusive lower-bound ISO timestamp for legacy task filters, normalized to UTC."
             },
             "session_id": {
               "type": "array",
@@ -54458,7 +55121,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                     "properties": {
                       "filter_type": {
                         "type": "string",
-                        "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                        "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
                       },
                       "filter_op": {
                         "type": "string",
@@ -54470,6 +55133,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
                       "col_type": {
                         "type": "string",
                         "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                      },
+                      "attribute_value_types": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "string",
+                            "number",
+                            "boolean"
+                          ],
+                          "x-nullable": true
+                        },
+                        "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                       }
                     },
                     "required": [
@@ -54512,7 +55188,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                     "properties": {
                       "filter_type": {
                         "type": "string",
-                        "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                        "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
                       },
                       "filter_op": {
                         "type": "string",
@@ -54524,6 +55200,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
                       "col_type": {
                         "type": "string",
                         "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                      },
+                      "attribute_value_types": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "string",
+                            "number",
+                            "boolean"
+                          ],
+                          "x-nullable": true
+                        },
+                        "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                       }
                     },
                     "required": [
@@ -56653,7 +57342,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 "properties": {
                   "filter_type": {
                     "type": "string",
-                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
                   },
                   "filter_op": {
                     "type": "string",
@@ -56665,6 +57354,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   "col_type": {
                     "type": "string",
                     "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                  },
+                  "attribute_value_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "string",
+                        "number",
+                        "boolean"
+                      ],
+                      "x-nullable": true
+                    },
+                    "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                   }
                 },
                 "required": [
@@ -56695,6 +57397,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Project id",
           "type": "string",
           "format": "uuid"
+        },
+        "allow_sampled": {
+          "title": "Allow sampled",
+          "description": "Deprecated compatibility parameter; accepted but ignored. Aggregate graph results are always exact.",
+          "type": "boolean",
+          "default": false
+        },
+        "refresh": {
+          "title": "Refresh",
+          "description": "Recompute and atomically replace the last complete exact result.",
+          "type": "boolean",
+          "default": false
         }
       }
     },
@@ -61471,6 +62185,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "type": "string",
             "minLength": 1
           }
+        },
+        "query_complete": {
+          "title": "Query complete",
+          "type": "boolean"
+        },
+        "query_status": {
+          "title": "Query status",
+          "type": "string",
+          "enum": [
+            "complete",
+            "sampled",
+            "degraded"
+          ]
+        },
+        "query_error_code": {
+          "title": "Query error code",
+          "type": "string",
+          "enum": [
+            "sample_limit",
+            "read_budget_exceeded",
+            "query_failed"
+          ]
+        },
+        "query_window_start": {
+          "title": "Query window start",
+          "type": "string",
+          "format": "date-time"
+        },
+        "query_window_end": {
+          "title": "Query window end",
+          "type": "string",
+          "format": "date-time"
         }
       }
     },
@@ -61771,6 +62517,78 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "ObserveGraphDataErrorResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": false
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "enum": [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error"
+          ],
+          "x-nullable": true
+        },
+        "code": {
+          "title": "Code",
+          "type": "string",
+          "x-nullable": true
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string",
+          "x-nullable": true
+        },
+        "result": {
+          "$ref": "#/definitions/ObserveGraphDataErrorResult"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "x-nullable": true
+        },
+        "error": {
+          "title": "Error",
+          "type": "string",
+          "x-nullable": true
+        },
+        "attr": {
+          "title": "Attr",
+          "type": "string",
+          "x-nullable": true
+        },
+        "details": {
+          "title": "Details",
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
     "ObserveGraphDataRequest": {
       "required": [
         "project_id",
@@ -61809,7 +62627,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 "properties": {
                   "filter_type": {
                     "type": "string",
-                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
                   },
                   "filter_op": {
                     "type": "string",
@@ -61821,6 +62639,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   "col_type": {
                     "type": "string",
                     "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                  },
+                  "attribute_value_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "string",
+                        "number",
+                        "boolean"
+                      ],
+                      "x-nullable": true
+                    },
+                    "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                   }
                 },
                 "required": [
@@ -61836,7 +62667,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
             ],
             "additionalProperties": false
           },
-          "default": []
+          "default": [],
+          "description": "On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
+          "x-boundedDatetimeOperators": [
+            "between",
+            "equals",
+            "greater_than",
+            "greater_than_or_equal",
+            "is_not_null",
+            "is_null",
+            "less_than",
+            "less_than_or_equal",
+            "not_between",
+            "not_equals"
+          ]
         },
         "interval": {
           "title": "Interval",
@@ -62903,6 +63747,82 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "array",
           "items": {
             "$ref": "#/definitions/PIIEntity"
+          }
+        }
+      }
+    },
+    "PageDepthExceededError": {
+      "required": [
+        "code"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": false
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "enum": [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error"
+          ],
+          "x-nullable": true
+        },
+        "code": {
+          "title": "Code",
+          "type": "string",
+          "enum": [
+            "page_depth_exceeded"
+          ]
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string",
+          "x-nullable": true
+        },
+        "result": {
+          "title": "Result",
+          "type": "string",
+          "x-nullable": true
+        },
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "x-nullable": true
+        },
+        "error": {
+          "title": "Error",
+          "type": "string",
+          "x-nullable": true
+        },
+        "attr": {
+          "title": "Attr",
+          "type": "string",
+          "x-nullable": true
+        },
+        "details": {
+          "title": "Details",
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         }
       }
@@ -64840,7 +65760,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 "properties": {
                   "filter_type": {
                     "type": "string",
-                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
                   },
                   "filter_op": {
                     "type": "string",
@@ -64852,6 +65772,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   "col_type": {
                     "type": "string",
                     "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                  },
+                  "attribute_value_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "string",
+                        "number",
+                        "boolean"
+                      ],
+                      "x-nullable": true
+                    },
+                    "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                   }
                 },
                 "required": [
@@ -64920,7 +65853,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 "properties": {
                   "filter_type": {
                     "type": "string",
-                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
                   },
                   "filter_op": {
                     "type": "string",
@@ -64932,6 +65865,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   "col_type": {
                     "type": "string",
                     "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                  },
+                  "attribute_value_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "string",
+                        "number",
+                        "boolean"
+                      ],
+                      "x-nullable": true
+                    },
+                    "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                   }
                 },
                 "required": [
@@ -64994,7 +65940,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 "properties": {
                   "filter_type": {
                     "type": "string",
-                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
                   },
                   "filter_op": {
                     "type": "string",
@@ -65006,6 +65952,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   "col_type": {
                     "type": "string",
                     "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                  },
+                  "attribute_value_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "string",
+                        "number",
+                        "boolean"
+                      ],
+                      "x-nullable": true
+                    },
+                    "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                   }
                 },
                 "required": [
@@ -70075,7 +71034,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "required": [
         "key",
         "type",
-        "count"
+        "count",
+        "query_complete",
+        "query_status",
+        "query_sampled"
       ],
       "type": "object",
       "properties": {
@@ -70090,8 +71052,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "enum": [
             "string",
             "number",
-            "boolean"
-          ]
+            "boolean",
+            "array",
+            "map",
+            "json"
+          ],
+          "x-nullable": true
         },
         "count": {
           "title": "Count",
@@ -70100,6 +71066,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "unique_values": {
           "title": "Unique values",
           "type": "integer"
+        },
+        "types": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SpanAttributeTypeSummary"
+          }
         },
         "top_values": {
           "type": "array",
@@ -70131,12 +71103,83 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "P95",
           "type": "number",
           "x-nullable": true
+        },
+        "stats": {
+          "$ref": "#/definitions/SpanAttributeNumericStats"
+        },
+        "query_complete": {
+          "title": "Query complete",
+          "type": "boolean"
+        },
+        "query_status": {
+          "title": "Query status",
+          "type": "string",
+          "enum": [
+            "complete",
+            "pending",
+            "sampled",
+            "degraded"
+          ]
+        },
+        "query_sampled": {
+          "title": "Query sampled",
+          "type": "boolean"
+        },
+        "query_error_code": {
+          "title": "Query error code",
+          "type": "string",
+          "enum": [
+            "sample_limit",
+            "read_budget_exceeded",
+            "query_failed"
+          ]
+        },
+        "query_window_start": {
+          "title": "Query window start",
+          "type": "string",
+          "format": "date-time"
+        },
+        "query_window_end": {
+          "title": "Query window end",
+          "type": "string",
+          "format": "date-time"
+        },
+        "query_count": {
+          "title": "Query count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "query_elapsed_ms": {
+          "title": "Query elapsed ms",
+          "type": "number",
+          "minimum": 0
+        },
+        "query_completed_at": {
+          "title": "Query completed at",
+          "type": "string",
+          "format": "date-time"
+        },
+        "query_cached": {
+          "title": "Query cached",
+          "type": "boolean"
+        },
+        "query_refreshing": {
+          "title": "Query refreshing",
+          "type": "boolean"
+        },
+        "query_refresh_failed": {
+          "title": "Query refresh failed",
+          "type": "boolean"
         }
       }
     },
     "SpanAttributeKeysResponse": {
       "required": [
-        "result"
+        "result",
+        "query_complete",
+        "query_status",
+        "query_window_start",
+        "query_window_end"
       ],
       "type": "object",
       "properties": {
@@ -70145,12 +71188,91 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "items": {
             "$ref": "#/definitions/SpanAttributeKey"
           }
+        },
+        "query_complete": {
+          "title": "Query complete",
+          "type": "boolean"
+        },
+        "query_status": {
+          "title": "Query status",
+          "type": "string",
+          "enum": [
+            "complete",
+            "sampled",
+            "degraded"
+          ]
+        },
+        "query_error_code": {
+          "title": "Query error code",
+          "type": "string",
+          "enum": [
+            "sample_limit",
+            "read_budget_exceeded",
+            "query_failed"
+          ]
+        },
+        "query_window_start": {
+          "title": "Query window start",
+          "type": "string",
+          "format": "date-time"
+        },
+        "query_window_end": {
+          "title": "Query window end",
+          "type": "string",
+          "format": "date-time"
+        },
+        "has_more": {
+          "title": "Has more",
+          "type": "boolean"
+        },
+        "next_cursor": {
+          "title": "Next cursor",
+          "type": "string",
+          "maxLength": 8192,
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "browse_mode": {
+          "title": "Browse mode",
+          "type": "string",
+          "enum": [
+            "recent_suggestions"
+          ]
+        },
+        "browse_status": {
+          "title": "Browse status",
+          "type": "string",
+          "enum": [
+            "continuation",
+            "exhausted",
+            "limit_reached"
+          ]
+        },
+        "browse_limit": {
+          "title": "Browse limit",
+          "type": "integer",
+          "minimum": 1
+        },
+        "lookup_mode": {
+          "title": "Lookup mode",
+          "type": "string",
+          "enum": [
+            "exact"
+          ]
+        },
+        "exact_match": {
+          "title": "Exact match",
+          "type": "boolean"
         }
       }
     },
     "SpanAttributeValuesResponse": {
       "required": [
-        "result"
+        "result",
+        "query_complete",
+        "query_status",
+        "query_window_start",
+        "query_window_end"
       ],
       "type": "object",
       "properties": {
@@ -70159,6 +71281,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "items": {
             "$ref": "#/definitions/SpanAttributeValue"
           }
+        },
+        "query_complete": {
+          "title": "Query complete",
+          "type": "boolean"
+        },
+        "query_status": {
+          "title": "Query status",
+          "type": "string",
+          "enum": [
+            "complete",
+            "sampled",
+            "degraded"
+          ]
+        },
+        "query_error_code": {
+          "title": "Query error code",
+          "type": "string",
+          "enum": [
+            "sample_limit",
+            "read_budget_exceeded",
+            "query_failed"
+          ]
+        },
+        "query_window_start": {
+          "title": "Query window start",
+          "type": "string",
+          "format": "date-time"
+        },
+        "query_window_end": {
+          "title": "Query window end",
+          "type": "string",
+          "format": "date-time"
         }
       }
     },
@@ -71961,7 +73115,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 "properties": {
                   "filter_type": {
                     "type": "string",
-                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
                   },
                   "filter_op": {
                     "type": "string",
@@ -71973,6 +73127,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   "col_type": {
                     "type": "string",
                     "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                  },
+                  "attribute_value_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "string",
+                        "number",
+                        "boolean"
+                      ],
+                      "x-nullable": true
+                    },
+                    "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                   }
                 },
                 "required": [
@@ -71988,7 +73155,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
             ],
             "additionalProperties": false
           },
-          "default": []
+          "default": [],
+          "description": "On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
+          "x-boundedDatetimeOperators": [
+            "between",
+            "equals",
+            "greater_than",
+            "greater_than_or_equal",
+            "is_not_null",
+            "is_null",
+            "less_than",
+            "less_than_or_equal",
+            "not_between",
+            "not_equals"
+          ]
         },
         "interval": {
           "title": "Interval",
@@ -72088,6 +73268,102 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/TraceToGraphResult"
+        }
+      }
+    },
+    "TraceVoiceCallListResponse": {
+      "required": [
+        "count",
+        "count_is_lower_bound",
+        "total_pages",
+        "current_page",
+        "next",
+        "previous",
+        "results",
+        "config",
+        "has_more",
+        "query_complete",
+        "query_status"
+      ],
+      "type": "object",
+      "properties": {
+        "count": {
+          "title": "Count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "count_is_lower_bound": {
+          "title": "Count is lower bound",
+          "type": "boolean"
+        },
+        "total_pages": {
+          "title": "Total pages",
+          "type": "integer",
+          "minimum": 0
+        },
+        "current_page": {
+          "title": "Current page",
+          "type": "integer",
+          "minimum": 1
+        },
+        "next": {
+          "title": "Next",
+          "type": "integer",
+          "minimum": 1,
+          "x-nullable": true
+        },
+        "previous": {
+          "title": "Previous",
+          "type": "integer",
+          "minimum": 1,
+          "x-nullable": true
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "x-nullable": true
+            }
+          }
+        },
+        "config": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "x-nullable": true
+            }
+          }
+        },
+        "has_more": {
+          "title": "Has more",
+          "type": "boolean"
+        },
+        "next_cursor": {
+          "title": "Next cursor",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "query_complete": {
+          "title": "Query complete",
+          "type": "boolean"
+        },
+        "query_status": {
+          "title": "Query status",
+          "type": "string",
+          "enum": [
+            "complete",
+            "degraded"
+          ]
+        },
+        "query_error_code": {
+          "title": "Query error code",
+          "type": "string",
+          "minLength": 1
         }
       }
     },
@@ -75873,7 +77149,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 "properties": {
                   "filter_type": {
                     "type": "string",
-                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
                   },
                   "filter_op": {
                     "type": "string",
@@ -75885,6 +77161,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   "col_type": {
                     "type": "string",
                     "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                  },
+                  "attribute_value_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "string",
+                        "number",
+                        "boolean"
+                      ],
+                      "x-nullable": true
+                    },
+                    "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                   }
                 },
                 "required": [
@@ -76089,7 +77378,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 "properties": {
                   "filter_type": {
                     "type": "string",
-                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
                   },
                   "filter_op": {
                     "type": "string",
@@ -76101,6 +77390,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   "col_type": {
                     "type": "string",
                     "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                  },
+                  "attribute_value_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "string",
+                        "number",
+                        "boolean"
+                      ],
+                      "x-nullable": true
+                    },
+                    "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                   }
                 },
                 "required": [
@@ -77312,7 +78614,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 "properties": {
                   "filter_type": {
                     "type": "string",
-                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
                   },
                   "filter_op": {
                     "type": "string",
@@ -77324,6 +78626,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   "col_type": {
                     "type": "string",
                     "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                  },
+                  "attribute_value_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "string",
+                        "number",
+                        "boolean"
+                      ],
+                      "x-nullable": true
+                    },
+                    "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                   }
                 },
                 "required": [
@@ -79210,6 +80525,83 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "DashboardFilterValuesResult": {
+      "required": [
+        "values"
+      ],
+      "type": "object",
+      "properties": {
+        "values": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/DashboardFilterValueOption"
+          }
+        },
+        "query_complete": {
+          "title": "Query complete",
+          "type": "boolean"
+        },
+        "query_status": {
+          "title": "Query status",
+          "type": "string",
+          "enum": [
+            "complete",
+            "sampled",
+            "degraded"
+          ]
+        },
+        "query_error_code": {
+          "title": "Query error code",
+          "type": "string",
+          "enum": [
+            "sample_limit",
+            "read_budget_exceeded",
+            "query_failed"
+          ]
+        },
+        "query_window_start": {
+          "title": "Query window start",
+          "type": "string",
+          "format": "date-time"
+        },
+        "query_window_end": {
+          "title": "Query window end",
+          "type": "string",
+          "format": "date-time"
+        },
+        "has_more": {
+          "title": "Has more",
+          "type": "boolean"
+        },
+        "browse_status": {
+          "title": "Browse status",
+          "type": "string",
+          "enum": [
+            "continuation",
+            "exhausted",
+            "limit_reached"
+          ]
+        },
+        "next_cursor": {
+          "title": "Next cursor",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "attribute_type": {
+          "title": "Attribute type",
+          "type": "string",
+          "enum": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "map",
+            "json"
+          ]
+        }
+      }
+    },
     "DashboardMetricsCatalogResult": {
       "required": [
         "metrics"
@@ -79424,8 +80816,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "boolean",
             "datetime",
             "date"
-          ],
-          "default": "string"
+          ]
         },
         "column_id": {
           "title": "Column id",
@@ -79472,7 +80863,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 "properties": {
                   "filter_type": {
                     "type": "string",
-                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
                   },
                   "filter_op": {
                     "type": "string",
@@ -79484,6 +80875,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   "col_type": {
                     "type": "string",
                     "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                  },
+                  "attribute_value_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "string",
+                        "number",
+                        "boolean"
+                      ],
+                      "x-nullable": true
+                    },
+                    "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                   }
                 },
                 "required": [
@@ -79562,6 +80966,55 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "week",
             "month"
           ]
+        },
+        "query_complete": {
+          "title": "Query complete",
+          "type": "boolean"
+        },
+        "query_status": {
+          "title": "Query status",
+          "type": "string",
+          "enum": [
+            "complete",
+            "degraded",
+            "pending"
+          ]
+        },
+        "query_sampled": {
+          "title": "Query sampled",
+          "type": "boolean"
+        },
+        "query_completed_at": {
+          "title": "Query completed at",
+          "type": "string",
+          "format": "date-time"
+        },
+        "query_cached": {
+          "title": "Query cached",
+          "type": "boolean"
+        },
+        "query_refresh_failed": {
+          "title": "Query refresh failed",
+          "type": "boolean"
+        },
+        "query_refreshing": {
+          "title": "Query refreshing",
+          "type": "boolean"
+        },
+        "query_snapshot_version_ceiling": {
+          "title": "Query snapshot version ceiling",
+          "type": "integer",
+          "minimum": 1
+        },
+        "query_snapshot_capture_count": {
+          "title": "Query snapshot capture count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "query_snapshot_relation_count": {
+          "title": "Query snapshot relation count",
+          "type": "integer",
+          "minimum": 0
         }
       }
     },
@@ -81395,7 +82848,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     "EvalTemplateListChartsResponseResult": {
       "required": [
-        "charts"
+        "charts",
+        "query_complete",
+        "query_status",
+        "query_sampled",
+        "data_stale"
       ],
       "type": "object",
       "properties": {
@@ -81405,6 +82862,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "additionalProperties": {
             "$ref": "#/definitions/EvalTemplateListChartsItem"
           }
+        },
+        "query_complete": {
+          "title": "Query complete",
+          "type": "boolean"
+        },
+        "query_status": {
+          "title": "Query status",
+          "type": "string",
+          "enum": [
+            "complete",
+            "stale",
+            "degraded"
+          ]
+        },
+        "query_sampled": {
+          "title": "Query sampled",
+          "type": "boolean"
+        },
+        "query_error_code": {
+          "title": "Query error code",
+          "type": "string",
+          "enum": [
+            "read_budget_exceeded",
+            "template_limit_exceeded",
+            "query_failed"
+          ]
+        },
+        "data_stale": {
+          "title": "Data stale",
+          "type": "boolean"
         }
       }
     },
@@ -81580,6 +83067,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Is composite",
           "type": "boolean"
         },
+        "completeness": {
+          "title": "Completeness",
+          "type": "string",
+          "enum": [
+            "complete",
+            "degraded",
+            "pending"
+          ]
+        },
+        "unavailable_fields": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
         "stats": {
           "$ref": "#/definitions/EvalUsageStats"
         },
@@ -81597,6 +83100,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "logs": {
           "$ref": "#/definitions/EvalUsagePagination"
+        },
+        "query_complete": {
+          "title": "Query complete",
+          "type": "boolean"
+        },
+        "query_status": {
+          "title": "Query status",
+          "type": "string",
+          "enum": [
+            "complete",
+            "degraded",
+            "pending"
+          ]
+        },
+        "query_sampled": {
+          "title": "Query sampled",
+          "type": "boolean"
+        },
+        "query_completed_at": {
+          "title": "Query completed at",
+          "type": "string",
+          "format": "date-time"
+        },
+        "query_cached": {
+          "title": "Query cached",
+          "type": "boolean"
+        },
+        "query_refresh_failed": {
+          "title": "Query refresh failed",
+          "type": "boolean"
+        },
+        "query_refreshing": {
+          "title": "Query refreshing",
+          "type": "boolean"
         }
       }
     },
@@ -85440,6 +86977,143 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "ObserveGraphDataErrorResult": {
+      "required": [
+        "metric_name",
+        "data",
+        "message"
+      ],
+      "type": "object",
+      "properties": {
+        "metric_name": {
+          "title": "Metric name",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "data": {
+          "description": "Exact graph points. Pending or failed refreshes never publish partial aggregate values.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ObserveGraphDataPoint"
+          }
+        },
+        "query_complete": {
+          "title": "Query complete",
+          "type": "boolean"
+        },
+        "query_status": {
+          "title": "Query status",
+          "type": "string",
+          "enum": [
+            "complete",
+            "sampled",
+            "degraded",
+            "pending"
+          ]
+        },
+        "query_error_code": {
+          "title": "Query error code",
+          "type": "string",
+          "enum": [
+            "sample_limit",
+            "read_budget_exceeded",
+            "query_failed"
+          ]
+        },
+        "query_window_start": {
+          "title": "Query window start",
+          "type": "string",
+          "minLength": 1
+        },
+        "query_window_end": {
+          "title": "Query window end",
+          "type": "string",
+          "minLength": 1
+        },
+        "query_sample_size": {
+          "title": "Query sample size",
+          "type": "integer",
+          "minimum": 0
+        },
+        "query_count": {
+          "title": "Query count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "query_elapsed_ms": {
+          "title": "Query elapsed ms",
+          "type": "number",
+          "minimum": 0
+        },
+        "query_rows_returned": {
+          "title": "Query rows returned",
+          "type": "integer",
+          "minimum": 0
+        },
+        "query_result_bytes": {
+          "title": "Query result bytes",
+          "type": "integer",
+          "minimum": 0
+        },
+        "query_total_rows_lower_bound": {
+          "title": "Query total rows lower bound",
+          "type": "integer",
+          "minimum": 0
+        },
+        "query_sampled": {
+          "title": "Query sampled",
+          "type": "boolean"
+        },
+        "query_completed_at": {
+          "title": "Query completed at",
+          "type": "string",
+          "format": "date-time"
+        },
+        "query_cached": {
+          "title": "Query cached",
+          "type": "boolean"
+        },
+        "query_refresh_failed": {
+          "title": "Query refresh failed",
+          "type": "boolean"
+        },
+        "query_refreshing": {
+          "title": "Query refreshing",
+          "type": "boolean"
+        },
+        "query_snapshot_version_ceiling": {
+          "title": "Query snapshot version ceiling",
+          "type": "integer",
+          "minimum": 1
+        },
+        "query_sampling_strategy": {
+          "title": "Query sampling strategy",
+          "type": "string",
+          "enum": [
+            "time_stratified_latest_state",
+            "bounded_latest_state_prefix"
+          ]
+        },
+        "query_sampling_strata": {
+          "title": "Query sampling strata",
+          "type": "integer",
+          "minimum": 0
+        },
+        "query_sampling_strata_completed": {
+          "title": "Query sampling strata completed",
+          "type": "integer",
+          "minimum": 0
+        },
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "ObserveGraphDataResult": {
       "required": [
         "metric_name",
@@ -85451,11 +87125,123 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Metric name",
           "type": "string"
         },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
         "data": {
+          "description": "Exact graph points. Pending or failed refreshes never publish partial aggregate values.",
           "type": "array",
           "items": {
             "$ref": "#/definitions/ObserveGraphDataPoint"
           }
+        },
+        "query_complete": {
+          "title": "Query complete",
+          "type": "boolean"
+        },
+        "query_status": {
+          "title": "Query status",
+          "type": "string",
+          "enum": [
+            "complete",
+            "sampled",
+            "degraded",
+            "pending"
+          ]
+        },
+        "query_error_code": {
+          "title": "Query error code",
+          "type": "string",
+          "enum": [
+            "sample_limit",
+            "read_budget_exceeded",
+            "query_failed"
+          ]
+        },
+        "query_window_start": {
+          "title": "Query window start",
+          "type": "string",
+          "minLength": 1
+        },
+        "query_window_end": {
+          "title": "Query window end",
+          "type": "string",
+          "minLength": 1
+        },
+        "query_sample_size": {
+          "title": "Query sample size",
+          "type": "integer",
+          "minimum": 0
+        },
+        "query_count": {
+          "title": "Query count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "query_elapsed_ms": {
+          "title": "Query elapsed ms",
+          "type": "number",
+          "minimum": 0
+        },
+        "query_rows_returned": {
+          "title": "Query rows returned",
+          "type": "integer",
+          "minimum": 0
+        },
+        "query_result_bytes": {
+          "title": "Query result bytes",
+          "type": "integer",
+          "minimum": 0
+        },
+        "query_total_rows_lower_bound": {
+          "title": "Query total rows lower bound",
+          "type": "integer",
+          "minimum": 0
+        },
+        "query_sampled": {
+          "title": "Query sampled",
+          "type": "boolean"
+        },
+        "query_completed_at": {
+          "title": "Query completed at",
+          "type": "string",
+          "format": "date-time"
+        },
+        "query_cached": {
+          "title": "Query cached",
+          "type": "boolean"
+        },
+        "query_refresh_failed": {
+          "title": "Query refresh failed",
+          "type": "boolean"
+        },
+        "query_refreshing": {
+          "title": "Query refreshing",
+          "type": "boolean"
+        },
+        "query_snapshot_version_ceiling": {
+          "title": "Query snapshot version ceiling",
+          "type": "integer",
+          "minimum": 1
+        },
+        "query_sampling_strategy": {
+          "title": "Query sampling strategy",
+          "type": "string",
+          "enum": [
+            "time_stratified_latest_state",
+            "bounded_latest_state_prefix"
+          ]
+        },
+        "query_sampling_strata": {
+          "title": "Query sampling strata",
+          "type": "integer",
+          "minimum": 0
+        },
+        "query_sampling_strata_completed": {
+          "title": "Query sampling strata completed",
+          "type": "integer",
+          "minimum": 0
         }
       }
     },
@@ -88367,7 +90153,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 "properties": {
                   "filter_type": {
                     "type": "string",
-                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                    "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
                   },
                   "filter_op": {
                     "type": "string",
@@ -88379,6 +90165,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   "col_type": {
                     "type": "string",
                     "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                  },
+                  "attribute_value_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "string",
+                        "number",
+                        "boolean"
+                      ],
+                      "x-nullable": true
+                    },
+                    "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
                   }
                 },
                 "required": [
@@ -89935,6 +91734,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "SpanAttributeNumericStats": {
+      "type": "object",
+      "properties": {
+        "min": {
+          "title": "Min",
+          "type": "number",
+          "x-nullable": true
+        },
+        "max": {
+          "title": "Max",
+          "type": "number",
+          "x-nullable": true
+        },
+        "avg": {
+          "title": "Avg",
+          "type": "number",
+          "x-nullable": true
+        },
+        "p50": {
+          "title": "P50",
+          "type": "number",
+          "x-nullable": true
+        },
+        "p95": {
+          "title": "P95",
+          "type": "number",
+          "x-nullable": true
+        }
+      }
+    },
     "SpanAttributeTopValue": {
       "required": [
         "value",
@@ -89945,7 +91774,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "properties": {
         "value": {
           "title": "Value",
-          "type": "object"
+          "type": "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          "description": "Any valid JSON value."
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "enum": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "map",
+            "json"
+          ]
         },
         "count": {
           "title": "Count",
@@ -89954,6 +91798,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "percentage": {
           "title": "Percentage",
           "type": "number"
+        }
+      }
+    },
+    "SpanAttributeTypeSummary": {
+      "required": [
+        "type",
+        "count",
+        "unique_values"
+      ],
+      "type": "object",
+      "properties": {
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "enum": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "map",
+            "json"
+          ]
+        },
+        "count": {
+          "title": "Count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "unique_values": {
+          "title": "Unique values",
+          "type": "integer",
+          "minimum": 0
         }
       }
     },
@@ -89976,12 +91852,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "enum": [
             "string",
             "number",
-            "boolean"
+            "boolean",
+            "array",
+            "map",
+            "json"
           ]
         },
         "count": {
           "title": "Count",
           "type": "integer"
+        },
+        "count_exact": {
+          "title": "Count exact",
+          "type": "boolean"
+        },
+        "types": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "string",
+              "number",
+              "boolean",
+              "array",
+              "map",
+              "json"
+            ]
+          }
         }
       }
     },
@@ -89994,11 +91891,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "properties": {
         "value": {
           "title": "Value",
-          "type": "object"
+          "type": "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          "description": "Any valid JSON value."
         },
         "count": {
           "title": "Count",
           "type": "integer"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "enum": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "map",
+            "json"
+          ]
         }
       }
     },
@@ -91805,6 +93717,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "total_pages": {
           "title": "Total pages",
           "type": "integer"
+        },
+        "count_is_lower_bound": {
+          "title": "Count is lower bound",
+          "type": "boolean"
+        },
+        "has_more": {
+          "title": "Has more",
+          "type": "boolean"
+        },
+        "next_cursor": {
+          "title": "Next cursor",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "query_complete": {
+          "title": "Query complete",
+          "type": "boolean"
+        },
+        "query_status": {
+          "title": "Query status",
+          "type": "string",
+          "enum": [
+            "complete",
+            "degraded"
+          ]
         }
       }
     },
@@ -93185,6 +95123,54 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "DashboardFilterValueOption": {
+      "required": [
+        "value",
+        "label"
+      ],
+      "type": "object",
+      "properties": {
+        "value": {
+          "title": "Value",
+          "type": "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          "description": "Any valid JSON value."
+        },
+        "label": {
+          "title": "Label",
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "enum": [
+            "string",
+            "number",
+            "boolean",
+            "array",
+            "map",
+            "json"
+          ]
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "email": {
+          "title": "Email",
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "title": "Description",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "DashboardMetricCatalogItem": {
       "required": [
         "name"
@@ -93299,6 +95285,52 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "items": {
             "$ref": "#/definitions/DashboardQuerySeries"
           }
+        },
+        "query_complete": {
+          "title": "Query complete",
+          "type": "boolean"
+        },
+        "query_sampled": {
+          "title": "Query sampled",
+          "type": "boolean"
+        },
+        "query_status": {
+          "title": "Query status",
+          "type": "string",
+          "enum": [
+            "complete",
+            "sampled",
+            "degraded"
+          ]
+        },
+        "query_error_code": {
+          "title": "Query error code",
+          "type": "string",
+          "enum": [
+            "sample_limit",
+            "read_budget_exceeded",
+            "query_failed"
+          ]
+        },
+        "query_sampling_strategy": {
+          "title": "Query sampling strategy",
+          "type": "string",
+          "minLength": 1
+        },
+        "query_sampling_interval_seconds": {
+          "title": "Query sampling interval seconds",
+          "type": "integer",
+          "minimum": 1
+        },
+        "query_sample_limit": {
+          "title": "Query sample limit",
+          "type": "integer",
+          "minimum": 1
+        },
+        "query_sample_per_bucket": {
+          "title": "Query sample per bucket",
+          "type": "integer",
+          "minimum": 1
         }
       }
     },
@@ -97393,6 +99425,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       }
     },
     "ObserveGraphDataPoint": {
+      "description": "Exact graph points. Pending or failed refreshes never publish partial aggregate values.",
       "required": [
         "timestamp",
         "value"
@@ -99120,6 +101153,62 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "total_rows": {
           "title": "Total rows",
           "type": "integer"
+        },
+        "total_rows_exact": {
+          "title": "Total rows exact",
+          "type": "integer",
+          "x-nullable": true
+        },
+        "total_rows_is_lower_bound": {
+          "title": "Total rows is lower bound",
+          "type": "boolean"
+        },
+        "has_more": {
+          "title": "Has more",
+          "type": "boolean"
+        },
+        "next_cursor": {
+          "title": "Next cursor",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "query_complete": {
+          "title": "Query complete",
+          "type": "boolean"
+        },
+        "query_status": {
+          "title": "Query status",
+          "type": "string",
+          "enum": [
+            "complete",
+            "degraded"
+          ]
+        },
+        "query_error_code": {
+          "title": "Query error code",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "query_elapsed_ms": {
+          "title": "Query elapsed ms",
+          "type": "number"
+        },
+        "query_count": {
+          "title": "Query count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "query_rows_returned": {
+          "title": "Query rows returned",
+          "type": "integer",
+          "minimum": 0
+        },
+        "query_result_payload_bytes": {
+          "title": "Query result payload bytes",
+          "type": "integer",
+          "minimum": 0
         }
       }
     },

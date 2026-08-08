@@ -170,73 +170,57 @@ function spanGroupKey(span) {
   return `${type}:${name}`;
 }
 
+function finiteInterval(item) {
+  const start = Date.parse(item?.span?.start_time);
+  const end = Date.parse(item?.span?.end_time);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+    return null;
+  }
+  return { start, end };
+}
+
 /**
- * Assign step numbers using timing overlap analysis.
- * Spans that overlap in time → same step (parallel).
- * Sequential spans → consecutive steps.
+ * Partition direct siblings into local execution groups.
+ *
+ * Overlapping siblings form one fork. A later non-overlapping group starts
+ * only after every active branch in the prior group has ended, so the next
+ * group is joined from each prior branch terminal. The calculation never
+ * compares unrelated branches elsewhere in the trace.
  */
-function assignSteps(flatSpans) {
-  if (flatSpans.length === 0) return [];
+function localSiblingGroups(siblings) {
+  const timed = siblings.map((item) => ({
+    item,
+    interval: finiteInterval(item),
+  }));
+  if (timed.some(({ interval }) => !interval)) return null;
 
-  // Sort by start time
-  const sorted = [...flatSpans].sort((a, b) => {
-    const aTime = new Date(a.span.start_time || 0).getTime();
-    const bTime = new Date(b.span.start_time || 0).getTime();
-    return aTime - bTime;
-  });
+  timed.sort(
+    (a, b) =>
+      a.interval.start - b.interval.start ||
+      a.interval.end - b.interval.end ||
+      String(a.item.span.id || "").localeCompare(String(b.item.span.id || "")),
+  );
 
-  const result = [];
-  let currentStep = 0;
-  let currentGroupEnd = 0;
-
-  for (const item of sorted) {
-    const startMs = new Date(item.span.start_time || 0).getTime();
-    const endMs = new Date(item.span.end_time || startMs).getTime();
-
-    if (startMs >= currentGroupEnd && result.length > 0) {
-      // New step — this span starts after the previous group ended
-      currentStep++;
+  const groups = [];
+  let activeEnd = -Infinity;
+  for (const entry of timed) {
+    if (groups.length === 0 || entry.interval.start >= activeEnd) {
+      groups.push([entry.item]);
+      activeEnd = entry.interval.end;
+      continue;
     }
-
-    result.push({ ...item, step: currentStep });
-    currentGroupEnd = Math.max(currentGroupEnd, endMs);
+    groups[groups.length - 1].push(entry.item);
+    activeEnd = Math.max(activeEnd, entry.interval.end);
   }
-
-  // Enforce parent-child constraints: child step must be > parent step
-  const spanSteps = {};
-  for (const item of result) {
-    spanSteps[item.span.id] = item.step;
-  }
-
-  let changed = true;
-  let iterations = 0;
-  while (changed && iterations < 500) {
-    changed = false;
-    iterations++;
-    for (const item of result) {
-      if (item.parentSpanId && spanSteps[item.parentSpanId] !== undefined) {
-        const parentStep = spanSteps[item.parentSpanId];
-        if (item.step <= parentStep) {
-          item.step = parentStep + 1;
-          spanSteps[item.span.id] = item.step;
-          changed = true;
-        }
-      }
-    }
-  }
-
-  return result;
+  return groups;
 }
 
 function buildInferredGraph(flatSpans) {
-  const steppedSpans = assignSteps(flatSpans);
-
   // Group by spanGroupKey, aggregating metrics
   const nodeMap = {}; // groupKey -> node data
-  const nodeSteps = {}; // groupKey -> Set of steps this node appears at
   const nodeToSpanIds = {}; // groupKey -> [spanId1, spanId2, ...]
 
-  for (const item of steppedSpans) {
+  for (const item of flatSpans) {
     const key = spanGroupKey(item.span);
     const type = item.span.observation_type || "unknown";
     const name = item.span.name || "unnamed";
@@ -254,7 +238,6 @@ function buildInferredGraph(flatSpans) {
         evals: [],
         annotations: [],
       };
-      nodeSteps[key] = new Set();
     }
 
     const node = nodeMap[key];
@@ -276,71 +259,76 @@ function buildInferredGraph(flatSpans) {
     const entryAnnotations = item.entry?.annotations || [];
     if (entryEvals.length) node.evals.push(...entryEvals);
     if (entryAnnotations.length) node.annotations.push(...entryAnnotations);
-    nodeSteps[key].add(item.step);
   }
 
-  // Build edges from parent→child relationships (grouped)
+  // Build execution edges independently inside each direct-sibling set. The
+  // previous implementation assigned global time buckets and connected every
+  // node in one bucket to every node in the next, inventing transitions across
+  // unrelated branches of the trace.
   const edgeMap = {};
-  for (const item of steppedSpans) {
-    if (!item.parentSpanId) continue;
-
-    const childKey = spanGroupKey(item.span);
-    // Find parent span to get its group key
-    const parentItem = steppedSpans.find(
-      (s) => s.span.id === item.parentSpanId,
-    );
-    if (!parentItem) continue;
-
-    const parentKey = spanGroupKey(parentItem.span);
-    if (parentKey === childKey) {
-      // Self-loop
-      const edgeKey = `${childKey}->${childKey}`;
-      if (!edgeMap[edgeKey]) {
-        edgeMap[edgeKey] = {
-          source: childKey,
-          target: childKey,
-          transitionCount: 0,
-          isSelfLoop: true,
-        };
-      }
-      edgeMap[edgeKey].transitionCount += 1;
-    } else {
-      const edgeKey = `${parentKey}->${childKey}`;
-      if (!edgeMap[edgeKey]) {
-        edgeMap[edgeKey] = {
-          source: parentKey,
-          target: childKey,
-          transitionCount: 0,
-        };
-      }
-      edgeMap[edgeKey].transitionCount += 1;
+  const addEdge = (sourceItem, targetItem) => {
+    if (!sourceItem || !targetItem) return;
+    const source = spanGroupKey(sourceItem.span);
+    const target = spanGroupKey(targetItem.span);
+    const edgeKey = `${source}->${target}`;
+    if (!edgeMap[edgeKey]) {
+      edgeMap[edgeKey] = {
+        source,
+        target,
+        transitionCount: 0,
+        ...(source === target ? { isSelfLoop: true } : {}),
+      };
     }
-  }
+    edgeMap[edgeKey].transitionCount += 1;
+  };
 
-  // Also add step-based sequential edges for nodes without parent-child edges
-  const stepToNodes = {};
-  for (const item of steppedSpans) {
-    const key = spanGroupKey(item.span);
-    if (!stepToNodes[item.step]) stepToNodes[item.step] = new Set();
-    stepToNodes[item.step].add(key);
-  }
+  const itemByEntry = new Map(flatSpans.map((item) => [item.entry, item]));
+  const childrenOf = (item) =>
+    (item?.entry?.children || [])
+      .map((childEntry) => itemByEntry.get(childEntry))
+      .filter(Boolean);
 
-  const stepNumbers = Object.keys(stepToNodes)
-    .map(Number)
-    .sort((a, b) => a - b);
-  for (let i = 0; i < stepNumbers.length - 1; i++) {
-    const currentNodes = stepToNodes[stepNumbers[i]];
-    const nextNodes = stepToNodes[stepNumbers[i + 1]];
-    for (const src of currentNodes) {
-      for (const tgt of nextNodes) {
-        if (src === tgt) continue; // skip self-loops from step edges
-        const edgeKey = `${src}->${tgt}`;
-        if (!edgeMap[edgeKey]) {
-          edgeMap[edgeKey] = { source: src, target: tgt, transitionCount: 1 };
-        }
-      }
+  // Return the terminal span(s) of each subtree while building its local
+  // execution edges. Connecting the next sibling group from subtree terminals
+  // is important: when `generation` contains an LLM child and `evaluation`
+  // follows generation, the real transition is LLM -> evaluation, not a fork
+  // generation -> {LLM, evaluation}.
+  const processItem = (item) => {
+    const children = childrenOf(item);
+    if (children.length === 0) return [item];
+    return processSiblingSet(children, item);
+  };
+
+  const processSiblingSet = (siblings, parentItem) => {
+    const groups = localSiblingGroups(siblings);
+
+    // Missing/malformed timing is not a license to invent execution order.
+    // Fall back to the authoritative hierarchy for this local sibling set.
+    if (!groups) {
+      if (parentItem) siblings.forEach((child) => addEdge(parentItem, child));
+      return siblings.flatMap((child) => processItem(child));
     }
-  }
+
+    if (parentItem) {
+      groups[0].forEach((child) => addEdge(parentItem, child));
+    }
+
+    let previousTerminals = [];
+    groups.forEach((group, index) => {
+      if (index > 0) {
+        previousTerminals.forEach((source) => {
+          group.forEach((target) => addEdge(source, target));
+        });
+      }
+      previousTerminals = group.flatMap((child) => processItem(child));
+    });
+    return previousTerminals;
+  };
+
+  processSiblingSet(
+    flatSpans.filter((item) => item.depth === 0),
+    null,
+  );
 
   // Compute averages
   const nodes = Object.values(nodeMap).map((n) => ({

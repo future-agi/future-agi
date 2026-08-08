@@ -15,6 +15,11 @@ import EvaluationCell from "src/sections/projects/LLMTracing/Renderers/Evaluatio
 import { AGENT_TYPES, isLiveKitProvider } from "./constants";
 import AnnotationHeaderCellRenderer from "./CallLogs/AnnotationHeaderCellRenderer";
 import NewAnnotationCellRenderer from "./NewAnnotationCellRenderer";
+import {
+  isListCursorContinuationLimitError,
+  listContinuationParams,
+  loadExactListPage,
+} from "src/sections/projects/LLMTracing/listCursorPagination";
 
 export const agentDefinitionSections = [
   {
@@ -842,12 +847,16 @@ export const useCallLogs = ({
   page,
   pageLimit,
   params,
+  paginationParams,
+  paginationRevision = 0,
+  cursorPagination,
+  paginationGeneration,
   enabled = true,
 }) => {
   const isProjectModule = module === "project";
   const condition = isProjectModule ? !!id : !!id && !!version;
   const queryKey = isProjectModule
-    ? ["callLogs", module, id, pageLimit, params, page]
+    ? ["callLogs", module, id, pageLimit, params, page, paginationRevision]
     : ["callLogs", module, id, version, pageLimit, params, page];
   const getEndpoint = () =>
     isProjectModule
@@ -855,19 +864,93 @@ export const useCallLogs = ({
       : endpoints.agentDefinitions.getCallLogs(id, version);
   const { data, isLoading, error } = useQuery({
     queryKey: queryKey,
-    queryFn: () =>
-      axios.get(getEndpoint(), {
-        params: { page, page_size: pageLimit, ...params },
-      }),
+    queryFn: async () => {
+      const baseParams = {
+        page,
+        page_size: pageLimit,
+        ...params,
+      };
+      if (isProjectModule && cursorPagination) {
+        const exactPage = await loadExactListPage({
+          pagination: cursorPagination,
+          pageNumber: page - 1,
+          targetRowCount: pageLimit,
+          loadResponse: () =>
+            axios.get(getEndpoint(), {
+              params: paginationParams
+                ? { ...params, ...paginationParams }
+                : baseParams,
+            }),
+          nextResponse: (cursor) =>
+            axios.get(getEndpoint(), {
+              params: listContinuationParams(baseParams, cursor),
+            }),
+          rowsFromResponse: (response) => {
+            const result = response?.data?.result || response?.data || {};
+            return result.results || result.data || result.calls || [];
+          },
+          metadataFromResponse: (response) =>
+            response?.data?.result || response?.data || {},
+          rowIdentity: (row) =>
+            row?.call_id || row?.id || row?.trace_id || null,
+          isCurrent: () => cursorPagination.isCurrent(paginationGeneration),
+        });
+        const rawResponse = exactPage.response || {};
+        const payload = rawResponse.data || {};
+        const result = payload.result || payload;
+        const exactMetadata = {
+          pending: exactPage.pending,
+          stale: exactPage.stale,
+          isLastPage: exactPage.isLastPage,
+          canPrefetch: exactPage.canPrefetch,
+        };
+        const mergedResult = {
+          ...result,
+          results: exactPage.rows,
+          __exactPage: exactMetadata,
+        };
+        return {
+          ...rawResponse,
+          data: payload.result
+            ? {
+                ...payload,
+                ...mergedResult,
+                result: mergedResult,
+              }
+            : mergedResult,
+        };
+      }
+      return axios.get(getEndpoint(), {
+        params: paginationParams
+          ? { ...params, ...paginationParams }
+          : baseParams,
+      });
+    },
     enabled: condition && enabled,
     select: (data) => data?.data,
+    // CallLogsGrid owns a concise retry/empty state. Never let a failed
+    // ClickHouse-backed list request reach the global raw-error snackbar.
+    meta: { errorHandled: true },
+    retry: (failureCount, queryError) =>
+      !isListCursorContinuationLimitError(queryError) && failureCount < 1,
   });
   return { queryKey, data, isLoading, error };
 };
 
 export const prefetchCallLogs = (
   queryClient,
-  { module, id, version, page, pageLimit, params },
+  {
+    module,
+    id,
+    version,
+    page,
+    pageLimit,
+    params,
+    paginationParams,
+    paginationRevision = 0,
+    cursorPagination,
+    paginationGeneration,
+  },
 ) => {
   const isProjectModule = module === "project";
   const condition = isProjectModule ? !!id : !!id && !!version;
@@ -878,14 +961,71 @@ export const prefetchCallLogs = (
     ? endpoints.project.getCallLogs
     : endpoints.agentDefinitions.getCallLogs(id, version);
   const queryKey = isProjectModule
-    ? ["callLogs", module, id, pageLimit, params, page]
+    ? ["callLogs", module, id, pageLimit, params, page, paginationRevision]
     : ["callLogs", module, id, version, pageLimit, params, page];
   queryClient.prefetchQuery({
     queryKey,
-    queryFn: () =>
-      axios.get(endpoint, {
-        params: { page, page_size: pageLimit, ...params },
-      }),
+    queryFn: async () => {
+      const baseParams = { page, page_size: pageLimit, ...params };
+      if (isProjectModule && cursorPagination) {
+        const exactPage = await loadExactListPage({
+          pagination: cursorPagination,
+          pageNumber: page - 1,
+          targetRowCount: pageLimit,
+          loadResponse: () =>
+            axios.get(endpoint, {
+              params: paginationParams
+                ? { ...params, ...paginationParams }
+                : baseParams,
+            }),
+          nextResponse: (cursor) =>
+            axios.get(endpoint, {
+              params: listContinuationParams(baseParams, cursor),
+            }),
+          rowsFromResponse: (response) => {
+            const result = response?.data?.result || response?.data || {};
+            return result.results || result.data || result.calls || [];
+          },
+          metadataFromResponse: (response) =>
+            response?.data?.result || response?.data || {},
+          rowIdentity: (row) =>
+            row?.call_id || row?.id || row?.trace_id || null,
+          isCurrent: () => cursorPagination.isCurrent(paginationGeneration),
+        });
+        const rawResponse = exactPage.response || {};
+        const payload = rawResponse.data || {};
+        const result = payload.result || payload;
+        const exactMetadata = {
+          pending: exactPage.pending,
+          stale: exactPage.stale,
+          isLastPage: exactPage.isLastPage,
+          canPrefetch: exactPage.canPrefetch,
+        };
+        const mergedResult = {
+          ...result,
+          results: exactPage.rows,
+          __exactPage: exactMetadata,
+        };
+        return {
+          ...rawResponse,
+          data: payload.result
+            ? {
+                ...payload,
+                ...mergedResult,
+                result: mergedResult,
+              }
+            : mergedResult,
+        };
+      }
+      return axios.get(endpoint, {
+        params: paginationParams
+          ? { ...params, ...paginationParams }
+          : baseParams,
+      });
+    },
+    // A speculative next-page failure must stay silent; the foreground read
+    // renders the normal retry state if the user advances to that page.
+    meta: { errorHandled: true },
   });
 };
 

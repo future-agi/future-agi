@@ -83,6 +83,11 @@ const TYPE_COLORS = {
     icon: "mdi:shield-check-outline",
     label: "Guardrail",
   },
+  aggregate: {
+    text: "#71717a",
+    icon: "mdi:dots-horizontal-circle-outline",
+    label: "Aggregate",
+  },
   unknown: {
     text: "#6b7280",
     icon: "mdi:help-circle-outline",
@@ -591,16 +596,25 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
 
   const nodeIdSet = new Set(graphData.nodes.map((n) => n.id));
 
+  // Agent Graph renders the recorded parent_span_id topology. Agent Path is
+  // the separate chronological projection and consumes `path_edges` itself.
+  // Using path_edges here invents parent/child relationships between adjacent
+  // sibling starts and can turn an otherwise acyclic span tree into a cycle.
+  const graphEdges = graphData.edges ?? [];
+
   const flowNodes = graphData.nodes.map((node) => ({
     id: node.id,
     type: "agentNode",
     data: {
       ...node,
-      span_count: node.spanCount ?? 0,
-      avg_latency_ms: node.avgLatencyMs ?? 0,
-      total_tokens: node.totalTokens ?? 0,
-      total_cost: node.totalCost ?? 0,
-      error_count: node.errorCount ?? 0,
+      // Aggregate API payloads are canonical snake_case. Trace-detail graphs
+      // are built in the browser and remain camelCase. Normalise both without
+      // allowing a missing camelCase alias to overwrite an exact API value.
+      span_count: node.span_count ?? node.spanCount ?? 0,
+      avg_latency_ms: node.avg_latency_ms ?? node.avgLatencyMs ?? 0,
+      total_tokens: node.total_tokens ?? node.totalTokens ?? 0,
+      total_cost: node.total_cost ?? node.totalCost ?? 0,
+      error_count: node.error_count ?? node.errorCount ?? 0,
       _direction: direction,
     },
     position: { x: 0, y: 0 },
@@ -610,13 +624,15 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
   // Find max transition count for scaling edge thickness
   const maxTransitions = Math.max(
     1,
-    ...graphData.edges.map((e) => e.transition_count || 1),
+    ...graphEdges.map(
+      (edge) => edge.transition_count ?? edge.transitionCount ?? 1,
+    ),
   );
 
-  const flowEdges = graphData.edges
+  const flowEdges = graphEdges
     .filter((edge) => nodeIdSet.has(edge.source) && nodeIdSet.has(edge.target))
     .map((edge, idx) => {
-      const count = edge.transition_count || 1;
+      const count = edge.transition_count ?? edge.transitionCount ?? 1;
       // Scale thickness: 0.75px min, 2px max — subtle, not overpowering
       const thickness = 0.75 + (count / maxTransitions) * 1.25;
 
@@ -665,7 +681,7 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
         source: edge.source,
         target: edge.target,
         type: "default",
-        animated: edge.is_self_loop || false,
+        animated: edge.is_self_loop ?? edge.isSelfLoop ?? false,
         markerEnd: {
           type: MarkerType.ArrowClosed,
           color: edgeColor,
@@ -815,7 +831,7 @@ const AgentGraphInner = ({
         }}
       >
         <Typography variant="body2" sx={{ fontSize: 13 }}>
-          Failed to load agent graph
+          We couldn&apos;t load the agent graph. Please retry in a moment.
         </Typography>
       </Box>
     );

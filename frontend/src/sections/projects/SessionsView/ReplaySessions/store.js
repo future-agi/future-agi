@@ -88,6 +88,8 @@ export const useSessionsGridStore = create((set, get, store) => ({
   setSelectAll: (value) => set(() => ({ selectAll: value })),
   // keeps track of the total row count of the sessions grid
   totalRowCount: 0,
+  totalRowCountLowerBound: null,
+  totalRowCountIsLowerBound: false,
   setTotalRowCount: (value) => set(() => ({ totalRowCount: value })),
   // reset the store to its initial state
   reset: () => {

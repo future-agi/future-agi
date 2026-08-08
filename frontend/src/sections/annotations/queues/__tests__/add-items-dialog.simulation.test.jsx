@@ -8,7 +8,14 @@ import {
   buildSimulationSelectorColumnDefs,
   buildSimulationSelectorFilterFields,
   DatasetRowSelector,
+  ExactSelectorReadFailureNotice,
+  getSelectorPageTotalState,
+  getSelectorSelectAllTotalState,
+  getSelectorStatusState,
+  getVoiceSelectorTotalState,
+  retryExactSelectorRead,
   SelectionCheckboxNudge,
+  shouldShowSelectorSelectAll,
 } from "../items/add-items-dialog";
 import {
   buildSessionSelectAllMeta,
@@ -430,6 +437,183 @@ describe("Session add-items filters", () => {
         },
       }),
     ).toBe("backend-session");
+  });
+});
+
+describe("Add-items selector total semantics", () => {
+  it("keeps paginated totals explicitly lower-bound while more data exists", () => {
+    const pageTotalState = getSelectorPageTotalState(
+      {
+        total_rows: 20,
+        total_rows_is_lower_bound: true,
+        has_more: true,
+      },
+      20,
+    );
+
+    expect(pageTotalState).toEqual({
+      totalRowCount: null,
+      totalRowCountLowerBound: 20,
+      totalRowCountIsLowerBound: true,
+      selectorHasMore: true,
+    });
+
+    const selectAllTotalState = getSelectorSelectAllTotalState(
+      pageTotalState,
+      20,
+    );
+    expect(selectAllTotalState).toEqual({
+      totalCount: 20,
+      totalCountIsLowerBound: true,
+      hasMore: true,
+    });
+    expect(
+      shouldShowSelectorSelectAll({
+        ...selectAllTotalState,
+        visibleCount: 20,
+      }),
+    ).toBe(true);
+  });
+
+  it("uses an exact terminal total without retaining lower-bound state", () => {
+    const pageTotalState = getSelectorPageTotalState(
+      {
+        total_rows: 37,
+        total_rows_is_lower_bound: false,
+        has_more: false,
+      },
+      20,
+    );
+
+    expect(pageTotalState).toEqual({
+      totalRowCount: 37,
+      totalRowCountLowerBound: null,
+      totalRowCountIsLowerBound: false,
+      selectorHasMore: false,
+    });
+
+    const selectAllTotalState = getSelectorSelectAllTotalState(
+      pageTotalState,
+      20,
+    );
+    expect(selectAllTotalState).toEqual({
+      totalCount: 37,
+      totalCountIsLowerBound: false,
+      hasMore: false,
+    });
+    expect(
+      shouldShowSelectorSelectAll({
+        ...selectAllTotalState,
+        visibleCount: 20,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowSelectorSelectAll({
+        ...selectAllTotalState,
+        totalCount: 20,
+        visibleCount: 20,
+      }),
+    ).toBe(false);
+  });
+
+  it("uses the backend voice total instead of multiplying full pages", () => {
+    expect(
+      getVoiceSelectorTotalState({
+        currentPageSize: 25,
+        totalPages: 2,
+        pageLimit: 25,
+        totalMatching: 36,
+        totalMatchingIsLowerBound: false,
+      }),
+    ).toEqual({
+      totalCount: 36,
+      totalCountIsLowerBound: false,
+      hasMore: true,
+    });
+  });
+
+  it("preserves voice lower-bound totals and marks missing totals as provisional", () => {
+    expect(
+      getVoiceSelectorTotalState({
+        currentPageSize: 25,
+        totalPages: 2,
+        pageLimit: 25,
+        totalMatching: 25,
+        totalMatchingIsLowerBound: true,
+      }),
+    ).toEqual({
+      totalCount: 25,
+      totalCountIsLowerBound: true,
+      hasMore: true,
+    });
+    expect(
+      getVoiceSelectorTotalState({
+        currentPageSize: 25,
+        totalPages: 2,
+        pageLimit: 25,
+      }),
+    ).toEqual({
+      totalCount: 50,
+      totalCountIsLowerBound: true,
+      hasMore: true,
+    });
+  });
+
+  it("does not label a nonterminal lower bound as an exact total", () => {
+    expect(
+      getSelectorStatusState({
+        context: {
+          totalRowCount: null,
+          totalRowCountLowerBound: 125,
+          totalRowCountIsLowerBound: true,
+        },
+        displayedRowCount: 20,
+        lastDisplayedRowIndex: 19,
+      }),
+    ).toEqual({
+      loadedRows: 20,
+      totalRows: 125,
+      totalRowsIsLowerBound: true,
+    });
+
+    expect(
+      getSelectorStatusState({
+        context: {
+          totalRowCount: 37,
+          totalRowCountIsLowerBound: false,
+        },
+        displayedRowCount: 20,
+        lastDisplayedRowIndex: 19,
+      }),
+    ).toEqual({
+      loadedRows: 20,
+      totalRows: 37,
+      totalRowsIsLowerBound: false,
+    });
+  });
+});
+
+describe("Exact selector cold-read recovery", () => {
+  it("renders a sanitized retry action", async () => {
+    const onRetry = vi.fn();
+    render(<ExactSelectorReadFailureNotice failed onRetry={onRetry} />);
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Rows are temporarily unavailable.",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+
+  it("retries failed blocks and falls back to an in-place refresh", () => {
+    const retryServerSideLoads = vi.fn();
+    const refreshServerSide = vi.fn();
+    retryExactSelectorRead({ retryServerSideLoads, refreshServerSide });
+    expect(retryServerSideLoads).toHaveBeenCalledOnce();
+    expect(refreshServerSide).not.toHaveBeenCalled();
+
+    retryExactSelectorRead({ refreshServerSide });
+    expect(refreshServerSide).toHaveBeenCalledWith({ purge: false });
   });
 });
 

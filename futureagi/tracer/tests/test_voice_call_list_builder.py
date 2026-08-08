@@ -10,9 +10,10 @@ The builder builds SQL STRINGS only — nothing here touches ClickHouse.
 """
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
+from django.test import override_settings
 
 from tracer.services.clickhouse.query_builders.voice_call_list import (
     VAPI_PHONE_NUMBERS,
@@ -25,6 +26,37 @@ PROJECT_ID = "proj-123"
 def _squash(sql: str) -> str:
     """Collapse whitespace so multi-line SQL substrings match reliably."""
     return re.sub(r"\s+", " ", sql).strip()
+
+
+def _voice_multi_filters(end: datetime) -> list[dict]:
+    return [
+        {
+            "column_id": "created_at",
+            "filter_config": {
+                "filter_type": "datetime",
+                "filter_op": "between",
+                "filter_value": [end - timedelta(days=365), end],
+            },
+        },
+        {
+            "column_id": "call.total_turns",
+            "filter_config": {
+                "filter_type": "number",
+                "filter_op": "equals",
+                "filter_value": 2,
+                "col_type": "SPAN_ATTRIBUTE",
+            },
+        },
+        {
+            "column_id": "conversation.transcript.16.message.role",
+            "filter_config": {
+                "filter_type": "text",
+                "filter_op": "in",
+                "filter_value": ["assistant"],
+                "col_type": "SPAN_ATTRIBUTE",
+            },
+        },
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +149,6 @@ def test_build_sets_time_window_params():
     s = _squash(sql)
     assert "start_time >= %(start_date)s" in s
     assert "start_time < %(end_date)s" in s
-    # created_at pre-window widens partition pruning by one day.
     assert "created_at >= %(start_date)s - INTERVAL 1 DAY" in s
     assert params["start_date"] is not None
     assert params["end_date"] is not None
@@ -154,9 +185,7 @@ def test_simulation_filter_sql_is_noop():
 @pytest.mark.unit
 def test_build_does_not_embed_phone_numbers_in_sql():
     """Phone numbers live in the heavy JSON blob; must not leak into SQL."""
-    qb = VoiceCallListQueryBuilder(
-        project_id=PROJECT_ID, remove_simulation_calls=True
-    )
+    qb = VoiceCallListQueryBuilder(project_id=PROJECT_ID, remove_simulation_calls=True)
     sql, _ = qb.build()
     for phone in VAPI_PHONE_NUMBERS:
         assert phone not in sql
@@ -218,6 +247,415 @@ def test_count_query_respects_project_scope():
     qb.build()
     _, params = qb.build_count_query()
     assert params["project_id"] == PROJECT_ID
+
+
+@pytest.mark.unit
+def test_v2_voice_normal_list_count_and_id_use_start_time_only():
+    from tracer.services.clickhouse.v2.query_builders.voice_call_list import (
+        VoiceCallListQueryBuilderV2,
+    )
+
+    qb = VoiceCallListQueryBuilderV2(project_id=PROJECT_ID)
+    for method_name in ("build", "build_count_query", "build_id_query"):
+        sql, _ = getattr(qb, method_name)()
+        s = _squash(sql)
+        assert "start_time >= %(start_date)s" in s
+        assert "start_time < %(end_date)s" in s
+        assert "created_at >= %(start_date)s" not in s
+
+
+@pytest.mark.unit
+def test_interactive_voice_multi_filter_classifies_identity_then_hydrates_page():
+    """The call grid must not aggregate presentation columns for every candidate."""
+    from tracer.services.clickhouse.v2.query_builders.voice_call_list import (
+        VoiceCallListQueryBuilderV2,
+    )
+
+    end = datetime(2026, 8, 8, tzinfo=UTC)
+    builder = VoiceCallListQueryBuilderV2(
+        project_id=PROJECT_ID,
+        page_size=25,
+        filters=_voice_multi_filters(end),
+    )
+    seed_rows = [
+        {
+            "project_id": PROJECT_ID,
+            "trace_id": "trace-1",
+            "root_span_id": "root-1",
+            "start_time": end - timedelta(minutes=1),
+        }
+    ]
+
+    identity_sql, identity_params = (
+        builder.build_filter_identity_match_query_from_seed_rows(seed_rows)
+    )
+    hydration_sql, hydration_params = builder.build_filter_page_hydration_query(
+        seed_rows
+    )
+
+    assert builder.use_identity_only_filter_classification() is True
+    assert builder.recommended_filter_seed_batch_size() == 200
+    assert "SELECT trace_id, canonical_root_identity.1 AS root_span_id" in identity_sql
+    assert "latest_trace_name AS trace_name" not in identity_sql
+    assert "latest_attr_exists_0" in identity_sql
+    assert "latest_attr_exists_1" in identity_sql
+    assert identity_params["latest_filter_key_0"] == "call.total_turns"
+    assert identity_params["latest_filter_param_0"] == 2
+    assert (
+        identity_params["latest_filter_key_1"]
+        == "conversation.transcript.16.message.role"
+    )
+    assert identity_params["latest_filter_param_1"] == ("assistant",)
+    assert "latest_trace_name AS trace_name" in hydration_sql
+    expected_start_us = int(seed_rows[0]["start_time"].timestamp() * 1_000_000)
+    assert hydration_params["page_hydration_root_identities"] == (
+        (PROJECT_ID, "trace-1", "root-1", expected_start_us),
+    )
+    assert identity_sql.count("SETTINGS ") == 1
+    assert hydration_sql.count("SETTINGS ") == 1
+
+
+@pytest.mark.unit
+def test_voice_multi_filter_exact_zero_probe_intersects_independent_span_witnesses():
+    from tracer.services.clickhouse.v2.query_builders.voice_call_list import (
+        VoiceCallListQueryBuilderV2,
+    )
+
+    end = datetime(2026, 8, 8, tzinfo=UTC)
+    builder = VoiceCallListQueryBuilderV2(
+        project_id=PROJECT_ID,
+        page_size=25,
+        filters=_voice_multi_filters(end),
+    )
+
+    sql, params = builder.build_filter_exact_zero_probe()
+    squashed = _squash(sql)
+
+    assert builder.supports_filter_exact_zero_probe() is True
+    assert squashed.count("UNION ALL") == 2
+    assert "GROUP BY trace_id HAVING countIf(witness_kind = 0) > 0" in squashed
+    assert "AND countIf(witness_kind = 1) > 0" in squashed
+    assert "AND countIf(witness_kind = 2) > 0 LIMIT 1" in squashed
+    # Each leaf is selected in its own branch. Requiring both predicates in one
+    # physical-span WHERE would violate trace any-span semantics.
+    root_branch, first_leaf_branch, second_leaf_branch = sql.split("UNION ALL")
+    assert "parent_span_id IS NULL" in root_branch
+    assert "%(latest_filter_key_0)s" in first_leaf_branch
+    assert "%(latest_filter_key_1)s" not in first_leaf_branch
+    assert "%(latest_filter_key_1)s" in second_leaf_branch
+    assert "%(latest_filter_key_0)s" not in second_leaf_branch
+    assert params["latest_filter_key_0"] == "call.total_turns"
+    assert params["latest_filter_param_0"] == 2
+    assert params["latest_filter_key_1"] == "conversation.transcript.16.message.role"
+    assert params["latest_filter_param_1"] == ("assistant",)
+    assert "attrs_number" in sql
+    assert "attrs_string" in sql
+    assert "span_attr_num" not in sql
+    assert "span_attr_str" not in sql
+    assert sql.count("SETTINGS ") == 1
+
+
+@pytest.mark.unit
+def test_voice_exact_zero_probe_rejects_single_or_structured_filter_shapes():
+    end = datetime(2026, 8, 8, tzinfo=UTC)
+    single_filter = VoiceCallListQueryBuilder(
+        project_id=PROJECT_ID,
+        filters=_voice_multi_filters(end)[:2],
+    )
+    structured_filter = VoiceCallListQueryBuilder(
+        project_id=PROJECT_ID,
+        filters=[
+            *_voice_multi_filters(end)[:2],
+            {
+                "column_id": "metadata",
+                "filter_config": {
+                    "filter_type": "map",
+                    "filter_op": "contains",
+                    "filter_value": {"source": "assistant"},
+                    "col_type": "SPAN_ATTRIBUTE",
+                },
+            },
+        ],
+    )
+
+    assert single_filter.supports_filter_exact_zero_probe() is False
+    assert structured_filter.supports_filter_exact_zero_probe() is False
+    assert structured_filter.recommended_filter_classify_batch_size() == 10
+
+
+@pytest.mark.unit
+def test_internal_voice_selection_retains_unhydrated_membership_projection():
+    builder = VoiceCallListQueryBuilder(
+        project_id=PROJECT_ID,
+        page_size=10_001,
+        bounded_internal_scan=True,
+        bounded_identity_only=True,
+    )
+
+    assert builder.use_identity_only_filter_classification() is False
+
+
+@pytest.mark.unit
+def test_voice_only_constraints_are_preserved_on_identity_classifier():
+    builder = VoiceCallListQueryBuilder(
+        project_id=PROJECT_ID,
+        page_size=25,
+        remove_simulation_calls=True,
+        bounded_sampling_salt="task-1",
+        bounded_sampling_rate=50,
+    )
+
+    sql, params = builder.build_filter_identity_match_query_from_seed_rows(
+        [
+            {
+                "project_id": PROJECT_ID,
+                "trace_id": "trace-1",
+                "root_span_id": "root-1",
+                "start_time": datetime(2026, 8, 8),
+            }
+        ]
+    )
+
+    assert "simulator_phone_numbers" in sql
+    assert "cityHash64" in sql
+    assert params["simulator_phone_numbers"] == tuple(VAPI_PHONE_NUMBERS)
+    assert params["bounded_sampling_salt"] == "task-1"
+    assert params["bounded_sampling_rate"] == 50
+
+
+@pytest.mark.unit
+def test_voice_bounded_reader_uses_identity_classification_before_page_hydration():
+    from tracer.selectors.trace_filter_reads import read_bounded_filter_page
+    from tracer.services.clickhouse.query_service import QueryResult
+    from tracer.services.clickhouse.v2.query_builders.voice_call_list import (
+        VoiceCallListQueryBuilderV2,
+    )
+
+    end = datetime(2026, 8, 8)
+    filters = _voice_multi_filters(end)
+    filters[0]["filter_config"]["filter_value"] = [
+        end - timedelta(minutes=5),
+        end,
+    ]
+    candidates = [
+        {
+            "project_id": PROJECT_ID,
+            "trace_id": f"trace-{index:02d}",
+            "root_span_id": f"root-{index:02d}",
+            "start_time": end - timedelta(seconds=index + 1),
+        }
+        for index in range(26)
+    ]
+    hydrated = [
+        {
+            **row,
+            "trace_name": f"call-{index:02d}",
+            "provider": "vapi",
+        }
+        for index, row in enumerate(candidates[:25])
+    ]
+
+    class Executor:
+        supports_per_query_read_settings = True
+
+        def __init__(self):
+            self.calls = []
+            # A non-empty raw intersection is inconclusive and must fall back
+            # to seed -> exact latest-state classify -> page hydration.
+            self.results = [
+                [{"trace_id": "raw-witness"}],
+                candidates,
+                candidates[:10],
+                candidates[10:20],
+                candidates[20:],
+                hydrated,
+            ]
+
+        def execute_ch_query(self, query, params, **kwargs):
+            self.calls.append((query, params, kwargs))
+            rows = self.results.pop(0)
+            return QueryResult(
+                data=rows,
+                row_count=len(rows),
+                backend_used="clickhouse",
+                query_time_ms=1,
+            )
+
+    executor = Executor()
+    page = read_bounded_filter_page(
+        builder=VoiceCallListQueryBuilderV2(
+            project_id=PROJECT_ID,
+            page_size=25,
+            filters=filters,
+        ),
+        analytics=executor,
+        filters=filters,
+        key_field="trace_id",
+        page_number=0,
+        page_size=25,
+        deadline_ms=5_000,
+    )
+
+    assert page.complete is True
+    assert [row["trace_id"] for row in page.rows] == [
+        row["trace_id"] for row in hydrated
+    ]
+    assert [attempt.kind for attempt in page.attempts] == [
+        "zero_probe",
+        "seed",
+        "classify",
+        "classify",
+        "classify",
+        "hydrate",
+    ]
+    assert "latest_trace_name AS trace_name" not in executor.calls[2][0]
+    assert executor.calls[2][1]["latest_filter_key_0"] == "call.total_turns"
+    assert executor.calls[2][1]["latest_filter_param_0"] == 2
+    assert (
+        executor.calls[2][1]["latest_filter_key_1"]
+        == "conversation.transcript.16.message.role"
+    )
+    assert executor.calls[2][1]["latest_filter_param_1"] == ("assistant",)
+    assert "latest_trace_name AS trace_name" in executor.calls[5][0]
+
+
+@pytest.mark.unit
+def test_voice_exact_zero_probe_returns_terminal_empty_without_seed_scan():
+    from tracer.selectors.trace_filter_reads import read_bounded_filter_page
+    from tracer.services.clickhouse.query_service import QueryResult
+    from tracer.services.clickhouse.v2.query_builders.voice_call_list import (
+        VoiceCallListQueryBuilderV2,
+    )
+
+    end = datetime(2026, 8, 8)
+    filters = _voice_multi_filters(end)
+
+    class Executor:
+        supports_per_query_read_settings = True
+
+        def __init__(self):
+            self.calls = []
+
+        def execute_ch_query(self, query, params, **kwargs):
+            self.calls.append((query, params, kwargs))
+            return QueryResult(
+                data=[],
+                row_count=0,
+                backend_used="clickhouse",
+                query_time_ms=950,
+            )
+
+    executor = Executor()
+    page = read_bounded_filter_page(
+        builder=VoiceCallListQueryBuilderV2(
+            project_id=PROJECT_ID,
+            page_size=25,
+            filters=filters,
+        ),
+        analytics=executor,
+        filters=filters,
+        key_field="trace_id",
+        page_number=0,
+        page_size=25,
+        deadline_ms=5_000,
+    )
+
+    assert page.complete is True
+    assert page.status == "complete"
+    assert page.error_code is None
+    assert page.rows == []
+    assert page.has_more is False
+    assert page.total_rows_lower_bound == 0
+    assert [attempt.kind for attempt in page.attempts] == ["zero_probe"]
+    assert len(executor.calls) == 1
+    assert executor.calls[0][2]["timeout_ms"] == 1_500
+    assert executor.calls[0][2]["settings"]["max_bytes_to_read"] == 256 * 1024 * 1024
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "probe_error",
+    [
+        TimeoutError("optional probe timed out"),
+        pytest.param("read_budget", id="read-budget-cap"),
+    ],
+)
+def test_voice_exact_zero_probe_failure_preserves_normal_exact_scan(probe_error):
+    from tracer.selectors.trace_filter_reads import read_bounded_filter_page
+    from tracer.services.clickhouse.query_service import QueryResult
+    from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
+    from tracer.services.clickhouse.v2.query_builders.voice_call_list import (
+        VoiceCallListQueryBuilderV2,
+    )
+
+    if probe_error == "read_budget":
+        probe_error = ReadDeadlineExceeded("bounded probe cap")
+    end = datetime(2026, 8, 8)
+    filters = _voice_multi_filters(end)
+    candidates = [
+        {
+            "project_id": PROJECT_ID,
+            "trace_id": f"trace-{index:02d}",
+            "root_span_id": f"root-{index:02d}",
+            "start_time": end - timedelta(seconds=index + 1),
+        }
+        for index in range(26)
+    ]
+    hydrated = [{**row, "trace_name": "call"} for row in candidates[:25]]
+
+    class Executor:
+        supports_per_query_read_settings = True
+
+        def __init__(self):
+            self.calls = 0
+            self.results = [
+                candidates,
+                candidates[:10],
+                candidates[10:20],
+                candidates[20:],
+                hydrated,
+            ]
+
+        def execute_ch_query(self, query, params, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise probe_error
+            rows = self.results.pop(0)
+            return QueryResult(
+                data=rows,
+                row_count=len(rows),
+                backend_used="clickhouse",
+                query_time_ms=1,
+            )
+
+    page = read_bounded_filter_page(
+        builder=VoiceCallListQueryBuilderV2(
+            project_id=PROJECT_ID,
+            page_size=25,
+            filters=filters,
+        ),
+        analytics=Executor(),
+        filters=filters,
+        key_field="trace_id",
+        page_number=0,
+        page_size=25,
+        deadline_ms=5_000,
+    )
+
+    assert page.complete is True
+    assert len(page.rows) == 25
+    assert [attempt.kind for attempt in page.attempts] == [
+        "zero_probe",
+        "seed",
+        "classify",
+        "classify",
+        "classify",
+        "hydrate",
+    ]
+    assert page.attempts[0].error_code in {
+        "prefilter_unavailable",
+        "read_budget_exceeded",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +725,9 @@ def test_content_query_fetches_heavy_columns():
     s = _squash(sql)
     assert "span_attributes_raw" in s
     assert "PREWHERE id IN %(content_span_ids)s" in s
-    assert "project_id = %(project_id)s AND is_deleted = 0" in s
+    assert "project_id = %(project_id)s" in s
+    assert "argMax(_peerdb_is_deleted, _peerdb_version)" in s
+    assert "WHERE latest_is_deleted = 0" in s
     assert params["content_span_ids"] == ("s1", "s2")
 
 
@@ -299,6 +739,21 @@ def test_content_query_empty_span_ids_returns_empty():
     assert params == {}
 
 
+@pytest.mark.unit
+def test_v2_content_query_uses_valid_latest_json_aggregate():
+    from tracer.services.clickhouse.v2.query_builders.voice_call_list import (
+        VoiceCallListQueryBuilderV2,
+    )
+
+    sql, _ = VoiceCallListQueryBuilderV2(project_id=PROJECT_ID).build_content_query(
+        ["s1"]
+    )
+
+    assert "argMax(tuple(attributes_extra), _version).1" in sql
+    assert "attributes_extra AS span_attributes_raw" not in sql
+    assert "tuple(attributes_extra AS" not in sql
+
+
 # ---------------------------------------------------------------------------
 # build_eval_query — Phase 2 eval scores (NOT rewritten by v2)
 # ---------------------------------------------------------------------------
@@ -306,12 +761,10 @@ def test_content_query_empty_span_ids_returns_empty():
 
 @pytest.mark.unit
 def test_eval_query_groups_by_trace_and_config():
-    qb = VoiceCallListQueryBuilder(
-        project_id=PROJECT_ID, eval_config_ids=["c1", "c2"]
-    )
+    qb = VoiceCallListQueryBuilder(project_id=PROJECT_ID, eval_config_ids=["c1", "c2"])
     sql, params = qb.build_eval_query(["t1", "t2"])
     s = _squash(sql)
-    assert "GROUP BY trace_id, custom_eval_config_id" in s
+    assert "GROUP BY latest_trace_id, latest_eval_config_id" in s
     assert params["trace_ids"] == ("t1", "t2")
     assert params["eval_config_ids"] == ("c1", "c2")
 
@@ -323,24 +776,25 @@ def test_eval_query_averages_across_all_spans():
     qb = VoiceCallListQueryBuilder(project_id=PROJECT_ID, eval_config_ids=["c1"])
     sql, _ = qb.build_eval_query(["t1"])
     s = _squash(sql)
-    assert "avgIf(" in s
-    assert "groupArrayIf(" in s
+    assert "avgIf(" in s and "latest_output_float" in s
+    assert "groupArrayIf(" in s and "latest_output_str_list" in s
     assert "output_str_list" in s
     assert "pass_rate" in s
     assert "avg_score" in s
 
 
 @pytest.mark.unit
-def test_eval_query_keeps_both_delete_predicates():
-    """Voice build_eval_query is in the v2 rewrite-exclude set, so it keeps the
-    legacy `_peerdb_is_deleted = 0` guard AND the `(deleted = 0 OR deleted IS
-    NULL)` clause — the exact predicate must not be dropped/renamed."""
+@override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger")
+def test_eval_query_replays_legacy_latest_state_without_final():
+    """Legacy CDC versions/tombstones are collapsed only for page candidates."""
     qb = VoiceCallListQueryBuilder(project_id=PROJECT_ID, eval_config_ids=["c1"])
     sql, _ = qb.build_eval_query(["t1"])
     s = _squash(sql)
-    assert "_peerdb_is_deleted = 0" in s
-    assert "(deleted = 0 OR deleted IS NULL)" in s
-    assert "FROM tracer_eval_logger FINAL" in s
+    assert "FROM tracer_eval_logger PREWHERE trace_id IN" in s
+    assert "argMax(_peerdb_is_deleted, _peerdb_version)" in s
+    assert "coalesce(argMax(deleted, _peerdb_version), 0)" in s
+    assert "WHERE latest_is_deleted = 0" in s
+    assert "FINAL" not in s
 
 
 @pytest.mark.unit
@@ -348,8 +802,21 @@ def test_eval_query_excludes_non_terminal_and_errored_rows():
     qb = VoiceCallListQueryBuilder(project_id=PROJECT_ID, eval_config_ids=["c1"])
     sql, _ = qb.build_eval_query(["t1"])
     s = _squash(sql)
-    assert "status NOT IN ('pending', 'running', 'skipped', 'errored')" in s
-    assert "error = 0" in s
+    assert "latest_status NOT IN ('pending', 'running', 'skipped', 'errored')" in s
+    assert "latest_error = 0" in s
+
+
+@pytest.mark.unit
+@override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2")
+def test_eval_query_uses_direct_write_v2_latest_state_shape():
+    qb = VoiceCallListQueryBuilder(project_id=PROJECT_ID, eval_config_ids=["c1"])
+    sql, _ = qb.build_eval_query(["t1"])
+    s = _squash(sql)
+    assert "FROM tracer_eval_logger_v2 PREWHERE" in s
+    assert "argMax(is_deleted, _version) AS latest_is_deleted" in s
+    assert "'completed' AS latest_status" in s
+    assert "_peerdb" not in s
+    assert "FINAL" not in s
 
 
 @pytest.mark.unit
@@ -474,10 +941,10 @@ def test_build_embeds_frontend_filter_fragment():
     # Filter param value bound (not inlined literal in the ORDER BY tail).
     assert any(v == "error" for v in params.values())
     # status is a case-insensitive system-metric column: the compiled filter
-    # emits a trace_id subquery comparing lower(status). That fragment (which
+    # emits a trace_id subquery comparing lowerUTF8(toString(status)). That fragment (which
     # only the filter builder produces) must be spliced in before ORDER BY.
-    assert "lower(status) =" in s
-    assert s.index("lower(status) =") < s.index("ORDER BY")
+    assert "lowerUTF8(toString(status)) =" in s
+    assert s.index("lowerUTF8(toString(status)) =") < s.index("ORDER BY")
 
 
 @pytest.mark.unit
@@ -517,3 +984,27 @@ def test_time_range_filter_narrows_window_params():
     _, params = qb.build()
     assert params["start_date"].year == 2026 and params["start_date"].month == 1
     assert params["end_date"].day == 31
+
+
+@pytest.mark.unit
+def test_v2_voice_builder_uses_direct_write_query_service(monkeypatch):
+    from tracer.services.clickhouse.query_service import AnalyticsQueryService
+    from tracer.services.clickhouse.v2 import query_service as query_service_module
+    from tracer.services.clickhouse.v2.query_builders.voice_call_list import (
+        VoiceCallListQueryBuilderV2,
+    )
+
+    fallback = object.__new__(AnalyticsQueryService)
+    direct_write_service = object()
+    monkeypatch.setattr(
+        query_service_module,
+        "V2AnalyticsQueryService",
+        lambda: direct_write_service,
+    )
+
+    assert (
+        query_service_module.query_service_for_builder(
+            "VOICE_CALL_LIST", VoiceCallListQueryBuilderV2, fallback
+        )
+        is direct_write_service
+    )

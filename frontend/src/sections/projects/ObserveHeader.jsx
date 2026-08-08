@@ -66,7 +66,9 @@ const ObserveHeader = ({
   const [openConfigDialog, setOpenConfigDialog] = useState(false);
   const queryClient = useQueryClient();
   const [openShareUrl, setOpenShareUrl] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState(() => new Date());
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [isAggregationRefreshing, setIsAggregationRefreshing] = useState(false);
+  const aggregationRefreshSourcesRef = useRef(new Set());
   const [autoRefresh, _setAutoRefresh] = useState(
     () => getStorage("autoRefresh") ?? false,
   );
@@ -115,8 +117,9 @@ const ObserveHeader = ({
     let intervalId;
     if (autoRefresh) {
       intervalId = setInterval(() => {
-        refreshData?.();
-        setLastUpdated(new Date());
+        // Auto-refresh is for row/list data only. Exact aggregations are
+        // refreshed solely by the explicit reload action below.
+        refreshData?.({ includeAggregations: false });
       }, 10000);
     }
     return () => {
@@ -125,6 +128,58 @@ const ObserveHeader = ({
       }
     };
   }, [autoRefresh, refreshData]);
+
+  useEffect(() => {
+    setLastUpdated(null);
+    aggregationRefreshSourcesRef.current.clear();
+    setIsAggregationRefreshing(false);
+  }, [currentPath, observeId]);
+
+  useEffect(() => {
+    const handleAggregationCompleted = (event) => {
+      if (String(event?.detail?.observeId || "") !== String(observeId || "")) {
+        return;
+      }
+      const raw = event?.detail?.queryCompletedAt;
+      const completedAt = raw ? new Date(raw) : null;
+      if (!completedAt || Number.isNaN(completedAt.getTime())) return;
+      setLastUpdated((current) =>
+        !current || completedAt > current ? completedAt : current,
+      );
+    };
+    window.addEventListener(
+      "observe-aggregation-completed",
+      handleAggregationCompleted,
+    );
+    return () =>
+      window.removeEventListener(
+        "observe-aggregation-completed",
+        handleAggregationCompleted,
+      );
+  }, [observeId]);
+
+  useEffect(() => {
+    const handleAggregationRefreshState = (event) => {
+      if (String(event?.detail?.observeId || "") !== String(observeId || "")) {
+        return;
+      }
+      const sourceId = event?.detail?.sourceId;
+      if (!sourceId) return;
+      const sources = aggregationRefreshSourcesRef.current;
+      if (event.detail.refreshing) sources.add(sourceId);
+      else sources.delete(sourceId);
+      setIsAggregationRefreshing(sources.size > 0);
+    };
+    window.addEventListener(
+      "observe-aggregation-refresh-state",
+      handleAggregationRefreshState,
+    );
+    return () =>
+      window.removeEventListener(
+        "observe-aggregation-refresh-state",
+        handleAggregationRefreshState,
+      );
+  }, [observeId]);
 
   const { data: projectList, isLoading: isLoadingProjects } = useProjectList();
 
@@ -459,43 +514,45 @@ const ObserveHeader = ({
         {/* ── Right: Last updated + Auto refresh + Action buttons ── */}
         <Box display="flex" alignItems="center" gap={1}>
           {/* Last updated timestamp */}
-          <Box
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              gap: 0.5,
-              opacity: 0.8,
-            }}
-          >
-            <Iconify
-              icon="mdi:clock-outline"
-              width={14}
-              sx={{ color: "text.secondary" }}
-            />
-            <Typography
+          {lastUpdated && (
+            <Box
               sx={{
-                fontSize: 12,
-                color: "text.secondary",
-                fontFamily: "'IBM Plex Sans', sans-serif",
-                whiteSpace: "nowrap",
+                display: "flex",
+                alignItems: "center",
+                gap: 0.5,
+                opacity: 0.8,
               }}
             >
-              Last updated on{" "}
-              {lastUpdated.toLocaleDateString("en-GB", {
-                day: "2-digit",
-                month: "2-digit",
-                year: "numeric",
-              })}
-              ,{" "}
-              {lastUpdated
-                .toLocaleTimeString("en-US", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  hour12: true,
-                })
-                .toLowerCase()}
-            </Typography>
-          </Box>
+              <Iconify
+                icon="mdi:clock-outline"
+                width={14}
+                sx={{ color: "text.secondary" }}
+              />
+              <Typography
+                sx={{
+                  fontSize: 12,
+                  color: "text.secondary",
+                  fontFamily: "'IBM Plex Sans', sans-serif",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Last updated on{" "}
+                {lastUpdated.toLocaleDateString("en-GB", {
+                  day: "2-digit",
+                  month: "2-digit",
+                  year: "numeric",
+                })}
+                ,{" "}
+                {lastUpdated
+                  .toLocaleTimeString("en-US", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    hour12: true,
+                  })
+                  .toLowerCase()}
+              </Typography>
+            </Box>
+          )}
 
           {/* Auto refresh toggle — bordered pill */}
           <CustomTooltip
@@ -568,50 +625,64 @@ const ObserveHeader = ({
             {/* Reload */}
             <CustomTooltip
               show
-              title="Reload data"
+              title={
+                isAggregationRefreshing ? "Refreshing data" : "Reload data"
+              }
               arrow
               size="small"
               type="black"
             >
               <ObserveIconButton
                 size="small"
+                aria-label={
+                  isAggregationRefreshing ? "Refreshing data" : "Reload data"
+                }
+                disabled={isAggregationRefreshing}
                 onClick={() => {
                   // Use refreshData from LLMTracingView if available
-                  refreshData?.();
-                  setLastUpdated(new Date());
-                  // Also invalidate React Query caches
-                  queryClient.invalidateQueries({
-                    queryKey: ["llm-tracing-graph"],
-                  });
+                  refreshData?.({ includeAggregations: false });
+                  // Keep row/project data fresh. Aggregations listen for the
+                  // explicit event below and send `refresh=true` themselves.
                   queryClient.invalidateQueries({
                     queryKey: ["observe-projects"],
                   });
                   // Dispatch a custom event that the grid can listen to
-                  window.dispatchEvent(new CustomEvent("observe-refresh"));
+                  window.dispatchEvent(
+                    new CustomEvent("observe-refresh", {
+                      detail: { observeId },
+                    }),
+                  );
                 }}
               >
-                <Iconify icon="mdi:refresh" width={16} />
+                {isAggregationRefreshing ? (
+                  <CircularProgress size={14} />
+                ) : (
+                  <Iconify icon="mdi:refresh" width={16} />
+                )}
               </ObserveIconButton>
             </CustomTooltip>
 
-            {/* Export/Download */}
-            <CustomTooltip
-              show
-              title={isExportData ? "Exporting..." : "Export CSV"}
-              arrow
-              size="small"
-              type="black"
-            >
-              <span>
-                <ObserveIconButton
-                  size="small"
-                  onClick={handleExportClick}
-                  disabled={isExportData}
-                >
-                  <Iconify icon="mdi:download-outline" width={16} />
-                </ObserveIconButton>
-              </span>
-            </CustomTooltip>
+            {/* Users export is hidden until it has an exact bounded preflight.
+                The previous streaming path could return a partial 200 CSV. */}
+            {text !== "Users" && (
+              <CustomTooltip
+                show
+                title={isExportData ? "Exporting..." : "Export CSV"}
+                arrow
+                size="small"
+                type="black"
+              >
+                <span>
+                  <ObserveIconButton
+                    size="small"
+                    onClick={handleExportClick}
+                    disabled={isExportData}
+                  >
+                    <Iconify icon="mdi:download-outline" width={16} />
+                  </ObserveIconButton>
+                </span>
+              </CustomTooltip>
+            )}
 
             {/* View Docs */}
             <CustomTooltip

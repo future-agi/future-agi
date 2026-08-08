@@ -31,13 +31,10 @@ import {
   getNewTaskFilters,
 } from "./schema";
 import TaskConfirmDialog from "src/sections/common/EvalsTasks/EditTaskDrawer/TaskConfirmBox";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 
 const getTaskDetailsErrorMessage = (error) =>
-  error?.result ||
-  error?.message ||
-  error?.response?.data?.result ||
-  error?.response?.data?.message ||
-  "Task details could not be loaded.";
+  getSafeActionErrorMessage(error, "Task details could not be loaded.");
 
 const TAB_OPTIONS = [
   { label: "Details", value: "details", icon: "solar:settings-linear" },
@@ -117,6 +114,7 @@ const TaskDetailPage = () => {
 
   // ── Mutations ──
   const { mutate: updateTask, isPending: isUpdating } = useMutation({
+    meta: { errorHandled: true },
     mutationFn: (data) =>
       axios.patch(endpoints.project.patchEvalTask(), {
         ...data,
@@ -128,9 +126,13 @@ const TaskDetailPage = () => {
       enqueueSnackbar("Task updated successfully", { variant: "success" });
     },
     onError: (err) => {
-      enqueueSnackbar(err?.response?.data?.result || "Failed to update task", {
-        variant: "error",
-      });
+      enqueueSnackbar(
+        getSafeActionErrorMessage(
+          err,
+          "Task could not be updated. Review the filters and try again.",
+        ),
+        { variant: "error" },
+      );
     },
   });
 

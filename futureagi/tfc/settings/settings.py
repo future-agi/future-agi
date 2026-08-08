@@ -350,6 +350,13 @@ CLICKHOUSE = {
     "CH_CONNECT_TIMEOUT": int(os.getenv("CH_CONNECT_TIMEOUT", "10")),
     "CH_SEND_TIMEOUT": int(os.getenv("CH_SEND_TIMEOUT", "300")),
     "CH_RECEIVE_TIMEOUT": int(os.getenv("CH_RECEIVE_TIMEOUT", "300")),
+    # Dedicated SOS/read-replica profiles may lock readonly=1 and every
+    # resource ceiling server-side. Such profiles reject per-query setting
+    # overrides, so the client must transmit none.
+    "CH_SERVER_ENFORCED_READONLY": os.getenv(
+        "CH_SERVER_ENFORCED_READONLY", "false"
+    ).lower()
+    in ("true", "1", "yes"),
 }
 
 # Password validation
@@ -839,19 +846,29 @@ WEBAUTHN_CHALLENGE_TTL = 120  # 2 minutes
 # to the legacy CLICKHOUSE dict above for connection details if not set
 # explicitly — see tracer/services/clickhouse/v2/__init__.py:get_v2_config().
 CLICKHOUSE_V2 = {
-    "CH25_HOST":      os.getenv("CH25_HOST"),
-    "CH25_HTTP_PORT": os.getenv("CH25_HTTP_PORT", "8123"),
-    "CH25_TCP_PORT":  os.getenv("CH25_TCP_PORT", "9000"),
-    "CH25_USER":      os.getenv("CH25_USER", "default"),
-    "CH25_PASSWORD":  os.getenv("CH25_PASSWORD", ""),
-    "CH25_DATABASE":  os.getenv("CH25_DATABASE", "default"),
+    "CH25_HOST": os.getenv("CH25_HOST"),
+    "CH25_HTTP_PORT": os.getenv("CH25_HTTP_PORT"),
+    "CH25_TCP_PORT": os.getenv("CH25_TCP_PORT"),
+    "CH25_USER": os.getenv("CH25_USER"),
+    "CH25_PASSWORD": os.getenv("CH25_PASSWORD"),
+    "CH25_DATABASE": os.getenv("CH25_DATABASE"),
+    # ``None`` means the v2-specific flag was not configured and lets
+    # ``get_v2_config`` inherit the legacy single-cluster setting.  A concrete
+    # False must be reserved for an explicit CH25 override; defaulting to False
+    # here silently disabled inheritance for server-locked read profiles.
+    "CH25_SERVER_ENFORCED_READONLY": (
+        None
+        if os.getenv("CH25_SERVER_ENFORCED_READONLY") is None
+        else os.getenv("CH25_SERVER_ENFORCED_READONLY", "").lower()
+        in ("true", "1", "yes")
+    ),
     # ─── Per-query-type routing for the shadow-mode rollout ──────────────────
     # Comma-separated query type names. See tracer/services/clickhouse/v2/shadow.py
     # for RoutingMode definitions. Anything not listed defaults to V1_ONLY.
     "QUERY_TYPES_V2_PRIMARY": os.getenv("CH25_QUERY_TYPES_V2_PRIMARY", ""),
-    "QUERY_TYPES_V2_ONLY":    os.getenv("CH25_QUERY_TYPES_V2_ONLY", ""),
-    "QUERY_TYPES_SHADOW":     os.getenv("CH25_QUERY_TYPES_SHADOW", ""),
-    "QUERY_TYPES_DISABLED":   os.getenv("CH25_QUERY_TYPES_DISABLED", ""),
+    "QUERY_TYPES_V2_ONLY": os.getenv("CH25_QUERY_TYPES_V2_ONLY", ""),
+    "QUERY_TYPES_SHADOW": os.getenv("CH25_QUERY_TYPES_SHADOW", ""),
+    "QUERY_TYPES_DISABLED": os.getenv("CH25_QUERY_TYPES_DISABLED", ""),
 }
 
 # Fail-closed: rollup routing requires both flag=on and window >= coverage date.

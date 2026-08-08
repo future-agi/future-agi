@@ -4,11 +4,13 @@ import React, {
   useEffect,
   useImperativeHandle,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
+  Button,
   Chip,
   CircularProgress,
   Divider,
@@ -19,7 +21,7 @@ import {
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { useWatch } from "react-hook-form";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { canonicalEntries } from "src/utils/utils";
 import { ROW_TYPE_LABELS } from "src/utils/constants";
@@ -46,12 +48,19 @@ import {
 } from "src/components/inline-audio/audio-detection";
 import { ID_ONLY_FIELDS } from "src/sections/projects/LLMTracing/idFields";
 import {
+  collectExactListRows,
+  createListCursorProtocolError,
+  isListCursorProtocolError,
+  listContinuationParams,
+} from "src/sections/projects/LLMTracing/listCursorPagination";
+import {
   ANNOTATION_COLUMN_IDS,
   FIELD_CATEGORY_TO_COL_TYPE,
   RANGE_OPS,
   LIST_OPS,
   NO_VALUE_OPS,
 } from "src/sections/common/EvalsTasks/common";
+import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
 
 // One form row → one wire entry. No cross-row merging: it would collapse
 // "not_contains A AND not_contains B" into "in [A, B]" (inverting intent) and
@@ -92,6 +101,14 @@ export function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
           filter_op: op,
           ...(filterValue !== undefined && { filter_value: filterValue }),
           ...(!isIdColumn && { col_type: colType }),
+          ...(colType === "SPAN_ATTRIBUTE" &&
+            LIST_OPS.has(op) &&
+            Array.isArray(filterValue) &&
+            Array.isArray(f?.filterConfig?.attributeValueTypes) &&
+            f.filterConfig.attributeValueTypes.length ===
+              filterValue.length && {
+              attribute_value_types: f.filterConfig.attributeValueTypes,
+            }),
         },
       };
     })
@@ -119,6 +136,37 @@ export function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
 
   return userFilters;
 }
+
+// Trace/span/session/voice previews opt into signed bounded continuation. Every row is
+// a genuine classified match; bounded transport pages are accumulated until
+// the 50-row preview is full or the frozen window is exhausted.
+// eslint-disable-next-line react-refresh/only-export-components
+export function buildTaskPreviewListParams({ rowType, projectId, apiFilters }) {
+  const cursorCapable = ["voiceCalls", "traces", "spans", "sessions"].includes(
+    rowType,
+  );
+  return {
+    project_id: projectId,
+    ...(rowType === "voiceCalls" ? { page: 1 } : { page_number: 0 }),
+    page_size: 50,
+    filters: JSON.stringify(apiFilters),
+    ...(cursorCapable ? { cursor_mode: true } : {}),
+  };
+}
+
+const taskPreviewRowIdentity = (rowType, row) => {
+  if (rowType === "voiceCalls") {
+    return row?.call_id || row?.id || row?.trace_id || null;
+  }
+  if (rowType === "sessions") {
+    return row?.session_id || row?.id || null;
+  }
+  if (rowType === "traces") {
+    return row?.trace_id || row?.id || null;
+  }
+  const id = row?.span_id || row?.id;
+  return id ? `${row?.trace_id || ""}:${id}:${row?.start_time || ""}` : null;
+};
 
 // Deep search: check if a value (including nested JSON) matches query
 function deepMatch(val, q) {
@@ -222,6 +270,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
   //   { [idx]: { status: "running" | "success" | "error", result?, error? } }
   const [testResults, setTestResults] = useState({});
   const [isTesting, setIsTesting] = useState(false);
+  const queryClient = useQueryClient();
 
   const formFilters = useWatch({ control, name: "filters" });
   const startDate = useWatch({ control, name: "startDate" });
@@ -233,11 +282,36 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
     () => buildApiFilterArray(formFilters, startDate, endDate),
     [formFilters, startDate, endDate],
   );
-
-  // Reset row index when filters / rowType change
+  const previewScopeKey = useMemo(
+    () => JSON.stringify([rowType, projectId || null, apiFilters]),
+    [apiFilters, projectId, rowType],
+  );
+  const [listContinuation, setListContinuation] = useState(null);
+  const activeListContinuation =
+    listContinuation?.scopeKey === previewScopeKey ? listContinuation : null;
+  const resumeCursor = activeListContinuation?.cursor || null;
+  const previousPreviewScopeKeyRef = useRef(previewScopeKey);
+  // Signed cursors are snapshot- and scope-bound. Remove every cached list
+  // response for the scope being left so A -> B -> A starts a fresh read
+  // instead of resurrecting A's old cursor or accumulated rows.
   useEffect(() => {
+    const previousScopeKey = previousPreviewScopeKeyRef.current;
+    if (previousScopeKey !== previewScopeKey) {
+      queryClient.removeQueries({
+        predicate: (query) => {
+          const key = query?.queryKey || [];
+          if (key[0] !== "task-preview-list") return false;
+          return (
+            JSON.stringify([key[1], key[2] || null, key[3] || []]) ===
+            previousScopeKey
+          );
+        },
+      });
+      previousPreviewScopeKeyRef.current = previewScopeKey;
+      setListContinuation(null);
+    }
     setCurrentRowIndex(0);
-  }, [apiFilters, rowType, projectId]);
+  }, [previewScopeKey, queryClient]);
 
   // ── Fetch list of matching rows ──
   const {
@@ -245,26 +319,112 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
     isLoading: listLoading,
     isFetching: listFetching,
     isError: listError,
+    error: listQueryError,
+    refetch: refetchList,
   } = useQuery({
-    queryKey: ["task-preview-list", rowType, projectId, apiFilters],
-    queryFn: async () => {
+    queryKey: [
+      "task-preview-list",
+      rowType,
+      projectId,
+      apiFilters,
+      resumeCursor,
+    ],
+    queryFn: async ({ signal }) => {
       if (!projectId) return { rows: [], total: 0, columns: [] };
 
+      // Cursors are opaque and query-bound. Keep every cursor already
+      // requested for this exact project/filter scope so a repeated or cyclic
+      // backend chain fails closed instead of spinning forever. The pending
+      // continuation itself is deliberately not in this set until this
+      // request consumes it.
+      const requestedCursors = new Set(
+        activeListContinuation?.requestedCursors || [],
+      );
+      if (resumeCursor) {
+        if (requestedCursors.has(resumeCursor)) {
+          throw createListCursorProtocolError(
+            "List API returned a repeated continuation cursor",
+          );
+        }
+        requestedCursors.add(resumeCursor);
+      }
+
+      const recordContinuation = (metadata) => {
+        const nextCursor = metadata?.next_cursor;
+        if (
+          typeof nextCursor !== "string" ||
+          nextCursor.length === 0 ||
+          requestedCursors.has(nextCursor)
+        ) {
+          throw createListCursorProtocolError(
+            "List API returned a repeated continuation cursor",
+          );
+        }
+        requestedCursors.add(nextCursor);
+      };
+
+      const continuationResult = (nextCursor, accumulatedRows = []) => {
+        if (!nextCursor) return null;
+        // The shared per-attempt follower checks cycles inside one bounded
+        // attempt. This second guard covers a cycle that lands exactly on the
+        // attempt boundary and points back to any cursor consumed earlier.
+        if (requestedCursors.has(nextCursor)) {
+          throw createListCursorProtocolError(
+            "List API returned a repeated continuation cursor",
+          );
+        }
+        return {
+          cursor: nextCursor,
+          requestedCursors: [...requestedCursors],
+          rows: accumulatedRows,
+        };
+      };
+
       if (rowType === "voiceCalls") {
-        const resp = await axios.get(endpoints.project.getCallLogs, {
-          params: {
-            project_id: projectId,
-            page: 1,
-            page_size: 50,
-            filters: JSON.stringify(apiFilters),
-          },
+        const requestParams = buildTaskPreviewListParams({
+          rowType,
+          projectId,
+          apiFilters,
         });
-        const result = resp.data?.result || resp.data || {};
-        const rowsOut = result.results || result.data || result.calls || [];
+        const resp = await axios.get(endpoints.project.getCallLogs, {
+          params: resumeCursor
+            ? listContinuationParams(requestParams, resumeCursor)
+            : requestParams,
+          signal,
+        });
+        const exactRows = await collectExactListRows({
+          initialResponse: resp,
+          initialRows: activeListContinuation?.rows || [],
+          targetRowCount: requestParams.page_size,
+          rowsFromResponse: (response) => {
+            const result = response?.data?.result || response?.data || {};
+            return result.results || result.data || result.calls || [];
+          },
+          metadataFromResponse: (response) =>
+            response?.data?.result || response?.data || {},
+          nextResponse: (cursor) =>
+            axios.get(endpoints.project.getCallLogs, {
+              params: listContinuationParams(requestParams, cursor),
+              signal,
+            }),
+          onContinuation: recordContinuation,
+          isCurrent: () => !signal.aborted,
+          rowIdentity: (row) => taskPreviewRowIdentity(rowType, row),
+        });
+        const result =
+          exactRows.response?.data?.result || exactRows.response?.data || {};
+        const rowsOut = exactRows.rows;
         return {
           rows: rowsOut,
-          total: result.total_count || result.total || rowsOut.length,
+          total:
+            result.count ??
+            result.total_count ??
+            result.total ??
+            rowsOut.length,
           columns: [],
+          continuation: exactRows.pending
+            ? continuationResult(exactRows.nextCursor, rowsOut)
+            : null,
         };
       }
 
@@ -283,45 +443,89 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
           url = endpoints.project.getSpansForObserveProject();
       }
 
-      const resp = await axios.get(url, {
-        params: {
-          project_id: projectId,
-          page_number: 0,
-          page_size: 50,
-          filters: JSON.stringify(apiFilters),
-        },
+      const requestParams = buildTaskPreviewListParams({
+        rowType,
+        projectId,
+        apiFilters,
       });
-      const result = resp.data?.result || {};
+      const resp = await axios.get(url, {
+        params: resumeCursor
+          ? listContinuationParams(requestParams, resumeCursor)
+          : requestParams,
+        signal,
+      });
+      const exactRows = await collectExactListRows({
+        initialResponse: resp,
+        initialRows: activeListContinuation?.rows || [],
+        targetRowCount: requestParams.page_size,
+        rowsFromResponse: (response) => response?.data?.result?.table || [],
+        metadataFromResponse: (response) =>
+          response?.data?.result?.metadata || {},
+        nextResponse: (cursor) =>
+          axios.get(url, {
+            params: listContinuationParams(requestParams, cursor),
+            signal,
+          }),
+        onContinuation: recordContinuation,
+        isCurrent: () => !signal.aborted,
+        rowIdentity: (row) => taskPreviewRowIdentity(rowType, row),
+      });
+      const result = exactRows.response?.data?.result || {};
+      const rowsOut = exactRows.rows;
       return {
-        rows: result.table || result.results || result.data || [],
+        rows: rowsOut,
         total:
           result.metadata?.total_rows ||
           result.total_count ||
           result.total ||
-          (result.table || []).length,
+          rowsOut.length,
         columns: result.config || [],
+        continuation: exactRows.pending
+          ? continuationResult(exactRows.nextCursor, rowsOut)
+          : null,
       };
     },
     enabled: !!projectId,
     refetchOnWindowFocus: false,
     staleTime: 10000,
+    // Live Preview renders its own generic failure state; suppress backend
+    // query text (including ClickHouse exception details) globally.
+    meta: { errorHandled: true },
   });
 
-  const rows = listData?.rows || [];
-  const total = listData?.total || 0;
+  const retryableListContinuationError = Boolean(
+    listError &&
+      activeListContinuation?.cursor &&
+      !isListCursorProtocolError(listQueryError),
+  );
+  const retryableColdListError = Boolean(
+    listError &&
+      !activeListContinuation?.cursor &&
+      !isListCursorProtocolError(listQueryError),
+  );
+  const rows =
+    listData?.rows ||
+    (retryableListContinuationError ? activeListContinuation?.rows : []) ||
+    [];
   const columns = listData?.columns || [];
+  const pendingListContinuation = listData?.continuation || null;
   const currentRow = rows[currentRowIndex] || null;
 
   // ── Fetch full detail for the currently selected row ──
-  const { data: spanDetail, isLoading: detailLoading } = useQuery({
+  const {
+    data: spanDetail,
+    isLoading: detailLoading,
+    isError: detailError,
+  } = useQuery({
     queryKey: [
       "task-preview-detail",
+      projectId,
       rowType,
       currentRow?.trace_id,
       currentRow?.span_id,
       currentRow?.session_id,
     ],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       if (!currentRow) return null;
       const spanId = currentRow.span_id;
       const traceId = currentRow.trace_id;
@@ -334,7 +538,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
         try {
           const { data } = await axios.get(
             endpoints.project.getVoiceCallDetail,
-            { params: { trace_id: traceId } },
+            { params: { trace_id: traceId }, signal },
           );
           const voiceResult = data?.result || data?.data || data || {};
           detailData = { ...currentRow, ...voiceResult };
@@ -342,7 +546,9 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
           detailData = { ...currentRow };
         }
       } else if ((rowType === "spans" || rowType === "traces") && traceId) {
-        const { data } = await axios.get(endpoints.project.getTrace(traceId));
+        const { data } = await axios.get(endpoints.project.getTrace(traceId), {
+          signal,
+        });
         const traceResult = data?.result;
 
         const spans = traceResult?.observation_spans;
@@ -375,7 +581,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
         try {
           const sResp = await axios.get(
             `${endpoints.project.traceSession}${sid}/`,
-            { params: { page_number: 0, page_size: 30 } },
+            { params: { page_number: 0, page_size: 30 }, signal },
           );
           const sResult = sResp.data?.result || {};
           sessionMeta = sResult.session_metadata || {};
@@ -393,6 +599,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
             try {
               const tResp = await axios.get(
                 endpoints.project.getTrace(firstTraceId),
+                { signal },
               );
               const tResult = tResp.data?.result || {};
               firstTraceSpans = sortSpansForMapping(
@@ -421,6 +628,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
     enabled: !!currentRow,
     refetchOnWindowFocus: false,
     staleTime: 10000,
+    meta: { errorHandled: true },
   });
 
   // Reset test results whenever the row or eval set changes
@@ -580,7 +788,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
           sx={{ fontSize: "11px", display: "block" }}
         >
           {projectId
-            ? "Browse a sample row matching your current filters"
+            ? "Browse a row matching your current filters"
             : "Select a project to preview matching rows"}
         </Typography>
       </Box>
@@ -605,14 +813,100 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
           >
             <CircularProgress size={20} />
           </Box>
-        ) : listError ? (
-          <Typography
-            variant="body2"
-            color="error"
-            sx={{ fontSize: "12px", textAlign: "center", mt: 2 }}
+        ) : retryableListContinuationError ? (
+          <Box
+            sx={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 1,
+              minHeight: 160,
+              textAlign: "center",
+            }}
           >
-            Failed to load preview
-          </Typography>
+            <Typography variant="body2" sx={{ fontSize: "12px" }}>
+              The exact preview was paused.
+            </Typography>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ fontSize: "11px" }}
+            >
+              Your saved position is retained. Retry to continue from it.
+            </Typography>
+            <Button
+              size="small"
+              variant="outlined"
+              disabled={listFetching}
+              onClick={() => refetchList()}
+            >
+              Retry search
+            </Button>
+          </Box>
+        ) : listError ? (
+          <Box
+            role="status"
+            sx={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 1,
+              minHeight: 160,
+              justifyContent: "center",
+              textAlign: "center",
+            }}
+          >
+            <Typography variant="body2" color="error" sx={{ fontSize: "12px" }}>
+              {QUERY_FAILED_RETRY_MESSAGE}
+            </Typography>
+            {retryableColdListError && (
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={listFetching}
+                onClick={() => refetchList()}
+              >
+                Retry search
+              </Button>
+            )}
+          </Box>
+        ) : pendingListContinuation ? (
+          <Box
+            sx={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 1,
+              minHeight: 160,
+              textAlign: "center",
+            }}
+          >
+            <Typography variant="body2" sx={{ fontSize: "12px" }}>
+              Preparing the exact preview.
+            </Typography>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ fontSize: "11px" }}
+            >
+              Continue from the saved position to load the next bounded batch.
+            </Typography>
+            <Button
+              size="small"
+              variant="outlined"
+              disabled={listFetching}
+              onClick={() =>
+                setListContinuation({
+                  scopeKey: previewScopeKey,
+                  ...pendingListContinuation,
+                })
+              }
+            >
+              Continue search
+            </Button>
+          </Box>
         ) : rows.length === 0 ? (
           <EmptyState
             icon="solar:magnifer-outline"
@@ -637,14 +931,6 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
               >
                 Row {Math.min(currentRowIndex + 1, rows.length)} of{" "}
                 {rows.length}
-                {total > rows.length && (
-                  <Typography
-                    component="span"
-                    sx={{ fontSize: "11px", color: "text.disabled", ml: 0.5 }}
-                  >
-                    ({total} matching total)
-                  </Typography>
-                )}
               </Typography>
               <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
                 <IconButton
@@ -673,6 +959,14 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
               <Box sx={{ display: "flex", justifyContent: "center", py: 3 }}>
                 <CircularProgress size={18} />
               </Box>
+            ) : detailError ? (
+              <Typography
+                variant="body2"
+                color="error"
+                sx={{ fontSize: "12px", textAlign: "center", py: 3 }}
+              >
+                {QUERY_FAILED_RETRY_MESSAGE}
+              </Typography>
             ) : spanDetail ? (
               <RowDetailTable
                 spanDetail={spanDetail}

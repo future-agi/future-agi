@@ -1,6 +1,7 @@
 import React, {
   useState,
   useEffect,
+  useId,
   useRef,
   useMemo,
   useCallback,
@@ -31,6 +32,18 @@ import { useLLMTracingStoreShallow } from "../states";
 import { logger } from "src/utils/logger";
 import { FILTER_FOR_HAS_EVAL, toBackendFilters } from "../common";
 import { buildDefaultDateEntry } from "./graphFilterUtils";
+import {
+  AGGREGATION_POLL_TIMEOUT_MS,
+  GRAPH_LOADING_MESSAGE,
+  QUERY_FAILED_RETRY_MESSAGE,
+  getAggregationPollDelay,
+  getAggregationRefreshState,
+  getExactAggregationReadState,
+  getExactGraphData,
+  getQueryCompletedAt,
+  isAggregationPollBudgetExhausted,
+  awaitAggregationRequestWithDeadline,
+} from "src/utils/queryReadState";
 
 const deltaObject = {
   hour: { hours: 1 },
@@ -85,6 +98,7 @@ const GraphSection = ({
   const chartRef = useRef(null);
 
   const { observeId } = useParams();
+  const aggregationSourceId = useId();
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
 
@@ -132,6 +146,82 @@ const GraphSection = ({
   const handleGraphConfigChange = (config) => {
     setSelectedGraphConfig(config ? { ...config } : null);
   };
+  const forceRefreshRef = useRef(false);
+  const pollAttemptRef = useRef(0);
+  const pollingRef = useRef(false);
+  const pollStartedAtRef = useRef(null);
+  const requestScopeRef = useRef(null);
+  const requestGenerationRef = useRef(0);
+  const [pollingTimedOut, setPollingTimedOut] = useState(false);
+
+  const resetAggregationBudget = useCallback(() => {
+    requestGenerationRef.current += 1;
+    requestScopeRef.current = null;
+    pollAttemptRef.current = 0;
+    pollingRef.current = false;
+    pollStartedAtRef.current = null;
+    setPollingTimedOut(false);
+  }, []);
+
+  const runAggregationRequest = useCallback(async (scopeKey, request) => {
+    if (requestScopeRef.current !== scopeKey) {
+      requestGenerationRef.current += 1;
+      requestScopeRef.current = scopeKey;
+      pollAttemptRef.current = 0;
+      pollingRef.current = false;
+      pollStartedAtRef.current = null;
+      setPollingTimedOut(false);
+    }
+
+    const generation = requestGenerationRef.current;
+    const startedAt = pollStartedAtRef.current ?? Date.now();
+    pollStartedAtRef.current = startedAt;
+    const remaining = Math.max(
+      AGGREGATION_POLL_TIMEOUT_MS - (Date.now() - startedAt),
+      0,
+    );
+    if (remaining === 0) {
+      pollingRef.current = false;
+      setPollingTimedOut(true);
+      throw new Error("Exact aggregation request deadline exceeded");
+    }
+
+    return awaitAggregationRequestWithDeadline(request(), {
+      timeoutMs: remaining,
+      isCurrent: () => generation === requestGenerationRef.current,
+      onTimeout: () => {
+        pollingRef.current = false;
+        setPollingTimedOut(true);
+      },
+    });
+  }, []);
+
+  const recordAggregationResponse = useCallback((response) => {
+    const { isRefreshing, refreshFailed } =
+      getAggregationRefreshState(response);
+    const readState = getExactAggregationReadState(response);
+    const shouldPoll =
+      isRefreshing &&
+      !refreshFailed &&
+      (readState === "complete" || readState === "pending");
+    if (!shouldPoll) {
+      pollAttemptRef.current = 0;
+      pollingRef.current = false;
+      pollStartedAtRef.current = null;
+      setPollingTimedOut(false);
+      return;
+    }
+
+    if (pollStartedAtRef.current == null) {
+      pollStartedAtRef.current = Date.now();
+    }
+    const exhausted = isAggregationPollBudgetExhausted({
+      attempt: pollAttemptRef.current,
+      startedAt: pollStartedAtRef.current,
+    });
+    pollingRef.current = !exhausted;
+    if (exhausted) setPollingTimedOut(true);
+  }, []);
 
   // Graph APIs
 
@@ -140,6 +230,8 @@ const GraphSection = ({
     data: traceGraphData,
     isFetching: traceGraphLoading,
     isPending: traceGraphPending,
+    isError: traceGraphError,
+    refetch: refetchTraceGraph,
   } = useQuery({
     queryKey: [
       "llm-tracing-graph",
@@ -150,16 +242,61 @@ const GraphSection = ({
       combinedFilters,
       selectedGraphConfig,
     ],
-    queryFn: () =>
-      axios.post(endpoints.project.getTraceGraphData(), {
-        interval: selectedInterval,
-        filters: toBackendFilters(combinedFilters),
-        property: "average",
-        req_data_config: selectedGraphConfig,
-        project_id: observeId,
-      }),
+    queryFn: async ({ queryKey, signal }) => {
+      if (pollingRef.current) pollAttemptRef.current += 1;
+      const refresh = forceRefreshRef.current;
+      forceRefreshRef.current = false;
+      const response = await runAggregationRequest(
+        JSON.stringify(queryKey),
+        () =>
+          axios.post(
+            endpoints.project.getTraceGraphData(),
+            {
+              interval: selectedInterval,
+              filters: toBackendFilters(combinedFilters),
+              property: "average",
+              req_data_config: selectedGraphConfig,
+              project_id: observeId,
+            },
+            {
+              params: {
+                allow_sampled: false,
+                ...(refresh ? { refresh: true } : {}),
+              },
+              signal,
+            },
+          ),
+      );
+      recordAggregationResponse(response);
+      return response;
+    },
     enabled: selectedTab === "trace" && Boolean(selectedGraphConfig?.id),
-    select: (data) => data.data?.result,
+    // Preserve wrapper-level exactness and refresh metadata. Dropping this
+    // envelope turns a legitimate queued read into an apparent empty result.
+    select: (data) => data.data,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchInterval: (query) => {
+      if (pollingTimedOut) return false;
+      const { isRefreshing, refreshFailed } = getAggregationRefreshState(
+        query.state.data,
+      );
+      const readState = getExactAggregationReadState(query.state.data);
+      if (
+        !isRefreshing ||
+        refreshFailed ||
+        (readState !== "complete" && readState !== "pending")
+      ) {
+        pollAttemptRef.current = 0;
+        pollingRef.current = false;
+        return false;
+      }
+      return getAggregationPollDelay(pollAttemptRef.current);
+    },
+    refetchIntervalInBackground: false,
+    retry: false,
+    meta: { errorHandled: true },
   });
 
   // Span Graph Data
@@ -167,6 +304,8 @@ const GraphSection = ({
     data: spanGraphData,
     isFetching: spanGraphLoading,
     isPending: spanGraphPending,
+    isError: spanGraphError,
+    refetch: refetchSpanGraph,
   } = useQuery({
     queryKey: [
       "llm-tracing-graph",
@@ -176,18 +315,63 @@ const GraphSection = ({
       selectedInterval,
       selectedGraphEvals,
       combinedFilters,
-      selectedGraphEvals,
+      selectedGraphConfig,
     ],
-    queryFn: () =>
-      axios.post(endpoints.project.getSpanGraphData(), {
-        interval: selectedInterval,
-        filters: toBackendFilters(combinedFilters),
-        property: "average",
-        req_data_config: selectedGraphConfig,
-        project_id: observeId,
-      }),
+    queryFn: async ({ queryKey, signal }) => {
+      if (pollingRef.current) pollAttemptRef.current += 1;
+      const refresh = forceRefreshRef.current;
+      forceRefreshRef.current = false;
+      const response = await runAggregationRequest(
+        JSON.stringify(queryKey),
+        () =>
+          axios.post(
+            endpoints.project.getSpanGraphData(),
+            {
+              interval: selectedInterval,
+              filters: toBackendFilters(combinedFilters),
+              property: "average",
+              req_data_config: selectedGraphConfig,
+              project_id: observeId,
+            },
+            {
+              params: {
+                allow_sampled: false,
+                ...(refresh ? { refresh: true } : {}),
+              },
+              signal,
+            },
+          ),
+      );
+      recordAggregationResponse(response);
+      return response;
+    },
     enabled: selectedTab === "spans" && Boolean(selectedGraphConfig?.id),
-    select: (data) => data.data?.result,
+    // Preserve wrapper-level exactness and refresh metadata. Dropping this
+    // envelope turns a legitimate queued read into an apparent empty result.
+    select: (data) => data.data,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchInterval: (query) => {
+      if (pollingTimedOut) return false;
+      const { isRefreshing, refreshFailed } = getAggregationRefreshState(
+        query.state.data,
+      );
+      const readState = getExactAggregationReadState(query.state.data);
+      if (
+        !isRefreshing ||
+        refreshFailed ||
+        (readState !== "complete" && readState !== "pending")
+      ) {
+        pollAttemptRef.current = 0;
+        pollingRef.current = false;
+        return false;
+      }
+      return getAggregationPollDelay(pollAttemptRef.current);
+    },
+    refetchIntervalInBackground: false,
+    retry: false,
+    meta: { errorHandled: true },
   });
 
   const apiGraphData = selectedTab === "trace" ? traceGraphData : spanGraphData;
@@ -195,27 +379,236 @@ const GraphSection = ({
     selectedTab === "trace"
       ? traceGraphLoading && traceGraphPending
       : spanGraphLoading && spanGraphPending;
+  const apiGraphError =
+    selectedTab === "trace" ? traceGraphError : spanGraphError;
+  const apiGraphReadState = getExactAggregationReadState(apiGraphData, {
+    isError: apiGraphError,
+  });
+  const graphSnapshotKey = useMemo(
+    () =>
+      JSON.stringify([
+        selectedTab,
+        observeId,
+        selectedInterval,
+        combinedFilters,
+        selectedGraphConfig,
+      ]),
+    [
+      combinedFilters,
+      observeId,
+      selectedGraphConfig,
+      selectedInterval,
+      selectedTab,
+    ],
+  );
+  const [lastExactSnapshot, setLastExactSnapshot] = useState(null);
+  const [refreshUnavailable, setRefreshUnavailable] = useState(false);
+  const notifyAggregationRefresh = useCallback(
+    (refreshing) => {
+      window.dispatchEvent(
+        new CustomEvent("observe-aggregation-refresh-state", {
+          detail: {
+            observeId,
+            sourceId: aggregationSourceId,
+            refreshing,
+          },
+        }),
+      );
+    },
+    [aggregationSourceId, observeId],
+  );
+
+  useEffect(() => {
+    const handleRefresh = (event) => {
+      if (
+        event?.detail?.observeId &&
+        String(event.detail.observeId) !== String(observeId)
+      ) {
+        return;
+      }
+      forceRefreshRef.current = true;
+      resetAggregationBudget();
+      setRefreshUnavailable(false);
+      notifyAggregationRefresh(true);
+      if (selectedTab === "trace") {
+        refetchTraceGraph({ cancelRefetch: true });
+      } else {
+        refetchSpanGraph({ cancelRefetch: true });
+      }
+    };
+    window.addEventListener("observe-refresh", handleRefresh);
+    return () => window.removeEventListener("observe-refresh", handleRefresh);
+  }, [
+    notifyAggregationRefresh,
+    observeId,
+    refetchSpanGraph,
+    refetchTraceGraph,
+    resetAggregationBudget,
+    selectedTab,
+  ]);
+
+  useEffect(() => {
+    return () => notifyAggregationRefresh(false);
+  }, [graphSnapshotKey, notifyAggregationRefresh]);
+
+  useEffect(
+    () => () => {
+      requestGenerationRef.current += 1;
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!apiGraphData || pollingTimedOut) return undefined;
+    const { isRefreshing, refreshFailed } =
+      getAggregationRefreshState(apiGraphData);
+    const readState = getExactAggregationReadState(apiGraphData);
+    if (
+      !isRefreshing ||
+      refreshFailed ||
+      (readState !== "complete" && readState !== "pending")
+    ) {
+      return undefined;
+    }
+
+    const startedAt = pollStartedAtRef.current ?? Date.now();
+    pollStartedAtRef.current = startedAt;
+    const remaining = Math.max(
+      AGGREGATION_POLL_TIMEOUT_MS - (Date.now() - startedAt),
+      0,
+    );
+    const stopPolling = () => {
+      pollingRef.current = false;
+      setPollingTimedOut(true);
+      notifyAggregationRefresh(false);
+    };
+    if (remaining === 0) {
+      stopPolling();
+      return undefined;
+    }
+    const timer = window.setTimeout(stopPolling, remaining);
+    return () => window.clearTimeout(timer);
+  }, [apiGraphData, notifyAggregationRefresh, pollingTimedOut]);
+
+  useEffect(() => {
+    if (!apiGraphData) return;
+    const { isRefreshing, refreshFailed } =
+      getAggregationRefreshState(apiGraphData);
+    const refreshReadState = getExactAggregationReadState(apiGraphData);
+    const completedAt = getQueryCompletedAt(apiGraphData);
+    if (apiGraphReadState === "complete") {
+      setLastExactSnapshot({
+        key: graphSnapshotKey,
+        data: apiGraphData,
+        updatedAt: completedAt,
+      });
+    }
+    if (
+      isRefreshing &&
+      !refreshFailed &&
+      (refreshReadState === "complete" || refreshReadState === "pending")
+    ) {
+      setRefreshUnavailable(apiGraphReadState !== "complete");
+      notifyAggregationRefresh(true);
+      return;
+    }
+    notifyAggregationRefresh(false);
+    if (refreshFailed) {
+      setRefreshUnavailable(apiGraphReadState !== "complete");
+      return;
+    }
+    if (apiGraphReadState !== "complete") {
+      setRefreshUnavailable(true);
+      return;
+    }
+    setRefreshUnavailable(false);
+    if (completedAt) {
+      window.dispatchEvent(
+        new CustomEvent("observe-aggregation-completed", {
+          detail: {
+            observeId,
+            queryCompletedAt: completedAt.toISOString(),
+          },
+        }),
+      );
+    }
+  }, [
+    apiGraphData,
+    apiGraphReadState,
+    graphSnapshotKey,
+    notifyAggregationRefresh,
+    observeId,
+  ]);
+
+  useEffect(() => {
+    if (apiGraphError) {
+      setRefreshUnavailable(true);
+      const { isRefreshing, refreshFailed } =
+        getAggregationRefreshState(apiGraphData);
+      const refreshReadState = getExactAggregationReadState(apiGraphData);
+      notifyAggregationRefresh(
+        isRefreshing &&
+          !refreshFailed &&
+          (refreshReadState === "complete" || refreshReadState === "pending"),
+      );
+    }
+  }, [apiGraphData, apiGraphError, notifyAggregationRefresh]);
+
+  const currentExactSnapshot =
+    apiGraphData && apiGraphReadState === "complete"
+      ? {
+          key: graphSnapshotKey,
+          data: apiGraphData,
+          updatedAt: getQueryCompletedAt(apiGraphData),
+        }
+      : null;
+  const exactSnapshot =
+    currentExactSnapshot ||
+    (lastExactSnapshot?.key === graphSnapshotKey ? lastExactSnapshot : null);
+  const exactGraphData = exactSnapshot?.data;
+  const apiGraphRefreshState = getAggregationRefreshState(apiGraphData);
+  const apiGraphReadFailed =
+    pollingTimedOut ||
+    apiGraphError ||
+    apiGraphRefreshState.refreshFailed ||
+    (Boolean(apiGraphData) &&
+      apiGraphReadState !== "complete" &&
+      apiGraphReadState !== "pending");
+  const apiGraphReadMessage = apiGraphReadFailed
+    ? QUERY_FAILED_RETRY_MESSAGE
+    : !exactSnapshot &&
+        (apiGraphLoading ||
+          refreshUnavailable ||
+          apiGraphReadState === "pending" ||
+          !apiGraphData)
+      ? GRAPH_LOADING_MESSAGE
+      : null;
 
   const chartData = useMemo(() => {
     const primaryData = [];
     const trafficData = [];
 
-    const evalData = Array.isArray(apiGraphData?.data) ? apiGraphData.data : [];
+    const evalData = getExactGraphData(exactGraphData);
 
     for (const item of evalData) {
       if (item.timestamp != null) {
         // Remove timezone suffix to normalize format
         const normalizedTimestamp = item.timestamp.replace(/\+00:00$/, "");
 
-        primaryData.push({ x: normalizedTimestamp, y: item.value ?? 0 });
+        primaryData.push({
+          x: normalizedTimestamp,
+          y: item.value == null ? null : Number(item.value),
+        });
         trafficData.push({
           x: normalizedTimestamp,
-          y: item.primary_traffic ?? 0,
+          y: item.primary_traffic == null ? null : Number(item.primary_traffic),
         });
       }
     }
 
-    const lineSeriesName = getLineSeriesName(selectedGraphProperty);
+    const baseLineSeriesName = getLineSeriesName(selectedGraphProperty);
+    const lineSeriesName = baseLineSeriesName;
+    const trafficSeriesName = "Traffic";
     const isEval = selectedGraphConfig?.type === "EVAL";
 
     const series = [
@@ -252,14 +645,14 @@ const GraphSection = ({
 
     if (!isEval) {
       series.push({
-        name: "Traffic",
+        name: trafficSeriesName,
         type: "column",
         data: trafficData,
         color: trafficColor,
         group: "apexcharts-axis-1",
       });
       yAxis.push({
-        seriesName: "Traffic",
+        seriesName: trafficSeriesName,
         title: {
           text: "Traffic",
           style: isCollapsed
@@ -357,7 +750,7 @@ const GraphSection = ({
       },
     };
   }, [
-    apiGraphData,
+    exactGraphData,
     chartId,
     lineColor,
     selectedGraphProperty,
@@ -606,9 +999,20 @@ const GraphSection = ({
                 (selectedGraphConfig ||
                   selectedGraphEvals?.length > 0 ||
                   Object.keys(selectedGraphAttributes || {}).length > 0) &&
-                !apiGraphLoading
+                !apiGraphLoading &&
+                Boolean(exactSnapshot)
               }
             >
+              <ShowComponent condition={Boolean(apiGraphReadMessage)}>
+                <Typography
+                  role="status"
+                  fontSize="11px"
+                  color="text.secondary"
+                  sx={{ px: 1 }}
+                >
+                  {apiGraphReadMessage}
+                </Typography>
+              </ShowComponent>
               <ReactApexChart
                 ref={chartRef}
                 options={chartData.options}
@@ -621,6 +1025,25 @@ const GraphSection = ({
             <ShowComponent condition={apiGraphLoading}>
               <Box sx={{ height: isCollapsed ? 124 : 248 }}>
                 <GraphSkeleton />
+              </Box>
+            </ShowComponent>
+
+            <ShowComponent
+              condition={
+                !apiGraphLoading && apiGraphReadMessage && !exactSnapshot
+              }
+            >
+              <Box
+                role="status"
+                sx={{
+                  minHeight: isCollapsed ? 124 : 248,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "text.secondary",
+                }}
+              >
+                <Typography fontSize="12px">{apiGraphReadMessage}</Typography>
               </Box>
             </ShowComponent>
           </Box>
@@ -687,8 +1110,8 @@ GraphSection.propTypes = {
   compareType: PropTypes.string,
   setSelectedGraphEvals: PropTypes.func,
   setSelectedGraphProperty: PropTypes.func,
-  dateFilter: PropTypes.array,
-  selectedGraphAttributes: PropTypes.string,
+  dateFilter: PropTypes.object,
+  selectedGraphAttributes: PropTypes.object,
   setSelectedGraphAttributes: PropTypes.func,
   setDateFilter: PropTypes.func,
   index: PropTypes.number,

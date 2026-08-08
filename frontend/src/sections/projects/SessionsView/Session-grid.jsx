@@ -23,8 +23,21 @@ import {
   normalizeConfigKeys,
   toBackendFilters,
 } from "src/sections/projects/LLMTracing/common";
-import { useSessionsGridStoreShallow } from "./ReplaySessions/store";
+import {
+  useSessionsGridStore,
+  useSessionsGridStoreShallow,
+} from "./ReplaySessions/store";
 import { APP_CONSTANTS } from "src/utils/constants";
+import { getListTotalState } from "src/sections/projects/LLMTracing/listTotalMetadata";
+import { failServerSideGridRead } from "src/utils/queryReadState";
+import {
+  createListCursorPagination,
+  isListCursorContinuationLimitError,
+  loadExactListPage,
+  retryServerSideCursorLoad,
+  resumePendingListPage,
+} from "src/sections/projects/LLMTracing/listCursorPagination";
+import ListCursorContinuationNotice from "src/sections/projects/LLMTracing/ListCursorContinuationNotice";
 
 const getSessionGridThemeParams = (theme) => ({
   columnBorder: false,
@@ -41,6 +54,10 @@ const getSessionGridThemeParams = (theme) => ({
 });
 
 const DATASET_ROWS_LIMIT = 25;
+const sessionRowIdentity = (row) => {
+  const id = row?.session_id || row?.id;
+  return id ? `${row?.project_id || ""}:${id}` : null;
+};
 
 const LoadingHeader = () => {
   return <Skeleton variant="text" width={100} height={20} />;
@@ -68,6 +85,13 @@ const SessionGrid = React.forwardRef(
   ) => {
     const [open, setOpen] = useState(false);
     const [currentRowData, setCurrentRowData] = useState(null);
+    const [continuationNotice, setContinuationNotice] = useState(null);
+    const continueCursorSearch = useCallback(() => {
+      if (!continuationNotice) return;
+      if (retryServerSideCursorLoad(gridApiRef?.current?.api)) {
+        setContinuationNotice(null);
+      }
+    }, [continuationNotice, gridApiRef]);
     const theme = useTheme();
     const agTheme = useAgThemeWith(getSessionGridThemeParams(theme));
     const handleDrawerClose = () => {
@@ -206,45 +230,86 @@ const SessionGrid = React.forwardRef(
 
     // Prefetch cache: stores next page data so scroll feels instant
     const prefetchCache = useRef(new Map());
+    const cursorPagination = useRef(createListCursorPagination());
+    const cursorQueryKeyRef = useRef(null);
 
     const dataSource = useMemo(
       () => {
         prefetchCache.current.clear();
+        cursorPagination.current.reset();
+        cursorQueryKeyRef.current = null;
         return {
           getRows: async (params) => {
+            let pageNumber = 0;
+            let requestGeneration = null;
             try {
               const { request } = params;
 
-              const pageNumber = Math.floor(
-                request.startRow / DATASET_ROWS_LIMIT,
+              pageNumber = Math.floor(request.startRow / DATASET_ROWS_LIMIT);
+              const sortParams = (request?.sortModel || []).map(
+                ({ colId, sort }) => ({
+                  column_id: colId,
+                  direction: sort,
+                }),
               );
-
-              const buildParams = (page) => ({
-                // Omit project_id when null — backend treats absent
-                // project_id as org-scoped (used by the cross-project
-                // user detail page).
-                ...(projectId ? { project_id: projectId } : {}),
-                page_number: page,
-                page_size: DATASET_ROWS_LIMIT,
-                sort_params: JSON.stringify(
-                  request?.sortModel?.map(({ colId, sort }) => ({
-                    column_id: colId,
-                    direction: sort,
-                  })),
-                ),
-                filters: JSON.stringify(toBackendFilters(filters)),
-                ...(dateInterval && { interval: dateInterval }),
+              const backendFilters = toBackendFilters(filters);
+              const queryKey = JSON.stringify({
+                projectId: projectId || null,
+                filters: backendFilters,
+                dateInterval: dateInterval || null,
+                sort: sortParams,
+                pageSize: DATASET_ROWS_LIMIT,
               });
+              if (cursorQueryKeyRef.current !== queryKey) {
+                prefetchCache.current.clear();
+                cursorPagination.current.reset();
+                cursorQueryKeyRef.current = queryKey;
+              }
+              requestGeneration = cursorPagination.current.generation();
+
+              const buildParams = (page) =>
+                cursorPagination.current.requestParams(page, {
+                  // Omit project_id when null — backend treats absent
+                  // project_id as org-scoped (used by the cross-project
+                  // user detail page).
+                  ...(projectId ? { project_id: projectId } : {}),
+                  page_size: DATASET_ROWS_LIMIT,
+                  sort_params: JSON.stringify(sortParams),
+                  filters: JSON.stringify(backendFilters),
+                  ...(dateInterval && { interval: dateInterval }),
+                });
 
               // Await the in-flight prefetch promise if present, else fetch —
               // dedupes a concurrent getRows for the same page.
               const cached = prefetchCache.current.get(pageNumber);
               prefetchCache.current.delete(pageNumber);
-              const results = cached
-                ? await cached
-                : await axios.get(endpoints.project.projectSessionList(), {
+              const exactPage = await loadExactListPage({
+                pagination: cursorPagination.current,
+                pageNumber,
+                targetRowCount: DATASET_ROWS_LIMIT,
+                loadResponse: () =>
+                  cached
+                    ? cached
+                    : axios.get(endpoints.project.projectSessionList(), {
+                        params: buildParams(pageNumber),
+                      }),
+                rowsFromResponse: (response) =>
+                  response?.data?.result?.table || [],
+                metadataFromResponse: (response) =>
+                  response?.data?.result?.metadata || {},
+                rowIdentity: sessionRowIdentity,
+                isCurrent: () =>
+                  cursorPagination.current.isCurrent(requestGeneration),
+                nextResponse: () =>
+                  axios.get(endpoints.project.projectSessionList(), {
                     params: buildParams(pageNumber),
-                  });
+                  }),
+              });
+              if (!cursorPagination.current.isCurrent(requestGeneration)) {
+                params.fail();
+                return;
+              }
+              const results = exactPage.response;
               const res = results?.data?.result;
               const newCols = normalizeConfigKeys(res?.config);
 
@@ -326,37 +391,96 @@ const SessionGrid = React.forwardRef(
               });
 
               setFilteredColumnDefs(filteredColumns);
-              const rows = res?.table || [];
-              const totalRows = res?.metadata?.total_rows;
-              params.api.totalRowCount = totalRows;
+              const rows = exactPage.rows;
+              const metadata = exactPage.metadata;
+              if (
+                resumePendingListPage({
+                  page: exactPage,
+                  resume: () => {
+                    if (cursorPagination.current.isCurrent(requestGeneration)) {
+                      params.fail();
+                      if (params.api?.retryServerSideLoads) {
+                        params.api.retryServerSideLoads();
+                      } else {
+                        params.api?.refreshServerSide?.({ purge: false });
+                      }
+                    }
+                  },
+                })
+              ) {
+                return;
+              }
+              const totalState = getListTotalState(metadata);
+              params.api.totalRowCount = totalState.totalRowCount;
+              params.api.totalRowCountLowerBound =
+                totalState.totalRowCountLowerBound;
+              params.api.totalRowCountIsLowerBound =
+                totalState.totalRowCountIsLowerBound;
+              useSessionsGridStore.setState(totalState);
 
-              const isLastPage = rows.length < DATASET_ROWS_LIMIT;
+              const isLastPage = exactPage.isLastPage;
               const lastRow = isLastPage ? request.startRow + rows.length : -1;
 
               params.success({
                 rowData: rows,
                 rowCount: lastRow,
               });
+              setContinuationNotice(null);
 
               // Prefetch next page so scroll feels instant. Cache the promise
               // (not the resolved value) so a concurrent getRows dedupes.
-              if (!isLastPage) {
+              if (exactPage.canPrefetch) {
+                const prefetchGeneration = requestGeneration;
                 const prefetch = axios.get(
                   endpoints.project.projectSessionList(),
                   { params: buildParams(pageNumber + 1) },
                 );
                 prefetchCache.current.set(pageNumber + 1, prefetch);
                 prefetch.catch(() => {
-                  prefetchCache.current.delete(pageNumber + 1);
+                  if (
+                    cursorPagination.current.isCurrent(prefetchGeneration) &&
+                    prefetchCache.current.get(pageNumber + 1) === prefetch
+                  ) {
+                    prefetchCache.current.delete(pageNumber + 1);
+                  }
                 });
               }
             } catch (error) {
-              const message =
-                (typeof error?.result === "string" && error?.result) ||
-                error?.message ||
-                "Failed to load sessions. Please check your filters.";
-              enqueueSnackbar(message, { variant: "error" });
-              params.success({ rowData: [], rowCount: 0 });
+              if (
+                requestGeneration !== null &&
+                !cursorPagination.current.isCurrent(requestGeneration)
+              ) {
+                params.fail();
+                return;
+              }
+              if (isListCursorContinuationLimitError(error)) {
+                // Preserve the exact continuation checkpoint and any rows
+                // already rendered. This bounded pause is neutral and only a
+                // deliberate refresh/retry resumes the next exact segment.
+                setContinuationNotice(true);
+                params.fail();
+                return;
+              }
+              if (
+                cursorPagination.current.canRecoverFromContinuationError(
+                  pageNumber,
+                  error,
+                )
+              ) {
+                prefetchCache.current.clear();
+                cursorPagination.current.disableCursor();
+                params.fail();
+                params.api?.refreshServerSide?.({ purge: true });
+                return;
+              }
+              setContinuationNotice(null);
+              enqueueSnackbar(
+                "Session data could not be loaded. Please retry.",
+                {
+                  variant: "error",
+                },
+              );
+              failServerSideGridRead(params);
             }
           },
           getRowId: ({ data }) => {
@@ -451,11 +575,18 @@ const SessionGrid = React.forwardRef(
               paddingX: theme.spacing(2),
               paddingBottom: theme.spacing(1),
               flex: 1,
+              display: "flex",
+              flexDirection: "column",
+              minHeight: 0,
             }}
           >
+            <ListCursorContinuationNotice
+              pending={Boolean(continuationNotice)}
+              onContinue={continueCursorSearch}
+            />
             <Box
               className={`ag-theme-quartz ${className} ${cellHeight && cellHeight !== "Short" ? "cell-wrap" : ""}`}
-              style={{ height: "100%" }}
+              style={{ flex: 1, minHeight: 0 }}
             >
               <AgGridReact
                 ref={gridApiRef}
@@ -473,7 +604,7 @@ const SessionGrid = React.forwardRef(
                 }
                 statusBar={statusBar}
                 rowSelection={{ mode: "multiRow", enableClickSelection: false }}
-                className="clean-data-table"
+                className={`clean-data-table${continuationNotice ? " ag-grid-cursor-paused" : ""}`}
                 theme={agTheme}
                 rowModelType="serverSide"
                 serverSideDatasource={dataSource}
@@ -482,6 +613,9 @@ const SessionGrid = React.forwardRef(
                 maxBlocksInCache={5}
                 rowBuffer={5}
                 suppressServerSideFullWidthLoadingRow={true}
+                noRowsOverlayComponent={
+                  continuationNotice ? () => null : undefined
+                }
                 serverSideInitialRowCount={DATASET_ROWS_LIMIT}
                 defaultColDef={defaultColDef}
                 rowStyle={{ cursor: "pointer" }}

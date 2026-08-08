@@ -37,8 +37,27 @@ import { REPLAY_MODULES } from "../SessionsView/ReplaySessions/configurations";
 import { useShallowToggleAnnotationsStore } from "../../agents/store";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import {
+  failServerSideGridRead,
+  getQueryReadState,
+  QUERY_FAILED_RETRY_MESSAGE,
+} from "src/utils/queryReadState";
+import {
+  createListCursorPagination,
+  isListCursorContinuationLimitError,
+  loadExactListPage,
+  retryServerSideCursorLoad,
+  resumePendingListPage,
+} from "./listCursorPagination";
+import ListCursorContinuationNotice from "./ListCursorContinuationNotice";
+import { getListReadMessage, getListTotalState } from "./listTotalMetadata";
+import { getTraceAttributeRequestKey } from "./traceAttributeRequest";
 
 const ROWS_LIMIT = 25;
+const traceRowIdentity = (row) => {
+  const id = row?.trace_id || row?.id;
+  return id ? `${row?.project_id || ""}:${id}` : null;
+};
 const EMPTY_EXTRA_FILTERS = [];
 
 const TraceGrid = React.forwardRef(
@@ -85,23 +104,47 @@ const TraceGrid = React.forwardRef(
     const activeTraceId = traceDetailDrawerOpen?.traceId || null;
     const [openQuickFilter, setOpenQuickFilter] = useState(null);
     const [selectedAll, setSelectedAll] = useState(false);
+    const [readMessage, setReadMessage] = useState(null);
+    const readMessageRef = useRef(null);
+    const [continuationNotice, setContinuationNotice] = useState(null);
+    const [gridLoading, setGridLoading] = useState(enabled);
+    const firstPageRequestRef = useRef(0);
+    const preserveRowsDuringNextRefreshRef = useRef(false);
 
     // Use ref to track latest columns for comparison without triggering dataSource recreation
     const columnsRef = useRef(columns);
     useEffect(() => {
       columnsRef.current = columns;
     }, [columns]);
+    const requestedAttributeKeysKey = useMemo(
+      () => getTraceAttributeRequestKey(columns),
+      [columns],
+    );
 
     // Prefetch cache: stores next page data so scroll feels instant
     const prefetchCache = useRef(new Map());
+    const cursorPagination = useRef(createListCursorPagination());
     const { showMetricsIds, reset: resetMetricIds } =
       useShallowToggleAnnotationsStore((state) => ({
         showMetricsIds: state.showMetricsIds,
         reset: state.reset,
       }));
-    const refreshGrid = useCallback(() => {
-      gridRef?.current?.api?.refreshServerSide({ purge: true });
-    }, [gridRef]);
+    const refreshGrid = useCallback(
+      (purge = true) => {
+        prefetchCache.current.clear();
+        cursorPagination.current.reset();
+        preserveRowsDuringNextRefreshRef.current = !purge;
+        if (purge) setGridLoading(enabled);
+        gridRef?.current?.api?.refreshServerSide({ purge });
+      },
+      [enabled, gridRef],
+    );
+    const continueCursorSearch = useCallback(() => {
+      if (!continuationNotice) return;
+      if (retryServerSideCursorLoad(gridRef?.current?.api)) {
+        setContinuationNotice(null);
+      }
+    }, [continuationNotice, gridRef]);
     const filterRequestKey = useMemo(
       () =>
         JSON.stringify({
@@ -111,6 +154,7 @@ const TraceGrid = React.forwardRef(
           hasEvalFilter,
           dateInterval,
           projectId,
+          requestedAttributeKeys: requestedAttributeKeysKey,
           enabled,
         }),
       [
@@ -120,6 +164,7 @@ const TraceGrid = React.forwardRef(
         hasEvalFilter,
         dateInterval,
         projectId,
+        requestedAttributeKeysKey,
         enabled,
       ],
     );
@@ -128,13 +173,18 @@ const TraceGrid = React.forwardRef(
     useEffect(() => {
       if (previousFilterRequestKeyRef.current === filterRequestKey) return;
       previousFilterRequestKeyRef.current = filterRequestKey;
+      setGridLoading(enabled);
       prefetchCache.current.clear();
-      refreshGrid();
-    }, [filterRequestKey, refreshGrid]);
+      cursorPagination.current.reset();
+      refreshGrid(true);
+    }, [enabled, filterRequestKey, refreshGrid]);
 
     // Listen for refresh events from the header reload button
     useEffect(() => {
-      const handler = () => refreshGrid();
+      // A same-query manual refresh keeps the last exact rows visible until
+      // their replacement is complete. Filter/range changes still purge so
+      // rows from a different query are never presented as current.
+      const handler = () => refreshGrid(false);
       window.addEventListener("observe-refresh", handler);
       return () => window.removeEventListener("observe-refresh", handler);
     }, [refreshGrid]);
@@ -205,49 +255,121 @@ const TraceGrid = React.forwardRef(
     const dataSource = useMemo(
       () => {
         prefetchCache.current.clear();
+        cursorPagination.current.reset();
         return {
           getRows: async (params) => {
             if (!enabled) {
-              params.success({ rowData: [], rowCount: 0 });
+              // Disabled/unresolved is not an exact empty response. Reporting
+              // success here makes AG Grid publish "No traces" without ever
+              // calling the list API.
+              params.fail();
               return;
             }
+            let pageNumber = 0;
+            let firstPageRequestId = null;
+            let requestGeneration = null;
+            let continuationPending = false;
             try {
               setLoading(true);
               params.api?.hideOverlay();
               const { request } = params;
+              requestGeneration = cursorPagination.current.generation();
 
               const pageSize = request.endRow - request.startRow;
-              const pageNumber = Math.floor(request.startRow / pageSize);
+              pageNumber = Math.floor(request.startRow / pageSize);
+              if (pageNumber === 0) {
+                firstPageRequestId = ++firstPageRequestRef.current;
+                const preserveExistingRows =
+                  preserveRowsDuringNextRefreshRef.current;
+                preserveRowsDuringNextRefreshRef.current = false;
+                if (!preserveExistingRows) setGridLoading(true);
+                readMessageRef.current = null;
+                setReadMessage(null);
+                setContinuationNotice(null);
+              }
 
-              const buildParams = (page) => ({
-                // Omit project_id when null — the backend treats absent
-                // project_id as org-scoped (used by the cross-project user
-                // detail page).
-                ...(projectId ? { project_id: projectId } : {}),
-                page_number: page,
-                page_size: ROWS_LIMIT,
-                filters: JSON.stringify(
-                  toBackendFilters([
-                    ...filters,
-                    ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-                    ...(extraFilters || EMPTY_EXTRA_FILTERS),
-                    ...(metricFilters || []),
-                  ]),
-                ),
-                ...(dateInterval && { interval: dateInterval }),
-              });
+              const buildParams = (page) =>
+                cursorPagination.current.requestParams(page, {
+                  // Omit project_id when null — the backend treats absent
+                  // project_id as org-scoped (used by the cross-project user
+                  // detail page).
+                  ...(projectId ? { project_id: projectId } : {}),
+                  page_size: ROWS_LIMIT,
+                  // JSON preserves attribute paths containing commas. The API
+                  // rejects oversized requests; neither side truncates.
+                  ...(requestedAttributeKeysKey === "[]"
+                    ? {}
+                    : { attribute_keys: requestedAttributeKeysKey }),
+                  filters: JSON.stringify(
+                    toBackendFilters([
+                      ...filters,
+                      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                      ...(extraFilters || EMPTY_EXTRA_FILTERS),
+                      ...(metricFilters || []),
+                    ]),
+                  ),
+                  ...(dateInterval && { interval: dateInterval }),
+                });
 
               // Use prefetched data if available, otherwise fetch
               const cached = prefetchCache.current.get(pageNumber);
               prefetchCache.current.delete(pageNumber);
-              const results =
-                cached ||
-                (await axios.get(
-                  endpoints.project.getTracesForObserveProject(),
-                  { params: buildParams(pageNumber) },
-                ));
+              const exactPage = await loadExactListPage({
+                pagination: cursorPagination.current,
+                pageNumber,
+                targetRowCount: ROWS_LIMIT,
+                loadResponse: () =>
+                  cached ||
+                  axios.get(endpoints.project.getTracesForObserveProject(), {
+                    params: buildParams(pageNumber),
+                  }),
+                rowsFromResponse: (response) =>
+                  response?.data?.result?.table || [],
+                metadataFromResponse: (response) =>
+                  response?.data?.result?.metadata || {},
+                rowIdentity: traceRowIdentity,
+                isCurrent: () =>
+                  cursorPagination.current.isCurrent(requestGeneration),
+                nextResponse: () =>
+                  axios.get(endpoints.project.getTracesForObserveProject(), {
+                    params: buildParams(pageNumber),
+                  }),
+              });
+              if (!cursorPagination.current.isCurrent(requestGeneration)) {
+                // A newer filter/range owns the grid now. Do not let this stale
+                // response replace its loading state with an empty overlay.
+                params.fail();
+                return;
+              }
 
+              const results = exactPage.response;
               const res = results?.data?.result;
+              const rows = exactPage.rows;
+              const metadata = exactPage.metadata;
+              if (
+                resumePendingListPage({
+                  page: exactPage,
+                  resume: () => {
+                    if (cursorPagination.current.isCurrent(requestGeneration)) {
+                      params.fail();
+                      if (params.api?.retryServerSideLoads) {
+                        params.api.retryServerSideLoads();
+                      } else {
+                        params.api?.refreshServerSide?.({ purge: false });
+                      }
+                    }
+                  },
+                })
+              ) {
+                continuationPending = true;
+                return;
+              }
+              const nextReadState = getQueryReadState(results?.data);
+              if (pageNumber === 0 || nextReadState !== "complete") {
+                const nextReadMessage = getListReadMessage(results?.data);
+                readMessageRef.current = nextReadMessage;
+                setReadMessage(nextReadMessage);
+              }
               const newCols = normalizeConfigKeys(res?.config);
 
               // Use ref to get latest columns for comparison without triggering dataSource recreation
@@ -305,21 +427,25 @@ const TraceGrid = React.forwardRef(
                 }
               }
 
-              const rows = res?.table || [];
-              const totalRows = res?.metadata?.total_rows;
-              params.api.totalRowCount = totalRows;
-              useTraceGridStore.setState({ totalRowCount: totalRows || 0 });
+              const totalState = getListTotalState(metadata);
+              params.api.totalRowCount = totalState.totalRowCount;
+              params.api.totalRowCountLowerBound =
+                totalState.totalRowCountLowerBound;
+              params.api.totalRowCountIsLowerBound =
+                totalState.totalRowCountIsLowerBound;
+              useTraceGridStore.setState(totalState);
 
               // Infinite-scroll behavior: don't tell AG Grid the total upfront.
               // Use -1 (unknown) so it only extends the scrollbar as pages load.
               // When we get fewer rows than requested, that's the last page.
-              const isLastPage = rows.length < ROWS_LIMIT;
+              const isLastPage = exactPage.isLastPage;
               const lastRow = isLastPage ? request.startRow + rows.length : -1;
 
               params.success({
                 rowData: rows,
                 rowCount: lastRow,
               });
+              setContinuationNotice(null);
 
               if (pageNumber === 0 && rows.length === 0) {
                 params.api?.showNoRowsOverlay();
@@ -337,20 +463,52 @@ const TraceGrid = React.forwardRef(
               }, 0);
 
               // Prefetch next page so scroll feels instant
-              if (!isLastPage) {
+              if (exactPage.canPrefetch) {
                 axios
                   .get(endpoints.project.getTracesForObserveProject(), {
                     params: buildParams(pageNumber + 1),
                   })
                   .then((res) => {
-                    prefetchCache.current.set(pageNumber + 1, res);
+                    if (cursorPagination.current.isCurrent(requestGeneration)) {
+                      prefetchCache.current.set(pageNumber + 1, res);
+                    }
                   })
                   .catch(() => {});
               }
             } catch (error) {
-              params.fail();
+              if (isListCursorContinuationLimitError(error)) {
+                // Keep the signed checkpoint and any existing rows. This is a
+                // bounded exact read awaiting an explicit retry, not an empty
+                // result or a user-visible query failure.
+                setContinuationNotice(true);
+                params.fail();
+                return;
+              }
+              if (
+                cursorPagination.current.canRecoverFromContinuationError(
+                  pageNumber,
+                  error,
+                )
+              ) {
+                prefetchCache.current.clear();
+                cursorPagination.current.disableCursor();
+                params.fail();
+                params.api?.refreshServerSide?.({ purge: true });
+                return;
+              }
+              readMessageRef.current = QUERY_FAILED_RETRY_MESSAGE;
+              setReadMessage(QUERY_FAILED_RETRY_MESSAGE);
+              failServerSideGridRead(params);
             } finally {
-              setLoading(false);
+              if (
+                !continuationPending &&
+                firstPageRequestId !== null &&
+                firstPageRequestId === firstPageRequestRef.current &&
+                cursorPagination.current.isCurrent(requestGeneration)
+              ) {
+                setGridLoading(false);
+              }
+              if (!continuationPending) setLoading(false);
             }
           },
         };
@@ -368,6 +526,7 @@ const TraceGrid = React.forwardRef(
         hasEvalFilter,
         enabled,
         dateInterval,
+        requestedAttributeKeysKey,
       ],
     );
 
@@ -533,11 +692,36 @@ const TraceGrid = React.forwardRef(
 
     return (
       <Box
-        sx={{ height: "calc(100vh - 270px)" }}
+        sx={{
+          height: "calc(100vh - 270px)",
+          display: "flex",
+          flexDirection: "column",
+        }}
         className={cellHeight && cellHeight !== "Short" ? "cell-wrap" : ""}
       >
+        {readMessage && (
+          <Box
+            role="status"
+            sx={{
+              px: 1.5,
+              py: 0.75,
+              fontSize: 12,
+              color: "warning.main",
+              bgcolor: "warning.lighter",
+              borderBottom: "1px solid",
+              borderColor: "warning.light",
+            }}
+          >
+            {readMessage}
+          </Box>
+        )}
+        <ListCursorContinuationNotice
+          pending={Boolean(continuationNotice)}
+          onContinue={continueCursorSearch}
+        />
         <AgGridReact
-          className={`clean-data-table ${shouldDisable ? "ag-grid-disabled" : ""}`}
+          style={{ flex: 1, minHeight: 0 }}
+          className={`clean-data-table ${continuationNotice ? "ag-grid-cursor-paused" : ""} ${shouldDisable ? "ag-grid-disabled" : ""}`}
           theme={agTheme.withParams({
             columnBorder: false,
             headerColumnBorder: false,
@@ -568,18 +752,25 @@ const TraceGrid = React.forwardRef(
           suppressServerSideFullWidthLoadingRow={true}
           rowModelType="serverSide"
           serverSideDatasource={dataSource}
+          loading={
+            gridLoading ||
+            previousFilterRequestKeyRef.current !== filterRequestKey
+          }
           noRowsOverlayComponent={() =>
-            NoRowsOverlay(
-              <Typography
-                sx={{
-                  fontSize: 14,
-                  fontWeight: 400,
-                  color: "text.secondary",
-                }}
-              >
-                {showErrors ? "No error found" : "No traces found"}
-              </Typography>,
-            )
+            continuationNotice
+              ? null
+              : NoRowsOverlay(
+                  <Typography
+                    sx={{
+                      fontSize: 14,
+                      fontWeight: 400,
+                      color: "text.secondary",
+                    }}
+                  >
+                    {readMessageRef.current ||
+                      (showErrors ? "No error found" : "No traces found")}
+                  </Typography>,
+                )
           }
           onCellClicked={handleCellClick}
           onSelectionChanged={onSelectionChanged}

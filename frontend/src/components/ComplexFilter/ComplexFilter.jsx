@@ -56,6 +56,7 @@ const ComplexFilter = ({
   filterDefinition,
   onClose,
   className,
+  projectId,
 }) => {
   const addFilter = useCallback(() => {
     setFilters(() => [...filters, { ...defaultFilter, id: getRandomId() }]);
@@ -127,6 +128,7 @@ const ComplexFilter = ({
           filterDefinition={adjustedFilterDefinition}
           defaultFilter={defaultFilter}
           propertyIdCount={propertyIdCount}
+          projectId={projectId}
         />
       );
     });
@@ -138,6 +140,7 @@ const ComplexFilter = ({
     addFilter,
     updateFilter,
     removeFilter,
+    projectId,
   ]);
 
   return (
@@ -185,6 +188,7 @@ ComplexFilter.propTypes = {
   filterDefinition: PropTypes.array,
   onClose: PropTypes.func,
   className: PropTypes.string,
+  projectId: PropTypes.string,
 };
 
 export default ComplexFilter;

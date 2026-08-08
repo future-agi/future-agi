@@ -2,7 +2,7 @@
 Tests for the @temporal_activity → TaskRunnerWorkflow retry-policy propagation chain.
 
 Surface area covered:
-- decorator default values (max_retries / retry_delay)
+- decorator default values (time_limit / max_retries / retry_delay)
 - TaskRunnerInput dataclass defaults
 - _resolve_retry_policy mapping of decorator settings to Temporal RetryPolicy
 - runner.start_activity reads registry metadata into TaskRunnerInput
@@ -12,6 +12,8 @@ is the data-shape contract from decorator → registry → input → policy. The
 end-to-end behavior is verified separately via the live Temporal UI.
 """
 
+import asyncio
+import time
 from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -23,7 +25,6 @@ from tfc.temporal.drop_in.workflow import (
     TaskRunnerInput,
     _resolve_retry_policy,
 )
-
 
 # =============================================================================
 # Helpers
@@ -193,6 +194,7 @@ class TestRunnerInputConstruction:
         # Register a fake activity so the registry has metadata to read.
         _decorate(
             "fixture_activity_for_runner",
+            time_limit=3600,
             max_retries=2,
             retry_delay=15,
             queue="trace_ingestion",
@@ -225,6 +227,7 @@ class TestRunnerInputConstruction:
 
         run_input = captured["input"]
         assert run_input.activity_name == "fixture_activity_for_runner"
+        assert run_input.time_limit == 3600
         assert run_input.max_retries == 2
         assert run_input.retry_delay == 15
 
@@ -257,5 +260,27 @@ class TestRunnerInputConstruction:
             )
 
         run_input = captured["input"]
+        assert run_input.time_limit is None
         assert run_input.max_retries is None
         assert run_input.retry_delay is None
+
+
+@pytest.mark.unit
+def test_sync_dispatch_timeout_bounds_temporal_outage():
+    async def _never_returns(*_args, **_kwargs):
+        await asyncio.sleep(60)
+
+    from tfc.temporal.drop_in.runner import start_activity
+
+    started = time.monotonic()
+    with patch(
+        "tfc.temporal.drop_in.runner._start_activity_async",
+        side_effect=_never_returns,
+    ):
+        with pytest.raises(TimeoutError):
+            start_activity(
+                "bounded-dispatch-test",
+                dispatch_timeout_seconds=0.02,
+            )
+
+    assert time.monotonic() - started < 0.5

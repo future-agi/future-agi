@@ -64,6 +64,37 @@ def survivor_map_subquery(remap_table: str) -> str:
     )
 
 
+def bounded_survivor_map_subquery(
+    remap_table: str,
+    *,
+    candidate_param: str,
+) -> str:
+    """Return the exact survivor map only for groups touched by candidates.
+
+    Page-scoped reads already own a finite candidate id set.  Building the
+    global window-function map for every request can consume hundreds of MiB
+    before the actual page scan starts.  This equivalent shape first discovers
+    the finite set of touched ``new_id`` groups, then expands only those groups
+    to their old/new aliases.  ``candidate_param`` is a trusted builder-owned
+    parameter name, never request SQL.
+    """
+
+    if not candidate_param or not candidate_param.replace("_", "").isalnum():
+        raise ValueError("candidate remap parameter name is invalid")
+    placeholder = f"%({candidate_param})s"
+    return (
+        "SELECT "
+        "arrayJoin(arrayDistinct(arrayConcat(groupArray(old_id), [new_id]))) "
+        "AS any_id, "
+        "argMin(old_id, toString(old_id)) AS survivor_id "
+        f"FROM {remap_table} FINAL "
+        "WHERE new_id IN ("
+        f"SELECT DISTINCT new_id FROM {remap_table} FINAL "
+        f"WHERE old_id IN {placeholder} OR new_id IN {placeholder}"
+        ") GROUP BY new_id"
+    )
+
+
 def resolved_id_expr(span_id_col: str, remap_alias: str = REMAP_ALIAS) -> str:
     """SQL for the resolved (survivor) id of ``span_id_col``: the joined map's
     ``survivor_id``, else the span's own id (zero-uuid/NULL guard — see module
@@ -88,6 +119,7 @@ def remap_left_join(
 
 __all__ = [
     "REMAP_ALIAS",
+    "bounded_survivor_map_subquery",
     "resolved_id_expr",
     "remap_left_join",
     "survivor_map_subquery",

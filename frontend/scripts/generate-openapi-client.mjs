@@ -275,11 +275,104 @@ async function runGeneration(schemaPath) {
       "x-string-or-object TS aliases → string | object",
     );
 
+    // Span-attribute array members are JSON scalars on the wire. Orval ignores
+    // x-json-value and narrows both response fields to object-only, so keep a
+    // focused recursive JSON type for these two public picker contracts.
+    schemas = assertReplace(
+      schemas,
+      `/**
+ * Any valid JSON value.
+ */
+export type SpanAttributeTopValueApiValue = { [key: string]: unknown };`,
+      `export type SpanAttributeJsonValueApi =
+  | string
+  | number
+  | boolean
+  | null
+  | SpanAttributeJsonValueApi[]
+  | { [key: string]: SpanAttributeJsonValueApi };
+
+/**
+ * Any valid JSON value.
+ */
+export type SpanAttributeTopValueApiValue = SpanAttributeJsonValueApi;`,
+      "SpanAttributeTopValueApiValue → recursive JSON value",
+    );
+    schemas = assertReplace(
+      schemas,
+      `/**
+ * Any valid JSON value.
+ */
+export type SpanAttributeValueApiValue = { [key: string]: unknown };`,
+      `/**
+ * Any valid JSON value.
+ */
+export type SpanAttributeValueApiValue = SpanAttributeJsonValueApi;`,
+      "SpanAttributeValueApiValue → recursive JSON value",
+    );
+    schemas = assertReplace(
+      schemas,
+      `/**
+ * Any valid JSON value.
+ */
+export type DashboardFilterValueOptionApiValue = { [key: string]: unknown };`,
+      `/**
+ * Any valid JSON value.
+ */
+export type DashboardFilterValueOptionApiValue = SpanAttributeJsonValueApi;`,
+      "DashboardFilterValueOptionApiValue → recursive JSON value",
+    );
+
     fs.writeFileSync(schemasOutputPath, schemas);
   }
 
   if (fs.existsSync(zodOutputPath)) {
     let zod = fs.readFileSync(zodOutputPath, "utf8");
+
+    zod = assertReplace(
+      zod,
+      `export const ApiTracesSpanAttributeDetailListResponse = zod.object({`,
+      `type SpanAttributeJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | SpanAttributeJsonValue[]
+  | { [key: string]: SpanAttributeJsonValue };
+
+const spanAttributeJsonValueSchema: zod.ZodType<SpanAttributeJsonValue> =
+  zod.lazy(() =>
+    zod.union([
+      zod.string(),
+      zod.number(),
+      zod.boolean(),
+      zod.null(),
+      zod.array(spanAttributeJsonValueSchema),
+      zod.record(spanAttributeJsonValueSchema),
+    ]),
+  );
+
+export const ApiTracesSpanAttributeDetailListResponse = zod.object({`,
+      "span-attribute recursive JSON zod schema",
+    );
+    zod = assertReplaceRegex(
+      zod,
+      /(export const ApiTracesSpanAttributeDetailListResponse = zod\.object\(\{[\s\S]*?"top_values": zod\.array\(zod\.object\(\{\n  "value": )zod\.object\(\{\n\n\}\)\.passthrough\(\)\.describe\('Any valid JSON value\.'\),/,
+      "$1spanAttributeJsonValueSchema,",
+      "SpanAttributeTopValue zod value → recursive JSON value",
+    );
+    zod = assertReplaceRegex(
+      zod,
+      /(export const ApiTracesSpanAttributeValuesListResponse = zod\.object\(\{[\s\S]*?"result": zod\.array\(zod\.object\(\{\n  "value": )zod\.object\(\{\n\n\}\)\.passthrough\(\)\.describe\('Any valid JSON value\.'\),/,
+      "$1spanAttributeJsonValueSchema,",
+      "SpanAttributeValue zod value → recursive JSON value",
+    );
+    zod = assertReplaceRegex(
+      zod,
+      /(export const TracerDashboardFilterValuesResponse = zod\.object\(\{[\s\S]*?"values": zod\.array\(zod\.object\(\{\n  "value": )zod\.object\(\{\n\n\}\)\.passthrough\(\)\.describe\('Any valid JSON value\.'\),/,
+      "$1spanAttributeJsonValueSchema,",
+      "DashboardFilterValueOption zod value → recursive JSON value",
+    );
 
     // x-string-or-array: orval generates zod.object({}).passthrough() for these
     // fields. Use the unique description emitted by StringOrArrayField as anchor.

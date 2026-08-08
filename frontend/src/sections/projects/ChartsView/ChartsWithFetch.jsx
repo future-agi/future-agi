@@ -4,10 +4,14 @@ import React, { useMemo } from "react";
 import ChartsGenerator from "./ChartsGenerator";
 import axios, { endpoints } from "src/utils/axios";
 import { transformEvaluationPayload } from "./common";
-import { Skeleton } from "@mui/material";
+import { Box, Skeleton, Typography } from "@mui/material";
 import { useChartsViewContext } from "./ChartsViewProvider/ChartsViewContext";
 import { getStorage } from "src/hooks/use-local-storage";
 import { normalizeTimestamp } from "./ChartsViewProvider/common";
+import {
+  AGGREGATION_PREPARING_MESSAGE,
+  getExactAggregationReadState,
+} from "src/utils/queryReadState";
 
 export default function ChartWithFetch({ evaluation, observeId, inView }) {
   const autoRefresh = getStorage("autoRefresh") ?? false;
@@ -23,7 +27,7 @@ export default function ChartWithFetch({ evaluation, observeId, inView }) {
     JSON.stringify(filters),
   ];
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey,
     queryFn: () => {
       const payload = {
@@ -44,8 +48,12 @@ export default function ChartWithFetch({ evaluation, observeId, inView }) {
     enabled: inView,
   });
 
+  const result = data?.data?.result;
+  const queryReadState = getExactAggregationReadState(result, { isError });
+  const queryReadMessage =
+    queryReadState === "complete" ? null : AGGREGATION_PREPARING_MESSAGE;
+
   const evalsChartData = useMemo(() => {
-    const result = data?.data?.result;
     const baseChart = {
       id: `chart-${evaluation?.id}`,
       label: evaluation?.name,
@@ -54,7 +62,7 @@ export default function ChartWithFetch({ evaluation, observeId, inView }) {
       isEvaluationChart: true,
     };
 
-    if (!result || !Array.isArray(result)) {
+    if (!Array.isArray(result) || queryReadState !== "complete") {
       return { ...baseChart, series: [] };
     }
 
@@ -68,13 +76,27 @@ export default function ChartWithFetch({ evaluation, observeId, inView }) {
         })),
       })),
     };
-  }, [data?.data?.result, evaluation?.id, evaluation?.name]);
+  }, [evaluation?.id, evaluation?.name, queryReadState, result]);
 
   if (isLoading) {
     return <Skeleton variant="rectangular" width="100%" height={250} />;
   }
 
-  return <ChartsGenerator {...evalsChartData} onZoom={handleZoomChange} />;
+  return (
+    <Box>
+      {queryReadMessage && (
+        <Typography
+          role="status"
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: "block", mb: 1 }}
+        >
+          {queryReadMessage}
+        </Typography>
+      )}
+      <ChartsGenerator {...evalsChartData} onZoom={handleZoomChange} />
+    </Box>
+  );
 }
 
 ChartWithFetch.propTypes = {

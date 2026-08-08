@@ -24,6 +24,7 @@ const FilterRow = ({
   filterDefinition,
   defaultFilter,
   propertyIdCount,
+  projectId,
 }) => {
   const parentProperty = filter?._meta?.parentProperty || "";
   const filterRef = useRef(null);
@@ -57,6 +58,7 @@ const FilterRow = ({
           definition={ogDefinition}
           filter={filter}
           updateFilter={updateFilter}
+          projectId={projectId}
         />
       );
     } else {
@@ -437,9 +439,11 @@ FilterRow.propTypes = {
       filter_op: PropTypes.string,
       filter_value: PropTypes.oneOfType([
         PropTypes.string,
+        PropTypes.number,
         PropTypes.array,
         PropTypes.bool,
       ]),
+      attribute_value_types: PropTypes.arrayOf(PropTypes.string),
     }),
     _meta: PropTypes.shape({
       parentProperty: PropTypes.string,
@@ -462,6 +466,7 @@ FilterRow.propTypes = {
   ).isRequired,
   defaultFilter: PropTypes.object.isRequired,
   propertyIdCount: PropTypes.object.isRequired,
+  projectId: PropTypes.string,
 };
 
 export default FilterRow;

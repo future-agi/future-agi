@@ -111,4 +111,57 @@ describe("annotation queue API filter converters", () => {
       value: "false",
     });
   });
+
+  it("round-trips a saved JSON object as a canonical map instead of [object Object]", () => {
+    const saved = {
+      column_id: "customer.context",
+      display_name: "Customer Context",
+      filter_config: {
+        filter_type: "json",
+        filter_op: "contains",
+        filter_value: { tier: "vip", attempt: 2, active: true },
+        col_type: "SPAN_ATTRIBUTE",
+      },
+    };
+
+    const panelFilter = apiFilterToPanel(saved);
+    expect(panelFilter).toMatchObject({
+      field: "customer.context",
+      fieldType: "map",
+      value: { tier: "vip", attempt: 2, active: true },
+    });
+    expect(panelFilterToApi(panelFilter)).toEqual({
+      column_id: "customer.context",
+      display_name: "Customer Context",
+      filter_config: {
+        filter_type: "map",
+        filter_op: "contains",
+        filter_value: { tier: "vip", attempt: 2, active: true },
+        col_type: "SPAN_ATTRIBUTE",
+      },
+    });
+  });
+
+  it("preserves typed members while round-tripping array attributes", () => {
+    const panelFilter = apiFilterToPanel({
+      column_id: "typed_values",
+      filter_config: {
+        filter_type: "array",
+        filter_op: "contains",
+        filter_value: [1, true, "vip"],
+        col_type: "SPAN_ATTRIBUTE",
+      },
+    });
+
+    expect(panelFilter).toMatchObject({
+      fieldType: "array",
+      value: [1, true, "vip"],
+    });
+    expect(panelFilterToApi(panelFilter).filter_config).toEqual({
+      filter_type: "array",
+      filter_op: "contains",
+      filter_value: [1, true, "vip"],
+      col_type: "SPAN_ATTRIBUTE",
+    });
+  });
 });

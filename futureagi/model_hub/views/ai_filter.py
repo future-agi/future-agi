@@ -163,82 +163,93 @@ When to give up:
 # Smart agent helpers
 # ---------------------------------------------------------------------------
 
-# CH column expressions for the system metric → spans table mapping.
-# Mirrors tracer.views.dashboard.DashboardViewSet.filter_values to keep
-# the smart agent self-contained without coupling to that viewset.
-_TRACE_SYSTEM_COL_MAP = {
-    "project": "toString(project_id)",
-    "model": "model",
-    "status": "status",
-    "provider": "provider",
-    "observation_type": "observation_type",
-    "span_kind": "observation_type",
-    "service_name": "name",
-    "session": "trace_session_id",
-    "user": "toString(end_user_id)",
-    "tag": "arrayJoin(trace_tags)",
-    "prompt_name": "dictGet('prompt_dict', 'prompt_name', prompt_version_id)",
-    "prompt_version": "dictGet('prompt_dict', 'template_version', prompt_version_id)",
-    "prompt_label": "dictGet('prompt_label_dict', 'name', prompt_label_id)",
-}
-
 
 def _fetch_trace_field_values(project_ids, metric_name, metric_type):
-    """Distinct values for a field in the spans table.
+    """Return bounded latest-state values from the direct-write CH25 source.
 
-    Returns a list of strings. Empty on miss (unknown field, query failure,
-    or no rows). Capped at 100 to keep the LLM context small.
+    The smart-filter endpoint deliberately keeps its historical ``list[str]``
+    contract: an unsupported, degraded, or unavailable picker returns an empty
+    list and lets the agent use its literal-value fallback. The actual reads are
+    shared with the public filter-value APIs so custom attributes (including
+    ``final_status``), tags, UUID remaps, tombstones, and row-version replay do
+    not drift into a second raw-SQL implementation.
     """
-    from tracer.services.clickhouse.client import is_clickhouse_enabled
-    from tracer.services.clickhouse.query_service import (
-        AnalyticsQueryService,
+    from tracer.services.clickhouse.attribute_reads import AttributeReadSelector
+    from tracer.services.clickhouse.filter_value_reads import (
+        SYSTEM_FILTER_VALUE_METRICS,
+        read_span_system_filter_values,
     )
+    from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
 
-    if not is_clickhouse_enabled() or not project_ids:
+    if not project_ids:
         return []
 
-    analytics = AnalyticsQueryService()
     try:
         if metric_type == "system_metric":
-            col_expr = _TRACE_SYSTEM_COL_MAP.get(metric_name)
-            if not col_expr:
+            if metric_name not in SYSTEM_FILTER_VALUE_METRICS:
                 return []
-            sql = (
-                f"SELECT DISTINCT {col_expr} AS val "
-                f"FROM spans "
-                f"WHERE project_id IN %(project_ids)s "
-                f"AND _peerdb_is_deleted = 0 "
-                f"AND {col_expr} != '' "
-                f"ORDER BY val "
-                f"LIMIT 100"
+            read = read_span_system_filter_values(
+                V2AnalyticsQueryService(),
+                project_ids=[str(project_id) for project_id in project_ids],
+                metric_name=metric_name,
+                limit=100,
+                lookback_days=365,
             )
-            result = analytics.execute_ch_query(
-                sql, {"project_ids": project_ids}, timeout_ms=5000
-            )
+            if not read.query_complete and read.query_error_code != "sample_limit":
+                logger.warning(
+                    "smart_filter_values_degraded",
+                    metric_name=metric_name,
+                    metric_type=metric_type,
+                    error_code=read.query_error_code,
+                )
+                return []
+            return list(read.values)
         elif metric_type == "custom_attribute":
-            sql = (
-                "SELECT DISTINCT span_attr_str[%(attr_key)s] AS val "
-                "FROM spans "
-                "WHERE project_id IN %(project_ids)s "
-                "AND _peerdb_is_deleted = 0 "
-                "AND span_attr_str[%(attr_key)s] != '' "
-                "ORDER BY val "
-                "LIMIT 100"
+            read = AttributeReadSelector(
+                typed_only=True,
+                json_attribute_mode="arrays",
+            ).read_values(
+                project_ids,
+                metric_name,
+                max_values=100,
+                horizon_days=365,
             )
-            result = analytics.execute_ch_query(
-                sql,
-                {"project_ids": project_ids, "attr_key": metric_name},
-                timeout_ms=5000,
-            )
+            if (
+                not read.metadata.query_complete
+                and read.metadata.query_error_code != "sample_limit"
+            ):
+                logger.warning(
+                    "smart_filter_values_degraded",
+                    metric_name=metric_name,
+                    metric_type=metric_type,
+                    error_code=read.metadata.query_error_code,
+                )
+                return []
+
+            values = []
+            seen = set()
+            for row in read.rows:
+                raw_values = row.value if isinstance(row.value, tuple) else (row.value,)
+                for raw_value in raw_values:
+                    value = (
+                        "true"
+                        if raw_value is True
+                        else "false"
+                        if raw_value is False
+                        else str(raw_value)
+                    )
+                    if value and value not in seen:
+                        seen.add(value)
+                        values.append(value)
+            return values[:100]
         else:
             return []
-        return [row["val"] for row in result.data if row.get("val")]
-    except Exception as e:
+    except Exception as exc:
         logger.warning(
             "smart_filter_values_failed",
             metric_name=metric_name,
             metric_type=metric_type,
-            error=str(e)[:200],
+            error_type=type(exc).__name__,
         )
         return []
 

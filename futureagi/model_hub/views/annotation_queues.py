@@ -7797,6 +7797,7 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
             )
 
         from model_hub.utils.annotation_queue_helpers import (
+            AUTOMATION_RULE_MATCH_LIMIT,
             RULE_RUN_SYNC_THRESHOLD,
         )
 
@@ -7822,7 +7823,11 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
         if not peek.get("truncated"):
             # Small enough to handle inline — user sees the result
             # immediately, no email overhead.
-            result = evaluate_rule(rule, user=request.user, cap=RULE_RUN_SYNC_THRESHOLD)
+            result = evaluate_rule(
+                rule,
+                user=request.user,
+                cap=AUTOMATION_RULE_MATCH_LIMIT,
+            )
             return self._gm.success_response(result)
 
         # Large run — hand off to Temporal. The workflow id is stable per rule,
@@ -7877,7 +7882,9 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
                 "status": "scheduled",
                 "workflow_id": workflow_id,
                 "message": (
-                    "We're preparing your data. You'll get an email when it's ready."
+                    "Run scheduled. Automation rules support up to 10,000 matching "
+                    "items per run. If this rule exceeds that limit, nothing will "
+                    "be added and the completion email will explain how to retry."
                 ),
             },
             status=status.HTTP_202_ACCEPTED,

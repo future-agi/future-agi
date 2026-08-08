@@ -15,7 +15,7 @@ Usage:
 import asyncio
 import uuid
 from datetime import timedelta
-from typing import Any, Optional, Tuple
+from typing import Any
 
 from tfc.logging.temporal import get_logger
 
@@ -24,12 +24,13 @@ logger = get_logger(__name__)
 
 def start_activity(
     activity_name: str,
-    args: Tuple = (),
-    kwargs: Optional[dict] = None,
+    args: tuple = (),
+    kwargs: dict | None = None,
     queue: str = "default",
-    task_id: Optional[str] = None,
-    id_conflict_policy: Optional[Any] = None,
-    start_delay: Optional[Any] = None,
+    task_id: str | None = None,
+    id_conflict_policy: Any | None = None,
+    start_delay: Any | None = None,
+    dispatch_timeout_seconds: float | None = None,
 ) -> str:
     """
     Start a Temporal activity (drop-in replacement for Celery's apply_async).
@@ -42,6 +43,8 @@ def start_activity(
         kwargs: Keyword arguments to pass to the activity
         queue: Task queue to use
         task_id: Optional workflow ID (auto-generated if not provided)
+        dispatch_timeout_seconds: Optional client-side deadline for starting
+            the workflow. It does not change the activity execution timeout.
 
     Returns:
         The workflow ID
@@ -77,38 +80,21 @@ def start_activity(
     )
 
     try:
-        # Check if there's a running event loop
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
+        except RuntimeError:
+            has_running_loop = False
+        else:
+            has_running_loop = True
+
+        if has_running_loop:
             # We're in an async context - need to run synchronously in a new thread
             # to avoid blocking the event loop
             import concurrent.futures
 
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    asyncio.run,
-                    _start_activity_async(
-                        activity_name,
-                        args,
-                        kwargs,
-                        temporal_queue,
-                        task_id,
-                        id_conflict_policy,
-                        start_delay,
-                    ),
-                )
-                result = future.result(timeout=30)  # 30 second timeout
-                logger.info(
-                    "start_activity_completed",
-                    activity_name=activity_name,
-                    workflow_id=result,
-                    context="async",
-                )
-                return result
-        except RuntimeError:
-            # No running loop, create one - this is the normal case for sync Django views
-            result = asyncio.run(
-                _start_activity_async(
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            try:
+                coroutine = _start_activity_async(
                     activity_name,
                     args,
                     kwargs,
@@ -117,7 +103,51 @@ def start_activity(
                     id_conflict_policy,
                     start_delay,
                 )
+                if dispatch_timeout_seconds is not None:
+                    coroutine = asyncio.wait_for(
+                        coroutine,
+                        timeout=max(float(dispatch_timeout_seconds), 0.001),
+                    )
+                future = executor.submit(
+                    asyncio.run,
+                    coroutine,
+                )
+                wait_timeout = (
+                    max(float(dispatch_timeout_seconds), 0.001) + 1
+                    if dispatch_timeout_seconds is not None
+                    else 30
+                )
+                result = future.result(timeout=wait_timeout)
+                logger.info(
+                    "start_activity_completed",
+                    activity_name=activity_name,
+                    workflow_id=result,
+                    context="async",
+                )
+                return result
+            finally:
+                # On a bounded dispatch timeout, never make the request wait
+                # for the worker thread during executor shutdown. The wrapped
+                # asyncio.wait_for cancellation closes its event loop shortly
+                # afterward.
+                executor.shutdown(wait=False, cancel_futures=True)
+        else:
+            # No running loop, create one - this is the normal case for sync Django views
+            coroutine = _start_activity_async(
+                activity_name,
+                args,
+                kwargs,
+                temporal_queue,
+                task_id,
+                id_conflict_policy,
+                start_delay,
             )
+            if dispatch_timeout_seconds is not None:
+                coroutine = asyncio.wait_for(
+                    coroutine,
+                    timeout=max(float(dispatch_timeout_seconds), 0.001),
+                )
+            result = asyncio.run(coroutine)
             logger.info(
                 "start_activity_completed",
                 activity_name=activity_name,
@@ -134,16 +164,14 @@ def start_activity(
 
 async def _start_activity_async(
     activity_name: str,
-    args: Tuple,
+    args: tuple,
     kwargs: dict,
     queue: str,
     task_id: str,
-    id_conflict_policy: Optional[Any] = None,
-    start_delay: Optional[Any] = None,
+    id_conflict_policy: Any | None = None,
+    start_delay: Any | None = None,
 ) -> str:
     """Async implementation of start_activity."""
-    from temporalio.client import Client
-
     from tfc.temporal.common.client import get_client
     from tfc.temporal.drop_in.decorator import _ACTIVITY_REGISTRY
     from tfc.temporal.drop_in.workflow import TaskRunnerInput, TaskRunnerWorkflow
@@ -204,13 +232,14 @@ async def _start_activity_async(
             _extra_start_kwargs["id_conflict_policy"] = id_conflict_policy
         if start_delay is not None:
             _extra_start_kwargs["start_delay"] = start_delay
-        handle = await client.start_workflow(
+        await client.start_workflow(
             TaskRunnerWorkflow.run,
             TaskRunnerInput(
                 activity_name=activity_name,
                 args=safe_args,
                 kwargs=safe_kwargs,
                 queue=queue,
+                time_limit=activity_metadata.get("time_limit"),
                 max_retries=activity_metadata.get("max_retries"),
                 retry_delay=activity_metadata.get("retry_delay"),
             ),
@@ -241,10 +270,10 @@ async def _start_activity_async(
 
 def start_activity_sync(
     activity_name: str,
-    args: Tuple = (),
-    kwargs: Optional[dict] = None,
+    args: tuple = (),
+    kwargs: dict | None = None,
     queue: str = "default",
-    task_id: Optional[str] = None,
+    task_id: str | None = None,
 ) -> str:
     """
     Synchronous version of start_activity.
@@ -270,10 +299,10 @@ def start_activity_sync(
 
 async def start_activity_async(
     activity_name: str,
-    args: Tuple = (),
-    kwargs: Optional[dict] = None,
+    args: tuple = (),
+    kwargs: dict | None = None,
     queue: str = "default",
-    task_id: Optional[str] = None,
+    task_id: str | None = None,
 ) -> str:
     """
     Async version of start_activity.

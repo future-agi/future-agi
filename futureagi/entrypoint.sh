@@ -10,6 +10,27 @@ ENV_PROJECT_ROOT=${ENV_PROJECT_ROOT:-/app/backend}
 # Fast startup mode - skip non-essential checks for faster local dev
 FAST_STARTUP=${FAST_STARTUP:-false}
 
+# Production keeps the existing startup path unless an isolated read-only job
+# explicitly opts in with the literal value "true". An explicitly supplied
+# empty or non-boolean value is rejected instead of being interpreted loosely.
+if [ "${NO_STARTUP_DB_MUTATIONS+x}" != "x" ]; then
+    NO_STARTUP_DB_MUTATIONS=false
+fi
+case "$NO_STARTUP_DB_MUTATIONS" in
+    "true"|"false") ;;
+    *)
+        echo "ERROR: NO_STARTUP_DB_MUTATIONS must be exactly 'true' or 'false'"
+        exit 64
+        ;;
+esac
+
+# Reuse the existing fast-startup boundary so the opt-in test pod skips DB
+# readiness checks, cache-table creation, migrations, and static collection.
+if [ "$NO_STARTUP_DB_MUTATIONS" = "true" ]; then
+    FAST_STARTUP=true
+fi
+export NO_STARTUP_DB_MUTATIONS
+
 # Disable bytecode compilation to speed up imports (optional)
 # export PYTHONDONTWRITEBYTECODE=1
 
@@ -248,7 +269,11 @@ else
     echo "FAST_STARTUP mode: skipping DB checks, migrations, and static collection"
 fi
 
-python manage.py register_temporal_schedules || echo "WARNING: Temporal schedule registration failed (non-fatal), continuing startup..."
+if [ "$NO_STARTUP_DB_MUTATIONS" = "true" ]; then
+    echo "Mutation-free startup: skipping Temporal schedule registration"
+else
+    python manage.py register_temporal_schedules || echo "WARNING: Temporal schedule registration failed (non-fatal), continuing startup..."
+fi
 
 # Start the appropriate service based on SERVICE_TYPE
 case "$SERVICE_TYPE" in

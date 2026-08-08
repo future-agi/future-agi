@@ -7,6 +7,7 @@ shape and stamping the config hash. Idempotent via the PR 3b unique indexes.
 
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from django.utils import timezone
@@ -21,8 +22,18 @@ from tracer.models.observation_span import (
 )
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
+from tracer.selectors.eval_tasks.row_resolver import (
+    EvalTaskReadBudgetExceeded,
+    TraceFilterWitness,
+)
 from tracer.services.eval_tasks.config_hash import resolved_config_hash
-from tracer.services.eval_tasks.entries import materialize_pending, soft_delete_live
+from tracer.services.eval_tasks.entries import (
+    _resolve_entry_fks,
+    materialize_pending,
+    persist_eval_result,
+    soft_delete_live,
+    writing_onto_entry,
+)
 from tracer.tests._ch_seed import seed_ch_spans
 
 
@@ -90,6 +101,27 @@ def _make_spans(
 
 def _live(task, **filters):
     return EvalLogger.objects.filter(eval_task_id=str(task.id), **filters)
+
+
+@pytest.mark.unit
+def test_entry_fk_resolution_rejects_off_page_cross_trace_span_id_collision():
+    class CollisionReader:
+        def list_by_ids(self, *_args, **_kwargs):
+            return [
+                SimpleNamespace(id="shared", trace_id="trace-a"),
+                SimpleNamespace(id="shared", trace_id="trace-b"),
+            ]
+
+    with pytest.raises(
+        EvalTaskReadBudgetExceeded,
+        match="could not safely distinguish",
+    ):
+        _resolve_entry_fks(
+            CollisionReader(),
+            RowType.SPANS,
+            ["shared"],
+            project_id="project-a",
+        )
 
 
 @pytest.mark.integration
@@ -174,6 +206,114 @@ class TestMaterializeTracesAndSessions:
         task = _task(project, row_type=RowType.TRACES, evals=[custom_eval_config])
         materialize_pending(task)  # must not raise
         assert _live(task).count() == 0
+
+    def test_trace_filter_witness_is_namespaced_and_survives_result_write(
+        self, project, custom_eval_config
+    ):
+        trace = Trace.objects.create(project=project, name="filtered-trace")
+        started_at = timezone.now() - timedelta(minutes=1)
+        root = ObservationSpan.objects.create(
+            id=f"root-{uuid.uuid4().hex[:8]}",
+            project=project,
+            trace=trace,
+            name="root",
+            observation_type="llm",
+            parent_span_id="",
+            start_time=started_at,
+        )
+        child = ObservationSpan.objects.create(
+            id=f"child-{uuid.uuid4().hex[:8]}",
+            project=project,
+            trace=trace,
+            name="child",
+            observation_type="tool",
+            parent_span_id=root.id,
+            span_attributes={"final_status": "Rejected"},
+            start_time=started_at + timedelta(seconds=1),
+        )
+        _seed_past([root, child])
+        task = _task(project, row_type=RowType.TRACES, evals=[custom_eval_config])
+        witness = TraceFilterWitness(
+            trace_id=str(trace.id),
+            filter_ordinal=0,
+            column_id="final_status",
+            col_type="SPAN_ATTRIBUTE",
+            project_id=str(project.id),
+            span_id=str(child.id),
+            start_time=child.start_time,
+        )
+
+        materialize_pending(
+            task,
+            [str(trace.id)],
+            trace_filter_witnesses=[witness],
+        )
+        entry = _live(task).get()
+        stored = entry.output_metadata["_task_selection"]["filter_witnesses"][0]
+        assert stored["span_id"] == child.id
+        assert stored["start_time"] == child.start_time.isoformat()
+
+        entry.status = EvalEntryStatus.RUNNING
+        entry.save(update_fields=["status"])
+        with writing_onto_entry(entry.id, output_metadata=entry.output_metadata):
+            persist_eval_result({"output_metadata": {"engine": "ok"}})
+        entry.refresh_from_db()
+        assert entry.output_metadata["engine"] == "ok"
+        assert (
+            entry.output_metadata["_task_selection"]["filter_witnesses"][0]["span_id"]
+            == child.id
+        )
+
+    def test_idempotent_reconcile_backfills_witness_on_existing_pending_entry(
+        self, project, custom_eval_config
+    ):
+        trace = Trace.objects.create(project=project, name="existing-trace")
+        started_at = timezone.now() - timedelta(minutes=1)
+        root = ObservationSpan.objects.create(
+            id=f"root-{uuid.uuid4().hex[:8]}",
+            project=project,
+            trace=trace,
+            name="root",
+            observation_type="llm",
+            parent_span_id="",
+            start_time=started_at,
+        )
+        child = ObservationSpan.objects.create(
+            id=f"child-{uuid.uuid4().hex[:8]}",
+            project=project,
+            trace=trace,
+            name="child",
+            observation_type="tool",
+            parent_span_id=root.id,
+            start_time=started_at + timedelta(seconds=1),
+        )
+        _seed_past([root, child])
+        task = _task(project, row_type=RowType.TRACES, evals=[custom_eval_config])
+        materialize_pending(task, [str(trace.id)])
+        entry = _live(task).get()
+        assert entry.output_metadata is None
+
+        materialize_pending(
+            task,
+            [str(trace.id)],
+            trace_filter_witnesses=[
+                TraceFilterWitness(
+                    trace_id=str(trace.id),
+                    filter_ordinal=0,
+                    column_id="final_status",
+                    col_type="SPAN_ATTRIBUTE",
+                    project_id=str(project.id),
+                    span_id=str(child.id),
+                    start_time=child.start_time,
+                )
+            ],
+        )
+
+        entry.refresh_from_db()
+        assert (
+            entry.output_metadata["_task_selection"]["filter_witnesses"][0]["span_id"]
+            == child.id
+        )
 
     def test_session_entries(self, project, custom_eval_config):
         session = TraceSession.objects.create(project=project, name="sess")

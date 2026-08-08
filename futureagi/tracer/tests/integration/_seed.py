@@ -43,9 +43,8 @@ CHOICE_OPTIONS = ["good", "bad", "neutral"]
 #   pct2 -> round(v/(v+1)*100, 2)    (agent-talk-percentage style)
 #   pct0 -> round(v/(v+1)*100)       (talk_ratio filter: integer-rounded)
 #
-# Three known display-vs-filter mismatches are currently NOT covered here:
+# Two known display-vs-filter mismatches are currently NOT covered here:
 #   - wpm: filter round()s to int; displayed value is raw.
-#   - call.status: filter matches raw 'ended'; UI shows 'completed'.
 #   - call_type: filter reads raw_log.type (not stored) -> always 'outbound'.
 # The auto-matrix pins the filter's own rounding/raw-value semantics (so it
 # passes), leaving the display divergence untested.
@@ -94,10 +93,9 @@ VOICE_NUM_SPEC: list[tuple] = [
 _PERSONA = ["formal", "casual", "curt"]
 VOICE_STR_SPEC: list[tuple] = [
     ("ended_reason", "ended_reason", lambda i: "customer-ended-call" if i % 2 == 0 else "exceeded-max-duration"),
-    # call.status is stored raw ('ended'); the auto-matrix filters that raw value
-    # (passes). The 'ended'->'completed' display normalization gap is NOT covered
-    # (see the spec header). call_type is seeded below but SKIPPED by the matrix
-    # (its filter reads raw_log.type, not this key — display gap uncovered).
+    # call.status is stored raw ('ended'); the voice-list matrix filters the
+    # normalized public value ('completed'). call_type is seeded below but
+    # SKIPPED by the matrix (its filter reads raw_log.type, not this key).
     ("call_status", "call.status", lambda i: "ended"),
     ("call_type", "call_type", lambda i: "inbound" if i % 2 == 0 else "outbound"),
     # fallback string metrics — seeded under the FE col_id key.

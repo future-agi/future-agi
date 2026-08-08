@@ -14,7 +14,8 @@ Usage:
 """
 
 import functools
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 from django.db import close_old_connections
 
@@ -48,10 +49,10 @@ class AsyncResult:
 def temporal_activity(
     time_limit: int = 3600,
     queue: str = "default",
-    max_retries: Optional[int] = None,
-    retry_delay: Optional[int] = None,
-    rate_limit: Optional[str] = None,
-    name: Optional[str] = None,
+    max_retries: int | None = None,
+    retry_delay: int | None = None,
+    rate_limit: str | None = None,
+    name: str | None = None,
 ):
     """
     Drop-in replacement decorator for @celery_app.task.
@@ -147,6 +148,7 @@ def temporal_activity(
                     task_id=options.get("task_id"),
                     id_conflict_policy=options.get("id_conflict_policy"),
                     start_delay=options.get("start_delay"),
+                    dispatch_timeout_seconds=options.get("dispatch_timeout_seconds"),
                 )
                 log.info(
                     "apply_async_completed",
@@ -278,7 +280,7 @@ def get_registered_activities() -> list[Callable]:
     ]
 
 
-def get_activity_by_name(name: str) -> Optional[dict]:
+def get_activity_by_name(name: str) -> dict | None:
     """Get activity metadata by name."""
     return _ACTIVITY_REGISTRY.get(name)
 

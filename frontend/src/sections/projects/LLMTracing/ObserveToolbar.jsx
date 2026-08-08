@@ -89,6 +89,7 @@ const ObserveToolbar = ({
   bulkActions,
   isSimulator,
   allMatching,
+  selectedCountIsLowerBound,
   // Add Evals button
   excludeSimulationCalls,
   onToggleSimulationCalls,
@@ -184,11 +185,19 @@ const ObserveToolbar = ({
     const newPanelFilters = graphFilters.map((gf) => {
       const rawOp = gf.filter_config?.filter_op || "equals";
       const rawType = gf.filter_config?.filter_type;
+      const rawVal = gf.filter_config?.filter_value;
       // Trust explicit `filter_type` only; ops are shared across types.
       const isNumberType = rawType === "number";
       const isBooleanType = rawType === "boolean";
+      const isArrayType = rawType === "array" || rawType === "list";
+      const isMapType =
+        rawType === "map" ||
+        rawType === "object" ||
+        (rawType === "json" &&
+          rawVal !== null &&
+          typeof rawVal === "object" &&
+          !Array.isArray(rawVal));
       const isRange = RANGE_OPS.has(rawOp);
-      const rawVal = gf.filter_config?.filter_value;
       let value;
       if (isRange) {
         // Normalize to a 2-element string array for the TextField pair.
@@ -206,6 +215,14 @@ const ObserveToolbar = ({
         value = rawVal === true || rawVal === "true" ? "true" : "false";
       } else if (isNumberType) {
         value = rawVal != null ? String(rawVal) : "";
+      } else if (isMapType) {
+        value = rawVal && typeof rawVal === "object" ? rawVal : "";
+      } else if (isArrayType || rawType === "json") {
+        value = Array.isArray(rawVal)
+          ? rawVal
+          : rawVal !== undefined && rawVal !== null && rawVal !== ""
+            ? [rawVal]
+            : [];
       } else {
         value = rawVal
           ? String(rawVal)
@@ -255,15 +272,20 @@ const ObserveToolbar = ({
             ? "boolean"
             : isNumberType
               ? "number"
-              : rawFilterType === "number"
-                ? "number"
-                : rawFilterType === "thumbs" || looksLikeThumbsValues
-                  ? "thumbs"
-                  : rawFilterType === "categorical"
-                    ? "categorical"
-                    : rawFilterType === "text" && rawColType === "ANNOTATION"
-                      ? "text"
-                      : "string",
+              : isMapType
+                ? "map"
+                : isArrayType || rawFilterType === "json"
+                  ? "array"
+                  : rawFilterType === "number"
+                    ? "number"
+                    : rawFilterType === "thumbs" || looksLikeThumbsValues
+                      ? "thumbs"
+                      : rawFilterType === "categorical"
+                        ? "categorical"
+                        : rawFilterType === "text" &&
+                            rawColType === "ANNOTATION"
+                          ? "text"
+                          : "string",
         apiColType: isDirectIdFilter
           ? undefined
           : isGlobalAnnotatorFilter
@@ -271,6 +293,7 @@ const ObserveToolbar = ({
             : rawColType,
         operator: rawOp,
         value,
+        valueTypes: gf.filter_config?.attribute_value_types,
       };
     });
     setPanelFilters(newPanelFilters);
@@ -356,6 +379,7 @@ const ObserveToolbar = ({
           isSimulator={isSimulator}
           actions={bulkActions}
           allMatching={allMatching}
+          selectedCountIsLowerBound={selectedCountIsLowerBound}
         />
       ) : (
         <>
@@ -575,6 +599,7 @@ ObserveToolbar.propTypes = {
   onCompareToggle: PropTypes.func,
   isCompareActive: PropTypes.bool,
   selectedCount: PropTypes.number,
+  selectedCountIsLowerBound: PropTypes.bool,
   allMatching: PropTypes.bool,
   onClearSelection: PropTypes.func,
   onBulkAction: PropTypes.func,

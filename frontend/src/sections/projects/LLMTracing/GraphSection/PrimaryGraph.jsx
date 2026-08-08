@@ -10,7 +10,14 @@
  * Metric dropdown shows ALL metrics from the dashboard metrics API:
  * system metrics, evals, annotations — same as what the dashboard module uses.
  */
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import PropTypes from "prop-types";
 import {
   Badge,
@@ -42,6 +49,18 @@ import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { formatDate } from "src/utils/report-utils";
 import { toBackendFilters } from "../common";
 import { combineGraphFilters } from "./graphFilterUtils";
+import {
+  AGGREGATION_POLL_TIMEOUT_MS,
+  GRAPH_LOADING_MESSAGE,
+  QUERY_FAILED_RETRY_MESSAGE,
+  getAggregationPollDelay,
+  getAggregationRefreshState,
+  getExactAggregationReadState,
+  getExactGraphData,
+  getQueryCompletedAt,
+  isAggregationPollBudgetExhausted,
+  awaitAggregationRequestWithDeadline,
+} from "src/utils/queryReadState";
 
 // ---------------------------------------------------------------------------
 // Map dashboard category → graph API type
@@ -150,6 +169,7 @@ function useGraphMetrics() {
       return groups;
     },
     staleTime: 60_000,
+    meta: { errorHandled: true },
   });
 }
 
@@ -183,6 +203,7 @@ const PrimaryGraph = ({
   const { observeId } = useParams();
   const effectiveObserveId = observeIdOverride || observeId;
   const theme = useTheme();
+  const aggregationSourceId = useId();
   const [selectedMetric, setSelectedMetric] = useState(
     defaultMetric || "latency",
   );
@@ -314,7 +335,84 @@ const PrimaryGraph = ({
 
   // Fetch graph data
   const apiEndpoint = graphEndpoint || endpoints.project.getTraceGraphData();
-  const { data: graphData, isLoading } = useQuery({
+  const forceRefreshRef = useRef(false);
+  const pollAttemptRef = useRef(0);
+  const pollingRef = useRef(false);
+  const pollStartedAtRef = useRef(null);
+  const requestScopeRef = useRef(null);
+  const requestGenerationRef = useRef(0);
+  const [pollingTimedOut, setPollingTimedOut] = useState(false);
+  const resetAggregationBudget = useCallback(() => {
+    requestGenerationRef.current += 1;
+    requestScopeRef.current = null;
+    pollAttemptRef.current = 0;
+    pollingRef.current = false;
+    pollStartedAtRef.current = null;
+    setPollingTimedOut(false);
+  }, []);
+  const runAggregationRequest = useCallback(async (scopeKey, request) => {
+    if (requestScopeRef.current !== scopeKey) {
+      requestGenerationRef.current += 1;
+      requestScopeRef.current = scopeKey;
+      pollAttemptRef.current = 0;
+      pollingRef.current = false;
+      pollStartedAtRef.current = null;
+      setPollingTimedOut(false);
+    }
+
+    const generation = requestGenerationRef.current;
+    const startedAt = pollStartedAtRef.current ?? Date.now();
+    pollStartedAtRef.current = startedAt;
+    const remaining = Math.max(
+      AGGREGATION_POLL_TIMEOUT_MS - (Date.now() - startedAt),
+      0,
+    );
+    if (remaining === 0) {
+      pollingRef.current = false;
+      setPollingTimedOut(true);
+      throw new Error("Exact aggregation request deadline exceeded");
+    }
+
+    return awaitAggregationRequestWithDeadline(request(), {
+      timeoutMs: remaining,
+      isCurrent: () => generation === requestGenerationRef.current,
+      onTimeout: () => {
+        pollingRef.current = false;
+        setPollingTimedOut(true);
+      },
+    });
+  }, []);
+  const recordAggregationResponse = useCallback((response) => {
+    const { isRefreshing, refreshFailed } =
+      getAggregationRefreshState(response);
+    const readState = getExactAggregationReadState(response);
+    const shouldPoll =
+      isRefreshing &&
+      !refreshFailed &&
+      (readState === "complete" || readState === "pending");
+    if (!shouldPoll) {
+      pollAttemptRef.current = 0;
+      pollingRef.current = false;
+      pollStartedAtRef.current = null;
+      setPollingTimedOut(false);
+      return;
+    }
+    if (pollStartedAtRef.current == null) {
+      pollStartedAtRef.current = Date.now();
+    }
+    const exhausted = isAggregationPollBudgetExhausted({
+      attempt: pollAttemptRef.current,
+      startedAt: pollStartedAtRef.current,
+    });
+    pollingRef.current = !exhausted;
+    if (exhausted) setPollingTimedOut(true);
+  }, []);
+  const {
+    data: graphData,
+    isLoading,
+    isError: graphError,
+    refetch,
+  } = useQuery({
     queryKey: [
       "primary-graph",
       effectiveObserveId,
@@ -323,40 +421,292 @@ const PrimaryGraph = ({
       combinedFilters,
       apiEndpoint,
     ],
-    queryFn: () =>
-      axios.post(apiEndpoint, {
-        interval: selectedInterval,
-        filters: toBackendFilters(combinedFilters),
-        property: "average",
-        req_data_config: {
-          id: metricDef.id,
-          type: metricDef.apiType || "SYSTEM_METRIC",
-          ...(metricDef.outputType && { output_type: metricDef.outputType }),
-        },
-        project_id: effectiveObserveId,
-      }),
-    select: (d) => d.data?.result,
+    queryFn: async ({ queryKey, signal }) => {
+      if (pollingRef.current) pollAttemptRef.current += 1;
+      const refresh = forceRefreshRef.current;
+      forceRefreshRef.current = false;
+      const response = await runAggregationRequest(
+        JSON.stringify(queryKey),
+        () =>
+          axios.post(
+            apiEndpoint,
+            {
+              interval: selectedInterval,
+              filters: toBackendFilters(combinedFilters),
+              property: "average",
+              req_data_config: {
+                id: metricDef.id,
+                type: metricDef.apiType || "SYSTEM_METRIC",
+                ...(metricDef.outputType && {
+                  output_type: metricDef.outputType,
+                }),
+              },
+              project_id: effectiveObserveId,
+            },
+            {
+              params: {
+                allow_sampled: false,
+                ...(refresh ? { refresh: true } : {}),
+              },
+              signal,
+            },
+          ),
+      );
+      recordAggregationResponse(response);
+      return response;
+    },
+    // Keep the response envelope. The exactness/refresh contract can be
+    // published either on `result` or on its wrapper, and stripping the
+    // wrapper makes a queued response look like an ordinary empty graph.
+    select: (d) => d.data,
     enabled: !!effectiveObserveId && !!metricDef.id,
-    staleTime: 30_000,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchInterval: (query) => {
+      if (pollingTimedOut) return false;
+      const { isRefreshing, refreshFailed } = getAggregationRefreshState(
+        query.state.data,
+      );
+      const readState = getExactAggregationReadState(query.state.data);
+      if (
+        !isRefreshing ||
+        refreshFailed ||
+        (readState !== "complete" && readState !== "pending")
+      ) {
+        pollAttemptRef.current = 0;
+        pollingRef.current = false;
+        return false;
+      }
+      return getAggregationPollDelay(pollAttemptRef.current);
+    },
+    refetchIntervalInBackground: false,
+    retry: false,
+    meta: { errorHandled: true },
   });
+  const graphReadState = graphError
+    ? "error"
+    : graphData?.queryReadState || getExactAggregationReadState(graphData);
+  const snapshotKey = useMemo(
+    () =>
+      JSON.stringify([
+        effectiveObserveId,
+        selectedMetric,
+        selectedInterval,
+        combinedFilters,
+        apiEndpoint,
+      ]),
+    [
+      apiEndpoint,
+      combinedFilters,
+      effectiveObserveId,
+      selectedInterval,
+      selectedMetric,
+    ],
+  );
+  const [lastExactSnapshot, setLastExactSnapshot] = useState(null);
+  const [refreshUnavailable, setRefreshUnavailable] = useState(false);
+  const notifyAggregationRefresh = useCallback(
+    (refreshing) => {
+      window.dispatchEvent(
+        new CustomEvent("observe-aggregation-refresh-state", {
+          detail: {
+            observeId: effectiveObserveId,
+            sourceId: aggregationSourceId,
+            refreshing,
+          },
+        }),
+      );
+    },
+    [aggregationSourceId, effectiveObserveId],
+  );
+
+  useEffect(() => {
+    const handleRefresh = (event) => {
+      if (
+        event?.detail?.observeId &&
+        String(event.detail.observeId) !== String(effectiveObserveId)
+      ) {
+        return;
+      }
+      forceRefreshRef.current = true;
+      resetAggregationBudget();
+      setRefreshUnavailable(false);
+      notifyAggregationRefresh(true);
+      refetch({ cancelRefetch: true });
+    };
+    window.addEventListener("observe-refresh", handleRefresh);
+    return () => window.removeEventListener("observe-refresh", handleRefresh);
+  }, [
+    effectiveObserveId,
+    notifyAggregationRefresh,
+    refetch,
+    resetAggregationBudget,
+  ]);
+
+  useEffect(() => {
+    return () => notifyAggregationRefresh(false);
+  }, [notifyAggregationRefresh, snapshotKey]);
+
+  useEffect(
+    () => () => {
+      requestGenerationRef.current += 1;
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!graphData || pollingTimedOut) return undefined;
+    const { isRefreshing, refreshFailed } =
+      getAggregationRefreshState(graphData);
+    const readState = getExactAggregationReadState(graphData);
+    if (
+      !isRefreshing ||
+      refreshFailed ||
+      (readState !== "complete" && readState !== "pending")
+    ) {
+      return undefined;
+    }
+
+    const startedAt = pollStartedAtRef.current ?? Date.now();
+    pollStartedAtRef.current = startedAt;
+    const remaining = Math.max(
+      AGGREGATION_POLL_TIMEOUT_MS - (Date.now() - startedAt),
+      0,
+    );
+    const stopPolling = () => {
+      pollingRef.current = false;
+      setPollingTimedOut(true);
+      notifyAggregationRefresh(false);
+    };
+    if (remaining === 0) {
+      stopPolling();
+      return undefined;
+    }
+    const timer = window.setTimeout(stopPolling, remaining);
+    return () => window.clearTimeout(timer);
+  }, [graphData, notifyAggregationRefresh, pollingTimedOut]);
+
+  useEffect(() => {
+    if (!graphData) return;
+    const { isRefreshing, refreshFailed } =
+      getAggregationRefreshState(graphData);
+    const refreshReadState = getExactAggregationReadState(graphData);
+    const completedAt = getQueryCompletedAt(graphData);
+    if (graphReadState === "complete") {
+      setLastExactSnapshot({
+        key: snapshotKey,
+        data: graphData,
+        updatedAt: completedAt,
+      });
+    }
+    if (
+      isRefreshing &&
+      !refreshFailed &&
+      (refreshReadState === "complete" || refreshReadState === "pending")
+    ) {
+      setRefreshUnavailable(graphReadState !== "complete");
+      notifyAggregationRefresh(true);
+      return;
+    }
+    notifyAggregationRefresh(false);
+    if (refreshFailed) {
+      setRefreshUnavailable(graphReadState !== "complete");
+      return;
+    }
+    if (graphReadState !== "complete") {
+      setRefreshUnavailable(true);
+      return;
+    }
+    setRefreshUnavailable(false);
+    if (completedAt) {
+      window.dispatchEvent(
+        new CustomEvent("observe-aggregation-completed", {
+          detail: {
+            observeId: effectiveObserveId,
+            queryCompletedAt: completedAt.toISOString(),
+          },
+        }),
+      );
+    }
+  }, [
+    effectiveObserveId,
+    graphData,
+    graphReadState,
+    notifyAggregationRefresh,
+    snapshotKey,
+  ]);
+
+  useEffect(() => {
+    if (graphError) {
+      setRefreshUnavailable(true);
+      const { isRefreshing, refreshFailed } =
+        getAggregationRefreshState(graphData);
+      const refreshReadState = getExactAggregationReadState(graphData);
+      notifyAggregationRefresh(
+        isRefreshing &&
+          !refreshFailed &&
+          (refreshReadState === "complete" || refreshReadState === "pending"),
+      );
+    }
+  }, [graphData, graphError, notifyAggregationRefresh]);
+
+  // A completed response is already safe to render in this render pass. Do
+  // not wait for the persistence effect below: that one-frame gap used to
+  // advertise "No data" even when the exact response contained points.
+  const currentExactSnapshot =
+    graphData && graphReadState === "complete"
+      ? {
+          key: snapshotKey,
+          data: graphData,
+          updatedAt: getQueryCompletedAt(graphData),
+        }
+      : null;
+  const exactSnapshot =
+    currentExactSnapshot ||
+    (lastExactSnapshot?.key === snapshotKey ? lastExactSnapshot : null);
+  const displayGraphData = exactSnapshot?.data;
+  const graphRefreshState = getAggregationRefreshState(graphData);
+  const graphReadFailed =
+    pollingTimedOut ||
+    graphError ||
+    graphRefreshState.refreshFailed ||
+    (Boolean(graphData) &&
+      graphReadState !== "complete" &&
+      graphReadState !== "pending");
+  const graphStatusMessage = graphReadFailed
+    ? QUERY_FAILED_RETRY_MESSAGE
+    : !exactSnapshot &&
+        (isLoading ||
+          refreshUnavailable ||
+          graphReadState === "pending" ||
+          !graphData)
+      ? GRAPH_LOADING_MESSAGE
+      : null;
 
   // Parse API data → [{timestamp, value, primary_traffic}, ...]
   const { metricData, trafficData } = useMemo(() => {
-    if (!graphData) return { metricData: [], trafficData: [] };
+    if (!displayGraphData) return { metricData: [], trafficData: [] };
 
-    const items = Array.isArray(graphData.data) ? graphData.data : [];
+    const items = getExactGraphData(displayGraphData);
     const mData = [];
     const tData = [];
 
     for (const item of items) {
       if (item.timestamp == null) continue;
       const ts = item.timestamp.replace(/\+00:00$/, "");
-      mData.push({ x: new Date(ts).getTime(), y: item.value ?? 0 });
-      tData.push({ x: new Date(ts).getTime(), y: item.primary_traffic ?? 0 });
+      mData.push({
+        x: new Date(ts).getTime(),
+        y: item.value == null ? null : Number(item.value),
+      });
+      tData.push({
+        x: new Date(ts).getTime(),
+        y: item.primary_traffic == null ? null : Number(item.primary_traffic),
+      });
     }
 
     return { metricData: mData, trafficData: tData };
-  }, [graphData]);
+  }, [displayGraphData]);
 
   // Colors — soft blue line over light blue bars (overridable via props)
   const lineColor =
@@ -370,17 +720,23 @@ const PrimaryGraph = ({
       ? "rgba(147, 130, 220, 0.30)"
       : "rgba(147, 160, 230, 0.25)");
 
-  const lineSeriesName = metricDef.unit
+  const metricSeriesName = metricDef.unit
     ? `${metricDef.label} (${metricDef.unit})`
     : metricDef.label;
+  const lineSeriesName = metricSeriesName;
+  const trafficSeriesName = "Traffic";
 
   // Series: metric line FIRST (left axis), traffic bars SECOND (right axis)
   const series = useMemo(
     () => [
       { name: lineSeriesName, type: "line", data: metricData },
-      { name: "Traffic", type: "column", data: trafficData },
+      {
+        name: trafficSeriesName,
+        type: "column",
+        data: trafficData,
+      },
     ],
-    [lineSeriesName, metricData, trafficData],
+    [lineSeriesName, metricData, trafficData, trafficSeriesName],
   );
 
   // Drag-to-zoom → apply as date filter
@@ -478,7 +834,7 @@ const PrimaryGraph = ({
           tickAmount: 4,
         },
         {
-          seriesName: "Traffic",
+          seriesName: trafficSeriesName,
           opposite: true,
           title: { text: undefined },
           labels: {
@@ -526,10 +882,11 @@ const PrimaryGraph = ({
       theme,
       handleZoomed,
       trafficLabel,
+      trafficSeriesName,
     ],
   );
 
-  if (isLoading) {
+  if (isLoading && !exactSnapshot) {
     return (
       <Box sx={{ px: 2, py: 1, height: CHART_HEIGHT + 40 }}>
         <GraphSkeleton />
@@ -823,6 +1180,14 @@ const PrimaryGraph = ({
       </Box>
 
       {/* Chart */}
+      {graphStatusMessage && exactSnapshot ? (
+        <Typography
+          role="status"
+          sx={{ px: 1, fontSize: 11, color: "text.secondary" }}
+        >
+          {graphStatusMessage}
+        </Typography>
+      ) : null}
       {hasData ? (
         <Box sx={{ mx: -0.5 }}>
           <ReactApexChart
@@ -842,7 +1207,7 @@ const PrimaryGraph = ({
           }}
         >
           <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
-            No data available for this time range
+            {graphStatusMessage || "No data available for this time range"}
           </Typography>
         </Box>
       )}

@@ -2,8 +2,12 @@ import { describe, it, expect } from "vitest";
 import {
   fromAxisConfigPayload,
   getAggColumnLabel,
+  getExactDashboardResult,
+  getDashboardMetricSeriesState,
+  getPlottedChartSeries,
   getYAxisRangeWarning,
   seriesHasDataPoints,
+  shouldConnectAcrossMissingBuckets,
   toAxisConfigPayload,
 } from "../widgetUtils";
 import { ALL_AGGREGATIONS } from "../constants";
@@ -77,6 +81,37 @@ describe("seriesHasDataPoints", () => {
   });
 });
 
+describe("getPlottedChartSeries", () => {
+  it("connects both line and stacked-line area renderers across missing buckets", () => {
+    expect(shouldConnectAcrossMissingBuckets("line")).toBe(true);
+    expect(shouldConnectAcrossMissingBuckets("area")).toBe(true);
+    expect(shouldConnectAcrossMissingBuckets("bar")).toBe(false);
+  });
+
+  it("connects the widget editor line preview across null buckets without changing zeroes or source data", () => {
+    const source = [
+      {
+        name: "Latency (avg)",
+        data: [
+          { x: 1, y: 12 },
+          { x: 2, y: null },
+          { x: 3, y: 0 },
+          { x: 4, y: 18 },
+        ],
+      },
+    ];
+
+    expect(getPlottedChartSeries(source, true)[0].data).toEqual([
+      { x: 1, y: 12 },
+      { x: 3, y: 0 },
+      { x: 4, y: 18 },
+    ]);
+    expect(source[0].data).toHaveLength(4);
+    expect(source[0].data[1].y).toBeNull();
+    expect(getPlottedChartSeries(source, false)).toBe(source);
+  });
+});
+
 describe("getAggColumnLabel", () => {
   it("returns 'Average' when metrics list is empty", () => {
     expect(getAggColumnLabel([], ALL_AGGREGATIONS)).toBe("Average");
@@ -140,6 +175,163 @@ const series = (values) => [
 ];
 
 const leftAxis = (bounds) => ({ leftY: bounds });
+
+describe("getDashboardMetricSeriesState", () => {
+  const point = { timestamp: "2026-07-09T00:00:00Z", value: 12 };
+  const sampledMetric = {
+    name: "final_status",
+    aggregation: "count_distinct",
+    query_complete: false,
+    query_status: "sampled",
+    query_error_code: "sample_limit",
+    query_sampling_strategy: "bounded_physical_rows_per_time_bucket",
+    query_sampling_interval_seconds: 86400,
+    query_sample_limit: 8192,
+    query_sample_per_bucket: 128,
+    series: [{ name: "total", data: [point] }],
+  };
+  const completeMetric = {
+    name: "latency",
+    aggregation: "avg",
+    query_complete: true,
+    query_status: "complete",
+    query_sampled: false,
+    series: [{ name: "total", data: [point] }],
+  };
+
+  it("fails sampled and degraded metrics closed", () => {
+    const degradedMetric = {
+      name: "latency",
+      aggregation: "avg",
+      query_complete: false,
+      query_status: "degraded",
+      query_error_code: "read_budget_exceeded",
+      series: [{ name: "total", data: [point] }],
+    };
+
+    const state = getDashboardMetricSeriesState([
+      sampledMetric,
+      degradedMetric,
+    ]);
+
+    expect(state.hasSampledMetrics).toBe(true);
+    expect(state.hasDegradedMetrics).toBe(true);
+    expect(state.renderableMetrics).toEqual([]);
+    expect(state.series).toEqual([]);
+  });
+
+  it("fails closed instead of plotting a malformed sample", () => {
+    const state = getDashboardMetricSeriesState([
+      { ...sampledMetric, query_error_code: "query_failed" },
+    ]);
+
+    expect(state.hasSampledMetrics).toBe(false);
+    expect(state.hasDegradedMetrics).toBe(true);
+    expect(state.series).toEqual([]);
+  });
+
+  it("keeps a pending metric non-renderable while an exact snapshot is built", () => {
+    const state = getDashboardMetricSeriesState([
+      {
+        ...completeMetric,
+        query_complete: false,
+        query_status: "pending",
+        query_refreshing: true,
+        series: [],
+      },
+    ]);
+
+    expect(state.hasPendingMetrics).toBe(true);
+    expect(state.renderableMetrics).toEqual([]);
+    expect(state.series).toEqual([]);
+  });
+
+  it.each([
+    ["sampled", sampledMetric, true, false],
+    [
+      "degraded",
+      {
+        ...sampledMetric,
+        query_status: "degraded",
+        query_error_code: "read_budget_exceeded",
+      },
+      false,
+      true,
+    ],
+    [
+      "error",
+      {
+        ...sampledMetric,
+        query_complete: undefined,
+        query_status: undefined,
+        query_error_code: undefined,
+        queryReadState: "error",
+      },
+      false,
+      true,
+    ],
+  ])(
+    "fails the whole widget closed for complete + %s metrics",
+    (_, unavailableMetric, hasSampled, hasDegraded) => {
+      const state = getDashboardMetricSeriesState([
+        completeMetric,
+        unavailableMetric,
+      ]);
+
+      expect(state.hasSampledMetrics).toBe(hasSampled);
+      expect(state.hasDegradedMetrics).toBe(hasDegraded);
+      expect(state.renderableMetrics).toEqual([]);
+      expect(state.series).toEqual([]);
+    },
+  );
+});
+
+describe("getExactDashboardResult", () => {
+  it("accepts an all-exact response and rejects one unavailable sibling", () => {
+    const exactMetric = {
+      name: "latency",
+      aggregation: "avg",
+      query_complete: true,
+      query_status: "complete",
+      query_sampled: false,
+      series: [],
+    };
+    const exactResult = {
+      query_complete: true,
+      query_status: "complete",
+      query_sampled: false,
+      metrics: [exactMetric],
+    };
+
+    expect(getExactDashboardResult({ data: { result: exactResult } })).toBe(
+      exactResult,
+    );
+    expect(
+      getExactDashboardResult({
+        data: {
+          result: {
+            query_complete: true,
+            query_status: "complete",
+            query_sampled: false,
+            metrics: [
+              exactMetric,
+              {
+                ...exactMetric,
+                query_complete: false,
+                query_status: "degraded",
+              },
+            ],
+          },
+        },
+      }),
+    ).toBeNull();
+    expect(
+      getExactDashboardResult({
+        data: { result: { metrics: [exactMetric] } },
+      }),
+    ).toBeNull();
+  });
+});
 
 describe("getYAxisRangeWarning", () => {
   it("returns null when no min/max is configured", () => {

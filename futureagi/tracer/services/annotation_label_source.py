@@ -7,10 +7,12 @@ Routed via ``_REGISTRY["ANNOTATION_LABELS"]`` (see v2/dispatch.py):
 - ``V2_ONLY``/``V2_PRIMARY`` → :class:`AnnotationLabelScoresProjectPG` — filters
   ``Score`` on the denormalized ``tracer_project_id`` (valid post-CH25, cheap).
 
-:class:`AnnotationLabelScoresCH` scopes ``model_hub_score`` via the CH ``spans``
-table. Its ``spans`` scan OOMs at scale, so label discovery moved to the PG
-source above; the CH class is retained for the annotator / categorical
-filter-value reads that have no PG equivalent.
+:class:`AnnotationLabelScoresCH` scopes the legacy CDC ``model_hub_score`` via
+the direct-write CH25 ``spans`` table.  That is a cross-topology query: the two
+tables are not co-located after the direct-write cutover.  Public reads are
+therefore pinned to :class:`AnnotationLabelScoresProjectPG`, where ``Score`` is
+authoritative and ``tracer_project_id`` is populated by every tracer Score
+write (and backfilled for historic rows).
 
 ``label_ids_for_project(project_id) -> list[str]`` is the dispatched entrypoint
 (all sources expose it) so the dispatcher stays backend-blind.
@@ -19,7 +21,27 @@ Note: ``Score.project``/``model_hub_score.project_id`` point at
 ``model_hub.DevelopAI`` (a different id space) and are NOT used for scoping; the
 denormalized ``Score.tracer_project_id`` carries the ``tracer.Project`` id.
 """
+
 from __future__ import annotations
+
+from typing import Any
+
+
+class AnnotationScoreReadUnavailable(RuntimeError):
+    """Stable boundary error for authoritative annotation Score reads."""
+
+
+def _materialize_score_rows(queryset):
+    """Evaluate a Score queryset without exposing database diagnostics."""
+
+    from django.db import DatabaseError
+
+    try:
+        return list(queryset)
+    except DatabaseError:
+        raise AnnotationScoreReadUnavailable(
+            "Annotation score data is temporarily unavailable"
+        ) from None
 
 
 class AnnotationLabelScoresPG:
@@ -57,17 +79,24 @@ _CH_PROJECT_SCOPE = """(
 
 
 class AnnotationLabelScoresProjectPG:
-    """v2: label ids of scores in a project, via denormalized ``Score.tracer_project_id``.
+    """Direct-write-safe Score reads scoped by ``Score.tracer_project_id``.
 
     Replaces the CH ``spans``-scoped scan (see :class:`AnnotationLabelScoresCH`),
-    which OOMs at scale. Keeps trace+span parity with that query via the
-    ``trace_id``/``observation_span_id`` not-null predicate — session-only and
-    other non-trace/span scores stay excluded, matching prior behavior.
+    which is invalid once legacy CDC tables and direct-write CH25 spans live on
+    different clusters.  The trace/span not-null predicate keeps session-only
+    and non-observability scores out, matching the old public response.
     """
 
-    def label_ids_for_project(self, project_id) -> list[str]:
+    FILTER_VALUE_LIMIT = 5_000
+    GRAPH_EVENT_LIMIT = 2_001
+
+    @staticmethod
+    def _trace_span_scope():
         from django.db.models import Q
 
+        return Q(trace_id__isnull=False) | Q(observation_span_id__isnull=False)
+
+    def label_ids_for_project(self, project_id) -> list[str]:
         from model_hub.models.score import Score
 
         # no_workspace_objects: project is the tenancy boundary (matching the CH
@@ -75,26 +104,184 @@ class AnnotationLabelScoresProjectPG:
         # .order_by() defensively strips any default ordering so it can't leak into
         # SELECT DISTINCT and break the per-label dedup. Score._meta.ordering is []
         # today (it does not inherit BaseModel's "-created_at"), so this is a guard.
-        return [
-            str(lid)
-            for lid in Score.no_workspace_objects.filter(
-                Q(trace_id__isnull=False) | Q(observation_span_id__isnull=False),
+        rows = _materialize_score_rows(
+            Score.no_workspace_objects.filter(
+                self._trace_span_scope(),
                 tracer_project_id=project_id,
             )
             .order_by()
             .values_list("label_id", flat=True)
             .distinct()
-            if lid
-        ]
+        )
+        return [str(lid) for lid in rows if lid]
+
+    def label_ids_by_project(self, project_ids: list[str]) -> dict[str, list[str]]:
+        """Return label ids grouped by their authoritative tracer project.
+
+        Organization list endpoints must not flatten this relation into one
+        label union: ``has_annotation`` means completeness against the labels
+        configured for *that row's* project.  Reading all requested projects
+        in one finite metadata query avoids an N+1 while preserving that
+        tenant boundary.
+        """
+
+        normalized = tuple(dict.fromkeys(str(value) for value in project_ids if value))
+        grouped: dict[str, list[str]] = {project_id: [] for project_id in normalized}
+        if not normalized:
+            return grouped
+
+        from model_hub.models.score import Score
+
+        rows = _materialize_score_rows(
+            Score.no_workspace_objects.filter(
+                self._trace_span_scope(),
+                tracer_project_id__in=normalized,
+            )
+            .order_by()
+            .values_list("tracer_project_id", "label_id")
+            .distinct()
+        )
+        for project_id, label_id in rows:
+            project_key = str(project_id)
+            if project_key in grouped and label_id:
+                grouped[project_key].append(str(label_id))
+        return grouped
+
+    def annotator_ids_for_projects(self, project_ids: list[str]) -> list[str]:
+        """Return distinct annotators for the requested tracer projects only."""
+
+        if not project_ids:
+            return []
+
+        from django.db.models import Exists, OuterRef
+
+        from accounts.models.user import User
+        from model_hub.models.score import Score
+
+        # Drive the query from the much smaller User relation and use the
+        # implicit Score.annotator FK index for a stop-at-first-match EXISTS.
+        # A DISTINCT scan over every Score in a heavy project is exactly the
+        # unbounded shape this source replaces.
+        matching_score = Score.no_workspace_objects.filter(
+            self._trace_span_scope(),
+            tracer_project_id__in=project_ids,
+            annotator_id=OuterRef("pk"),
+        )
+        rows = _materialize_score_rows(
+            User.objects.filter(Exists(matching_score))
+            .order_by()
+            .values_list("id", flat=True)
+        )
+        return [str(annotator_id) for annotator_id in rows if annotator_id]
+
+    def categorical_values_for_label(
+        self, label_id, project_ids: list[str]
+    ) -> list[Any]:
+        """Return a finite newest-first slice of stored Score JSON values."""
+
+        if not project_ids:
+            return []
+
+        from model_hub.models.score import Score
+
+        # The picker deduplicates categorical choices, so ordering millions of
+        # Score rows by updated_at adds work without changing its response.
+        # The indexed project+label scan stops at the finite row cap.
+        rows = _materialize_score_rows(
+            Score.no_workspace_objects.filter(
+                self._trace_span_scope(),
+                tracer_project_id__in=project_ids,
+                label_id=label_id,
+            )
+            .order_by()
+            .values_list("value", flat=True)[: self.FILTER_VALUE_LIMIT]
+        )
+        return [value for value in rows if value not in (None, "")]
+
+    def annotation_rows_for_candidates(
+        self,
+        *,
+        project_id: str,
+        label_id: str,
+        start_date,
+        end_date,
+        trace_ids: tuple[str, ...] = (),
+        span_entities: tuple[tuple[str, str], ...] = (),
+        limit: int = GRAPH_EVENT_LIMIT,
+    ) -> list[dict[str, Any]]:
+        """Read a finite annotation slice for already-proven CH25 candidates.
+
+        ``Score`` remains the annotation source of truth in PostgreSQL; only
+        the candidate trace/span identities originate in CH25.  Project and
+        label predicates hit ``idx_score_tracer_project_label`` before the
+        finite entity predicate.  Span matching uses the trace/span pair, not
+        a bare OTel span id, so collisions cannot cross candidate traces.
+        """
+
+        from django.db.models import CharField, Q, Value
+        from django.db.models.functions import Cast, Concat
+
+        from model_hub.models.score import Score
+
+        unique_trace_ids = tuple(
+            dict.fromkeys(str(value) for value in trace_ids if value)
+        )
+        unique_span_entities = tuple(
+            dict.fromkeys(
+                (str(trace_id), str(span_id))
+                for trace_id, span_id in span_entities
+                if trace_id and span_id
+            )
+        )
+        if not unique_trace_ids and not unique_span_entities:
+            return []
+
+        # Trace UUIDs have a canonical fixed-width string representation.  The
+        # separator therefore produces an unambiguous composite candidate key
+        # while keeping the query parameterized and ORM-owned.
+        span_keys = tuple(
+            f"{trace_id}:{span_id}" for trace_id, span_id in unique_span_entities
+        )
+        queryset = Score.no_workspace_objects.filter(
+            tracer_project_id=project_id,
+            label_id=label_id,
+            created_at__gte=start_date,
+            created_at__lt=end_date,
+        )
+        entity_scope = Q()
+        if unique_trace_ids:
+            entity_scope |= Q(trace_id__in=unique_trace_ids)
+        if span_keys:
+            queryset = queryset.annotate(
+                _candidate_entity=Concat(
+                    Cast("trace_id", output_field=CharField()),
+                    Value(":"),
+                    "observation_span_id",
+                    output_field=CharField(),
+                )
+            )
+            # The simple IN predicates let PostgreSQL discard unrelated rows
+            # before evaluating the exact composite key.
+            entity_scope |= Q(
+                trace_id__in=tuple(pair[0] for pair in unique_span_entities),
+                observation_span_id__in=tuple(pair[1] for pair in unique_span_entities),
+                _candidate_entity__in=span_keys,
+            )
+
+        finite_limit = min(max(int(limit), 1), self.GRAPH_EVENT_LIMIT)
+        return _materialize_score_rows(
+            queryset.filter(entity_scope)
+            .order_by("created_at", "id")
+            .values("created_at", "value")[:finite_limit]
+        )
 
 
 class AnnotationLabelScoresCH:
-    """label ids + filter-value reads over ``model_hub_score``, scoped by ``spans``.
+    """Legacy CDC compatibility reader; not used by direct-write public APIs.
 
-    Label discovery for the ANNOTATION_LABELS dispatch now routes to
-    :class:`AnnotationLabelScoresProjectPG` (the ``spans`` scan here OOMs at
-    scale); this class is retained for the annotator / categorical filter-value
-    reads below, which have no PG equivalent.
+    Kept for legacy parity tests and rollback tooling only.  Direct-write paths
+    must use :class:`AnnotationLabelScoresProjectPG` so they never try to join
+    legacy ``model_hub_score`` to CH25 ``spans`` across clusters.
     """
 
     _QUERY = f"""

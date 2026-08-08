@@ -7,6 +7,7 @@ from datetime import timedelta
 import pytest
 from django.utils import timezone
 
+import tracer.services.eval_tasks.reconciler as reconciler_module
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import EvalTask, EvalTaskStatus, RowType, RunType
 from tracer.models.observation_span import (
@@ -16,6 +17,7 @@ from tracer.models.observation_span import (
 )
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
+from tracer.selectors.eval_tasks.row_resolver import ResolvedRowSet
 from tracer.services.eval_tasks.entries import soft_delete_live
 from tracer.services.eval_tasks.reconciler import (
     _CONTINUOUS_CURSOR_OVERLAP,
@@ -80,7 +82,7 @@ def _make_spans(project, n, *, observation_type="llm", prefix="s"):
         ObservationSpan.objects.filter(id=span.id).update(created_at=seeded_at)
         span.refresh_from_db()
         spans.append(span)
-    seed_ch_spans(spans)
+    seed_ch_spans(spans, version_from_created_at=True)
     return spans
 
 
@@ -100,7 +102,7 @@ def _make_spans_at(project, n, created_at, *, prefix="t"):
         ObservationSpan.objects.filter(id=span.id).update(created_at=created_at)
         span.refresh_from_db()
         spans.append(span)
-    seed_ch_spans(spans)
+    seed_ch_spans(spans, version_from_created_at=True)
     return spans
 
 
@@ -128,7 +130,7 @@ def _make_span_with_gap(
     )
     ObservationSpan.objects.filter(id=span.id).update(created_at=created_at)
     span.refresh_from_db()
-    seed_ch_spans([span])
+    seed_ch_spans([span], version_from_created_at=True)
     return span
 
 
@@ -138,6 +140,44 @@ def _live(task, **f):
 
 def _mark(task, status, **f):
     return _live(task, **f).update(status=status)
+
+
+@pytest.mark.unit
+def test_reconcile_reuses_frozen_ceiling_for_requeue(monkeypatch):
+    frozen = timezone.now()
+    task = object()
+    observed: dict[str, object] = {}
+
+    monkeypatch.setattr(reconciler_module.timezone, "now", lambda: frozen)
+    monkeypatch.setattr(reconciler_module, "_live_count", lambda _task: 0)
+
+    def fake_resolve(_task, *, ceiling):
+        observed["resolve"] = ceiling
+        return ResolvedRowSet((), (), False)
+
+    monkeypatch.setattr(
+        reconciler_module,
+        "resolve_desired_rows",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        reconciler_module,
+        "materialize_pending",
+        lambda _task, row_ids: observed.setdefault("materialize", row_ids),
+    )
+    monkeypatch.setattr(
+        reconciler_module,
+        "_advance_continuous_cursor",
+        lambda _task, now: observed.setdefault("cursor", now),
+    )
+
+    reconciler_module.reconcile(task)
+
+    assert observed == {
+        "resolve": frozen,
+        "materialize": (),
+        "cursor": frozen,
+    }
 
 
 @pytest.mark.integration
@@ -612,9 +652,9 @@ class TestLifecycleFlows:
         reconcile(task)
 
         # sessions store the session id in trace_session_id (see entries.py).
-        materialized = set(
+        materialized = {
             str(x) for x in _live(task).values_list("trace_session_id", flat=True)
-        )
+        }
         assert str(hit_session.id) in materialized
         assert str(miss_session.id) not in materialized
 
@@ -801,6 +841,95 @@ class TestLifecycleFlows:
         assert _live(task).count() == 3  # one entry each — no duplicate
         assert live[a.id] == EvalEntryStatus.COMPLETED  # paid work kept
         assert live[c.id] == EvalEntryStatus.PENDING  # newly materialized
+
+    def test_two_pass_window_preserves_pending_older_than_overlap(
+        self, project, custom_eval_config
+    ):
+        # The second continuous desired read is only an arrival delta. Once an
+        # identity ages out of that delta, its absence must not be interpreted
+        # as full-state proof that still-pending work left task scope.
+        t = timezone.now()
+        task = _task(project, evals=[custom_eval_config], run_type=RunType.CONTINUOUS)
+        EvalTask.objects.filter(id=task.id).update(
+            start_time=t - timedelta(hours=1),
+            continuous_cursor=t - timedelta(minutes=10),
+        )
+        task.refresh_from_db()
+        old_pending = _make_span_with_gap(
+            project,
+            start_time=t - timedelta(hours=2),
+            created_at=t - timedelta(minutes=8),
+            prefix="pending-before-overlap",
+        )
+
+        reconcile(task)
+        assert (
+            _live(
+                task,
+                observation_span_id=old_pending.id,
+                status=EvalEntryStatus.PENDING,
+            ).count()
+            == 1
+        )
+
+        # Simulate the next normal poll after the identity is beyond the
+        # overlap. This remains an incremental pass, not an edit/full scan.
+        EvalTask.objects.filter(id=task.id).update(
+            continuous_cursor=t - timedelta(minutes=2)
+        )
+        task.refresh_from_db()
+        result = reconcile(task)
+
+        assert result.dropped == 0
+        assert (
+            _live(
+                task,
+                observation_span_id=old_pending.id,
+                status=EvalEntryStatus.PENDING,
+            ).count()
+            == 1
+        )
+
+    def test_continuous_config_edit_requeues_identity_older_than_overlap(
+        self, project, custom_eval_config
+    ):
+        # Config hashes are a full-history signal: an edit must requeue an old
+        # completed identity even though the arrival-delta read no longer sees
+        # that identity.
+        t = timezone.now()
+        task = _task(project, evals=[custom_eval_config], run_type=RunType.CONTINUOUS)
+        EvalTask.objects.filter(id=task.id).update(
+            start_time=t - timedelta(hours=1),
+            continuous_cursor=t - timedelta(minutes=10),
+        )
+        task.refresh_from_db()
+        old_completed = _make_span_with_gap(
+            project,
+            start_time=t - timedelta(hours=2),
+            created_at=t - timedelta(minutes=8),
+            prefix="completed-before-overlap",
+        )
+
+        reconcile(task)
+        _mark(task, EvalEntryStatus.COMPLETED)
+        # An edit explicitly resets the cursor, selecting a full-state pass
+        # instead of treating the normal arrival delta as complete scope.
+        EvalTask.objects.filter(id=task.id).update(continuous_cursor=None)
+        task.refresh_from_db()
+        custom_eval_config.config = {"threshold": 0.9}
+        custom_eval_config.save()
+
+        result = reconcile(task)
+
+        assert result.requeued == 1
+        assert (
+            _live(
+                task,
+                observation_span_id=old_completed.id,
+                status=EvalEntryStatus.PENDING,
+            ).count()
+            == 1
+        )
 
     def test_historical_to_continuous_keeps_entries(self, project, custom_eval_config):
         # Switching to continuous keeps existing entries (no wipe).

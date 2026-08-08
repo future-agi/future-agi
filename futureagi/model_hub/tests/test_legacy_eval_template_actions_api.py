@@ -303,14 +303,16 @@ def test_legacy_duplicate_and_delete_hide_same_org_other_workspace_template(
         },
         format="json",
     )
-    assert duplicate_response.status_code == status.HTTP_400_BAD_REQUEST
+    # Cross-workspace objects are deliberately indistinguishable from missing
+    # objects so the legacy action cannot be used as an existence oracle.
+    assert duplicate_response.status_code == status.HTTP_404_NOT_FOUND
 
     delete_response = auth_client.post(
         "/model-hub/delete-eval-template/",
         {"eval_template_id": str(other_template.id)},
         format="json",
     )
-    assert delete_response.status_code == status.HTTP_400_BAD_REQUEST
+    assert delete_response.status_code == status.HTTP_404_NOT_FOUND
 
     other_template.refresh_from_db()
     assert other_template.deleted is False

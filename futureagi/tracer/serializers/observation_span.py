@@ -8,10 +8,17 @@ from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
+from tracer.serializers.cursor_pagination import (
+    CURSOR_HELP_TEXT,
+    validate_cursor_exclusivity,
+)
 from tracer.serializers.filters import (
+    BOUNDED_PAGE_NUMBER_HELP_TEXT,
     StrictInputSerializer,
+    bounded_filter_list_query_param_field,
     filter_list_query_param_field,
 )
+from tracer.services.clickhouse.attribute_reads import validate_attribute_key
 
 
 class ProjectScopeQueryParamField(serializers.CharField):
@@ -50,11 +57,32 @@ class ObservationAttributeListQuerySerializer(serializers.Serializer):
         required=False,
         default="spans",
     )
+    q = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        max_length=512,
+    )
+
+    def validate_q(self, value):
+        try:
+            return validate_attribute_key(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
 
 
 class ObservationAttributeListResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
     result = serializers.ListField(child=serializers.CharField())
+    query_complete = serializers.BooleanField(required=False)
+    query_status = serializers.ChoiceField(
+        choices=["complete", "sampled", "degraded"], required=False
+    )
+    query_error_code = serializers.ChoiceField(
+        choices=["sample_limit", "read_budget_exceeded", "query_failed"],
+        required=False,
+    )
+    query_window_start = serializers.DateTimeField(required=False)
+    query_window_end = serializers.DateTimeField(required=False)
 
 
 class RootSpansQuerySerializer(serializers.Serializer):
@@ -141,7 +169,9 @@ class ObservationSpanSerializer(serializers.ModelSerializer):
             if getattr(workspace, "is_default", False):
                 project_workspace_scope = (
                     Q(workspace=workspace)
-                    | Q(workspace__is_default=True, workspace__organization=organization)
+                    | Q(
+                        workspace__is_default=True, workspace__organization=organization
+                    )
                     | Q(workspace__isnull=True)
                 )
                 related_workspace_scope = (
@@ -223,21 +253,55 @@ class SpanExportQuerySerializer(StrictInputSerializer):
 
 class SpanListQuerySerializer(StrictInputSerializer):
     project_version_id = serializers.UUIDField()
-    filters = filter_list_query_param_field(required=False, default=list)
-    page_number = serializers.IntegerField(required=False, default=0, min_value=0)
+    filters = bounded_filter_list_query_param_field(required=False, default=list)
+    page_number = serializers.IntegerField(
+        required=False,
+        default=0,
+        min_value=0,
+        help_text=BOUNDED_PAGE_NUMBER_HELP_TEXT,
+    )
     page_size = serializers.IntegerField(
         required=False, default=30, min_value=1, max_value=500
+    )
+    allow_sampled = serializers.BooleanField(
+        required=False,
+        help_text=(
+            "Omit for backward-compatible complete bounded pages, which may "
+            "label total_rows as a lower bound. Send false to require an exact "
+            "total, or true to opt in explicitly to lower-bound totals."
+        ),
     )
 
 
 class SpanObserveListQuerySerializer(StrictInputSerializer):
     project_id = serializers.UUIDField(required=False, allow_null=True)
     user_id = serializers.CharField(required=False, allow_blank=True)
-    filters = filter_list_query_param_field(required=False, default=list)
-    page_number = serializers.IntegerField(required=False, default=0, min_value=0)
+    filters = bounded_filter_list_query_param_field(required=False, default=list)
+    page_number = serializers.IntegerField(
+        required=False,
+        default=0,
+        min_value=0,
+        help_text=BOUNDED_PAGE_NUMBER_HELP_TEXT,
+    )
     page_size = serializers.IntegerField(
         required=False, default=30, min_value=1, max_value=500
     )
+    cursor = serializers.CharField(
+        required=False, allow_blank=False, max_length=4096, help_text=CURSOR_HELP_TEXT
+    )
+    cursor_mode = serializers.BooleanField(required=False, default=False)
+    allow_sampled = serializers.BooleanField(
+        required=False,
+        help_text=(
+            "Omit for backward-compatible complete bounded pages, which may "
+            "label total_rows as a lower bound. Send false to require an exact "
+            "total, or true to opt in explicitly to lower-bound totals."
+        ),
+    )
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        return validate_cursor_exclusivity(self, attrs, page_field="page_number")
 
 
 class SpanIndexQuerySerializer(StrictInputSerializer):

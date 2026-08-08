@@ -8,7 +8,6 @@ from tracer.serializers.filters import (
     filter_list_field,
 )
 
-
 DASHBOARD_METRIC_TYPES = (
     "system_metric",
     "eval_metric",
@@ -105,7 +104,6 @@ class DashboardMetricSerializer(StrictInputSerializer):
     attribute_type = serializers.ChoiceField(
         choices=DASHBOARD_DATA_TYPES,
         required=False,
-        default="string",
     )
     column_id = serializers.CharField(required=False, allow_blank=True)
     data_type = serializers.ChoiceField(
@@ -117,6 +115,40 @@ class DashboardMetricSerializer(StrictInputSerializer):
 
     class Meta:
         swagger_schema_fields = {"additionalProperties": False}
+
+    def validate(self, attrs):
+        """Infer the value-map type for legacy custom-metric payloads.
+
+        The dashboard metric picker historically omitted ``attribute_type``.
+        Defaulting that omission to ``string`` makes every numeric aggregation
+        (avg, percentile, sum, and so on) fail before ClickHouse is queried.
+        Dashboard Y-axis aggregations are numeric unless the caller explicitly
+        requests a text-safe count operation; explicit types always win.
+        """
+
+        if not attrs.get("attribute_type"):
+            if attrs.get("type") == "custom_attribute":
+                attrs["attribute_type"] = (
+                    "number"
+                    if attrs.get("aggregation", "avg")
+                    in {
+                        "avg",
+                        "sum",
+                        "median",
+                        "p25",
+                        "p50",
+                        "p75",
+                        "p90",
+                        "p95",
+                        "p99",
+                    }
+                    else "string"
+                )
+            else:
+                # Preserve the historical normalized payload/cache identity for
+                # metric kinds that do not consume this field.
+                attrs["attribute_type"] = "string"
+        return attrs
 
 
 class DashboardBreakdownSerializer(StrictInputSerializer):
@@ -296,11 +328,20 @@ class DashboardQuerySerializer(StrictInputSerializer):
     )
     metrics = DashboardMetricSerializer(many=True)
     filters = filter_list_field(required=False, default=list)
-    breakdowns = DashboardBreakdownSerializer(
-        many=True, required=False, default=list
+    breakdowns = DashboardBreakdownSerializer(many=True, required=False, default=list)
+    allow_sampled = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text=(
+            "Deprecated compatibility parameter; accepted but ignored. "
+            "Dashboard aggregates are always exact."
+        ),
     )
 
     class Meta:
+        # Keep the established OpenAPI component identity explicit so runtime
+        # read-compatibility subclasses can share the same unchanged contract.
+        ref_name = "DashboardQuery"
         swagger_schema_fields = {"additionalProperties": False}
 
     def validate_metrics(self, value):
@@ -313,6 +354,28 @@ class DashboardQuerySerializer(StrictInputSerializer):
 
 class DashboardPreviewQuerySerializer(StrictInputSerializer):
     query_config = DashboardQuerySerializer(required=True)
+    allow_sampled = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text=(
+            "Deprecated compatibility parameter; accepted but ignored. "
+            "Dashboard aggregates are always exact."
+        ),
+    )
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
+
+
+class DashboardSampleOptInSerializer(StrictInputSerializer):
+    allow_sampled = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text=(
+            "Deprecated compatibility parameter; accepted but ignored. "
+            "Dashboard aggregates are always exact."
+        ),
+    )
 
     class Meta:
         swagger_schema_fields = {"additionalProperties": False}
@@ -334,6 +397,21 @@ class DashboardQueryMetricResultSerializer(serializers.Serializer):
     aggregation = serializers.ChoiceField(choices=DASHBOARD_AGGREGATIONS)
     unit = serializers.CharField(allow_blank=True)
     series = DashboardQuerySeriesSerializer(many=True)
+    query_complete = serializers.BooleanField(required=False)
+    query_sampled = serializers.BooleanField(required=False)
+    query_status = serializers.ChoiceField(
+        choices=["complete", "sampled", "degraded"], required=False
+    )
+    query_error_code = serializers.ChoiceField(
+        choices=["sample_limit", "read_budget_exceeded", "query_failed"],
+        required=False,
+    )
+    query_sampling_strategy = serializers.CharField(required=False)
+    query_sampling_interval_seconds = serializers.IntegerField(
+        min_value=1, required=False
+    )
+    query_sample_limit = serializers.IntegerField(min_value=1, required=False)
+    query_sample_per_bucket = serializers.IntegerField(min_value=1, required=False)
 
 
 class DashboardQueryTimeRangeResultSerializer(serializers.Serializer):
@@ -345,6 +423,22 @@ class DashboardQueryResultSerializer(serializers.Serializer):
     metrics = DashboardQueryMetricResultSerializer(many=True)
     time_range = DashboardQueryTimeRangeResultSerializer()
     granularity = serializers.ChoiceField(choices=DASHBOARD_GRANULARITIES)
+    query_complete = serializers.BooleanField(required=False)
+    query_status = serializers.ChoiceField(
+        choices=["complete", "degraded", "pending"], required=False
+    )
+    query_sampled = serializers.BooleanField(required=False)
+    query_completed_at = serializers.DateTimeField(required=False)
+    query_cached = serializers.BooleanField(required=False)
+    query_refresh_failed = serializers.BooleanField(required=False)
+    query_refreshing = serializers.BooleanField(required=False)
+    query_snapshot_version_ceiling = serializers.IntegerField(
+        min_value=1, required=False
+    )
+    query_snapshot_capture_count = serializers.IntegerField(min_value=0, required=False)
+    query_snapshot_relation_count = serializers.IntegerField(
+        min_value=0, required=False
+    )
 
 
 class DashboardQueryApiResponseSerializer(serializers.Serializer):
@@ -384,6 +478,18 @@ class DashboardMetricsCatalogResponseSerializer(serializers.Serializer):
 class CommaSeparatedListField(serializers.Field):
     """Query-param helper for explicit comma-separated lists."""
 
+    class Meta:
+        swagger_schema_fields = {
+            "type": "string",
+            "default": "",
+        }
+
+    def run_validation(self, data=serializers.empty):
+        value = super().run_validation(data)
+        if data is serializers.empty:
+            return self.to_internal_value(value)
+        return value
+
     def to_internal_value(self, data):
         if data in (None, ""):
             return []
@@ -394,6 +500,8 @@ class CommaSeparatedListField(serializers.Field):
         return [str(item).strip() for item in items if str(item).strip()]
 
     def to_representation(self, value):
+        if isinstance(value, str):
+            return value
         return value or []
 
 
@@ -421,6 +529,105 @@ class DashboardFilterValuesQuerySerializer(serializers.Serializer):
         required=False,
         default="traces",
     )
-    project_ids = CommaSeparatedListField(required=False, default=list)
+    project_ids = CommaSeparatedListField(required=False, default="")
     dataset_id = serializers.UUIDField(required=False)
-    search = serializers.CharField(required=False, allow_blank=True, default="")
+    search = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+        # The selector enforces the same limit in encoded UTF-8 bytes.  This
+        # character cap keeps obviously oversized requests out of every
+        # source-specific branch before any database work.
+        max_length=512,
+    )
+    page_size = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        max_value=50,
+    )
+    cursor = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        max_length=16_384,
+    )
+    attribute_type = serializers.ChoiceField(
+        choices=["string", "number", "boolean", "array", "map", "json"],
+        required=False,
+    )
+
+    def validate(self, attrs):
+        if attrs.get("cursor") and "page_size" not in attrs:
+            raise serializers.ValidationError(
+                {"page_size": "page_size is required with cursor"}
+            )
+        return attrs
+
+    def validate_search(self, value):
+        # Import lazily so serializer/OpenAPI discovery does not initialize the
+        # ClickHouse client package.  The shared validator also catches a
+        # 512-character non-ASCII value whose UTF-8 representation exceeds the
+        # actual 512-byte query contract.
+        from tracer.services.clickhouse.attribute_reads import (
+            InvalidAttributeSearch,
+            validate_attribute_search,
+        )
+
+        try:
+            return validate_attribute_search(value)
+        except InvalidAttributeSearch as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+
+
+class DashboardFilterValueOptionSerializer(serializers.Serializer):
+    """One filter-picker option with optional custom-attribute provenance.
+
+    ``type`` is additive so existing system/eval/annotation/dataset options
+    keep their established ``value``/``label`` shape.  Custom-attribute
+    options populate it from ``AttributeValueRow.type`` so an overflow-array
+    member cannot be mistaken for a typed-Map text value by API consumers.
+    """
+
+    value = JsonValueField(allow_null=True)
+    label = serializers.CharField()
+    type = serializers.ChoiceField(
+        choices=["string", "number", "boolean", "array", "map", "json"],
+        required=False,
+    )
+    # Annotator options retain these established optional presentation fields.
+    name = serializers.CharField(required=False)
+    email = serializers.CharField(required=False)
+    description = serializers.CharField(required=False)
+
+
+class DashboardFilterValuesResultSerializer(serializers.Serializer):
+    values = DashboardFilterValueOptionSerializer(many=True)
+    query_complete = serializers.BooleanField(required=False)
+    query_status = serializers.ChoiceField(
+        choices=["complete", "sampled", "degraded"],
+        required=False,
+    )
+    query_error_code = serializers.ChoiceField(
+        choices=["sample_limit", "read_budget_exceeded", "query_failed"],
+        required=False,
+    )
+    query_window_start = serializers.DateTimeField(required=False)
+    query_window_end = serializers.DateTimeField(required=False)
+    has_more = serializers.BooleanField(required=False)
+    browse_status = serializers.ChoiceField(
+        choices=["continuation", "exhausted", "limit_reached"],
+        required=False,
+    )
+    next_cursor = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=False,
+    )
+    attribute_type = serializers.ChoiceField(
+        choices=["string", "number", "boolean", "array", "map", "json"],
+        required=False,
+    )
+
+
+class DashboardFilterValuesResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = DashboardFilterValuesResultSerializer()

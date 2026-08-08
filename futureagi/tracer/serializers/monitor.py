@@ -415,3 +415,16 @@ class FetchGraphSerializer(StrictInputSerializer):
     )
     req_data_config = FetchGraphMetricConfigField()
     project_id = serializers.UUIDField()
+    allow_sampled = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text=(
+            "Deprecated compatibility parameter; accepted but ignored. "
+            "Aggregate graph results are always exact."
+        ),
+    )
+    refresh = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Recompute and atomically replace the last complete exact result.",
+    )

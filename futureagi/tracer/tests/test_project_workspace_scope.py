@@ -1,4 +1,5 @@
 import uuid
+from unittest.mock import patch
 
 import pytest
 from rest_framework import status
@@ -9,7 +10,6 @@ from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
-
 
 pytestmark = [pytest.mark.integration, pytest.mark.api]
 
@@ -63,6 +63,35 @@ def _assert_not_mutated(project_id, *, name, config, session_config, tags):
 
 
 class TestProjectWorkspaceScope:
+    @patch("tracer.views.project.fetch_eval_graph_ch")
+    def test_user_eval_graph_rejects_config_from_another_project_before_ch(
+        self,
+        mock_fetch_eval_graph,
+        auth_client,
+        observe_project,
+        custom_eval_config,
+    ):
+        response = auth_client.post(
+            "/tracer/project/get_users_aggregate_graph_data/",
+            {
+                "project_id": str(observe_project.id),
+                "interval": "day",
+                "filters": [],
+                "property": "average",
+                "req_data_config": {
+                    "type": "EVAL",
+                    "id": str(custom_eval_config.id),
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Evaluation config is not available for this project" in str(
+            response.json()
+        )
+        mock_fetch_eval_graph.assert_not_called()
+
     def test_custom_project_mutations_reject_same_org_other_workspace_project(
         self, auth_client, organization, user
     ):

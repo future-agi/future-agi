@@ -15,12 +15,8 @@ from django.core.cache import cache
 
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project, ProjectSourceChoices
-from tracer.services.clickhouse.client import (
-    get_clickhouse_client,
-    is_clickhouse_enabled,
-)
-from tracer.services.clickhouse.query_service import AnalyticsQueryService
-from tracer.utils.sql_queries import SQL_query_handler
+from tracer.services.annotation_label_source import AnnotationLabelScoresProjectPG
+from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
 
 logger = structlog.get_logger(__name__)
 
@@ -554,12 +550,11 @@ def build_metrics_catalog(
     def _discover_span_attributes():
         attrs = []
         try:
-            if is_clickhouse_enabled() and project_ids:
-                analytics = AnalyticsQueryService()
+            if project_ids:
+                analytics = V2AnalyticsQueryService()
                 rows = analytics.get_span_attribute_keys_ch_for_projects(
                     project_ids,
                     recent_days=None,
-                    timeout_ms=15000,
                     outer_limit=2000,
                 )
                 for r in rows:
@@ -567,15 +562,6 @@ def build_metrics_catalog(
                     t = r.get("type", "string")
                     if k:
                         attrs.append({"key": k, "type": t})
-            elif project_ids:
-                for pid in project_ids:
-                    keys = SQL_query_handler.get_span_attributes_for_project(pid)
-                    for key in keys:
-                        k = key if isinstance(key, str) else str(key)
-                        if k not in [
-                            a.get("key") if isinstance(a, dict) else a for a in attrs
-                        ]:
-                            attrs.append({"key": k, "type": "string"})
         except Exception as exc:
             logger.warning(
                 "dashboard_span_attribute_discovery_failed",
@@ -591,44 +577,37 @@ def build_metrics_catalog(
         from model_hub.models.evals_metric import EvalTemplate
 
         used_template_ids = []
-        if is_clickhouse_enabled():
-            from tracer.services.clickhouse.client import (
-                get_clickhouse_client,
+        if filter_by_project:
+            # Resolve the candidate config ids from the authoritative project
+            # metadata first.  The direct-write eval table is sorted by
+            # ``custom_eval_config_id``; candidate-scoped discovery therefore
+            # prunes by its leading key and never needs the legacy trace
+            # dictionary or CDC eval table.
+            candidate_config_ids = list(
+                CustomEvalConfig.objects.filter(
+                    project_id__in=project_ids,
+                    deleted=False,
+                ).values_list("id", flat=True)
             )
-
-            ch = get_clickhouse_client()
-
-            if filter_by_project:
-                result = ch.execute_read(
-                    "SELECT DISTINCT toString(custom_eval_config_id) AS tid "
-                    "FROM tracer_eval_logger "
-                    "WHERE _peerdb_is_deleted = 0 AND deleted = 0 "
-                    "AND custom_eval_config_id != toUUID('00000000-0000-0000-0000-000000000000') "
-                    "AND created_at >= now() - INTERVAL 90 DAY "
-                    "AND dictGet('trace_dict', 'project_id', trace_id) IN %(project_ids)s",
-                    {"project_ids": project_ids},
-                    timeout_ms=5000,
-                )
-            else:
-                ws_id = str(workspace.id)
-                result = ch.execute_read(
-                    "SELECT DISTINCT source_id FROM usage_apicalllog "
-                    "WHERE workspace_id = toUUID(%(ws_id)s) "
-                    "AND status = 'success' AND length(source_id) > 0 "
-                    "AND _peerdb_is_deleted = 0",
-                    {"ws_id": ws_id},
-                    timeout_ms=5000,
-                )
-
-            raw_rows = result[0] if isinstance(result, tuple) else result
-            used_template_ids = [
-                (
-                    r[0]
-                    if isinstance(r, (list, tuple))
-                    else r.get("tid", r.get("source_id", ""))
-                )
-                for r in raw_rows
-            ]
+            if candidate_config_ids:
+                try:
+                    analytics = V2AnalyticsQueryService()
+                    used_template_ids = analytics.get_eval_config_ids_for_candidates_ch(
+                        [str(value) for value in candidate_config_ids],
+                        timeout_ms=5000,
+                        window_days=90,
+                    )
+                except Exception:
+                    # Metric discovery is availability-sensitive: a transient
+                    # CH timeout must not make every configured evaluation
+                    # disappear from the settings/task picker.  Falling back
+                    # to the already tenant-scoped config metadata preserves
+                    # the selectable fields without exposing the DB failure.
+                    logger.warning(
+                        "dashboard_eval_usage_discovery_failed",
+                        exc_info=True,
+                    )
+                    used_template_ids = []
 
         if not used_template_ids and filter_by_project:
             used_template_ids = list(
@@ -693,12 +672,11 @@ def build_metrics_catalog(
         from model_hub.models.develop_annotations import AnnotationsLabels
 
         if filter_by_project:
-            # Used-label ids via dispatched ANNOTATION_LABELS source (no dropped-table JOIN).
-            from tracer.services.clickhouse.v2.dispatch import (
-                get_query_builder_class,
-            )
-
-            source = get_query_builder_class("ANNOTATION_LABELS")()
+            # Pin the post-direct-write source.  It scopes the score metadata
+            # by the denormalized tracer project id and never joins the removed
+            # Postgres span table; routing flags cannot send this endpoint back
+            # to the legacy span-join implementation.
+            source = AnnotationLabelScoresProjectPG()
             used_label_ids: set = set()
             for pid in project_ids:
                 used_label_ids.update(source.label_ids_for_project(pid))

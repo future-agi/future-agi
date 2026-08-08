@@ -33,6 +33,16 @@ def _expected_count(case, seeded: list[SeededRow]) -> int:
     if case.target_type in ("spans", "voiceCalls"):
         return sum(1 for r in seeded if case.expected_predicate(r))
     if case.target_type == "traces":
+        if case.col_type == "SYSTEM_METRIC" and case.filter_type == "datetime":
+            # Trace datetime filters bind to the displayed root timestamp,
+            # not to any child span in the trace.  Counting every matching
+            # child and then de-duplicating trace ids would incorrectly include
+            # a trace whose root is exactly on a strict greater-than boundary.
+            return sum(
+                1
+                for r in seeded
+                if r.parent_span_id is None and case.expected_predicate(r)
+            )
         return len({r.trace_id for r in seeded if case.expected_predicate(r)})
     if case.target_type == "sessions":
         return len({r.session_id for r in seeded if case.expected_predicate(r)})
@@ -40,9 +50,7 @@ def _expected_count(case, seeded: list[SeededRow]) -> int:
 
 
 def _expected_meta_count(case, seeded: list[SeededRow]) -> int:
-    """has_eval / has_annotation are trace/session-scoped: a trace matches if
-    ANY child span carries the flag. Roll the per-span flag up to the target
-    grain, then apply the True/False variant."""
+    """Roll has_eval / has_annotation up to the requested target grain."""
     flag = (
         (lambda r: r.has_eval)
         if case.meta_kind == "has_eval"
@@ -51,12 +59,9 @@ def _expected_meta_count(case, seeded: list[SeededRow]) -> int:
     want = bool(case.filter_value)
     traces_with = {r.trace_id for r in seeded if flag(r)}
     if case.target_type in ("spans", "voiceCalls"):
-        # has_eval is trace-scoped on the span grid (every span in an
-        # eval-bearing trace matches); has_annotation is span-scoped (only the
-        # annotated span itself). See _build_has_eval_condition (trace_id IN …)
-        # vs _build_has_annotation_condition (observation_span_id IN …).
-        if case.meta_kind == "has_eval":
-            return sum(1 for r in seeded if (r.trace_id in traces_with) == want)
+        # Span/voice grids match the exact trace+span pair for both direct-write
+        # eval rows and annotations.  A metric on one child must not pull in its
+        # siblings merely because they share a trace.
         return sum(1 for r in seeded if flag(r) == want)
     if case.target_type == "traces":
         all_ids = {r.trace_id for r in seeded}

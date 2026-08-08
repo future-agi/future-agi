@@ -41,6 +41,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import re
+from datetime import timedelta
 
 import pytest
 
@@ -239,17 +240,183 @@ class TestListBuilderOutputContract:
             if name in exclude:
                 continue
             method = getattr(builder, name)
-            sig = inspect.signature(method)
-            required = [
-                p
-                for p in sig.parameters.values()
-                if p.default is inspect.Parameter.empty
-                and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
-            ]
-            # Inherited id-list methods take one positional (trace_ids/span_ids);
-            # page/count methods take none.
-            args = [["dummy-id-1", "dummy-id-2"]] * len(required)
-            result = method(*args)
+            if name in {
+                "build_filter_anchor_probe",
+                "build_filter_graph_key_witness_probe",
+            }:
+                # The anchor contract requires an explicit finite sentinel;
+                # there is deliberately no production default or time-only
+                # anchor that a caller could accidentally widen. Exercise it
+                # with the smallest supported any-span attribute predicate.
+                original_filters = builder.filters
+                original_anchor_probe = getattr(builder, "_bounded_anchor_probe", None)
+                builder.filters = [
+                    *original_filters,
+                    {
+                        "column_id": "contract.anchor",
+                        "filter_config": {
+                            "col_type": "SPAN_ATTRIBUTE",
+                            "filter_type": "text",
+                            "filter_op": "equals",
+                            "filter_value": "value",
+                        },
+                    },
+                ]
+                if original_anchor_probe is not None:
+                    builder._bounded_anchor_probe = True
+                try:
+                    result = method(limit=2)
+                finally:
+                    builder.filters = original_filters
+                    if original_anchor_probe is not None:
+                        builder._bounded_anchor_probe = original_anchor_probe
+            elif name in {
+                "build_filter_ordered_seed_page",
+                "build_filter_seed_page",
+            }:
+                start, end = builder.parse_time_range(builder.filters)
+                result = method(slice_start=start, slice_end=end, limit=2)
+            elif name == "build_filter_unindexed_micro_seed_page":
+                original_filters = builder.filters
+                builder.filters = [
+                    *original_filters,
+                    {
+                        "column_id": "call_type",
+                        "filter_config": {
+                            "col_type": "SYSTEM_METRIC",
+                            "filter_type": "text",
+                            "filter_op": "equals",
+                            "filter_value": "inbound",
+                        },
+                    },
+                ]
+                try:
+                    start, end = builder.parse_time_range(builder.filters)
+                    result = method(
+                        slice_start=max(start, end - timedelta(minutes=5)),
+                        slice_end=end,
+                        limit=2,
+                    )
+                finally:
+                    builder.filters = original_filters
+            elif name == "build_filter_exact_zero_probe":
+                # This capability-gated voice optimization only compiles for
+                # two or more positive scalar any-span leaves in a short
+                # request window. Exercise the SQL boundary under that
+                # supported public contract instead of asking the optional
+                # accelerator to compile the generic 24-hour fixture.
+                original_filters = builder.filters
+                original_internal_scan = builder._bounded_internal_scan
+                original_request_window = builder._bounded_request_window
+                request_end = original_request_window[1]
+                request_start = request_end - timedelta(minutes=30)
+                builder.filters = [
+                    {
+                        "column_id": "created_at",
+                        "filter_config": {
+                            "filter_type": "datetime",
+                            "filter_op": "between",
+                            "filter_value": [
+                                request_start.isoformat(),
+                                request_end.isoformat(),
+                            ],
+                        },
+                    },
+                    {
+                        "column_id": "contract.numeric",
+                        "filter_config": {
+                            "col_type": "SPAN_ATTRIBUTE",
+                            "filter_type": "number",
+                            "filter_op": "equals",
+                            "filter_value": 1,
+                        },
+                    },
+                    {
+                        "column_id": "contract.text",
+                        "filter_config": {
+                            "col_type": "SPAN_ATTRIBUTE",
+                            "filter_type": "text",
+                            "filter_op": "in",
+                            "filter_value": ["value"],
+                        },
+                    },
+                ]
+                builder._bounded_internal_scan = False
+                builder._bounded_request_window = (request_start, request_end)
+                try:
+                    result = method()
+                finally:
+                    builder.filters = original_filters
+                    builder._bounded_internal_scan = original_internal_scan
+                    builder._bounded_request_window = original_request_window
+            elif name == "build_filter_navigation_seed_page":
+                start, end = builder.parse_time_range(builder.filters)
+                result = method(
+                    direction="older",
+                    slice_start=start,
+                    slice_end=end,
+                    limit=2,
+                )
+            elif name == "build_filter_navigation_target_query":
+                result = method(target_id="contract-navigation-target", result_limit=2)
+            elif name == "build_candidate_cursor_page_query":
+                # This deliberately narrow fast path exists only for one
+                # positive, resolved end-user filter. Exercise its emitted SQL
+                # under that exact capability contract.
+                original_filters = builder.filters
+                builder.filters = [
+                    *original_filters,
+                    {
+                        "column_id": "end_user_id",
+                        "filter_config": {
+                            "filter_type": "text",
+                            "filter_op": "in",
+                            "filter_value": ["00000000-0000-4000-8000-000000000001"],
+                        },
+                    },
+                ]
+                try:
+                    result = method()
+                finally:
+                    builder.filters = original_filters
+            elif name == "build_user_dimension_query":
+                result = method(
+                    [
+                        {
+                            "project_id": "contract-test-proj",
+                            "physical_end_user_ids": ("contract-end-user",),
+                        }
+                    ]
+                )
+            elif name in {
+                "build_filter_identity_match_query_from_seed_rows",
+                "build_filter_match_query_from_seed_rows",
+                "build_filter_page_hydration_query",
+            }:
+                start, _ = builder.parse_time_range(builder.filters)
+                result = method(
+                    [
+                        {
+                            "project_id": "contract-test-proj",
+                            "trace_id": "dummy-trace-id",
+                            "id": "dummy-span-id",
+                            "root_span_id": "dummy-span-id",
+                            "start_time": start,
+                        }
+                    ]
+                )
+            else:
+                sig = inspect.signature(method)
+                required = [
+                    p
+                    for p in sig.parameters.values()
+                    if p.default is inspect.Parameter.empty
+                    and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+                ]
+                # Inherited id-list methods take one positional
+                # (trace_ids/span_ids); page/count methods take none.
+                args = [["dummy-id-1", "dummy-id-2"]] * len(required)
+                result = method(*args)
             if isinstance(result, tuple):
                 yield name, result[0]
             elif isinstance(result, list):
@@ -261,7 +428,23 @@ class TestListBuilderOutputContract:
         exercised = 0
         for qt in _LIST_BUILDER_TYPES:
             cls = _load(registry[qt])
-            builder = cls(project_id="contract-test-proj")
+            kwargs = {"project_id": "contract-test-proj"}
+            if "bounded_internal_scan" in inspect.signature(cls).parameters:
+                kwargs["bounded_internal_scan"] = True
+                kwargs["filters"] = [
+                    {
+                        "column_id": "created_at",
+                        "filter_config": {
+                            "filter_type": "datetime",
+                            "filter_op": "between",
+                            "filter_value": [
+                                "2026-01-01T00:00:00",
+                                "2026-01-02T00:00:00",
+                            ],
+                        },
+                    }
+                ]
+            builder = cls(**kwargs)
             for name, sql in self._exercise(builder):
                 exercised += 1
                 cleaned = _LEGIT_ALIAS_RE.sub("", sql or "")

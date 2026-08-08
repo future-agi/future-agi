@@ -71,6 +71,10 @@ import {
 } from "src/sections/projects/LLMTracing/filterValuePickerUtils";
 import CallLogsGrid from "src/sections/agents/CallLogs/CallLogsGrid";
 import SelectAllBanner from "src/sections/projects/LLMTracing/SelectAllBanner";
+import {
+  formatSelectionCount,
+  getListTotalState,
+} from "src/sections/projects/LLMTracing/listTotalMetadata";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { useDebounce } from "src/hooks/use-debounce";
 import { PROJECT_SOURCE } from "src/utils/constants";
@@ -93,6 +97,10 @@ import {
 import "src/styles/clean-data-table.css";
 import { fetchRootSpans } from "src/api/project/llm-tracing";
 import { summarizeAddResults, addResultToast } from "./add-items-results";
+import {
+  ExactSelectorContinuationNotice,
+  useExactSelectorDataSource,
+} from "./exact-selector-pagination";
 
 const panelFilterToApi = (panel) =>
   panelFilterToApiBase(panel, { includeMeta: true });
@@ -177,6 +185,153 @@ function renderProjectAutocompleteOption(props, option, state) {
 const DATASET_ROWS_LIMIT = 10;
 const TRACE_ROWS_LIMIT = 20;
 const DEFAULT_MIN_WIDTH = 300;
+const createEmptyVoiceSelectionMeta = () => ({
+  isAllOnPageSelected: false,
+  currentPageSize: 0,
+  totalPages: 1,
+  pageLimit: 25,
+  totalMatching: null,
+  totalMatchingIsLowerBound: false,
+});
+
+const selectorRowsFromResponse = (response) =>
+  response?.data?.result?.table || [];
+const selectorMetadataFromResponse = (response) =>
+  response?.data?.result?.metadata || {};
+const traceSelectorRowIdentity = (row) => row?.trace_id || row?.traceId || null;
+const spanSelectorRowIdentity = (row) => {
+  const spanId = row?.span_id || row?.spanId || row?.id;
+  return spanId
+    ? `${row?.trace_id || row?.traceId || ""}:${spanId}:${row?.start_time || ""}`
+    : null;
+};
+const sessionSelectorRowIdentity = (row) =>
+  row?.session_id || row?.sessionId || row?.id || null;
+
+export const getSelectorPageTotalState = (metadata, loadedLowerBound) => {
+  const totalState = getListTotalState(metadata);
+  const normalizedLoadedLowerBound = Math.max(0, Number(loadedLowerBound) || 0);
+  if (totalState.totalRowCountIsLowerBound) {
+    return {
+      totalRowCount: null,
+      totalRowCountLowerBound: Math.max(
+        totalState.totalRowCountLowerBound || 0,
+        normalizedLoadedLowerBound,
+      ),
+      totalRowCountIsLowerBound: true,
+      selectorHasMore: metadata?.has_more === true,
+    };
+  }
+
+  return {
+    totalRowCount: Math.max(
+      totalState.totalRowCount || 0,
+      normalizedLoadedLowerBound,
+    ),
+    totalRowCountLowerBound: null,
+    totalRowCountIsLowerBound: false,
+    selectorHasMore: metadata?.has_more === true,
+  };
+};
+
+export const getSelectorSelectAllTotalState = (context, visibleCount = 0) => {
+  const isLowerBound = context?.totalRowCountIsLowerBound === true;
+  const reportedTotal = isLowerBound
+    ? context?.totalRowCountLowerBound
+    : context?.totalRowCount;
+  const numericTotal = Number(reportedTotal);
+  return {
+    totalCount: Math.max(
+      Number.isFinite(numericTotal) ? numericTotal : 0,
+      Number(visibleCount) || 0,
+    ),
+    totalCountIsLowerBound: isLowerBound,
+    hasMore: context?.selectorHasMore === true,
+  };
+};
+
+export const shouldShowSelectorSelectAll = (selectionMeta) =>
+  Boolean(
+    selectionMeta &&
+      (selectionMeta.totalCountIsLowerBound ||
+        selectionMeta.totalCount > selectionMeta.visibleCount),
+  );
+
+export const getVoiceSelectorTotalState = (selectionMeta = {}) => {
+  const visibleCount = Math.max(0, Number(selectionMeta.currentPageSize) || 0);
+  const totalPages = Math.max(1, Number(selectionMeta.totalPages) || 1);
+  const pageLimit = Math.max(1, Number(selectionMeta.pageLimit) || 1);
+  const hasReportedTotal =
+    selectionMeta.totalMatching !== null &&
+    selectionMeta.totalMatching !== undefined &&
+    selectionMeta.totalMatching !== "" &&
+    Number.isFinite(Number(selectionMeta.totalMatching)) &&
+    Number(selectionMeta.totalMatching) >= 0;
+  const totalCount = Math.max(
+    visibleCount,
+    hasReportedTotal
+      ? Number(selectionMeta.totalMatching)
+      : totalPages * pageLimit,
+  );
+  const totalCountIsLowerBound =
+    selectionMeta.totalMatchingIsLowerBound === true || !hasReportedTotal;
+
+  return {
+    totalCount,
+    totalCountIsLowerBound,
+    hasMore:
+      totalCountIsLowerBound || totalPages > 1 || totalCount > visibleCount,
+  };
+};
+
+export const getSelectorStatusState = ({
+  context,
+  displayedRowCount,
+  lastDisplayedRowIndex,
+}) => {
+  const loadedRows = Math.max(0, Number(lastDisplayedRowIndex) + 1 || 0);
+  if (context?.totalRowCountIsLowerBound === true) {
+    return {
+      loadedRows,
+      totalRows: Math.max(
+        loadedRows,
+        Number(context?.totalRowCountLowerBound) || 0,
+      ),
+      totalRowsIsLowerBound: true,
+    };
+  }
+
+  return {
+    loadedRows,
+    totalRows: Math.max(
+      0,
+      Number(context?.totalRowCount ?? displayedRowCount) || 0,
+    ),
+    totalRowsIsLowerBound: false,
+  };
+};
+
+export const retryExactSelectorRead = (api) => {
+  if (api?.retryServerSideLoads) {
+    api.retryServerSideLoads();
+    return;
+  }
+  api?.refreshServerSide?.({ purge: false });
+};
+
+const updateSelectorPageMetadata = (exactPage, params) => {
+  const loadedLowerBound =
+    (Number(params.request?.startRow) || 0) + exactPage.rows.length;
+  const totalState = getSelectorPageTotalState(
+    exactPage.metadata,
+    loadedLowerBound,
+  );
+  const context = params.api.getGridOption("context") || {};
+  params.api.setGridOption("context", {
+    ...context,
+    ...totalState,
+  });
+};
 
 const DATASET_GRID_THEME_PARAMS = {
   columnBorder: true,
@@ -444,7 +599,8 @@ async function fetchAllTraceIds(
     });
     const res = resp?.data?.result;
     const rows = res?.table ?? [];
-    const totalRows = res?.metadata?.totalRows ?? 0;
+    const metadata = res?.metadata ?? {};
+    const totalRows = metadata.totalRows ?? metadata.total_rows ?? 0;
 
     rows.forEach((row) => {
       const id = row.rowId || row.trace_id || row.id;
@@ -452,7 +608,10 @@ async function fetchAllTraceIds(
     });
 
     page += 1;
-    hasMore = page * TRACE_ROWS_LIMIT < totalRows;
+    hasMore =
+      metadata.has_more ??
+      metadata.hasMore ??
+      page * TRACE_ROWS_LIMIT < totalRows;
   }
 
   return allIds;
@@ -482,7 +641,8 @@ async function fetchAllSpanIds(
     });
     const res = resp?.data?.result;
     const rows = res?.table ?? [];
-    const totalRows = res?.metadata?.totalRows ?? 0;
+    const metadata = res?.metadata ?? {};
+    const totalRows = metadata.totalRows ?? metadata.total_rows ?? 0;
 
     rows.forEach((row) => {
       const id = row.rowId || row.span_id || row.id;
@@ -490,7 +650,10 @@ async function fetchAllSpanIds(
     });
 
     page += 1;
-    hasMore = page * SPAN_ROWS_LIMIT < totalRows;
+    hasMore =
+      metadata.has_more ??
+      metadata.hasMore ??
+      page * SPAN_ROWS_LIMIT < totalRows;
   }
 
   return allIds;
@@ -518,10 +681,17 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
   const queryClient = useQueryClient();
   const isDefaultQueue = !!queue?.is_default;
 
+  const selectionCountIsLowerBound =
+    selectionMode === "selectAll" &&
+    selectAllInfo?.totalCountIsLowerBound === true;
   const selectionCount =
     selectionMode === "selectAll" && selectAllInfo
-      ? selectAllInfo.totalCount - selectAllInfo.excludedIds.size
+      ? Math.max(selectAllInfo.totalCount - selectAllInfo.excludedIds.size, 0)
       : selectedIds.size;
+  const selectionCountLabel = formatSelectionCount({
+    count: selectionCount,
+    isLowerBound: selectionCountIsLowerBound,
+  });
 
   const handleSetSelection = useCallback((ids) => {
     setSelectionMode("manual");
@@ -912,7 +1082,7 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
             >
               {selectionCount === 0
                 ? "No rows selected"
-                : `${selectionCount} selected`}
+                : `${selectionCountLabel} selected`}
             </Typography>
             <Button
               variant="outlined"
@@ -936,7 +1106,7 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
               sx={{ minWidth: 140, flexShrink: 0 }}
             >
               {selectionCount > 0
-                ? `(${selectionCount}) Add to queue`
+                ? `(${selectionCountLabel}) Add to queue`
                 : "Add to queue"}
             </Button>
           </Box>
@@ -1213,14 +1383,20 @@ function createDataSource(queryClient, datasetId, filtersRef, searchRef) {
 function StatusBar({ api }) {
   const [loadedRows, setLoadedRows] = useState(0);
   const [totalRows, setTotalRows] = useState(0);
+  const [totalRowsIsLowerBound, setTotalRowsIsLowerBound] = useState(false);
 
   useEffect(() => {
     if (!api) return;
     const updateCounts = () => {
       const context = api.getGridOption?.("context");
-      const total = context?.totalRowCount ?? api.getDisplayedRowCount();
-      setTotalRows(total);
-      setLoadedRows(api.getLastDisplayedRowIndex() + 1);
+      const nextState = getSelectorStatusState({
+        context,
+        displayedRowCount: api.getDisplayedRowCount(),
+        lastDisplayedRowIndex: api.getLastDisplayedRowIndex(),
+      });
+      setTotalRows(nextState.totalRows);
+      setLoadedRows(nextState.loadedRows);
+      setTotalRowsIsLowerBound(nextState.totalRowsIsLowerBound);
     };
     updateCounts();
     const events = ["modelUpdated", "viewportChanged", "firstDataRendered"];
@@ -1234,13 +1410,48 @@ function StatusBar({ api }) {
 
   return (
     <Box sx={{ px: 2, py: 1, fontSize: 13, color: "text.secondary" }}>
-      Showing Rows: {loadedRows} / Total Rows: {totalRows}
+      Showing Rows: {loadedRows} /{" "}
+      {totalRowsIsLowerBound ? "Matching Rows: at least" : "Total Rows:"}{" "}
+      {totalRows}
     </Box>
   );
 }
 
 StatusBar.propTypes = {
   api: PropTypes.object,
+};
+
+export function ExactSelectorReadFailureNotice({ failed, onRetry }) {
+  if (!failed) return null;
+
+  return (
+    <Box
+      role="status"
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 1,
+        px: 1.5,
+        py: 0.75,
+        borderBottom: "1px solid",
+        borderColor: "divider",
+        bgcolor: "action.hover",
+      }}
+    >
+      <Typography variant="caption" color="text.secondary">
+        Rows are temporarily unavailable.
+      </Typography>
+      <Button size="small" variant="outlined" onClick={onRetry}>
+        Retry
+      </Button>
+    </Box>
+  );
+}
+
+ExactSelectorReadFailureNotice.propTypes = {
+  failed: PropTypes.bool,
+  onRetry: PropTypes.func.isRequired,
 };
 
 function FieldLoadingAdornment({ loading }) {
@@ -1818,12 +2029,9 @@ function TraceSelector({
   const filtersRef = useRef([]);
   // CallLogsGrid client-side paginated selection meta (for the voice
   // branch below). Drives the SelectAllBanner's visibility + count.
-  const [simCallMeta, setSimCallMeta] = useState({
-    isAllOnPageSelected: false,
-    currentPageSize: 0,
-    totalPages: 1,
-    pageLimit: 25,
-  });
+  const [simCallMeta, setSimCallMeta] = useState(createEmptyVoiceSelectionMeta);
+  const [pageSelectAllMeta, setPageSelectAllMeta] = useState(null);
+  const [traceReadFailed, setTraceReadFailed] = useState(false);
 
   const {
     data: projects,
@@ -1933,56 +2141,60 @@ function TraceSelector({
     filtersRef.current = validatedFilters;
   }, [validatedFilters]);
 
-  // Server-side datasource (same pattern as TraceGrid)
-  const dataSource = useMemo(
+  const traceQuerySignature = JSON.stringify({
+    projectId,
+    versionId,
+    filters: validatedFilters,
+  });
+  const getTraceBaseParams = useCallback(
     () => ({
-      getRows: async (params) => {
-        try {
-          const { request } = params;
-          const pageSize = request.endRow - request.startRow;
-          const pageNumber = Math.floor(request.startRow / pageSize);
-
-          const apiParams = {
-            project_id: projectId,
-            page_number: pageNumber,
-            page_size: TRACE_ROWS_LIMIT,
-            filters: JSON.stringify(
-              stripUiFilterKeys(filtersRef.current || []),
-            ),
-          };
-          if (versionId) {
-            apiParams.project_version_id = versionId;
-          }
-          const results = await axios.get(
-            endpoints.project.getTracesForObserveProject(),
-            { params: apiParams },
-          );
-          const res = results?.data?.result;
-
-          // Update columns from response config (same as TraceGrid)
-          const newCols = normalizeConfigKeys(res?.config);
-          if (newCols) {
-            setColumns((prev) => (isEqual(prev, newCols) ? prev : newCols));
-          }
-
-          const totalRows = res?.metadata?.total_rows;
-          const ctx = params.api.getGridOption("context") || {};
-          params.api.setGridOption("context", {
-            ...ctx,
-            totalRowCount: totalRows,
-          });
-          params.success({
-            rowData: res?.table,
-            rowCount: totalRows,
-          });
-        } catch {
-          params.fail();
-        }
-      },
+      project_id: projectId,
+      ...(versionId ? { project_version_id: versionId } : {}),
+      filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
     }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [projectId, versionId, validatedFilters],
+    [projectId, versionId],
   );
+  const requestTracePage = useCallback(
+    (requestParams) =>
+      axios.get(endpoints.project.getTracesForObserveProject(), {
+        params: requestParams,
+      }),
+    [],
+  );
+  const onTracePageLoaded = useCallback((exactPage, params) => {
+    setTraceReadFailed(false);
+    const newColumns = normalizeConfigKeys(
+      exactPage.response?.data?.result?.config,
+    );
+    if (newColumns) {
+      setColumns((previous) =>
+        isEqual(previous, newColumns) ? previous : newColumns,
+      );
+    }
+    updateSelectorPageMetadata(exactPage, params);
+  }, []);
+  const onTracePageFailure = useCallback(() => {
+    setTraceReadFailed(true);
+  }, []);
+  const {
+    dataSource,
+    continuationPending: traceContinuationPending,
+    continueSearch: continueTraceSearch,
+  } = useExactSelectorDataSource({
+    querySignature: traceQuerySignature,
+    targetRowCount: TRACE_ROWS_LIMIT,
+    getBaseParams: getTraceBaseParams,
+    request: requestTracePage,
+    rowsFromResponse: selectorRowsFromResponse,
+    metadataFromResponse: selectorMetadataFromResponse,
+    rowIdentity: traceSelectorRowIdentity,
+    onPageLoaded: onTracePageLoaded,
+    onFailure: onTracePageFailure,
+  });
+
+  useEffect(() => {
+    setTraceReadFailed(false);
+  }, [traceQuerySignature]);
 
   // Build column defs from server config (same as TraceGrid)
   const columnDefs = useMemo(() => {
@@ -2054,7 +2266,28 @@ function TraceSelector({
   // the parent in *manual* selection for just the visible page; the
   // SelectAllBanner then offers the user an explicit "Select all N
   // matching your filter" opt-in before we flip to filter-mode.
-  const [pageSelectAllMeta, setPageSelectAllMeta] = useState(null);
+  const resetTraceScopedSelection = useCallback(() => {
+    setPageSelectAllMeta(null);
+    setSimCallMeta(createEmptyVoiceSelectionMeta());
+    onSetSelection([]);
+  }, [onSetSelection]);
+  const previousTraceQuerySignatureRef = useRef(traceQuerySignature);
+  useEffect(() => {
+    if (previousTraceQuerySignatureRef.current === traceQuerySignature) return;
+    previousTraceQuerySignatureRef.current = traceQuerySignature;
+    resetTraceScopedSelection();
+  }, [resetTraceScopedSelection, traceQuerySignature]);
+
+  const retryTraceRead = useCallback(() => {
+    setTraceReadFailed(false);
+    retryExactSelectorRead(gridApi);
+  }, [gridApi]);
+
+  const voiceSelectAllState = useMemo(
+    () => getVoiceSelectorTotalState(simCallMeta),
+    [simCallMeta],
+  );
+
   const onSelectionChanged = useCallback(
     (event) => {
       const selectionState = event.api.getServerSideSelectionState();
@@ -2067,17 +2300,20 @@ function TraceSelector({
         // `forEachNodeAfterFilterAndSort` would yield for a client-
         // side grid).
         const excludedIds = new Set(selectionState.toggledNodes || []);
-        const totalCount =
-          (event.api.getGridOption("context") || {}).totalRowCount ?? 0;
+        const context = event.api.getGridOption("context") || {};
         const visibleRowIds = [];
         const rendered = event.api.getRenderedNodes?.() || [];
         rendered.forEach((node) => {
           const rowId = node?.data?.trace_id ?? node?.data?.traceId ?? node?.id;
           if (rowId && !excludedIds.has(rowId)) visibleRowIds.push(rowId);
         });
+        const totalState = getSelectorSelectAllTotalState(
+          context,
+          visibleRowIds.length,
+        );
         onSetSelection(visibleRowIds);
         setPageSelectAllMeta({
-          totalCount,
+          ...totalState,
           excludedIds,
           visibleCount: visibleRowIds.length,
         });
@@ -2095,6 +2331,8 @@ function TraceSelector({
     if (!pageSelectAllMeta) return;
     onSelectAll({
       totalCount: pageSelectAllMeta.totalCount,
+      totalCountIsLowerBound: pageSelectAllMeta.totalCountIsLowerBound,
+      hasMore: pageSelectAllMeta.hasMore,
       excludedIds: pageSelectAllMeta.excludedIds,
       projectId,
       projectVersionId: versionId || undefined,
@@ -2109,16 +2347,17 @@ function TraceSelector({
   );
 
   const handleProjectChange = (e) => {
+    resetTraceScopedSelection();
     setProjectId(e.target.value);
     setVersionId("");
     setColumns([]);
     setFilters([{ ...traceDefaultFilterBase, id: getRandomId() }]);
     setFilterAnchorEl(null);
     setFilterOpen(false);
-    onSetSelection([]);
   };
 
   const handleVersionChange = (e) => {
+    resetTraceScopedSelection();
     setVersionId(e.target.value);
     setColumns([]);
     setFilters([{ ...traceDefaultFilterBase, id: getRandomId() }]);
@@ -2390,14 +2629,20 @@ function TraceSelector({
         >
           <SelectAllBanner
             visible={
-              simCallMeta.isAllOnPageSelected && simCallMeta.totalPages > 1
+              simCallMeta.isAllOnPageSelected && voiceSelectAllState.hasMore
             }
             visibleCount={simCallMeta.currentPageSize}
-            totalMatching={simCallMeta.totalPages * simCallMeta.pageLimit}
+            totalMatching={voiceSelectAllState.totalCount}
+            totalMatchingIsLowerBound={
+              voiceSelectAllState.totalCountIsLowerBound
+            }
             noun="call"
             onSelectAll={() => {
               onSelectAll({
-                totalCount: simCallMeta.totalPages * simCallMeta.pageLimit,
+                totalCount: voiceSelectAllState.totalCount,
+                totalCountIsLowerBound:
+                  voiceSelectAllState.totalCountIsLowerBound,
+                hasMore: voiceSelectAllState.hasMore,
                 excludedIds: new Set(),
                 projectId,
                 projectVersionId: versionId || undefined,
@@ -2435,10 +2680,7 @@ function TraceSelector({
           }}
         >
           <SelectAllBanner
-            visible={
-              !!pageSelectAllMeta &&
-              pageSelectAllMeta.totalCount > pageSelectAllMeta.visibleCount
-            }
+            visible={shouldShowSelectorSelectAll(pageSelectAllMeta)}
             visibleCount={pageSelectAllMeta?.visibleCount || 0}
             totalMatching={
               pageSelectAllMeta
@@ -2449,8 +2691,19 @@ function TraceSelector({
                   )
                 : 0
             }
+            totalMatchingIsLowerBound={
+              pageSelectAllMeta?.totalCountIsLowerBound === true
+            }
             noun="trace"
             onSelectAll={commitFilterModeSelectAll}
+          />
+          <ExactSelectorReadFailureNotice
+            failed={traceReadFailed}
+            onRetry={retryTraceRead}
+          />
+          <ExactSelectorContinuationNotice
+            pending={traceContinuationPending}
+            onContinue={continueTraceSearch}
           />
           <Box sx={{ flex: 1, position: "relative" }}>
             <AgGridReact
@@ -2521,6 +2774,8 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   const filterButtonRef = useRef(null);
   const agTheme = useAgThemeWith(SELECTOR_GRID_THEME_PARAMS);
   const filtersRef = useRef([]);
+  const [pageSelectAllMeta, setPageSelectAllMeta] = useState(null);
+  const [spanReadFailed, setSpanReadFailed] = useState(false);
 
   const {
     data: projects,
@@ -2604,57 +2859,60 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
     filtersRef.current = validatedFilters;
   }, [validatedFilters]);
 
-  // Server-side datasource (same pattern as SpanGrid)
-  const dataSource = useMemo(
+  const spanQuerySignature = JSON.stringify({
+    projectId,
+    versionId,
+    filters: validatedFilters,
+  });
+  const getSpanBaseParams = useCallback(
     () => ({
-      getRows: async (params) => {
-        try {
-          const { request } = params;
-          const pageSize = request.endRow - request.startRow;
-          const pageNumber = Math.floor(request.startRow / pageSize);
-
-          const apiParams = {
-            project_id: projectId,
-            page_number: pageNumber,
-            page_size: SPAN_ROWS_LIMIT,
-            filters: JSON.stringify(
-              stripUiFilterKeys(filtersRef.current || []),
-            ),
-          };
-          if (versionId) {
-            apiParams.project_version_id = versionId;
-          }
-
-          const results = await axios.get(
-            endpoints.project.getSpansForObserveProject(),
-            { params: apiParams },
-          );
-          const res = results?.data?.result;
-
-          // Update columns from response config
-          const newCols = normalizeConfigKeys(res?.config);
-          if (newCols) {
-            setColumns((prev) => (isEqual(prev, newCols) ? prev : newCols));
-          }
-
-          const totalRows = res?.metadata?.total_rows;
-          const ctx = params.api.getGridOption("context") || {};
-          params.api.setGridOption("context", {
-            ...ctx,
-            totalRowCount: totalRows,
-          });
-          params.success({
-            rowData: res?.table,
-            rowCount: totalRows,
-          });
-        } catch {
-          params.fail();
-        }
-      },
+      project_id: projectId,
+      ...(versionId ? { project_version_id: versionId } : {}),
+      filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
     }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [projectId, versionId, validatedFilters],
+    [projectId, versionId],
   );
+  const requestSpanPage = useCallback(
+    (requestParams) =>
+      axios.get(endpoints.project.getSpansForObserveProject(), {
+        params: requestParams,
+      }),
+    [],
+  );
+  const onSpanPageLoaded = useCallback((exactPage, params) => {
+    setSpanReadFailed(false);
+    const newColumns = normalizeConfigKeys(
+      exactPage.response?.data?.result?.config,
+    );
+    if (newColumns) {
+      setColumns((previous) =>
+        isEqual(previous, newColumns) ? previous : newColumns,
+      );
+    }
+    updateSelectorPageMetadata(exactPage, params);
+  }, []);
+  const onSpanPageFailure = useCallback(() => {
+    setSpanReadFailed(true);
+  }, []);
+  const {
+    dataSource,
+    continuationPending: spanContinuationPending,
+    continueSearch: continueSpanSearch,
+  } = useExactSelectorDataSource({
+    querySignature: spanQuerySignature,
+    targetRowCount: SPAN_ROWS_LIMIT,
+    getBaseParams: getSpanBaseParams,
+    request: requestSpanPage,
+    rowsFromResponse: selectorRowsFromResponse,
+    metadataFromResponse: selectorMetadataFromResponse,
+    rowIdentity: spanSelectorRowIdentity,
+    onPageLoaded: onSpanPageLoaded,
+    onFailure: onSpanPageFailure,
+  });
+
+  useEffect(() => {
+    setSpanReadFailed(false);
+  }, [spanQuerySignature]);
 
   // Build column defs from server config (reuse getTraceListColumnDefs — same renderers)
   const columnDefs = useMemo(() => {
@@ -2722,24 +2980,42 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
 
   // Opt-in for cross-page select-all — same pattern as
   // TraceSelector above (mirrors LLMTracingView's span tab, Phase 5).
-  const [pageSelectAllMeta, setPageSelectAllMeta] = useState(null);
+  const resetSpanScopedSelection = useCallback(() => {
+    setPageSelectAllMeta(null);
+    onSetSelection([]);
+  }, [onSetSelection]);
+  const previousSpanQuerySignatureRef = useRef(spanQuerySignature);
+  useEffect(() => {
+    if (previousSpanQuerySignatureRef.current === spanQuerySignature) return;
+    previousSpanQuerySignatureRef.current = spanQuerySignature;
+    resetSpanScopedSelection();
+  }, [resetSpanScopedSelection, spanQuerySignature]);
+
+  const retrySpanRead = useCallback(() => {
+    setSpanReadFailed(false);
+    retryExactSelectorRead(gridApi);
+  }, [gridApi]);
+
   const onSelectionChanged = useCallback(
     (event) => {
       const selectionState = event.api.getServerSideSelectionState();
 
       if (selectionState.selectAll) {
         const excludedIds = new Set(selectionState.toggledNodes || []);
-        const totalCount =
-          (event.api.getGridOption("context") || {}).totalRowCount ?? 0;
+        const context = event.api.getGridOption("context") || {};
         const visibleRowIds = [];
         const rendered = event.api.getRenderedNodes?.() || [];
         rendered.forEach((node) => {
           const rowId = node?.data?.span_id ?? node?.data?.spanId ?? node?.id;
           if (rowId && !excludedIds.has(rowId)) visibleRowIds.push(rowId);
         });
+        const totalState = getSelectorSelectAllTotalState(
+          context,
+          visibleRowIds.length,
+        );
         onSetSelection(visibleRowIds);
         setPageSelectAllMeta({
-          totalCount,
+          ...totalState,
           excludedIds,
           visibleCount: visibleRowIds.length,
         });
@@ -2756,6 +3032,8 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
     if (!pageSelectAllMeta) return;
     onSelectAll({
       totalCount: pageSelectAllMeta.totalCount,
+      totalCountIsLowerBound: pageSelectAllMeta.totalCountIsLowerBound,
+      hasMore: pageSelectAllMeta.hasMore,
       excludedIds: pageSelectAllMeta.excludedIds,
       projectId,
       projectVersionId: versionId || undefined,
@@ -2770,6 +3048,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   );
 
   const handleProjectChange = (e) => {
+    resetSpanScopedSelection();
     setProjectId(e.target.value);
     setVersionId("");
     setColumns([]);
@@ -2779,6 +3058,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   };
 
   const handleVersionChange = (e) => {
+    resetSpanScopedSelection();
     setVersionId(e.target.value);
     setColumns([]);
     setFilters([{ ...traceDefaultFilterBase, id: getRandomId() }]);
@@ -3023,10 +3303,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
           }}
         >
           <SelectAllBanner
-            visible={
-              !!pageSelectAllMeta &&
-              pageSelectAllMeta.totalCount > pageSelectAllMeta.visibleCount
-            }
+            visible={shouldShowSelectorSelectAll(pageSelectAllMeta)}
             visibleCount={pageSelectAllMeta?.visibleCount || 0}
             totalMatching={
               pageSelectAllMeta
@@ -3037,8 +3314,19 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
                   )
                 : 0
             }
+            totalMatchingIsLowerBound={
+              pageSelectAllMeta?.totalCountIsLowerBound === true
+            }
             noun="span"
             onSelectAll={commitFilterModeSelectAll}
+          />
+          <ExactSelectorReadFailureNotice
+            failed={spanReadFailed}
+            onRetry={retrySpanRead}
+          />
+          <ExactSelectorContinuationNotice
+            pending={spanContinuationPending}
+            onContinue={continueSpanSearch}
           />
           <Box sx={{ flex: 1, position: "relative" }}>
             <AgGridReact
@@ -3107,6 +3395,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
   const filterButtonRef = useRef(null);
   const agTheme = useAgThemeWith(SELECTOR_GRID_THEME_PARAMS);
   const filtersRef = useRef([]);
+  const [sessionReadFailed, setSessionReadFailed] = useState(false);
 
   const {
     data: projects,
@@ -3176,61 +3465,66 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
     filtersRef.current = validatedFilters;
   }, [validatedFilters]);
 
-  // Server-side datasource (same pattern as Session-grid)
-  const dataSource = useMemo(
-    () => ({
-      getRows: async (params) => {
-        try {
-          const { request } = params;
-          const pageSize = request.endRow - request.startRow;
-          const pageNumber = Math.floor(request.startRow / pageSize);
-
-          const results = await axios.get(
-            endpoints.project.projectSessionList(),
-            {
-              params: {
-                project_id: projectId,
-                ...(versionId ? { project_version_id: versionId } : {}),
-                page_number: pageNumber,
-                page_size: SESSION_ROWS_LIMIT,
-                sort_params: JSON.stringify(
-                  request?.sortModel?.map(({ colId, sort }) => ({
-                    column_id: colId,
-                    direction: sort,
-                  })),
-                ),
-                filters: JSON.stringify(
-                  stripUiFilterKeys(filtersRef.current || []),
-                ),
-              },
-            },
-          );
-          const res = results?.data?.result;
-
-          // Update columns from response config
-          const newCols = normalizeConfigKeys(res?.config);
-          if (newCols) {
-            setColumns((prev) => (isEqual(prev, newCols) ? prev : newCols));
-          }
-
-          const totalRows = res?.metadata?.total_rows;
-          const ctx = params.api.getGridOption("context") || {};
-          params.api.setGridOption("context", {
-            ...ctx,
-            totalRowCount: totalRows,
-          });
-          params.success({
-            rowData: res?.table,
-            rowCount: totalRows,
-          });
-        } catch {
-          params.fail();
-        }
-      },
+  const sessionQuerySignature = JSON.stringify({
+    projectId,
+    versionId,
+    filters: validatedFilters,
+  });
+  const getSessionBaseParams = useCallback(
+    (request) => ({
+      project_id: projectId,
+      ...(versionId ? { project_version_id: versionId } : {}),
+      sort_params: JSON.stringify(
+        request?.sortModel?.map(({ colId, sort }) => ({
+          column_id: colId,
+          direction: sort,
+        })) || [],
+      ),
+      filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
     }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [projectId, versionId, validatedFilters],
+    [projectId, versionId],
   );
+  const requestSessionPage = useCallback(
+    (requestParams) =>
+      axios.get(endpoints.project.projectSessionList(), {
+        params: requestParams,
+      }),
+    [],
+  );
+  const onSessionPageLoaded = useCallback((exactPage, params) => {
+    setSessionReadFailed(false);
+    const newColumns = normalizeConfigKeys(
+      exactPage.response?.data?.result?.config,
+    );
+    if (newColumns) {
+      setColumns((previous) =>
+        isEqual(previous, newColumns) ? previous : newColumns,
+      );
+    }
+    updateSelectorPageMetadata(exactPage, params);
+  }, []);
+  const onSessionPageFailure = useCallback(() => {
+    setSessionReadFailed(true);
+  }, []);
+  const {
+    dataSource,
+    continuationPending: sessionContinuationPending,
+    continueSearch: continueSessionSearch,
+  } = useExactSelectorDataSource({
+    querySignature: sessionQuerySignature,
+    targetRowCount: SESSION_ROWS_LIMIT,
+    getBaseParams: getSessionBaseParams,
+    request: requestSessionPage,
+    rowsFromResponse: selectorRowsFromResponse,
+    metadataFromResponse: selectorMetadataFromResponse,
+    rowIdentity: sessionSelectorRowIdentity,
+    onPageLoaded: onSessionPageLoaded,
+    onFailure: onSessionPageFailure,
+  });
+
+  useEffect(() => {
+    setSessionReadFailed(false);
+  }, [sessionQuerySignature]);
 
   // Build column defs from server config (same as Session-grid)
   const columnDefs = useMemo(() => {
@@ -3301,7 +3595,25 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
     }
   }, [dataSource, gridApi, projectId]);
 
+  const retrySessionRead = useCallback(() => {
+    setSessionReadFailed(false);
+    retryExactSelectorRead(gridApi);
+  }, [gridApi]);
+
   const [pageSelectAllMeta, setPageSelectAllMeta] = useState(null);
+
+  const resetSessionScopedSelection = useCallback(() => {
+    setPageSelectAllMeta(null);
+    onSetSelection([]);
+  }, [onSetSelection]);
+  const previousSessionQuerySignatureRef = useRef(sessionQuerySignature);
+  useEffect(() => {
+    if (previousSessionQuerySignatureRef.current === sessionQuerySignature) {
+      return;
+    }
+    previousSessionQuerySignatureRef.current = sessionQuerySignature;
+    resetSessionScopedSelection();
+  }, [resetSessionScopedSelection, sessionQuerySignature]);
 
   // Handle row selection. Session rows use the backend `session_id` field as
   // the row id; filter-mode select-all sends the same canonical ids to the API.
@@ -3310,7 +3622,12 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
       const selectionState = event.api.getServerSideSelectionState?.() || {};
 
       if (selectionState.selectAll) {
-        const selectAllMeta = buildSessionSelectAllMeta(event.api);
+        const baseMeta = buildSessionSelectAllMeta(event.api);
+        const totalState = getSelectorSelectAllTotalState(
+          event.api.getGridOption("context") || {},
+          baseMeta?.visibleCount || 0,
+        );
+        const selectAllMeta = baseMeta ? { ...baseMeta, ...totalState } : null;
         onSetSelection(selectAllMeta?.visibleRowIds || []);
         setPageSelectAllMeta(selectAllMeta);
         return;
@@ -3327,6 +3644,8 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
     if (!pageSelectAllMeta) return;
     onSelectAll({
       totalCount: pageSelectAllMeta.totalCount,
+      totalCountIsLowerBound: pageSelectAllMeta.totalCountIsLowerBound,
+      hasMore: pageSelectAllMeta.hasMore,
       excludedIds: pageSelectAllMeta.excludedIds,
       projectId,
       projectVersionId: versionId || undefined,
@@ -3341,24 +3660,22 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
   );
 
   const handleProjectChange = (e) => {
+    resetSessionScopedSelection();
     setProjectId(e.target.value);
     setVersionId("");
     setColumns([]);
     setFilters([{ ...sessionDefaultFilterBase, id: getRandomId() }]);
     setFilterAnchorEl(null);
     setFilterOpen(false);
-    setPageSelectAllMeta(null);
-    onSetSelection([]);
   };
 
   const handleVersionChange = (e) => {
+    resetSessionScopedSelection();
     setVersionId(e.target.value);
     setColumns([]);
     setFilters([{ ...sessionDefaultFilterBase, id: getRandomId() }]);
     setFilterAnchorEl(null);
     setFilterOpen(false);
-    setPageSelectAllMeta(null);
-    onSetSelection([]);
   };
 
   // For prototype projects, require a version to be selected before showing grid
@@ -3609,10 +3926,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
           }}
         >
           <SelectAllBanner
-            visible={
-              !!pageSelectAllMeta &&
-              pageSelectAllMeta.totalCount > pageSelectAllMeta.visibleCount
-            }
+            visible={shouldShowSelectorSelectAll(pageSelectAllMeta)}
             visibleCount={pageSelectAllMeta?.visibleCount || 0}
             totalMatching={
               pageSelectAllMeta
@@ -3623,8 +3937,19 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
                   )
                 : 0
             }
+            totalMatchingIsLowerBound={
+              pageSelectAllMeta?.totalCountIsLowerBound === true
+            }
             noun="session"
             onSelectAll={commitFilterModeSelectAll}
+          />
+          <ExactSelectorReadFailureNotice
+            failed={sessionReadFailed}
+            onRetry={retrySessionRead}
+          />
+          <ExactSelectorContinuationNotice
+            pending={sessionContinuationPending}
+            onContinue={continueSessionSearch}
           />
           <Box sx={{ flex: 1, position: "relative" }}>
             <AgGridReact

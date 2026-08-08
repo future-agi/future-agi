@@ -4,6 +4,7 @@ import structlog
 from django.db import models, transaction
 from django.db.models import Count
 from django.utils import timezone
+from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
@@ -27,6 +28,7 @@ from tracer.models.trace import Trace
 from tracer.models.trace_scan import TraceScanConfig
 from tracer.models.trace_session import TraceSession
 from tracer.queries.projects import apply_project_list_filters
+from tracer.serializers.filters import ObserveGraphDataQuerySerializer
 from tracer.serializers.project import (
     ProjectDetailResponseSerializer,
     ProjectGraphDataQuerySerializer,
@@ -39,17 +41,24 @@ from tracer.serializers.project import (
     ProjectUsersAggregateGraphDataRequestSerializer,
 )
 from tracer.services.clickhouse.graph_dispatch import (
+    enforce_exact_graph_data_contract,
     fetch_annotation_graph_ch,
     fetch_eval_graph_ch,
+    fetch_user_system_metric_graph_ch,
+    graph_payload_is_publishable,
 )
-from tracer.services.clickhouse.query_builders import (
-    ClickHouseFilterBuilder,
-    TimeSeriesQueryBuilder,
-    UserListQueryBuilder,
+from tracer.services.clickhouse.read_budget import (
+    is_clickhouse_api_read_unavailable_error,
 )
-from tracer.services.clickhouse.query_service import AnalyticsQueryService
 from tracer.services.clickhouse.v2.query_builders.user_list import (
     UserListQueryBuilderV2,
+)
+from tracer.services.clickhouse.v2.query_builders.user_time_series import (
+    UserDetailTimeSeriesQueryBuilderV2,
+)
+from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
+from tracer.services.filter_principal_context import (
+    bind_request_my_annotations_principal,
 )
 from tracer.utils.constants import (
     INSTALLATION_GUIDE,
@@ -111,7 +120,9 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 TraceSession.objects.filter(project__in=projects).update(
                     deleted=True, deleted_at=now
                 )
-            Trace.objects.filter(project__in=projects).update(deleted=True, deleted_at=now)
+            Trace.objects.filter(project__in=projects).update(
+                deleted=True, deleted_at=now
+            )
             ObservationSpan.objects.filter(project__in=projects).update(
                 deleted=True, deleted_at=now
             )
@@ -487,104 +498,90 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             # Get 30-day volume from ClickHouse for just this page of projects
             volume_map = {}
             daily_volume_map = {}
+            last_active_map = {}
             project_ids = [str(p["id"]) for p in projects_data]
             if project_ids:
                 try:
-                    from tracer.services.clickhouse.client import get_clickhouse_client
-                    from tracer.services.clickhouse.query_service import (
-                        is_clickhouse_enabled,
+                    service = V2AnalyticsQueryService()
+                    thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime(
+                        "%Y-%m-%d"
                     )
-
-                    if is_clickhouse_enabled():
-                        ch = get_clickhouse_client()
-                        thirty_days_ago = (
-                            datetime.now() - timedelta(days=30)
-                        ).strftime("%Y-%m-%d")
-                        vol_result = ch.execute_read(
-                            "SELECT project_id, count() AS vol "
-                            "FROM spans "
-                            "WHERE project_id IN %(pids)s "
-                            "AND is_deleted = 0 "
-                            "AND (parent_span_id IS NULL OR parent_span_id = %(e)s) "
-                            "AND start_time >= %(since)s "
-                            "AND created_at >= %(since)s "
-                            "GROUP BY project_id",
-                            {"pids": project_ids, "e": "", "since": thirty_days_ago},
-                            timeout_ms=5000,
+                    ninety_days_ago = (datetime.now() - timedelta(days=90)).strftime(
+                        "%Y-%m-%d"
+                    )
+                    activity_query = """
+                        WITH latest_roots AS (
+                            SELECT
+                                project_id,
+                                trace_id,
+                                id,
+                                start_time,
+                                argMax(tuple(parent_span_id), _version).1
+                                    AS latest_parent_span_id,
+                                argMax(is_deleted, _version) AS latest_is_deleted
+                            FROM spans
+                            PREWHERE project_id IN %(pids)s
+                              AND start_time >= %(since_90d)s
+                            GROUP BY project_id, trace_id, id, start_time
+                        ), daily AS (
+                            SELECT
+                                project_id,
+                                toDate(start_time) AS day,
+                                count() AS day_volume,
+                                max(start_time) AS day_last_active
+                            FROM latest_roots
+                            WHERE latest_is_deleted = 0
+                              AND latest_parent_span_id = ''
+                            GROUP BY project_id, day
                         )
-                        raw = (
-                            vol_result[0]
-                            if isinstance(vol_result, tuple)
-                            else vol_result
-                        )
-                        volume_map = {str(r[0]): r[1] for r in raw}
-
-                        # Daily volume for sparkline charts
-                        daily_result = ch.execute_read(
-                            "SELECT project_id, toDate(start_time) AS day, count() AS vol "
-                            "FROM spans "
-                            "WHERE project_id IN %(pids)s "
-                            "AND is_deleted = 0 "
-                            "AND (parent_span_id IS NULL OR parent_span_id = %(e)s) "
-                            "AND start_time >= %(since)s "
-                            "AND created_at >= %(since)s "
-                            "GROUP BY project_id, day "
-                            "ORDER BY project_id, day",
-                            {"pids": project_ids, "e": "", "since": thirty_days_ago},
-                            timeout_ms=5000,
-                        )
-                        daily_raw = (
-                            daily_result[0]
-                            if isinstance(daily_result, tuple)
-                            else daily_result
-                        )
-                        # Build { project_id: [vol_day1, vol_day2, ...vol_day30] }
-                        from collections import defaultdict
-
-                        daily_map_raw = defaultdict(dict)
-                        for r in daily_raw:
-                            pid = str(r[0])
-                            day = r[1]  # date object
-                            vol = r[2]
-                            daily_map_raw[pid][str(day)] = vol
-
-                        # Fill in missing days with 0
-                        daily_volume_map = {}
-                        for pid in project_ids:
-                            pid_str = str(pid)
-                            days_data = []
-                            for i in range(30):
-                                day = (
-                                    datetime.now() - timedelta(days=29 - i)
-                                ).strftime("%Y-%m-%d")
-                                days_data.append(
-                                    daily_map_raw.get(pid_str, {}).get(day, 0)
-                                )
-                            daily_volume_map[pid_str] = days_data
-
-                        # Last active — most recent span ingested per project
-                        last_active_result = ch.execute_read(
-                            "SELECT project_id, max(start_time) AS last_active "
-                            "FROM spans "
-                            "WHERE project_id IN %(pids)s "
-                            "AND is_deleted = 0 "
-                            "GROUP BY project_id",
-                            {"pids": project_ids},
-                            timeout_ms=5000,
-                        )
-                        la_raw = (
-                            last_active_result[0]
-                            if isinstance(last_active_result, tuple)
-                            else last_active_result
-                        )
-                        last_active_map = {
-                            str(r[0]): r[1].isoformat() if r[1] else None
-                            for r in la_raw
+                        SELECT
+                            toString(project_id) AS project_id,
+                            sumIf(day_volume, day >= toDate(%(since_30d)s)) AS volume,
+                            max(day_last_active) AS last_active,
+                            groupArrayIf(
+                                tuple(toString(day), day_volume),
+                                day >= toDate(%(since_30d)s)
+                            ) AS daily_volume
+                        FROM daily
+                        GROUP BY project_id
+                    """
+                    activity_result = service.execute_ch_query(
+                        activity_query,
+                        {
+                            "pids": project_ids,
+                            "since_30d": thirty_days_ago,
+                            "since_90d": ninety_days_ago,
+                        },
+                        timeout_ms=5000,
+                    )
+                    daily_map_raw = {}
+                    last_active_map = {}
+                    for row in activity_result.data:
+                        pid = str(row["project_id"])
+                        volume_map[pid] = int(row.get("volume") or 0)
+                        daily_map_raw[pid] = {
+                            str(day): int(volume)
+                            for day, volume in (row.get("daily_volume") or [])
                         }
+                        last_active = row.get("last_active")
+                        last_active_map[pid] = (
+                            last_active.isoformat() if last_active else None
+                        )
+
+                    # Fill in missing days with zero for the fixed sparkline
+                    # response contract.
+                    for pid in project_ids:
+                        daily_volume_map[pid] = [
+                            daily_map_raw.get(pid, {}).get(
+                                (datetime.now() - timedelta(days=29 - offset)).strftime(
+                                    "%Y-%m-%d"
+                                ),
+                                0,
+                            )
+                            for offset in range(30)
+                        ]
                 except Exception as e:
                     logger.warning(f"CH volume query failed, falling back to 0: {e}")
-
-            last_active_map = locals().get("last_active_map", {})
 
             # Run counts — count ProjectVersions per project
             run_count_map = {}
@@ -680,16 +677,31 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     def get_graph_data(self, request, *args, **kwargs):
         query_params = request.validated_query_data
         project_id = str(query_params["project_id"])
+        allow_sampled = query_params["allow_sampled"]
+        refresh = query_params.get("refresh", False)
 
         try:
             if not self._get_project_in_scope(project_id):
                 return self._gm.bad_request("Project not found.")
             response_data = get_all_system_metrics(
                 interval=query_params["interval"],
-                filters=query_params["filters"],
+                filters=bind_request_my_annotations_principal(
+                    request,
+                    query_params["filters"],
+                ),
                 property="average",
                 system_metric_filters={"project_id": project_id},
+                refresh=refresh,
             )
+            if not graph_payload_is_publishable(
+                response_data,
+                allow_sampled=allow_sampled,
+            ):
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Graph data is temporarily unavailable. Please retry.",
+                    code="service_unavailable",
+                )
             graph_data = {
                 "system_metrics": response_data,
                 "evaluations": {},
@@ -709,14 +721,17 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             body = request.validated_data
             end_user_id = str(body["end_user_id"])
             project_id = str(body["project_id"])
-            filters = body["filters"]
+            filters = bind_request_my_annotations_principal(
+                request,
+                body["filters"],
+            )
 
             if not self._get_project_in_scope(project_id):
                 return self._gm.bad_request("Project not found.")
 
             _org = get_request_organization(request) or request.user.organization
             _org_id = str(_org.id)
-            analytics = AnalyticsQueryService()
+            analytics = V2AnalyticsQueryService()
             builder = UserListQueryBuilderV2(
                 organization_id=_org_id,
                 workspace_id=str(request.workspace.id),
@@ -752,12 +767,28 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 )
 
             return self._gm.success_response(output)
-        except Exception as e:
-            logger.exception(f"ERROR IN RETRIEVING USER METRICS: {e}")
-            return self._gm.internal_server_error_response()
+        except Exception as exc:
+            if is_clickhouse_api_read_unavailable_error(exc):
+                logger.warning(
+                    "project_user_metrics_unavailable",
+                    error_type=type(exc).__name__,
+                )
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "User metrics are temporarily unavailable. Please retry.",
+                    code="service_unavailable",
+                )
+            logger.exception(
+                "project_user_metrics_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.internal_server_error_response(
+                "User metrics could not be loaded"
+            )
 
     @validated_request(
-        request_serializer=ProjectUsersAggregateGraphDataRequestSerializer
+        query_serializer=ObserveGraphDataQuerySerializer,
+        request_serializer=ProjectUsersAggregateGraphDataRequestSerializer,
     )
     @action(detail=False, methods=["post"])
     def get_users_aggregate_graph_data(self, request, *args, **kwargs):
@@ -769,8 +800,13 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         """
         try:
             body = request.validated_data
+            allow_sampled = request.validated_query_data["allow_sampled"]
+            refresh = request.validated_query_data.get("refresh", False)
             project_id = str(body["project_id"])
-            filters = body["filters"]
+            filters = bind_request_my_annotations_principal(
+                request,
+                body["filters"],
+            )
             interval = body["interval"]
             req_data_config = body["req_data_config"]
             metric_type = req_data_config.get("type", "SYSTEM_METRIC")
@@ -779,46 +815,44 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             if not self._get_project_in_scope(project_id):
                 return self._gm.bad_request("Project not found.")
 
-            analytics = AnalyticsQueryService()
+            if (
+                metric_type == "EVAL"
+                and not CustomEvalConfig.objects.filter(
+                    id=metric_id,
+                    project_id=project_id,
+                    deleted=False,
+                ).exists()
+            ):
+                return self._gm.bad_request(
+                    "Evaluation config is not available for this project."
+                )
+
+            analytics = V2AnalyticsQueryService()
 
             if metric_type == "SYSTEM_METRIC":
                 try:
-                    from tracer.services.clickhouse.query_builders.user_time_series import (
-                        UserTimeSeriesQueryBuilder,
-                    )
-
-                    builder = UserTimeSeriesQueryBuilder(
-                        project_id=str(project_id),
+                    graph_data = fetch_user_system_metric_graph_ch(
+                        analytics=analytics,
+                        project_id=project_id,
                         filters=filters,
                         interval=interval,
+                        metric_id=metric_id,
+                        refresh=refresh,
                     )
-                    query, params = builder.build()
-                    result = analytics.execute_ch_query(query, params, timeout_ms=10000)
-                    ch_data = builder.format_result(result.data, result.columns or [])
-
-                    metric_key = metric_id if metric_id in ch_data else "active_users"
-                    metric_points = ch_data.get(metric_key, [])
-                    traffic_points = ch_data.get("traffic", [])
-                    traffic_by_ts = {
-                        t.get("timestamp"): t.get("traffic", 0) for t in traffic_points
-                    }
-                    graph_data = {
-                        "metric_name": metric_id,
-                        "data": [
-                            {
-                                "timestamp": p.get("timestamp"),
-                                "value": p.get("value", 0),
-                                "primary_traffic": traffic_by_ts.get(
-                                    p.get("timestamp"), 0
-                                ),
-                            }
-                            for p in metric_points
-                        ],
-                    }
+                    graph_data = enforce_exact_graph_data_contract(graph_data)
+                    if not graph_payload_is_publishable(
+                        graph_data,
+                        allow_sampled=allow_sampled,
+                    ):
+                        return self._gm.custom_error_response(
+                            status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "User graph data is temporarily unavailable. Please retry.",
+                            code="service_unavailable",
+                        )
                     return self._gm.success_response(graph_data)
                 except Exception as e:
                     logger.warning("CH user time-series failed", error=str(e))
-                    return self._gm.bad_request("ClickHouse user graph failed")
+                    raise
 
             elif metric_type in ("EVAL", "ANNOTATION"):
                 user_filters = [
@@ -835,84 +869,73 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 ]
                 if metric_type == "EVAL":
                     try:
-                        return self._gm.success_response(
-                            fetch_eval_graph_ch(
-                                analytics=analytics,
-                                project_id=project_id,
-                                filters=user_filters,
-                                interval=interval,
-                                req_data_config=req_data_config,
-                            )
+                        graph_data = fetch_eval_graph_ch(
+                            analytics=analytics,
+                            project_id=project_id,
+                            filters=user_filters,
+                            interval=interval,
+                            req_data_config=req_data_config,
+                            refresh=refresh,
+                            aggregation_context="user",
                         )
                     except Exception as e:
                         logger.exception(
                             "ClickHouse user eval graph failed",
                             error=str(e),
                         )
-                        return self._gm.bad_request("ClickHouse user graph failed")
+                        raise
 
-                if metric_type == "ANNOTATION":
+                elif metric_type == "ANNOTATION":
                     try:
-                        return self._gm.success_response(
-                            fetch_annotation_graph_ch(
-                                analytics=analytics,
-                                project_id=project_id,
-                                filters=user_filters,
-                                interval=interval,
-                                req_data_config=req_data_config,
-                                observe_type="trace",
-                            )
+                        graph_data = fetch_annotation_graph_ch(
+                            analytics=analytics,
+                            project_id=project_id,
+                            filters=user_filters,
+                            interval=interval,
+                            req_data_config=req_data_config,
+                            observe_type="trace",
+                            refresh=refresh,
+                            aggregation_context="user",
                         )
                     except Exception as e:
                         logger.exception(
                             "ClickHouse user annotation graph failed",
                             error=str(e),
                         )
-                        return self._gm.bad_request("ClickHouse user graph failed")
+                        raise
 
-                from tracer.models.trace import Trace
-                from tracer.utils.graphs_optimized import (
-                    get_annotation_graph_data,
-                    get_eval_graph_data,
-                )
-
-                # All traces that have a user
-                user_trace_qs = Trace.objects.filter(
-                    project_id=project_id,
-                ).filter(
-                    id__in=ObservationSpan.objects.filter(
-                        project_id=project_id,
-                        end_user__isnull=False,
-                    ).values("trace_id"),
-                )
-
-                if metric_type == "EVAL":
-                    graph_data = get_eval_graph_data(
-                        interval=interval,
-                        filters=filters,
-                        property=body["property"],
-                        observe_type="trace",
-                        req_data_config=req_data_config,
-                        eval_logger_filters={"trace_ids_queryset": user_trace_qs},
+                graph_data = enforce_exact_graph_data_contract(graph_data)
+                if not graph_payload_is_publishable(
+                    graph_data,
+                    allow_sampled=allow_sampled,
+                ):
+                    return self._gm.custom_error_response(
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "User graph data is temporarily unavailable. Please retry.",
+                        code="service_unavailable",
                     )
-                else:
-                    graph_data = get_annotation_graph_data(
-                        interval=interval,
-                        filters=filters,
-                        property=body["property"],
-                        observe_type="trace",
-                        req_data_config=req_data_config,
-                        annotation_logger_filters={"trace_ids_queryset": user_trace_qs},
-                    )
-                return self._gm.success_response(
-                    graph_data or {"metric_name": metric_id, "data": []}
-                )
+                return self._gm.success_response(graph_data)
 
             # Fallback: empty
             return self._gm.success_response({"metric_name": metric_id, "data": []})
-        except Exception as e:
-            logger.exception(f"Error in get_users_aggregate_graph_data: {str(e)}")
-            return self._gm.bad_request(f"Error fetching user graph data: {str(e)}")
+        except Exception as exc:
+            if is_clickhouse_api_read_unavailable_error(exc):
+                logger.warning(
+                    "project_users_graph_unavailable",
+                    error_type=type(exc).__name__,
+                )
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "User graph data is temporarily unavailable. Please retry.",
+                    code="service_unavailable",
+                )
+            logger.exception(
+                "project_users_graph_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.internal_server_error_response(
+                "User graph data could not be loaded"
+            )
 
     @validated_request(
         query_serializer=ProjectUserGraphDataQuerySerializer,
@@ -930,115 +953,23 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
             try:
                 interval = body["interval"]
-                filters = body["filters"]
-                analytics = AnalyticsQueryService()
-                builder = TimeSeriesQueryBuilder(
+                filters = bind_request_my_annotations_principal(
+                    request,
+                    body["filters"],
+                )
+                analytics = V2AnalyticsQueryService()
+                _org = get_request_organization(request) or request.user.organization
+                builder = UserDetailTimeSeriesQueryBuilderV2(
                     project_id=project_id,
+                    organization_id=str(_org.id),
+                    end_user_id=end_user_id,
                     filters=filters,
                     interval=interval,
                 )
-                _org = get_request_organization(request) or request.user.organization
-                start_date, end_date = builder.parse_time_range(filters)
-                bucket_fn = builder.time_bucket_expr(interval)
-                fb = ClickHouseFilterBuilder(
-                    table="spans",
-                    project_id=project_id,
-                    query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
-                )
-                extra_where, extra_params = fb.translate(filters)
-                extra_clause = f"AND {extra_where}" if extra_where else ""
-                params = {
-                    "project_id": project_id,
-                    "end_user_id": end_user_id,
-                    "org_id": str(_org.id),
-                    "start_date": start_date,
-                    "end_date": end_date,
-                    **extra_params,
-                }
-                if getattr(request, "workspace", None):
-                    params["workspace_id"] = str(request.workspace.id)
-
-                # CH25 EndUser cutover (DESIGN §4.3): curated source is the v2
-                # `end_users` RMT. It has no `workspace_id` (schema 017), so the
-                # workspace clause is dropped here — `project_id` is validated
-                # upstream via `_get_project_in_scope`, and the subquery already
-                # pins to a single enduser by (id, organization_id, project_id),
-                # which fully constrains the row without the workspace guard.
-                #
-                # P3b step1.5 (DESIGN §3 / id_remap_sql): resolve each span's
-                # `end_user_id` new→old through `end_user_id_remap` BEFORE the
-                # `IN (end_users …)` membership check, so a cross-cutover
-                # straddler's NEW (deterministic-id) spans match the SAME curated
-                # `end_user_id` the `end_users` subquery returns (the OLD id, still
-                # primary) and roll into this per-user detail graph instead of
-                # being dropped. The raw `spans` scan keeps the committed
-                # project/time/soft-delete predicates and `{extra_clause}` on the
-                # bare columns; the remap join is a thin outer layer and
-                # `resolved_id_expr` is the zero-uuid-guarded new→old map (NOT a
-                # COALESCE — an unmatched LEFT JOIN fills `old_id` with the
-                # zero-uuid, not NULL; see id_remap_sql). Pre-flip NO span matches
-                # a `new_id`, so the resolved id == the span's own id and this is a
-                # byte-identical no-op (acceptance gate B).
-                from tracer.services.clickhouse.v2.id_remap_sql import (
-                    remap_left_join,
-                    resolved_id_expr,
-                )
-
-                # P3b step1.5 — DUAL remap (DESIGN §3 / id_remap_sql): this per-user
-                # graph filters by the OLD curated end_user_id AND reports
-                # `uniqExactIf(trace_session_id)`. A cross-cutover straddler splits
-                # on BOTH axes, so resolve BOTH columns new→old. The two joins hang
-                # off the SAME inner scan `rs` and so MUST carry DISTINCT aliases
-                # (the default `id_remap` would collide) — `eu_remap` / `ts_remap`.
-                # Resolving the session id makes `uniqExactIf` count a straddler's
-                # old+new session ids as ONE session (else session_count inflates).
-                # Pre-flip NO span matches either `new_id`, so both resolved ids ==
-                # own id → byte-identical no-op (gate B).
-                eu_remap_join = remap_left_join(
-                    "rs.end_user_id", "end_user_id_remap", "eu_remap"
-                )
-                ts_remap_join = remap_left_join(
-                    "rs.trace_session_id", "trace_session_id_remap", "ts_remap"
-                )
-                eu_resolved = resolved_id_expr("rs.end_user_id", "eu_remap")
-                ts_resolved = resolved_id_expr("rs.trace_session_id", "ts_remap")
-                query = f"""
-                SELECT
-                    {bucket_fn}(created_at) AS time_bucket,
-                    uniqExactIf(toString(trace_session_id), isNotNull(trace_session_id)) AS session_count,
-                    uniqExact(trace_id) AS trace_count,
-                    sum(ifNull(cost, 0)) AS cost,
-                    sum(ifNull(prompt_tokens, 0)) AS input_tokens,
-                    sum(ifNull(completion_tokens, 0)) AS output_tokens
-                FROM (
-                    SELECT
-                        {eu_resolved} AS end_user_id,
-                        rs.trace_id AS trace_id,
-                        {ts_resolved} AS trace_session_id,
-                        rs.created_at AS created_at,
-                        rs.cost AS cost,
-                        rs.prompt_tokens AS prompt_tokens,
-                        rs.completion_tokens AS completion_tokens
-                    FROM spans AS rs
-                    {eu_remap_join}
-                    {ts_remap_join}
-                    WHERE rs.project_id = %(project_id)s
-                      AND rs.is_deleted = 0
-                      AND rs.created_at >= %(start_date)s
-                      AND rs.created_at < %(end_date)s
-                      {extra_clause}
-                )
-                WHERE end_user_id IN (
-                    SELECT end_user_id
-                    FROM end_users FINAL
-                    WHERE end_user_id = toUUID(%(end_user_id)s)
-                      AND organization_id = toUUID(%(org_id)s)
-                      AND project_id = toUUID(%(project_id)s)
-                      AND is_deleted = 0
-                  )
-                GROUP BY time_bucket
-                ORDER BY time_bucket
-                """
+                query, params = builder.build()
+                start_date = builder.start_date
+                end_date = builder.end_date
+                assert start_date is not None and end_date is not None
                 result = analytics.execute_ch_query(query, params, timeout_ms=10000)
                 rows = result.data or []
 
@@ -1070,12 +1001,32 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 )
             except Project.DoesNotExist:
                 return self._gm.bad_request("Project not found.")
-            except Exception as e:
-                logger.exception(f"Error in get_graph_data: {str(e)}")
-                return self._gm.internal_server_error_response(str(e))
-        except Exception as e:
-            logger.exception(f"ERROR IN RETRIEVING USER DATA GRAPH: {e}")
-            return self._gm.internal_server_error_response()
+            except Exception as exc:
+                if is_clickhouse_api_read_unavailable_error(exc):
+                    logger.warning(
+                        "project_user_graph_unavailable",
+                        error_type=type(exc).__name__,
+                    )
+                    return self._gm.custom_error_response(
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "User graph data is temporarily unavailable. Please retry.",
+                        code="service_unavailable",
+                    )
+                logger.exception(
+                    "project_user_graph_failed",
+                    error_type=type(exc).__name__,
+                )
+                return self._gm.internal_server_error_response(
+                    "User graph data could not be loaded"
+                )
+        except Exception as exc:
+            logger.exception(
+                "project_user_graph_request_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.internal_server_error_response(
+                "User graph data could not be loaded"
+            )
 
     @validated_request(responses={200: ProjectIdListResponseSerializer})
     @action(detail=False, methods=["get"])

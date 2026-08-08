@@ -131,13 +131,7 @@ const convertGraphSelectionsToFilters = (
 import { ShowComponent } from "src/components/show";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { formatDate } from "src/utils/report-utils";
-import {
-  endOfToday,
-  startOfToday,
-  startOfTomorrow,
-  startOfYesterday,
-  sub,
-} from "date-fns";
+import { startOfToday, startOfTomorrow, startOfYesterday, sub } from "date-fns";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { Helmet } from "react-helmet-async";
@@ -148,6 +142,7 @@ import axios, { endpoints } from "src/utils/axios";
 
 import { PROJECT_SOURCE } from "src/utils/constants";
 import { useLLMTracingFilters } from "./useLLMTracingFilters";
+import { isTraceListProjectReady } from "./projectSourceMode";
 import {
   generateObserveTraceFilterDefinition,
   generateSpanObserveFilterDefinition,
@@ -161,6 +156,7 @@ import {
   restampColumns,
   columnStateToHideMap,
   reorderColumns,
+  mergePersistedCustomColumns,
   isColumnVisibilityDirty,
   isColumnOrderDirty,
 } from "./savedViewColumns";
@@ -169,6 +165,7 @@ import ObserveToolbar from "./ObserveToolbar";
 import { selectPanelGraphFilters } from "./GraphSection/graphFilterUtils";
 import { buildAddEvalsDraft } from "./buildAddEvalsDraft";
 import SelectAllBanner from "./SelectAllBanner";
+import { getSelectionCountState } from "./listTotalMetadata";
 import useProjectFilterField from "../UsersView/useProjectFilterField";
 import FilterChips from "./FilterChips";
 import { useDashboardFilterValues } from "src/hooks/useDashboards";
@@ -209,6 +206,7 @@ import {
   useCreateSavedView,
   useUpdateWorkspaceSavedView,
 } from "src/api/project/saved-views";
+import { getDefaultDateRangeForMode } from "../dateRangeDefaults";
 
 const USER_DETAIL_TAB_TYPE = "user_detail";
 
@@ -270,18 +268,6 @@ const defaultFilterBase = {
     filter_value: "",
   },
 };
-const getDefaultDateRange = (dateOption = "7D") => {
-  const start =
-    dateOption === "6M"
-      ? sub(new Date(), { months: 6 })
-      : sub(new Date(), { days: 7 });
-
-  return {
-    dateFilter: [formatDate(start), formatDate(endOfToday())],
-    dateOption,
-  };
-};
-
 const getDefaultFilter = () => {
   return [{ ...defaultFilterBase, id: getRandomId() }];
 };
@@ -673,6 +659,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     currentPageSize: 0,
     totalPages: 1,
     pageLimit: 25,
+    totalMatchingIsLowerBound: false,
   });
   const [openAnnotateDrawer, setOpenAnnotateDrawer] = useState(false);
   const { mutate: addAnnotationValues } = useMutation({
@@ -838,23 +825,52 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       setViewMode: state.setViewMode,
     }),
   );
-  const { selectedTraces, allTracesSelected, totalTraces } =
-    useTraceGridStoreShallow((s) => {
-      return {
-        selectedTraces: s.toggledNodes,
-        allTracesSelected: s.selectAll,
-        totalTraces: s.totalRowCount,
-      };
-    });
+  const {
+    selectedTraces,
+    allTracesSelected,
+    totalTraces,
+    traceTotalLowerBound,
+    traceTotalIsLowerBound,
+  } = useTraceGridStoreShallow((s) => {
+    return {
+      selectedTraces: s.toggledNodes,
+      allTracesSelected: s.selectAll,
+      totalTraces: s.totalRowCount,
+      traceTotalLowerBound: s.totalRowCountLowerBound,
+      traceTotalIsLowerBound: s.totalRowCountIsLowerBound,
+    };
+  });
 
-  const { selectedSpans, allSpansSelected, totalSpans } =
-    useSpanGridStoreShallow((s) => {
-      return {
-        selectedSpans: s.toggledNodes,
-        allSpansSelected: s.selectAll,
-        totalSpans: s.totalRowCount,
-      };
-    });
+  const {
+    selectedSpans,
+    allSpansSelected,
+    totalSpans,
+    spanTotalLowerBound,
+    spanTotalIsLowerBound,
+  } = useSpanGridStoreShallow((s) => {
+    return {
+      selectedSpans: s.toggledNodes,
+      allSpansSelected: s.selectAll,
+      totalSpans: s.totalRowCount,
+      spanTotalLowerBound: s.totalRowCountLowerBound,
+      spanTotalIsLowerBound: s.totalRowCountIsLowerBound,
+    };
+  });
+
+  const traceSelectionCount = getSelectionCountState({
+    selectAll: allTracesSelected,
+    toggledNodes: selectedTraces,
+    totalRowCount: totalTraces,
+    totalRowCountLowerBound: traceTotalLowerBound,
+    totalRowCountIsLowerBound: traceTotalIsLowerBound,
+  });
+  const spanSelectionCount = getSelectionCountState({
+    selectAll: allSpansSelected,
+    toggledNodes: selectedSpans,
+    totalRowCount: totalSpans,
+    totalRowCountLowerBound: spanTotalLowerBound,
+    totalRowCountIsLowerBound: spanTotalIsLowerBound,
+  });
 
   const {
     openReplaySessionDrawer,
@@ -1007,6 +1023,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const projectSource = isUserMode
     ? PROJECT_SOURCE.OBSERVE
     : projectDetail?.source;
+  const traceListProjectReady = isTraceListProjectReady({
+    projectId: observeId,
+    projectSource,
+    allowOrgScope: isUserMode,
+  });
 
   const effectiveViewMode =
     projectSource === PROJECT_SOURCE.SIMULATOR && viewMode !== "graph"
@@ -1014,7 +1035,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       : viewMode;
 
   const defaultDateFilter = useMemo(
-    () => getDefaultDateRange(isUserMode ? "6M" : "7D"),
+    () => getDefaultDateRangeForMode(isUserMode, "7D"),
     [isUserMode],
   );
 
@@ -1632,7 +1653,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   // }, [selectedTab, columns]);
 
   const refreshPrimary = useCallback(
-    (setLoading = true) => {
+    (setLoading = true, { includeAggregations = true } = {}) => {
       logger.debug("refreshPrimary", { setLoading });
       if (setLoading) {
         setLatestActive(true);
@@ -1649,16 +1670,18 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         if (primarySpanGridRef.current) {
           primarySpanGridRef.current.api.refreshServerSide();
         }
-        queryClient.invalidateQueries({
-          queryKey: ["llm-tracing-graph"],
-        });
+        if (includeAggregations) {
+          queryClient.invalidateQueries({
+            queryKey: ["llm-tracing-graph"],
+          });
+        }
       }
     },
     [queryClient, projectSource],
   );
 
   const refreshCompare = useCallback(
-    (setLoading = true) => {
+    (setLoading = true, { includeAggregations = true } = {}) => {
       logger.debug("refreshCompare", { setLoading });
       if (setLoading) {
         setLatestActive(true);
@@ -1672,18 +1695,23 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         compareSpanGridRef.current.api.refreshServerSide();
       }
 
-      queryClient.invalidateQueries({
-        queryKey: ["llm-tracing-graph"],
-      });
+      if (includeAggregations) {
+        queryClient.invalidateQueries({
+          queryKey: ["llm-tracing-graph"],
+        });
+      }
     },
     [queryClient],
   );
 
-  const refreshAll = useCallback(() => {
-    setLatestActive(true);
-    refreshPrimary(false);
-    refreshCompare(false);
-  }, [refreshCompare, refreshPrimary]);
+  const refreshAll = useCallback(
+    ({ includeAggregations = true } = {}) => {
+      setLatestActive(true);
+      refreshPrimary(false, { includeAggregations });
+      refreshCompare(false, { includeAggregations });
+    },
+    [refreshCompare, refreshPrimary],
+  );
 
   const columnKey = useMemo(() => {
     if (selectedGraph === "primary" && selectedTab === "trace") {
@@ -2273,31 +2301,54 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       if (saved.showCompare) setShowCompare(saved.showCompare);
       if (saved.hasEvalFilter) setHasEvalFilter(saved.hasEvalFilter);
       // Accept both new {trace, spans} object shape and legacy flat array
-      // (treated as customs for the current tab only).
+      // (treated as customs for the current tab only). Merge immediately when
+      // a warm grid already has base columns; otherwise queue for that grid's
+      // config callback. This closes the reload race where the callback fired
+      // before this localStorage effect and the queued custom columns vanished.
       if (saved.customColumns) {
         const cloneEach = (arr) => arr.map((c) => ({ ...c }));
+        let traceCols = [];
+        let spansCols = [];
         if (Array.isArray(saved.customColumns)) {
           if (saved.customColumns.length > 0) {
             if (selectedTab === "trace") {
-              primaryTracePendingRef.current = cloneEach(saved.customColumns);
-              compareTracePendingRef.current = cloneEach(saved.customColumns);
+              traceCols = saved.customColumns;
             } else {
-              primarySpansPendingRef.current = cloneEach(saved.customColumns);
-              compareSpansPendingRef.current = cloneEach(saved.customColumns);
+              spansCols = saved.customColumns;
             }
           }
         } else {
-          const traceCols = saved.customColumns.trace || [];
-          const spansCols = saved.customColumns.spans || [];
-          if (traceCols.length > 0) {
-            primaryTracePendingRef.current = cloneEach(traceCols);
-            compareTracePendingRef.current = cloneEach(traceCols);
-          }
-          if (spansCols.length > 0) {
-            primarySpansPendingRef.current = cloneEach(spansCols);
-            compareSpansPendingRef.current = cloneEach(spansCols);
-          }
+          traceCols = saved.customColumns.trace || [];
+          spansCols = saved.customColumns.spans || [];
         }
+
+        const targets = [
+          ["primary-trace", primaryTracePendingRef, traceCols],
+          ["compare-trace", compareTracePendingRef, traceCols],
+          ["primary-spans", primarySpansPendingRef, spansCols],
+          ["compare-spans", compareSpansPendingRef, spansCols],
+        ];
+        targets.forEach(([, pendingRef, persisted]) => {
+          pendingRef.current = cloneEach(persisted);
+        });
+        setColumns((prev) => {
+          let next = prev;
+          targets.forEach(([slotKey, pendingRef, persisted]) => {
+            if (persisted.length === 0) return;
+            const slot = prev[slotKey] || [];
+            const hasBaseColumns = slot.some(
+              (col) => col?.groupBy !== "Custom Columns",
+            );
+            if (!hasBaseColumns) return;
+            const merged = mergePersistedCustomColumns(slot, persisted);
+            if (merged !== slot) {
+              if (next === prev) next = { ...prev };
+              next[slotKey] = merged;
+            }
+            pendingRef.current = [];
+          });
+          return next;
+        });
       }
     } catch {
       /* ignore corrupted localStorage */
@@ -3799,18 +3850,16 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       simCallMeta.totalPages * simCallMeta.pageLimit
                     : selectedCallIds?.length || 0
                   : selectedTab === "trace"
-                    ? allTracesSelected
-                      ? Math.max(
-                          (totalTraces || 0) - (selectedTraces?.length || 0),
-                          1,
-                        )
-                      : selectedTraces?.length || 0
-                    : allSpansSelected
-                      ? Math.max(
-                          (totalSpans || 0) - (selectedSpans?.length || 0),
-                          1,
-                        )
-                      : selectedSpans?.length || 0
+                    ? traceSelectionCount.count
+                    : spanSelectionCount.count
+              }
+              selectedCountIsLowerBound={
+                projectSource === PROJECT_SOURCE.SIMULATOR
+                  ? simCallFilterSelectionMode &&
+                    simCallMeta.totalMatchingIsLowerBound
+                  : selectedTab === "trace"
+                    ? traceSelectionCount.isLowerBound
+                    : spanSelectionCount.isLowerBound
               }
               allMatching={
                 (projectSource === PROJECT_SOURCE.SIMULATOR &&
@@ -4557,7 +4606,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               <SelectAllBanner
                 visible={
                   selectedTab === "trace" &&
-                  projectSource !== PROJECT_SOURCE.SIMULATOR &&
+                  traceListProjectReady &&
                   allTracesSelected &&
                   !filterSelectionMode
                 }
@@ -4565,7 +4614,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   primaryTraceGridRef.current?.api?.getDisplayedRowCount?.() ||
                   0
                 }
-                totalMatching={totalTraces || 0}
+                totalMatching={
+                  traceTotalIsLowerBound
+                    ? traceTotalLowerBound || 0
+                    : totalTraces || 0
+                }
+                totalMatchingIsLowerBound={traceTotalIsLowerBound}
                 noun="trace"
                 onSelectAll={() => setFilterSelectionMode(true)}
               />
@@ -4574,7 +4628,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   display:
                     selectedTab === "trace" &&
                     selectedGraph === "primary" &&
-                    projectSource !== PROJECT_SOURCE.SIMULATOR
+                    traceListProjectReady
                       ? "block"
                       : "none",
                 }}
@@ -4600,12 +4654,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     pendingCustomColumnsRef={primaryTracePendingRef}
                     canonicalOrderRef={canonicalTraceOrderRef}
                     showErrors={showErrors}
-                    enabled={
-                      [
-                        PROJECT_SOURCE.PROTOTYPE,
-                        PROJECT_SOURCE.OBSERVE,
-                      ].includes(projectSource) && selectedTab === "trace"
-                    }
+                    enabled={traceListProjectReady && selectedTab === "trace"}
                   />
                 </Suspense>
               </Box>
@@ -4614,7 +4663,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   display:
                     selectedTab === "trace" &&
                     selectedGraph === "compare" &&
-                    projectSource !== PROJECT_SOURCE.SIMULATOR
+                    traceListProjectReady
                       ? "block"
                       : "none",
                 }}
@@ -4641,10 +4690,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     projectId={observeId}
                     showErrors={showErrors}
                     enabled={
-                      [
-                        PROJECT_SOURCE.PROTOTYPE,
-                        PROJECT_SOURCE.OBSERVE,
-                      ].includes(projectSource) &&
+                      traceListProjectReady &&
                       selectedTab === "trace" &&
                       selectedGraph === "compare"
                     }
@@ -4654,8 +4700,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               <Box
                 sx={{
                   display:
-                    selectedTab === "spans" &&
-                    projectSource !== PROJECT_SOURCE.SIMULATOR
+                    selectedTab === "spans" && traceListProjectReady
                       ? "block"
                       : "none",
                 }}
@@ -4663,7 +4708,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 <SelectAllBanner
                   visible={
                     selectedTab === "spans" &&
-                    projectSource !== PROJECT_SOURCE.SIMULATOR &&
+                    traceListProjectReady &&
                     allSpansSelected &&
                     !spanFilterSelectionMode
                   }
@@ -4671,7 +4716,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     primarySpanGridRef.current?.api?.getDisplayedRowCount?.() ||
                     0
                   }
-                  totalMatching={totalSpans || 0}
+                  totalMatching={
+                    spanTotalIsLowerBound
+                      ? spanTotalLowerBound || 0
+                      : totalSpans || 0
+                  }
+                  totalMatchingIsLowerBound={spanTotalIsLowerBound}
                   noun="span"
                   onSelectAll={() => setSpanFilterSelectionMode(true)}
                 />
@@ -4681,7 +4731,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   display:
                     selectedTab === "spans" &&
                     selectedGraph === "primary" &&
-                    projectSource !== PROJECT_SOURCE.SIMULATOR
+                    traceListProjectReady
                       ? "block"
                       : "none",
                 }}
@@ -4705,12 +4755,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     setFilterOpen={setIsPrimaryFilterOpen}
                     setLoading={setLoadingEnhanced}
                     compareType="primary"
-                    enabled={
-                      [
-                        PROJECT_SOURCE.PROTOTYPE,
-                        PROJECT_SOURCE.OBSERVE,
-                      ].includes(projectSource) && selectedTab === "spans"
-                    }
+                    enabled={traceListProjectReady && selectedTab === "spans"}
                   />
                 </Suspense>
               </Box>
@@ -4719,7 +4764,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   display:
                     selectedTab === "spans" &&
                     selectedGraph === "compare" &&
-                    projectSource !== PROJECT_SOURCE.SIMULATOR
+                    traceListProjectReady
                       ? "block"
                       : "none",
                 }}
@@ -4744,10 +4789,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     setLoading={setLoadingEnhanced}
                     compareType="compare"
                     enabled={
-                      [
-                        PROJECT_SOURCE.PROTOTYPE,
-                        PROJECT_SOURCE.OBSERVE,
-                      ].includes(projectSource) &&
+                      traceListProjectReady &&
                       selectedTab === "spans" &&
                       selectedGraph === "compare"
                     }
@@ -4781,6 +4823,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 simCallMeta.totalPages * simCallMeta.pageLimit
               }
               noun="call"
+              totalMatchingIsLowerBound={simCallMeta.totalMatchingIsLowerBound}
               onSelectAll={() => setSimCallFilterSelectionMode(true)}
             />
             <Suspense fallback={<ComponentLoader />}>

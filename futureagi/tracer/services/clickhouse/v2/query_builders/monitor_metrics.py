@@ -19,5 +19,7 @@ from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 class MonitorMetricsQueryBuilderV2(V2RewriteMixin, MonitorMetricsQueryBuilder):
     """Drop-in v2 MonitorMetrics builder."""
 
+    _SPANS_TIME_COLUMN = "start_time"
+
 
 __all__ = ["MonitorMetricsQueryBuilderV2"]

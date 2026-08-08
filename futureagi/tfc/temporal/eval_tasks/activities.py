@@ -9,6 +9,7 @@ context propagation, mirroring ``tfc/temporal/evaluations/activities.py``.
 
 from django.db import close_old_connections
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from tfc.telemetry import otel_sync_to_async
 from tfc.temporal.common.heartbeat import Heartbeater
@@ -330,10 +331,24 @@ def _finalize_task_sync(task_id: str) -> dict:
 async def reconcile_eval_task_activity(
     input: ReconcileActivityInput,
 ) -> ReconcileActivityOutput:
-    async with Heartbeater():
-        result = await otel_sync_to_async(_reconcile_sync, thread_sensitive=False)(
-            input.task_id
-        )
+    from tracer.selectors.eval_tasks.row_resolver import EvalTaskReadBudgetExceeded
+
+    try:
+        async with Heartbeater():
+            result = await otel_sync_to_async(_reconcile_sync, thread_sensitive=False)(
+                input.task_id
+            )
+    except EvalTaskReadBudgetExceeded as exc:
+        # This is a deterministic, sanitized exact-selection rejection (hard
+        # query/deadline envelope or unsupported filter), not a transient
+        # worker failure. Retrying the whole potentially long proof would put
+        # the same load on ClickHouse up to five times and cannot change the
+        # result for the frozen task window.
+        raise ApplicationError(
+            str(exc),
+            type="EvalTaskReadBudgetExceeded",
+            non_retryable=True,
+        ) from None
     return ReconcileActivityOutput(
         task_id=result["task_id"],
         created=result["created"],

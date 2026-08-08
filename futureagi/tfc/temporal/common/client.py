@@ -201,7 +201,10 @@ def start_workflow_sync(
     )
 
 
-async def get_workflow_status_async(workflow_id: str) -> dict | None:
+async def get_workflow_status_async(
+    workflow_id: str,
+    timeout_seconds: float | None = None,
+) -> dict | None:
     """
     Get the status of a workflow.
 
@@ -211,16 +214,26 @@ async def get_workflow_status_async(workflow_id: str) -> dict | None:
     Returns:
         Dict with workflow status info, or None if not found
     """
-    client = await get_client()
-
     try:
-        handle = client.get_workflow_handle(workflow_id)
-        description = await handle.describe()
+
+        async def _describe():
+            client = await get_client()
+            handle = client.get_workflow_handle(workflow_id)
+            return await handle.describe()
+
+        if timeout_seconds is None:
+            description = await _describe()
+        else:
+            description = await asyncio.wait_for(
+                _describe(),
+                timeout=max(0.001, float(timeout_seconds)),
+            )
 
         return {
             "workflow_id": workflow_id,
             "run_id": description.run_id,
             "status": str(description.status),
+            "status_name": description.status.name,
             "start_time": (
                 description.start_time.isoformat() if description.start_time else None
             ),
@@ -232,9 +245,14 @@ async def get_workflow_status_async(workflow_id: str) -> dict | None:
         return None
 
 
-def get_workflow_status_sync(workflow_id: str) -> dict | None:
+def get_workflow_status_sync(
+    workflow_id: str,
+    timeout_seconds: float | None = None,
+) -> dict | None:
     """Get workflow status synchronously with OTel context propagation."""
-    return _run_async_in_sync_context(lambda: get_workflow_status_async(workflow_id))
+    return _run_async_in_sync_context(
+        lambda: get_workflow_status_async(workflow_id, timeout_seconds)
+    )
 
 
 async def cancel_workflow_async(workflow_id: str) -> bool:

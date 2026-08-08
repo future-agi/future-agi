@@ -26,6 +26,7 @@ import { getFilterExtraProperties } from "../../../utils/prototypeObserveUtils";
 import { useQuery } from "@tanstack/react-query";
 import { generateAnnotationColumnsForTracing } from "src/sections/projects/LLMTracing/common";
 import { useShallowToggleAnnotationsStore } from "src/sections/agents/store";
+import { getListTotalState } from "src/sections/projects/LLMTracing/listTotalMetadata";
 
 const defaultFilter = {
   column_id: "",
@@ -52,6 +53,7 @@ const normalizeColumnConfig = (column = {}) => ({
 
 const normalizeTraceListPayload = (payload = {}) => {
   const metadata = payload.metadata || {};
+  const totalState = getListTotalState(metadata);
 
   return {
     columnConfig: (
@@ -62,6 +64,8 @@ const normalizeTraceListPayload = (payload = {}) => {
     ).map(normalizeColumnConfig),
     table: payload.table || [],
     totalRows: metadata.totalRows ?? metadata.total_rows ?? 0,
+    hasMore: metadata.hasMore ?? metadata.has_more ?? false,
+    ...totalState,
   };
 };
 
@@ -316,11 +320,15 @@ const TraceTab = React.forwardRef(
             }));
             setColumns(columns);
 
-            params.api.totalRowCount = res.totalRows;
-            params.success({
-              rowData: res.table,
-              totalRows: res.totalRows,
-            });
+            params.api.totalRowCount = res.totalRowCount;
+            params.api.totalRowCountLowerBound = res.totalRowCountLowerBound;
+            params.api.totalRowCountIsLowerBound =
+              res.totalRowCountIsLowerBound;
+            const successPayload = { rowData: res.table };
+            if (!res.totalRowCountIsLowerBound) {
+              successPayload.totalRows = res.totalRows;
+            }
+            params.success(successPayload);
           } catch (error) {
             params.fail();
           }
@@ -342,6 +350,7 @@ const TraceTab = React.forwardRef(
               setFilters={setFilters}
               filterDefinition={filterDefinition}
               onClose={() => setFilterOpen(false)}
+              projectId={projectId}
             />
           </Box>
         </Collapse>

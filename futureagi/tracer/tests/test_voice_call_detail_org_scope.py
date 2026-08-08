@@ -14,20 +14,22 @@ upstream in authentication and covered by ``accounts.tests.test_multi_org_auth``
 """
 
 import uuid
-from types import SimpleNamespace
+from datetime import UTC, datetime
 
 import pytest
+from rest_framework import status
 
 from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
 from tracer.models.project import Project
+from tracer.services.clickhouse.v2.trace_detail_reads import (
+    TraceDetailNotFound,
+    TraceDetailRead,
+    TraceDetailReadUnavailable,
+)
 
 VOICE_CALL_DETAIL_URL = "/tracer/trace/voice_call_detail/"
-CH_QUERY_PATH = (
-    "tracer.services.clickhouse.query_service."
-    "AnalyticsQueryService.execute_ch_query"
-)
 
 
 def _make_org_project(user, label):
@@ -53,23 +55,35 @@ def _make_org_project(user, label):
     return org, workspace, project
 
 
-def _ch_returning(project_id):
-    """Stub CH: resolve the trace to ``project_id``, then find no root span.
-
-    Only the first query (project resolution) matters here. The second returns
-    empty so the request stops right after the ownership gate with a distinct
-    message — that message is how the tests tell "ownership passed" apart from
-    "ownership rejected", without standing up a full span fixture.
-    """
-    calls = {"n": 0}
-
-    def fake(self, *args, **kwargs):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return SimpleNamespace(data=[{"project_id": str(project_id)}])
-        return SimpleNamespace(data=[])
-
-    return fake
+def _detail(project_id, trace_id):
+    return TraceDetailRead(
+        project_id=str(project_id),
+        spans=(
+            {
+                "id": "root",
+                "project_id": str(project_id),
+                "trace_id": str(trace_id),
+                "parent_span_id": "",
+                "name": "conversation",
+                "observation_type": "conversation",
+                "start_time": datetime(2026, 7, 30, tzinfo=UTC),
+                "end_time": datetime(2026, 7, 30, 0, 0, 1, tzinfo=UTC),
+                "latency_ms": 1000,
+                "status": "OK",
+                "provider": "vapi",
+                "span_attributes": "{}",
+                "metadata_json": "{}",
+                "attrs_string": {},
+                "attrs_number": {},
+                "attrs_bool": {},
+            },
+        ),
+        eval_config_ids=(),
+        evals=(),
+        annotations=(),
+        query_count=3,
+        elapsed_ms=1.0,
+    )
 
 
 @pytest.mark.django_db
@@ -81,31 +95,86 @@ def test_detail_allows_project_in_active_org_not_user_home_org(
     _, active_workspace, project = _make_org_project(user, "Active")
     assert project.organization_id != user.organization_id
     auth_client.set_workspace(active_workspace)
-    monkeypatch.setattr(CH_QUERY_PATH, _ch_returning(project.id))
-
-    response = auth_client.get(
-        VOICE_CALL_DETAIL_URL, {"trace_id": str(uuid.uuid4())}
+    trace_id = str(uuid.uuid4())
+    direct_write_analytics = object()
+    monkeypatch.setattr(
+        "tracer.views.trace.V2AnalyticsQueryService",
+        lambda: direct_write_analytics,
     )
 
-    # Ownership passed: the request reached the root-span lookup. Scoping the
-    # check to the user row instead would have stopped at "trace_id not found".
-    assert "trace_id not found" not in str(response.data)
-    assert "root span" in str(response.data)
+    def fake_read(**kwargs):
+        assert kwargs["analytics"] is direct_write_analytics
+        assert kwargs["project_ids"] == [str(project.id)]
+        assert kwargs["trace_id"] == trace_id
+        assert kwargs["include_annotations"] is False
+        assert kwargs["deadline_ms"] == 6000
+        kwargs["eval_config_ids_resolver"](str(project.id))
+        return _detail(project.id, trace_id)
+
+    monkeypatch.setattr("tracer.views.trace.read_trace_detail", fake_read)
+
+    response = auth_client.get(VOICE_CALL_DETAIL_URL, {"trace_id": trace_id})
+
+    assert response.status_code == status.HTTP_200_OK
+    assert str(project.id) in str(response.data)
+    assert trace_id in str(response.data)
 
 
 @pytest.mark.django_db
-def test_detail_still_rejects_project_in_unrelated_org(
-    auth_client, user, monkeypatch
-):
+def test_detail_still_rejects_project_in_unrelated_org(auth_client, user, monkeypatch):
     # Guard on the loosened check: acting in one organization must not grant
     # access to a project owned by a different one.
     _, active_workspace, _ = _make_org_project(user, "Active")
     _, _, foreign_project = _make_org_project(user, "Foreign")
     auth_client.set_workspace(active_workspace)
-    monkeypatch.setattr(CH_QUERY_PATH, _ch_returning(foreign_project.id))
 
-    response = auth_client.get(
-        VOICE_CALL_DETAIL_URL, {"trace_id": str(uuid.uuid4())}
+    def fake_read(**kwargs):
+        assert str(foreign_project.id) not in kwargs["project_ids"]
+        raise TraceDetailNotFound
+
+    monkeypatch.setattr("tracer.views.trace.V2AnalyticsQueryService", lambda: object())
+    monkeypatch.setattr("tracer.views.trace.read_trace_detail", fake_read)
+
+    response = auth_client.get(VOICE_CALL_DETAIL_URL, {"trace_id": str(uuid.uuid4())})
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert "trace_id not found" in str(response.data)
+
+
+@pytest.mark.django_db
+def test_detail_sanitizes_bounded_clickhouse_failure(auth_client, user, monkeypatch):
+    _, active_workspace, _ = _make_org_project(user, "Active")
+    auth_client.set_workspace(active_workspace)
+    monkeypatch.setattr("tracer.views.trace.V2AnalyticsQueryService", lambda: object())
+
+    def unavailable(**_kwargs):
+        raise TraceDetailReadUnavailable("clickhouse_query_failed")
+
+    monkeypatch.setattr("tracer.views.trace.read_trace_detail", unavailable)
+
+    response = auth_client.get(VOICE_CALL_DETAIL_URL, {"trace_id": str(uuid.uuid4())})
+
+    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert "temporarily unavailable" in str(response.data)
+    assert "clickhouse_query_failed" not in str(response.data)
+    assert "DB::Exception" not in str(response.data)
+
+
+@pytest.mark.django_db
+def test_detail_preserves_sanitized_generic_bad_request(auth_client, user, monkeypatch):
+    _, active_workspace, _ = _make_org_project(user, "Active")
+    auth_client.set_workspace(active_workspace)
+    monkeypatch.setattr("tracer.views.trace.V2AnalyticsQueryService", lambda: object())
+
+    def fail_with_private_detail(**_kwargs):
+        raise RuntimeError("private compiler state and SQL")
+
+    monkeypatch.setattr(
+        "tracer.views.trace.read_trace_detail", fail_with_private_detail
     )
 
-    assert "trace_id not found" in str(response.data)
+    response = auth_client.get(VOICE_CALL_DETAIL_URL, {"trace_id": str(uuid.uuid4())})
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.data["result"] == "Voice call details could not be loaded"
+    assert "private compiler state" not in str(response.data)
