@@ -7,6 +7,19 @@ and choice-to-score mapping.
 These utilities are used by the revamped eval system.
 Existing eval execution code in _run_eval / calculate_eval_average
 is NOT modified — these coexist.
+
+API layering (prefer top → bottom):
+  - ``score_eval_output`` — high-level entry point. Handles unwrapping,
+    validation, and scoring. Defaults to returning ``None`` when a value
+    cannot be interpreted, so callers can distinguish "scored 0" from
+    "could not score".
+  - ``is_numerically_scorable`` — guard function. Use when you need to
+    decide whether to score before calling ``normalize_score``.
+  - ``normalize_score`` — low-level function. Always returns a float in
+    [0.0, 1.0]; never raises; never returns NaN. Converts ``None`` and
+    unrecognized values to ``0.0`` (with a warning log). Callers that
+    need to distinguish "scored 0" from "could not score" should use
+    ``score_eval_output`` with ``default_score=None`` instead.
 """
 
 from __future__ import annotations
@@ -14,13 +27,28 @@ from __future__ import annotations
 import math
 from typing import Any
 
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 
 def _to_clamped_score(value) -> float:
     if value is None:
+        logger.warning(
+            "normalize_score_coerced_none",
+            reason="None value coerced to 0.0 — caller should guard with"
+            " is_numerically_scorable or use score_eval_output",
+        )
         return 0.0
     try:
         score = float(value)
     except (TypeError, ValueError):
+        logger.warning(
+            "normalize_score_coerced_unrecognized",
+            value_type=type(value).__name__,
+            reason="Unrecognized value coerced to 0.0 — caller should guard with"
+            " is_numerically_scorable or use score_eval_output",
+        )
         return 0.0
     if math.isnan(score):
         return 0.0
@@ -95,6 +123,12 @@ def normalize_score(
         Normalized score as float in [0.0, 1.0]; never NaN; never raises.
     """
     if value is None:
+        logger.warning(
+            "normalize_score_coerced_none",
+            output_type=output_type,
+            reason="None value coerced to 0.0 — caller should guard with"
+            " is_numerically_scorable or use score_eval_output",
+        )
         return 0.0
 
     if output_type == "pass_fail":
@@ -104,6 +138,12 @@ def normalize_score(
             return 1.0 if value.lower() in ("passed", "pass", "true", "yes") else 0.0
         if isinstance(value, (int, float)):
             return 1.0 if value > 0 else 0.0
+        logger.warning(
+            "normalize_score_coerced_unrecognized",
+            value_type=type(value).__name__,
+            output_type=output_type,
+            reason="Unrecognized pass_fail value coerced to 0.0",
+        )
         return 0.0
 
     if output_type == "deterministic":
@@ -218,12 +258,16 @@ def validate_pass_threshold(threshold) -> list[str]:
 def score_eval_output(
     value_or_result: Any,
     eval_template: Any,
-    default_score: float | None = 0.0,
+    default_score: float | None = None,
 ) -> float | None:
-    """Canonical eval-output → normalized 0-1 score. Falls back to
-    ``default_score`` when the value cannot be interpreted under the
-    template's output type; pass ``default_score=None`` to surface that
-    case as ``None`` instead of a hard 0.0."""
+    """Canonical eval-output → normalized 0-1 score.
+
+    Returns ``default_score`` (default ``None``) when the value cannot be
+    interpreted under the template's output type. Returning ``None`` by
+    default lets callers distinguish "scored 0" from "could not score".
+
+    Pass ``default_score=0.0`` to preserve the legacy behaviour of treating
+    unscorable results as a failing grade."""
     if hasattr(value_or_result, "eval_results"):
         from evaluations.engine.formatting import (
             extract_raw_result,
