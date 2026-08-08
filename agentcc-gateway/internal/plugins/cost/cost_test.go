@@ -365,3 +365,21 @@ func TestProcessResponse_RerankNoCost(t *testing.T) {
 		t.Fatal("Metadata[cost] should not be set for rerank endpoint")
 	}
 }
+
+func TestProcessResponse_CachedPromptTokens(t *testing.T) {
+	t.Parallel()
+	p := testPlugin()
+	rc := newRC("gpt-4o-mini", 1000, 500)
+	rc.Response.Usage.CachedPromptTokens = 800
+
+	p.ProcessResponse(context.Background(), rc)
+
+	// 200 fresh @0.15/M + 800 cached @0.075/M + 500 out @0.60/M = 0.000390 (0.000450 without the discount).
+	costStr, ok := rc.Metadata["cost"]
+	if !ok {
+		t.Fatal("Metadata[cost] not set")
+	}
+	if costStr != "0.000390" {
+		t.Fatalf("Metadata[cost] = %q, want %q (cached tokens should be discounted)", costStr, "0.000390")
+	}
+}
