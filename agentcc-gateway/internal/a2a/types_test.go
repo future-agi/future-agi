@@ -152,6 +152,69 @@ func TestTaskStore(t *testing.T) {
 	}
 }
 
+func TestTaskStoreReturnsSnapshots(t *testing.T) {
+	ts := NewTaskStore()
+	original := &Task{
+		ID:       "task-1",
+		Metadata: json.RawMessage(`{"task":"original"}`),
+		Status: TaskStatus{
+			State:   TaskStatusWorking,
+			Message: []MessagePart{{Type: "text", Text: "status", Data: json.RawMessage(`{"status":"original"}`)}},
+		},
+		Artifacts: []Artifact{{
+			Name:     "artifact",
+			Parts:    []MessagePart{{Type: "text", Text: "artifact", Data: json.RawMessage(`{"artifact":"original"}`)}},
+			Metadata: json.RawMessage(`{"artifact_meta":"original"}`),
+		}},
+		History: []Message{{
+			Role:     "user",
+			Parts:    []MessagePart{{Type: "text", Text: "history", Data: json.RawMessage(`{"history":"original"}`)}},
+			Metadata: json.RawMessage(`{"history_meta":"original"}`),
+		}},
+	}
+	ts.Store(original)
+
+	original.Status.State = TaskStatusFailed
+	original.Status.Message[0].Text = "mutated"
+	original.Artifacts[0].Parts[0].Text = "mutated"
+	original.History[0].Parts[0].Text = "mutated"
+	original.Metadata[0] = 'X'
+
+	got, ok := ts.Get(original.ID)
+	if !ok {
+		t.Fatal("expected stored task")
+	}
+	if got.Status.State != TaskStatusWorking || got.Status.Message[0].Text != "status" {
+		t.Fatalf("stored status was mutated through caller: %#v", got.Status)
+	}
+	if got.Artifacts[0].Parts[0].Text != "artifact" || got.History[0].Parts[0].Text != "history" {
+		t.Fatalf("stored nested fields were mutated through caller: %#v", got)
+	}
+	if string(got.Metadata) != `{"task":"original"}` {
+		t.Fatalf("stored metadata was mutated through caller: %s", got.Metadata)
+	}
+
+	got.Status.State = TaskStatusCompleted
+	got.Status.Message[0].Text = "mutated snapshot"
+	got.Artifacts[0].Parts[0].Text = "mutated snapshot"
+	got.History[0].Parts[0].Text = "mutated snapshot"
+	got.Metadata[0] = 'Y'
+
+	again, ok := ts.Get(original.ID)
+	if !ok {
+		t.Fatal("expected stored task on second get")
+	}
+	if again.Status.State != TaskStatusWorking || again.Status.Message[0].Text != "status" {
+		t.Fatalf("stored status was mutated through snapshot: %#v", again.Status)
+	}
+	if again.Artifacts[0].Parts[0].Text != "artifact" || again.History[0].Parts[0].Text != "history" {
+		t.Fatalf("stored nested fields were mutated through snapshot: %#v", again)
+	}
+	if string(again.Metadata) != `{"task":"original"}` {
+		t.Fatalf("stored metadata was mutated through snapshot: %s", again.Metadata)
+	}
+}
+
 func TestTaskStoreCleanup(t *testing.T) {
 	ts := NewTaskStore()
 

@@ -156,6 +156,66 @@ type taskEntry struct {
 	createdAt time.Time
 }
 
+func cloneTask(task *Task) *Task {
+	if task == nil {
+		return nil
+	}
+
+	cloned := *task
+	cloned.Metadata = cloneRawMessage(task.Metadata)
+	cloned.Status.Message = cloneMessageParts(task.Status.Message)
+	cloned.Artifacts = cloneArtifacts(task.Artifacts)
+	cloned.History = cloneMessages(task.History)
+	return &cloned
+}
+
+func cloneRawMessage(raw json.RawMessage) json.RawMessage {
+	if raw == nil {
+		return nil
+	}
+	cloned := make(json.RawMessage, len(raw))
+	copy(cloned, raw)
+	return cloned
+}
+
+func cloneMessageParts(parts []MessagePart) []MessagePart {
+	if parts == nil {
+		return nil
+	}
+	cloned := make([]MessagePart, len(parts))
+	copy(cloned, parts)
+	for i := range cloned {
+		cloned[i].Data = cloneRawMessage(parts[i].Data)
+	}
+	return cloned
+}
+
+func cloneMessages(messages []Message) []Message {
+	if messages == nil {
+		return nil
+	}
+	cloned := make([]Message, len(messages))
+	copy(cloned, messages)
+	for i := range cloned {
+		cloned[i].Parts = cloneMessageParts(messages[i].Parts)
+		cloned[i].Metadata = cloneRawMessage(messages[i].Metadata)
+	}
+	return cloned
+}
+
+func cloneArtifacts(artifacts []Artifact) []Artifact {
+	if artifacts == nil {
+		return nil
+	}
+	cloned := make([]Artifact, len(artifacts))
+	copy(cloned, artifacts)
+	for i := range cloned {
+		cloned[i].Parts = cloneMessageParts(artifacts[i].Parts)
+		cloned[i].Metadata = cloneRawMessage(artifacts[i].Metadata)
+	}
+	return cloned
+}
+
 // NewTaskStore creates a task store.
 func NewTaskStore() *TaskStore {
 	return &TaskStore{
@@ -165,7 +225,7 @@ func NewTaskStore() *TaskStore {
 
 // Store saves a task.
 func (ts *TaskStore) Store(task *Task) {
-	ts.tasks[task.ID] = &taskEntry{task: task, createdAt: time.Now()}
+	ts.tasks[task.ID] = &taskEntry{task: cloneTask(task), createdAt: time.Now()}
 }
 
 // Get retrieves a task by ID.
@@ -174,7 +234,7 @@ func (ts *TaskStore) Get(id string) (*Task, bool) {
 	if !ok {
 		return nil, false
 	}
-	return e.task, true
+	return cloneTask(e.task), true
 }
 
 // Cleanup removes tasks older than the given duration.
