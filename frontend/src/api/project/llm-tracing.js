@@ -18,6 +18,20 @@ export async function fetchRootSpans(traceIds, projectIds = []) {
   return res?.data?.result || {};
 }
 
+export async function fetchSpanAttributeKeys(projectId) {
+  try {
+    return await axios.get(endpoints.project.spanAttributeKeys(), {
+      params: { project_id: projectId },
+    });
+  } catch {
+    return axios.get(endpoints.project.getEvalAttributeList(), {
+      params: {
+        filters: JSON.stringify({ project_id: projectId }),
+      },
+    });
+  }
+}
+
 export const useGetTraceProperties = () => {
   return useQuery({
     queryKey: ["trace-properties"],
