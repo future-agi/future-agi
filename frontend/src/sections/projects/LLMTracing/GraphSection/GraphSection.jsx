@@ -158,7 +158,7 @@ const GraphSection = ({
         req_data_config: selectedGraphConfig,
         project_id: observeId,
       }),
-    enabled: selectedTab === "trace" && Boolean(selectedGraphConfig?.id),
+    enabled: selectedTab === "trace" && (Boolean(selectedGraphConfig?.id) || combinedFilters.length > 0),
     select: (data) => data.data?.result,
   });
 
@@ -186,7 +186,7 @@ const GraphSection = ({
         req_data_config: selectedGraphConfig,
         project_id: observeId,
       }),
-    enabled: selectedTab === "spans" && Boolean(selectedGraphConfig?.id),
+    enabled: selectedTab === "spans" && (Boolean(selectedGraphConfig?.id) || combinedFilters.length > 0),
     select: (data) => data.data?.result,
   });
 
