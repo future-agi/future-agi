@@ -3,7 +3,7 @@ Type definitions and dataclasses for model_hub
 """
 
 from dataclasses import dataclass
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -14,10 +14,10 @@ class ConversionResult:
 
     cell_id: str
     success: bool
-    new_value: Optional[str]
+    new_value: str | None
     status: str
     value_infos: dict
-    error_message: Optional[str] = None
+    error_message: str | None = None
 
 
 # =============================================================================
@@ -133,9 +133,7 @@ class EvalCreateRequest(BaseModel):
     data_injection: dict | None = (
         None  # {variables_only, dataset_row, trace_context, ...}
     )
-    summary: dict | None = (
-        None  # {type: short|long|concise|custom, custom: str}
-    )
+    summary: dict | None = None  # {type: short|long|concise|custom, custom: str}
     # Error Localization — mirrors EvalUpdateRequest. Without this here the
     # FE's create payload (which always includes the toggle value) is
     # rejected by `extra="forbid"`.
@@ -255,13 +253,13 @@ class PlaygroundEvalResponse(BaseModel):
     `ground_truth_examples` is omitted when GT is not configured on the template."""
 
     output: str | float | list | dict | None = None
-    reason: Optional[str] = None
-    model: Optional[str] = None
+    reason: str | None = None
+    model: str | None = None
     metadata: Any = None
-    output_type: Optional[str] = None
-    log_id: Optional[str] = None
-    ground_truth_examples: Optional[list] = None
-    warnings: Optional[list] = None
+    output_type: str | None = None
+    log_id: str | None = None
+    ground_truth_examples: list | None = None
+    warnings: list | None = None
 
 
 # =============================================================================
@@ -625,30 +623,6 @@ class EvalFeedbackResponse(BaseModel):
     template_id: str
     items: list[FeedbackItem]
     total: int
-
-
-# =============================================================================
-# Trace/Session Eval Types (Phase 11)
-# =============================================================================
-
-
-class TraceEvalRequest(BaseModel):
-    """Request for POST /model-hub/eval-templates/{id}/run-on-trace/"""
-
-    trace_id: str
-    model: str = "turing_large"
-    pass_context: bool = False
-
-
-class TraceEvalResponse(BaseModel):
-    """Response for POST /model-hub/eval-templates/{id}/run-on-trace/"""
-
-    template_id: str
-    trace_id: str
-    score: float | None = None
-    passed: bool | None = None
-    reason: str | None = None
-    status: str = "completed"
 
 
 # =============================================================================
