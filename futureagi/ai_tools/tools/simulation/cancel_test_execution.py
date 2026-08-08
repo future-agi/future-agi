@@ -32,7 +32,7 @@ class CancelTestExecutionTool(BaseTool):
     description = (
         "Cancels a running test execution. "
         "Provide either a test_execution_id or a run_test_id (cancels latest execution). "
-        "Sends cancellation signals to Temporal workflows or Celery tasks and stops active calls."
+        "Sends cancellation signals to Temporal workflows and stops active calls."
     )
     category = "simulation"
     input_model = CancelTestExecutionInput
@@ -43,7 +43,6 @@ class CancelTestExecutionTool(BaseTool):
 
         from simulate.models.run_test import RunTest
         from simulate.models.test_execution import TestExecution
-        from tfc.settings import settings as app_settings
 
         # Validate that at least one identifier is provided
         if not params.test_execution_id and not params.run_test_id:
@@ -63,7 +62,6 @@ class CancelTestExecutionTool(BaseTool):
                 return ToolResult.not_found(
                     "Test Execution", str(params.test_execution_id)
                 )
-            run_test_id = str(test_execution.run_test_id)
         else:
             # Cancel by run_test_id: verify access and find latest execution
             try:
@@ -85,8 +83,6 @@ class CancelTestExecutionTool(BaseTool):
                     "No test executions found for this run test.",
                     error_code="NOT_FOUND",
                 )
-            run_test_id = str(run_test.id)
-
         # Check if execution is in a cancellable state
         cancellable_statuses = [
             TestExecution.ExecutionStatus.PENDING,
@@ -107,17 +103,7 @@ class CancelTestExecutionTool(BaseTool):
         test_execution.status = TestExecution.ExecutionStatus.CANCELLING
         test_execution.save(update_fields=["status", "updated_at"])
 
-        # Dispatch cancellation to Temporal or Celery
-        if getattr(app_settings, "TEMPORAL_TEST_EXECUTION_ENABLED", False):
-            result = self._cancel_with_temporal(test_execution)
-        else:
-            from simulate.services.test_executor import TestExecutor
-
-            test_executor = TestExecutor()
-            result = test_executor.cancel_test(
-                run_test_id=run_test_id,
-                test_execution_id=test_execution_id,
-            )
+        result = self._cancel_with_temporal(test_execution)
 
         if not result.get("success"):
             error_msg = result.get("error", "Failed to cancel test execution")
