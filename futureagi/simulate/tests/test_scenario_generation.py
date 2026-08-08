@@ -1039,3 +1039,1042 @@ class TestGenerateScenarioRowsPrefetch:
                     description="test",
                     new_rows_id=row_ids,
                 )
+
+
+class TestKnowledgeBaseWiring:
+    """Wiring the agent's KB reference through generate_scenario_rows."""
+
+    def test_resolve_returns_none_when_agent_has_no_kb(self, db, agent_definition):
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
+
+        assert build_agent_kb_payload(agent_definition) is None
+
+    def test_resolve_returns_none_when_agent_or_id_is_not_a_valid_uuid(self, db):
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
+
+        assert build_agent_kb_payload("not-a-uuid") is None
+
+    def test_resolve_returns_none_when_indexer_returns_empty(
+        self, db, agent_definition, organization
+    ):
+        from model_hub.models.develop_dataset import KnowledgeBaseFile
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
+
+        kb = KnowledgeBaseFile.objects.create(name="empty-kb", organization=organization)
+        agent_definition.knowledge_base = kb
+        agent_definition.save(update_fields=["knowledge_base"])
+
+        with patch(
+            "model_hub.utils.kb_indexer.KBIndexer.get_kb_doc_id_sample", return_value=[]
+        ):
+            payload = build_agent_kb_payload(agent_definition)
+
+        assert payload is None
+
+    def test_resolve_returns_shaped_dict_when_kb_present(
+        self, db, agent_definition, organization
+    ):
+        from model_hub.models.develop_dataset import KnowledgeBaseFile
+        from model_hub.utils.kb_indexer import KB_TABLE_NAME
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
+
+        kb = KnowledgeBaseFile.objects.create(name="kb", organization=organization)
+        agent_definition.knowledge_base = kb
+        agent_definition.save(update_fields=["knowledge_base"])
+
+        with patch(
+            "model_hub.utils.kb_indexer.KBIndexer.get_kb_doc_id_sample",
+            return_value=[
+                "7c23b7c0-0fc4-4a4f-b3f3-693efd733453",
+                "e6c1fd97-0444-4292-9165-023cc80dce6a",
+            ],
+        ) as mock_get:
+            payload = build_agent_kb_payload(agent_definition)
+
+        mock_get.assert_called_once()
+        assert payload == {
+            "table_name": KB_TABLE_NAME,
+            "kb_id": str(kb.id),
+            "doc_ids": [
+                "7c23b7c0-0fc4-4a4f-b3f3-693efd733453",
+                "e6c1fd97-0444-4292-9165-023cc80dce6a",
+            ],
+        }
+
+    def test_resolve_returns_none_on_indexer_exception(
+        self, db, agent_definition, organization
+    ):
+        from model_hub.models.develop_dataset import KnowledgeBaseFile
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
+
+        kb = KnowledgeBaseFile.objects.create(name="kb", organization=organization)
+        agent_definition.knowledge_base = kb
+        agent_definition.save(update_fields=["knowledge_base"])
+
+        with patch(
+            "model_hub.utils.kb_indexer.KBIndexer.get_kb_doc_id_sample",
+            side_effect=RuntimeError("boom"),
+        ):
+            payload = build_agent_kb_payload(agent_definition)
+
+        assert payload is None
+
+    def test_generate_scenario_rows_forwards_kb_payload_to_enhanced_agent(
+        self, db, scenario_dataset, agent_definition, organization, workspace
+    ):
+        from model_hub.models.develop_dataset import KnowledgeBaseFile
+        from model_hub.utils.kb_indexer import KB_TABLE_NAME
+        from simulate.tasks.scenario_tasks import generate_scenario_rows
+
+        kb = KnowledgeBaseFile.objects.create(name="kb", organization=organization)
+        agent_definition.knowledge_base = kb
+        agent_definition.save(update_fields=["knowledge_base"])
+
+        columns = list(Column.objects.filter(dataset=scenario_dataset))
+        row_ids = TestGenerateScenarioRowsPrefetch._seed_rows(
+            scenario_dataset, num_rows=1
+        )
+        TestGenerateScenarioRowsPrefetch._seed_cells(scenario_dataset, columns, row_ids)
+        scenario = TestGenerateScenarioRowsPrefetch._make_scenario_and_graph(
+            scenario_dataset, agent_definition, organization, workspace
+        )
+        cases = TestGenerateScenarioRowsPrefetch._build_cases(1, columns)
+
+        with patch(
+            "simulate.tasks.scenario_tasks.EnhancedScenariosAgent"
+        ) as mock_agent_cls, patch(
+            "simulate.tasks.scenario_tasks.close_old_connections"
+        ), patch(
+            "model_hub.utils.kb_indexer.KBIndexer.get_kb_doc_id_sample",
+            return_value=["7c23b7c0-0fc4-4a4f-b3f3-693efd733453"],
+        ):
+            agent = mock_agent_cls.return_value
+            agent.graph_generator.get_branches.return_value = []
+            agent._generate_cases_for_branches.return_value = cases
+
+            generate_scenario_rows(
+                dataset_id=scenario_dataset.id,
+                scenario_id=scenario.id,
+                num_rows=1,
+                description="scenario desc",
+                new_rows_id=row_ids,
+            )
+
+        kwargs = mock_agent_cls.call_args.kwargs
+        assert kwargs["knowledge_base"] == {
+            "table_name": KB_TABLE_NAME,
+            "kb_id": str(kb.id),
+            "doc_ids": ["7c23b7c0-0fc4-4a4f-b3f3-693efd733453"],
+        }
+
+    def test_generate_scenario_rows_forwards_none_when_agent_has_no_kb(
+        self, db, scenario_dataset, agent_definition, organization, workspace
+    ):
+        from simulate.tasks.scenario_tasks import generate_scenario_rows
+
+        columns = list(Column.objects.filter(dataset=scenario_dataset))
+        row_ids = TestGenerateScenarioRowsPrefetch._seed_rows(
+            scenario_dataset, num_rows=1
+        )
+        TestGenerateScenarioRowsPrefetch._seed_cells(scenario_dataset, columns, row_ids)
+        scenario = TestGenerateScenarioRowsPrefetch._make_scenario_and_graph(
+            scenario_dataset, agent_definition, organization, workspace
+        )
+        cases = TestGenerateScenarioRowsPrefetch._build_cases(1, columns)
+
+        with patch(
+            "simulate.tasks.scenario_tasks.EnhancedScenariosAgent"
+        ) as mock_agent_cls, patch(
+            "simulate.tasks.scenario_tasks.close_old_connections"
+        ):
+            agent = mock_agent_cls.return_value
+            agent.graph_generator.get_branches.return_value = []
+            agent._generate_cases_for_branches.return_value = cases
+
+            generate_scenario_rows(
+                dataset_id=scenario_dataset.id,
+                scenario_id=scenario.id,
+                num_rows=1,
+                description="anything",
+                new_rows_id=row_ids,
+            )
+
+        kwargs = mock_agent_cls.call_args.kwargs
+        assert kwargs["knowledge_base"] is None
+
+
+class TestPinnedOrLiveHelper:
+    """Unit tests for pinned_or_live: snapshot value wins iff present and non-None."""
+
+    def _agent(self, **fields):
+        agent = MagicMock()
+        for k, v in fields.items():
+            setattr(agent, k, v)
+        return agent
+
+    def test_snapshot_value_wins_when_present(self):
+        from simulate.models.agent_version import pinned_or_live
+
+        assert (
+            pinned_or_live({"agent_name": "pinned"}, self._agent(agent_name="live"), "agent_name")
+            == "pinned"
+        )
+
+    def test_live_used_when_snapshot_is_none(self):
+        from simulate.models.agent_version import pinned_or_live
+
+        assert pinned_or_live(None, self._agent(agent_name="live"), "agent_name") == "live"
+
+    def test_live_used_when_snapshot_missing_field(self):
+        from simulate.models.agent_version import pinned_or_live
+
+        assert (
+            pinned_or_live({"other": 1}, self._agent(agent_name="live"), "agent_name")
+            == "live"
+        )
+
+    def test_live_used_when_snapshot_field_is_none(self):
+        from simulate.models.agent_version import pinned_or_live
+
+        assert (
+            pinned_or_live({"agent_name": None}, self._agent(agent_name="live"), "agent_name")
+            == "live"
+        )
+
+    def test_snapshot_false_wins_over_live_true(self):
+        """Regression: booleans must survive the truthy-only check."""
+        from simulate.models.agent_version import pinned_or_live
+
+        assert (
+            pinned_or_live({"inbound": False}, self._agent(inbound=True), "inbound") is False
+        )
+
+    def test_snapshot_empty_list_wins(self):
+        from simulate.models.agent_version import pinned_or_live
+
+        assert (
+            pinned_or_live({"languages": []}, self._agent(languages=["en"]), "languages")
+            == []
+        )
+
+
+class TestBuildKbPayload:
+
+    def test_none_kb_id_returns_none(self):
+        from model_hub.utils.kb_indexer import build_kb_payload
+
+        assert build_kb_payload(None) is None
+
+    def test_empty_doc_ids_returns_none(self):
+        from model_hub.utils.kb_indexer import build_kb_payload
+
+        with patch(
+            "model_hub.utils.kb_indexer.KBIndexer.get_kb_doc_id_sample", return_value=[]
+        ):
+            assert build_kb_payload("kb-uuid") is None
+
+    def test_returns_shaped_dict_when_docs_present(self):
+        from model_hub.utils.kb_indexer import KB_TABLE_NAME, build_kb_payload
+
+        with patch(
+            "model_hub.utils.kb_indexer.KBIndexer.get_kb_doc_id_sample",
+            return_value=[
+                "7c23b7c0-0fc4-4a4f-b3f3-693efd733453",
+                "e6c1fd97-0444-4292-9165-023cc80dce6a",
+            ],
+        ):
+            payload = build_kb_payload("kb-uuid")
+
+        assert payload == {
+            "table_name": KB_TABLE_NAME,
+            "kb_id": "kb-uuid",
+            "doc_ids": [
+                "7c23b7c0-0fc4-4a4f-b3f3-693efd733453",
+                "e6c1fd97-0444-4292-9165-023cc80dce6a",
+            ],
+        }
+
+    def test_indexer_exception_returns_none(self):
+        from model_hub.utils.kb_indexer import build_kb_payload
+
+        with patch(
+            "model_hub.utils.kb_indexer.KBIndexer.get_kb_doc_id_sample",
+            side_effect=RuntimeError("boom"),
+        ):
+            assert build_kb_payload("kb-uuid") is None
+
+    def test_non_uuid_items_filtered_out(self):
+        from model_hub.utils.kb_indexer import build_kb_payload
+
+        with patch(
+            "model_hub.utils.kb_indexer.KBIndexer.get_kb_doc_id_sample",
+            return_value=["c", "f", "d", "cfd0e8a2-3064-489a-bf3f-43c430680f44"],
+        ):
+            payload = build_kb_payload("kb-uuid")
+            assert payload is not None
+            assert payload["doc_ids"] == ["cfd0e8a2-3064-489a-bf3f-43c430680f44"]
+
+    def test_default_cap_passed_to_sampler(self):
+        from model_hub.utils.kb_indexer import (
+            KB_DOC_ID_PAYLOAD_CAP,
+            build_kb_payload,
+        )
+
+        with patch(
+            "model_hub.utils.kb_indexer.KBIndexer.get_kb_doc_id_sample",
+            return_value=["cfd0e8a2-3064-489a-bf3f-43c430680f44"],
+        ) as mock_sample:
+            build_kb_payload("kb-uuid")
+        mock_sample.assert_called_once()
+        args, _ = mock_sample.call_args
+        assert args[0] == "kb-uuid"
+        assert args[1] == KB_DOC_ID_PAYLOAD_CAP
+
+    def test_explicit_max_count_forwarded(self):
+        from model_hub.utils.kb_indexer import build_kb_payload
+
+        with patch(
+            "model_hub.utils.kb_indexer.KBIndexer.get_kb_doc_id_sample",
+            return_value=["cfd0e8a2-3064-489a-bf3f-43c430680f44"],
+        ) as mock_sample:
+            build_kb_payload("kb-uuid", 50)
+        assert mock_sample.call_args.args[1] == 50
+
+
+class TestBuildAgentKbPayloadVersionPin:
+    """Version pin is authoritative: null snapshot KB means no KB, not fall-through."""
+
+    @pytest.fixture
+    def _kb(self, db, organization):
+        from model_hub.models.develop_dataset import KnowledgeBaseFile
+
+        return KnowledgeBaseFile.objects.create(name="live-kb", organization=organization)
+
+    def _agent_with_kb(self, agent_definition, kb):
+        agent_definition.knowledge_base = kb
+        agent_definition.save(update_fields=["knowledge_base"])
+        return agent_definition
+
+    def _scenario_with_version(self, db, agent_definition, organization, workspace, snapshot):
+        from simulate.models.agent_version import AgentVersion
+
+        version = AgentVersion.objects.create(
+            agent_definition=agent_definition,
+            organization=organization,
+            workspace=workspace,
+            version_number=1,
+            configuration_snapshot=snapshot or {},
+        )
+        scenario = Scenarios.objects.create(
+            name="s",
+            source="x",
+            scenario_type=Scenarios.ScenarioTypes.GRAPH,
+            organization=organization,
+            workspace=workspace,
+            agent_definition=agent_definition,
+            metadata={"agent_definition_version_id": str(version.id)},
+        )
+        return scenario, version
+
+    def test_snapshot_kb_wins_over_live(
+        self, db, agent_definition, organization, workspace, _kb
+    ):
+        from model_hub.models.develop_dataset import KnowledgeBaseFile
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
+
+        pinned_kb = KnowledgeBaseFile.objects.create(name="pinned-kb", organization=organization)
+        self._agent_with_kb(agent_definition, _kb)  # live points to _kb
+        scenario, _ = self._scenario_with_version(
+            db, agent_definition, organization, workspace,
+            snapshot={"knowledge_base": str(pinned_kb.id)},
+        )
+
+        with patch(
+            "model_hub.utils.kb_indexer.KBIndexer.get_kb_doc_id_sample",
+            return_value=["7c23b7c0-0fc4-4a4f-b3f3-693efd733453"],
+        ):
+            payload = build_agent_kb_payload(agent_definition, scenario=scenario)
+
+        assert payload["kb_id"] == str(pinned_kb.id)
+        assert payload["kb_id"] != str(_kb.id)
+
+    def test_snapshot_null_kb_returns_none_not_live_fallback(
+        self, db, agent_definition, organization, workspace, _kb
+    ):
+        """v3-with-no-KB case: pinned version means live is silently ignored."""
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
+
+        self._agent_with_kb(agent_definition, _kb)  # live has a KB
+        scenario, _ = self._scenario_with_version(
+            db, agent_definition, organization, workspace,
+            snapshot={"knowledge_base": None},
+        )
+
+        with patch(
+            "model_hub.utils.kb_indexer.KBIndexer.get_kb_doc_id_sample",
+            return_value=["e6c1fd97-0444-4292-9165-023cc80dce6a"],
+        ):
+            payload = build_agent_kb_payload(agent_definition, scenario=scenario)
+
+        assert payload is None
+
+    def test_missing_version_returns_none(
+        self, db, agent_definition, organization, workspace, _kb
+    ):
+        """Pin points to a nonexistent version: pin authority means no live fallback."""
+        import uuid as _uuid
+
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
+
+        self._agent_with_kb(agent_definition, _kb)
+        scenario = Scenarios.objects.create(
+            name="s",
+            source="x",
+            scenario_type=Scenarios.ScenarioTypes.GRAPH,
+            organization=organization,
+            workspace=workspace,
+            agent_definition=agent_definition,
+            metadata={"agent_definition_version_id": str(_uuid.uuid4())},
+        )
+
+        with patch(
+            "model_hub.utils.kb_indexer.KBIndexer.get_kb_doc_id_sample",
+            return_value=["e6c1fd97-0444-4292-9165-023cc80dce6a"],
+        ):
+            payload = build_agent_kb_payload(agent_definition, scenario=scenario)
+
+        assert payload is None
+
+
+class TestBuildAgentKbPayloadNonUuidGuard:
+    """Regression: non-UUID agent_or_id must not propagate a ValidationError up."""
+
+    def test_non_uuid_string_returns_none(self, db):
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
+
+        assert build_agent_kb_payload("not-a-uuid-at-all") is None
+
+    def test_integer_agent_or_id_returns_none(self, db):
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
+
+        assert build_agent_kb_payload(12345) is None
+
+    def test_none_agent_or_id_short_circuits(self, db):
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
+
+        assert build_agent_kb_payload(None) is None
+
+
+class TestColumnDefinitionSerializerProperty:
+    """Regression: custom_columns[*].property must reach the request payload."""
+
+    def test_accepts_property_dict(self):
+        from simulate.serializers.requests.scenarios import ColumnDefinitionSerializer
+
+        ser = ColumnDefinitionSerializer(
+            data={
+                "name": "segment",
+                "data_type": "text",
+                "description": "customer segment tag",
+                "property": {"min_length": 3, "max_length": 32},
+            }
+        )
+        assert ser.is_valid(), ser.errors
+        assert ser.validated_data["property"] == {"min_length": 3, "max_length": 32}
+
+    def test_property_is_optional(self):
+        from simulate.serializers.requests.scenarios import ColumnDefinitionSerializer
+
+        ser = ColumnDefinitionSerializer(
+            data={
+                "name": "segment",
+                "data_type": "text",
+                "description": "customer segment tag",
+            }
+        )
+        assert ser.is_valid(), ser.errors
+
+
+class TestResolveConfigurationSnapshot:
+    """Shared helper used at every prompt-construction site to load the pinned
+    version's snapshot from a scenario."""
+
+    def test_none_scenario_returns_none(self):
+        from simulate.models.agent_version import resolve_configuration_snapshot
+
+        assert resolve_configuration_snapshot(None) is None
+
+    def test_scenario_without_version_id_returns_none(self, db, agent_definition, organization, workspace):
+        from simulate.models.agent_version import resolve_configuration_snapshot
+
+        scenario = Scenarios.objects.create(
+            name="s", source="x", scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=organization, workspace=workspace,
+            agent_definition=agent_definition, metadata={},
+        )
+        assert resolve_configuration_snapshot(scenario) is None
+
+    def test_scenario_with_version_returns_snapshot(self, db, agent_definition, organization, workspace):
+        from simulate.models.agent_version import AgentVersion, resolve_configuration_snapshot
+
+        snap = {"agent_name": "Pinned"}
+        v = AgentVersion.objects.create(
+            agent_definition=agent_definition, organization=organization,
+            workspace=workspace, version_number=1, configuration_snapshot=snap,
+        )
+        scenario = Scenarios.objects.create(
+            name="s", source="x", scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=organization, workspace=workspace,
+            agent_definition=agent_definition,
+            metadata={"agent_definition_version_id": str(v.id)},
+        )
+        assert resolve_configuration_snapshot(scenario) == snap
+
+    def test_missing_version_returns_none(self, db, agent_definition, organization, workspace):
+        import uuid as _uuid
+        from simulate.models.agent_version import resolve_configuration_snapshot
+
+        scenario = Scenarios.objects.create(
+            name="s", source="x", scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=organization, workspace=workspace,
+            agent_definition=agent_definition,
+            metadata={"agent_definition_version_id": str(_uuid.uuid4())},
+        )
+        assert resolve_configuration_snapshot(scenario) is None
+
+
+class TestHasVersionPin:
+    """Distinguishes 'pin intended but version missing' from 'no pin at all',
+    used by build_agent_kb_payload's authoritative-pin fallback rule."""
+
+    def test_no_scenario(self):
+        from simulate.models.agent_version import has_version_pin
+
+        assert has_version_pin(None) is False
+
+    def test_no_pin_in_metadata(self, db, agent_definition, organization, workspace):
+        from simulate.models.agent_version import has_version_pin
+
+        scenario = Scenarios.objects.create(
+            name="s", source="x", scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=organization, workspace=workspace,
+            agent_definition=agent_definition, metadata={},
+        )
+        assert has_version_pin(scenario) is False
+
+    def test_pin_present_even_when_version_deleted(self, db, agent_definition, organization, workspace):
+        import uuid as _uuid
+        from simulate.models.agent_version import has_version_pin
+
+        scenario = Scenarios.objects.create(
+            name="s", source="x", scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=organization, workspace=workspace,
+            agent_definition=agent_definition,
+            metadata={"agent_definition_version_id": str(_uuid.uuid4())},
+        )
+        assert has_version_pin(scenario) is True
+
+
+class TestGenerateScenarioColumnsVersionPin:
+    """Add-columns flow: generate_scenario_columns must honor the version pin
+    when building the SDA prompt for new column values."""
+
+    def _make_scenario_with_version(self, db, agent_definition, organization, workspace, snapshot):
+        from simulate.models.agent_version import AgentVersion
+
+        dataset = Dataset.no_workspace_objects.create(
+            name="ds", organization=organization, workspace=workspace,
+            source=DatasetSourceChoices.SCENARIO.value,
+        )
+        Row.objects.create(dataset=dataset, order=0)
+        v = AgentVersion.objects.create(
+            agent_definition=agent_definition, organization=organization,
+            workspace=workspace, version_number=1, configuration_snapshot=snapshot,
+        )
+        scenario = Scenarios.objects.create(
+            name="scn", source="x", scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=organization, workspace=workspace,
+            agent_definition=agent_definition, dataset=dataset,
+            metadata={"agent_definition_version_id": str(v.id)},
+        )
+        return scenario, dataset
+
+    def test_snapshot_agent_name_reaches_column_gen_payload(
+        self, db, agent_definition, organization, workspace
+    ):
+        from simulate.tasks.scenario_tasks import generate_scenario_columns
+
+        agent_definition.agent_name = "Live Bot"
+        agent_definition.save(update_fields=["agent_name"])
+        scenario, dataset = self._make_scenario_with_version(
+            db, agent_definition, organization, workspace,
+            snapshot={"agent_name": "Pinned Bot v1"},
+        )
+
+        captured = {}
+
+        async def fake_generate_column_data(payload, **kwargs):
+            captured["payload"] = payload
+            import pandas as _pd
+            return _pd.DataFrame([{"c1": "x"}])
+
+        with patch(
+            "simulate.tasks.scenario_tasks.SyntheticDataAgent"
+        ) as mock_cls, patch(
+            "simulate.tasks.scenario_tasks.close_old_connections"
+        ):
+            mock_cls.return_value.generate_column_data = fake_generate_column_data
+            generate_scenario_columns(
+                dataset_id=dataset.id,
+                new_columns_required_info=[
+                    {"name": "c1", "data_type": "text", "description": "x"}
+                ],
+                scenario_id=scenario.id,
+            )
+
+        objective = captured["payload"]["requirements"]["Objective"]
+        assert "Pinned Bot v1" in objective
+        assert "Live Bot" not in objective
+
+
+class TestBuildSdaPayloadVersionPin:
+    """Dataset scenario flow: `_build_sda_payload` must honor the version pin
+    when constructing the SDA prompt."""
+
+    @pytest.fixture
+    def new_dataset(self, db, organization, workspace, user):
+        return Dataset.no_workspace_objects.create(
+            name="target",
+            organization=organization,
+            workspace=workspace,
+            user=user,
+            source=DatasetSourceChoices.SCENARIO.value,
+        )
+
+    def _make_scenario_with_pin(
+        self, db, agent_definition, organization, workspace, snapshot
+    ):
+        from simulate.models.agent_version import AgentVersion
+
+        v = AgentVersion.objects.create(
+            agent_definition=agent_definition,
+            organization=organization,
+            workspace=workspace,
+            version_number=1,
+            configuration_snapshot=snapshot,
+        )
+        return Scenarios.objects.create(
+            name="s",
+            source="x",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=organization,
+            workspace=workspace,
+            agent_definition=agent_definition,
+            metadata={"agent_definition_version_id": str(v.id)},
+        )
+
+    def test_snapshot_agent_name_wins_in_dataset_payload(
+        self, db, new_dataset, agent_definition, organization, workspace
+    ):
+        from tfc.temporal.simulate.activities import _build_sda_payload
+
+        agent_definition.agent_name = "Live Bot"
+        agent_definition.save(update_fields=["agent_name"])
+        scenario = self._make_scenario_with_pin(
+            db, agent_definition, organization, workspace,
+            snapshot={"agent_name": "Pinned Bot v1"},
+        )
+
+        payload = _build_sda_payload(new_dataset, agent_definition, "voice", scenario=scenario)
+
+        assert "Pinned Bot v1" in payload["requirements"]["Dataset Description"]
+        assert "Live Bot" not in payload["requirements"]["Dataset Description"]
+
+    def test_snapshot_inbound_false_wins_in_dataset_payload(
+        self, db, new_dataset, agent_definition, organization, workspace
+    ):
+        from tfc.temporal.simulate.activities import _build_sda_payload
+
+        agent_definition.inbound = True
+        agent_definition.save(update_fields=["inbound"])
+        scenario = self._make_scenario_with_pin(
+            db, agent_definition, organization, workspace,
+            snapshot={"inbound": False},
+        )
+
+        payload = _build_sda_payload(new_dataset, agent_definition, "voice", scenario=scenario)
+
+        assert "Outbound" in payload["requirements"]["Dataset Description"]
+
+    def test_no_scenario_falls_back_to_live_agent(
+        self, db, new_dataset, agent_definition, organization, workspace
+    ):
+        from tfc.temporal.simulate.activities import _build_sda_payload
+
+        agent_definition.agent_name = "Live Bot"
+        agent_definition.save(update_fields=["agent_name"])
+
+        payload = _build_sda_payload(new_dataset, agent_definition, "voice", scenario=None)
+
+        assert "Live Bot" in payload["requirements"]["Dataset Description"]
+
+    def test_custom_instruction_appended_to_objective(
+        self, db, new_dataset, agent_definition, organization, workspace
+    ):
+        from tfc.temporal.simulate.activities import _build_sda_payload
+
+        payload = _build_sda_payload(
+            new_dataset,
+            agent_definition,
+            "voice",
+            scenario=None,
+            custom_instruction="Focus on Spanish-speaking customers.",
+        )
+        assert (
+            "Focus on Spanish-speaking customers." in payload["requirements"]["Objective"]
+        )
+
+    def test_custom_columns_reach_constraints_and_schema(
+        self, db, new_dataset, agent_definition, organization, workspace
+    ):
+        from tfc.temporal.simulate.activities import _build_sda_payload
+
+        payload = _build_sda_payload(
+            new_dataset,
+            agent_definition,
+            "voice",
+            scenario=None,
+            custom_columns=[
+                {
+                    "name": "segment",
+                    "data_type": "text",
+                    "description": "customer segment",
+                    "property": {"min_length": 3, "max_length": 32},
+                }
+            ],
+        )
+        constraint = next(
+            c for c in payload["constraints"] if c["field"] == "segment"
+        )
+        assert constraint["type"] == "text"
+        assert constraint["property"]["min_length"] == 3
+        assert constraint["property"]["max_length"] == 32
+        assert payload["schema"]["segment"] == {"type": "text"}
+
+
+class TestScenarioDescriptionForwarding:
+    """scenario.description must flow into the EnhancedScenariosAgent constructor."""
+
+    def test_generate_scenario_rows_forwards_scenario_description(
+        self, db, scenario_dataset, agent_definition, organization, workspace
+    ):
+        from simulate.tasks.scenario_tasks import generate_scenario_rows
+
+        columns = list(Column.objects.filter(dataset=scenario_dataset))
+        row_ids = TestGenerateScenarioRowsPrefetch._seed_rows(scenario_dataset, num_rows=1)
+        TestGenerateScenarioRowsPrefetch._seed_cells(scenario_dataset, columns, row_ids)
+        scenario = TestGenerateScenarioRowsPrefetch._make_scenario_and_graph(
+            scenario_dataset, agent_definition, organization, workspace
+        )
+        scenario.description = "pinned scenario description"
+        scenario.save(update_fields=["description"])
+        cases = TestGenerateScenarioRowsPrefetch._build_cases(1, columns)
+
+        with patch(
+            "simulate.tasks.scenario_tasks.EnhancedScenariosAgent"
+        ) as mock_agent_cls, patch(
+            "simulate.tasks.scenario_tasks.close_old_connections"
+        ):
+            mock = mock_agent_cls.return_value
+            mock.graph_generator.get_branches.return_value = []
+            mock._generate_cases_for_branches.return_value = cases
+
+            generate_scenario_rows(
+                dataset_id=scenario_dataset.id,
+                scenario_id=scenario.id,
+                num_rows=1,
+                description="call-time desc",
+                new_rows_id=row_ids,
+            )
+
+        assert (
+            mock_agent_cls.call_args.kwargs["scenario_description"]
+            == "pinned scenario description"
+        )
+
+    def test_generate_scenario_rows_forwards_configuration_snapshot(
+        self, db, scenario_dataset, agent_definition, organization, workspace
+    ):
+        """Add-rows path must forward the version-pinned snapshot to the row generator constructor
+        so add-rows on a pinned scenario uses snapshot fields, not live agent state."""
+        from simulate.models.agent_version import AgentVersion
+        from simulate.tasks.scenario_tasks import generate_scenario_rows
+
+        snap = {"agent_name": "Pinned v1 Agent", "inbound": False}
+        version = AgentVersion.objects.create(
+            agent_definition=agent_definition,
+            organization=organization,
+            workspace=workspace,
+            version_number=1,
+            configuration_snapshot=snap,
+        )
+        columns = list(Column.objects.filter(dataset=scenario_dataset))
+        row_ids = TestGenerateScenarioRowsPrefetch._seed_rows(scenario_dataset, num_rows=1)
+        TestGenerateScenarioRowsPrefetch._seed_cells(scenario_dataset, columns, row_ids)
+        scenario = TestGenerateScenarioRowsPrefetch._make_scenario_and_graph(
+            scenario_dataset, agent_definition, organization, workspace
+        )
+        scenario.metadata = {"agent_definition_version_id": str(version.id)}
+        scenario.save(update_fields=["metadata"])
+        cases = TestGenerateScenarioRowsPrefetch._build_cases(1, columns)
+
+        with patch(
+            "simulate.tasks.scenario_tasks.EnhancedScenariosAgent"
+        ) as mock_agent_cls, patch(
+            "simulate.tasks.scenario_tasks.close_old_connections"
+        ):
+            mock = mock_agent_cls.return_value
+            mock.graph_generator.get_branches.return_value = []
+            mock._generate_cases_for_branches.return_value = cases
+
+            generate_scenario_rows(
+                dataset_id=scenario_dataset.id,
+                scenario_id=scenario.id,
+                num_rows=1,
+                description="anything",
+                new_rows_id=row_ids,
+            )
+
+        assert mock_agent_cls.call_args.kwargs["configuration_snapshot"] == snap
+
+
+class TestApplyCustomColumnConstraints:
+    def test_none_or_empty_is_noop(self):
+        from simulate.utils.scenario_constraints import apply_custom_column_constraints
+
+        for cols in (None, []):
+            constraints, schema = [], {}
+            apply_custom_column_constraints(constraints, schema, cols, "Bot")
+            assert constraints == [] and schema == {}
+
+    def test_column_without_name_is_skipped(self):
+        from simulate.utils.scenario_constraints import apply_custom_column_constraints
+
+        constraints, schema = [], {}
+        apply_custom_column_constraints(
+            constraints, schema, [{"data_type": "text"}], "Bot"
+        )
+        assert constraints == [] and schema == {}
+
+    def test_column_type_mapping(self):
+        from simulate.utils.scenario_constraints import apply_custom_column_constraints
+
+        cases = [
+            ("json", "json"),
+            ("persona", "json"),
+            ("number", "number"),
+            ("integer", "number"),
+            ("float", "number"),
+            ("boolean", "boolean"),
+            ("string", "text"),
+            ("datetime", "datetime"),
+            ("array", "array"),
+            ("text", "text"),
+            ("unknown_type", "text"),
+        ]
+        for src, expected in cases:
+            constraints, schema = [], {}
+            apply_custom_column_constraints(
+                constraints, schema, [{"name": "c", "data_type": src}], "Bot"
+            )
+            assert schema["c"]["type"] == expected, (src, expected)
+            assert constraints[0]["type"] == expected
+
+    def test_default_text_property_and_user_override(self):
+        from simulate.utils.scenario_constraints import apply_custom_column_constraints
+
+        constraints, schema = [], {}
+        apply_custom_column_constraints(
+            constraints, schema,
+            [{"name": "seg", "data_type": "text", "property": {"max_length": 32}}],
+            "Bot",
+        )
+        prop = constraints[0]["property"]
+        assert prop["min_length"] == 10
+        assert prop["max_length"] == 32
+        assert prop["required_elements"] == []
+
+    def test_non_text_type_gets_only_user_property(self):
+        from simulate.utils.scenario_constraints import apply_custom_column_constraints
+
+        constraints, schema = [], {}
+        apply_custom_column_constraints(
+            constraints, schema,
+            [{"name": "flag", "data_type": "boolean", "property": {"nullable": True}}],
+            "Bot",
+        )
+        assert constraints[0]["property"] == {"nullable": True}
+
+    def test_content_string_shape(self):
+        from simulate.utils.scenario_constraints import apply_custom_column_constraints
+
+        constraints, schema = [], {}
+        apply_custom_column_constraints(
+            constraints, schema,
+            [{"name": "tone", "data_type": "text", "description": "customer tone"}],
+            "Alice", branch_context_footer=" branch=welcome",
+        )
+        expected = (
+            "customer tone. Generate realistic and contextually relevant data "
+            "for Alice scenarios that can be tailored using the conversation "
+            "branch information below. branch=welcome"
+        )
+        assert constraints[0]["content"] == expected
+
+    def test_content_string_without_footer(self):
+        from simulate.utils.scenario_constraints import apply_custom_column_constraints
+
+        constraints, schema = [], {}
+        apply_custom_column_constraints(
+            constraints, schema,
+            [{"name": "tone", "data_type": "text", "description": "customer tone"}],
+            "Alice",
+        )
+        expected = (
+            "customer tone. Generate realistic and contextually relevant data "
+            "for Alice scenarios that can be tailored using the conversation "
+            "branch information below."
+        )
+        assert constraints[0]["content"] == expected
+
+    def test_multiple_columns_all_landed(self):
+        from simulate.utils.scenario_constraints import apply_custom_column_constraints
+
+        cols = [
+            {"name": "urgency", "data_type": "text"},
+            {"name": "score", "data_type": "number"},
+            {"name": "tags", "data_type": "array"},
+        ]
+        constraints, schema = [], {}
+        apply_custom_column_constraints(constraints, schema, cols, "Bot")
+        assert len(constraints) == 3
+        assert [c["field"] for c in constraints] == ["urgency", "score", "tags"]
+        assert schema == {
+            "urgency": {"type": "text"},
+            "score": {"type": "number"},
+            "tags": {"type": "array"},
+        }
+
+    def test_schema_entry_added(self):
+        from simulate.utils.scenario_constraints import apply_custom_column_constraints
+
+        constraints, schema = [], {"persona": {"type": "json"}}
+        apply_custom_column_constraints(
+            constraints, schema,
+            [{"name": "urgency", "data_type": "text"}], "Bot",
+        )
+        assert schema["urgency"] == {"type": "text"}
+        assert schema["persona"] == {"type": "json"}
+
+
+class TestEffectivePersonaIds:
+    def test_auto_true_drops_user_personas(self):
+        from tfc.temporal.simulate.activities import _effective_persona_ids
+
+        assert _effective_persona_ids({
+            "add_persona_automatically": True,
+            "personas": ["p1", "p2"],
+        }) == []
+
+    def test_auto_true_no_personas(self):
+        from tfc.temporal.simulate.activities import _effective_persona_ids
+
+        assert _effective_persona_ids({"add_persona_automatically": True}) == []
+
+    def test_auto_false_keeps_user_personas(self):
+        from tfc.temporal.simulate.activities import _effective_persona_ids
+
+        assert _effective_persona_ids({
+            "add_persona_automatically": False,
+            "personas": ["p1", "p2"],
+        }) == ["p1", "p2"]
+
+    def test_auto_absent_defaults_to_false(self):
+        from tfc.temporal.simulate.activities import _effective_persona_ids
+
+        assert _effective_persona_ids({"personas": ["p1"]}) == ["p1"]
+
+    def test_empty_validated_data(self):
+        from tfc.temporal.simulate.activities import _effective_persona_ids
+
+        assert _effective_persona_ids({}) == []
+
+
+class TestResolveScenarioAgent:
+    def test_agent_definition_source_returns_real_instance(
+        self, db, agent_definition, organization, workspace
+    ):
+        from tfc.temporal.simulate.activities import _resolve_scenario_agent
+
+        scenario = Scenarios.objects.create(
+            name="s", source="x",
+            scenario_type=Scenarios.ScenarioTypes.GRAPH,
+            organization=organization, workspace=workspace,
+            agent_definition=agent_definition, metadata={},
+        )
+        resolved = _resolve_scenario_agent(scenario, "agent_definition")
+        assert resolved is agent_definition
+
+    def test_prompt_source_returns_simplenamespace_adapter(
+        self, db, organization, workspace
+    ):
+        import types
+        from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+        from tfc.temporal.simulate.activities import _resolve_scenario_agent
+
+        template = PromptTemplate.objects.create(
+            name="pt", organization=organization, workspace=workspace,
+        )
+        PromptVersion.objects.create(
+            original_template_id=template.id,
+            template_version="v1",
+            is_default=True,
+            prompt_config_snapshot={
+                "messages": [
+                    {"role": "system", "content": [{"type": "text", "text": "You are a helper."}]}
+                ]
+            },
+        )
+        scenario = Scenarios.objects.create(
+            name="s", source="x",
+            scenario_type=Scenarios.ScenarioTypes.GRAPH,
+            organization=organization, workspace=workspace,
+            source_type="prompt",
+            prompt_template=template,
+            metadata={},
+        )
+        resolved = _resolve_scenario_agent(scenario, "prompt")
+        assert isinstance(resolved, types.SimpleNamespace)
+        assert resolved.agent_name == "pt"
+        assert "You are a helper." in resolved.description
+        assert resolved.agent_type == "text"
+        assert resolved.inbound is True
+        assert resolved.languages == ["en"]
+        assert resolved.organization == organization
+        assert resolved.workspace == workspace
+
+    def test_prompt_source_with_no_template_falls_through(
+        self, db, agent_definition, organization, workspace
+    ):
+        from tfc.temporal.simulate.activities import _resolve_scenario_agent
+
+        scenario = Scenarios.objects.create(
+            name="s", source="x",
+            scenario_type=Scenarios.ScenarioTypes.GRAPH,
+            organization=organization, workspace=workspace,
+            source_type="prompt",
+            agent_definition=agent_definition,
+            metadata={},
+        )
+        resolved = _resolve_scenario_agent(scenario, "prompt")
+        assert resolved is agent_definition

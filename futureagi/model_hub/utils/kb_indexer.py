@@ -5,6 +5,7 @@ import os
 import re
 import tempfile
 import traceback
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,6 +31,57 @@ from tfc.utils.storage_client import get_storage_client
 KB_TABLE_NAME = "syn"
 KB_INDEX_COL_TYPE = "text"
 KB_INDEX_COL_NAME = "chunk_text"
+KB_DOC_ID_PAYLOAD_CAP = 200
+
+
+def build_kb_payload(
+    kb_id: str | None, max_count: int = KB_DOC_ID_PAYLOAD_CAP
+) -> dict[str, Any] | None:
+    """Random-sampled KB payload dict (up to `max_count` chunk ids), or None."""
+    if not kb_id:
+        return None
+    try:
+        raw = KBIndexer().get_kb_doc_id_sample(str(kb_id), max_count)
+    except Exception as exc:
+        logger.warning("kb_payload_resolve_failed", kb_id=str(kb_id), error=str(exc))
+        return None
+    if not isinstance(raw, list):
+        return None
+    doc_ids = [str(d) for d in raw if isinstance(d, (str, uuid.UUID)) and len(str(d)) >= 32]
+    if not doc_ids:
+        return None
+    return {"table_name": KB_TABLE_NAME, "kb_id": str(kb_id), "doc_ids": doc_ids}
+
+
+def build_agent_kb_payload(
+    agent_or_id: Any,
+    scenario: Any = None,
+) -> dict[str, Any] | None:
+    """Resolve the agent's KB id (pinned snapshot wins over live) into a payload, or None."""
+    if agent_or_id is None:
+        return None
+    from simulate.models.agent_version import (
+        has_version_pin,
+        resolve_configuration_snapshot,
+    )
+
+    snapshot = resolve_configuration_snapshot(scenario)
+    kb_id = snapshot.get("knowledge_base") if snapshot else None
+    if not kb_id and not has_version_pin(scenario):
+        agent = agent_or_id
+        if not hasattr(agent, "knowledge_base_id"):
+            from django.core.exceptions import ValidationError
+
+            from simulate.models import AgentDefinition
+
+            try:
+                agent = AgentDefinition.no_workspace_objects.filter(id=agent_or_id).first()
+            except (ValueError, ValidationError):
+                return None
+            if agent is None:
+                return None
+        kb_id = getattr(agent, "knowledge_base_id", None)
+    return build_kb_payload(kb_id)
 
 
 @dataclass
@@ -290,6 +342,22 @@ class KBIndexer:
         )
 
         return new_kb_id
+
+    def get_kb_doc_id_sample(self, kb_id: str, max_count: int = KB_DOC_ID_PAYLOAD_CAP) -> list[str]:
+        """Random sample of up to `max_count` chunk ids from the KB (raw ClickHouse LIMIT)."""
+        try:
+            kb_uuid = str(uuid.UUID(str(kb_id)))
+        except (ValueError, AttributeError, TypeError):
+            return []
+        from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
+
+        db = ClickHouseVectorDB()
+        rows = db.client.execute(
+            f"SELECT id FROM {KB_TABLE_NAME} "
+            f"WHERE eval_id = '{kb_uuid}' AND deleted = 0 "
+            f"ORDER BY rand() LIMIT {int(max_count)}"
+        )
+        return [str(r[0]) for r in (rows or [])]
 
     def get_data_subset_kb_id(
         self, query: list[str], kb_id: str, top_k: int = 4

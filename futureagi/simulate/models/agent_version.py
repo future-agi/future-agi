@@ -1,4 +1,5 @@
 import uuid
+from typing import Any
 
 from django.conf import settings
 from django.db import models
@@ -6,6 +7,43 @@ from django.db import models
 from accounts.models import Organization
 from simulate.pydantic_schemas.agent_version import AgentConfigurationSnapshot
 from tfc.utils.base_model import BaseModel
+
+
+def pinned_or_live(
+    configuration_snapshot: dict[str, Any] | None,
+    agent_definition: Any,
+    field_name: str,
+) -> Any:
+    """Snapshot's value for field_name wins over live agent when present and non-None."""
+    if configuration_snapshot:
+        val = configuration_snapshot.get(field_name)
+        if val is not None:
+            return val
+    return getattr(agent_definition, field_name, None)
+
+
+def _pinned_version_id(scenario: Any) -> str | None:
+    if scenario is None:
+        return None
+    metadata = getattr(scenario, "metadata", None) or {}
+    if not isinstance(metadata, dict):
+        return None
+    version_id = metadata.get("agent_definition_version_id")
+    return str(version_id) if version_id else None
+
+
+def has_version_pin(scenario: Any) -> bool:
+    """True iff scenario metadata pins an AgentVersion; used for authoritative-pin fallback."""
+    return _pinned_version_id(scenario) is not None
+
+
+def resolve_configuration_snapshot(scenario: Any) -> dict[str, Any] | None:
+    """Return the pinned AgentVersion.configuration_snapshot for a scenario, or None. Treat returned dict as read-only (Django JSONField cache)."""
+    version_id = _pinned_version_id(scenario)
+    if not version_id:
+        return None
+    v = AgentVersion.objects.filter(id=version_id).first()
+    return v.configuration_snapshot if v else None
 
 
 class AgentVersion(BaseModel):

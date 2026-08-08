@@ -722,8 +722,14 @@ class CreateGraphScenarioWorkflow:
 
             dataset_id = get_result_field(dataset_result, "dataset_id")
 
-            # Step 5: Finalize scenario + clean up Redis keys
-            persona_ids = input.validated_data.get("personas", [])
+            # Step 5: Finalize scenario + clean up Redis keys.
+            # add_persona_automatically=True drops user-picked personas so the
+            # finalize write does not overwrite the empty property_list intent.
+            persona_ids = (
+                []
+                if input.validated_data.get("add_persona_automatically", False)
+                else input.validated_data.get("personas", [])
+            )
             finalize_result = await workflow.execute_activity(
                 "finalize_graph_scenario_activity",
                 FinalizeGraphScenarioInput(
@@ -1016,8 +1022,14 @@ class CreateGraphScenarioWorkflow:
 
             dataset_id = get_result_field(dataset_result, "dataset_id")
 
-            # Step 7: Finalize scenario
-            persona_ids = input.validated_data.get("personas", [])
+            # Step 7: Finalize scenario. add_persona_automatically=True drops
+            # user-picked personas so finalize does not overwrite the empty
+            # property_list intent.
+            persona_ids = (
+                []
+                if input.validated_data.get("add_persona_automatically", False)
+                else input.validated_data.get("personas", [])
+            )
             finalize_result = await workflow.execute_activity(
                 "finalize_graph_scenario_activity",
                 FinalizeGraphScenarioInput(
