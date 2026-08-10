@@ -1,8 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { endpoints } from "src/utils/axios";
 
 import ExperimentBarSummaryRightSection from "../ExperimentBarSummaryRightSection";
 
@@ -12,19 +19,17 @@ const mockEnqueueSnackbar = vi.fn();
 const mockSetChooseWinnerOpen = vi.fn();
 let anchorClick;
 
-vi.mock("src/utils/axios", () => ({
-  default: {
-    get: (...args) => mockGet(...args),
-  },
-  endpoints: {
-    develop: {
-      experiment: {
-        downloadExperiment: (experimentId) =>
-          `/model-hub/experiments/v2/${experimentId}/download/`,
-      },
+vi.mock("src/utils/axios", async () => {
+  const actual = await vi.importActual("src/utils/axios");
+
+  return {
+    ...actual,
+    default: {
+      ...actual.default,
+      get: (...args) => mockGet(...args),
     },
-  },
-}));
+  };
+});
 
 vi.mock("src/utils/Mixpanel", async (importOriginal) => {
   const actual = await importOriginal();
@@ -94,8 +99,7 @@ describe("ExperimentBarSummaryRightSection", () => {
 
   it("hides Download CSV on the individual experiment summary route", () => {
     renderComponent({
-      initialEntry:
-        "/dashboard/develop/individual-experiment/ind-123/summary",
+      initialEntry: "/dashboard/develop/individual-experiment/ind-123/summary",
       routePath:
         "/dashboard/develop/individual-experiment/:individualExperimentId/summary",
     });
@@ -122,21 +126,23 @@ describe("ExperimentBarSummaryRightSection", () => {
     const downloadButton = screen.getByRole("button", { name: "Download CSV" });
     await user.click(downloadButton);
 
-    expect(mockTrackEvent).toHaveBeenCalledWith("Experiment_download_clicked");
+    expect(mockTrackEvent).toHaveBeenCalledWith(
+      "Dataset_experiment_download_clicked",
+    );
     expect(mockGet).toHaveBeenCalledWith(
-      "/model-hub/experiments/v2/exp-123/download/",
+      endpoints.develop.experiment.downloadExperiment("exp-123"),
       { responseType: "blob" },
     );
-    expect(
-      screen.getByRole("button", { name: "Downloading…" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Downloading…" })).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Downloading…" }));
     expect(mockGet).toHaveBeenCalledTimes(1);
 
     resolveDownload({ data: "experiment,data" });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Download CSV" })).toBeEnabled();
+      expect(
+        screen.getByRole("button", { name: "Download CSV" }),
+      ).toBeEnabled();
     });
   });
 
@@ -165,7 +171,9 @@ describe("ExperimentBarSummaryRightSection", () => {
 
     resolveDownload({ data: "first,download" });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Download CSV" })).toBeEnabled();
+      expect(
+        screen.getByRole("button", { name: "Download CSV" }),
+      ).toBeEnabled();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Download CSV" }));
@@ -202,7 +210,9 @@ describe("ExperimentBarSummaryRightSection", () => {
         "Failed to download experiment",
         { variant: "error" },
       );
-      expect(screen.getByRole("button", { name: "Download CSV" })).toBeEnabled();
+      expect(
+        screen.getByRole("button", { name: "Download CSV" }),
+      ).toBeEnabled();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Download CSV" }));
