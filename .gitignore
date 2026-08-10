@@ -247,6 +247,7 @@ futureagi/ee/MIGRATION_GUIDE.md
 futureagi/ee/OPERATIONS_RUNBOOK.md
 futureagi/ee/PHASE4_CLASSIFICATION.md
 futureagi/ee/README.md
+futureagi/ee/scripts/
 # stray local leftover at repo root (old gateway config) — not the ee tree
 /ee/
 
