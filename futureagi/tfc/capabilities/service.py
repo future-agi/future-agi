@@ -120,6 +120,11 @@ def check(
     exception based on the result. For convenience, use check_or_raise()
     which raises CapabilityDenied on denial.
     """
+    # A blank org id is not an identity. Normalise it to None so a caller that
+    # passes "" gets a clean denial instead of reaching the cloud resolver and
+    # raising ValidationError on an invalid-UUID lookup inside the request path.
+    org_id = (org_id or "").strip() or None
+
     feature = FEATURE_REGISTRY.get(feature_id)
 
     # 1. Unknown feature → programming error, always deny
