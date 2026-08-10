@@ -35,7 +35,7 @@ describe("shouldMintExperimentVersion", () => {
     ).toBe(false);
   });
 
-  it("does not mint for system or composite templates", () => {
+  it("does not mint for system templates", () => {
     expect(
       shouldMintExperimentVersion({
         source: "experiment",
@@ -44,6 +44,9 @@ describe("shouldMintExperimentVersion", () => {
         templateType: "single",
       }),
     ).toBe(false);
+  });
+
+  it("mints for dirty composite templates like single evals", () => {
     expect(
       shouldMintExperimentVersion({
         source: "experiment",
@@ -51,6 +54,6 @@ describe("shouldMintExperimentVersion", () => {
         isSystemEval: false,
         templateType: "composite",
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 });

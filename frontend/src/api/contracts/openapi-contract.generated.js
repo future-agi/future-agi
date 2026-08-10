@@ -54587,6 +54587,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Config snapshot",
           "type": "object",
           "x-nullable": true
+        },
+        "composite_weight_overrides": {
+          "title": "Composite weight overrides",
+          "type": "object",
+          "x-nullable": true
         }
       }
     },

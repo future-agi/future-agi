@@ -10458,10 +10458,13 @@ export interface EvalTemplateVersionListResponseApi {
 
 export type EvalTemplateVersionCreateRequestApiConfigSnapshot = { [key: string]: unknown };
 
+export type EvalTemplateVersionCreateRequestApiCompositeWeightOverrides = { [key: string]: unknown };
+
 export interface EvalTemplateVersionCreateRequestApi {
   criteria?: string;
   model?: string;
   config_snapshot?: EvalTemplateVersionCreateRequestApiConfigSnapshot;
+  composite_weight_overrides?: EvalTemplateVersionCreateRequestApiCompositeWeightOverrides;
 }
 
 export interface EvalTemplateVersionResponseResultApi {

@@ -20147,6 +20147,9 @@ export const ModelHubEvalTemplatesVersionsCreateCreateBody = zod.object({
   "model": zod.string().optional(),
   "config_snapshot": zod.object({
 
+}).passthrough().optional(),
+  "composite_weight_overrides": zod.object({
+
 }).passthrough().optional()
 })
 
