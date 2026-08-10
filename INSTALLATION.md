@@ -77,7 +77,35 @@ docker exec -it futureagi-backend-1 python manage.py create_user \
   --password yourpassword
 ```
 
-> **Team invites and password resets require email (SMTP).** See the [Email configuration](#email-smtp) section below for setup. Mailgun offers a free tier (100 emails/day) that works well for small self-hosted deployments.
+### Reset a password
+
+Self-hosted installs without SMTP cannot deliver a reset email. Two ways round it.
+
+**From the host** — works on any deployment:
+
+```bash
+docker exec -it futureagi-backend-1 python manage.py reset_password --email you@example.com
+```
+
+You will be prompted for the new password, or pass `--password` to supply it
+non-interactively. Any sessions already signed in as that account are signed out.
+
+**In the browser** — set this in `.env` and restart the backend:
+
+```
+OSS_RETURN_PASSWORD_RESET_LINK=true
+```
+
+"Forgot password" then returns the reset link in its response and takes the user
+straight to the set-password screen, no mail required.
+
+> Only turn this on where reaching the instance already implies full trust — a
+> laptop install, or a host behind a VPN with no other tenants. The endpoint takes
+> no authentication, so anyone who can reach it can request a link for **any**
+> address and take over that account. Leave it off on anything internet-facing
+> and use the command above.
+
+> **Team invites require email (SMTP).** See the [Email configuration](#email-smtp) section below for setup. Mailgun offers a free tier (100 emails/day) that works well for small self-hosted deployments. Without it, the invite dialog returns a shareable link for each invitee instead of sending mail.
 
 To stop everything: `./bin/uninstall` (or `docker compose down`). Data persists in named volumes across restarts.
 

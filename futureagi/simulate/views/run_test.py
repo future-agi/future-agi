@@ -16,12 +16,6 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework import status
-from rest_framework.exceptions import NotFound
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
-from rest_framework.views import APIView
-
 from model_hub.models.api_key import ApiKey
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.evals_metric import EvalTemplate
@@ -29,6 +23,11 @@ from model_hub.utils.function_eval_params import (
     normalize_eval_runtime_config,
     params_with_defaults_for_response,
 )
+from rest_framework import status
+from rest_framework.exceptions import NotFound
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
 from simulate.models import (
     AgentDefinition,
     CallExecution,
@@ -143,12 +142,12 @@ from simulate.utils.agent_optimiser import (
     get_or_create_optimiser_for_test_execution,
 )
 from simulate.utils.baseline import resolve_baseline_id
-from simulate.utils.eval_summary import iter_live_eval_outputs
 from simulate.utils.eval_summary import (
     _build_template_statistics,
     _calculate_final_template_summaries,
     _get_completed_call_executions,
     _get_eval_configs_with_template,
+    iter_live_eval_outputs,
 )
 from simulate.utils.scenario_completeness import check_scenarios_incomplete
 from simulate.utils.sql_query import (
@@ -233,6 +232,14 @@ def _voice_sim_gate_response(user_organization, gm):
             ),
             status=status.HTTP_402_PAYMENT_REQUIRED,
         )
+
+    from ee.usage.deployment import DeploymentMode
+
+    if not DeploymentMode.is_cloud():
+        # Voice sim is open on self-hosted (voice_sim is not in the
+        # oss_locked set), and plan entitlements are a cloud-only concept.
+        # Nothing to gate off-cloud.
+        return None
 
     feat_check = Entitlements.check_feature(str(user_organization.id), "has_voice_sim")
     if not feat_check.allowed:
@@ -1580,9 +1587,9 @@ class RunTestKPIsView(APIView):
                 config_choices_map = {}
                 for sec in simulate_eval_configs:
                     binding_config = sec.config or {}
-                    runtime_config = binding_config.get("run_config") or binding_config.get(
-                        "config", {}
-                    )
+                    runtime_config = binding_config.get(
+                        "run_config"
+                    ) or binding_config.get("config", {})
                     choices = (
                         runtime_config.get("choices")
                         or sec.eval_template.choices
@@ -2592,9 +2599,9 @@ class PerformanceSummaryView(APIView):
 
                 # Get overall score if available
                 if call_execution.overall_score is not None:
-                    scenario_performance[scenario_id]["total_score"] += (
-                        call_execution.overall_score
-                    )
+                    scenario_performance[scenario_id][
+                        "total_score"
+                    ] += call_execution.overall_score
                     scenario_performance[scenario_id]["scores"].append(
                         call_execution.overall_score
                     )
@@ -3536,14 +3543,16 @@ class CallExecutionLogsView(APIView):
                         provider_call_id = None
                         provider_api_key = None
                         try:
-                            test_exec = getattr(
-                                call_execution, "test_execution", None
-                            )
+                            test_exec = getattr(call_execution, "test_execution", None)
                             version = (
-                                getattr(test_exec, "agent_version", None) if test_exec else None
+                                getattr(test_exec, "agent_version", None)
+                                if test_exec
+                                else None
                             )
                             if version is not None:
-                                from simulate.services.agent_definition import resolve_api_key_for_version
+                                from simulate.services.agent_definition import (
+                                    resolve_api_key_for_version,
+                                )
 
                                 provider_api_key = resolve_api_key_for_version(version)
                             provider_call_id = (

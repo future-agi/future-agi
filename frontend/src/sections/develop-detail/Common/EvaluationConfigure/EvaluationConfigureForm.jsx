@@ -47,9 +47,9 @@ import {
   DEFAULT_EVAL_MODEL,
 } from "src/sections/common/EvaluationDrawer/common";
 import { FAGI_MODEL_VALUES } from "src/sections/evals/components/ModelSelector";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
 
-const getDefaultValues = (evalConfig, editMode, allColumns, isOSS) => {
+const getDefaultValues = (evalConfig, editMode, allColumns, fagiLocked) => {
   const mapping = {};
   const config = {};
   const allColumnsMap = allColumns?.reduce((acc, col) => {
@@ -65,19 +65,19 @@ const getDefaultValues = (evalConfig, editMode, allColumns, isOSS) => {
   }
   for (const key of Object.keys(evalConfig?.config || {})) {
     const defaultVal = evalConfig?.config[key]?.default;
-    // Auto-select preferred model (turing_large) for model field. OSS has no
-    // Turing/Protect access, so it starts blank and the user must pick.
+    // Auto-select preferred model (turing_large) for model field. Without
+    // Turing access (no license/plan) it starts blank and the user must pick.
     if (key === "model") {
       const modelOptions =
         evalConfig?.configParamsOption?.[key] ||
         evalConfig?.config_params_option?.[key] ||
         [];
       const allowed = modelOptions.filter(
-        (m) => !isOSS || !FAGI_MODEL_VALUES.has(m),
+        (m) => !fagiLocked || !FAGI_MODEL_VALUES.has(m),
       );
       const safeDefault =
-        isOSS && FAGI_MODEL_VALUES.has(defaultVal) ? "" : defaultVal;
-      const hasTuringLarge = !isOSS && allowed.includes(DEFAULT_EVAL_MODEL);
+        fagiLocked && FAGI_MODEL_VALUES.has(defaultVal) ? "" : defaultVal;
+      const hasTuringLarge = !fagiLocked && allowed.includes(DEFAULT_EVAL_MODEL);
       config[key] = editMode
         ? safeDefault ||
           (hasTuringLarge ? DEFAULT_EVAL_MODEL : allowed[0] || "")
@@ -187,7 +187,9 @@ const EvaluationConfigureFormChild = ({
     () => allowedColumnFilter(evalConfig, allColumns),
     [allColumns, evalConfig],
   );
-  const { isOSS } = useDeploymentMode();
+  // Fail closed while capabilities load (locked===true) so form defaults never
+  // seed a Turing model the deployment can't run.
+  const { locked: fagiLocked } = useFeatureLocked(CAPABILITY.TURING_MODELS);
   const [rulePromptData, setRulePromptData] = useState("");
   const [isRulePrompt, setIsRulePrompt] = useState(false);
 
@@ -215,7 +217,7 @@ const EvaluationConfigureFormChild = ({
       evalConfig,
       editMode,
       allowedColumns,
-      isOSS,
+      fagiLocked,
     ),
     resolver: zodResolver(validationSchema),
   });

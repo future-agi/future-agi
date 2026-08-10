@@ -429,7 +429,7 @@ body {
   --vscode-editor-background: var(--monaco-bg);
   --vscode-editorGutter-background: var(--monaco-gutter-bg);
 }
-.ag-row-focus.active-row {
+.ag-row.active-row {
   background-color: var(--surface-row-active);
 }
 

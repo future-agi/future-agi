@@ -19,7 +19,7 @@ import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
 import { useNavigate, useParams } from "react-router";
 import { useSnackbar } from "notistack";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
 
 import { useCreateEval } from "../hooks/useCreateEval";
@@ -44,8 +44,8 @@ import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 
-const ERROR_LOCALIZER_OSS_TOOLTIP =
-  "Error Localization is not available on self-hosted (OSS) deployments.";
+const ERROR_LOCALIZER_LOCKED_TOOLTIP =
+  "Error Localization isn't enabled for this workspace.";
 
 const EVAL_TYPE_TABS = [
   { value: "agent", label: "Agents" },
@@ -148,7 +148,16 @@ const EvalCreatePage = () => {
   const canEditEvals =
     RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][role];
   const { enqueueSnackbar } = useSnackbar();
-  const { isOSS, isLoading: deploymentModeLoading } = useDeploymentMode();
+  // Fail closed while capabilities load (both flags true) so we never flash
+  // Turing models or agent evals as available before the fetch resolves.
+  const { locked: fagiLocked } = useFeatureLocked(CAPABILITY.TURING_MODELS);
+  const { locked: agentEvalLocked, isLoading: capabilitiesLoading } =
+    useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  // Confirmed denial (loaded AND not allowed). Seed defaults raw and only
+  // strip them on confirmed denial — seeding off `locked` (which is true
+  // while loading) would blank the default model / flip the eval type for
+  // entitled cloud/EE users too, and never restore it.
+  const fagiModelsDenied = fagiLocked && !capabilitiesLoading;
   const createEval = useCreateEval();
   const createComposite = useCreateCompositeEval();
   const testPlaygroundRef = useRef(null);
@@ -158,11 +167,11 @@ const EvalCreatePage = () => {
 
   // --- Single eval state ---
   const [name, setName] = useState("");
-  const [evalType, setEvalType] = useState(isOSS ? "llm" : "agent");
+  const [evalType, setEvalType] = useState("agent");
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState(PYTHON_CODE_TEMPLATE);
   const [codeLanguage, setCodeLanguage] = useState("python");
-  const [model, setModel] = useState(isOSS ? "" : "turing_large");
+  const [model, setModel] = useState("turing_large");
   const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
@@ -177,7 +186,7 @@ const EvalCreatePage = () => {
   const [knowledgeBaseIds, setKnowledgeBaseIds] = useState([]);
   const [contextOptions, setContextOptions] = useState(["variables_only"]);
   const [errorLocalizerEnabled, setErrorLocalizerEnabled] = useState(false);
-  const errorLocalizerActive = errorLocalizerEnabled && !isOSS;
+  const errorLocalizerActive = errorLocalizerEnabled && !agentEvalLocked;
   const [tags, setTags] = useState([]);
   const [fewShotExamples, setFewShotExamples] = useState([]);
   const [messages, setMessages] = useState([{ role: "system", content: "" }]);
@@ -253,15 +262,21 @@ const EvalCreatePage = () => {
 
   const evalTypeDefaulted = useRef(false);
   useEffect(() => {
-    if (deploymentModeLoading || evalTypeDefaulted.current) return;
+    if (capabilitiesLoading || evalTypeDefaulted.current) return;
     evalTypeDefaulted.current = true;
-    setEvalType(isOSS ? "llm" : "agent");
-  }, [deploymentModeLoading, isOSS]);
+    setEvalType(agentEvalLocked ? "llm" : "agent");
+  }, [capabilitiesLoading, agentEvalLocked]);
+
+  // Drop the seeded Turing default only once denial is confirmed, so entitled
+  // users keep "turing_large" through the capabilities fetch.
+  useEffect(() => {
+    if (fagiModelsDenied && FAGI_MODEL_VALUES.has(model)) setModel("");
+  }, [fagiModelsDenied, model]);
 
   // Load existing draft from URL, or create a new one
   const draftLoaded = useRef(false);
   useEffect(() => {
-    if (deploymentModeLoading) return;
+    if (capabilitiesLoading) return;
     if (draftCreating.current) return;
 
     // If URL has a draft ID, load its config
@@ -327,7 +342,7 @@ const EvalCreatePage = () => {
             endpoints.develop.eval.createEvalTemplateV2,
             {
               is_draft: true,
-              eval_type: isOSS ? "llm" : "agent",
+              eval_type: agentEvalLocked ? "llm" : "agent",
               output_type: "pass_fail",
               model: "turing_large",
               pass_threshold: 0.5,
@@ -343,7 +358,7 @@ const EvalCreatePage = () => {
         }
       })();
     }
-  }, [deploymentModeLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [capabilitiesLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-save config to draft (debounced, skip initial load)
   const autoSaveTimer = useRef(null);
@@ -435,22 +450,22 @@ const EvalCreatePage = () => {
 
   // --- Save handlers ---
   const handleSaveSingle = useCallback(async () => {
-    if (isOSS && evalType === "agent") {
+    if (agentEvalLocked && evalType === "agent") {
       enqueueSnackbar(
-        "Agent evaluations are not available on OSS. Use LLM-as-a-Judge or Code evaluations instead.",
+        "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
         { variant: "error" },
       );
       return;
     }
-    if (isOSS && evalType !== "code" && FAGI_MODEL_VALUES.has(model)) {
+    if (fagiLocked && evalType !== "code" && FAGI_MODEL_VALUES.has(model)) {
       enqueueSnackbar(
-        "Turing models are not available in OSS. Please select your own model.",
+        "Turing models aren't enabled for this workspace. Please select your own model.",
         { variant: "error" },
       );
       setOpenModelMenuSignal((n) => n + 1);
       return;
     }
-    if (isOSS && evalType !== "code" && !model) {
+    if (fagiLocked && evalType !== "code" && !model) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
       return;
@@ -494,7 +509,8 @@ const EvalCreatePage = () => {
     updateDraft,
     enqueueSnackbar,
     navigate,
-    isOSS,
+    agentEvalLocked,
+    fagiLocked,
     evalType,
     model,
   ]);
@@ -563,8 +579,8 @@ const EvalCreatePage = () => {
     // needed since the composite hasn't been (and won't be) saved as a
     // single-eval draft. Single evals still need their draft up to date
     // so the playground sees the latest instructions/code/config.
- 
-    if (isOSS && evalType !== "code" && !model) {
+
+    if (fagiLocked && evalType !== "code" && !model) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
       return;
@@ -600,7 +616,7 @@ const EvalCreatePage = () => {
   }, [
     mode,
     draftId,
-    isOSS,
+    fagiLocked,
     evalType,
     model,
     buildUpdatePayload,
@@ -669,7 +685,7 @@ const EvalCreatePage = () => {
     canEditEvals && (mode === "single" ? canSaveSingle : canSaveComposite);
 
 
-  if (deploymentModeLoading) {
+  if (capabilitiesLoading) {
     return null;
   }
 
@@ -872,9 +888,9 @@ const EvalCreatePage = () => {
                   <Tabs
                     value={evalType}
                     onChange={(_, val) => {
-                      if (isOSS && val === "agent") {
+                      if (agentEvalLocked && val === "agent") {
                         enqueueSnackbar(
-                          "Agent evaluations require an Enterprise (EE) license. Upgrade to EE license key to enable.",
+                          "Agent evaluations aren't enabled for this workspace.",
                           { variant: "info" },
                         );
                         return;
@@ -908,7 +924,7 @@ const EvalCreatePage = () => {
                     }}
                   >
                     {EVAL_TYPE_TABS.map((tab) => {
-                      const locked = isOSS && tab.value === "agent";
+                      const locked = agentEvalLocked && tab.value === "agent";
                       return (
                         <Tab
                           key={tab.value}
@@ -919,7 +935,7 @@ const EvalCreatePage = () => {
                                 show
                                 type=""
                                 arrow
-                                title="Agent evaluations require an Enterprise (EE) license. Upgrade to EE license key to enable."
+                                title="Agent evaluations aren't enabled for this workspace."
                               >
                                 <Box
                                   sx={{
@@ -1112,17 +1128,17 @@ const EvalCreatePage = () => {
                   {evalType !== "code" && (
                     <Box>
                       <CustomTooltip
-                        show={isOSS}
+                        show={agentEvalLocked}
                         type=""
                         arrow
-                        title={ERROR_LOCALIZER_OSS_TOOLTIP}
+                        title={ERROR_LOCALIZER_LOCKED_TOOLTIP}
                       >
                         <Box sx={{ display: "inline-flex" }}>
                           <FormControlLabel
                             control={
                               <Checkbox
                                 checked={errorLocalizerActive}
-                                disabled={isOSS}
+                                disabled={agentEvalLocked}
                                 onChange={(e) =>
                                   setErrorLocalizerEnabled(e.target.checked)
                                 }

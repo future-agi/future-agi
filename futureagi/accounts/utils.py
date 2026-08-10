@@ -8,8 +8,10 @@ import structlog
 from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
 from django.db import close_old_connections, transaction
+from django.db.models.functions import Lower
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from slack_sdk import WebhookClient
 
 from accounts.models.organization import Organization
@@ -54,9 +56,7 @@ def _fire_deployment_telemetry_registration():
 
         threading.Thread(target=_register).start()
     except Exception:
-        logger.warning(
-            "deployment_telemetry_signup_hook_failed", exc_info=True
-        )
+        logger.warning("deployment_telemetry_signup_hook_failed", exc_info=True)
 
 
 def resolve_org(request):
@@ -222,7 +222,11 @@ def first_signup(data, mode=None):
         # For work emails, use domain as before
         data["company_name"] = domain.split(".")[0]
 
-    allow_any_email = os.getenv("ALLOW_ANY_EMAIL", "false").lower() == "true"
+    from tfc.ee_gating import is_oss
+
+    allow_any_email = (
+        os.getenv("ALLOW_ANY_EMAIL", "true" if is_oss() else "false").lower() == "true"
+    )
     if not allow_any_email and not is_work_email(data.get("email")):
         raise Exception("Provided Email is not work email")
 
@@ -262,7 +266,7 @@ def first_signup(data, mode=None):
         except ImportError:
             pass
     else:
-        raise Exception(f"Invalid data: {serializer.errors}")
+        raise DRFValidationError(serializer.errors)
 
     email = data.get("email", None)
     organization = get_user_organization(user)
@@ -325,6 +329,48 @@ def persist_pending_org_invite(
     )
 
 
+def build_invite_accept_link(user):
+    """Build the accept-invite link for an inactive invited user.
+
+    Same URL that goes out in invite_user.html — OSS deployments surface it in
+    the API so an admin can share it manually when SMTP isn't configured.
+    """
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    token = default_token_generator.make_token(user)
+    return f"{settings.APP_URL}/auth/jwt/invitation/accept/{uid}/{token}"
+
+
+def build_invite_links(emails):
+    """Map lowercased email -> accept-invite link, OSS only.
+
+    Shared by invite creation and both member lists so they cannot disagree
+    about who gets a link.
+    """
+    from tfc.ee_gating import is_oss
+
+    if not emails or not is_oss():
+        return {}
+
+    lowered = {email.lower() for email in emails}
+    return {
+        user.email.lower(): build_invite_accept_link(user)
+        for user in User.objects.annotate(email_lower=Lower("email")).filter(
+            email_lower__in=lowered,
+            is_active=False,
+        )
+    }
+
+
+def build_password_reset_link(uidb64, token):
+    """Build the password-reset link for an already-issued uid/token pair.
+
+    Same URL reset_password.html renders. The uid and token are passed in rather
+    than derived here because the caller has already minted the AuthToken that
+    the token encodes — building a second one would leave a stray active token.
+    """
+    return f"{settings.APP_URL}/auth/jwt/verify/{uidb64}/{token}"
+
+
 def send_invite_email(email, organization, inviter):
     """Send invite email to the target user."""
     try:
@@ -336,10 +382,8 @@ def send_invite_email(email, organization, inviter):
             extra_context = {}
         elif existing:
             # Inactive user — send invite with activation token
-            uid = urlsafe_base64_encode(force_bytes(existing.pk))
-            token = default_token_generator.make_token(existing)
             template = "invite_user.html"
-            extra_context = {"uid": uid, "token": token}
+            extra_context = {"invite_link": build_invite_accept_link(existing)}
         else:
             # No user record yet; email will be sent once the user signs up.
             logger.info("invite_email_skipped_no_user", email=email)

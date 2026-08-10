@@ -627,7 +627,7 @@ func main() {
 	engine := pipeline.NewEngine(plugins...)
 
 	// Create and start server (shares the same ModelDB pointer for hot-reload).
-	srv := server.New(cfg, *configPath, registry, engine, keyStore, grEngine, policyStore, metricsRegistry, &sharedModelDB, tenantStore, onOrgConfigChange)
+	srv := server.New(cfg, *configPath, registry, engine, keyStore, grEngine, policyStore, metricsRegistry, &sharedModelDB, tenantStore, onOrgConfigChange, redisClient)
 
 	// Register onChange callback on tenantStore so that periodic sync (MergeBulk)
 	// evicts the OrgProviderCache for any org whose config changed. Without this,

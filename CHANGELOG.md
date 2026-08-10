@@ -1,5 +1,51 @@
 # Changelog
 
+## [1.24.3](https://github.com/future-agi/future-agi/compare/v1.24.2...v1.24.3) (2026-08-05)
+
+
+### Bug Fixes
+
+* make tracer tests green in OSS lane and against test CH database ([ca3b5dc](https://github.com/future-agi/future-agi/commit/ca3b5dc53feeb82451bdbc15c1b438ee3db24f78))
+* preserve plaintext trace input/output in detail read path ([ff5cd21](https://github.com/future-agi/future-agi/commit/ff5cd219dd8d44bfd47a560d93a08994577d4d8a))
+* trace-detail drawer eval score by type (pass/fail + choices) ([95bc9a3](https://github.com/future-agi/future-agi/commit/95bc9a39b711c0206c06e98a0021244f53b4c646))
+
+## [1.24.2](https://github.com/future-agi/future-agi/compare/v1.24.1...v1.24.2) (2026-08-04)
+
+
+### Bug Fixes
+
+* **backfill:** drop CH optimize-mirror path, document full-table sweep ([511866f](https://github.com/future-agi/future-agi/commit/511866fb19a739dfb56c3bebb34d2833c87a34d2))
+* **model_hub:** harden convert and backfill vector-table commands ([2f32706](https://github.com/future-agi/future-agi/commit/2f32706b14143d23681b403fcd999583012a953c))
+* **tests:** use has_ee and requires_ee marker instead of hand-rolled path checks ([deef725](https://github.com/future-agi/future-agi/commit/deef725ab55b97984aa05ad1c58732d9253bf91c))
+* **tracer:** address Retell PR review comments ([b18f3ca](https://github.com/future-agi/future-agi/commit/b18f3ca1906639d785e711a9fd66899fdd4883bf))
+* **tracer:** backfill blank EvalLogger status for legacy successes ([e4ed615](https://github.com/future-agi/future-agi/commit/e4ed615a6049be063e99c04805955a0686e72827))
+* **tracer:** clarify numeric parse and cover null watermark ([baef86e](https://github.com/future-agi/future-agi/commit/baef86eb4d27ff082d0184c828e2d8571bf48963))
+* **tracer:** migrate retell list-calls to v3 api ([4eeefa9](https://github.com/future-agi/future-agi/commit/4eeefa9ab2e116b9083bff796224ae636cbc7c09))
+* **tracer:** restore provider fetch success log ([6529f78](https://github.com/future-agi/future-agi/commit/6529f783908af6eed7d9f0f54b22d64e7b2af6e0))
+
+## [1.24.1](https://github.com/future-agi/future-agi/compare/v1.24.0...v1.24.1) (2026-08-03)
+
+
+### Bug Fixes
+
+* **agents:** create observability provider for bland agents ([993804d](https://github.com/future-agi/future-agi/commit/993804d20c7f98998efa02d8c0819c4a6811cee1))
+* **agents:** create observability provider for bland agents ([e50a83b](https://github.com/future-agi/future-agi/commit/e50a83bb57e19ec54ecbfec6ae7784e72cee2712))
+* **annotations:** address submit review — duplicate labels, counts, comments ([8150104](https://github.com/future-agi/future-agi/commit/8150104b204202859a23c22c3f55f1737fee1823))
+* **annotations:** de-flake the assign query-count test ([e61c101](https://github.com/future-agi/future-agi/commit/e61c10157488d10b574f238e28b5227bf662f793))
+* **annotations:** keep assign's lowest-pk assigned_to, per review ([2588e78](https://github.com/future-agi/future-agi/commit/2588e78841ab63e353f09e741d218a729b3b33cb))
+* **eval-tasks:** window continuous tasks on arrival time, not start time ([b6a5258](https://github.com/future-agi/future-agi/commit/b6a5258251537ff083fc3ef9a9679f2485728e13))
+* **eval-tasks:** window continuous tasks on arrival time, not start time ([8d29a60](https://github.com/future-agi/future-agi/commit/8d29a602f87e27c33e6055ff7736024ecde17142))
+* **observe:** guard unparseable dates so one bad row can't crash the whole page (TH-7181) ([7b6503c](https://github.com/future-agi/future-agi/commit/7b6503c7c9f4c4afcd2533c7e657f9f68e6b9d33))
+* **theme:** make dark mode readable across evals, traces and error feed ([#1884](https://github.com/future-agi/future-agi/issues/1884)) ([a683923](https://github.com/future-agi/future-agi/commit/a68392382226003c5bf17bf6160edf00da72cefb))
+
+
+### Performance Improvements
+
+* **annotations:** batch submit's per-label label read and score upsert ([385a810](https://github.com/future-agi/future-agi/commit/385a8102119820ddc23e0b0294505c41b5142c74))
+* **annotations:** batch submit's per-label label read and score upsert ([e2a214f](https://github.com/future-agi/future-agi/commit/e2a214f75391a04db1bc667dce7d32bd850b012e))
+* **annotations:** resolve assign's legacy FK in one query instead of per item ([d62fc89](https://github.com/future-agi/future-agi/commit/d62fc89aeb4df99613bfea3998955eb46444cf92))
+* **annotations:** resolve assign's legacy FK in one query instead of per item ([98875f5](https://github.com/future-agi/future-agi/commit/98875f5175d6427cdea1fbb16e1055a190cb0079))
+
 ## [1.24.0](https://github.com/future-agi/future-agi/compare/v1.23.1...v1.24.0) (2026-07-30)
 
 

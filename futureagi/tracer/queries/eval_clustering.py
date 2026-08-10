@@ -385,10 +385,33 @@ def create_cluster(
     h = hashlib.md5(base.encode(), usedforsecurity=False).hexdigest()[:8]
     cluster_id = f"E-{h.upper()}"
 
-    # Handle collision
-    if TraceErrorGroup.objects.filter(
+    # A row already under this ID is almost always the SAME failure arriving
+    # again, not an md5 collision: the ID hashes (project, target_type,
+    # eval_name, explanation), so a repeat explanation repeats the hash by
+    # construction. We land here when the centroid lookup missed a cluster it
+    # should have matched. Minting a fresh ID produces two clusters with an
+    # identical title; join the existing one instead. Compare on the stored
+    # explanation rather than meta.title — title comes from _eval_cluster_meta,
+    # which we have not computed yet at this point.
+    existing = TraceErrorGroup.objects.filter(
         project_id=project_id, cluster_id=cluster_id
-    ).exists():
+    ).first()
+    if existing is not None:
+        same_failure = (
+            existing.eval_target_type == result.target_type
+            and existing.issue_group == result.eval_name
+            and existing.combined_description == result.explanation
+        )
+        if same_failure:
+            logger.info(
+                "eval_cluster_join_on_existing_id",
+                cluster_id=cluster_id,
+                eval_logger_id=result.eval_logger_id,
+                reason="centroid_lookup_missed",
+            )
+            assign_to_cluster(cluster_id, project_id, result, embedding)
+            return cluster_id
+
         h2 = hashlib.md5(
             f"{base}|{result.eval_logger_id}".encode(), usedforsecurity=False
         ).hexdigest()[:8]

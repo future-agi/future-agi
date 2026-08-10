@@ -19,7 +19,7 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 
 // Shared 24px bordered pill button
-const ToolbarPill = React.forwardRef(({ icon, label, onClick, sx }, ref) => (
+export const ToolbarPill = React.forwardRef(({ icon, label, onClick, sx }, ref) => (
   <ButtonBase
     ref={ref}
     onClick={onClick}

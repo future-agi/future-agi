@@ -4,6 +4,8 @@ Signup & Account API Tests
 Tests for user registration, logout, password reset, and account management.
 """
 
+import os
+
 import pytest
 from django.contrib.auth.tokens import default_token_generator
 from rest_framework import status
@@ -1049,6 +1051,14 @@ class TestActivateAccountRateLimit:
     """Rate-limit boundary tests for GET /accounts/activate/<uidb64>/<token>/."""
 
     @pytest.fixture(autouse=True)
+    def _non_oss(self):
+        # The IP rate limit is skipped entirely in OSS mode (TH-7179), and
+        # this repo's test environment defaults to OSS — pin non-OSS so the
+        # blocking behavior stays exercised.
+        with patch("accounts.views.signup.is_oss", return_value=False):
+            yield
+
+    @pytest.fixture(autouse=True)
     def _clear_rate_limit_cache(self):
         yield
         from django.core.cache import cache
@@ -1134,6 +1144,24 @@ class TestActivateAccountRateLimit:
         )
         # First IP in X-Forwarded-For is used for rate limiting
         assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+
+    def test_rate_limit_skipped_in_oss_mode(self, api_client, db):
+        """OSS mode skips IP rate limiting — all traffic shares one IP (TH-7179)."""
+        from django.core.cache import cache
+
+        user = self._inactive_user(db)
+        url = self._activation_url(user)
+        ip = "10.20.30.1"
+        cache.set(f"activate_account_rate:{ip}", 10, timeout=60)
+
+        with patch("accounts.views.signup.is_oss", return_value=True):
+            response = api_client.get(url, REMOTE_ADDR=ip)
+
+        assert response.status_code == status.HTTP_200_OK
+        user.refresh_from_db()
+        assert user.is_active is True
+        # OSS mode must not touch the rate-limit counter either
+        assert cache.get(f"activate_account_rate:{ip}") == 10
 
 
 @pytest.mark.integration
@@ -1575,3 +1603,606 @@ class TestInitiatePasswordResetSSO:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "sso" in response.json()["message"].lower()
+
+
+
+OSS_SIGNUP_PASSWORD = "Futureagi@45xyz"
+
+
+def _oss(enabled=True):
+    return patch("accounts.views.signup.is_oss", return_value=enabled)
+
+
+def _oss_signup_payload(email, **overrides):
+    payload = {
+        "email": email,
+        "full_name": "New Owner",
+        "company_name": "",
+        "recaptcha_response": "",
+        "allow_email": True,
+        "password": OSS_SIGNUP_PASSWORD,
+    }
+    payload.update(overrides)
+    return payload
+
+
+@pytest.fixture
+def no_outbound_email():
+    """Signup and reset both fan out to third parties. Left live, these tests
+    would depend on the network and, worse, actually mail a real address."""
+    with (
+        patch("accounts.views.signup.email_helper") as mail,
+        patch("accounts.utils.process_post_registration"),
+        patch("accounts.utils.track_mixpanel_event"),
+        patch("accounts.utils.mixpanel_tracker"),
+        patch("accounts.views.signup.track_mixpanel_event"),
+    ):
+        yield mail
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestOssSignupReturnsASession:
+    """OSS takes the password on the form and logs the new owner straight in."""
+
+    def test_returns_tokens_in_the_success_envelope(
+        self, db, api_client, no_outbound_email
+    ):
+        from accounts.models import User  # noqa: F401
+
+        with _oss():
+            response = api_client.post(
+                "/accounts/signup/",
+                _oss_signup_payload("oss-owner-a@futureagi.com"),
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        body = response.json()
+        assert body["status"] is True
+        assert body["result"]["access"]
+        assert body["result"]["refresh"]
+
+    def test_result_carries_new_org_for_routing(
+        self, db, api_client, no_outbound_email
+    ):
+        """The frontend routes to org setup on this flag, exactly as after login."""
+        with _oss():
+            response = api_client.post(
+                "/accounts/signup/",
+                _oss_signup_payload("oss-owner-b@futureagi.com"),
+                format="json",
+            )
+
+        assert response.json()["result"]["new_org"] is True
+
+    def test_carries_the_same_fields_as_a_login(
+        self, db, api_client, no_outbound_email
+    ):
+        """Signup and login differ in the envelope, never in the data."""
+        email = "oss-owner-c@futureagi.com"
+        with _oss():
+            signup = api_client.post(
+                "/accounts/signup/", _oss_signup_payload(email), format="json"
+            ).json()["result"]
+
+        login = api_client.post(
+            "/accounts/token/",
+            {
+                "email": email,
+                "password": OSS_SIGNUP_PASSWORD,
+                "recaptcha_response": "",
+            },
+            format="json",
+        )
+
+        assert login.status_code == status.HTTP_200_OK
+        assert set(signup) == set(login.json())
+
+    def test_the_chosen_password_is_the_one_that_works(
+        self, db, api_client, no_outbound_email
+    ):
+        """The whole point: no emailed link, so this password must be live."""
+        email = "oss-owner-d@futureagi.com"
+        with _oss():
+            api_client.post(
+                "/accounts/signup/", _oss_signup_payload(email), format="json"
+            )
+
+        response = api_client.post(
+            "/accounts/token/",
+            {
+                "email": email,
+                "password": OSS_SIGNUP_PASSWORD,
+                "recaptcha_response": "",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["access"]
+
+    def test_organization_is_selected_server_side(
+        self, db, api_client, no_outbound_email
+    ):
+        """Login does this from the first membership; signup must match, or the
+        next authenticated request arrives with no org context."""
+        from accounts.models import User
+
+        email = "oss-owner-e@futureagi.com"
+        with _oss():
+            api_client.post(
+                "/accounts/signup/", _oss_signup_payload(email), format="json"
+            )
+
+        created = User.objects.get(email=email)
+        assert created.is_active is True
+        assert created.config["selected_organization_id"] == str(
+            created.organization.id
+        )
+        assert created.config["currentOrganizationId"] == str(created.organization.id)
+
+    def test_no_signup_email_is_sent(self, db, api_client, no_outbound_email):
+        with _oss():
+            api_client.post(
+                "/accounts/signup/",
+                _oss_signup_payload("oss-owner-f@futureagi.com"),
+                format="json",
+            )
+
+        no_outbound_email.assert_not_called()
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestOssSignupPasswordValidation:
+    """Django's validators now run, and their messages reach the form."""
+
+    @pytest.mark.parametrize("weak_password", ["abc", "password", "12345678"])
+    def test_weak_password_is_rejected_with_field_errors(
+        self, db, api_client, no_outbound_email, weak_password
+    ):
+        """Used to surface as the opaque catch-all; now it is per-field."""
+        with _oss():
+            response = api_client.post(
+                "/accounts/signup/",
+                _oss_signup_payload("oss-weak@futureagi.com", password=weak_password),
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        result = response.json()["result"]
+        assert result["error_code"] == "SIGNUP_VALIDATION_FAILED"
+        assert result["field_errors"]["password"]
+
+    def test_field_errors_are_renderable_strings(
+        self, db, api_client, no_outbound_email
+    ):
+        """The frontend prints these straight onto the form."""
+        with _oss():
+            response = api_client.post(
+                "/accounts/signup/",
+                _oss_signup_payload("oss-weak2@futureagi.com", password="abc"),
+                format="json",
+            )
+
+        messages = response.json()["result"]["field_errors"]["password"]
+        assert isinstance(messages, list)
+        assert all(isinstance(m, str) and m for m in messages)
+
+    def test_rejected_signup_creates_no_account(
+        self, db, api_client, no_outbound_email
+    ):
+        from accounts.models import User
+
+        with _oss():
+            api_client.post(
+                "/accounts/signup/",
+                _oss_signup_payload("oss-weak3@futureagi.com", password="abc"),
+                format="json",
+            )
+
+        assert not User.objects.filter(email="oss-weak3@futureagi.com").exists()
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestCloudSignupUnchanged:
+    """The OSS branch must not leak into Cloud/EE."""
+
+    def test_cloud_returns_the_check_your_email_message(
+        self, db, api_client, no_outbound_email
+    ):
+        with _oss(False), patch(
+            "accounts.views.signup.verify_recaptcha", return_value=True
+        ):
+            response = api_client.post(
+                "/accounts/signup/",
+                _oss_signup_payload("cloud-a@futureagi.com"),
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert "message" in response.json()["result"]
+
+    def test_cloud_never_returns_a_session(self, db, api_client, no_outbound_email):
+        """Tokens before verification would skip the verification entirely."""
+        with _oss(False), patch(
+            "accounts.views.signup.verify_recaptcha", return_value=True
+        ):
+            response = api_client.post(
+                "/accounts/signup/",
+                _oss_signup_payload("cloud-b@futureagi.com"),
+                format="json",
+            )
+
+        result = response.json()["result"]
+        assert "access" not in result
+        assert "refresh" not in result
+
+    def test_cloud_ignores_a_posted_password(
+        self, db, api_client, no_outbound_email
+    ):
+        """password is allowlisted on OSS only, so a cloud caller cannot set one."""
+        email = "cloud-c@futureagi.com"
+        with _oss(False), patch(
+            "accounts.views.signup.verify_recaptcha", return_value=True
+        ):
+            api_client.post(
+                "/accounts/signup/", _oss_signup_payload(email), format="json"
+            )
+
+        response = api_client.post(
+            "/accounts/token/",
+            {
+                "email": email,
+                "password": OSS_SIGNUP_PASSWORD,
+                "recaptcha_response": "",
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestOssPasswordResetLink:
+    """OSS returns the reset link instead of mailing it, once an operator opts in.
+
+    The endpoint takes no authentication and the link takes over the account it
+    names, so the link is withheld unless ``OSS_RETURN_PASSWORD_RESET_LINK`` says
+    the deployment already trusts everyone who can reach it.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _link_in_response(self):
+        with patch.dict(os.environ, {"OSS_RETURN_PASSWORD_RESET_LINK": "true"}):
+            yield
+
+    def test_link_is_returned_in_the_response(
+        self, api_client, user, no_outbound_email
+    ):
+        with _oss():
+            response = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": user.email},
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["reset_link"]
+
+    def test_link_points_at_the_verify_route(
+        self, api_client, user, no_outbound_email
+    ):
+        """Same URL the email would have carried, so the existing confirm screen
+        handles it unchanged."""
+        with _oss():
+            response = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": user.email},
+                format="json",
+            )
+
+        assert "/auth/jwt/verify/" in response.json()["result"]["reset_link"]
+
+    def test_no_email_is_sent(self, api_client, user, no_outbound_email):
+        """The send is skipped entirely, not merely ignored."""
+        with _oss():
+            api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": user.email},
+                format="json",
+            )
+
+        no_outbound_email.assert_not_called()
+
+    def test_unknown_address_is_told_so_plainly(
+        self, api_client, db, no_outbound_email
+    ):
+        """Self-hosted has no enumeration risk worth the confusion — an admin
+        who mistypes an address should be told, not handed a false success."""
+        with _oss():
+            response = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": "nobody-oss@futureagi.com"},
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "nobody-oss@futureagi.com" in response.json()["message"]
+
+    def test_unknown_address_still_gets_no_link(
+        self, api_client, db, no_outbound_email
+    ):
+        with _oss():
+            response = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": "nobody-oss@futureagi.com"},
+                format="json",
+            )
+
+        assert "reset_link" not in response.json().get("result", {})
+        no_outbound_email.assert_not_called()
+
+    def test_each_request_issues_a_fresh_link(
+        self, api_client, user, no_outbound_email
+    ):
+        with _oss():
+            first = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": user.email},
+                format="json",
+            ).json()["result"]["reset_link"]
+            second = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": user.email},
+                format="json",
+            ).json()["result"]["reset_link"]
+
+        assert first != second
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestCloudPasswordResetUnchanged:
+    def test_cloud_emails_the_link_and_does_not_return_it(
+        self, api_client, user, no_outbound_email
+    ):
+        with _oss(False):
+            response = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": user.email},
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert "reset_link" not in response.json()["result"]
+        no_outbound_email.assert_called_once()
+
+    def test_cloud_response_is_identical_for_known_and_unknown_addresses(
+        self, api_client, user, no_outbound_email
+    ):
+        """Cloud must not become an account-existence oracle."""
+        with _oss(False):
+            known = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": user.email},
+                format="json",
+            ).json()
+            unknown = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": "nobody-cloud@futureagi.com"},
+                format="json",
+            ).json()
+
+        assert set(known["result"]) == set(unknown["result"]) == {"message"}
+
+
+def _oss_gate(enabled=True):
+    return patch("tfc.ee_gating.is_oss", return_value=enabled)
+
+
+def _first_signup_payload(email):
+    return {
+        "email": email,
+        "full_name": "Solo Dev",
+        "company_name": "",
+        "password": OSS_SIGNUP_PASSWORD,
+    }
+
+
+@pytest.mark.integration
+class TestWorkEmailGate:
+    """Self-hosters run on personal addresses, so OSS accepts any domain.
+    Cloud still requires a work email unless an operator opts out."""
+
+    def test_oss_accepts_a_free_provider_address(
+        self, db, no_outbound_email, monkeypatch
+    ):
+        from accounts.utils import first_signup
+
+        monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
+
+        with _oss_gate(True):
+            user = first_signup(_first_signup_payload("solo.dev@gmail.com"))
+
+        assert user.email == "solo.dev@gmail.com"
+
+    def test_cloud_still_rejects_a_free_provider_address(
+        self, db, no_outbound_email, monkeypatch
+    ):
+        from accounts.utils import first_signup
+
+        monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
+
+        with _oss_gate(False):
+            with pytest.raises(Exception, match="not work email"):
+                first_signup(_first_signup_payload("solo.dev@gmail.com"))
+
+    def test_explicit_false_still_overrides_the_oss_default(
+        self, db, no_outbound_email, monkeypatch
+    ):
+        """An operator who sets it explicitly outranks the deployment default."""
+        from accounts.utils import first_signup
+
+        monkeypatch.setenv("ALLOW_ANY_EMAIL", "false")
+
+        with _oss_gate(True):
+            with pytest.raises(Exception, match="not work email"):
+                first_signup(_first_signup_payload("solo.dev@gmail.com"))
+
+    def test_explicit_true_still_opens_cloud_up(
+        self, db, no_outbound_email, monkeypatch
+    ):
+        from accounts.utils import first_signup
+
+        monkeypatch.setenv("ALLOW_ANY_EMAIL", "true")
+
+        with _oss_gate(False):
+            user = first_signup(_first_signup_payload("solo.dev@gmail.com"))
+
+        assert user.email == "solo.dev@gmail.com"
+
+    def test_work_email_is_accepted_on_either_deployment(
+        self, db, no_outbound_email, monkeypatch
+    ):
+        from accounts.utils import first_signup
+
+        monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
+
+        with _oss_gate(False):
+            user = first_signup(_first_signup_payload("owner@acmecorp.dev"))
+
+        assert user.email == "owner@acmecorp.dev"
+
+
+@pytest.mark.unit
+class TestAuthLinkBuilders:
+    def test_reset_link_uses_the_uid_and_token_it_is_given(self):
+        """The caller has already minted the AuthToken the token encodes;
+        deriving a second one here would leave a stray active token behind."""
+        from accounts.utils import build_password_reset_link
+
+        assert build_password_reset_link("UID123", "TOKEN456").endswith(
+            "/auth/jwt/verify/UID123/TOKEN456"
+        )
+
+    def test_invite_and_reset_links_target_different_routes(self, user):
+        from accounts.utils import build_invite_accept_link, build_password_reset_link
+
+        assert "/auth/jwt/invitation/accept/" in build_invite_accept_link(user)
+        assert "/auth/jwt/verify/" in build_password_reset_link("u", "t")
+
+
+@pytest.fixture
+def pending_invite(db, user):
+    """An invited-but-not-yet-active user, plus the PENDING invite row the
+    member list joins against."""
+    from accounts.models import User
+    from accounts.models.organization_invite import InviteStatus, OrganizationInvite
+    from tfc.constants.levels import Level
+
+    invitee = User.objects.create_user(
+        email="invitee-oss@futureagi.com",
+        password="unusable-until-accepted",
+        name="Invitee",
+        organization=user.organization,
+        is_active=False,
+    )
+    OrganizationInvite.objects.create(
+        organization=user.organization,
+        target_email=invitee.email,
+        status=InviteStatus.PENDING,
+        level=Level.VIEWER,
+        workspace_access=[],
+        invited_by=user,
+    )
+    return invitee
+
+
+def _member_rows(client):
+    response = client.get("/accounts/organization/members/")
+    assert response.status_code == status.HTTP_200_OK
+    result = response.json()["result"]
+    return result["results"] if isinstance(result, dict) else result
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestInviteLinkOnMemberList:
+    """Without SMTP the invite mail never lands, so an admin needs the link."""
+
+    def test_oss_exposes_the_link_on_pending_invites(
+        self, auth_client, pending_invite
+    ):
+        with _oss_gate(True):
+            rows = _member_rows(auth_client)
+
+        invite = next(r for r in rows if r.get("type") == "invite")
+        assert "/auth/jwt/invitation/accept/" in invite["invite_link"]
+
+    def test_cloud_keeps_the_link_email_only(self, auth_client, pending_invite):
+        with _oss_gate(False):
+            rows = _member_rows(auth_client)
+
+        invite = next(r for r in rows if r.get("type") == "invite")
+        assert "invite_link" not in invite
+
+    def test_active_members_never_carry_a_link(self, auth_client, pending_invite):
+        """Only an unclaimed invite has a link; an active account must not."""
+        with _oss_gate(True):
+            rows = _member_rows(auth_client)
+
+        for row in rows:
+            if row.get("type") == "member":
+                assert "invite_link" not in row
+
+
+INVITE_CREATE_URL = "/accounts/organization/invite/"
+FRESH_INVITEE = "fresh-invitee@futureagi.com"
+
+
+def _invite(client, emails):
+    from tfc.constants.levels import Level
+
+    return client.post(
+        INVITE_CREATE_URL,
+        {"emails": emails, "org_level": Level.VIEWER},
+        format="json",
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestInviteLinkOnInviteCreate:
+    """Returning the link on create saves the admin a trip to the member list."""
+
+    def test_oss_returns_a_link_per_new_invite(self, auth_client):
+        with _oss_gate(True):
+            response = _invite(auth_client, [FRESH_INVITEE])
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["invited"] == [FRESH_INVITEE]
+        (invite,) = result["invites"]
+        assert invite["email"] == FRESH_INVITEE
+        assert "/auth/jwt/invitation/accept/" in invite["invite_link"]
+
+    def test_cloud_keeps_the_link_email_only(self, auth_client):
+        with _oss_gate(False):
+            response = _invite(auth_client, [FRESH_INVITEE])
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["invited"] == [FRESH_INVITEE]
+        assert "invites" not in result
+
+    def test_already_active_accounts_get_no_link(self, auth_client, second_user):
+        """An account that can already log in has nothing to accept."""
+        with _oss_gate(True):
+            response = _invite(auth_client, [FRESH_INVITEE, second_user.email])
+
+        result = response.json()["result"]
+        assert set(result["invited"]) == {FRESH_INVITEE, second_user.email}
+        assert [i["email"] for i in result["invites"]] == [FRESH_INVITEE]

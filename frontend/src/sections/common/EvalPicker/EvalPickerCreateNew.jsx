@@ -29,7 +29,7 @@ import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import { buildApiFilterArray } from "src/sections/tasks/components/TaskLivePreview";
 import { ROW_TYPE_LABELS } from "src/utils/constants";
 import { useSnackbar } from "notistack";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
 
 // Same components as EvalCreatePage
 import { useCreateEval } from "src/sections/evals/hooks/useCreateEval";
@@ -126,7 +126,15 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     filterForm: localFilterForm,
   } = useEvalPickerContext();
   const { enqueueSnackbar } = useSnackbar();
-  const { isOSS, isLoading: deploymentModeLoading } = useDeploymentMode();
+  // Fail closed while capabilities load (both flags true) so we never flash
+  // Turing models or agent evals as available before the fetch resolves.
+  const { locked: fagiLocked, isLoading: capabilitiesLoading } =
+    useFeatureLocked(CAPABILITY.TURING_MODELS);
+  const { locked: agentEvalLocked } = useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  // Confirmed denial (loaded AND not allowed). Seed model/evalType defaults raw
+  // and only strip them on confirmed denial — seeding off `locked` (true while
+  // loading) blanks the default model / flips the eval type for entitled users.
+  const fagiModelsDenied = fagiLocked && !capabilitiesLoading;
   const createEval = useCreateEval();
   const createComposite = useCreateCompositeEval();
   const sourceRef = useRef(null);
@@ -134,11 +142,11 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   // Form state (same as EvalCreatePage)
   const [name, setName] = useState("");
   const [mode, setMode] = useState("single");
-  const [evalType, setEvalType] = useState(isOSS ? "llm" : "agent");
+  const [evalType, setEvalType] = useState("agent");
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState(PYTHON_CODE_TEMPLATE);
   const [codeLanguage, setCodeLanguage] = useState("python");
-  const [model, setModel] = useState(isOSS ? "" : "turing_large");
+  const [model, setModel] = useState("turing_large");
   const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
@@ -156,10 +164,16 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
 
   const evalTypeDefaulted = useRef(false);
   useEffect(() => {
-    if (deploymentModeLoading || evalTypeDefaulted.current) return;
+    if (capabilitiesLoading || evalTypeDefaulted.current) return;
     evalTypeDefaulted.current = true;
-    setEvalType(isOSS ? "llm" : "agent");
-  }, [deploymentModeLoading, isOSS]);
+    setEvalType(agentEvalLocked ? "llm" : "agent");
+  }, [capabilitiesLoading, agentEvalLocked]);
+
+  // Drop the seeded Turing default only once denial is confirmed, so entitled
+  // users keep "turing_large" through the capabilities fetch.
+  useEffect(() => {
+    if (fagiModelsDenied && FAGI_MODEL_VALUES.has(model)) setModel("");
+  }, [fagiModelsDenied, model]);
 
   const handleSourceRowTypeChange = useCallback((rt) => {
     const map = TRACING_ROW_TYPE_TO_KEY;
@@ -348,7 +362,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
 
   // Test
   const handleTestEvaluation = useCallback(async () => {
-    if (isOSS && evalType !== "code" && !model) {
+    if (fagiLocked && evalType !== "code" && !model) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
       return;
@@ -366,7 +380,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     }
   }, [
     draftId,
-    isOSS,
+    fagiLocked,
     evalType,
     model,
     buildPayload,
@@ -503,22 +517,22 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
 
   // Save & Add
   const handleSaveAndAdd = useCallback(async () => {
-    if (isOSS && evalType === "agent") {
+    if (agentEvalLocked && evalType === "agent") {
       enqueueSnackbar(
-        "Agent evaluations are not available on OSS. Use LLM-as-a-Judge or Code evaluations instead.",
+        "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
         { variant: "error" },
       );
       return;
     }
-    if (isOSS && FAGI_MODEL_VALUES.has(model)) {
+    if (fagiLocked && FAGI_MODEL_VALUES.has(model)) {
       enqueueSnackbar(
-        "Turing models are not available in OSS. Please select your own model.",
+        "Turing models aren't enabled for this workspace. Please select your own model.",
         { variant: "error" },
       );
       setOpenModelMenuSignal((n) => n + 1);
       return;
     }
-    if (isOSS && evalType !== "code" && !model) {
+    if (fagiLocked && evalType !== "code" && !model) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
       return;
@@ -581,7 +595,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     instructions,
     contextOptions,
     enqueueSnackbar,
-    isOSS,
+    agentEvalLocked,
+    fagiLocked,
     source,
     onFiltersChange,
     localFilterForm,
@@ -723,7 +738,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     return [...new Set(vars)];
   }, [instructions, evalType, templateFormat, code, codeLanguage]);
 
-  if (deploymentModeLoading) {
+  if (capabilitiesLoading) {
     return null;
   }
 
@@ -928,9 +943,9 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                 <Tabs
                   value={evalType}
                   onChange={(_, val) => {
-                    if (isOSS && val === "agent") {
+                    if (agentEvalLocked && val === "agent") {
                       enqueueSnackbar(
-                        "Agent evaluations require an Enterprise (EE) license. Upgrade to EE license key to enable.",
+                        "Agent evaluations aren't enabled for this workspace.",
                         { variant: "info" },
                       );
                       return;
@@ -965,7 +980,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   }}
                 >
                   {EVAL_TYPE_TABS.map((tab) => {
-                    const locked = isOSS && tab.value === "agent";
+                    const locked = agentEvalLocked && tab.value === "agent";
                     return (
                       <Tab
                         key={tab.value}
@@ -976,7 +991,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                               show
                               type=""
                               arrow
-                              title="Agent evaluations require an Enterprise (EE) license. Upgrade to EE license key to enable."
+                              title="Agent evaluations aren't enabled for this workspace."
                             >
                               <Box
                                 sx={{

@@ -1,4 +1,5 @@
-import { Box, Typography, Chip, CircularProgress } from "@mui/material";
+import { Box, Typography, Chip } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import { alpha } from "@mui/material/styles";
 import React from "react";
 import PropTypes from "prop-types";
@@ -113,7 +114,7 @@ const TaskLogs = ({ evalTaskId }) => {
             zIndex: 1,
           }}
         >
-          <CircularProgress />
+          <LoadingScreen variant="orbit" />
         </Box>
       </ShowComponent>
 
