@@ -92,6 +92,7 @@ x-backend-env: &backend-env
   # this False until the cutover playbook in docs/CH25_MIGRATION.md is
   # complete.
   CH25_DROP_LEGACY_CDC_CHAIN: ${CH25_DROP_LEGACY_CDC_CHAIN:-true}
+  CH25_EVAL_LOGGER_TABLE: ${CH25_EVAL_LOGGER_TABLE:-tracer_eval_logger}
 
   CH25_QUERY_TYPES_V2_ONLY: ${CH25_QUERY_TYPES_V2_ONLY:-span_list,trace_list,session_list,voice_call_list,dashboard,monitor_metrics,eval_metrics,filter_builder,trace_detail,annotation_labels}
 
@@ -135,7 +136,7 @@ x-backend-env: &backend-env
   # Future AGI Cloud API (optional)
   FUTURE_AGI_CLOUD_API_KEY: ${FUTURE_AGI_CLOUD_API_KEY:-}
   FUTURE_AGI_CLOUD_API_URL: ${FUTURE_AGI_CLOUD_API_URL:-https://api.futureagi.com}
-
+  TEMPORAL_TEST_EXECUTION_ENABLED: ${TEMPORAL_TEST_EXECUTION_ENABLED:-true}
 services:
   # ==========================================================================
   # Application

@@ -340,7 +340,7 @@ const SettingsIcons = {
 
 export function useNavSettingsData() {
   const { user } = useAuthContext();
-  const { isOSS } = useDeploymentMode();
+  const { isCloud } = useDeploymentMode();
   const { currentWorkspaceRole } = useWorkspace();
 
   const { data: workspaces = [] } = useWorkspacesList({
@@ -428,21 +428,21 @@ export function useNavSettingsData() {
 
     // Section 3: Organization (based on role permissions for each item)
     const orgItems = [];
-    if (!isOSS && canAccess(RoutesName.usageSummary)) {
+    if (isCloud && canAccess(RoutesName.usageSummary)) {
       orgItems.push({
         title: "Usage Summary",
         path: "/dashboard/settings/usage-summary",
         icon: SettingsIcons.Summary,
       });
     }
-    if (!isOSS && canAccess(RoutesName.planAndPricing)) {
+    if (isCloud && canAccess(RoutesName.planAndPricing)) {
       orgItems.push({
         title: "Plans & Pricing",
         path: "/dashboard/settings/pricing",
         icon: SettingsIcons.Pricing,
       });
     }
-    if (!isOSS && canAccess(RoutesName.billing)) {
+    if (isCloud && canAccess(RoutesName.billing)) {
       orgItems.push({
         title: "Billing",
         path: "/dashboard/settings/billing",
@@ -472,14 +472,13 @@ export function useNavSettingsData() {
         icon: SettingsIcons.Security,
       });
     }
-    // EE Licenses - hidden (feature not available yet)
-    // if (effectiveRole === ROLES.OWNER) {
-    //   orgItems.push({
-    //     title: "EE Licenses",
-    //     path: "/dashboard/settings/ee-licenses",
-    //     icon: SettingsIcons.Keys,
-    //   });
-    // }
+    if (!isCloud && isOrgAdminPlus) {
+      orgItems.push({
+        title: "License",
+        path: "/dashboard/settings/ee-licenses",
+        icon: SettingsIcons.Keys,
+      });
+    }
     if (wsEnabled && canAccess(RoutesName.workspace)) {
       orgItems.push({
         title: "Workspaces",
@@ -514,7 +513,7 @@ export function useNavSettingsData() {
     user,
     wsEnabled,
     workspaces,
-    isOSS,
+    isCloud,
   ]);
 
   return sections;

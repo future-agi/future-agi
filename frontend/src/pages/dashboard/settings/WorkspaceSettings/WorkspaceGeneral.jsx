@@ -8,9 +8,9 @@ import {
   Typography,
   TextField,
   Button,
-  CircularProgress,
 } from "@mui/material";
 import { useSnackbar } from "notistack";
+import { LoadingScreen } from "src/components/loading-screen";
 import axiosInstance, { endpoints } from "src/utils/axios";
 import { useAuthContext } from "src/auth/hooks";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
@@ -78,16 +78,7 @@ export default function WorkspaceGeneral() {
 
   if (isLoading) {
     return (
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          height: 300,
-        }}
-      >
-        <CircularProgress />
-      </Box>
+      <LoadingScreen variant="orbit" sx={{ height: "100%", minHeight: "60vh" }} />
     );
   }
 

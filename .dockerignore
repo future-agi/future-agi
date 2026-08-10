@@ -165,3 +165,10 @@ changelog/
 **/*.bak
 **/*.backup
 **/celerybeat-schedule
+
+# Private EE artifacts: gitignored, so a fresh clone never has them. Exclude
+# from local builds too so the image matches what an OSS user can build.
+futureagi/ee/cloud/
+futureagi/ee/billing.yaml
+futureagi/ee/Dockerfile.cloud
+futureagi/ee/.github/

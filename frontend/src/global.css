@@ -71,6 +71,9 @@
   --syntax-value-blue: #2e7cd6;
   --syntax-label-orange: #cf5e0b;
   --syntax-punctuation: #808080;
+  --syntax-string: #b5520a;
+  --syntax-number: #1750eb;
+  --syntax-boolean: #9333ea;
 
   /* Chip colors */
   --chip-success-bg: #00a2510d;
@@ -177,6 +180,9 @@
   --syntax-value-blue: #6ba8e6;
   --syntax-label-orange: #e89b5a;
   --syntax-punctuation: #909090;
+  --syntax-string: #e89b5a;
+  --syntax-number: #6ba8e6;
+  --syntax-boolean: #c4b5fd;
 
   /* Chip colors */
   --chip-success-bg: rgba(34, 197, 94, 0.08);
@@ -423,7 +429,7 @@ body {
   --vscode-editor-background: var(--monaco-bg);
   --vscode-editorGutter-background: var(--monaco-gutter-bg);
 }
-.ag-row-focus.active-row {
+.ag-row.active-row {
   background-color: var(--surface-row-active);
 }
 

@@ -255,15 +255,31 @@ def embed_trace_inputs(trace_ids: List[str], project_id: str) -> int:
         logger.info("no_root_inputs_found", project_id=project_id)
         return 0
 
-    # Kevinify then embed
-    texts = [inp.kevinified_text for inp in inputs]
+    # Kevinify, then drop anything that reduced to nothing before embedding.
+    # The embedder raises on an empty string, and one such trace would take the
+    # whole batch down with it — losing the embedding for every OTHER trace in
+    # the call, silently, since the caller only sees a count. kevinified_text
+    # also returns None when the compression module isn't installed, so this
+    # guards both.
+    pairs = [(inp, inp.kevinified_text) for inp in inputs]
+    usable = [(inp, text) for inp, text in pairs if text and text.strip()]
+    skipped = len(pairs) - len(usable)
+    if not usable:
+        logger.info(
+            "no_embeddable_root_inputs", project_id=project_id, skipped=skipped
+        )
+        return 0
+
+    embeddable = [inp for inp, _ in usable]
+    texts = [text for _, text in usable]
     embeddings = embed_texts(texts)
 
-    stored = store_trace_input_embeddings(inputs, embeddings)
+    stored = store_trace_input_embeddings(embeddable, embeddings)
     logger.info(
         "trace_inputs_embedded",
         project_id=project_id,
         traces_with_input=len(inputs),
+        skipped_empty=skipped,
         stored=stored,
     )
     return stored

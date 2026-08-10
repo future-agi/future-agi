@@ -247,7 +247,7 @@ class TestVoiceAnnotationRegressionE2E:
         root_conversation_span,
     ):
         queue = _queue(
-            "TH-4825 direct call trace queue",
+            "direct call trace queue",
             organization,
             workspace,
             user,
@@ -284,7 +284,7 @@ class TestVoiceAnnotationRegressionE2E:
         observe_project,
     ):
         queue = _queue(
-            "TH-5175 in-progress trace queue",
+            "in-progress trace queue",
             organization,
             workspace,
             user,
@@ -341,7 +341,7 @@ class TestVoiceAnnotationRegressionE2E:
         root_conversation_span,
     ):
         queue = _queue(
-            "TH-5175 filter skips in-progress traces",
+            "filter skips in-progress traces",
             organization,
             workspace,
             user,
@@ -468,7 +468,7 @@ class TestVoiceAnnotationRegressionE2E:
         thumbs_label,
     ):
         queue = _queue(
-            "TH-4782 voice simulation queue",
+            "voice simulation queue",
             organization,
             workspace,
             user,
@@ -546,7 +546,7 @@ class TestVoiceAnnotationRegressionE2E:
         seed_ch_span(root_conversation_span)
 
         queue = _queue(
-            "TH-4055 trace call queue",
+            "trace call queue",
             organization,
             workspace,
             user,
@@ -655,7 +655,7 @@ class TestVoiceAnnotationRegressionE2E:
         seed_ch_span(root_conversation_span)
 
         queue = _queue(
-            "TH-4861 trace note separation queue",
+            "trace note separation queue",
             organization,
             workspace,
             user,
@@ -744,7 +744,7 @@ class TestVoiceAnnotationRegressionE2E:
         seed_ch_span(root_conversation_span)
 
         queue = _queue(
-            "TH-4055 default observe queue",
+            "default observe queue",
             organization,
             workspace,
             user,
@@ -866,7 +866,19 @@ class TestVoiceAnnotationRegressionE2E:
         root_conversation_span,
         simulation_call_execution,
     ):
-        from tracer.tests._ch_seed import seed_ch_span
+        """voice_call_detail must surface the simulation path context.
+
+        The ``OPTIMIZE TABLE spans FINAL`` below works around a production bug:
+        ``voice_call_detail``'s root-span query has no ``FINAL`` and no
+        ``argMax(_, _version)`` dedup, so it can return a stale
+        ReplacingMergeTree row and drop ``call_execution_id``. Delete the
+        OPTIMIZE once the query is fixed.
+        """
+        from tracer.tests._ch_seed import (
+            _get_ch_client,
+            seed_ch_span,
+            seed_ch_trace,
+        )
 
         ScenarioGraph.objects.create(
             name="Order flow",
@@ -902,6 +914,18 @@ class TestVoiceAnnotationRegressionE2E:
 
         # Seed AFTER .save() so CH has the updated span_attributes/eval_attributes
         seed_ch_span(root_conversation_span)
+        # voice_call_detail resolves the trace's project from the CH `traces` table
+        # (PG tracer_trace is dropped on CH25), so the trace row must be seeded too;
+        # seeding only the span leaves the traces lookup empty (404).
+        seed_ch_trace(observe_trace)
+        # The fixture seeded this span without eval_attributes and the re-seed
+        # above added them, so two ReplacingMergeTree rows share the id. Merge
+        # them so the later, eval-bearing row wins deterministically.
+        _ch = _get_ch_client()
+        try:
+            _ch.command("OPTIMIZE TABLE spans FINAL")
+        finally:
+            _ch.close()
 
         resp = auth_client.get(
             "/tracer/trace/voice_call_detail/",
@@ -940,7 +964,7 @@ class TestVoiceAnnotationRegressionE2E:
             status="OK",
         )
         queue = _queue(
-            "TH-388 navigation queue",
+            "navigation queue",
             organization,
             workspace,
             user,
@@ -1056,7 +1080,7 @@ class TestVoiceAnnotationRegressionE2E:
             status="OK",
         )
         queue = _queue(
-            "TH-3884 resume skipped queue",
+            "resume skipped queue",
             organization,
             workspace,
             user,
@@ -1126,7 +1150,7 @@ class TestVoiceAnnotationRegressionE2E:
         )
 
         queue = _queue(
-            "TH-3535 metrics queue",
+            "metrics queue",
             organization,
             workspace,
             user,
@@ -1182,7 +1206,7 @@ class TestVoiceAnnotationRegressionE2E:
         # CH-native, so the PG-only write above must be mirrored.
         seed_ch_span(root_conversation_span)
         queue = _queue(
-            "TH-4735 export queue",
+            "export queue",
             organization,
             workspace,
             user,
@@ -2349,7 +2373,7 @@ class TestQueueExportQueryCount:
 
 
 class TestAnnotateDetailClickHouseReads:
-    """TH-7104: opening a voice item must not re-read the same trace from CH."""
+    """Opening a voice item must not re-read the same trace from CH."""
 
     def test_annotate_detail_reads_trace_root_once_scoped_to_project(
         self,
@@ -2373,7 +2397,7 @@ class TestAnnotateDetailClickHouseReads:
         from tracer.services.clickhouse.v2 import span_reader
 
         queue = _queue(
-            "TH-7104 CH read guard",
+            "CH read guard",
             organization,
             workspace,
             user,
@@ -2413,12 +2437,12 @@ class TestAnnotateDetailClickHouseReads:
         assert len(calls) == 1, (
             f"annotate-detail made {len(calls)} ClickHouse root-span reads for "
             "one trace; content, preview and the notes target must share one "
-            "cached read (TH-7104)."
+            "cached read."
         )
         assert calls[0] == str(observe_project.id), (
             "the root-span read was not scoped to the item's project, so it "
-            "cannot prune the spans PK prefix and scans every tenant "
-            f"(TH-7104). project_id passed: {calls[0]!r}"
+            "cannot prune the spans PK prefix and scans every tenant. "
+            f"project_id passed: {calls[0]!r}"
         )
 
     def test_annotate_detail_reads_a_span_item_once(
@@ -2442,7 +2466,7 @@ class TestAnnotateDetailClickHouseReads:
         from tracer.services.clickhouse.v2 import span_reader
 
         queue = _queue(
-            "TH-7104 span read guard",
+            "span read guard",
             organization,
             workspace,
             user,
@@ -2488,13 +2512,13 @@ class TestAnnotateDetailClickHouseReads:
         assert len(calls) == 1, (
             f"annotate-detail made {len(calls)} ClickHouse span reads "
             f"({[c[0] for c in calls]}) for one item; the notes target, content "
-            "and preview must share one cached read (TH-7104)."
+            "and preview must share one cached read."
         )
 
 
 @pytest.mark.django_db
 class TestQueueItemSourcePreviewCapture:
-    """TH-7211: rendering the items grid must not read ClickHouse.
+    """Rendering the items grid must not read ClickHouse.
 
     A page used to cost one ``spans FINAL`` merge — ~1.5-2.3s on a large voice
     project — purely to show a name and two 200-char previews. The preview is
@@ -2536,7 +2560,7 @@ class TestQueueItemSourcePreviewCapture:
         from tracer.services.clickhouse.v2 import span_reader
 
         queue = _queue(
-            "TH-7211 preview capture",
+            "preview capture",
             organization,
             workspace,
             user,
@@ -2570,7 +2594,7 @@ class TestQueueItemSourcePreviewCapture:
         assert len(calls) == 0, (
             f"items list made {len(calls)} ClickHouse root-span read(s) for a page "
             "whose previews were already captured; the capture exists precisely "
-            "to remove that read (TH-7211)."
+            "to remove that read."
         )
         # and the payload the grid renders is unchanged
         assert resp.data["results"][0]["source_preview"] == live_preview
@@ -2592,7 +2616,7 @@ class TestQueueItemSourcePreviewCapture:
         someone changed one shape without the other.
         """
         queue = _queue(
-            "TH-7211 preview parity",
+            "preview parity",
             organization,
             workspace,
             user,
@@ -2686,7 +2710,7 @@ class TestQueueItemSourcePreviewCapture:
         every row back to a live ClickHouse read with nothing failing.
         """
         queue = _queue(
-            "TH-7211 filter capture",
+            "filter capture",
             organization,
             workspace,
             user,
@@ -2736,7 +2760,7 @@ class TestQueueItemSourcePreviewCapture:
         )
 
         queue = _queue(
-            "TH-7211 backfill sentinel",
+            "backfill sentinel",
             organization,
             workspace,
             user,
@@ -2782,7 +2806,7 @@ class TestQueueItemSourcePreviewCapture:
         the fallback is the normal path for existing data, not an edge case.
         """
         queue = _queue(
-            "TH-7211 preview fallback",
+            "preview fallback",
             organization,
             workspace,
             user,
@@ -2821,7 +2845,7 @@ class TestQueueItemSourcePreviewCapture:
         )
 
         queue = _queue(
-            "TH-7211 backfill",
+            "backfill",
             organization,
             workspace,
             user,

@@ -20,11 +20,21 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import PropTypes from "prop-types";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Iconify from "src/components/iconify";
 import KeysDrawer from "src/components/custom-model-dropdown/KeysDrawer";
 import { useDebounce } from "src/hooks/use-debounce";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import {
+  useFeatureAllowed,
+  useFeatureLocked,
+  CAPABILITY,
+} from "src/hooks/useCapabilities";
 import { useNavigate } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
 import { getProviderLogoFilterSx } from "./modelLogo";
@@ -150,8 +160,8 @@ const FAGI_MODELS = [
 
 export const FAGI_MODEL_VALUES = new Set(FAGI_MODELS.map((m) => m.value));
 
-const FAGI_MODEL_OSS_TOOLTIP =
-  "Turing models are not available on self-hosted (OSS) deployments. Select your own model, or upgrade your plan.";
+const FAGI_MODEL_LOCKED_TOOLTIP =
+  "Turing models aren't enabled for this workspace. Select your own model.";
 
 const CHIP_STYLES = {
   backgroundColor: (theme) =>
@@ -596,6 +606,11 @@ const ModelSelector = ({
   activeContextOptions: activeContextOptionsProp,
   onActiveContextOptionsChange,
   hideDatasetContextToggle = false,
+  // Bump this counter to pop the model menu open from the parent — used when
+  // an action is blocked because no model is picked, so the snackbar and the
+  // menu arrive together. A counter rather than a boolean so repeat attempts
+  // re-open it without the parent having to reset the flag.
+  openModelMenuSignal = 0,
 }) => {
   // For each field, pick "controlled" (parent-driven) or "uncontrolled" (local state).
   const [modeLocal, setModeLocal] = useState("agent");
@@ -607,6 +622,12 @@ const ModelSelector = ({
 
   const [modeAnchor, setModeAnchor] = useState(null);
   const [modelAnchor, setModelAnchor] = useState(null);
+  const modelPillRef = useRef(null);
+
+  useEffect(() => {
+    if (!openModelMenuSignal || disabled) return;
+    setModelAnchor(modelPillRef.current);
+  }, [openModelMenuSignal, disabled]);
   const [modelSearch, setModelSearch] = useState("");
   const debouncedModelSearch = useDebounce(modelSearch.trim(), 400);
   const [plusAnchor, setPlusAnchor] = useState(null);
@@ -669,20 +690,27 @@ const ModelSelector = ({
   const debouncedKbSearch = useDebounce(kbSearch.trim(), 400);
   const [keysDrawerModel, setKeysDrawerModel] = useState(null);
   const navigate = useNavigate();
-  const { isOSS, isLoading: deploymentModeLoading } = useDeploymentMode();
-  const fagiModelsLocked = isOSS && !deploymentModeLoading;
+  // Fail closed while capabilities load: never flash Turing models as
+  // selectable during the fetch. `fagiModelsDenied` is the *confirmed* denial
+  // (loaded AND not allowed) used only to clear a seeded selection below — we
+  // must not wipe a legitimately-preselected Turing model mid-fetch.
+  const { locked: fagiModelsLocked, isLoading: capabilitiesLoading } =
+    useFeatureLocked(CAPABILITY.TURING_MODELS);
+  const fagiModelsDenied = fagiModelsLocked && !capabilitiesLoading;
+  const { allowed: falconAllowed } = useFeatureAllowed(CAPABILITY.FALCON_AI);
 
   const currentMode = MODES.find((m) => m.value === mode) || MODES[1];
 
-  // Fetch real MCP connectors from Falcon AI API. Falcon AI is EE-only;
-  // skip the call in OSS so the ee_stub 402 doesn't fire a snackbar.
+  // Fetch real MCP connectors from Falcon AI API. Falcon AI needs a
+  // license/plan; skip the call when locked so the 402 doesn't fire a
+  // snackbar.
   const { data: connectorsData } = useInfiniteQuery({
     queryKey: ["falcon-mcp-connectors"],
     queryFn: () => axios.get(endpoints.falconAI.connectors),
     getNextPageParam: () => null,
     initialPageParam: 1,
     staleTime: 60000,
-    enabled: !isOSS,
+    enabled: falconAllowed,
   });
 
   const connectors = useMemo(() => {
@@ -784,7 +812,6 @@ const ModelSelector = ({
     );
   }, [connectors, connectorSearch]);
 
-
   const filteredFagiModels = useMemo(() => {
     if (!modelSearch) return FAGI_MODELS;
     return FAGI_MODELS.filter((m) =>
@@ -792,12 +819,14 @@ const ModelSelector = ({
     );
   }, [modelSearch]);
 
-  // OSS can't run Turing models, but callers still seed `model` with
+  // When Turing models aren't enabled, callers still seed `model` with
   // "turing_large". Drop it so the pill reads "Select model" instead of
-  // preselecting something the backend would 402 on save.
+  // preselecting something the backend would 402 on save. Gate on the
+  // *confirmed* denial, not the loading-time lock, or we'd clear a legitimate
+  // selection before capabilities resolve.
   useEffect(() => {
-    if (fagiModelsLocked && FAGI_MODEL_VALUES.has(model)) onModelChange("");
-  }, [fagiModelsLocked, model, onModelChange]);
+    if (fagiModelsDenied && FAGI_MODEL_VALUES.has(model)) onModelChange("");
+  }, [fagiModelsDenied, model, onModelChange]);
 
   return (
     <Box
@@ -847,6 +876,7 @@ const ModelSelector = ({
 
       {/* ── Model selector (right) ── */}
       <Box
+        ref={modelPillRef}
         onClick={(e) => !disabled && setModelAnchor(e.currentTarget)}
         sx={{
           display: "inline-flex",
@@ -1166,7 +1196,7 @@ const ModelSelector = ({
               {filteredFagiModels.map((m) => (
                 <Tooltip
                   key={m.value}
-                  title={fagiModelsLocked ? FAGI_MODEL_OSS_TOOLTIP : ""}
+                  title={fagiModelsLocked ? FAGI_MODEL_LOCKED_TOOLTIP : ""}
                   placement="right"
                   arrow
                 >
@@ -1210,9 +1240,7 @@ const ModelSelector = ({
                           color="text.secondary"
                           sx={{ fontSize: "11px" }}
                         >
-                          {fagiModelsLocked
-                            ? "Not available on self-host"
-                            : m.description}
+                          {fagiModelsLocked ? "Not enabled" : m.description}
                         </Typography>
                       </Box>
                       {fagiModelsLocked ? (
@@ -1443,7 +1471,9 @@ const ModelSelector = ({
                   width: 12,
                   height: 12,
                   borderRadius: "50%",
-                  backgroundColor: "#fff",
+                  backgroundColor: useInternet
+                    ? "primary.contrastText"
+                    : "common.white",
                   position: "absolute",
                   top: 2,
                   left: useInternet ? 18 : 2,
@@ -1930,6 +1960,7 @@ ModelSelector.propTypes = {
   showMode: PropTypes.bool,
   showPlus: PropTypes.bool,
   hideDatasetContextToggle: PropTypes.bool,
+  openModelMenuSignal: PropTypes.number,
 };
 
 export default ModelSelector;

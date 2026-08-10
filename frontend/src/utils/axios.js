@@ -591,6 +591,9 @@ export const endpoints = {
       deploymentInfo: apiPath("/api/deployment-info/"),
     },
   },
+  ossSetup: {
+    setupChecks: apiPath("/api/setup-checks/"),
+  },
   tools: {
     create: apiPath("/model-hub/tools/"),
     update: (id) => apiPath("/model-hub/tools/{id}/", { id: id }),
