@@ -10,7 +10,9 @@ import {
 import PropTypes from "prop-types";
 import React, { useCallback, useEffect, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
+import { useQueryClient } from "@tanstack/react-query";
 import Iconify from "src/components/iconify";
+import axios, { endpoints } from "src/utils/axios";
 import EvalPickerProvider from "./context/EvalPickerProvider";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
 import EvalPickerList from "./EvalPickerList";
@@ -38,12 +40,41 @@ const EvalPickerContent = ({ onStepChange }) => {
     keepOpenAfterSave,
   } = useEvalPickerContext();
 
+  const queryClient = useQueryClient();
   const [isSaving, setIsSaving] = useState(false);
 
   // Notify parent when step changes (for drawer width)
   useEffect(() => {
     onStepChange?.(step);
   }, [step, onStepChange]);
+  const needsModelSelection = useCallback(
+    async (evalData) => {
+      const normalized = normalizeEvalPickerEval(evalData);
+      if (normalized?.evalType === "code") return false;
+      if (normalized?.model) return false;
+
+      const templateId =
+        normalized?.templateId || evalData?.template_id || evalData?.id;
+      if (!templateId) return false;
+
+      try {
+        const detail = await queryClient.fetchQuery({
+          queryKey: ["evals", "detail", templateId],
+          queryFn: async () => {
+            const { data } = await axios.get(
+              endpoints.develop.eval.getEvalDetail(templateId),
+            );
+            return data?.result;
+          },
+          staleTime: 30000,
+        });
+        return !detail?.model;
+      } catch {
+        return false;
+      }
+    },
+    [queryClient],
+  );
 
   // From the list (expand → "Add Evaluation"), go directly to config.
   // When skipConfig is set, fire onEvalAdded immediately with the raw
@@ -54,6 +85,11 @@ const EvalPickerContent = ({ onStepChange }) => {
       if (skipConfig) {
         setIsSaving(true);
         try {
+          if (await needsModelSelection(evalData)) {
+            setSelectedEval(evalData);
+            setStep("config");
+            return;
+          }
           await onEvalAdded?.(normalizeEvalPickerEval(evalData));
           onClose?.();
         } catch {
@@ -66,7 +102,14 @@ const EvalPickerContent = ({ onStepChange }) => {
       setSelectedEval(evalData);
       setStep("config");
     },
-    [skipConfig, onEvalAdded, onClose, setSelectedEval, setStep],
+    [
+      skipConfig,
+      needsModelSelection,
+      onEvalAdded,
+      onClose,
+      setSelectedEval,
+      setStep,
+    ],
   );
 
   // In edit mode, back closes the drawer (returns to the SavedEvalsList).
