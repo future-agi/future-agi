@@ -24,12 +24,13 @@ from tracer.services.clickhouse.v2 import get_reader
 if TYPE_CHECKING:
     from tracer.models.eval_task import EvalTask
 
-# row_type → (UI list builder query type, identity column the builder emits).
+# row_type → (UI list builder query type, identity column, event-time column —
+# the last two both projected by the builder's build_id_query).
 _BUILDER_BY_ROW_TYPE = {
-    "spans": ("SPAN_LIST", "id"),
-    "voiceCalls": ("VOICE_CALL_LIST", "id"),
-    "traces": ("TRACE_LIST", "trace_id"),
-    "sessions": ("SESSION_LIST", "session_id"),
+    "spans": ("SPAN_LIST", "id", "start_time"),
+    "voiceCalls": ("VOICE_CALL_LIST", "id", "start_time"),
+    "traces": ("TRACE_LIST", "trace_id", "start_time"),
+    "sessions": ("SESSION_LIST", "session_id", "session_start"),
 }
 
 
@@ -89,7 +90,7 @@ def _build_sample_query(
     from tracer.services.clickhouse.v2.dispatch import get_v2_class
 
     try:
-        query_type, id_col = _BUILDER_BY_ROW_TYPE[row_type]
+        query_type, id_col, sort_col = _BUILDER_BY_ROW_TYPE[row_type]
     except KeyError:
         raise ValueError(f"Unsupported row_type: {row_type!r}") from None
 
@@ -152,11 +153,12 @@ def _build_sample_query(
         params["lim"] = int(limit)
 
     # modulo() not `%` — clickhouse-connect treats a literal `%` as a
-    # parameter-format marker. Order by the id for a stable limit prefix.
+    # parameter-format marker. Newest first, with the id breaking ties so
+    # colliding timestamps still give a stable limit prefix.
     sql = (
         f"SELECT {id_col} FROM ({inner_sql}) "
         f"WHERE modulo(cityHash64(%(salt)s, toString({id_col})), 100) < %(rate)s "
         f"{ot_pred} "
-        f"ORDER BY {id_col} {limit_sql}"
+        f"ORDER BY {sort_col} DESC, {id_col} DESC {limit_sql}"
     )
     return sql, params

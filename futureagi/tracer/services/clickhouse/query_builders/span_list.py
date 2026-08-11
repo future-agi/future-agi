@@ -340,7 +340,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             self.params["id_limit"] = int(limit)
 
         query = f"""
-        SELECT id
+        SELECT id, start_time
         FROM {self.TABLE}
         {self.project_where()}
           {time_where}

@@ -230,7 +230,7 @@ def test_id_query_selects_only_ids():
     qb = VoiceCallListQueryBuilder(project_id=PROJECT_ID)
     sql, _ = qb.build_id_query()
     s = _squash(sql)
-    assert "SELECT id FROM spans" in s
+    assert "SELECT id, start_time FROM spans" in s
     assert "observation_type = 'conversation'" in s
     assert "LIMIT 1 BY trace_id" in s
     # No page-limit/offset — resolver wants the full matched id set.

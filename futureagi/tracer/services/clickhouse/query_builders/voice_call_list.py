@@ -177,7 +177,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         filter_fragment = f"AND {extra_where}" if extra_where else ""
 
         query = f"""
-        SELECT id
+        SELECT id, start_time
         FROM {self.TABLE}
         {self.project_where()}
           AND (parent_span_id IS NULL OR parent_span_id = '')

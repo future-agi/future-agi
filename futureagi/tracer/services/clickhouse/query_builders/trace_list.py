@@ -315,7 +315,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             self.params["search"] = f"%{self.search}%"
 
         query = f"""
-        SELECT trace_id
+        SELECT trace_id, start_time
         FROM {self.TABLE}
         {self.project_where()}
           AND (parent_span_id IS NULL OR parent_span_id = '')
