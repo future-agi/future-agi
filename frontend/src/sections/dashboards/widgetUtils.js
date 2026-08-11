@@ -54,17 +54,91 @@ export const escapeHtml = (str) => {
     .replace(/'/g, "&#039;");
 };
 
-export const getSeriesAverage = (points = []) => {
-  let total = 0;
-  let count = 0;
+// Aggregations whose bucket values recombine exactly by summing. Keep the
+// count family complete: the dataset metrics add pass_count/fail_count, and
+// averaging a count reports a per-bucket figure as if it were the total.
+const ADDITIVE_AGGREGATIONS = new Set([
+  "sum",
+  "count",
+  "count_distinct",
+  "pass_count",
+  "fail_count",
+]);
+
+// Whether adding this aggregation's values together yields a real quantity.
+// Summing per-slice averages or maxima does not — a pie of avg latency by
+// project has no meaningful grand total to print in the middle.
+export const isAdditiveAggregation = (aggregation) =>
+  ADDITIVE_AGGREGATIONS.has(aggregation);
+
+// Collapse an already-bucketed series to a single scalar, honouring the
+// metric's own aggregation. The backend aggregates *within* each time bucket
+// and sends no period total, so any single-number view (pie slice, metric
+// card, table Agg column) has to recombine the buckets here.
+//
+// Exact for sum/count/min/max. For avg, median and percentiles this is an
+// approximation: recombining correctly needs per-bucket row counts the API
+// does not send, so an unweighted mean is the closest available answer.
+export const getSeriesScalar = (points = [], aggregation = "avg") => {
+  const values = [];
   for (const pt of points) {
     if (pt?.y == null) continue;
     const y = Number(pt.y);
     if (!Number.isFinite(y)) continue;
-    total += y;
-    count += 1;
+    values.push(y);
   }
-  return count > 0 ? total / count : null;
+  if (!values.length) return null;
+  if (ADDITIVE_AGGREGATIONS.has(aggregation)) {
+    return values.reduce((a, b) => a + b, 0);
+  }
+  if (aggregation === "min") return Math.min(...values);
+  if (aggregation === "max") return Math.max(...values);
+  return values.reduce((a, b) => a + b, 0) / values.length;
+};
+
+// Max slices shown in a single pie, applied per metric rather than across the
+// flat series list — a global cap could strip every slice from one metric and
+// leave an empty donut.
+const MAX_PIE_SLICES = 10;
+
+// Group a flat series list into one pie per metric. Each slice is a breakdown
+// value collapsed by that metric's own aggregation, so unrelated metrics are
+// never combined into a single donut (TH-6530).
+//
+// Only slices a ring can draw become slices: a zero or negative value has no
+// arc, so keeping it would inflate the legend and the slice count. The metric
+// itself is always kept — silently removing one the user added looks like the
+// add failed — and `hasValues` lets its panel say whether the data was all
+// zero or absent entirely.
+export const groupPieSeries = (series = []) => {
+  const byMetric = new Map();
+  for (const s of series) {
+    if (!byMetric.has(s.metricIndex)) {
+      byMetric.set(s.metricIndex, {
+        metricIndex: s.metricIndex,
+        metricName: s.metricName,
+        aggregation: s.aggregation,
+        unit: s.unit ?? "",
+        hasValues: false,
+        slices: [],
+      });
+    }
+    const group = byMetric.get(s.metricIndex);
+    const value = getSeriesScalar(s.data, s.aggregation);
+    if (value == null) continue;
+    group.hasValues = true;
+    if (value <= 0) continue;
+    group.slices.push({ name: s.breakdownName, value });
+  }
+  return [...byMetric.values()].map((group) => ({
+    ...group,
+    slices:
+      group.slices.length > MAX_PIE_SLICES
+        ? [...group.slices]
+            .sort((a, b) => b.value - a.value)
+            .slice(0, MAX_PIE_SLICES)
+        : group.slices,
+  }));
 };
 
 export const getAutoDecimals = (series = []) => {
