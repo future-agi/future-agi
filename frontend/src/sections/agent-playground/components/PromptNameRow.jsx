@@ -114,9 +114,6 @@ export default function PromptNameRow({ control }) {
     setValue("outputFormat", formConfig.outputFormat || "string", {
       shouldDirty: false,
     });
-    setValue("templateFormat", formConfig.templateFormat || "mustache", {
-      shouldDirty: false,
-    });
     if (formConfig.payload) {
       setValue("payload", formConfig.payload, { shouldDirty: true });
     }
