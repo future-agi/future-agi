@@ -324,36 +324,19 @@ export default function AgentVoiceForm() {
           options={VOICE_CHAT_PROVIDERS}
           onChange={(e) => {
             const value = e.target.value;
-            const mainProviders = [
-              "vapi",
-              "retell",
-              "elevenlabs",
-              "livekit",
-              "livekit_bridge",
-            ];
-            // "bland" is intentionally excluded: its raw-authorization key is
-            // distinct from these Bearer providers, so switching into or out of
-            // Bland must clear the key rather than carry a stale one.
-
-            // Clear authenticationMethod only if switching to or from "others"
-            const isPrevMain = mainProviders.includes(selectedProvider);
-            const isNextMain = mainProviders.includes(value);
 
             if (value !== selectedProvider) {
               // Providers with only one selectable method get it preselected,
               // so the required field is never left empty after a switch.
-              const nextAuthMethod = defaultAuthMethodForProvider(value);
-              if (isPrevMain && isNextMain) {
-                // between vapi/retell/elevenlabs → keep the key, but realign
-                // the method to the provider now selected
-                if (nextAuthMethod) {
-                  setValue("authenticationMethod", nextAuthMethod);
-                }
-              } else {
-                setValue("authenticationMethod", nextAuthMethod);
-                setValue("apiKey", "");
-                clearErrors("apiKey");
-              }
+              setValue(
+                "authenticationMethod",
+                defaultAuthMethodForProvider(value),
+              );
+
+              setValue("apiKey", "");
+              setValue("assistantId", "");
+              clearErrors(["apiKey", "assistantId"]);
+              setShowSuccess(false);
               // Clear LiveKit fields when switching away from livekit
               if (isLiveKitProvider(selectedProvider)) {
                 setValue("livekitUrl", "");
