@@ -11,19 +11,18 @@ probabilistic, as every streaming sampler is.
 
 from __future__ import annotations
 
+import logging
 import math
 from typing import TYPE_CHECKING, Any
 
 from tracer.models.eval_task import RunType
 from tracer.selectors.eval_tasks.row_resolver import build_eligible_query
+from tracer.selectors.eval_tasks.sampling import HASH_SPACE, sampling_hash_sql
 from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.eval_tasks.ch_guardrails import eval_ch_guardrails
 
 if TYPE_CHECKING:
     from tracer.models.eval_task import EvalTask
-
-# cityHash64 >> 1 — the 63-bit space that fits a signed BIGINT.
-HASH_SPACE = 2**63
 
 # Above this k the naive top-k sort approaches CH's spill threshold (1.6 GiB at
 # k=105M); below it the histogram's second pass over the inner query costs more
@@ -33,11 +32,7 @@ NAIVE_MAX_K = 10_000_000
 # Top 16 bits of the 63-bit hash → 65536 histogram buckets.
 _BUCKET_SHIFT = 47
 
-
-def sampling_hash_sql(salt_param: str, id_col: str) -> str:
-    """The single definition of the sampling hash expression — every consumer
-    imports it rather than re-spelling it."""
-    return f"bitShiftRight(cityHash64(%({salt_param})s, toString({id_col})), 1)"
+logger = logging.getLogger(__name__)
 
 
 def derive_threshold(task: EvalTask) -> int:
@@ -66,6 +61,27 @@ def derive_threshold(task: EvalTask) -> int:
     if k <= NAIVE_MAX_K:
         return _naive_threshold(sql, params, hash_sql, k)
     return _histogram_threshold(sql, params, hash_sql, k)
+
+
+def refresh_sample_threshold(task: EvalTask) -> int | None:
+    """Derive the task's threshold and persist it, returning what was stored.
+
+    Fails open: if ClickHouse is unreachable the threshold is left as-is and the
+    task still runs, sampling on whatever predicate it already had. Losing exact
+    counts is a far smaller harm than refusing to create or edit the task.
+    """
+    from tracer.models.eval_task import EvalTask as EvalTaskModel
+
+    try:
+        threshold = derive_threshold(task)
+    except Exception:
+        logger.exception(
+            "eval_task_threshold_derivation_failed", extra={"eval_task_id": task.id}
+        )
+        return None
+    task.sample_threshold = threshold
+    EvalTaskModel.objects.filter(id=task.id).update(sample_threshold=threshold)
+    return threshold
 
 
 def _naive_threshold(sql: str, params: dict[str, Any], hash_sql: str, k: int) -> int:

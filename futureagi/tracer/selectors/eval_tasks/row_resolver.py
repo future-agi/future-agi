@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from tracer.models.eval_task import RowType, RunType
+from tracer.selectors.eval_tasks.sampling import sampling_hash_sql
 from tracer.services.clickhouse.v2 import get_reader
 
 if TYPE_CHECKING:
@@ -47,6 +48,7 @@ def iter_desired_rows(
         row_type=task.row_type,
         salt=str(task.id),
         sampling_rate=float(sampling_rate),
+        threshold=task.sample_threshold,
         filters=task.filters or {},
         limit=limit,
         created_at_floor=_continuous_floor(task),
@@ -81,6 +83,7 @@ def _build_sample_query(
     sampling_rate: float,
     filters: dict | None,
     limit: int | None,
+    threshold: int | None = None,
     created_at_floor: datetime | None = None,
     created_at_ceiling: datetime | None = None,
 ) -> tuple[str, dict[str, Any]]:
@@ -94,19 +97,30 @@ def _build_sample_query(
         created_at_floor=created_at_floor,
         created_at_ceiling=created_at_ceiling,
     )
-    params = {**params, "salt": str(salt), "rate": float(sampling_rate)}
+    params = {**params, "salt": str(salt)}
+
+    if threshold is not None:
+        params["threshold"] = int(threshold)
+        sample_pred = f"{sampling_hash_sql('salt', id_col)} <= %(threshold)s"
+    else:
+        # Tasks predating the stored threshold: keep the per-row modulo test so
+        # their row set does not shift under them mid-run. modulo() not `%` —
+        # clickhouse-connect reads a literal `%` as a parameter-format marker.
+        params["rate"] = float(sampling_rate)
+        sample_pred = (
+            f"modulo(cityHash64(%(salt)s, toString({id_col})), 100) < %(rate)s"
+        )
 
     limit_sql = ""
     if limit is not None:
         limit_sql = "LIMIT %(lim)s"
         params["lim"] = int(limit)
 
-    # modulo() not `%` — clickhouse-connect treats a literal `%` as a
-    # parameter-format marker. Newest first, with the id breaking ties so
-    # colliding timestamps still give a stable limit prefix.
+    # Newest first, with the id breaking ties so colliding timestamps still give
+    # a stable limit prefix.
     sql = (
         f"SELECT {id_col} FROM ({eligible_sql}) "
-        f"WHERE modulo(cityHash64(%(salt)s, toString({id_col})), 100) < %(rate)s "
+        f"WHERE {sample_pred} "
         f"ORDER BY {sort_col} DESC, {id_col} DESC {limit_sql}"
     )
     return sql, params

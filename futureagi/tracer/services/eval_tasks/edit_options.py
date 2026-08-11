@@ -23,6 +23,23 @@ from tracer.models.eval_task import RunType
 FRESH_RUN = "fresh_run"  # Delete & rerun
 EDIT_RERUN = "edit_rerun"  # Edit & rerun
 
+# Editing one of these changes the population the sampling threshold was derived
+# over, so the threshold no longer selects the intended count.
+#
+# ``spans_limit`` is deliberately absent: it caps cost *after* sampling, so it
+# never moves the threshold. ``run_type`` is absent for a stronger reason —
+# re-deriving on a historical/continuous flip would pick a different row set
+# underneath results already paid for.
+_SCOPE_FIELDS = ("filters", "sampling_rate")
+
+
+def scope_changed(update_fields: dict, task) -> bool:
+    """Whether an edit invalidates the task's stored sampling threshold."""
+    return any(
+        field in update_fields and update_fields[field] != getattr(task, field)
+        for field in _SCOPE_FIELDS
+    )
+
 
 def validate_edit_action(
     edit_type: str,

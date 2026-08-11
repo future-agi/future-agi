@@ -39,8 +39,9 @@ from tracer.serializers.eval_task import (
     EvalTaskUpdateResponseSerializer,
     PaginationQuerySerializer,
 )
-from tracer.services.eval_tasks.edit_options import validate_edit_action
+from tracer.services.eval_tasks.edit_options import scope_changed, validate_edit_action
 from tracer.services.eval_tasks.entries import soft_delete_live
+from tracer.services.eval_tasks.threshold import refresh_sample_threshold
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import get_default_eval_task_config
 
@@ -459,6 +460,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     "Eval configs not found for project: " + ", ".join(invalid_eval_ids)
                 )
             eval_task = serializer.save()
+            refresh_sample_threshold(eval_task)
 
             # The workflow's first step materializes entries, so create returns
             # immediately even for large tasks.
@@ -1478,6 +1480,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     for field in ("filters", "sampling_rate", "spans_limit")
                 )
                 new_run_type = update_fields.get("run_type")
+                # Read before save, while the task still holds its old values.
+                threshold_stale = scope_changed(update_fields, eval_task)
 
                 # Enforce which rerun action is allowed for what changed.
                 action_error = validate_edit_action(
@@ -1510,6 +1514,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 )
                 task_serializer.is_valid(raise_exception=True)
                 eval_task = task_serializer.save()
+                if threshold_stale:
+                    refresh_sample_threshold(eval_task)
 
                 # Delete & rerun wipes live entries first; the workflow then
                 # reconciles (materialize/diff) and drains for both cases, so the
