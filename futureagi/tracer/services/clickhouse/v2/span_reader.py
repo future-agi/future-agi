@@ -2144,6 +2144,13 @@ class CHSpanReader:
         # caller's responsibility; this helper stays narrow.
         return out
 
+    def query_rows(
+        self, sql: str, params: dict[str, Any] | None = None
+    ) -> list[tuple[Any, ...]]:
+        """Run a query and return every row as a tuple. For small, bounded
+        result sets — use ``stream_query`` when the result can be large."""
+        return self._client.query(sql, parameters=params or {}).result_rows
+
     def stream_query(
         self,
         sql: str,

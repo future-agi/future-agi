@@ -18,7 +18,7 @@ from collections.abc import Iterator
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from tracer.models.eval_task import RunType
+from tracer.models.eval_task import RowType, RunType
 from tracer.services.clickhouse.v2 import get_reader
 
 if TYPE_CHECKING:
@@ -27,10 +27,10 @@ if TYPE_CHECKING:
 # row_type → (UI list builder query type, identity column, event-time column —
 # the last two both projected by the builder's build_id_query).
 _BUILDER_BY_ROW_TYPE = {
-    "spans": ("SPAN_LIST", "id", "start_time"),
-    "voiceCalls": ("VOICE_CALL_LIST", "id", "start_time"),
-    "traces": ("TRACE_LIST", "trace_id", "start_time"),
-    "sessions": ("SESSION_LIST", "session_id", "session_start"),
+    RowType.SPANS: ("SPAN_LIST", "id", "start_time"),
+    RowType.VOICE_CALLS: ("VOICE_CALL_LIST", "id", "start_time"),
+    RowType.TRACES: ("TRACE_LIST", "trace_id", "start_time"),
+    RowType.SESSIONS: ("SESSION_LIST", "session_id", "session_start"),
 }
 
 
@@ -87,6 +87,47 @@ def _build_sample_query(
     """Sampled-row-ids SQL for the row_type: take the UI list builder's filtered
     id set and wrap it with deterministic hash sampling, a stable order, and the
     row limit."""
+    eligible_sql, params, id_col, sort_col = build_eligible_query(
+        project_id=project_id,
+        row_type=row_type,
+        filters=filters,
+        created_at_floor=created_at_floor,
+        created_at_ceiling=created_at_ceiling,
+    )
+    params = {**params, "salt": str(salt), "rate": float(sampling_rate)}
+
+    limit_sql = ""
+    if limit is not None:
+        limit_sql = "LIMIT %(lim)s"
+        params["lim"] = int(limit)
+
+    # modulo() not `%` — clickhouse-connect treats a literal `%` as a
+    # parameter-format marker. Newest first, with the id breaking ties so
+    # colliding timestamps still give a stable limit prefix.
+    sql = (
+        f"SELECT {id_col} FROM ({eligible_sql}) "
+        f"WHERE modulo(cityHash64(%(salt)s, toString({id_col})), 100) < %(rate)s "
+        f"ORDER BY {sort_col} DESC, {id_col} DESC {limit_sql}"
+    )
+    return sql, params
+
+
+def build_eligible_query(
+    *,
+    project_id: str,
+    row_type: str,
+    filters: dict | None,
+    created_at_floor: datetime | None = None,
+    created_at_ceiling: datetime | None = None,
+) -> tuple[str, dict[str, Any], str, str]:
+    """``(sql, params, id_col, sort_col)`` for the rows a task is eligible to
+    evaluate — the UI list builder's filtered id set, before sampling, ordering
+    and the row limit.
+
+    Shared by the resolver and by threshold derivation so both always see the
+    same population; a threshold derived over a different id set than the
+    resolver selects from would silently miss its target count.
+    """
     from tracer.services.clickhouse.v2.dispatch import get_v2_class
 
     try:
@@ -118,47 +159,40 @@ def _build_sample_query(
     inner_sql, params = builder.build_id_query(
         created_at_floor=created_at_floor, created_at_ceiling=created_at_ceiling
     )
-    params = {**params, "salt": str(salt), "rate": float(sampling_rate)}
 
     # observation_type is a legacy top-level key, not a filter-builder column;
     # constrain the id set against spans directly.
     ot_pred = ""
     ot = f.get("observation_type")
     if ot:
+        params = {**params}
         params["otypes"] = tuple(
             str(o) for o in (ot if isinstance(ot, list | tuple | set) else [ot])
         )
         params["ot_project_id"] = str(project_id)
-        src = "toString(trace_session_id)" if row_type == "sessions" else id_col
+        src = "toString(trace_session_id)" if row_type == RowType.SESSIONS else id_col
         # For traces, the trace list derives observation_type from the ROOT span
         # (it scans parent_span_id IS NULL), so match root spans only for parity.
         root_pred = (
             " AND (parent_span_id IS NULL OR parent_span_id = '')"
-            if row_type == "traces"
+            if row_type == RowType.TRACES
             else ""
         )
         # Scope the subquery like the outer scan (project + not-deleted) so it
         # can't match ids from another project or soft-deleted rows.
         ot_pred = (
-            f"AND {id_col} IN "
+            f"WHERE {id_col} IN "
             f"(SELECT {src} FROM spans "
             f"WHERE observation_type IN %(otypes)s "
             f"AND project_id = %(ot_project_id)s AND is_deleted = 0"
             f"{root_pred})"
         )
 
-    limit_sql = ""
-    if limit is not None:
-        limit_sql = "LIMIT %(lim)s"
-        params["lim"] = int(limit)
-
-    # modulo() not `%` — clickhouse-connect treats a literal `%` as a
-    # parameter-format marker. Newest first, with the id breaking ties so
-    # colliding timestamps still give a stable limit prefix.
-    sql = (
-        f"SELECT {id_col} FROM ({inner_sql}) "
-        f"WHERE modulo(cityHash64(%(salt)s, toString({id_col})), 100) < %(rate)s "
-        f"{ot_pred} "
-        f"ORDER BY {sort_col} DESC, {id_col} DESC {limit_sql}"
+    # Carry the sort column through: callers wrap this in another subquery and
+    # an outer ORDER BY can only see what this projects.
+    return (
+        f"SELECT {id_col}, {sort_col} FROM ({inner_sql}) {ot_pred}",
+        params,
+        id_col,
+        sort_col,
     )
-    return sql, params
