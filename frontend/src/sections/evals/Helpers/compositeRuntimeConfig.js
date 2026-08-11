@@ -25,6 +25,48 @@ export function buildCompositeRuntimeConfig({
   return runtimeConfig;
 }
 
+const CHILD_RUN_CONFIG_KEYS = [
+  "model",
+  "pass_threshold",
+  "error_localizer_enabled",
+  "check_internet",
+  "agent_mode",
+  "summary",
+  "tools",
+  "knowledge_bases",
+  "data_injection",
+];
+
+export function buildCompositeChildRunConfig(evalMeta) {
+  const source = evalMeta || {};
+  const nested =
+    source.config?.run_config && typeof source.config.run_config === "object"
+      ? source.config.run_config
+      : {};
+
+  const runConfig = {};
+  for (const key of CHILD_RUN_CONFIG_KEYS) {
+    const value = source[key] ?? nested[key];
+    if (value === undefined || value === null) continue;
+    if (Array.isArray(value) && value.length === 0) continue;
+    if (
+      !Array.isArray(value) &&
+      typeof value === "object" &&
+      Object.keys(value).length === 0
+    ) {
+      continue;
+    }
+    runConfig[key] = value;
+  }
+
+  if (!runConfig.model) {
+    const fallbackModel = source.config?.model || source.evalTemplate?.model;
+    if (fallbackModel) runConfig.model = fallbackModel;
+  }
+
+  return runConfig;
+}
+
 export function buildCompositeChildConfigs(children = []) {
   return (children || []).reduce((acc, child) => {
     const childId = child?.child_id || child?.id;
