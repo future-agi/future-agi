@@ -100,11 +100,9 @@ const ObserveTabBar = ({
   }, [projectSource]);
   const { data: savedViewsData } = useGetSavedViews(projectId);
   // Only show trace-list views (traces/spans/voice) — exclude "imagine" tabs (those belong to trace detail)
-  const customViews = (
-    savedViewsData?.customViews ??
-    savedViewsData?.custom_views ??
-    []
-  ).filter((v) => (v.tab_type || v.tabType) !== "imagine");
+  const customViews = (savedViewsData?.custom_views ?? []).filter(
+    (v) => v.tab_type !== "imagine",
+  );
 
   // Mutations
   const { mutate: updateView } = useUpdateSavedView(projectId);
@@ -130,8 +128,7 @@ const ObserveTabBar = ({
   //  - on a saved view tab, inherit the view's tab_type.
   //  - on the Users fixed tab, save as "users".
   //  - on the Sessions fixed tab, save as "sessions".
-  //  - on the Traces fixed tab, fall back to LLMTracingView's registered
-  //    callback (distinguishes trace vs span sub-tab).
+  //  - on the Traces fixed tab, read the trace/span grouping from the URL.
   const resolveTabType = useCallback(() => {
     if (activeTab === "users") return "users";
     if (activeTab === "sessions") return "sessions";

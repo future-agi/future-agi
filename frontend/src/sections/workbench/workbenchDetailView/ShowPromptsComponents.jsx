@@ -67,7 +67,7 @@ const ShowPromptsComponents = forwardRef(({ open, onClose, id }, ref) => {
         [PropertyName.click]: true,
       });
       navigate(
-        `/dashboard/workbench/create/${data?.data?.result?.rootTemplate}`,
+        `/dashboard/workbench/create/${data?.data?.result?.root_template}`,
       );
     },
   });

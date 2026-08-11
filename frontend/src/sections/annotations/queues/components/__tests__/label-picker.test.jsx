@@ -82,4 +82,17 @@ describe("LabelPicker", () => {
     );
     expect(refetchMock).toHaveBeenCalled();
   });
+
+  it("renders the locked last chip without a delete button", () => {
+    render(
+      <LabelPicker
+        selectedIds={["existing-label"]}
+        onChange={vi.fn()}
+        lockLastSelected
+      />,
+    );
+
+    expect(screen.getAllByText("Existing Label").length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("CancelIcon")).toBeNull();
+  });
 });

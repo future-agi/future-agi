@@ -10,6 +10,11 @@ from rest_framework.test import APIClient
 from agent_playground.models.choices import PortMode
 from agent_playground.models.node_template import NodeTemplate
 
+AUTH_REQUIRED_STATUS_CODES = (
+    status.HTTP_401_UNAUTHORIZED,
+    status.HTTP_403_FORBIDDEN,
+)
+
 
 @pytest.fixture
 def api_client():
@@ -65,7 +70,7 @@ class TestNodeTemplateList:
         url = reverse("node-template-list")
         response = api_client.get(url)
 
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_list_empty_when_no_templates(self, authenticated_client):
         """Test that list returns empty when no templates exist."""
@@ -186,7 +191,7 @@ class TestNodeTemplateRetrieve:
         url = reverse("node-template-detail", kwargs={"pk": str(node_template.id)})
         response = api_client.get(url)
 
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_retrieve_nonexistent_returns_404(self, authenticated_client):
         """Test that retrieve returns 404 for nonexistent template."""

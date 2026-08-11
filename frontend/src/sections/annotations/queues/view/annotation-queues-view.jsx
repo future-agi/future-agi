@@ -5,6 +5,8 @@ import {
   MenuItem,
   Stack,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
@@ -43,6 +45,7 @@ export default function AnnotationQueuesView() {
     page: 0,
     limit: 10,
     include_counts: true,
+    archived: false,
   });
 
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -88,6 +91,15 @@ export default function AnnotationQueuesView() {
     setFilters((prev) => ({ ...prev, limit: newRowsPerPage, page: 0 }));
   }, []);
 
+  const handleArchiveViewChange = useCallback((_, value) => {
+    if (value === null) return;
+    setFilters((prev) => ({
+      ...prev,
+      archived: value === "archived",
+      page: 0,
+    }));
+  }, []);
+
   const handleEdit = useCallback((queue) => {
     setEditQueue(queue);
     setDrawerOpen(true);
@@ -107,6 +119,17 @@ export default function AnnotationQueuesView() {
   const handleArchive = useCallback((queue) => {
     setArchiveQueue(queue);
   }, []);
+
+  const handleRestore = useCallback(
+    (queue) => {
+      restoreQueue(queue.id, {
+        onSuccess: () => {
+          enqueueSnackbar("Queue restored.", { variant: "success" });
+        },
+      });
+    },
+    [restoreQueue],
+  );
 
   const handleConfirmDelete = useCallback(() => {
     if (!archiveQueue) return;
@@ -172,7 +195,11 @@ export default function AnnotationQueuesView() {
   }, []);
 
   const isEmpty =
-    !isLoading && results.length === 0 && !filters.search && !filters.status;
+    !filters.archived &&
+    !isLoading &&
+    results.length === 0 &&
+    !filters.search &&
+    !filters.status;
 
   return (
     <Box
@@ -280,6 +307,24 @@ export default function AnnotationQueuesView() {
                 "& .MuiOutlinedInput-root": { height: "30px" },
               }}
             />
+            <ToggleButtonGroup
+              exclusive
+              size="small"
+              value={filters.archived ? "archived" : "active"}
+              onChange={handleArchiveViewChange}
+              sx={{
+                height: 30,
+                "& .MuiToggleButton-root": {
+                  px: 1.25,
+                  borderRadius: "4px",
+                  typography: "s2",
+                  fontWeight: "fontWeightMedium",
+                },
+              }}
+            >
+              <ToggleButton value="active">Active</ToggleButton>
+              <ToggleButton value="archived">Archived</ToggleButton>
+            </ToggleButtonGroup>
             <TextField
               size="small"
               select
@@ -322,7 +367,9 @@ export default function AnnotationQueuesView() {
             onEdit={handleEdit}
             onDuplicate={handleDuplicate}
             onArchive={handleArchive}
+            onRestore={handleRestore}
             onStatusChange={handleStatusChange}
+            archivedView={filters.archived}
           />
         </Box>
       )}

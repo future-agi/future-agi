@@ -3,9 +3,142 @@ from collections import defaultdict
 from rest_framework import serializers
 
 from accounts.models import User
+from accounts.utils import get_request_organization
+from model_hub.models.choices import AnnotationTypeChoices
 from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
 from model_hub.models.develop_dataset import Cell, Row
 from tracer.models.project import Project
+from tracer.serializers.filters import StrictInputSerializer
+
+
+class AnnotationTaskListQuerySerializer(StrictInputSerializer):
+    page = serializers.IntegerField(required=False, min_value=1)
+    limit = serializers.IntegerField(required=False, min_value=1, max_value=500)
+    predictive_journey = serializers.UUIDField(required=False)
+
+
+class AnnotateRowQuerySerializer(StrictInputSerializer):
+    row_order = serializers.IntegerField(min_value=0)
+
+
+class AnnotationLabelsListQuerySerializer(StrictInputSerializer):
+    page = serializers.IntegerField(required=False, min_value=1)
+    limit = serializers.IntegerField(required=False, min_value=1, max_value=500)
+    dataset = serializers.UUIDField(required=False)
+    project_id = serializers.UUIDField(required=False)
+    type = serializers.ChoiceField(
+        choices=[choice.value for choice in AnnotationTypeChoices],
+        required=False,
+    )
+    search = serializers.CharField(required=False, allow_blank=True)
+    include_usage_count = serializers.BooleanField(required=False, default=False)
+    include_archived = serializers.BooleanField(required=False, default=False)
+    archived = serializers.BooleanField(required=False)
+
+
+class BulkDestroyAnnotationsRequestSerializer(StrictInputSerializer):
+    annotation_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        allow_empty=False,
+    )
+
+
+class AnnotationLabelValueUpdateSerializer(StrictInputSerializer):
+    row_id = serializers.UUIDField()
+    label_id = serializers.UUIDField()
+    value = serializers.JSONField()
+    description = serializers.CharField(required=False, allow_blank=True, default="")
+    column_id = serializers.UUIDField()
+    time_taken = serializers.FloatField(required=False, allow_null=True)
+
+
+class AnnotationResponseFieldUpdateSerializer(StrictInputSerializer):
+    row_id = serializers.UUIDField()
+    column_id = serializers.UUIDField()
+    value = serializers.JSONField()
+
+
+class UpdateAnnotationCellsRequestSerializer(StrictInputSerializer):
+    label_values = AnnotationLabelValueUpdateSerializer(
+        many=True, required=False, default=list
+    )
+    response_field_values = AnnotationResponseFieldUpdateSerializer(
+        many=True, required=False, default=list
+    )
+
+    def validate(self, attrs):
+        if not attrs.get("label_values") and not attrs.get("response_field_values"):
+            raise serializers.ValidationError(
+                "label_values or response_field_values is required."
+            )
+        return attrs
+
+
+class ResetAnnotationsRequestSerializer(StrictInputSerializer):
+    row_id = serializers.UUIDField()
+
+
+class PreviewAnnotationsRequestSerializer(StrictInputSerializer):
+    dataset_id = serializers.UUIDField()
+    static_column = serializers.ListField(
+        child=serializers.UUIDField(), required=False, default=list
+    )
+    response_column = serializers.ListField(
+        child=serializers.UUIDField(), required=False, default=list
+    )
+
+    def validate(self, attrs):
+        if not attrs.get("static_column") and not attrs.get("response_column"):
+            raise serializers.ValidationError(
+                "static_column or response_column is required."
+            )
+        return attrs
+
+
+class AnnotationActionMessageResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+
+
+class AnnotationActionMessageResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = AnnotationActionMessageResultSerializer()
+
+
+class BulkDestroyAnnotationsResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    deleted_count = serializers.IntegerField()
+    errors = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+    )
+
+
+class BulkDestroyAnnotationsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = BulkDestroyAnnotationsResultSerializer()
+
+
+class PreviewAnnotationFieldSerializer(serializers.Serializer):
+    column_id = serializers.UUIDField()
+    column_name = serializers.CharField()
+    data_type = serializers.CharField()
+    value = serializers.JSONField(allow_null=True)
+
+
+class PreviewAnnotationDataSerializer(serializers.Serializer):
+    static_fields = PreviewAnnotationFieldSerializer(many=True)
+    response_fields = PreviewAnnotationFieldSerializer(many=True)
+
+
+class PreviewAnnotationsResultSerializer(serializers.Serializer):
+    row_id = serializers.UUIDField()
+    row_number = serializers.IntegerField()
+    preview_data = PreviewAnnotationDataSerializer()
+
+
+class PreviewAnnotationsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = PreviewAnnotationsResultSerializer()
 
 
 class AnnotationsLabelsSerializer(serializers.ModelSerializer):
@@ -14,6 +147,7 @@ class AnnotationsLabelsSerializer(serializers.ModelSerializer):
     )
     trace_annotations_count = serializers.IntegerField(read_only=True, required=False)
     annotation_count = serializers.IntegerField(read_only=True, required=False)
+    archived = serializers.BooleanField(source="deleted", read_only=True)
 
     class Meta:
         model = AnnotationsLabels
@@ -29,6 +163,7 @@ class AnnotationsLabelsSerializer(serializers.ModelSerializer):
             "created_at",
             "trace_annotations_count",
             "annotation_count",
+            "archived",
         ]
         read_only_fields = ["organization"]
 
@@ -50,8 +185,7 @@ class AnnotationsLabelsSerializer(serializers.ModelSerializer):
         # Attempt to fetch organisation from request context if not supplied
         # directly (typical in API usage).
         if organization is None and "request" in self.context:
-            user = getattr(self.context["request"], "user", None)
-            organization = getattr(user, "organization", None)
+            organization = get_request_organization(self.context["request"])
 
         # Build the queryset to check for duplicates.
         duplicate_qs = AnnotationsLabels.objects.filter(
@@ -83,6 +217,16 @@ class AnnotationsLabelsSerializer(serializers.ModelSerializer):
                 )
 
         return attrs
+
+
+class AnnotationLabelRestoreResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = AnnotationsLabelsSerializer()
+
+
+class AnnotationLabelCreateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = AnnotationsLabelsSerializer()
 
 
 class AnnotationsSerializer(serializers.ModelSerializer):
@@ -280,7 +424,25 @@ class AnnotationsSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
+        ref_name = "DevelopAnnotationsUser"
         fields = ["id", "email", "name", "organization_role", "is_active", "is_staff"]
+
+
+class AnnotationSummaryHeaderSerializer(serializers.Serializer):
+    dataset_coverage = serializers.FloatField(required=False, allow_null=True)
+    completion_eta = serializers.FloatField(required=False, allow_null=True)
+    overall_agreement = serializers.FloatField(required=False, allow_null=True)
+
+
+class AnnotationSummaryResultSerializer(serializers.Serializer):
+    labels = serializers.ListField(child=serializers.JSONField(), default=list)
+    annotators = serializers.ListField(child=serializers.JSONField(), default=list)
+    header = AnnotationSummaryHeaderSerializer(required=False)
+
+
+class AnnotationSummaryResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = AnnotationSummaryResultSerializer()
 
 
 class AnnotationProjectVersionMapperSerializer(serializers.ModelSerializer):

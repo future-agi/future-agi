@@ -1,7 +1,8 @@
 import { endOfToday, sub } from "date-fns";
-import _, { filter } from "lodash";
+import _ from "lodash";
 import { formatDate } from "src/utils/report-utils";
 import { getYAxisUnit } from "../LLMTracing/GraphSection/common";
+import { apiFilterHasValue } from "src/sections/annotations/queues/utils/filter-operators";
 
 // Helper function to format y-axis values with proper precision
 const formatYAxisValue = (value) => {
@@ -27,6 +28,50 @@ const formatYAxisValue = (value) => {
 
   // Default: 2 decimal places
   return value.toFixed(2);
+};
+
+export const normalizeAlertFilters = (filters = {}) => {
+  const observationType =
+    filters?.observationType ?? filters?.observation_type ?? [];
+  const spanAttributesFilters =
+    filters?.spanAttributesFilters ?? filters?.span_attributes_filters ?? [];
+
+  return {
+    ...filters,
+    observationType,
+    observation_type: filters?.observation_type ?? observationType,
+    spanAttributesFilters,
+    span_attributes_filters:
+      filters?.span_attributes_filters ?? spanAttributesFilters,
+  };
+};
+
+export const normalizeAlertListRow = (row = {}) => ({
+  ...row,
+  metricType: row?.metricType ?? row?.metric_type,
+  lastTriggered: row?.lastTriggered ?? row?.last_triggered,
+  noOfAlerts: row?.noOfAlerts ?? row?.no_of_alerts ?? 0,
+  isMute: row?.isMute ?? row?.is_mute ?? false,
+  filters: normalizeAlertFilters(row?.filters),
+});
+
+export const isAlertMuted = (row) => Boolean(row?.isMute ?? row?.is_mute);
+
+export const getAlertFilterValue = (data) => {
+  const filters = [];
+  const normalizedFilters = normalizeAlertFilters(data?.filters);
+  const observationTypes = normalizedFilters.observationType ?? [];
+  if (observationTypes?.length > 0) {
+    filters.push(`Span Type is ${_.toUpper(observationTypes.join(", "))}`);
+  }
+  const spanAttributes = normalizedFilters.spanAttributesFilters ?? [];
+  if (spanAttributes.length > 0) {
+    const customAttributeString = `Custom attribute is ${spanAttributes
+      .map((f) => `(${f.columnId ?? f.column_id})`)
+      .join(",")}`;
+    filters.push(customAttributeString);
+  }
+  return filters;
 };
 
 export const alertTypes = [
@@ -759,6 +804,7 @@ export function getSimpleLineChartConfig(
       yaxis: customOptions.thresholds.map((threshold) => ({
         y: threshold.value || 0,
         y2: threshold.y2 || 0,
+        yAxisIndex: 0,
         fillColor: threshold.fillColor || "#00A25108",
         borderColor: threshold.borderColor || "#00A251",
         strokeDashArray: threshold.strokeDashArray || 4,
@@ -779,6 +825,15 @@ export function getSimpleLineChartConfig(
     yaxis: { ...defaultOptions.yaxis, ...customOptions.yaxis },
   };
 
+  if (customOptions?.thresholds && !Array.isArray(options.yaxis)) {
+    options.yaxis = [
+      {
+        ...options.yaxis,
+        seriesName: [customOptions.seriesName || series[0]?.name || ""],
+      },
+    ];
+  }
+
   return { series, options, metadata };
 }
 
@@ -786,7 +841,7 @@ export const convertFiltersToPayload = (filters) => {
   const observation_type = [];
   const span_attributes_filters = [];
 
-  if (filter?.length === 0)
+  if (filters?.length === 0)
     return {
       observation_type,
       span_attributes_filters,
@@ -801,11 +856,13 @@ export const convertFiltersToPayload = (filters) => {
     }
     if (property === "attributes") {
       span_attributes_filters.push({
-        filterConfig: {
-          ...filters[i]?.filterConfig,
-          colType: "SPAN_ATTRIBUTE",
+        column_id: filters[i]?.propertyId,
+        filter_config: {
+          filter_type: filters[i]?.filterConfig?.filterType,
+          filter_op: filters[i]?.filterConfig?.filterOp,
+          filter_value: filters[i]?.filterConfig?.filterValue,
+          col_type: "SPAN_ATTRIBUTE",
         },
-        columnId: filters[i]?.propertyId,
       });
     }
   }
@@ -819,10 +876,5 @@ export const convertFiltersToPayload = (filters) => {
 export const isSpanAttrFilterValid = (spanFilters = []) => {
   if (spanFilters.length === 0) return true;
 
-  return spanFilters.every(
-    (filter) =>
-      filter?.filterConfig?.filterValue !== undefined &&
-      filter?.filterConfig?.filterValue !== null &&
-      filter?.filterConfig?.filterValue !== "",
-  );
+  return spanFilters.every((filter) => apiFilterHasValue(filter));
 };

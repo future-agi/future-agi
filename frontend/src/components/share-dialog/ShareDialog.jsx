@@ -30,7 +30,7 @@ import {
 
 /* ── helpers ──────────────────────────────────── */
 
-function buildFallbackUrl(resourceType, resourceId) {
+function buildFallbackUrl() {
   // Use current page URL — it already has the drawer/trace state in query params
   return window.location.href;
 }
@@ -51,10 +51,14 @@ const AccessOption = ({
   label,
   description,
   selected,
+  disabled,
   onClick,
 }) => (
   <Box
-    onClick={onClick}
+    role="button"
+    aria-disabled={disabled ? "true" : undefined}
+    tabIndex={disabled ? -1 : 0}
+    onClick={disabled ? undefined : onClick}
     sx={{
       display: "flex",
       alignItems: "center",
@@ -65,7 +69,8 @@ const AccessOption = ({
       border: "1.5px solid",
       borderColor: selected ? "primary.main" : "divider",
       bgcolor: selected ? "rgba(87, 63, 204, 0.04)" : "background.paper",
-      cursor: "pointer",
+      cursor: disabled ? "not-allowed" : "pointer",
+      opacity: disabled ? 0.6 : 1,
       transition: "all 120ms",
       "&:hover": { borderColor: selected ? "primary.main" : "text.disabled" },
     }}
@@ -139,6 +144,10 @@ const ShareDialog = ({
   const addAccessMutation = useAddSharedLinkAccess();
   const removeAccessMutation = useRemoveSharedLinkAccess();
   const autoCreated = useRef(false);
+  const createdLink =
+    createMutation.data?.data?.result || createMutation.data?.result || null;
+  const shareLink = activeLink || createdLink;
+  const shareLinkReady = Boolean(shareLink?.id);
 
   // Auto-create a restricted shared link when dialog opens and none exists
   useEffect(() => {
@@ -176,50 +185,39 @@ const ShareDialog = ({
 
   // Sync access mode from server link
   useEffect(() => {
-    if (activeLink) {
-      const serverMode = activeLink.accessType || activeLink.access_type;
+    if (shareLink) {
+      const serverMode = shareLink.accessType || shareLink.access_type;
       if (serverMode) setAccessMode(serverMode);
     }
-  }, [activeLink]);
+  }, [shareLink]);
 
   // Persist access mode changes to server
   const handleAccessModeChange = useCallback(
     (mode) => {
       setAccessMode(mode);
-      if (activeLink?.id) {
-        updateMutation.mutate({ id: activeLink.id, access_type: mode });
+      if (shareLink?.id) {
+        updateMutation.mutate({ id: shareLink.id, access_type: mode });
       }
     },
-    [activeLink, updateMutation],
+    [shareLink, updateMutation],
   );
 
   // Share URL: token-based when link exists, direct fallback otherwise
   // Also use the just-created link data from createMutation
   const shareUrl = useMemo(() => {
     // First check the active link from the query
-    const token = activeLink?.token;
+    const token = shareLink?.token;
     if (token) {
       return `${window.location.origin}/shared/${token}`;
-    }
-    // Check if create mutation just returned a new link
-    const createdToken = createMutation.data?.data?.result?.token;
-    if (createdToken) {
-      return `${window.location.origin}/shared/${createdToken}`;
     }
     // Caller-supplied direct fallback (e.g. a voice-call full-page URL)
     if (fallbackShareUrl) return fallbackShareUrl;
     // Last-resort fallback — current page URL.
-    return buildFallbackUrl(resourceType, resourceId);
-  }, [
-    activeLink,
-    createMutation.data,
-    resourceType,
-    resourceId,
-    fallbackShareUrl,
-  ]);
+    return buildFallbackUrl();
+  }, [shareLink, fallbackShareUrl]);
 
-  const accessList = activeLink?.accessList || activeLink?.access_list || [];
   const allEmails = useMemo(() => {
+    const accessList = shareLink?.accessList || shareLink?.access_list || [];
     const backendEmails = accessList.map((e) => ({
       id: e.id,
       email: e.email,
@@ -229,7 +227,7 @@ const ShareDialog = ({
       .filter((e) => !backendEmails.some((b) => b.email === e))
       .map((e) => ({ id: e, email: e, source: "local" }));
     return [...backendEmails, ...localOnly];
-  }, [accessList, localEmails]);
+  }, [shareLink, localEmails]);
 
   const handleCopy = useCallback(() => {
     copyToClipboard(shareUrl);
@@ -249,6 +247,13 @@ const ShareDialog = ({
       setEmailInput("");
       return;
     }
+    const linkId = shareLink?.id;
+    if (!linkId) {
+      enqueueSnackbar("Share link is still being generated", {
+        variant: "warning",
+      });
+      return;
+    }
 
     // Try backend, always add locally for instant feedback
     setLocalEmails((prev) => [...prev, email]);
@@ -258,24 +263,21 @@ const ShareDialog = ({
       autoHideDuration: 2000,
     });
 
-    const linkId = activeLink?.id;
-    if (linkId) {
-      addAccessMutation.mutate({ linkId, emails: [email] });
-    }
-  }, [emailInput, allEmails, activeLink, addAccessMutation]);
+    addAccessMutation.mutate({ linkId, emails: [email] });
+  }, [emailInput, allEmails, shareLink, addAccessMutation]);
 
   const handleRemoveEmail = useCallback(
     (entry) => {
       if (entry.source === "local") {
         setLocalEmails((prev) => prev.filter((e) => e !== entry.email));
-      } else if (activeLink?.id) {
+      } else if (shareLink?.id) {
         removeAccessMutation.mutate({
-          linkId: activeLink.id,
+          linkId: shareLink.id,
           accessId: entry.id,
         });
       }
     },
-    [activeLink, removeAccessMutation],
+    [shareLink, removeAccessMutation],
   );
 
   const handleKeyDown = (e) => {
@@ -430,6 +432,7 @@ const ShareDialog = ({
               label="Anyone with the link"
               description="No sign-in required to view"
               selected={accessMode === "public"}
+              disabled={!shareLinkReady}
               onClick={() => handleAccessModeChange("public")}
             />
             <AccessOption
@@ -438,6 +441,7 @@ const ShareDialog = ({
               label="Restricted"
               description="Only people you add can view"
               selected={accessMode === "restricted"}
+              disabled={!shareLinkReady}
               onClick={() => handleAccessModeChange("restricted")}
             />
           </Stack>
@@ -482,7 +486,7 @@ const ShareDialog = ({
               variant="contained"
               size="small"
               onClick={handleAddEmail}
-              disabled={!emailInput.trim()}
+              disabled={!emailInput.trim() || !shareLinkReady}
               sx={{
                 textTransform: "none",
                 px: 2,
@@ -576,6 +580,7 @@ const ShareDialog = ({
                   <Tooltip title="Remove access">
                     <IconButton
                       size="small"
+                      aria-label={`Remove access for ${entry.email}`}
                       onClick={() => handleRemoveEmail(entry)}
                       sx={{ opacity: 0.4, "&:hover": { opacity: 1 } }}
                     >

@@ -13,8 +13,28 @@ Scope in this module:
 - ``resolve_filtered_trace_ids`` — Phase 1. Mirrors
   ``list_traces_of_session`` filter semantics for ``source_type="trace"``.
 
-Future phases will add sibling resolvers for ``observation_span``,
-``trace_session``, and ``call_execution``.
+Resolvers cover ``trace`` (+voice), ``observation_span``, ``trace_session``,
+and ``call_execution``.
+
+ClickHouse migration status:
+
+  Each resolver mirrors its grid's list view by instantiating the SAME v2
+  ``query_builders`` list builder (``TraceListQueryBuilder`` /
+  ``VoiceCallListQueryBuilder`` / ``SpanListQueryBuilder`` /
+  ``SessionListQueryBuilder``) through the ``ClickHouseFilterBuilder`` translator,
+  so filter semantics match the grid exactly.
+
+  - trace, voice, span, session: ClickHouse ONLY. No PG tracer-table read — rows
+    come only from CH. When the payload sends no time bound, an all-history
+    window is injected (``_all_history_time_filter``) so "select all matching"
+    spans everything instead of the builders' now-30d default. Drop-safe: a CH
+    failure propagates rather than falling back, and an empty CH result is
+    authoritative. Session score-label filters intersect the annotation ``Score``
+    table, which is NOT a tracer table.
+
+  Project / annotation-label / ``Score`` PG lookups stay — those tables are not
+  being dropped. ``call_execution`` resolves from the ``simulate`` PG tables,
+  which are also not tracer tables.
 """
 
 from __future__ import annotations
@@ -24,29 +44,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 import structlog
-from django.db import models
-from django.db.models import (
-    Avg,
-    Case,
-    CharField,
-    Count,
-    DurationField,
-    Exists,
-    ExpressionWrapper,
-    F,
-    FloatField,
-    IntegerField,
-    JSONField,
-    Max,
-    Min,
-    OuterRef,
-    Q,
-    Subquery,
-    Sum,
-    Value,
-    When,
-)
-from django.db.models.functions import Coalesce, JSONObject, Round
+from django.db.models import Q
 
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
@@ -56,13 +54,11 @@ from simulate.utils.persona_filtering import (
     apply_persona_filter,
     is_persona_filter_column,
 )
-from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.observation_span import EvalLogger, ObservationSpan
-from tracer.models.project import Project
-from tracer.models.trace import Trace
-from tracer.models.trace_session import TraceSession
-from tracer.utils.annotations import build_annotation_subqueries
-from tracer.utils.filters import FilterEngine, apply_created_at_filters
+from tracer.models.project import Project, ProjectSourceChoices
+from tracer.utils.filters import (
+    apply_created_at_filters,
+    normalize_filter_item,
+)
 from tracer.utils.helper import get_annotation_labels_for_project
 
 logger = structlog.get_logger(__name__)
@@ -80,6 +76,14 @@ class ResolveResult:
 _USER_SCOPED_COLUMN_IDS = {"my_annotations", "annotator"}
 
 
+def _filter_column_id(filter_item: dict) -> str:
+    return normalize_filter_item(filter_item)["column_id"] or ""
+
+
+def _filter_config(filter_item: dict) -> dict:
+    return normalize_filter_item(filter_item)["filter_config"]
+
+
 def _has_explicit_time_filter(filters: list[dict] | None) -> bool:
     """Return True only when the saved filter payload includes a real time bound.
 
@@ -90,143 +94,17 @@ def _has_explicit_time_filter(filters: list[dict] | None) -> bool:
     checks for the delta.
     """
     for filter_item in filters or []:
-        column_id = filter_item.get("column_id") or filter_item.get("columnId")
+        column_id = _filter_column_id(filter_item)
         if column_id not in {"created_at", "start_time"}:
             continue
-        config = (
-            filter_item.get("filter_config")
-            or filter_item.get("filterConfig")
-            or {}
-        )
-        filter_type = config.get("filter_type") or config.get("filterType")
+        config = _filter_config(filter_item)
+        filter_type = config.get("filter_type")
         if filter_type not in {"datetime", "date"}:
             continue
-        value = config.get("filter_value", config.get("filterValue"))
+        value = config.get("filter_value")
         if value not in (None, "", []):
             return True
     return False
-
-
-def _filter_col_type(filter_item: dict) -> str:
-    config = filter_item.get("filter_config") or filter_item.get("filterConfig") or {}
-    return config.get("col_type") or config.get("colType") or filter_item.get(
-        "col_type", filter_item.get("colType", "")
-    )
-
-
-def _needs_eval_metric_annotations(filters) -> bool:
-    return any(_filter_col_type(f) == "EVAL_METRIC" for f in filters or [])
-
-
-def _needs_annotation_field_annotations(filters) -> bool:
-    return any(_filter_col_type(f) == "ANNOTATION" for f in filters or [])
-
-
-def _annotate_eval_metrics(qs, *, project_id, organization, source_type: str):
-    """Mirror Observe PG list views' dynamic ``metric_<eval_id>`` annotations.
-
-    FilterEngine evaluates eval metric filters against JSON annotations named
-    ``metric_<custom_eval_config_id>`` with a nested ``score`` key. The grid
-    builds those annotations before filtering; queue filter-mode needs the
-    same shape so "select all matching filters" resolves the same rows.
-    """
-    if source_type == "observation_span":
-        eval_log_scope = EvalLogger.objects.filter(
-            observation_span__project_id=project_id,
-            observation_span__project__organization=organization,
-        )
-        outer_filter = {
-            "observation_span_id": OuterRef("id"),
-        }
-    else:
-        eval_log_scope = EvalLogger.objects.filter(
-            trace__project_id=project_id,
-            trace__project__organization=organization,
-        )
-        outer_filter = {
-            "trace_id": OuterRef("id"),
-        }
-
-    eval_configs = CustomEvalConfig.objects.filter(
-        id__in=eval_log_scope.values("custom_eval_config_id").distinct(),
-        deleted=False,
-    ).select_related("eval_template")
-
-    for config in eval_configs:
-        choices = (
-            config.eval_template.choices
-            if getattr(config, "eval_template", None)
-            and config.eval_template.choices
-            else None
-        )
-        metric_qs = (
-            EvalLogger.objects.filter(
-                **outer_filter,
-                custom_eval_config_id=config.id,
-            )
-            .exclude(Q(output_str="ERROR") | Q(error=True))
-            .values("custom_eval_config_id")
-            .annotate(
-                float_score=Round(Avg("output_float") * 100, 2),
-                bool_score=Round(
-                    Avg(
-                        Case(
-                            When(output_bool=True, then=100),
-                            When(output_bool=False, then=0),
-                            default=None,
-                            output_field=FloatField(),
-                        )
-                    ),
-                    2,
-                ),
-                str_list_score=JSONObject(
-                    **{
-                        f"{value}": JSONObject(
-                            score=Round(
-                                100.0
-                                * Count(
-                                    Case(
-                                        When(output_str_list__contains=[value], then=1),
-                                        default=None,
-                                        output_field=IntegerField(),
-                                    )
-                                )
-                                / Count("output_str_list"),
-                                2,
-                            )
-                        )
-                        for value in choices or []
-                    }
-                ),
-            )
-            .values("float_score", "bool_score", "str_list_score")[:1]
-        )
-
-        exists_qs = EvalLogger.objects.filter(
-            **outer_filter,
-            custom_eval_config_id=config.id,
-        )
-        qs = qs.annotate(
-            **{
-                f"metric_{config.id}": Case(
-                    When(
-                        Exists(exists_qs.filter(output_float__isnull=False)),
-                        then=JSONObject(score=Subquery(metric_qs.values("float_score"))),
-                    ),
-                    When(
-                        Exists(exists_qs.filter(output_bool__isnull=False)),
-                        then=JSONObject(score=Subquery(metric_qs.values("bool_score"))),
-                    ),
-                    When(
-                        Exists(exists_qs.filter(output_str_list__isnull=False)),
-                        then=Subquery(metric_qs.values("str_list_score")),
-                    ),
-                    default=None,
-                    output_field=JSONField(),
-                ),
-            }
-        )
-    return qs
 
 
 def _validate_user_scoped_filters(filters, user):
@@ -234,233 +112,20 @@ def _validate_user_scoped_filters(filters, user):
     if user is not None:
         return
     for f in filters or []:
-        col = f.get("column_id") or f.get("columnId")
+        col = _filter_column_id(f)
         if col in _USER_SCOPED_COLUMN_IDS:
             raise ValueError(
                 f"Filter references user-scoped column {col!r} but user is None"
             )
 
 
-def _build_trace_base_queryset(project_id, organization, workspace=None):
-    """Return org/workspace/project-scoped base Trace queryset.
-
-    Annotates ``span_attributes`` from the root ObservationSpan because the
-    frontend sends SPAN_ATTRIBUTE-typed filters that expect that attribute
-    path to exist on the Trace row. ``list_traces_of_session`` and
-    ``list_voice_calls`` both add this annotation before applying filters;
-    without it, ``span_attributes__contains`` silently matches the entire
-    project and the queue receives ALL traces.
-
-    Raises ``Project.DoesNotExist`` if the project does not belong to the
-    organization.
-    """
-    project = Project.objects.get(id=project_id, organization=organization)
-
-    root_span_qs = ObservationSpan.objects.filter(
-        trace_id=OuterRef("id"), parent_span_id__isnull=True
-    )
-    all_span_qs = ObservationSpan.objects.filter(trace_id=OuterRef("id"))
-    qs = Trace.objects.filter(project_id=project.id).annotate(
-        node_type=Case(
-            When(
-                Exists(root_span_qs),
-                then=Subquery(root_span_qs.values("observation_type")[:1]),
-            ),
-            default=Value("unknown"),
-            output_field=CharField(),
-        ),
-        trace_name=Case(
-            When(
-                Exists(root_span_qs),
-                then=Subquery(root_span_qs.values("name")[:1]),
-            ),
-            default=Value("[ Incomplete Trace ]"),
-            output_field=CharField(),
-        ),
-        latency=Subquery(root_span_qs.values("latency_ms")[:1]),
-        total_tokens=Coalesce(
-            Subquery(
-                all_span_qs.values("trace_id")
-                .annotate(total=Sum("total_tokens"))
-                .values("total")[:1]
-            ),
-            0,
-            output_field=IntegerField(),
-        ),
-        total_cost=Coalesce(
-            Subquery(
-                all_span_qs.values("trace_id")
-                .annotate(total=Sum("cost"))
-                .values("total")[:1]
-            ),
-            0.0,
-            output_field=FloatField(),
-        ),
-        trace_id=F("id"),
-        # Pull span_attributes off the root span. Old rows only have
-        # eval_attributes populated — Coalesce falls back to keep parity
-        # with the list views.
-        span_attributes=Subquery(
-            root_span_qs.annotate(
-                _attrs=Coalesce("span_attributes", "eval_attributes")
-            ).values("_attrs")[:1]
-        ),
-        user_id=Subquery(
-            ObservationSpan.objects.filter(
-                trace_id=OuterRef("id"), end_user__isnull=False
-            )
-            .order_by("start_time")
-            .values("end_user__user_id")[:1]
-        ),
-        start_time=Coalesce(
-            Subquery(root_span_qs.order_by("start_time").values("start_time")[:1]),
-            "created_at",
-        ),
-        status=Case(
-            When(Exists(root_span_qs.filter(status="ERROR")), then=Value("ERROR")),
-            When(Exists(root_span_qs.filter(status="OK")), then=Value("OK")),
-            default=Value("UNSET"),
-            output_field=CharField(),
-        ),
-    )
-
-    if workspace is not None:
-        qs = qs.filter(project__workspace=workspace)
-
-    return qs
-
-
-def _apply_voice_call_constraints(qs, filters: list[dict], *, remove_simulation_calls: bool = False):
-    """Narrow a Trace queryset to match ``list_voice_calls``'s result set.
-
-    Simulator/voice projects render the grid via ``list_voice_calls`` which
-    constrains to traces whose root span is a conversation, applies voice
-    system metrics (agent latency, turn count, etc.), and optionally hides
-    the VAPI simulator calls. The filter-mode resolver mirrored only
-    ``list_traces_of_session``, so for voice projects it returned a
-    superset — grid shows N, queue receives N + non-conversation traces.
-    This helper brings parity with the voice list view.
-    """
-    root_span_qs = ObservationSpan.objects.filter(
-        trace_id=OuterRef("id"),
-        parent_span_id__isnull=True,
-    )
-    qs = qs.annotate(
-        has_conversation_root=Exists(
-            root_span_qs.filter(observation_type="conversation")
-        )
-    ).filter(has_conversation_root=True)
-
-    # Voice-specific system metrics (agent_latency / turn_count / etc.) are
-    # stored as span aggregates and are NOT in the standard system-metric
-    # branch applied by ``_apply_trace_filters``.
-    voice_metric_conds, voice_annotations = (
-        FilterEngine.get_filter_conditions_for_voice_system_metrics(filters or [])
-    )
-    if voice_annotations:
-        qs = qs.annotate(**voice_annotations)
-    if voice_metric_conds:
-        qs = qs.filter(voice_metric_conds)
-
-    if remove_simulation_calls:
-        sim_q = FilterEngine.get_filter_conditions_for_simulation_calls(
-            remove_simulation_calls=True
-        )
-        if sim_q:
-            qs = qs.exclude(sim_q)
-
-    return qs
-
-
-def _apply_trace_filters(
-    base_qs,
-    filters: list[dict],
-    *,
-    user,
-    organization,
-    annotation_label_ids: list[str] | None = None,
-):
-    """Apply the same FilterEngine branches as ``list_traces_of_session``.
-
-    Mirrors ``tracer.views.trace.ObservationTraceViewSet.list_traces_of_session``
-    lines 1668-1742. Any drift here is a bug — see parity tests.
-    """
-    if not filters:
-        return base_qs
-
-    if annotation_label_ids is None:
-        annotation_label_ids = list(
-            AnnotationsLabels.objects.filter(
-                organization=organization, deleted=False
-            ).values_list("id", flat=True)
-        )
-
-    combined = Q()
-    qs = base_qs
-
-    # 1. System metrics
-    system_conds = FilterEngine.get_filter_conditions_for_system_metrics(filters)
-    if system_conds:
-        combined &= system_conds
-
-    # 2. Separate annotation filters from eval filters (must precede #3 and #4)
-    def _col_type(f):
-        fc = f.get("filter_config", {})
-        return fc.get("col_type", f.get("col_type", ""))
-
-    annotation_col_types = {"ANNOTATION"}
-    annotation_column_ids = {"my_annotations", "annotator"}
-    non_annotation = [
-        f
-        for f in filters
-        if _col_type(f) not in annotation_col_types
-        and (f.get("column_id") or f.get("columnId"))
-        not in annotation_column_ids
-    ]
-
-    # 3. Non-system (eval) metrics, excluding annotation columns
-    eval_conds = FilterEngine.get_filter_conditions_for_non_system_metrics(
-        non_annotation
-    )
-    if eval_conds:
-        combined &= eval_conds
-
-    # 4. Voice-call annotations (score / annotator / my_annotations)
-    ann_conds, extra_annotations = (
-        FilterEngine.get_filter_conditions_for_voice_call_annotations(
-            filters, user_id=getattr(user, "id", None)
-        )
-    )
-    if extra_annotations:
-        qs = qs.annotate(**extra_annotations)
-    if ann_conds:
-        combined &= ann_conds
-
-    # 5. Span attributes
-    span_attr_conds = FilterEngine.get_filter_conditions_for_span_attributes(filters)
-    if span_attr_conds:
-        combined &= span_attr_conds
-
-    # 6. has_eval toggle
-    has_eval = FilterEngine.get_filter_conditions_for_has_eval(
-        filters, observe_type="trace"
-    )
-    if has_eval:
-        combined &= has_eval
-
-    # 7. has_annotation toggle
-    has_ann = FilterEngine.get_filter_conditions_for_has_annotation(
-        filters,
-        observe_type="trace",
-        annotation_label_ids=[str(label_id) for label_id in annotation_label_ids],
-    )
-    if has_ann:
-        combined &= has_ann
-
-    if combined:
-        qs = qs.filter(combined)
-
-    return qs
+def _project_matches_workspace(project, workspace):
+    if workspace is None:
+        return True
+    project_workspace_id = getattr(project, "workspace_id", None)
+    if project_workspace_id == getattr(workspace, "id", None):
+        return True
+    return project_workspace_id is None and getattr(workspace, "is_default", False)
 
 
 def _resolve_voice_call_ids_clickhouse(
@@ -471,32 +136,21 @@ def _resolve_voice_call_ids_clickhouse(
     cap: int,
     remove_simulation_calls: bool,
     annotation_label_ids: list[str],
-) -> ResolveResult | None:
-    """Resolve voice-call trace IDs via ClickHouse.
+) -> ResolveResult:
+    """Resolve voice-call trace IDs via ClickHouse, mirroring ``list_voice_calls``.
 
-    Mirrors ``_list_voice_calls_clickhouse`` — uses
-    ``VoiceCallListQueryBuilder`` so filter semantics (especially
-    SPAN_ATTRIBUTE filters translated through ``ClickHouseFilterBuilder``)
-    match the grid exactly.
+    Uses ``VoiceCallListQueryBuilder`` so filter semantics — SPAN_ATTRIBUTE
+    filters translated through ``ClickHouseFilterBuilder``, voice system
+    metrics, simulator exclusion — match the voice grid exactly.
 
-    Returns ``None`` if ClickHouse is unavailable so the caller can fall
-    back to the PG path.
+    ClickHouse is the sole backend for voice-call rows (the PG tracer tables
+    are being dropped), so a ClickHouse failure propagates rather than silently
+    resolving to a partial/empty set.
     """
-    try:
-        from tracer.services.clickhouse.query_builders import (
-            VoiceCallListQueryBuilder,
-        )
-        from tracer.services.clickhouse.query_service import (
-            AnalyticsQueryService,
-            QueryType,
-        )
-    except ImportError:
-        return None
+    from tracer.services.clickhouse.query_builders import VoiceCallListQueryBuilder
+    from tracer.services.clickhouse.query_service import AnalyticsQueryService
 
     analytics = AnalyticsQueryService()
-    if not analytics.should_use_clickhouse(QueryType.VOICE_CALL_LIST):
-        return None
-
     builder = VoiceCallListQueryBuilder(
         project_id=str(project_id),
         page_number=0,
@@ -505,25 +159,28 @@ def _resolve_voice_call_ids_clickhouse(
         annotation_label_ids=annotation_label_ids,
         remove_simulation_calls=remove_simulation_calls,
     )
-    # build() must run before build_count_query() because the former is
-    # what populates self.params with start_date / end_date.
-    ids_query, ids_params = builder.build()
-    ids_result = analytics.execute_ch_query(
-        ids_query, ids_params, timeout_ms=15_000
-    )
-    ids = [
-        str(r.get("trace_id", ""))
-        for r in ids_result.data
-        if r.get("trace_id")
-    ]
-
-    count_query, count_params = builder.build_count_query()
-    count_result = analytics.execute_ch_query(
-        count_query, count_params, timeout_ms=10_000
-    )
-    total_matching = (
-        count_result.data[0].get("total", 0) if count_result.data else 0
-    )
+    # Skip the separate `uniqExact(trace_id)` count query — on large filter
+    # results it was the dominant /preview timeout. ``build()`` already adds
+    # ``LIMIT cap + 1`` (voice_call_list.py:97), so the cap+1 sentinel gives
+    # us "≥ cap" without a second scan.
+    try:
+        ids_query, ids_params = builder.build()
+        ids_result = analytics.execute_ch_query(
+            ids_query, ids_params, timeout_ms=15_000
+        )
+    except Exception as exc:
+        # CH is the sole voice backend (PG tracer tables dropped); fail closed.
+        # Breadcrumb for log-based alerting; the re-raise carries the Sentry
+        # error, so this stays WARNING to avoid a duplicate event.
+        logger.warning(
+            "bulk_selection_resolve_voice_ch_query_failed",
+            project_id=str(project_id),
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        raise
+    ids = [str(r.get("trace_id", "")) for r in ids_result.data if r.get("trace_id")]
+    raw_truncated = len(ids) > cap
 
     # VoiceCallListQueryBuilder's SQL simulation filter is a no-op (the
     # phone numbers live in the heavy span_attributes_raw blob). The list
@@ -531,14 +188,17 @@ def _resolve_voice_call_ids_clickhouse(
     # toggle is on.
     if remove_simulation_calls and ids:
         ids = _filter_out_simulator_calls_ch(ids, project_id, analytics)
-        total_matching = len(ids) + len(exclude_ids or set())
 
     if exclude_ids:
         excl = {str(i) for i in exclude_ids}
         ids = [i for i in ids if i not in excl]
 
-    truncated = total_matching > cap
+    # Preserve the cap+1 sentinel from before exclusion. If an excluded row
+    # occupied the sentinel slot there may still be more non-excluded rows
+    # just beyond the fetched window, so do not under-report truncation.
+    truncated = raw_truncated or len(ids) > cap
     ids = ids[:cap]
+    total_matching = len(ids) + (1 if truncated else 0)
 
     logger.info(
         "bulk_selection_resolve_trace_ch",
@@ -576,7 +236,10 @@ def _filter_out_simulator_calls_ch(trace_ids, project_id, analytics):
       AND observation_type = 'conversation'
       AND trace_id IN %(trace_ids)s
     """
-    params = {"project_id": str(project_id), "trace_ids": tuple(str(t) for t in trace_ids)}
+    params = {
+        "project_id": str(project_id),
+        "trace_ids": tuple(str(t) for t in trace_ids),
+    }
     result = analytics.execute_ch_query(query, params, timeout_ms=15_000)
     sim_trace_ids = set()
     for row in result.data:
@@ -585,7 +248,9 @@ def _filter_out_simulator_calls_ch(trace_ids, project_id, analytics):
             attrs = _json.loads(raw) if isinstance(raw, str) else (raw or {})
         except (_json.JSONDecodeError, TypeError):
             attrs = {}
-        if VoiceCallListQueryBuilder.is_simulator_call(attrs, row.get("provider") or ""):
+        if VoiceCallListQueryBuilder.is_simulator_call(
+            attrs, row.get("provider") or ""
+        ):
             sim_trace_ids.add(str(row.get("trace_id", "")))
     return [t for t in trace_ids if t not in sim_trace_ids]
 
@@ -597,67 +262,68 @@ def _resolve_trace_ids_clickhouse(
     exclude_ids: set,
     cap: int,
     annotation_label_ids: list[str],
-) -> ResolveResult | None:
-    """Resolve regular trace IDs via ClickHouse.
+) -> ResolveResult:
+    """Resolve regular trace IDs via ClickHouse, mirroring ``list_traces_of_session``.
 
-    Mirrors ``_list_traces_of_session_clickhouse`` — uses
-    ``TraceListQueryBuilder`` so filter semantics (especially
+    Uses ``TraceListQueryBuilder`` so filter semantics (especially
     SPAN_ATTRIBUTE filters translated through ``ClickHouseFilterBuilder``)
     match the non-voice grid exactly.
 
-    Returns ``None`` if ClickHouse is unavailable so the caller can fall
-    back to the PG path.
+    ClickHouse is the sole backend for trace rows (the PG tracer tables are
+    being dropped), so a ClickHouse failure propagates rather than silently
+    resolving to a partial/empty set.
     """
-    try:
-        from tracer.services.clickhouse.query_builders.trace_list import (
-            TraceListQueryBuilder,
-        )
-        from tracer.services.clickhouse.query_service import (
-            AnalyticsQueryService,
-            QueryType,
-        )
-    except ImportError:
-        return None
+    from tracer.services.clickhouse.query_builders.trace_list import (
+        TraceListQueryBuilder,
+    )
+    from tracer.services.clickhouse.query_service import AnalyticsQueryService
 
     analytics = AnalyticsQueryService()
-    if not analytics.should_use_clickhouse(QueryType.TRACE_OF_SESSION_LIST):
-        return None
-
     builder = TraceListQueryBuilder(
         project_id=str(project_id),
         page_number=0,
-        page_size=cap,
+        # Fetch cap+1 as the page size so a >cap result trips the truncation
+        # sentinel below. Unlike the voice builder, the trace ``build()`` LIMIT
+        # is exactly page_size (no internal +1), so request the extra row here.
+        page_size=cap + 1,
         filters=filters or [],
         annotation_label_ids=annotation_label_ids,
         # Phase 1 light columns are all we need — we only want trace_id.
         columns=["trace_id"],
     )
-    # build() must run before build_count_query() because it populates
-    # self.params with start_date / end_date that the count query reads.
-    ids_query, ids_params = builder.build()
-    ids_result = analytics.execute_ch_query(
-        ids_query, ids_params, timeout_ms=15_000
-    )
-    ids = [
-        str(r.get("trace_id", ""))
-        for r in ids_result.data
-        if r.get("trace_id")
-    ]
-
-    count_query, count_params = builder.build_count_query()
-    count_result = analytics.execute_ch_query(
-        count_query, count_params, timeout_ms=10_000
-    )
-    total_matching = (
-        count_result.data[0].get("total", 0) if count_result.data else 0
-    )
+    # Skip the separate count query — the cap+1 page gives the "≥ cap" sentinel
+    # without a second uniqExact scan (the dominant /preview timeout source).
+    # ``build()`` dedups per trace (``LIMIT 1 BY trace_id``) so ``len > cap`` is
+    # an honest distinct-trace count.
+    try:
+        ids_query, ids_params = builder.build()
+        ids_result = analytics.execute_ch_query(
+            ids_query, ids_params, timeout_ms=15_000
+        )
+    except Exception as exc:
+        # CH is the sole trace backend (PG tracer tables dropped); fail closed.
+        # Breadcrumb for log-based alerting; the re-raise carries the Sentry
+        # error, so this stays WARNING to avoid a duplicate event.
+        logger.warning(
+            "bulk_selection_resolve_trace_ch_query_failed",
+            project_id=str(project_id),
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        raise
+    ids = [str(r.get("trace_id", "")) for r in ids_result.data if r.get("trace_id")]
+    raw_truncated = len(ids) > cap
 
     if exclude_ids:
         excl = {str(i) for i in exclude_ids}
         ids = [i for i in ids if i not in excl]
 
-    truncated = total_matching > cap
+    # Preserve the cap+1 sentinel from before exclusion. If an excluded row
+    # occupied the sentinel slot there may still be more non-excluded rows
+    # just beyond the fetched window, so do not under-report truncation.
+    truncated = raw_truncated or len(ids) > cap
     ids = ids[:cap]
+    total_matching = len(ids) + (1 if truncated else 0)
 
     logger.info(
         "bulk_selection_resolve_trace_ch",
@@ -719,103 +385,48 @@ def resolve_filtered_trace_ids(
     """
     _validate_user_scoped_filters(filters or [], user)
 
-    # Verify project exists + is in org before we try either backend. Keeps
-    # the 404 contract consistent with the enumerated path.
+    # Project + workspace scope are resolved in PG — the project / annotation-
+    # label tables are NOT tracer tables and are not being dropped. Trace/voice
+    # rows themselves are read only from ClickHouse (no PG tracer-table access),
+    # so filter-mode add stays working once the PG tracer tables are dropped.
+    # Verifying the project up front keeps the 404 contract consistent with the
+    # enumerated path.
     project = Project.objects.get(id=project_id, organization=organization)
-    if workspace is not None and getattr(project, "workspace_id", None) != getattr(
-        workspace, "id", None
-    ):
+    if not _project_matches_workspace(project, workspace):
         return ResolveResult(ids=[], total_matching=0, truncated=False)
 
-    # Dispatch to ClickHouse when available so filter semantics
-    # (especially SPAN_ATTRIBUTE filters translated through
-    # ClickHouseFilterBuilder) match the grid exactly. Both grid paths
-    # (regular traces + voice calls) are CH-first in production, and
-    # PG/CH diverge on JSON span_attribute semantics — the PG fallback
-    # was matching the full project instead of the filtered subset.
     annotation_labels = get_annotation_labels_for_project(project.id, organization)
     annotation_label_ids = [str(lbl.id) for lbl in annotation_labels]
-    ch_result = None
-    if _has_explicit_time_filter(filters):
-        if is_voice_call:
-            ch_result = _resolve_voice_call_ids_clickhouse(
-                project_id=project_id,
-                filters=filters or [],
-                exclude_ids=set(exclude_ids or ()),
-                cap=cap,
-                remove_simulation_calls=remove_simulation_calls,
-                annotation_label_ids=annotation_label_ids,
-            )
-        else:
-            ch_result = _resolve_trace_ids_clickhouse(
-                project_id=project_id,
-                filters=filters or [],
-                exclude_ids=set(exclude_ids or ()),
-                cap=cap,
-                annotation_label_ids=annotation_label_ids,
-            )
-    if ch_result is not None:
-        return ch_result
 
-    base = _build_trace_base_queryset(project_id, organization, workspace)
-    if _needs_eval_metric_annotations(filters or []):
-        base = _annotate_eval_metrics(
-            base,
-            project_id=project.id,
-            organization=organization,
-            source_type="trace",
-        )
-    if _needs_annotation_field_annotations(filters or []):
-        base = build_annotation_subqueries(base, annotation_labels, organization)
-    qs = _apply_trace_filters(
-        base,
-        filters or [],
-        user=user,
-        organization=organization,
-        annotation_label_ids=annotation_label_ids,
-    )
+    # The CH list builders default to a now-30d window when the payload sends no
+    # time bound (a dashboard-perf default in parse_time_range), which would
+    # silently drop older rows a "select all matching this filter" must include.
+    # Widen to all-history so the resolve spans everything, matching the
+    # enumerated path; an explicit user time filter prunes normally.
+    #
+    # Injected here at the caller (not inside the resolvers) so one site covers
+    # both the trace and voice branches; span/session self-inject inside their
+    # single resolver.
+    ch_filters = list(filters or [])
+    if not _has_explicit_time_filter(filters):
+        ch_filters.append(_all_history_time_filter())
 
     if is_voice_call:
-        qs = _apply_voice_call_constraints(
-            qs,
-            filters or [],
+        return _resolve_voice_call_ids_clickhouse(
+            project_id=project_id,
+            filters=ch_filters,
+            exclude_ids=set(exclude_ids or ()),
+            cap=cap,
             remove_simulation_calls=remove_simulation_calls,
+            annotation_label_ids=annotation_label_ids,
         )
-
-    if exclude_ids:
-        qs = qs.exclude(id__in=list(exclude_ids))
-
-    # Mirror the list view's `start_time` annotation so ordering is identical:
-    # prefer the root span's start_time, fall back to Trace.created_at.
-    qs = qs.annotate(
-        start_time=Coalesce(
-            Subquery(
-                ObservationSpan.objects.filter(
-                    trace_id=OuterRef("id"), parent_span_id__isnull=True
-                )
-                .order_by("start_time")
-                .values("start_time")[:1]
-            ),
-            F("created_at"),
-        )
-    ).order_by("-start_time", "-id")
-
-    # One COUNT + one SELECT for the capped IDs. Two queries total.
-    total_matching = qs.count()
-    ids = list(qs.values_list("id", flat=True)[:cap])
-    truncated = total_matching > cap
-
-    logger.info(
-        "bulk_selection_resolve_trace",
-        project_id=str(project_id),
-        filter_count=len(filters or []),
-        exclude_count=len(list(exclude_ids or [])),
-        total_matching=total_matching,
-        returned=len(ids),
-        truncated=truncated,
+    return _resolve_trace_ids_clickhouse(
+        project_id=project_id,
+        filters=ch_filters,
+        exclude_ids=set(exclude_ids or ()),
+        cap=cap,
+        annotation_label_ids=annotation_label_ids,
     )
-
-    return ResolveResult(ids=ids, total_matching=total_matching, truncated=truncated)
 
 
 # --------------------------------------------------------------------------
@@ -823,113 +434,104 @@ def resolve_filtered_trace_ids(
 # --------------------------------------------------------------------------
 
 
-def _build_span_base_queryset(project_id, organization, workspace=None):
-    """Return org/workspace/project-scoped base ObservationSpan queryset.
+def _all_history_time_filter() -> dict:
+    """A wide-open ``start_time`` window that cancels the CH builders' now-30d default.
 
-    Mirrors the scoping at
-    ``tracer.views.observation_span.ObservationSpanViewSet.list_spans_observe``
-    (lines 1528-1580). Raises ``Project.DoesNotExist`` if the project is
-    not in the org.
+    The v2 list builders' ``parse_time_range`` defaults to now-30d when the
+    payload sends no time bound (a dashboard-perf default), which would silently
+    drop older rows a "select all matching this filter" must include. Injecting
+    this makes the CH resolve all-history for trace, voice and span alike.
+
+    Lower bound is ``1971`` (not ``1970``): the trace/voice builders subtract
+    ``INTERVAL 1 DAY`` from the window start for partition pruning (and so do the
+    span score subqueries), and a ClickHouse ``DateTime`` is a 32-bit epoch, so
+    ``1970-01-01 - 1 DAY`` underflows and matches nothing.
     """
-    project = Project.objects.get(id=project_id, organization=organization)
-
-    qs = ObservationSpan.objects.filter(
-        project_id=project.id,
-        project__organization=organization,
-        deleted=False,
-    ).annotate(
-        node_type=F("observation_type"),
-        span_id=F("id"),
-        span_name=F("name"),
-        trace_name=F("trace__name"),
-        user_id=F("end_user__user_id"),
-    )
-
-    if workspace is not None:
-        qs = qs.filter(project__workspace=workspace)
-
-    return qs
+    return {
+        "column_id": "start_time",
+        "filter_config": {
+            "filter_type": "datetime",
+            "filter_op": "between",
+            "filter_value": ["1971-01-01T00:00:00", "2099-12-31T23:59:59"],
+        },
+    }
 
 
-def _apply_span_filters(base_qs, filters: list[dict], *, user, organization):
-    """Apply the same FilterEngine branches as ``list_spans_observe``.
+def _resolve_span_ids_clickhouse(
+    *,
+    project_id,
+    filters: list[dict],
+    exclude_ids: set,
+    cap: int,
+    annotation_label_ids: list[str],
+) -> ResolveResult:
+    """Resolve span IDs from ClickHouse, mirroring ``list_spans_observe``.
 
-    Mirrors ``tracer/views/observation_span.py:1735-1806``. Two deltas vs
-    the trace variant:
+    Uses the same ``SPAN_LIST`` builder the observe grid uses (via v2 dispatch)
+    so filter semantics — span attributes, eval metrics, annotation labels,
+    ``user_id`` remap — match the grid exactly. Reads ids only (no wide JSON
+    columns) so a broad filtered scan can't OOM the shared cluster.
 
-      - ``get_filter_conditions_for_voice_call_annotations`` is called with
-        ``span_filter_kwargs={"observation_span_id": OuterRef("id")}``.
-      - ``get_filter_conditions_for_has_eval`` / ``has_annotation`` use
-        ``observe_type="span"``.
+    ClickHouse is the sole backend for span rows (the PG tracer tables are being
+    dropped), so a ClickHouse failure propagates rather than silently resolving
+    to a partial/empty set.
     """
-    if not filters:
-        return base_qs
+    from tracer.services.clickhouse.query_service import AnalyticsQueryService
+    from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
 
-    combined = Q()
-    qs = base_qs
+    ch_filters = list(filters or [])
+    if not _has_explicit_time_filter(ch_filters):
+        ch_filters.append(_all_history_time_filter())
 
-    # 1. System metrics
-    system_conds = FilterEngine.get_filter_conditions_for_system_metrics(filters)
-    if system_conds:
-        combined &= system_conds
-
-    # 2. Split annotation filters from eval filters
-    annotation_col_types = {"ANNOTATION"}
-    annotation_column_ids = {"my_annotations", "annotator"}
-    non_annotation = [
-        f
-        for f in filters
-        if f.get("col_type") not in annotation_col_types
-        and (f.get("column_id") or f.get("columnId"))
-        not in annotation_column_ids
-    ]
-
-    # 3. Non-system (eval) metrics
-    eval_conds = FilterEngine.get_filter_conditions_for_non_system_metrics(
-        non_annotation
+    BuilderCls = get_query_builder_class("SPAN_LIST")  # noqa: N806
+    builder = BuilderCls(
+        project_id=str(project_id),
+        filters=ch_filters,
+        annotation_label_ids=annotation_label_ids,
     )
-    if eval_conds:
-        combined &= eval_conds
-
-    # 4. Voice-call annotations — span variant uses span_filter_kwargs so
-    # the annotation subquery joins on ObservationSpan.id rather than
-    # Trace.id.
-    ann_conds, extra_annotations = (
-        FilterEngine.get_filter_conditions_for_voice_call_annotations(
-            filters,
-            user_id=getattr(user, "id", None),
-            span_filter_kwargs={"observation_span_id": OuterRef("id")},
+    # build_id_query(limit=cap+1) gives the LIMIT cap+1 truncation sentinel
+    # without a separate COUNT scan (same trick as the trace/voice/session CH
+    # paths).
+    try:
+        query, params = builder.build_id_query(limit=cap + 1)
+        result = AnalyticsQueryService().execute_ch_query(
+            query, params, timeout_ms=15_000
         )
+    except Exception as exc:
+        # CH is the sole span backend (PG tracer tables dropped); fail closed.
+        # Breadcrumb the outage for log-based alerting — the re-raise carries the
+        # Sentry error, so this stays WARNING to avoid a duplicate event.
+        logger.warning(
+            "bulk_selection_resolve_span_ch_query_failed",
+            project_id=str(project_id),
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        raise
+
+    ids = [str(r.get("id", "")) for r in result.data if r.get("id")]
+    raw_truncated = len(ids) > cap
+
+    if exclude_ids:
+        excl = {str(i) for i in exclude_ids}
+        ids = [i for i in ids if i not in excl]
+
+    # Preserve the cap+1 sentinel from before exclusion — an excluded row in the
+    # sentinel slot may still hide more non-excluded rows beyond the window.
+    truncated = raw_truncated or len(ids) > cap
+    ids = ids[:cap]
+    total_matching = len(ids) + (1 if truncated else 0)
+
+    logger.info(
+        "bulk_selection_resolve_span_ch",
+        project_id=str(project_id),
+        filter_count=len(filters or []),
+        exclude_count=len(exclude_ids or set()),
+        total_matching=total_matching,
+        returned=len(ids),
+        truncated=truncated,
     )
-    if extra_annotations:
-        qs = qs.annotate(**extra_annotations)
-    if ann_conds:
-        combined &= ann_conds
-
-    # 5. Span attributes
-    span_attr_conds = FilterEngine.get_filter_conditions_for_span_attributes(filters)
-    if span_attr_conds:
-        combined &= span_attr_conds
-
-    # 6. has_eval — observe_type="span"
-    has_eval = FilterEngine.get_filter_conditions_for_has_eval(
-        filters, observe_type="span"
-    )
-    if has_eval:
-        combined &= has_eval
-
-    # 7. has_annotation — observe_type="span". list_spans_observe does
-    # not pass annotation_label_ids, so we don't either.
-    has_ann = FilterEngine.get_filter_conditions_for_has_annotation(
-        filters, observe_type="span"
-    )
-    if has_ann:
-        combined &= has_ann
-
-    if combined:
-        qs = qs.filter(combined)
-
-    return qs
+    return ResolveResult(ids=ids, total_matching=total_matching, truncated=truncated)
 
 
 def resolve_filtered_span_ids(
@@ -944,9 +546,10 @@ def resolve_filtered_span_ids(
 ) -> ResolveResult:
     """Return span IDs matching ``filters`` in ``project_id``, minus ``exclude_ids``.
 
-    Mirrors the filter semantics of ``list_spans_observe``. Shares the
-    ``ResolveResult`` contract and the user-scoped-filter guard with
-    :func:`resolve_filtered_trace_ids`.
+    Resolved entirely from ClickHouse via the same ``SPAN_LIST`` builder the
+    observe grid uses, so filter semantics match the grid exactly and no PG
+    tracer table is read. Shares the ``ResolveResult`` contract and the
+    user-scoped-filter guard with :func:`resolve_filtered_trace_ids`.
 
     Args:
         project_id: UUID of the project to search in. Must belong to ``organization``.
@@ -968,235 +571,305 @@ def resolve_filtered_span_ids(
     """
     _validate_user_scoped_filters(filters or [], user)
 
+    # Project + workspace scope are resolved in PG — the project / annotation-label
+    # tables are NOT tracer tables and are not being dropped. The span rows
+    # themselves are read only from ClickHouse (no PG tracer-table access), so
+    # filter-mode add stays working once the PG tracer tables are dropped.
     project = Project.objects.get(id=project_id, organization=organization)
-    annotation_labels = get_annotation_labels_for_project(project.id, organization)
+    if not _project_matches_workspace(project, workspace):
+        return ResolveResult(ids=[], total_matching=0, truncated=False)
 
-    base = _build_span_base_queryset(project_id, organization, workspace)
-    if _needs_eval_metric_annotations(filters or []):
-        base = _annotate_eval_metrics(
-            base,
-            project_id=project.id,
-            organization=organization,
-            source_type="observation_span",
-        )
-    if _needs_annotation_field_annotations(filters or []):
-        base = build_annotation_subqueries(
-            base,
-            annotation_labels,
-            organization,
-            span_filter_kwargs={"observation_span_id": OuterRef("id")},
-        )
-    qs = _apply_span_filters(
-        base, filters or [], user=user, organization=organization
+    annotation_labels = get_annotation_labels_for_project(project.id, organization)
+    annotation_label_ids = [str(lbl.id) for lbl in annotation_labels]
+
+    return _resolve_span_ids_clickhouse(
+        project_id=project_id,
+        filters=filters or [],
+        exclude_ids=set(exclude_ids or ()),
+        cap=cap,
+        annotation_label_ids=annotation_label_ids,
     )
 
+
+# --------------------------------------------------------------------------
+# Phase 6 — source_type = trace_session
+#
+# Sessions are resolved from ClickHouse via the same ``SessionListQueryBuilder``
+# the live session grid uses (over the ``spans`` table). Score-label filters are
+# intersected in PG against the annotation ``Score`` table afterward — the CH
+# ``spans`` path can't host a session-level ``Score`` predicate. No PG tracer
+# table is read.
+# --------------------------------------------------------------------------
+
+
+def _session_score_label_ids(project_id) -> set[str]:
+    """Project-scoped annotation-label ids — the discriminator that splits a
+    score-based session filter (``col_id`` is a label id) from a system-metric
+    one, matching ``list_sessions``."""
+    return {
+        str(lbl.id)
+        for lbl in AnnotationsLabels.objects.filter(
+            project_id=project_id, deleted=False
+        )
+    }
+
+
+def _split_session_score_filters(
+    filters: list[dict], score_label_ids: set[str]
+) -> tuple[list[dict], list[dict]]:
+    """Partition ``filters`` into (non-score, score) by whether the filter's
+    ``col_id`` names a project annotation label. Score filters are applied in PG
+    against ``Score`` (which carries ``trace_session_id`` as a soft id, so it is
+    net-new-correct); everything else flows to the CH session-list builder."""
+    non_score: list[dict] = []
+    score: list[dict] = []
+    for f in filters or []:
+        if _filter_column_id(f) in score_label_ids:
+            score.append(f)
+        else:
+            non_score.append(f)
+    return non_score, score
+
+
+def _prepare_session_ch_filters(
+    non_score_filters: list[dict],
+    *,
+    project_id,
+    organization,
+) -> list[dict]:
+    """Translate a ``user_id`` session filter into the synthetic ``end_user_id``
+    IN(...) filter the CH ``SessionListQueryBuilder`` understands, mirroring the
+    live ``_list_sessions_clickhouse`` prep.
+
+    P3b step2 precondition (PG_ORM_READ_MIGRATION, Slice B/F): the reverse
+    resolve goes through the curated CH ``end_users`` dimension, NOT PG
+    ``EndUser.objects`` (which is stale for a NET-NEW user post-flip). The
+    resolved ids are bound to the id-remap-RESOLVED ``end_user_id`` span column
+    by the builder (``_build_resolved_user_clause``), so a straddler unifies and
+    a net-new user's sessions are reachable. Other filter columns (time,
+    span-attribute, aggregate-metric, session-id) pass through untouched — the
+    builder already routes each to the right CH predicate, remap-aware.
+    """
+    prepared: list[dict] = []
+    user_id_values: list[str] = []
+    for f in non_score_filters or []:
+        col_id = _filter_column_id(f)
+        cfg = _filter_config(f)
+        col_type = cfg.get("col_type", "NORMAL")
+        if col_id == "user_id" and col_type == "NORMAL":
+            raw = cfg.get("filter_value")
+            vals = raw if isinstance(raw, list) else [raw]
+            user_id_values.extend(str(v) for v in vals if v)
+            continue
+        prepared.append(f)
+
+    for raw_user_id in user_id_values:
+        from tracer.services.clickhouse.v2.end_user_dict_reader import (
+            resolve_end_user_ids_by_user_id,
+        )
+
+        ids = resolve_end_user_ids_by_user_id(
+            raw_user_id,
+            organization_id=getattr(organization, "id", None),
+            project_id=project_id,
+        )
+        # Empty → match nothing (NIL_UUID sentinel), mirroring the live view.
+        from tracer.services.clickhouse.query_builders.base import NIL_UUID
+
+        prepared.append(
+            {
+                "column_id": "end_user_id",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "in",
+                    "filter_value": ids or [NIL_UUID],
+                },
+            }
+        )
+    return prepared
+
+
+def _apply_session_score_filters_pg(
+    session_ids: list[str], score_filters: list[dict]
+) -> list[str]:
+    """Intersect a CH-derived candidate session-id list with annotation
+    ``Score``-based filters, preserving input order.
+
+    ``Score`` is the annotation-score table (not a tracer table), keyed by the
+    soft ``trace_session_id`` string — so a NET-NEW session's scores are reachable
+    here WITHOUT a PG ``trace_session`` row, and this stays valid once the tracer
+    tables are dropped. An explicit-id membership check (not an ``OuterRef``
+    Subquery) so it composes with the CH base set; each filter narrows the set.
+    """
+    surviving = list(session_ids)
+    for sf in score_filters:
+        if not surviving:
+            break
+        col_id = _filter_column_id(sf)
+        fc = _filter_config(sf)
+        filter_op = fc.get("filter_op") or "equals"
+        filter_val = fc.get("filter_value")
+
+        base_q = Score.objects.filter(
+            trace_session_id__in=surviving,
+            label_id=col_id,
+            deleted=False,
+        )
+        if filter_op == "is_not_null":
+            match_q = base_q
+            negate = False
+        elif filter_op == "is_null":
+            match_q = base_q
+            negate = True
+        elif filter_op == "equals":
+            match_q = base_q.filter(value=filter_val)
+            negate = False
+        elif filter_op == "not_equals":
+            match_q = base_q.filter(value=filter_val)
+            negate = True
+        elif filter_op == "in" and isinstance(filter_val, list):
+            match_q = base_q.filter(value__in=filter_val)
+            negate = False
+        elif filter_op == "not_in" and isinstance(filter_val, list):
+            match_q = base_q.filter(value__in=filter_val)
+            negate = True
+        elif filter_op == "contains":
+            match_q = base_q.filter(value__icontains=filter_val)
+            negate = False
+        else:
+            match_q = base_q
+            negate = False
+
+        matched = {
+            str(sid) for sid in match_q.values_list("trace_session_id", flat=True)
+        }
+        if negate:
+            surviving = [s for s in surviving if s not in matched]
+        else:
+            surviving = [s for s in surviving if s in matched]
+    return surviving
+
+
+def _resolve_session_ids_clickhouse(
+    *,
+    project_id,
+    non_score_filters: list[dict],
+    score_filters: list[dict],
+    exclude_ids: set,
+    organization,
+    cap: int,
+) -> ResolveResult:
+    """Re-derive the filter-matched session-id set from ClickHouse.
+
+    Uses the same remap-aware ``SessionListQueryBuilder`` the live session grid
+    uses (over the CH ``spans`` table), so a "select all sessions matching this
+    filter" bulk-add INCLUDES net-new sessions (first seen after the ingest
+    ``get_or_create`` was dropped — no PG ``trace_session`` row) and a
+    cross-cutover straddler's old + new session ids unify to ONE survivor.
+
+    Non-score filters (time / span-attribute / aggregate-metric / session-id /
+    user_id) are translated by the builder. Score-label filters are applied in
+    PG afterward (``_apply_session_score_filters_pg`` against the annotation
+    ``Score`` table — NOT a tracer table): the CH ``spans`` path can't host a
+    session-level ``Score`` predicate (its annotation subquery matches by
+    ``trace_id``/span ``id``, never ``trace_session_id``).
+
+    ClickHouse is the sole backend for session rows (the PG tracer tables are
+    being dropped), so a ClickHouse failure propagates rather than silently
+    resolving to a partial/empty set.
+    """
+    from tracer.services.clickhouse.query_service import AnalyticsQueryService
+    from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
+
+    BuilderCls = get_query_builder_class("SESSION_LIST")  # noqa: N806
+    ch_filters = _prepare_session_ch_filters(
+        non_score_filters, project_id=project_id, organization=organization
+    )
+
+    # Parity: the PG aggregate path imposes NO time window (it selects every
+    # session unless the payload carries a `created_at` filter). The CH builder's
+    # `parse_time_range` instead DEFAULTS to now-30d when no time bound is sent
+    # (base.py — a dashboard-perf default), which would silently drop older
+    # sessions a "select all matching this filter" must include. So when the
+    # payload has no explicit time filter, inject a wide-open `start_time`
+    # window to disable the default narrowing (mirrors the same all-history
+    # selection the PG path gives). An explicit user time filter passes through
+    # untouched and prunes normally.
+    #
+    # Lower bound is `1971` (not `1970`): a score-label filter routes through the
+    # annotation score subqueries, which lower-bound on `created_at - INTERVAL 1
+    # DAY`, and a ClickHouse `DateTime` is a 32-bit epoch — `1970-01-01 - 1 DAY`
+    # underflows and matches nothing.
+    if not _has_explicit_time_filter(non_score_filters):
+        ch_filters.append(
+            {
+                "column_id": "start_time",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": [
+                        "1971-01-01T00:00:00",
+                        "2099-12-31T23:59:59",
+                    ],
+                },
+            }
+        )
+
+    analytics = AnalyticsQueryService()
+    # page_size=cap → the builder's LIMIT cap+1 gives the truncation sentinel
+    # without a separate COUNT scan (same trick as the voice/ trace CH paths).
+    # When score filters are present we must over-fetch so the post-PG-intersect
+    # set can still reach the cap — fetch the full page (no extra +k heuristic;
+    # the cap is already the hard ceiling and truncation is reported honestly).
+    builder = BuilderCls(
+        project_id=str(project_id),
+        page_number=0,
+        page_size=cap,
+        filters=ch_filters,
+        sort_params=[],
+    )
+    try:
+        query, params = builder.build()
+        result = analytics.execute_ch_query(query, params, timeout_ms=15_000)
+    except Exception as exc:
+        # CH is the sole session backend (PG aggregate fallback removed); fail
+        # closed. Breadcrumb for log-based alerting; the re-raise carries the
+        # Sentry error, so this stays WARNING to avoid a duplicate event.
+        logger.warning(
+            "bulk_selection_resolve_session_ch_query_failed",
+            project_id=str(project_id),
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        raise
+    ids = [
+        str(row.get("session_id", "")) for row in result.data if row.get("session_id")
+    ]
+    raw_truncated = len(ids) > cap
+
+    if score_filters:
+        ids = _apply_session_score_filters_pg(ids, score_filters)
+
     if exclude_ids:
-        qs = qs.exclude(id__in=list(exclude_ids))
+        excl = {str(i) for i in exclude_ids}
+        ids = [i for i in ids if i not in excl]
 
-    # ObservationSpan has real start_time / id columns — order directly.
-    qs = qs.order_by("-start_time", "-id")
-
-    total_matching = qs.count()
-    ids = list(qs.values_list("id", flat=True)[:cap])
-    truncated = total_matching > cap
+    truncated = raw_truncated or len(ids) > cap
+    ids = ids[:cap]
+    total_matching = len(ids) + (1 if truncated else 0)
 
     logger.info(
-        "bulk_selection_resolve_span",
+        "bulk_selection_resolve_session_ch",
         project_id=str(project_id),
-        filter_count=len(filters or []),
-        exclude_count=len(list(exclude_ids or [])),
+        filter_count=len(non_score_filters or []) + len(score_filters or []),
+        score_filter_count=len(score_filters or []),
+        exclude_count=len(exclude_ids or set()),
         total_matching=total_matching,
         returned=len(ids),
         truncated=truncated,
     )
 
     return ResolveResult(ids=ids, total_matching=total_matching, truncated=truncated)
-
-
-# --------------------------------------------------------------------------
-# Phase 6 — source_type = trace_session
-#
-# Sessions are aggregated higher-order entities. ``list_sessions``
-# (``tracer/views/trace_session.py:853-1170``) computes them by
-# aggregating ObservationSpan rows grouped by ``trace__session_id`` and
-# applying filters against the aggregate annotations + score subqueries.
-# We mirror the non-ClickHouse path exactly so filter-mode returns the
-# same session IDs as the list UI.
-# --------------------------------------------------------------------------
-
-
-# Shared with list_sessions — keep the field names in lockstep.
-_SESSION_FIELD_MAP = {
-    "total_cost": "total_cost",
-    "total_tokens": "total_tokens",
-    "total_traces_count": "traces_count",
-    "start_time": "start_time",
-    "end_time": "end_time",
-    "created_at": "session_created_at",
-    "session_id": "trace__session_id",
-    "duration": "duration_val",
-    "first_message": "first_message",
-    "last_message": "last_message",
-}
-
-_SESSION_PRE_AGG_FIELDS = {"user_id": "end_user__user_id"}
-
-
-def _build_session_base_queryset(project_id, organization, workspace=None):
-    """Return scoped base TraceSession queryset (pre filter application)."""
-    project = Project.objects.get(id=project_id, organization=organization)
-
-    qs = TraceSession.objects.filter(project_id=project.id)
-    if workspace is not None:
-        qs = qs.filter(project__workspace=workspace)
-    return qs
-
-
-def _apply_session_filters(base_sessions_qs, filters, *, project_id, organization):
-    """Apply the full session filter pipeline and return a session-id-valued
-    aggregated queryset.
-
-    Mirrors ``list_sessions`` lines 922-1157 (non-ClickHouse PG path)
-    excluding pagination and sort ordering. Returns a queryset yielding
-    dicts with a ``trace__session_id`` key.
-    """
-    trace_sessions_qs, remaining_filters = apply_created_at_filters(
-        base_sessions_qs, filters or []
-    )
-
-    if not trace_sessions_qs.exists():
-        return ObservationSpan.objects.none().values("trace__session_id")
-
-    session_ids = trace_sessions_qs.values("id")
-
-    # Pre-aggregation: user_id system filter applied before grouping.
-    needs_first_last_cols = {"first_message", "last_message"}
-    needs_first_last = any(
-        f.get("column_id") in needs_first_last_cols for f in remaining_filters
-    )
-
-    pre_agg_q = FilterEngine.get_filter_conditions_for_system_metrics(
-        [f for f in remaining_filters if f.get("column_id") in _SESSION_PRE_AGG_FIELDS],
-        field_map=_SESSION_PRE_AGG_FIELDS,
-    )
-    remaining_filters = [
-        f
-        for f in remaining_filters
-        if f.get("column_id") not in _SESSION_PRE_AGG_FIELDS
-    ]
-
-    aggregated = (
-        ObservationSpan.objects.filter(
-            pre_agg_q, trace__session_id__in=session_ids
-        )
-        .values("trace__session_id")
-        .annotate(
-            start_time=Min("start_time"),
-            end_time=Max("end_time"),
-            total_cost=Coalesce(
-                Round(Sum("cost", output_field=FloatField()), 6),
-                0.0,
-            ),
-            total_tokens=Coalesce(
-                Sum(F("total_tokens"), output_field=models.IntegerField()),
-                0,
-            ),
-            traces_count=Count("trace_id", distinct=True),
-            session_created_at=Min("trace__session__created_at"),
-        )
-        .annotate(
-            duration_val=ExpressionWrapper(
-                F("end_time") - F("start_time"),
-                output_field=DurationField(),
-            ),
-        )
-    )
-
-    if needs_first_last:
-        aggregated = aggregated.annotate(
-            first_message=Subquery(
-                ObservationSpan.objects.filter(
-                    trace__session_id=OuterRef("trace__session_id"),
-                )
-                .order_by("start_time")
-                .values("input")[:1]
-            ),
-            last_message=Subquery(
-                ObservationSpan.objects.filter(
-                    trace__session_id=OuterRef("trace__session_id"),
-                )
-                .order_by("-start_time")
-                .values("input")[:1]
-            ),
-        )
-
-    # Split score filters (col_id matches a label on this project) from
-    # system-metric filters operating on the aggregate field map.
-    score_label_ids = (
-        {
-            str(lbl.id)
-            for lbl in AnnotationsLabels.objects.filter(
-                project_id=project_id, deleted=False
-            )
-        }
-        if remaining_filters
-        else set()
-    )
-    system_filters = []
-    score_filters = []
-    for f in remaining_filters:
-        col_id = f.get("column_id", "")
-        if col_id in score_label_ids:
-            score_filters.append(f)
-        else:
-            system_filters.append(f)
-
-    if system_filters:
-        q_filters = FilterEngine.get_filter_conditions_for_system_metrics(
-            system_filters, field_map=_SESSION_FIELD_MAP
-        )
-        if q_filters:
-            aggregated = aggregated.filter(q_filters)
-
-    # Score-based filters mirror list_sessions lines 1097-1139.
-    for sf in score_filters:
-        col_id = sf.get("column_id")
-        fc = sf.get("filter_config", {})
-        filter_op = fc.get("filter_op", "equals")
-        filter_val = fc.get("filter_value")
-        base_score_q = Score.objects.filter(
-            trace_session_id=OuterRef("trace__session_id"),
-            label_id=col_id,
-            deleted=False,
-        )
-        if filter_op == "is_not_null":
-            aggregated = aggregated.filter(Exists(base_score_q))
-        elif filter_op == "is_null":
-            aggregated = aggregated.exclude(Exists(base_score_q))
-        else:
-            if isinstance(filter_val, str) and "," in filter_val:
-                filter_val = [v.strip() for v in filter_val.split(",") if v.strip()]
-            if filter_op in ("equals", "is"):
-                score_q = (
-                    base_score_q.filter(value__in=filter_val)
-                    if isinstance(filter_val, list)
-                    else base_score_q.filter(value=filter_val)
-                )
-                aggregated = aggregated.filter(Exists(score_q))
-            elif filter_op in ("not_equals", "is_not"):
-                score_q = (
-                    base_score_q.filter(value__in=filter_val)
-                    if isinstance(filter_val, list)
-                    else base_score_q.filter(value=filter_val)
-                )
-                aggregated = aggregated.exclude(Exists(score_q))
-            elif filter_op == "contains":
-                score_q = base_score_q.filter(value__icontains=filter_val)
-                aggregated = aggregated.filter(Exists(score_q))
-            else:
-                aggregated = aggregated.filter(Exists(base_score_q))
-
-    return aggregated
 
 
 def resolve_filtered_session_ids(
@@ -1209,10 +882,19 @@ def resolve_filtered_session_ids(
     cap: int = 10_000,
     user=None,
 ) -> ResolveResult:
-    """Return TraceSession IDs matching ``filters`` in ``project_id``.
+    """Return session IDs matching ``filters`` in ``project_id``.
 
-    Mirrors ``list_sessions`` filter semantics (non-ClickHouse PG path).
-    Ordering: ``-start_time, -trace__session_id`` for determinism.
+    P3b step2 precondition (PG_ORM_READ_MIGRATION, Slice F): the matched session
+    set is re-derived from ClickHouse (``_resolve_session_ids_clickhouse``,
+    backed by the same remap-aware ``SessionListQueryBuilder`` the live session
+    grid uses) so a "select all sessions matching this filter" bulk-add to a
+    queue INCLUDES net-new sessions (first seen after the ingest
+    ``get_or_create`` is dropped, so they have NO PG ``trace_session`` row and
+    were silently omitted by the old PG aggregate). A cross-cutover straddler's
+    old + new session ids unify to ONE survivor (counted once). Score-label
+    filters intersect the annotation ``Score`` table (net-new-correct via the
+    soft ``trace_session_id``); everything else is translated by the CH builder.
+    No PG tracer table is read.
 
     Raises:
         Project.DoesNotExist: if the project is not in the org.
@@ -1220,36 +902,32 @@ def resolve_filtered_session_ids(
     """
     _validate_user_scoped_filters(filters or [], user)
 
-    base = _build_session_base_queryset(project_id, organization, workspace)
-    aggregated = _apply_session_filters(
-        base, filters or [], project_id=project_id, organization=organization
+    # Resolve + scope-check the project up front (the CH builder keys spans by
+    # project_id but does NOT enforce org membership or the SIMULATOR carve-out).
+    # Raising Project.DoesNotExist here preserves the caller's 404 mapping. These
+    # are Project / annotation tables — not tracer tables — so they stay in PG.
+    project = Project.objects.get(id=project_id, organization=organization)
+    if project.source == ProjectSourceChoices.SIMULATOR.value:
+        return ResolveResult(ids=[], total_matching=0, truncated=False)
+    if workspace is not None and project.workspace_id != getattr(
+        workspace, "id", workspace
+    ):
+        # Workspace mismatch — nothing to resolve.
+        return ResolveResult(ids=[], total_matching=0, truncated=False)
+
+    score_label_ids = _session_score_label_ids(project_id)
+    non_score_filters, score_filters = _split_session_score_filters(
+        filters or [], score_label_ids
     )
 
-    if exclude_ids:
-        aggregated = aggregated.exclude(
-            trace__session_id__in=[str(i) for i in exclude_ids]
-        )
-
-    aggregated = aggregated.order_by("-start_time", "-trace__session_id")
-
-    total_matching = aggregated.count()
-    ids = [
-        row["trace__session_id"]
-        for row in aggregated.values("trace__session_id")[:cap]
-    ]
-    truncated = total_matching > cap
-
-    logger.info(
-        "bulk_selection_resolve_session",
-        project_id=str(project_id),
-        filter_count=len(filters or []),
-        exclude_count=len(list(exclude_ids or [])),
-        total_matching=total_matching,
-        returned=len(ids),
-        truncated=truncated,
+    return _resolve_session_ids_clickhouse(
+        project_id=project_id,
+        non_score_filters=non_score_filters,
+        score_filters=score_filters,
+        exclude_ids=set(exclude_ids or set()),
+        organization=organization,
+        cap=cap,
     )
-
-    return ResolveResult(ids=ids, total_matching=total_matching, truncated=truncated)
 
 
 # --------------------------------------------------------------------------
@@ -1269,13 +947,110 @@ _CALL_EXECUTION_FIELD_MAP = {
     "status": "status",
     "simulation_call_type": "simulation_call_type",
     "call_type": "simulation_call_type",
+    "duration": "duration_seconds",
     "duration_seconds": "duration_seconds",
+    "agent_latency": "avg_agent_latency_ms",
+    "avg_agent_latency_ms": "avg_agent_latency_ms",
+    "total_cost": "cost_cents",
+    "cost_cents": "cost_cents",
     "overall_score": "overall_score",
     "agent_definition": "test_execution__agent_definition__agent_name",
 }
 
 
-def _apply_call_execution_filters(qs, filters):
+def _is_call_execution_eval_filter(col, cfg, eval_config_ids):
+    return cfg.get("col_type") == "EVAL_METRIC" and col and str(col) in eval_config_ids
+
+
+def _coerce_eval_number(value):
+    numeric = float(value)
+    return numeric / 100.0
+
+
+def _call_execution_json_output_filter(qs, output_field, eval_id, cfg):
+    op = cfg.get("filter_op")
+    value = cfg.get("filter_value")
+    filter_type = cfg.get("filter_type")
+    output_path = f"{output_field}__{eval_id}__output"
+    has_key = {f"{output_field}__has_key": eval_id}
+
+    if op == "is_null":
+        return qs.filter(Q(**{f"{output_path}__isnull": True}) | ~Q(**has_key))
+    if op == "is_not_null":
+        return qs.filter(**has_key).filter(**{f"{output_path}__isnull": False})
+
+    if value is None:
+        return qs
+
+    if filter_type == "number":
+        if op in ("between", "not_between"):
+            if not isinstance(value, (list, tuple)) or len(value) < 2:
+                raise ValueError("invalid numeric range")
+            lo = _coerce_eval_number(value[0])
+            hi = _coerce_eval_number(value[1])
+            if op == "between":
+                return qs.filter(
+                    **has_key,
+                    **{f"{output_path}__gte": lo, f"{output_path}__lte": hi},
+                )
+            return qs.filter(**has_key).exclude(
+                **{f"{output_path}__gte": lo, f"{output_path}__lte": hi}
+            )
+
+        numeric_value = _coerce_eval_number(value)
+        if op == "greater_than":
+            return qs.filter(**has_key, **{f"{output_path}__gt": numeric_value})
+        if op == "less_than":
+            return qs.filter(**has_key, **{f"{output_path}__lt": numeric_value})
+        if op == "greater_than_or_equal":
+            return qs.filter(**has_key, **{f"{output_path}__gte": numeric_value})
+        if op == "less_than_or_equal":
+            return qs.filter(**has_key, **{f"{output_path}__lte": numeric_value})
+        if op == "not_equals":
+            return qs.filter(**has_key).exclude(**{output_path: numeric_value})
+        return qs.filter(**has_key, **{output_path: numeric_value})
+
+    if filter_type == "boolean":
+        if isinstance(value, bool):
+            bool_value = value
+        else:
+            bool_value = str(value).lower() in ("true", "1", "yes", "passed")
+        if op == "not_equals":
+            return qs.filter(**has_key).exclude(**{output_path: bool_value})
+        return qs.filter(**has_key, **{output_path: bool_value})
+
+    values = value if isinstance(value, list) else [value]
+    values = [str(v) for v in values if v not in (None, "")]
+    if not values:
+        return qs
+
+    if op in ("in", "equals"):
+        if len(values) == 1 and op == "equals":
+            return qs.filter(**has_key, **{f"{output_path}__iexact": values[0]})
+        return qs.filter(**has_key, **{f"{output_path}__in": values})
+    if op in ("not_in", "not_equals"):
+        if len(values) == 1 and op == "not_equals":
+            return qs.filter(**has_key).exclude(**{f"{output_path}__iexact": values[0]})
+        return qs.filter(**has_key).exclude(**{f"{output_path}__in": values})
+    if op == "contains":
+        condition = Q()
+        for item in values:
+            condition |= Q(**{f"{output_path}__icontains": item})
+        return qs.filter(**has_key).filter(condition)
+    if op == "not_contains":
+        condition = Q()
+        for item in values:
+            condition |= Q(**{f"{output_path}__icontains": item})
+        return qs.filter(**has_key).exclude(condition)
+    if op == "starts_with":
+        return qs.filter(**has_key, **{f"{output_path}__istartswith": values[0]})
+    if op == "ends_with":
+        return qs.filter(**has_key, **{f"{output_path}__iendswith": values[0]})
+
+    raise ValueError("unsupported eval filter operator")
+
+
+def _apply_call_execution_filters(qs, filters, *, eval_config_ids=None):
     """Translate UI-shaped filters into CallExecution ORM lookups.
 
     Returns ``(qs, unsupported)`` where ``unsupported`` is the list of
@@ -1283,15 +1058,19 @@ def _apply_call_execution_filters(qs, filters):
     closed if any are returned.
     """
     unsupported: list[str] = []
+    eval_config_ids = {str(item) for item in (eval_config_ids or set())}
     for f in filters:
-        col = f.get("column_id") or f.get("columnId")
-        cfg = f.get("filter_config") or f.get("filterConfig") or {}
-        op = cfg.get("filter_op") or cfg.get("filterOp")
-        value = (
-            cfg.get("filter_value")
-            if "filter_value" in cfg
-            else cfg.get("filterValue")
-        )
+        col = _filter_column_id(f)
+        cfg = _filter_config(f)
+        op = cfg.get("filter_op")
+        value = cfg.get("filter_value")
+        if _is_call_execution_eval_filter(col, cfg, eval_config_ids):
+            try:
+                qs = _call_execution_json_output_filter(qs, "eval_outputs", col, cfg)
+            except (TypeError, ValueError):
+                unsupported.append(col or "<unknown>")
+            continue
+
         if is_persona_filter_column(col):
             try:
                 qs = apply_persona_filter(
@@ -1299,7 +1078,7 @@ def _apply_call_execution_filters(qs, filters):
                     col,
                     op,
                     value,
-                    cfg.get("filter_type") or cfg.get("filterType"),
+                    cfg.get("filter_type"),
                 )
             except UnsupportedPersonaFilter:
                 unsupported.append(col or "<unknown>")
@@ -1319,13 +1098,13 @@ def _apply_call_execution_filters(qs, filters):
             continue
 
         try:
-            if op in ("equals", "eq"):
+            if op == "equals":
                 values = value if isinstance(value, list) else [value]
                 if len(values) == 1:
                     qs = qs.filter(**{orm_field: values[0]})
                 else:
                     qs = qs.filter(**{f"{orm_field}__in": values})
-            elif op in ("not_equals", "ne"):
+            elif op == "not_equals":
                 values = value if isinstance(value, list) else [value]
                 if len(values) == 1:
                     qs = qs.exclude(**{orm_field: values[0]})
@@ -1337,24 +1116,28 @@ def _apply_call_execution_filters(qs, filters):
             elif op == "not_in":
                 values = value if isinstance(value, list) else [value]
                 qs = qs.exclude(**{f"{orm_field}__in": values})
-            elif op in ("contains", "icontains"):
+            elif op == "contains":
                 qs = qs.filter(**{f"{orm_field}__icontains": value})
-            elif op in ("not_contains",):
+            elif op == "not_contains":
                 qs = qs.exclude(**{f"{orm_field}__icontains": value})
-            elif op in ("more_than", "gt"):
+            elif op == "starts_with":
+                qs = qs.filter(**{f"{orm_field}__istartswith": value})
+            elif op == "ends_with":
+                qs = qs.filter(**{f"{orm_field}__iendswith": value})
+            elif op == "greater_than":
                 qs = qs.filter(**{f"{orm_field}__gt": value})
-            elif op in ("less_than", "lt"):
+            elif op == "less_than":
                 qs = qs.filter(**{f"{orm_field}__lt": value})
-            elif op in ("more_than_or_equal", "gte"):
+            elif op == "greater_than_or_equal":
                 qs = qs.filter(**{f"{orm_field}__gte": value})
-            elif op in ("less_than_or_equal", "lte"):
+            elif op == "less_than_or_equal":
                 qs = qs.filter(**{f"{orm_field}__lte": value})
             elif op == "between":
                 if isinstance(value, (list, tuple)) and len(value) >= 2:
                     qs = qs.filter(**{f"{orm_field}__range": (value[0], value[1])})
                 else:
                     unsupported.append(col)
-            elif op in ("not_between", "not_in_between"):
+            elif op == "not_between":
                 if isinstance(value, (list, tuple)) and len(value) >= 2:
                     qs = qs.exclude(**{f"{orm_field}__range": (value[0], value[1])})
                 else:
@@ -1402,7 +1185,21 @@ def resolve_filtered_call_execution_ids(
     if filters:
         qs, remaining = apply_created_at_filters(qs, filters)
         if remaining:
-            qs, unsupported = _apply_call_execution_filters(qs, remaining)
+            from simulate.models import SimulateEvalConfig
+
+            eval_config_ids = set(
+                SimulateEvalConfig.objects.filter(
+                    run_test__agent_definition_id=project_id,
+                    run_test__organization=organization,
+                    run_test__deleted=False,
+                    deleted=False,
+                ).values_list("id", flat=True)
+            )
+            qs, unsupported = _apply_call_execution_filters(
+                qs,
+                remaining,
+                eval_config_ids=eval_config_ids,
+            )
             if unsupported:
                 # Fail closed: a filter the resolver still can't apply
                 # must NOT silently broaden the result to the full
@@ -1417,9 +1214,11 @@ def resolve_filtered_call_execution_ids(
 
     qs = qs.order_by("-created_at", "-id")
 
-    total_matching = qs.count()
-    ids = list(qs.values_list("id", flat=True)[:cap])
-    truncated = total_matching > cap
+    # See resolve_filtered_trace_ids — cap+1 fetch instead of COUNT(*).
+    capped = list(qs.values_list("id", flat=True)[: cap + 1])
+    truncated = len(capped) > cap
+    ids = capped[:cap]
+    total_matching = len(ids) + (1 if truncated else 0)
 
     logger.info(
         "bulk_selection_resolve_call_execution",

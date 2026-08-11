@@ -25,10 +25,27 @@ export const useErrorFeedStore = create((set, get) => ({
   pageSize: 25,
 
   // ── Detail view state ──────────────────────────────────────────────────
-  activeTab: "overview", // "overview" | "traces" | "stategraph" | "trends"
+  activeTab: "overview", // "overview" | "traces" | "trends" | "analyze"
   // Per-cluster selected trace id for the Overview list + sidebar sync.
   // { [clusterId]: traceId } — null / missing means "use cluster's latest".
   selectedTraceIdByCluster: {},
+
+  // Whether the cluster-analysis accordion (ClusterHeadlineCard) is collapsed.
+  // Global toggle kept in the store so the choice survives tab switches
+  // (the card only mounts on the Overview tab and would otherwise reset).
+  clusterAnalysisCollapsed: false,
+
+  // ── Analyze tab thread state (per-cluster) ─────────────────────────────
+  // Shape: { [clusterId]: { messages: [...], runState: 'idle'|'streaming'|'done', startedAt } }
+  // Streamed live from the cluster-RCA agent over Falcon's WebSocket
+  // (see clusterAnalyzeSocket.js); ephemeral per session.
+  analyzeThreadsByCluster: {},
+  // Set when the headline card's "Analyze cluster" button is clicked. The
+  // Analyze tab consumes this flag on mount/visibility to auto-start a run,
+  // then clears it. If the user opens the Analyze tab directly without
+  // going through that button, the flag is absent and the tab shows an
+  // empty state instead.
+  analyzePendingStartByCluster: {},
 
   // ── Actions ────────────────────────────────────────────────────────────
   setSearchQuery: (v) => set({ searchQuery: v, page: 0 }),
@@ -51,6 +68,9 @@ export const useErrorFeedStore = create((set, get) => ({
   setPage: (p) => set({ page: p }),
   setActiveTab: (tab) => set({ activeTab: tab }),
 
+  toggleClusterAnalysisCollapsed: () =>
+    set((s) => ({ clusterAnalysisCollapsed: !s.clusterAnalysisCollapsed })),
+
   setSelectedTraceId: (clusterId, traceId) =>
     set((s) => ({
       selectedTraceIdByCluster: {
@@ -58,11 +78,45 @@ export const useErrorFeedStore = create((set, get) => ({
         [clusterId]: traceId,
       },
     })),
+
+  setAnalyzeThread: (clusterId, thread) =>
+    set((s) => ({
+      analyzeThreadsByCluster: {
+        ...s.analyzeThreadsByCluster,
+        [clusterId]: thread,
+      },
+    })),
+
+  // Drops the thread for one cluster (not a full state reset — hence
+  // "remove", not "clear").
+  removeAnalyzeThread: (clusterId) =>
+    set((s) => {
+      const next = { ...s.analyzeThreadsByCluster };
+      delete next[clusterId];
+      return { analyzeThreadsByCluster: next };
+    }),
+
+  setAnalyzePendingStart: (clusterId, value) =>
+    set((s) => ({
+      analyzePendingStartByCluster: {
+        ...s.analyzePendingStartByCluster,
+        [clusterId]: value,
+      },
+    })),
+  // Drops the pending-start flag for one cluster (removes the key rather
+  // than resetting the whole map — hence "remove", not "clear").
+  removeAnalyzePendingStart: (clusterId) =>
+    set((s) => {
+      const next = { ...s.analyzePendingStartByCluster };
+      delete next[clusterId];
+      return { analyzePendingStartByCluster: next };
+    }),
 }));
 
 // ── Sort key mapping: frontend camelCase → backend snake_case ──
 const SORT_KEY_MAP = {
   lastSeen: "last_seen",
+  severity: "severity",
   firstSeen: "first_seen",
   occurrences: "error_count",
   traceCount: "unique_traces",
@@ -77,6 +131,7 @@ export const useErrorFeedApiParams = () => {
   const selectedProject = useErrorFeedStore((s) => s.selectedProject);
   const searchQuery = useErrorFeedStore((s) => s.searchQuery);
   const selectedStatus = useErrorFeedStore((s) => s.selectedStatus);
+  const selectedSeverity = useErrorFeedStore((s) => s.selectedSeverity);
   const selectedFixLayer = useErrorFeedStore((s) => s.selectedFixLayer);
   const selectedSource = useErrorFeedStore((s) => s.selectedSource);
   const selectedErrorType = useErrorFeedStore((s) => s.selectedErrorType);
@@ -91,6 +146,7 @@ export const useErrorFeedApiParams = () => {
     if (selectedProject) params.project_id = selectedProject;
     if (searchQuery?.trim()) params.search = searchQuery.trim();
     if (selectedStatus) params.status = selectedStatus;
+    if (selectedSeverity) params.severity = selectedSeverity;
     if (selectedFixLayer) params.fix_layer = selectedFixLayer;
     if (selectedSource) params.source = selectedSource;
     if (selectedErrorType) params.issue_group = selectedErrorType;
@@ -106,6 +162,7 @@ export const useErrorFeedApiParams = () => {
     selectedProject,
     searchQuery,
     selectedStatus,
+    selectedSeverity,
     selectedFixLayer,
     selectedSource,
     selectedErrorType,

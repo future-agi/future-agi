@@ -148,6 +148,10 @@ click-repl==0.3.0
     # via celery
 clickhouse-driver==0.2.9
     # via core-backend (pyproject.toml)
+clickhouse-connect==1.1.1
+    # via core-backend (pyproject.toml)
+    # HTTP CH client for tracer/services/clickhouse/v2/apply_schema.py.
+    # Required by the v1→v2 spans migration in model_hub/apps.py.
 cloudpathlib==0.23.0
     # via weasel
 coloredlogs==15.0.1

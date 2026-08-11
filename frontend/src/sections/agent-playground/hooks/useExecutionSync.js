@@ -84,8 +84,9 @@ export default function useExecutionSync(graphId, executionId) {
       status === EXECUTION_STATUS.ERROR ||
       status === EXECUTION_STATUS.FAILED
     ) {
-      failRun(executionData.errorMessage || "Execution failed", executionData);
-      enqueueSnackbar(executionData.errorMessage || "Execution failed", {
+      const executionError = executionData.error_message || "Execution failed";
+      failRun(executionError, executionData);
+      enqueueSnackbar(executionError, {
         variant: "error",
       });
       queryClient.invalidateQueries({
@@ -110,14 +111,15 @@ export default function useExecutionSync(graphId, executionId) {
     const nodeStatesMap = {};
     const newNodeStatuses = {};
     for (const node of executionData.nodes) {
-      const currentStatus = node.nodeExecution?.status?.toLowerCase();
+      const nodeExecution = node.node_execution;
+      const currentStatus = nodeExecution?.status?.toLowerCase();
       const nodeState = mapApiStatusToNodeState(currentStatus);
       if (nodeState) {
         nodeStatesMap[node.id] = nodeState;
       }
 
       // Invalidate node detail query when node reaches terminal status
-      const nodeExecId = node.nodeExecution?.id;
+      const nodeExecId = nodeExecution?.id;
       const prevStatus = nodeStatusesRef.current[node.id];
       if (nodeExecId && currentStatus && currentStatus !== prevStatus) {
         const isTerminal =

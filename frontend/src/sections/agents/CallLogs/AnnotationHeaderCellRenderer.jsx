@@ -11,6 +11,9 @@ const AnnotationHeaderCellRenderer = ({
   displayName,
   metricId,
   isTextType = null,
+  subLabel = "",
+  subLabelType = "person",
+  showActions = true,
 }) => {
   const popover = usePopover();
   const toggleMetric = useToggleAnnotationsStore((s) => s.toggleMetric);
@@ -22,9 +25,12 @@ const AnnotationHeaderCellRenderer = ({
     <Box
       sx={{
         display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
+        alignItems: "stretch",
+        justifyContent: "center",
+        flexDirection: "column",
         width: "100%",
+        height: "100%",
+        position: "relative",
         gap: 0.5,
         overflow: "hidden",
       }}
@@ -34,14 +40,15 @@ const AnnotationHeaderCellRenderer = ({
           display: "flex",
           flexDirection: "row",
           alignItems: "center",
-          gap: 1,
+          gap: 0.75,
           overflow: "hidden",
           flex: 1,
           minWidth: 0,
+          pr: !isTextType && showActions ? 3 : 0,
         }}
       >
         <SvgColor
-          sx={{ width: "20px", flexShrink: 0 }}
+          sx={{ width: "18px", flexShrink: 0 }}
           src="/assets/icons/ic_label.svg"
         />
         <Typography
@@ -51,13 +58,55 @@ const AnnotationHeaderCellRenderer = ({
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
+            minWidth: 0,
           }}
         >
           {displayName}
         </Typography>
       </Box>
-      <ShowComponent condition={!isTextType}>
-        <IconButton size="small" onClick={popover.onOpen}>
+      <ShowComponent condition={Boolean(subLabel)}>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 0.5,
+            minWidth: 0,
+            pl: 0.25,
+          }}
+        >
+          <SvgColor
+            sx={{ width: 16, flexShrink: 0 }}
+            src={
+              subLabelType === "average"
+                ? "/assets/icons/ic_average.svg"
+                : "/assets/icons/ic_single_person.svg"
+            }
+          />
+          <Typography
+            typography="s2_1"
+            sx={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              minWidth: 0,
+              color: "text.secondary",
+            }}
+          >
+            {subLabel}
+          </Typography>
+        </Box>
+      </ShowComponent>
+      <ShowComponent condition={!isTextType && showActions}>
+        <IconButton
+          size="small"
+          onClick={popover.onOpen}
+          sx={{
+            position: "absolute",
+            right: 2,
+            top: "50%",
+            transform: "translateY(-50%)",
+          }}
+        >
           <Iconify icon="eva:more-vertical-fill" width={16} height={16} />
         </IconButton>
       </ShowComponent>
@@ -84,7 +133,10 @@ const AnnotationHeaderCellRenderer = ({
 AnnotationHeaderCellRenderer.propTypes = {
   displayName: PropTypes.string,
   metricId: PropTypes.string,
-  isTextType: PropTypes.string,
+  isTextType: PropTypes.bool,
+  subLabel: PropTypes.string,
+  subLabelType: PropTypes.oneOf(["average", "person"]),
+  showActions: PropTypes.bool,
 };
 
 export default AnnotationHeaderCellRenderer;

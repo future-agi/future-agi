@@ -554,3 +554,169 @@ class TestEvalMetricEntryIntegration:
 
         assert score == ["toxic", "spam"]
         assert output_type == "str_list"
+
+
+@pytest.mark.unit
+class TestFlattenEvalScoreIntoEntry:
+    """The list grids bind eval columns to flat row keys. ``flatten_eval_score_
+    into_entry`` maps a pivoted (trace, config) score onto them: PASS_FAIL → pass
+    rate, SCORE → numeric avg, CHOICES → per-choice %. Regression cover for the
+    inversion bug where a Pass/Fail eval carrying an ``output_float`` rendered the
+    score field instead of the pass rate."""
+
+    def _flatten(self, scores, output_type, config_id="cfg-1"):
+        from tracer.utils.helper import flatten_eval_score_into_entry
+
+        entry: dict = {}
+        flatten_eval_score_into_entry(entry, config_id, scores, output_type)
+        return entry
+
+    def test_pass_fail_uses_pass_rate_not_score(self):
+        # Passed eval that also wrote output_float (avg_score=0) → pass rate 100,
+        # not the score field 0.
+        entry = self._flatten(
+            {"avg_score": 0.0, "pass_rate": 100.0, "count": 1}, "Pass/Fail"
+        )
+        assert entry == {"cfg-1": 100.0}
+
+    def test_pass_fail_failed_uses_pass_rate(self):
+        entry = self._flatten(
+            {"avg_score": 100.0, "pass_rate": 0.0, "count": 1}, "Pass/Fail"
+        )
+        assert entry == {"cfg-1": 0.0}
+
+    def test_pass_fail_output_type_normalized(self):
+        for ot in ("Pass/Fail", "pass_fail", "PASS_FAIL", "pass fail"):
+            entry = self._flatten({"avg_score": 0.0, "pass_rate": 100.0}, ot)
+            assert entry["cfg-1"] == 100.0, ot
+
+    def test_pass_fail_none_when_no_completed_rows(self):
+        entry = self._flatten({"avg_score": None, "pass_rate": None}, "Pass/Fail")
+        assert entry == {"cfg-1": None}
+
+    def test_score_uses_avg_score(self):
+        entry = self._flatten(
+            {"avg_score": 60.0, "pass_rate": None, "count": 3}, "score"
+        )
+        assert entry == {"cfg-1": 60.0}
+
+    def test_score_zero_is_preserved(self):
+        # A legitimate SCORE of 0 must not fall through to pass_rate.
+        entry = self._flatten({"avg_score": 0.0, "pass_rate": None}, "score")
+        assert entry == {"cfg-1": 0.0}
+
+    def test_choices_spread_into_flat_keys(self):
+        entry = self._flatten(
+            {"per_choice": {"neutral": 100.0, "joy": 0.0}}, "choices"
+        )
+        assert entry == {"cfg-1**neutral": 100.0, "cfg-1**joy": 0.0}
+
+    def test_error_marker_passthrough(self):
+        entry = self._flatten({"error": True}, "Pass/Fail")
+        assert entry == {"cfg-1": {"error": True}}
+
+    def test_skipped_marker_passthrough(self):
+        marker = {"status": "skipped", "skipped_reason": "missing_attr"}
+        entry = self._flatten(marker, "score")
+        assert entry == {"cfg-1": marker}
+
+    def test_non_dict_passthrough(self):
+        entry = self._flatten(42, "score")
+        assert entry == {"cfg-1": 42}
+
+
+@pytest.mark.unit
+class TestPopulateCallLogsRounding:
+    """``populate_call_logs_result`` (voice list / export path) must round the
+    same five voice metrics the detail path rounds so list, export, and detail
+    agree. Regression cover for avg_agent_latency_ms / user_interruption_count /
+    ai_interruption_count previously passed through unrounded."""
+
+    def _run(self, span_attributes):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from tracer.views.trace import ObservabilityService, TraceView
+
+        trace = SimpleNamespace(
+            id="11111111-1111-1111-1111-111111111111",
+            provider="vapi",
+            span_attributes=span_attributes,
+            metadata={},
+        )
+        with patch.object(ObservabilityService, "process_raw_logs", return_value={}):
+            results = TraceView().populate_call_logs_result([trace], [])
+        assert len(results) == 1
+        return results[0]
+
+    def test_all_five_voice_metrics_rounded(self):
+        result = self._run(
+            {
+                "avg_agent_latency_ms": 123.7,
+                "call.user_wpm": 150.4,
+                "call.bot_wpm": 160.9,
+                "user_interruption_count": 2.6,
+                "ai_interruption_count": 1.4,
+            }
+        )
+        assert result["avg_agent_latency_ms"] == 124
+        assert result["user_wpm"] == 150
+        assert result["bot_wpm"] == 161
+        assert result["user_interruption_count"] == 3
+        assert result["ai_interruption_count"] == 1
+
+    def test_non_numeric_metrics_become_none(self):
+        result = self._run(
+            {
+                "avg_agent_latency_ms": None,
+                "user_interruption_count": "n/a",
+            }
+        )
+        assert result["avg_agent_latency_ms"] is None
+        assert result["user_interruption_count"] is None
+
+
+class TestTalkRatioBackendSplit:
+    """The list path must emit a backend-sourced integer talk split
+    (``user_talk_pct`` / ``bot_talk_pct``) so the FE renders it without any
+    client-side rounding. The raw ``talk_ratio`` scalar is kept for existing
+    consumers and the contract."""
+
+    def _run(self, span_attributes):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from tracer.views.trace import ObservabilityService, TraceView
+
+        trace = SimpleNamespace(
+            id="11111111-1111-1111-1111-111111111111",
+            provider="vapi",
+            span_attributes=span_attributes,
+            metadata={},
+        )
+        with patch.object(ObservabilityService, "process_raw_logs", return_value={}):
+            results = TraceView().populate_call_logs_result([trace], [])
+        assert len(results) == 1
+        return results[0]
+
+    def test_even_split(self):
+        result = self._run({"call.talk_ratio": 1.0})
+        assert result["bot_talk_pct"] == 50
+        assert result["user_talk_pct"] == 50
+        # Raw ratio still emitted for existing consumers / the contract.
+        assert result["talk_ratio"] == 1.0
+
+    def test_split_rounds_to_integers_and_sums_to_100(self):
+        # ratio 2.0 -> bot 66.67% -> integer 67 / 33.
+        result = self._run({"call.talk_ratio": 2.0})
+        assert result["bot_talk_pct"] == 67
+        assert result["user_talk_pct"] == 33
+        assert result["bot_talk_pct"] + result["user_talk_pct"] == 100
+        # agent_talk_percentage keeps 2-dp precision, independent of the split.
+        assert result["agent_talk_percentage"] == 66.67
+
+    def test_absent_ratio_yields_none_split(self):
+        result = self._run({"call.user_wpm": 150.0})
+        assert result["bot_talk_pct"] is None
+        assert result["user_talk_pct"] is None
+        assert result["talk_ratio"] is None

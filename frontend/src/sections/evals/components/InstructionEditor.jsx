@@ -11,13 +11,20 @@ import {
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 import axios, { endpoints } from "src/utils/axios";
 import PromptEditor from "src/components/PromptCards/PromptEditor";
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import ModelSelector from "./ModelSelector";
+import RequiredMark from "src/components/RequiredMark";
 
 const TEMPLATE_FORMATS = [
   {
@@ -264,6 +271,7 @@ const InstructionEditor = ({
   // ModelSelector (bottom bar: model picker, + menu, mode pill) editable.
   // Defaults to `disabled` for backward compat.
   modelSelectorDisabled,
+  openModelMenuSignal = 0,
   label = "Instructions",
   templateFormat = "mustache",
   onTemplateFormatChange,
@@ -610,7 +618,7 @@ const InstructionEditor = ({
       >
         <Typography variant="body2" fontWeight={600}>
           {label}
-          <span style={{ color: "#d32f2f" }}>*</span>
+          <RequiredMark />
         </Typography>
 
         {/* Template format selector */}
@@ -981,6 +989,7 @@ const InstructionEditor = ({
               activeContextOptions={activeContextOptions}
               onActiveContextOptionsChange={onActiveContextOptionsChange}
               hideDatasetContextToggle={hideDatasetContextToggle}
+              openModelMenuSignal={openModelMenuSignal}
             />
           </Box>
           {!aiOpen && (

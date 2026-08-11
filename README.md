@@ -66,7 +66,7 @@
 ## Why Future AGI?
 
 Most AI agents fail in production, and teams end up stitching together evals, observability, and guardrails that never close the loop.
-FutureAGI collapses all of it into one platform and one feedback loop. Simulate edge cases before launch, evaluate what happens in production, protect users in real time, and turn every trace into signal for the next version.
+Future AGI collapses all of it into one platform and one feedback loop. Simulate edge cases before launch, evaluate what happens in production, protect users in real time, and turn every trace into signal for the next version.
 The result: agents that don't just get monitored, they self-improve.
 
 <table>
@@ -96,7 +96,10 @@ Go-based gateway with **~9.9 ns weighted routing**, **~29 k req/s on t3.xlarge**
 
 ## 🚀 Quickstart (60 seconds)
 
-Two ways, picked by how much you want to install:
+Two ways, depending on how much you want to install:
+
+The self-host path requires Docker Desktop or Docker Engine with Docker Compose
+available before running the installer.
 
 <table width="100%">
 <tr>
@@ -290,7 +293,7 @@ Every arrow is an open, documented interface: **OpenTelemetry OTLP** for traces,
   <img alt="Future AGI architecture — client SDKs → traceAI + Agent Command Center → Django platform → PostgreSQL, ClickHouse, Redis, RabbitMQ" src=".github/assets/architecture.svg" width="100%">
 </picture> -->
 
-**Runtime:** Python 3.11+ (Django 4.2 + Channels) · Go 1.23+ (gateway) · React 18 + Vite · Node 20+.
+**Runtime:** Python 3.11+ (Django 5.1 + Channels) · Go 1.23+ (gateway) · React 18 + Vite · Node 20+.
 **Data:** PostgreSQL (metadata) · ClickHouse (spans + time-series) · Redis (state) · RabbitMQ + Temporal (jobs).
 
 <details><summary>Component breakdown (per-package)</summary>
@@ -502,7 +505,13 @@ We love contributions — bug fixes, new evaluators, framework integrations, doc
 
 ##  Telemetry
 
-Self-hosted Future AGI phones home **anonymous usage counts only** (version, instance ID, feature flags used) so we can size our release testing. **No trace data, no prompts, no API keys**, ever. Opt out via `FUTURE_AGI_TELEMETRY_DISABLED=1`.
+Self-hosted Future AGI collects deployment telemetry to help us size release testing and understand feature adoption. **No trace data, no prompts, no API keys**, ever.
+
+**What is collected:**
+- **Registration** (once, on first boot): instance ID, version, deployment type, and the **email addresses and domains** of active admin users.
+- **Heartbeat** (periodic): anonymous aggregate usage counts.
+
+Set `FUTURE_AGI_TELEMETRY_DISABLED=1` in `.env` (or `deploy/.env.production` for the production overlay) to opt out. When disabled the instance still sends a single minimal census ping — instance ID, version, deployment type, **no emails** — once after the first start, and no heartbeats. The ping lets us count how many self-hosted installs are out there; turn networking off at the edge if you need full silence.
 
 ---
 

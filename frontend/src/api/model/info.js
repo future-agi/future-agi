@@ -28,7 +28,7 @@ export function useGetModels() {
 }
 
 export function useGetModel(modelId) {
-  const URL = `${endpoints.model.details}/${modelId}/`;
+  const URL = endpoints.model.details(modelId);
 
   const { data, isLoading, error, isValidating } = useSWR(URL, fetcher);
 
@@ -46,7 +46,7 @@ export function useGetModel(modelId) {
 }
 
 export async function updateModelPerformanceMetric(modelId, details) {
-  const URL = `${endpoints.model.updateMetric}/${modelId}/`;
+  const URL = endpoints.model.updateMetric(modelId);
   const data = details;
   await axios.post(URL, data);
 }

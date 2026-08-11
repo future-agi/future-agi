@@ -1,0 +1,35 @@
+# Turns conventional commits on main into a release PR; merging that PR
+# creates tag vX.Y.Z + the GitHub Release (which triggers release-images.yml).
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      # App token (not GITHUB_TOKEN): the tag push must trigger release-images.yml,
+      # and GITHUB_TOKEN-created events never start workflows. App-minted tokens do,
+      # are short-lived (1h), and carry only Contents+PR write on this repo.
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+      # release-please-config.json pins release-as 1.23.0 for the epoch release. REMOVE that key immediately after v1.23.0 ships or every subsequent release will propose 1.23.0 again.
+      # changelog-sections there must stay in lockstep with SECTION_MAP in future-agi/docs scripts/changelog-from-release.mjs.
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

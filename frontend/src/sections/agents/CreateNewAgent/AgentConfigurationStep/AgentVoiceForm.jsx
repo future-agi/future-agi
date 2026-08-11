@@ -13,6 +13,7 @@ import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectFie
 import {
   AGENT_TYPES,
   AUTH_METHODS_BY_PROVIDER,
+  defaultAuthMethodForProvider,
   INBOUND_OUTBOUND_COPY,
   VOICE_CHAT_PROVIDERS,
   isLiveKitProvider,
@@ -176,6 +177,7 @@ export default function AgentVoiceForm() {
     mutationFn: (data) =>
       axios.post(endpoints.agentDefinitions.fetchAssistantFromProvider, data),
     onSuccess: (data) => {
+      clearErrors("assistantId");
       const providerData = data?.data?.result;
       if (!agentName?.includes(providerData?.name)) {
         setValue("agentName", `${agentName} (${providerData?.name})`, {
@@ -189,7 +191,6 @@ export default function AgentVoiceForm() {
         shouldDirty: true,
       });
       setValue("description", providerData?.prompt, { shouldDirty: true });
-      setValue("apiKey", providerData?.api_key, { shouldDirty: true });
       setShowSuccess(true);
     },
     meta: {
@@ -330,16 +331,26 @@ export default function AgentVoiceForm() {
               "livekit",
               "livekit_bridge",
             ];
+            // "bland" is intentionally excluded: its raw-authorization key is
+            // distinct from these Bearer providers, so switching into or out of
+            // Bland must clear the key rather than carry a stale one.
 
             // Clear authenticationMethod only if switching to or from "others"
             const isPrevMain = mainProviders.includes(selectedProvider);
             const isNextMain = mainProviders.includes(value);
 
             if (value !== selectedProvider) {
+              // Providers with only one selectable method get it preselected,
+              // so the required field is never left empty after a switch.
+              const nextAuthMethod = defaultAuthMethodForProvider(value);
               if (isPrevMain && isNextMain) {
-                // between vapi/retell/elevenlabs → keep authenticationMethod
+                // between vapi/retell/elevenlabs → keep the key, but realign
+                // the method to the provider now selected
+                if (nextAuthMethod) {
+                  setValue("authenticationMethod", nextAuthMethod);
+                }
               } else {
-                setValue("authenticationMethod", "");
+                setValue("authenticationMethod", nextAuthMethod);
                 setValue("apiKey", "");
                 clearErrors("apiKey");
               }

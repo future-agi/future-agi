@@ -2,16 +2,10 @@
 // snake_case payload accepted by simulate/run-tests/eval-configs/update and
 // the simulate add endpoint. RUN_CONFIG_KEYS mirrors the BE's
 //
-// Each runtime override is emitted in two places:
-//   1. Inside `config.run_config.*` — canonical location consumed by the BE's
-//      normalize_eval_runtime_config + the simulation runner (xl.py:741-786).
-//   2. Mirrored at the payload root — picked up by EvalPickerConfigFull's
-//      init-effect fallbacks (`evalData?.<key>`) on edit-reopen, so the
-//      prefill renders the user's saved choice instead of the template
-//      default whenever the BE round-trips fields at the top level.
-// `error_localizer_enabled` rides in run_config too (alongside the top-level
-// `error_localizer: bool`), so `config.error_localizer_enabled` resolves on
-// edit-reopen without a per-drawer rehydration patch.
+// Runtime overrides are emitted only in `config.run_config.*`, which is the
+// backend contract consumed by normalize_eval_runtime_config and the simulation
+// runner. Edit-reopen flows should read from that canonical location instead
+// of depending on duplicate top-level payload keys.
 const RUN_CONFIG_KEYS = [
   "model",
   "agent_mode",
@@ -26,7 +20,6 @@ const RUN_CONFIG_KEYS = [
 ];
 
 export function serializeEvalConfig(evalConfig) {
-
   const runConfig = {};
   for (const k of RUN_CONFIG_KEYS) {
     if (evalConfig[k] !== undefined) runConfig[k] = evalConfig[k];
@@ -35,7 +28,6 @@ export function serializeEvalConfig(evalConfig) {
     runConfig.error_localizer_enabled = !!evalConfig.error_localizer_enabled;
   }
   return {
-   ...runConfig,
     template_id: evalConfig.templateId,
     name: evalConfig.name,
     model: evalConfig.model,
@@ -50,6 +42,6 @@ export function serializeEvalConfig(evalConfig) {
       },
     },
     error_localizer: !!evalConfig.error_localizer_enabled,
-    filters: evalConfig.filters || {},
+    filters: evalConfig.filters || [],
   };
 }

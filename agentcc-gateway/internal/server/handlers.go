@@ -18,6 +18,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/files"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/policy"
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
@@ -947,6 +948,11 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 
 	// --- Phase 12A: Advanced routing pipeline ---
 
+	if middleware.IsLicenseAuthorized(r.Context()) && rc.Metadata["key_access_groups"] == "" {
+		rc.Metadata["key_access_groups"] = "internal"
+		rc.Metadata["key_type"] = "internal"
+	}
+
 	// 1. Model access group alias resolution and access check.
 	keyGroups := splitCSV(rc.Metadata["key_access_groups"])
 	if h.accessGroupChecker.IsEnabled() && len(keyGroups) > 0 {
@@ -1152,7 +1158,7 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 	// Non-internal keys must not resolve to global (FutureAGI-credentialed) providers.
 	// This guard runs first so no code path (model map, conditional routes, registry)
 	// can bypass it for user keys.
-	if h.keyStore != nil && rc.Metadata["key_type"] != "internal" {
+	if h.keyStore != nil && rc.Metadata["key_type"] != "internal" && !middleware.IsLicenseAuthorized(ctx) {
 		return nil, models.ErrForbidden(
 			fmt.Sprintf("model %q is not available for this API key", model),
 		)
@@ -1193,7 +1199,7 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 	// Try primary model first.
 	// Non-internal keys must not resolve to global (FutureAGI-credentialed) providers —
 	// they should only use org-configured providers (resolved above) or be rejected.
-	if rc.Metadata["key_type"] != "internal" {
+	if h.keyStore != nil && rc.Metadata["key_type"] != "internal" && !middleware.IsLicenseAuthorized(ctx) {
 		return nil, fmt.Errorf("model %q is not available for this API key: configure provider access via the control plane", model)
 	}
 

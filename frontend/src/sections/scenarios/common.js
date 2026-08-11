@@ -64,7 +64,7 @@ const CreateScenarioDefaultSchema = {
     .default("agent_definition"),
   sourceId: z.string().min(1, "Source is required"),
   sourceLabel: z.string().optional(), // Used for auto-generating scenario name, not sent to API
-  name: z.string().min(1, "Name is required"),
+  name: z.string().trim().min(1, "Name is required"),
   description: z.string().optional(),
   agentDefinitionId: z.string().optional(),
   agentDefinitionVersionId: z.string().optional(),
@@ -73,7 +73,8 @@ const CreateScenarioDefaultSchema = {
   customInstructionDisabled: z.boolean().default(false),
   customInstruction: z.string().optional(),
   noOfRows: z
-    .number()
+    .number({ invalid_type_error: "Number of scenarios is required" })
+    .int("Number of scenarios must be a whole number")
     .min(10, "Minimum 10 Rows are required")
     .max(20000, "Maximum 20000 Rows are allowed"),
   addPersonaAutomatically: z.boolean(),
@@ -140,6 +141,18 @@ export const CreateScenarioValidationSchema = z
       }),
     }),
   ])
+  .refine(
+    (data) => {
+      if (!data.addPersonaAutomatically) {
+        return Array.isArray(data.personas) && data.personas.length > 0;
+      }
+      return true;
+    },
+    {
+      message: "Add at least one persona",
+      path: ["personas"],
+    },
+  )
   .refine(
     (data) => {
       // Validate agent definition fields when source type is agent_definition
@@ -249,3 +262,44 @@ export const extractVersionFromScenarioName = (name, basePattern) => {
   const match = name.match(regex);
   return match ? parseInt(match[1], 10) : 0;
 };
+
+export const createScenarioFileDropHandler =
+  ({ enqueueSnackbar, onChange }) =>
+  (acceptedFiles, fileRejections = []) => {
+    if (fileRejections.length > 0) {
+      const hasTypeError = fileRejections.some((rejection) =>
+        rejection.errors?.some((err) => err.code === "file-invalid-type"),
+      );
+      enqueueSnackbar(
+        hasTypeError
+          ? "Unsupported file type. Please upload a TXT or PDF file."
+          : "File could not be uploaded",
+        { variant: "error" },
+      );
+      return;
+    }
+
+    const files = Array.from(acceptedFiles);
+    const maxSize = 5 * 1024 * 1024; // 5MB
+
+    const filesLargerThanMaxSize = files.filter((file) => file?.size > maxSize);
+
+    if (filesLargerThanMaxSize.length > 0) {
+      enqueueSnackbar("File size is too large", {
+        variant: "error",
+      });
+      return;
+    }
+
+    const validFiles = files.filter((file) => file.size <= maxSize);
+
+    const processedFiles = validFiles.map((file) => ({
+      file: file,
+      name: file.name,
+      size: file.size,
+    }));
+
+    if (onChange) {
+      onChange(processedFiles?.[0]);
+    }
+  };

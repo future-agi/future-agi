@@ -7,18 +7,18 @@ import requests
 import structlog
 from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
+from django.db import close_old_connections, transaction
+from django.db.models.functions import Lower
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from slack_sdk import WebhookClient
 
 from accounts.models.organization import Organization
+from accounts.models.organization_invite import InviteStatus, OrganizationInvite
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import OrgApiKey, User
 from accounts.serializers.user import UserSignupSerializer
-from accounts.user_onboard import (
-    create_demo_traces_and_spans,
-    upload_demo_dataset,
-)
 from analytics.mixpanel_util import mixpanel_tracker
 from analytics.utils import (
     MixpanelEvents,
@@ -28,11 +28,35 @@ from analytics.utils import (
 )
 from saml2_auth.models import SAMLMetadataModel
 from tfc.constants.email import FREE_EMAIL_DOMAINS
+from tfc.constants.levels import Level
 from tfc.settings.settings import ssl
 from tfc.utils.email import email_helper
 from tfc.utils.parse_errors import parse_serialized_errors
 
 logger = structlog.get_logger(__name__)
+
+
+def _fire_deployment_telemetry_registration():
+    import threading
+
+    try:
+        from tfc.deployment_telemetry.config import is_self_hosted_deployment
+
+        if not is_self_hosted_deployment():
+            return
+
+        def _register():
+            close_old_connections()
+            try:
+                from tfc.deployment_telemetry.sender import attempt_registration
+
+                attempt_registration()
+            finally:
+                close_old_connections()
+
+        threading.Thread(target=_register).start()
+    except Exception:
+        logger.warning("deployment_telemetry_signup_hook_failed", exc_info=True)
 
 
 def resolve_org(request):
@@ -193,18 +217,16 @@ def first_signup(data, mode=None):
     domain = email_parts[1]
 
     if domain in FREE_EMAIL_DOMAINS:
-        # For free email providers, use the username part and create org name
-        username = email_parts[0]
-        # Remove numbers and special characters, capitalize first letter of each word
-        # org_name = re.sub(r'[0-9._-]+', ' ', username)
-        # org_name = ' '.join(word.capitalize() for word in org_name.split())
-        # data["company_name"] = org_name + " Org"
         data["company_name"] = ""
     else:
         # For work emails, use domain as before
         data["company_name"] = domain.split(".")[0]
 
-    allow_any_email = os.getenv("ALLOW_ANY_EMAIL", "false").lower() == "true"
+    from tfc.ee_gating import is_oss
+
+    allow_any_email = (
+        os.getenv("ALLOW_ANY_EMAIL", "true" if is_oss() else "false").lower() == "true"
+    )
     if not allow_any_email and not is_work_email(data.get("email")):
         raise Exception("Provided Email is not work email")
 
@@ -244,7 +266,7 @@ def first_signup(data, mode=None):
         except ImportError:
             pass
     else:
-        raise Exception(f"Invalid data: {serializer.errors}")
+        raise DRFValidationError(serializer.errors)
 
     email = data.get("email", None)
     organization = get_user_organization(user)
@@ -269,11 +291,84 @@ def first_signup(data, mode=None):
         if generated_password:
             process_post_registration(user.id, generated_password)
 
+        transaction.on_commit(_fire_deployment_telemetry_registration)
         return user
 
     else:
         error_messages = parse_serialized_errors(serializer)
         raise Exception(str(error_messages))
+
+
+def persist_pending_org_invite(
+    organization, target_email, org_role, workspace_role, workspaces, invited_by
+):
+    """Create or refresh the PENDING OrganizationInvite for a newly invited user.
+
+    The accept-invite flow (accept_invitation_mail) rejects any link that has
+    no pending invite, and invite.accept() materializes the org + workspace
+    memberships from level/workspace_access. Without this row the invite email
+    link always renders as "expired or invalid".
+
+    Keyed on (organization, target_email, status=PENDING) to match the
+    unique_pending_invite_per_org_email constraint. org_role may be None for
+    workspace-only invites (falls back to Level.VIEWER).
+    """
+    org_level = Level.from_string(org_role) if org_role else Level.VIEWER
+    ws_level = Level.from_string(Level.normalize_ws_role(workspace_role))
+    OrganizationInvite.objects.update_or_create(
+        organization=organization,
+        target_email=target_email,
+        status=InviteStatus.PENDING,
+        defaults={
+            "level": org_level,
+            "workspace_access": [
+                {"workspace_id": str(w.id), "level": ws_level} for w in workspaces
+            ],
+            "invited_by": invited_by,
+        },
+    )
+
+
+def build_invite_accept_link(user):
+    """Build the accept-invite link for an inactive invited user.
+
+    Same URL that goes out in invite_user.html — OSS deployments surface it in
+    the API so an admin can share it manually when SMTP isn't configured.
+    """
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    token = default_token_generator.make_token(user)
+    return f"{settings.APP_URL}/auth/jwt/invitation/accept/{uid}/{token}"
+
+
+def build_invite_links(emails):
+    """Map lowercased email -> accept-invite link, OSS only.
+
+    Shared by invite creation and both member lists so they cannot disagree
+    about who gets a link.
+    """
+    from tfc.ee_gating import is_oss
+
+    if not emails or not is_oss():
+        return {}
+
+    lowered = {email.lower() for email in emails}
+    return {
+        user.email.lower(): build_invite_accept_link(user)
+        for user in User.objects.annotate(email_lower=Lower("email")).filter(
+            email_lower__in=lowered,
+            is_active=False,
+        )
+    }
+
+
+def build_password_reset_link(uidb64, token):
+    """Build the password-reset link for an already-issued uid/token pair.
+
+    Same URL reset_password.html renders. The uid and token are passed in rather
+    than derived here because the caller has already minted the AuthToken that
+    the token encodes — building a second one would leave a stray active token.
+    """
+    return f"{settings.APP_URL}/auth/jwt/verify/{uidb64}/{token}"
 
 
 def send_invite_email(email, organization, inviter):
@@ -287,10 +382,8 @@ def send_invite_email(email, organization, inviter):
             extra_context = {}
         elif existing:
             # Inactive user — send invite with activation token
-            uid = urlsafe_base64_encode(force_bytes(existing.pk))
-            token = default_token_generator.make_token(existing)
             template = "invite_user.html"
-            extra_context = {"uid": uid, "token": token}
+            extra_context = {"invite_link": build_invite_accept_link(existing)}
         else:
             # No user record yet; email will be sent once the user signs up.
             logger.info("invite_email_skipped_no_user", email=email)
@@ -475,14 +568,10 @@ def _run_post_registration(user_id, generated_password):
             updated, err = send_hubspot_notification(user)
             send_slack_notification(user, updated=updated, err=err)
 
-        org = get_user_organization(user)
-        if org:
-            upload_demo_dataset(org.id, str(user.id))
-            # create_demo_prompt_template(str(org.id), str(user.id))
-            create_demo_traces_and_spans(str(org.id))
 
-
-def existing_member_access_will_change(existing_user, organization, org_level, workspace_access):
+def existing_member_access_will_change(
+    existing_user, organization, org_level, workspace_access
+):
     """Check if re-inviting an existing active member would actually grant new access."""
     from accounts.models.workspace import WorkspaceMembership
     from tfc.constants.levels import Level

@@ -789,6 +789,24 @@ const _CATALOG_TO_RULE = Object.fromEntries(
   Object.entries(RULE_TO_CATALOG).map(([k, v]) => [v, k]),
 );
 
+function checksArrayToObject(checks) {
+  const normalized = {};
+  if (!Array.isArray(checks)) return normalized;
+
+  for (const check of checks) {
+    if (!check || typeof check !== "object") continue;
+    const originalName = check.name;
+    if (!originalName) continue;
+    const catalogName = RULE_TO_CATALOG[originalName] || originalName;
+    normalized[catalogName] = {
+      ...check,
+      _originalName: originalName,
+    };
+  }
+
+  return normalized;
+}
+
 /**
  * Convert org-config "rules" array to "checks" object map that the UI uses.
  * Handles both formats: { rules: [...] } and { checks: { ... } }.
@@ -803,6 +821,9 @@ function normalizeGuardrails(raw) {
     Object.keys(raw.checks).length > 0
   ) {
     return raw;
+  }
+  if (Array.isArray(raw.checks) && raw.checks.length > 0) {
+    return { ...raw, checks: checksArrayToObject(raw.checks) };
   }
   // Convert rules array → checks object map
   const rules = raw.rules;

@@ -10,6 +10,8 @@ import { z } from "zod";
 import AddEvalsFeedbackForm from "./AddEvalsFeedbackForm";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 const createValidationSchema = z.object({
   actionType: z.enum([ACTION_TYPES.RETUNE, ACTION_TYPES.RECALCULATE]),
@@ -72,6 +74,10 @@ const AddEvalsFeedbackDrawerChild = ({
   existingFeedback,
 }) => {
   const isEdit = !!existingFeedback;
+  const { role } = useAuthContext();
+  const canEdit = Boolean(
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role],
+  );
   const handleClose = () => {
     onClose();
   };
@@ -105,10 +111,14 @@ const AddEvalsFeedbackDrawerChild = ({
     return OUTPUT_TYPES.TEXT;
   }, [configData]);
 
+  const multiChoice = Boolean(configData?.multi_choice);
+  const isMultiSelect =
+    outputType === OUTPUT_TYPES.STR_LIST && multiChoice;
+
   const { control, reset, handleSubmit, formState } = useForm({
     defaultValues: {
       actionType: "",
-      value: outputType === OUTPUT_TYPES.STR_LIST ? [] : "",
+      value: isMultiSelect ? [] : "",
       explanation: "",
     },
     resolver: zodResolver(createValidationSchema),
@@ -117,29 +127,31 @@ const AddEvalsFeedbackDrawerChild = ({
   useEffect(() => {
     if (existingFeedback && !isPending) {
       let parsedValue = existingFeedback.value || "";
-      if (outputType === OUTPUT_TYPES.STR_LIST) {
+      if (isMultiSelect) {
         try {
           parsedValue = JSON.parse(parsedValue);
         } catch {
           parsedValue = [];
         }
+      } else if (outputType === OUTPUT_TYPES.BOOL) {
+        parsedValue = String(parsedValue).toLowerCase();
       }
       reset({
         value: parsedValue,
         explanation: existingFeedback.explanation || "",
-        actionType: existingFeedback.actionType || "",
+        actionType: existingFeedback.action_type || "",
       });
     }
-  }, [existingFeedback, outputType, isPending, reset]);
+  }, [existingFeedback, outputType, isMultiSelect, isPending, reset]);
 
   const { mutate: submitFeedback, isPending: isSubmitting } = useMutation({
-    mutationFn: (formData) =>
-      axios.post(endpoints.develop.eval.addEvalsFeedback, formData),
+    mutationFn: ({ url, body }) => axios.post(url, body),
     onSuccess: (data) => {
       // @ts-ignore
-      enqueueSnackbar(data?.data?.result?.message, {
-        variant: "success",
-      });
+      enqueueSnackbar(
+        data?.data?.result?.message || "Feedback updated",
+        { variant: "success" },
+      );
       reset();
       onClose(true);
       refreshGrid({ purge: true });
@@ -148,13 +160,77 @@ const AddEvalsFeedbackDrawerChild = ({
 
   const onSubmit = (payload) => {
     const { actionType, ...rest } = payload;
+    const source = existingFeedback?.source || "eval_playground";
+    const feedbackValue = isMultiSelect
+      ? JSON.stringify(payload.value)
+      : payload.value;
+    // dataset + experiment endpoints reject "recalculate"; the drawer's
+    // "Re-calculate and re-tune" option maps to their retune_recalculate.
+    const structuredActionType =
+      actionType === ACTION_TYPES.RECALCULATE
+        ? ACTION_TYPES.RETUNE_RECALCULATE
+        : actionType;
+
+    if (source === "experiment") {
+      const experimentId = existingFeedback?.experiment_id;
+      if (!experimentId) {
+        enqueueSnackbar(
+          "Cannot edit this experiment feedback: experiment id missing on the record.",
+          { variant: "error" },
+        );
+        return;
+      }
+      submitFeedback({
+        url: endpoints.develop.experiment.feedback.submit(experimentId),
+        body: {
+          action_type: structuredActionType,
+          feedback_id: existingFeedback?.id,
+          user_eval_metric_id: existingFeedback?.user_eval_metric_id,
+          value: feedbackValue,
+          explanation: rest.explanation,
+        },
+      });
+      return;
+    }
+
+    if (source === "dataset") {
+      submitFeedback({
+        url: endpoints.develop.eval.updateFeedback,
+        body: {
+          action_type: structuredActionType,
+          feedback_id: existingFeedback?.id,
+          user_eval_metric_id: existingFeedback?.user_eval_metric_id,
+          value: feedbackValue,
+          explanation: rest.explanation,
+        },
+      });
+      return;
+    }
+
+    if (source === "observe") {
+      submitFeedback({
+        url: endpoints.project.submitObservationSpanFeedbackActionType(),
+        body: {
+          action_type: actionType,
+          feedback_id: existingFeedback?.id,
+          observation_span_id: existingFeedback?.source_id,
+          custom_eval_config_id: existingFeedback?.custom_eval_config_id,
+        },
+      });
+      return;
+    }
+
+    // eval_playground (default)
     submitFeedback({
-      ...rest,
-      action_type: actionType,
-      log_id: selectedAddFeedback?.id,
-      ...(outputType === OUTPUT_TYPES.STR_LIST && {
-        value: JSON.stringify(payload.value),
-      }),
+      url: endpoints.develop.eval.addEvalsFeedback,
+      body: {
+        ...rest,
+        action_type: actionType,
+        log_id: selectedAddFeedback?.id,
+        ...(outputType === OUTPUT_TYPES.STR_LIST && {
+          value: feedbackValue,
+        }),
+      },
     });
   };
 
@@ -171,9 +247,10 @@ const AddEvalsFeedbackDrawerChild = ({
       outputType={outputType}
       feedbackError={Boolean(feedbackError)}
       choices={configData?.choices}
+      multiChoice={multiChoice}
       handleSubmitForm={onSubmit}
       handleSubmit={handleSubmit}
-      disabled={!formState.isValid}
+      disabled={!formState.isValid || !canEdit}
       loading={isSubmitting}
       retuneOptions={[
         {

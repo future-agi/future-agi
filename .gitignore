@@ -37,12 +37,23 @@ futureagi/agentcc-gateway/config.*.yaml
 # Private compose overlays (workspace-specific, internal testing, etc.)
 docker-compose.ws*.yml
 docker-compose.local.yml
+docker-compose.recover*.yml
 docker-compose.*.override.yml
 
 # License keys & related (Future AGI Enterprise License artifacts)
 license.key
 license.json
 *.license
+
+# direnv / PyPI credentials — commonly hold exported secrets; `.env.*` does
+# not match `.envrc`. (Carried over from the deleted futureagi/ee/.gitignore.)
+.envrc
+**/.envrc
+.pypirc
+**/.pypirc
+
+# Agent eval-orchestrator scratch output (may embed prompts / responses)
+**/eval_orchestrator/*_test_results.txt
 
 
 # ----------------------------------------------------------------------------
@@ -64,6 +75,7 @@ pip-wheel-metadata/
 
 # uv / virtualenvs / pyenv
 .venv/
+**/.venv*/
 venv/
 **/venv/
 env.bak/
@@ -186,12 +198,17 @@ media/
 # Claude Code — per-user permissions (team agents under .claude/agents/ are tracked)
 .claude/settings.local.json
 **/.claude/settings.local.json
+.claude/CLAUDE.md
 
 # MCP server configs — local dev tooling, not shipped with the repo.
 # If we ever expose a hosted product MCP, that config goes at repo root
 # and should be force-added with `git add -f .mcp.json`.
 .mcp.json
 **/.mcp.json
+.codex-tmp/
+**/.codex-tmp/
+.playwright-mcp/
+**/.playwright-mcp/
 *.swp
 *.swo
 *~
@@ -214,7 +231,24 @@ core-*-[0-9]*
 plan/
 planning/
 scratch/
-ee/
+
+# EE lives in-tree at futureagi/ee. Only the private cloud/billing
+# overlay pieces stay out of the public monorepo — never commit these:
+futureagi/ee/cloud/
+futureagi/ee/billing.yaml
+futureagi/ee/Dockerfile.cloud
+futureagi/ee/.github/
+# private-repo build/ops artifacts — images ship from the private repo,
+# not from here (a local nested ee checkout may still have these on disk):
+futureagi/ee/Dockerfile.ee
+futureagi/ee/docker-compose.ee.yml
+futureagi/ee/.dockerignore
+futureagi/ee/MIGRATION_GUIDE.md
+futureagi/ee/OPERATIONS_RUNBOOK.md
+futureagi/ee/PHASE4_CLASSIFICATION.md
+futureagi/ee/README.md
+# stray local leftover at repo root (old gateway config) — not the ee tree
+/ee/
 
 # Puppeteer / e2e test screenshots — local debugging only.
 frontend/scripts/.artifacts/
@@ -222,3 +256,8 @@ frontend/scripts/.artifacts/
 # bin/install timestamped logs
 install-*.log
 uninstall-*.log
+*.core
+
+# ee/ private-repo .gitignore — not part of the public monorepo
+# (ee/LICENSE stays tracked: source-available code needs a license file)
+futureagi/ee/.gitignore

@@ -2,7 +2,12 @@ import { Box, Button, Divider, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 
-const BulkActionsBar = ({ selectedCount, onDelete, onCancel }) => (
+const BulkActionsBar = ({
+  selectedCount,
+  onDelete,
+  onCancel,
+  canEditEvals = true,
+}) => (
   <Box
     sx={{
       display: "flex",
@@ -31,6 +36,7 @@ const BulkActionsBar = ({ selectedCount, onDelete, onCancel }) => (
       color="error"
       startIcon={<Iconify icon="solar:trash-bin-trash-bold" width={16} />}
       onClick={onDelete}
+      disabled={!canEditEvals}
       sx={{ fontSize: "13px", textTransform: "none" }}
     >
       Delete
@@ -52,6 +58,7 @@ BulkActionsBar.propTypes = {
   selectedCount: PropTypes.number.isRequired,
   onDelete: PropTypes.func.isRequired,
   onCancel: PropTypes.func.isRequired,
+  canEditEvals: PropTypes.bool,
 };
 
 export default BulkActionsBar;

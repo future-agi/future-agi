@@ -1,5 +1,5 @@
+import binascii
 import os
-import traceback
 from datetime import timedelta
 
 import requests
@@ -17,9 +17,11 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.authentication import decrypt_message, generate_encrypted_message
@@ -30,12 +32,29 @@ from accounts.models.auth_token import (
     AuthTokenType,
 )
 from accounts.models.organization import Organization
-from accounts.serializers import UserSignupSerializer
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    AcceptInvitationPreviewResponseSerializer,
+    AcceptInvitationRequestSerializer,
+    AccountsBulkUserMutationItemSerializer,
+    AccountsDirectMessageResponseSerializer,
+    AccountsMessageResponseSerializer,
+    AccountsStringResultResponseSerializer,
+    AccountsTokenPairResponseSerializer,
+    AccountsUserProfileResponseSerializer,
+    LogoutRequestSerializer,
+    PasswordResetConfirmRequestSerializer,
+    PasswordResetInitiateRequestSerializer,
+    PasswordResetInitiateResponseSerializer,
+    SignupRequestSerializer,
+    SignupResponseSerializer,
+    UserFullNameUpdateRequestSerializer,
+    UserIdsRequestSerializer,
+)
 from accounts.serializers.user import UpdateUserSerializer
-from accounts.utils import first_signup
+from accounts.services.token_service import issue_tokens
+from accounts.utils import build_password_reset_link, first_signup
 from accounts.views.workspace_management import clear_user_redis_cache
-
-logger = structlog.get_logger(__name__)
 from analytics.utils import (
     MixpanelEvents,
     get_mixpanel_properties,
@@ -44,11 +63,14 @@ from analytics.utils import (
 from saml2_auth.models import SAMLMetadataModel
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
+from tfc.ee_gating import is_oss
 from tfc.permissions.rbac import IsOrganizationAdmin
 from tfc.permissions.utils import get_org_membership
 from tfc.settings.settings import RECAPTCHA_ENABLED, RECAPTCHA_SECRET_KEY, ssl
+from tfc.utils.api_contracts import validated_api_request
 from tfc.utils.email import email_helper
 from tfc.utils.general_methods import GeneralMethods
+
 
 try:
     from ee.usage.utils.usage_entries import (
@@ -57,7 +79,29 @@ try:
 except ImportError:
     create_organization_subscription_if_not_exists = None
 
+logger = structlog.get_logger(__name__)
 _gm = GeneralMethods()
+
+OSS_RESET_UNAVAILABLE = (
+    "Email delivery is not configured on this deployment, so the reset link "
+    "cannot be sent. An administrator can set a new password from the host with "
+    "`docker exec -it futureagi-backend-1 python manage.py reset_password "
+    "--email <address>`, or set OSS_RETURN_PASSWORD_RESET_LINK=true to receive "
+    "reset links in the browser — only on a network where every caller is "
+    "already trusted, since the link takes over the account it names."
+)
+
+
+def oss_reset_link_in_response() -> bool:
+    """Whether ``initiate_password_reset`` may hand the reset link straight back
+    to the caller.
+
+    The endpoint is unauthenticated, and the link sets the password on the named
+    account, so returning it makes anyone who can reach the instance able to take
+    over any account on it. Off by default: an operator opts in only for a
+    deployment where network reach already implies full trust.
+    """
+    return os.getenv("OSS_RETURN_PASSWORD_RESET_LINK", "false").lower() == "true"
 
 
 class AccountActivationTokenGenerator(PasswordResetTokenGenerator):
@@ -101,23 +145,58 @@ def verify_recaptcha(token):
     return result.get("success", False)
 
 
+def _login_payload(user):
+    """The body ``POST /accounts/token/`` returns on a successful login, built for
+    a user who has just signed up.
+
+    OSS signup logs the new owner straight in, so the frontend should be able to
+    treat the signup response exactly as it treats a login response — same
+    fields, same routing decision — instead of special-casing the one endpoint.
+    Selecting the organization here is part of that: login does it from the first
+    active membership, and the auth layer reads it back on the next request.
+    """
+    org = user.organization
+    if org:
+        user.config["selected_organization_id"] = str(org.id)
+        user.config["currentOrganizationId"] = str(org.id)
+        user.save(update_fields=["config"])
+    membership = get_org_membership(user)
+    new_org = bool(
+        org
+        and org.is_new
+        and membership
+        and membership.role == OrganizationRoles.OWNER.value
+    )
+
+    return {**issue_tokens(user), "new_org": new_org}
+
+
+@swagger_auto_schema(
+    method="post",
+    request_body=SignupRequestSerializer,
+    responses={200: SignupResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["POST"])
+@validated_api_request(
+    request_serializer=SignupRequestSerializer,
+    responses={200: SignupResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    document=False,
+)
 def user_signup(request):
     try:
-        recaptcha_token = request.data.get("recaptcha-response")
+        data = request.validated_data
+        recaptcha_token = data.get("recaptcha_response", "")
         logger.info(
             "signup_request",
             host=request.get_host(),
             payload={
                 k: v
                 for k, v in request.data.items()
-                if k not in ("password", "recaptcha-response")
+                if k not in ("password", "recaptcha_response")
             },
         )
 
-        email = request.data.get("email", "")
-        if not email:
-            return _gm.bad_request("Email is required.")
+        email = data.get("email", "")
         email = email.lower()
 
         # Log and reject deprecated account-update parameters (security hardening)
@@ -133,35 +212,60 @@ def user_signup(request):
 
         is_local = os.getenv("ENV_TYPE") == "local"
 
-        if not is_local:
-            if not verify_recaptcha(recaptcha_token):
-                logger.error("recaptcha verification failed")
-                return Response(
-                    {"error": "reCAPTCHA verification failed"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            else:
-                logger.info("recaptcha verification passed")
+        if is_local or is_oss():
+            logger.info(
+                "recaptcha verification skipped",
+                reason="local environment" if is_local else "oss deployment",
+            )
+        elif not verify_recaptcha(recaptcha_token):
+            logger.error("recaptcha verification failed")
+            return _gm.bad_request("reCAPTCHA verification failed")
         else:
-            logger.info("recaptcha verification skipped (local environment)")
+            logger.info("recaptcha verification passed")
 
         # Check if a user with the provided email already exists
         if User.objects.filter(email=email).exists():
             return _gm.bad_request("User with this email already exists.")
 
         # Allowlist fields to prevent hidden-parameter attacks
-        allowed_fields = {
-            "email",
-            "full_name",
-            "company_name",
-            "recaptcha-response",
-            "allow_email",
-        }
-        sanitized_data = {k: v for k, v in request.data.items() if k in allowed_fields}
-        first_signup(sanitized_data)
+        if is_oss():
+            allowed_fields = {
+                "email",
+                "full_name",
+                "company_name",
+                "password",
+            }
+        else:
+            allowed_fields = {
+                "email",
+                "full_name",
+                "company_name",
+                "allow_email",
+            }
+
+        sanitized_data = {k: v for k, v in data.items() if k in allowed_fields}
+        user = first_signup(sanitized_data)
+
+        if is_oss():
+            logger.info("signup_auto_login", email=email, user_id=str(user.id))
+            return _gm.success_response(_login_payload(user), status=status.HTTP_200_OK)
 
         return _gm.success_response(
             {"message": "User Created Successfully, Please Check your email to proceed"}
+        )
+
+    except DRFValidationError as exc:
+        logger.info(
+            "signup_validation_failed",
+            email=request.data.get("email", "").lower(),
+            errors=exc.detail,
+        )
+        return _gm.bad_request(
+            {
+                "error": "Signup validation failed",
+                "error_code": "SIGNUP_VALIDATION_FAILED",
+                "field_errors": exc.detail,
+            }
         )
 
     except Exception:
@@ -169,7 +273,17 @@ def user_signup(request):
         return _gm.bad_request("An error occurred during signup.")
 
 
+@swagger_auto_schema(
+    method="post",
+    request_body=LogoutRequestSerializer,
+    responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["POST"])
+@validated_api_request(
+    request_serializer=LogoutRequestSerializer,
+    responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    document=False,
+)
 def user_logout(request):
     try:
         auth_token = (
@@ -198,19 +312,24 @@ def user_logout(request):
         return _gm.bad_request("Error in user logout.")
 
 
+@api_view(["GET"])
+@permission_classes([AllowAny])
 def activate_account(request, uidb64, token):
-    # Rate-limit by IP: 10 requests per minute.
-    ip = request.META.get("HTTP_X_FORWARDED_FOR", request.META.get("REMOTE_ADDR", ""))
-    if ip:
-        ip = ip.split(",")[0].strip()
-    rate_key = f"activate_account_rate:{ip}"
-    attempts = cache.get(rate_key, 0)
-    if attempts >= 10:
-        return Response(
-            {"error": "Too many activation attempts. Please try again later."},
-            status=status.HTTP_429_TOO_MANY_REQUESTS,
+    # Rate-limit by IP: 10 requests per minute. Skipped in OSS mode where all
+    # traffic shares a single IP (localhost / Docker gateway).
+    if not is_oss():
+        ip = request.META.get(
+            "HTTP_X_FORWARDED_FOR", request.META.get("REMOTE_ADDR", "")
         )
-    cache.set(rate_key, attempts + 1, timeout=60)
+        if ip:
+            ip = ip.split(",")[0].strip()
+        rate_key = f"activate_account_rate:{ip}"
+        attempts = cache.get(rate_key, 0)
+        if attempts >= 10:
+            return _gm.too_many_requests(
+                "Too many activation attempts. Please try again later."
+            )
+        cache.set(rate_key, attempts + 1, timeout=60)
 
     try:
         # Decode the uidb64 to the user ID
@@ -269,27 +388,37 @@ def activate_account(request, uidb64, token):
                 status=status.HTTP_200_OK,
             )
         else:
-            return Response(
-                {"error": "Activation link is invalid or has expired."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _gm.bad_request("Activation link is invalid or has expired.")
 
     except User.DoesNotExist:
-        return Response(
-            {"error": "User does not exist."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+        return _gm.bad_request("User does not exist.")
     except Exception:
         logger.exception("Error during account activation")
-        return Response(
-            {"error": "An error occurred during account activation."},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        return _gm.internal_server_error_response(
+            "An error occurred during account activation."
         )
 
 
+@swagger_auto_schema(
+    method="post",
+    request_body=PasswordResetInitiateRequestSerializer,
+    responses={
+        200: PasswordResetInitiateResponseSerializer,
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
+)
 @api_view(["POST"])
+@validated_api_request(
+    request_serializer=PasswordResetInitiateRequestSerializer,
+    responses={
+        200: PasswordResetInitiateResponseSerializer,
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
+    document=False,
+    reject_unknown_fields=True,
+)
 def initiate_password_reset(request):
-    email = request.data.get("email", None)
+    email = request.validated_data.get("email", None)
     if not email:
         return _gm.bad_request("Email is required.")
     email = email.lower()
@@ -308,6 +437,9 @@ def initiate_password_reset(request):
                 properties = get_mixpanel_properties(user=user)
                 track_mixpanel_event(MixpanelEvents.RESET_PASS.value, properties)
 
+                if is_oss() and not oss_reset_link_in_response():
+                    return _gm.success_response({"message": OSS_RESET_UNAVAILABLE})
+
                 # Send reset password email
                 # Generate a token
                 access_token = AuthToken.objects.create(
@@ -323,6 +455,18 @@ def initiate_password_reset(request):
                 # Generate uidb64
                 uidb64 = urlsafe_base64_encode(force_bytes(user.id))
 
+                reset_link = build_password_reset_link(str(uidb64), token)
+
+                if settings.DEBUG:
+                    logger.info(f"Password reset link {reset_link}")
+                if is_oss():
+                    return _gm.success_response(
+                        {
+                            "message": "Use the link below to reset your password.",
+                            "reset_link": reset_link,
+                        }
+                    )
+
                 email_helper(
                     "Reset Password",
                     "reset_password.html",
@@ -335,19 +479,21 @@ def initiate_password_reset(request):
                     [user.email],
                 )
 
-                if settings.DEBUG:
-                    logger.info(
-                        f"Password reset link {settings.APP_URL}/auth/jwt/verify/{str(uidb64)}/{token}"
-                    )
-
                 return _gm.success_response(
                     {
                         "message": f"If an account matches {email}, you will receive an email with instructions on how to reset your password shortly."
                     }
                 )
-        except (
-            User.DoesNotExist
-        ):  # Don't disclose that the user doesn't exist ,we just send a sucess response
+        except User.DoesNotExist:
+            if is_oss():
+                # Naming the address only helps where the caller can act on the
+                # answer. With the link withheld the response is identical for
+                # every address, so the endpoint tells an anonymous caller
+                # nothing about who has an account here.
+                if not oss_reset_link_in_response():
+                    return _gm.success_response({"message": OSS_RESET_UNAVAILABLE})
+                return _gm.bad_request(f"No account found for {email}.")
+            # Don't disclose that the user doesn't exist ,we just send a sucess response
             return _gm.success_response(
                 {
                     "message": f"If an account matches {email}, you will receive an email with instructions on how to reset your password shortly."
@@ -357,10 +503,21 @@ def initiate_password_reset(request):
     return _gm.bad_request("An error occurred, please try again.")
 
 
+@swagger_auto_schema(
+    method="post",
+    request_body=PasswordResetConfirmRequestSerializer,
+    responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["POST"])
+@validated_api_request(
+    request_serializer=PasswordResetConfirmRequestSerializer,
+    responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    document=False,
+    reject_unknown_fields=True,
+)
 def reset_password_confirm(request, uidb64, token):
-    new_password = request.data.get("new_password")
-    repeat_password = request.data.get("repeat_password")
+    new_password = request.validated_data.get("new_password")
+    repeat_password = request.validated_data.get("repeat_password")
 
     if new_password != repeat_password:
         return _gm.bad_request("Passwords do not match.")
@@ -458,7 +615,26 @@ def _activate_memberships(user):
     ).update(is_active=True)
 
 
+@swagger_auto_schema(
+    method="get",
+    responses={
+        200: AcceptInvitationPreviewResponseSerializer,
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
+)
+@swagger_auto_schema(
+    method="post",
+    request_body=AcceptInvitationRequestSerializer,
+    responses={200: AccountsTokenPairResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["GET", "POST"])
+@validated_api_request(
+    request_serializer=AcceptInvitationRequestSerializer,
+    responses={200: AccountsTokenPairResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    request_methods=["POST"],
+    document=False,
+    reject_unknown_fields=True,
+)
 def accept_invitation_mail(request, uidb64, token):
     """Accept an invitation link.
 
@@ -472,10 +648,7 @@ def accept_invitation_mail(request, uidb64, token):
         user = User.objects.select_related("organization").get(pk=uid)
 
         if not default_token_generator.check_token(user, token):
-            return Response(
-                {"error": "Invitation link is invalid or has expired."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _gm.bad_request("Invitation link is invalid or has expired.")
 
         # ------------------------------------------------------------------
         # Check if invite was cancelled - OrganizationInvite must be pending
@@ -484,10 +657,7 @@ def accept_invitation_mail(request, uidb64, token):
 
         org = user.organization
         if not org:
-            return Response(
-                {"error": "Invitation link is invalid or has expired."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _gm.bad_request("Invitation link is invalid or has expired.")
 
         invite_exists = OrganizationInvite.objects.filter(
             target_email__iexact=user.email,
@@ -496,10 +666,7 @@ def accept_invitation_mail(request, uidb64, token):
         ).exists()
 
         if not invite_exists:
-            return Response(
-                {"error": "This invitation has been cancelled or expired."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _gm.bad_request("This invitation has been cancelled or expired.")
 
         # ------------------------------------------------------------------
         # Security check: If another user is logged in, reject the request.
@@ -512,12 +679,10 @@ def accept_invitation_mail(request, uidb64, token):
                 token_data = decrypt_message(access_token)
                 authenticated_user_id = token_data.get("user_id")
                 if authenticated_user_id and str(authenticated_user_id) != str(user.id):
-                    return Response(
-                        {
-                            "code": "authenticated_user_mismatch",
-                            "error": "You are logged in as a different user. Please logout first to use this invitation link.",
-                        },
-                        status=status.HTTP_403_FORBIDDEN,
+                    return _gm.custom_error_response(
+                        status.HTTP_403_FORBIDDEN,
+                        "You are logged in as a different user. Please logout first to use this invitation link.",
+                        code="authenticated_user_mismatch",
                     )
             except Exception:
                 # Token decryption failed - ignore and continue (treat as unauthenticated)
@@ -543,28 +708,19 @@ def accept_invitation_mail(request, uidb64, token):
         # ------------------------------------------------------------------
         # POST — set password, activate, accept invite, return JWT tokens.
         # ------------------------------------------------------------------
-        new_password = request.data.get("new_password")
-        repeat_password = request.data.get("repeat_password")
+        new_password = request.validated_data.get("new_password")
+        repeat_password = request.validated_data.get("repeat_password")
 
         if not new_password or not repeat_password:
-            return Response(
-                {"error": "Both password fields are required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _gm.bad_request("Both password fields are required.")
 
         if new_password != repeat_password:
-            return Response(
-                {"error": "Passwords do not match."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _gm.bad_request("Passwords do not match.")
 
         try:
             validate_password(new_password)
         except ValidationError as e:
-            return Response(
-                {"error": "\n".join(e.messages)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _gm.bad_request("\n".join(e.messages))
 
         user.password = make_password(new_password)
         user.is_active = True
@@ -645,25 +801,40 @@ def accept_invitation_mail(request, uidb64, token):
             status=status.HTTP_200_OK,
         )
 
+    except (binascii.Error, TypeError, UnicodeDecodeError, ValueError, ValidationError):
+        return _gm.bad_request("Invitation link is invalid or has expired.")
     except User.DoesNotExist:
-        return Response(
-            {
-                "error": "An Error Occured! Please ask your Administrator to Resend Invitation Link"
-            },
-            status=status.HTTP_400_BAD_REQUEST,
+        return _gm.bad_request(
+            "An Error Occured! Please ask your Administrator to Resend Invitation Link"
         )
     except Exception:
         logger.exception("Error processing invitation acceptance")
-        return Response(
-            {"error": "An error occurred while processing the invitation."},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        return _gm.internal_server_error_response(
+            "An error occurred while processing the invitation."
         )
 
 
+@swagger_auto_schema(
+    method="post",
+    request_body=UserIdsRequestSerializer,
+    responses={
+        200: AccountsBulkUserMutationItemSerializer(many=True),
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
+)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated, IsOrganizationAdmin])
+@validated_api_request(
+    request_serializer=UserIdsRequestSerializer,
+    responses={
+        200: AccountsBulkUserMutationItemSerializer(many=True),
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
+    document=False,
+    reject_unknown_fields=True,
+)
 def resend_invitation_emails(request):
-    user_ids = request.data.get("user_ids", [])
+    user_ids = [str(user_id) for user_id in request.validated_data.get("user_ids", [])]
     responses = []
 
     # Resolve the actor's current organization for scoping
@@ -716,23 +887,37 @@ def resend_invitation_emails(request):
     return Response(responses, status=status.HTTP_200_OK)
 
 
+@swagger_auto_schema(
+    method="delete",
+    request_body=UserIdsRequestSerializer,
+    responses={
+        200: AccountsBulkUserMutationItemSerializer(many=True),
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
+)
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated, IsOrganizationAdmin])
+@validated_api_request(
+    request_serializer=UserIdsRequestSerializer,
+    responses={
+        200: AccountsBulkUserMutationItemSerializer(many=True),
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
+    document=False,
+    reject_unknown_fields=True,
+)
 def delete_users(request):
     from accounts.models.organization_membership import OrganizationMembership
     from tfc.constants.levels import Level
     from tfc.permissions.utils import get_org_membership
 
-    user_ids = request.data.get("user_ids", [])
+    user_ids = [str(user_id) for user_id in request.validated_data.get("user_ids", [])]
     responses = []
 
     # Validate that user is not trying to delete themselves
     for user_id in user_ids:
         if user_id == str(request.user.id):
-            return Response(
-                {"error": "Cannot delete your own account. Please try again."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _gm.bad_request("Cannot delete your own account. Please try again.")
 
     organization = getattr(request, "organization", None) or request.user.organization
     actor_membership = get_org_membership(request.user)
@@ -778,13 +963,28 @@ def delete_users(request):
     return Response(responses, status=status.HTTP_200_OK)
 
 
+@swagger_auto_schema(
+    method="post",
+    request_body=UpdateUserSerializer,
+    responses={
+        200: AccountsStringResultResponseSerializer,
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
+)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@validated_api_request(
+    request_serializer=UpdateUserSerializer,
+    responses={
+        200: AccountsStringResultResponseSerializer,
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
+    document=False,
+    reject_unknown_fields=True,
+)
 def update_user(request):
     _gm = GeneralMethods()
-    serializer = UpdateUserSerializer(data=request.data)
-    serializer.is_valid(raise_exception=True)
-    data = serializer.validated_data
+    data = request.validated_data
 
     try:
         user = User.objects.get(
@@ -854,18 +1054,33 @@ def update_user(request):
     return _gm.success_response("User updated successfully.")
 
 
+@swagger_auto_schema(
+    method="post",
+    request_body=UserFullNameUpdateRequestSerializer,
+    responses={
+        200: AccountsDirectMessageResponseSerializer,
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
+)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@validated_api_request(
+    request_serializer=UserFullNameUpdateRequestSerializer,
+    responses={
+        200: AccountsDirectMessageResponseSerializer,
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
+    document=False,
+    reject_unknown_fields=True,
+)
 def update_user_full_name(request):
     try:
         user = User.objects.get(pk=request.user.id)
     except User.DoesNotExist:
-        return Response(
-            {"error": "User does not exist."}, status=status.HTTP_404_NOT_FOUND
-        )
+        return _gm.not_found("User does not exist.")
 
     # Extract data from the request
-    name = request.data.get("name")
+    name = request.validated_data.get("name")
 
     # Update user fields if provided
     if name:
@@ -877,6 +1092,10 @@ def update_user_full_name(request):
     )
 
 
+@swagger_auto_schema(
+    method="get",
+    responses={200: AccountsUserProfileResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_user_profile_details(request):
@@ -896,13 +1115,9 @@ def get_user_profile_details(request):
             status=status.HTTP_200_OK,
         )
     except User.DoesNotExist:
-        return Response(
-            {"error": "User does not exist."},
-            status=status.HTTP_404_NOT_FOUND,
-        )
+        return _gm.not_found("User does not exist.")
     except Exception:
         logger.exception("Error retrieving user profile")
-        return Response(
-            {"error": "An error occurred while retrieving profile."},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        return _gm.internal_server_error_response(
+            "An error occurred while retrieving profile."
         )

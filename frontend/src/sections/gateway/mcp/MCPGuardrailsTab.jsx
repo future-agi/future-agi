@@ -18,6 +18,7 @@ import {
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { useUpdateMCPGuardrails } from "./hooks/useMCPConfig";
+import { getMCPServerId } from "./utils";
 
 const MCPGuardrailsTab = ({ config, mcpStatus, gatewayId }) => {
   const updateMutation = useUpdateMCPGuardrails();
@@ -61,7 +62,7 @@ const MCPGuardrailsTab = ({ config, mcpStatus, gatewayId }) => {
 
   const connectedServers = useMemo(() => {
     const statusServers = mcpStatus?.servers || [];
-    return statusServers.map((s) => s.server_id).filter(Boolean);
+    return statusServers.map((s) => getMCPServerId(s)).filter(Boolean);
   }, [mcpStatus]);
 
   const handleToggle = (field) => (e) => {

@@ -7,7 +7,8 @@ import axios from "src/utils/axios";
 import { endpoints } from "src/utils/axios";
 import ScenarioCellRenderer from "./CellRenderers/ScenarioCellRenderer";
 import { useQuery } from "@tanstack/react-query";
-import { canonicalKeys, objectCamelToSnake } from "src/utils/utils";
+import { canonicalKeys } from "src/utils/utils";
+import { stripUiFilterKeys } from "src/components/ComplexFilter/common";
 import { getAnnotationMetricFilterDefinition } from "src/utils/prototypeObserveUtils";
 import ToolEvaluationCellRenderer from "./CellRenderers/ToolEvaluationCellRenderer";
 import { getLabel } from "./PerformanceMetrics/common";
@@ -24,6 +25,7 @@ import { AGENT_TYPES } from "src/sections/agents/constants";
 import useKpis from "src/hooks/useKpis";
 import { useMemo } from "react";
 import { LoadingHeader } from "./CellRenderers/ScenarioCellRenderer";
+import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
 
 const menuOrder = [
   "Pin Column",
@@ -398,6 +400,15 @@ export const getTestRunDetailGridColumnDefs = (columnOrder) => {
   return config;
 };
 
+export const getColumnDefsSignature = (colDefs = []) =>
+  colDefs
+    .map((colDef) =>
+      colDef?.children
+        ? `${colDef.id}:[${getColumnDefsSignature(colDef.children)}]`
+        : String(colDef?.id ?? colDef?.field ?? ""),
+    )
+    .join(",");
+
 export const getTestRunDetailColumnQuery = (
   executionId,
   pageNumber,
@@ -419,7 +430,7 @@ export const getTestRunDetailColumnQuery = (
           page: pageNumber + 1,
           limit: 30,
           search: debouncedSearchQuery,
-          filters: JSON.stringify(validatedFilters?.map(objectCamelToSnake)),
+          filters: JSON.stringify(stripUiFilterKeys(validatedFilters)),
           ...(pageSize && { limit: pageSize }),
         },
       }),
@@ -568,7 +579,7 @@ export const getTestRunDetailFilterDefinition = (columns) => {
       };
     }
     scenarioFilters.push({
-      propertyId: `scenario_${col.scenario_id}_dataset_${col.id}`,
+      propertyId: col.id,
       propertyName: col.column_name,
       filterType: filterType,
       ...extra,
@@ -701,12 +712,9 @@ export const extractKpis = (data, agentType) => {
     : [...IGNORED_KEYS, ...AGENT_METRICS.VOICE, ...DETAILS_KEYS.VOICE];
   const detailsKeys = isVoice ? DETAILS_KEYS.VOICE : DETAILS_KEYS.CHAT;
 
-  // Process data keys. Iterate canonical snake_case keys only — the axios
-  // interceptor adds enumerable camelCase aliases on every response, and
-  // a plain `Object.keys` walk would double-count every metric AND slip
-  // alias keys past the snake_case filter lists (IGNORED_KEYS /
-  // AGENT_METRICS), causing entries like "scenarioGraphs" and "avgScore"
-  // to render as extra eval cards.
+  // Process data keys. Iterate canonical snake_case keys only so legacy
+  // objects carrying both snake_case and camelCase keys do not double-count
+  // metrics or slip alias keys past the snake_case filter lists.
   canonicalKeys(data || {}).forEach((key) => {
     // Categorize by key type
     if (relevantMetrics.includes(key)) {
@@ -827,14 +835,12 @@ export const getSelectedCallExecutionIdsFilter = () => {
   if (selectedCallExecutionIds.length > 0) {
     // if we have any selected call execution ids from fix my agent we need to add it to filter
     return [
-      {
-        column_id: "call_execution_id",
-        filter_config: {
-          filter_op: "in",
-          filter_type: "list",
-          filter_value: selectedCallExecutionIds,
-        },
-      },
+      buildApiFilterFromPanelRow({
+        field: "call_execution_id",
+        fieldType: "categorical",
+        operator: "in",
+        value: selectedCallExecutionIds,
+      }),
     ];
   }
 

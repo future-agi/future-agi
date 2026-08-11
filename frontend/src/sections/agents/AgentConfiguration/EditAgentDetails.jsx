@@ -16,13 +16,14 @@ import {
   pinCodeOptions,
 } from "src/components/agent-definitions/helper";
 import { useKnowledgeBaseList } from "src/api/knowledge-base/files";
-import { useNavigate, useParams } from "react-router";
+import { useParams } from "react-router";
 import SwitchField from "src/components/Switch/SwitchField";
 import LanguageMultiSelect from "../CreateNewAgent/AgentBasicInfoStep/LanguageMultiSelect";
 import { useWatch } from "react-hook-form";
 import {
   AGENT_TYPES,
   AUTH_METHODS_BY_PROVIDER,
+  defaultAuthMethodForProvider,
   VOICE_CHAT_PROVIDERS,
   INBOUND_OUTBOUND_COPY,
   isLiveKitProvider,
@@ -147,11 +148,9 @@ const EditAgentDetails = ({
         shouldDirty: true,
       });
       setValue("description", providerData?.prompt, { shouldDirty: true });
-      setValue("apiKey", providerData?.api_key, { shouldDirty: true });
       setLastFetchedAt(new Date());
       setShowSyncSuccess(true);
     },
-    
   });
 
   useEffect(() => {
@@ -207,6 +206,7 @@ const EditAgentDetails = ({
         api_key: apiKey,
         assistant_id: assistantId,
         provider: provider,
+        agent_id: agentDefinitionId,
       });
     }
   };
@@ -217,9 +217,7 @@ const EditAgentDetails = ({
   // meaning (nothing to call). Lock the toggle to inbound.
   const outboundLocked = selectedProvider === "others";
 
-  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null, {
-    status: true,
-  });
+  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null);
 
   const provider = useWatch({
     control,
@@ -365,16 +363,27 @@ const EditAgentDetails = ({
                   "livekit",
                   "livekit_bridge",
                 ];
+                // "bland" is intentionally excluded: its raw-authorization key
+                // is distinct from these Bearer providers, so switching into or
+                // out of Bland must clear the key rather than carry a stale one.
 
                 // Clear authenticationMethod only if switching to or from "others"
                 const isPrevMain = mainProviders.includes(selectedProvider);
                 const isNextMain = mainProviders.includes(value);
 
                 if (value !== selectedProvider) {
+                  // Providers with only one selectable method get it
+                  // preselected, so the required field is never left empty
+                  // after a switch.
+                  const nextAuthMethod = defaultAuthMethodForProvider(value);
                   if (isPrevMain && isNextMain) {
-                    // between vapi/retell/elevenlabs → keep authenticationMethod
+                    // between vapi/retell/elevenlabs → keep the key, but
+                    // realign the method to the provider now selected
+                    if (nextAuthMethod) {
+                      setValue("authenticationMethod", nextAuthMethod);
+                    }
                   } else {
-                    setValue("authenticationMethod", "");
+                    setValue("authenticationMethod", nextAuthMethod);
                     setValue("apiKey", "");
                   }
                   // Clear LiveKit fields when switching away from livekit
@@ -472,6 +481,7 @@ const EditAgentDetails = ({
                           api_key: apiKey,
                           assistant_id: value,
                           provider: selectedProvider,
+                          agent_id: agentDefinitionId,
                         });
                       }
                     }}
@@ -594,6 +604,7 @@ const EditAgentDetails = ({
                       api_key: value,
                       assistant_id: assistantId,
                       provider: selectedProvider,
+                      agent_id: agentDefinitionId,
                     });
                   }
                 }}

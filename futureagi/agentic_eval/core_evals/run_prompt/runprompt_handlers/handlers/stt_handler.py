@@ -135,7 +135,13 @@ class StandardSTTHandler(BaseModelHandler):
             )
 
         except Exception as e:
-            self.logger.exception(f"Standard STT execution failed: {str(e)}")
+            # Expected user misconfiguration (text-only input to an STT eval)
+            # is handled gracefully as a failed HandlerResponse; downgrade only
+            # that case to warning so real STT failures stay as errors.
+            if "No audio input found in messages for STT." in str(e):
+                self.logger.warning(f"Standard STT execution failed: {str(e)}")
+            else:
+                self.logger.exception(f"Standard STT execution failed: {str(e)}")
             return self._build_handler_response(
                 response=None,
                 start_time=start_time,
@@ -177,7 +183,13 @@ class StandardSTTHandler(BaseModelHandler):
             )
 
         except Exception as e:
-            self.logger.exception(f"Standard STT async execution failed: {str(e)}")
+            # Expected user misconfiguration (text-only input to an STT eval)
+            # is handled gracefully as a failed HandlerResponse; downgrade only
+            # that case to warning so real STT failures stay as errors.
+            if "No audio input found in messages for STT." in str(e):
+                self.logger.warning(f"Standard STT async execution failed: {str(e)}")
+            else:
+                self.logger.exception(f"Standard STT async execution failed: {str(e)}")
             return self._build_handler_response(
                 response=None,
                 start_time=start_time,
@@ -265,7 +277,13 @@ class CustomSTTHandler(BaseModelHandler):
             )
 
         except Exception as e:
-            self.logger.exception(f"Custom STT execution failed: {str(e)}")
+            # Expected user misconfiguration (text-only input to an STT eval)
+            # is handled gracefully as a failed HandlerResponse; downgrade only
+            # that case to warning so real STT failures stay as errors.
+            if "No audio input found in messages for STT." in str(e):
+                self.logger.warning(f"Custom STT execution failed: {str(e)}")
+            else:
+                self.logger.exception(f"Custom STT execution failed: {str(e)}")
             return self._build_handler_response(
                 response=None,
                 start_time=start_time,
@@ -318,7 +336,13 @@ class CustomSTTHandler(BaseModelHandler):
             )
 
         except Exception as e:
-            self.logger.exception(f"Custom STT async execution failed: {str(e)}")
+            # Expected user misconfiguration (text-only input to an STT eval)
+            # is handled gracefully as a failed HandlerResponse; downgrade only
+            # that case to warning so real STT failures stay as errors.
+            if "No audio input found in messages for STT." in str(e):
+                self.logger.warning(f"Custom STT async execution failed: {str(e)}")
+            else:
+                self.logger.exception(f"Custom STT async execution failed: {str(e)}")
             return self._build_handler_response(
                 response=None,
                 start_time=start_time,

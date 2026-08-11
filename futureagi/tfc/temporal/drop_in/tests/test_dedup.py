@@ -25,7 +25,7 @@ from tfc.temporal.drop_in.runner import _start_activity_async
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def _patched_client():

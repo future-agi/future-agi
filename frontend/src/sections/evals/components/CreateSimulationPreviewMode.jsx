@@ -20,6 +20,7 @@ import React, {
   useState,
 } from "react";
 import Iconify from "src/components/iconify";
+import { useMapToVariable } from "./useMapToVariable";
 import { canonicalEntries, canonicalKeys } from "src/utils/utils";
 
 // Preview mode for the run-simulation creation flow. The simulation
@@ -45,6 +46,11 @@ const VOICE_RUNTIME_LEAVES = [
   "assistant_recording",
   "customer_recording",
   "agent_prompt",
+  // Only the voice pipeline populates these; chat resolves them to "".
+  "summary",
+  "phone_number",
+  "recording_url",
+  "stereo_recording_url",
 ];
 const TEXT_RUNTIME_LEAVES = [
   "transcript",
@@ -53,14 +59,10 @@ const TEXT_RUNTIME_LEAVES = [
   "agent_prompt",
 ];
 const COMMON_RUNTIME_LEAVES = [
-  "summary",
   "ended_reason",
   "duration_seconds",
   "status",
   "overall_score",
-  "phone_number",
-  "recording_url",
-  "stereo_recording_url",
 ];
 
 const PRIORITY_PREFIXES = [
@@ -172,6 +174,13 @@ const CreateSimulationPreviewMode = React.forwardRef(
         ? { ...initialMapping }
         : {},
     );
+
+    // Shared click-to-map behaviour for the Columns/Value table rows.
+    const { renderRowMapAction, mapMenu, rowHoverSx } = useMapToVariable({
+      variables,
+      mapping,
+      setMapping,
+    });
     const [tableSearch, setTableSearch] = useState("");
     const [expandedCols, setExpandedCols] = useState({});
 
@@ -534,6 +543,7 @@ const CreateSimulationPreviewMode = React.forwardRef(
                       borderColor: "divider",
                       "&:last-child": { borderBottom: "none" },
                       "&:hover": { backgroundColor: "action.hover" },
+                      ...rowHoverSx,
                     }}
                   >
                     <Typography
@@ -586,6 +596,7 @@ const CreateSimulationPreviewMode = React.forwardRef(
                             : String(val)}
                       </Typography>
                     </Box>
+                    {renderRowMapAction(key)}
                   </Box>
                 );
               })}
@@ -704,6 +715,9 @@ const CreateSimulationPreviewMode = React.forwardRef(
             </Box>
           </Box>
         )}
+
+        {/* Map-from-table menu — shared across mapping surfaces */}
+        {mapMenu}
       </Box>
     );
   },

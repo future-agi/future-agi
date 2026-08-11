@@ -214,6 +214,22 @@ def get_kpi_eval_metrics_query(test_execution_id):
           AND jsonb_typeof(ce.eval_outputs) = 'object'
           AND e.value ? 'output'
           AND e.value ? 'output_type'
+          -- Exclude soft-deleted eval configs: eval_outputs is not pruned
+          -- when an eval is deleted, so its keys still linger here.
+          --
+          -- This guard is deliberately soft-deleted-only. It does NOT require a
+          -- backing config row to exist: KPI aggregation intentionally surfaces
+          -- every eval_outputs key whose config isn't explicitly soft-deleted,
+          -- including keys with no config row. Flipping to
+          -- EXISTS (...deleted = false) (inner-join semantics) would also drop
+          -- orphaned/config-less keys -- stricter, but it changes that contract
+          -- and drops legitimately-surfaced evals.
+          AND NOT EXISTS (
+              SELECT 1
+              FROM simulate_eval_config ec
+              WHERE ec.id::text = e.key
+                AND ec.deleted = true
+          )
     ),
 
     -- Pass/Fail and score: aggregate to a single avg per metric_name
@@ -228,6 +244,9 @@ def get_kpi_eval_metrics_query(test_execution_id):
                     WHEN output_type = 'Pass/Fail' AND output_text = 'Failed' THEN 0.0
                     WHEN output_type = 'score' AND jsonb_typeof(output_raw) IN ('number')
                          THEN (output_text)::numeric * 100
+                    WHEN output_type = 'score' AND jsonb_typeof(output_raw) = 'object'
+                         AND jsonb_typeof(output_raw->'score') = 'number'
+                         THEN (output_raw->>'score')::numeric * 100
                 END
             )::numeric, 1) AS avg_value,
             NULL::text AS choice_value,
@@ -237,7 +256,6 @@ def get_kpi_eval_metrics_query(test_execution_id):
         GROUP BY metric_id, metric_name, output_type
     ),
 
-    -- Choices: unnest strings, numbers, and arrays into individual rows
     choice_rows AS (
         -- string values
         SELECT metric_id, metric_name,
@@ -253,6 +271,25 @@ def get_kpi_eval_metrics_query(test_execution_id):
         FROM eval_entries,
              jsonb_array_elements_text(output_raw) AS elem
         WHERE output_type = 'choices' AND jsonb_typeof(output_raw) = 'array'
+
+        UNION ALL
+
+        SELECT metric_id, metric_name,
+               output_raw->>'choice' AS choice_value
+        FROM eval_entries
+        WHERE output_type = 'choices' AND jsonb_typeof(output_raw) = 'object'
+              AND output_raw ? 'choice'
+              AND NOT (output_raw ? 'choices')
+
+        UNION ALL
+
+        SELECT metric_id, metric_name,
+               elem AS choice_value
+        FROM eval_entries,
+             jsonb_array_elements_text(output_raw->'choices') AS elem
+        WHERE output_type = 'choices' AND jsonb_typeof(output_raw) = 'object'
+              AND output_raw ? 'choices'
+              AND jsonb_typeof(output_raw->'choices') = 'array'
     ),
 
     choice_agg AS (

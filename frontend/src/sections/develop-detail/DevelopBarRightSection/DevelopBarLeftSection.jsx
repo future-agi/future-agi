@@ -73,7 +73,7 @@ const DevelopBarLeftSection = ({
   const { processingComplete } = useDatasetOriginStore();
 
   const isData = Boolean(tableData?.data?.result?.table?.length);
-  const isSyntheticDataset = Boolean(tableData?.data?.result?.syntheticDataset);
+  const isSyntheticDataset = Boolean(tableData?.data?.result?.synthetic_dataset);
   const theme = useTheme();
   const { search, setSearch } = useDevelopSearchStore();
   const setCellHeight = useDevelopCellHeight((s) => s.setCellHeight);
@@ -148,7 +148,7 @@ const DevelopBarLeftSection = ({
 
         const newColumnOrder = existingColumnOrder.map((col) => {
           columnOrder.push(col.id);
-          const currentVisible = col.is_visible ?? col.isVisible;
+          const currentVisible = col.is_visible;
           const nextVisible =
             col.id === columnId ? !currentVisible : currentVisible;
           columnConfig[col.id] = {

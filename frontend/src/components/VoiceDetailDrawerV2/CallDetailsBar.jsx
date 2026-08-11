@@ -4,6 +4,7 @@ import { Box, Stack } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios from "src/utils/axios";
+import { apiPath } from "src/api/contracts/api-surface";
 import { enqueueSnackbar } from "notistack";
 import { fDateTime } from "src/utils/format-time";
 import TagChip from "src/components/traceDetail/TagChip";
@@ -88,7 +89,9 @@ const InlineTagsRow = ({ tags = [], traceId }) => {
 
   const { mutate: saveTags, isPending } = useMutation({
     mutationFn: (newTags) =>
-      axios.patch(`/tracer/trace/${traceId}/tags/`, { tags: newTags }),
+      axios.patch(apiPath("/tracer/trace/{id}/tags/", { id: traceId }), {
+        tags: newTags,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["voiceCallDetail"] });
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
@@ -179,7 +182,7 @@ InlineTagsRow.propTypes = {
   traceId: PropTypes.string,
 };
 
-const CallDetailsBar = ({ data, onAction }) => {
+const CallDetailsBar = ({ data, onAction, hiddenActionIds = [] }) => {
   const chips = useMemo(() => {
     const out = [];
     const callType = data?.call_type;
@@ -240,6 +243,15 @@ const CallDetailsBar = ({ data, onAction }) => {
     data?.trace?.tags ||
     [];
 
+  const actions = useMemo(() => {
+    const hiddenIds = new Set(hiddenActionIds);
+    const availableActions = data?.trace_id
+      ? VOICE_ACTIONS
+      : VOICE_ACTIONS.filter((a) => !TRACE_GATED_ACTION_IDS.has(a.id));
+
+    return availableActions.filter((a) => !hiddenIds.has(a.id));
+  }, [data?.trace_id, hiddenActionIds]);
+
   if (chips.length === 0 && tags.length === 0 && !onAction && !traceId)
     return null;
 
@@ -261,16 +273,7 @@ const CallDetailsBar = ({ data, onAction }) => {
           so the menu items aren't rendered as inert clicks. */}
       {onAction && (
         <Stack direction="row" justifyContent="flex-end" sx={{ mb: 0.75 }}>
-          <VoiceActionsDropdown
-            onAction={onAction}
-            actions={
-              data?.trace_id
-                ? VOICE_ACTIONS
-                : VOICE_ACTIONS.filter(
-                    (a) => !TRACE_GATED_ACTION_IDS.has(a.id),
-                  )
-            }
-          />
+          <VoiceActionsDropdown onAction={onAction} actions={actions} />
         </Stack>
       )}
 
@@ -302,6 +305,7 @@ const CallDetailsBar = ({ data, onAction }) => {
 CallDetailsBar.propTypes = {
   data: PropTypes.object,
   onAction: PropTypes.func,
+  hiddenActionIds: PropTypes.arrayOf(PropTypes.string),
 };
 
 export default CallDetailsBar;

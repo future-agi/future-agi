@@ -10,18 +10,17 @@ import Iconify from "src/components/iconify";
 import GridIcon from "src/components/gridIcon/GridIcon";
 
 const ImagesDatapointCard = ({ value, column }) => {
+  const cellValue = value?.cell_value;
   const imageUrls = useMemo(() => {
-    if (!value?.cellValue) return [];
+    if (!cellValue) return [];
     try {
       const parsed =
-        typeof value.cellValue === "string"
-          ? JSON.parse(value.cellValue)
-          : value.cellValue;
+        typeof cellValue === "string" ? JSON.parse(cellValue) : cellValue;
       return Array.isArray(parsed) ? parsed : [parsed];
     } catch {
-      return [value.cellValue];
+      return [cellValue];
     }
-  }, [value?.cellValue]);
+  }, [cellValue]);
 
   const hasImages = imageUrls.length > 0;
 

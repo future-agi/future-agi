@@ -30,7 +30,7 @@
   </table>
 
   <div style="margin: 20px 0 12px 0;">
-    {% include "billing/_button.html" with url=app_url|add:"/auth/jwt/invitation/accept/"|add:uid|add:"/"|add:token text="Accept invite →" variant="primary" %}
+    {% include "billing/_button.html" with url=invite_link text="Accept invite →" variant="primary" %}
   </div>
 
   <hr style="border:none; border-top:1px solid #27272a; margin:36px 0 26px 0;">
