@@ -324,7 +324,8 @@ export default function TracesTab({ error }) {
       {isVoiceProject ? (
         // Match TraceDetailDrawerV2's overlay shape so the two drawers feel
         // identical: persistent variant (no backdrop, page stays interactive),
-        // fixed right-anchored, sized in vw.
+        // fixed right-anchored.
+
         <Drawer
           anchor="right"
           variant="persistent"
@@ -332,7 +333,7 @@ export default function TracesTab({ error }) {
           onClose={() => setDrawerTraceId(null)}
           PaperProps={{
             sx: {
-              width: "60vw",
+              width: "auto",
               height: "100vh",
               position: "fixed",
               right: 0,
