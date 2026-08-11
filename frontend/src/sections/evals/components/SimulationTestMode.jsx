@@ -38,6 +38,7 @@ import {
   useExecuteCompositeEvalAdhoc,
 } from "../hooks/useCompositeEval";
 import RequiredMark from "src/components/RequiredMark";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import {
   NEVER_PICKABLE_TOPLEVEL,
   VOICE_ONLY_METRICS,
@@ -982,16 +983,15 @@ const SimulationTestMode = React.forwardRef(
             startErrorLocalizerPoll(data.result.log_id);
           }
         } else {
-          const errMsg = data?.result || "Evaluation failed";
+          const errMsg = "Evaluation failed. Please retry.";
           setError(errMsg);
           onTestResult?.(false, errMsg);
         }
       } catch (err) {
-        const errMsg =
-          err?.result ||
-          err?.detail ||
-          err?.message ||
-          "Failed to run evaluation";
+        const errMsg = getSafeActionErrorMessage(
+          err,
+          "Failed to run evaluation. Please retry.",
+        );
         setError(errMsg);
         onTestResult?.(false, errMsg);
       } finally {

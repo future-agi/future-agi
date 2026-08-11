@@ -239,6 +239,7 @@ export const formatTaskFilters = (filters_applied) => {
       filterOp: i?.filter_config?.filter_op,
       filterValue: i?.filter_config?.filter_value,
       colType: i?.filter_config?.col_type,
+      attributeValueTypes: i?.filter_config?.attribute_value_types,
     },
   }));
 

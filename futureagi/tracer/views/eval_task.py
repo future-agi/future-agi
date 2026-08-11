@@ -1,5 +1,4 @@
 import json
-import traceback
 import uuid as uuid_module
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
@@ -9,6 +8,7 @@ from django.db import models, transaction
 from django.db.models import Avg, Count, F, Func, Max, Q, Value
 from django.utils import timezone
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
@@ -18,7 +18,10 @@ from tfc.temporal.eval_tasks.client import (
     start_eval_task_workflow_sync,
 )
 from tfc.utils.api_contracts import validated_request
-from tfc.utils.api_serializers import EmptyRequestSerializer
+from tfc.utils.api_serializers import (
+    ApiErrorResponseSerializer,
+    EmptyRequestSerializer,
+)
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
@@ -41,6 +44,10 @@ from tracer.serializers.eval_task import (
 )
 from tracer.services.eval_tasks.edit_options import validate_edit_action
 from tracer.services.eval_tasks.entries import soft_delete_live
+from tracer.services.filter_principal_context import (
+    FilterPrincipalContextError,
+    bind_request_my_annotations_principal,
+)
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import get_default_eval_task_config
 
@@ -428,13 +435,17 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
     @validated_request(
         request_serializer=EvalTaskSerializer,
-        responses={200: EvalTaskCreateResponseSerializer},
+        responses={
+            200: EvalTaskCreateResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        },
     )
     def create(self, request, *args, **kwargs):
         try:
-            data = request.data
+            data = request.data.copy()
             data["status"] = EvalTaskStatus.PENDING
-            filters = data.get("filters", {})
+            filters = data.get("filters") or {}
             project_id = data.get("project")
             if (
                 project_id
@@ -466,12 +477,25 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
             return self._gm.success_response({"id": eval_task.id})
 
-        except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(str(e))
+        except ValidationError as exc:
+            return self._gm.bad_request(exc.detail)
+        except FilterPrincipalContextError as exc:
+            return self._gm.bad_request(str(exc))
+        except Exception as exc:
+            logger.exception(
+                "eval_task.create_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation task could not be created")
 
     @action(detail=False, methods=["get"], pagination_class=None)
-    @validated_request(query_serializer=EvalTaskListQuerySerializer)
+    @validated_request(
+        query_serializer=EvalTaskListQuerySerializer,
+        responses={
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        },
+    )
     def list_eval_tasks(self, request, *args, **kwargs):
         """
         List Eval Tasks filtered
@@ -559,9 +583,12 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
             return self._gm.success_response(response)
 
-        except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(f"error fetching the eval tasks list {str(e)}")
+        except Exception as exc:
+            logger.exception(
+                "eval_task.list_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation tasks could not be loaded")
 
     # Maximum number of distinct error groups returned per task. Most tasks
     # produce 1-5 distinct error types; this cap is a safety net for tasks
@@ -570,6 +597,12 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
     _WARNING_GROUPS_LIMIT = 20
     _WARNING_LOG_SCAN_LIMIT = 1000
 
+    @validated_request(
+        responses={
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        }
+    )
     @action(detail=False, methods=["get"])
     def get_eval_task_logs(self, request, *args, **kwargs):
         try:
@@ -726,9 +759,12 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         except EvalTask.DoesNotExist:
             return self._gm.bad_request(f"EvalTask with id {eval_task_id} not found.")
 
-        except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(str(e))
+        except Exception as exc:
+            logger.exception(
+                "eval_task.logs_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation task logs could not be loaded")
 
     # ──────────────────────────────────────────────────────────────────
     # GET /tracer/eval-task/get_usage/?eval_task_id=<id>&period=<>&...
@@ -750,6 +786,12 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         "365d": timedelta(days=365),
     }
 
+    @validated_request(
+        responses={
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        }
+    )
     @action(detail=False, methods=["get"])
     def get_usage(self, request, *args, **kwargs):
         try:
@@ -807,17 +849,25 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
                 start_date_str = self.request.query_params.get("start_date")
                 end_date_str = self.request.query_params.get("end_date")
-                if start_date_str:
-                    agg_base_qs = agg_base_qs.filter(
-                        observation_span__created_at__gte=datetime.fromisoformat(
-                            start_date_str
-                        )
+                try:
+                    aggregation_start_date = (
+                        datetime.fromisoformat(start_date_str)
+                        if start_date_str
+                        else None
                     )
-                if end_date_str:
+                    aggregation_end_date = (
+                        datetime.fromisoformat(end_date_str) if end_date_str else None
+                    )
+                except (TypeError, ValueError):
+                    return self._gm.bad_request("Invalid evaluation usage date range")
+
+                if aggregation_start_date is not None:
                     agg_base_qs = agg_base_qs.filter(
-                        observation_span__created_at__lte=datetime.fromisoformat(
-                            end_date_str
-                        )
+                        observation_span__created_at__gte=aggregation_start_date
+                    )
+                if aggregation_end_date is not None:
+                    agg_base_qs = agg_base_qs.filter(
+                        observation_span__created_at__lte=aggregation_end_date
                     )
 
                 agg_response = {"eval_task_id": str(eval_task_id)}
@@ -1173,18 +1223,23 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             }
             return self._gm.success_response(response)
 
-        except Exception as e:
-            traceback.print_exc()
-            logger.error(
-                "eval_task.get_usage failed",
-                error=str(e),
+        except ValidationError as exc:
+            return self._gm.bad_request(exc.detail)
+        except Exception as exc:
+            logger.exception(
+                "eval_task.get_usage_failed",
+                error_type=type(exc).__name__,
                 eval_task_id=request.query_params.get("eval_task_id"),
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request("Evaluation task usage could not be loaded")
 
     @validated_request(
         request_serializer=EvalTaskDeleteRequestSerializer,
-        responses={200: EvalTaskMessageResponseSerializer},
+        responses={
+            200: EvalTaskMessageResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        },
     )
     @action(detail=False, methods=["post"])
     def mark_eval_tasks_deleted(self, request, *args, **kwargs):
@@ -1229,14 +1284,21 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 {"message": "Eval tasks marked as deleted successfully"}
             )
 
-        except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(str(e))
+        except Exception as exc:
+            logger.exception(
+                "eval_task.delete_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation tasks could not be deleted")
 
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         query_serializer=EvalTaskIdQuerySerializer,
-        responses={200: EvalTaskMessageResponseSerializer},
+        responses={
+            200: EvalTaskMessageResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        },
     )
     @action(detail=False, methods=["post"])
     def pause_eval_task(self, request, *args, **kwargs):
@@ -1270,14 +1332,21 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 {"message": "Eval task paused successfully"}
             )
 
-        except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(str(e))
+        except Exception as exc:
+            logger.exception(
+                "eval_task.pause_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation task could not be paused")
 
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         query_serializer=EvalTaskIdQuerySerializer,
-        responses={200: EvalTaskMessageResponseSerializer},
+        responses={
+            200: EvalTaskMessageResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        },
     )
     @action(detail=False, methods=["post"])
     def unpause_eval_task(self, request, *args, **kwargs):
@@ -1310,12 +1379,21 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 {"message": "Eval task unpaused successfully"}
             )
 
-        except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(str(e))
+        except Exception as exc:
+            logger.exception(
+                "eval_task.unpause_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation task could not be resumed")
 
     @action(detail=False, methods=["get"], pagination_class=None)
-    @validated_request(query_serializer=EvalTaskListWithProjectNameQuerySerializer)
+    @validated_request(
+        query_serializer=EvalTaskListWithProjectNameQuerySerializer,
+        responses={
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        },
+    )
     def list_eval_tasks_with_project_name(self, request, *args, **kwargs):
         """
         List Eval Tasks filtered
@@ -1387,13 +1465,20 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
             return self._gm.success_response(response)
 
-        except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(f"error fetching the traces list {str(e)}")
+        except Exception as exc:
+            logger.exception(
+                "eval_task.list_with_project_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation tasks could not be loaded")
 
     @validated_request(
         request_serializer=EvalTaskUpdateRequestSerializer,
-        responses={200: EvalTaskUpdateResponseSerializer},
+        responses={
+            200: EvalTaskUpdateResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        },
     )
     @action(detail=False, methods=["patch"])
     def update_eval_task(self, request, *args, **kwargs):
@@ -1417,6 +1502,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 return self._gm.bad_request(serializer.errors)
 
             validated_data = serializer.validated_data
+            if "filters" in validated_data:
+                validated_data["filters"] = bind_request_my_annotations_principal(
+                    request,
+                    validated_data["filters"],
+                )
             edit_type = validated_data["edit_type"]
 
             # Get eval task with row-level locking to prevent concurrent modifications
@@ -1511,6 +1601,22 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 task_serializer.is_valid(raise_exception=True)
                 eval_task = task_serializer.save()
 
+                effective_run_type = update_fields.get("run_type", original_run_type)
+                if effective_run_type == RunType.CONTINUOUS and (
+                    rows_changed
+                    or evals_changed
+                    or original_run_type != effective_run_type
+                    or edit_type == "fresh_run"
+                ):
+                    # A selection/eval-set edit invalidates an arrival delta:
+                    # rows older than the overlap may newly match (or stop
+                    # matching). Reset inside this locked transaction so the
+                    # next reconcile performs a complete start-time proof.
+                    EvalTask.objects.filter(id=eval_task.id).update(
+                        continuous_cursor=None
+                    )
+                    eval_task.continuous_cursor = None
+
                 # Delete & rerun wipes live entries first; the workflow then
                 # reconciles (materialize/diff) and drains for both cases, so the
                 # request returns without doing that work synchronously.
@@ -1529,11 +1635,17 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     }
                 )
 
-        except Exception as e:
-            logger.error(
-                f"Error updating eval task {eval_task_id}: {str(e)}", exc_info=True
+        except ValidationError as exc:
+            return self._gm.bad_request(exc.detail)
+        except FilterPrincipalContextError as exc:
+            return self._gm.bad_request(str(exc))
+        except Exception as exc:
+            logger.exception(
+                "eval_task.update_failed",
+                eval_task_id=eval_task_id,
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(f"Error updating evaluation task: {str(e)}")
+            return self._gm.bad_request("Evaluation task could not be updated")
 
     def _extract_update_fields(self, validated_data):
         """Extract valid update fields from validated data.
@@ -1560,6 +1672,13 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
         return update_fields
 
+    @validated_request(
+        responses={
+            400: ApiErrorResponseSerializer,
+            404: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        }
+    )
     @action(detail=False, methods=["get"])
     def get_eval_details(self, request, *args, **kwargs):
         try:
@@ -1616,6 +1735,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
         except EvalTask.DoesNotExist:
             return self._gm.not_found("Eval task not found")
-        except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(f"Error fetching eval task details {str(e)}")
+        except Exception as exc:
+            logger.exception(
+                "eval_task.details_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation task details could not be loaded")

@@ -7,6 +7,10 @@ x-dev-worker: &dev-worker
     - ./futureagi:/app/backend
   environment:
     FAST_STARTUP: "true"
+    NO_STARTUP_DB_MUTATIONS: "true"
+    CH25_DROP_LEGACY_CDC_CHAIN: "false"
+    CH25_TRACE_DUAL_WRITE: "false"
+    CH_DUAL_WRITE: "false"
 
 services:
   frontend:
@@ -38,6 +42,10 @@ services:
       - ./futureagi:/app/backend
     environment:
       FAST_STARTUP: "true"
+      NO_STARTUP_DB_MUTATIONS: "true"
+      CH25_DROP_LEGACY_CDC_CHAIN: "false"
+      CH25_TRACE_DUAL_WRITE: "false"
+      CH_DUAL_WRITE: "false"
 
   # agentcc-gateway, serving, and code-executor are separate services we
   # don't modify in local dev, so they are NOT built from source here —
@@ -61,6 +69,9 @@ services:
     <<: *dev-worker
     profiles: !reset []
   worker-tasks-xl:
+    <<: *dev-worker
+    profiles: !reset []
+  worker-exact-aggregation:
     <<: *dev-worker
     profiles: !reset []
   worker-trace-ingestion:

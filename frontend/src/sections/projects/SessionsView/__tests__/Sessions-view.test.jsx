@@ -1,5 +1,17 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { getDateLabel } from "../Sessions-view";
+
+vi.hoisted(() => {
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      clear: vi.fn(),
+      getItem: vi.fn(() => null),
+      removeItem: vi.fn(),
+      setItem: vi.fn(),
+    },
+  });
+});
 
 describe("Sessions-view getDateLabel", () => {
   it("returns 'Past 6M' when dateFilter is undefined", () => {

@@ -48,6 +48,7 @@ const PrimaryGraph = lazy(
 import useUsersStore from "./Store/usersStore";
 import { getUsersColumnConfig } from "./common";
 import UsersGrid from "./UsersGrid";
+import { sanitizeUserColumnState } from "./userSortContract";
 import UsersEmptyScreen from "./UsersEmptyScreen";
 import { useShallow } from "zustand/react/shallow";
 import { filtersContentEqual } from "../saved-view-utils";
@@ -298,7 +299,10 @@ const UsersView = ({
     }, {});
     // columnState lives inside `display` because the backend serializer
     // whitelists `display` for arbitrary sub-keys (no top-level columnState).
-    const columnState = gridApi?.getColumnState?.() ?? undefined;
+    const rawColumnState = gridApi?.getColumnState?.() ?? undefined;
+    const columnState = rawColumnState
+      ? sanitizeUserColumnState(rawColumnState)
+      : undefined;
     // customColumns separately: AG Grid won't recreate them from columnState
     // alone since the backend doesn't know about custom cols.
     const customColumns = (columns || []).filter(
@@ -516,23 +520,22 @@ const UsersView = ({
         Array.isArray(display.columnState) &&
         display.columnState.length > 0
       ) {
+        const columnState = sanitizeUserColumnState(display.columnState);
         // Defer columnState when custom cols are being added — AG Grid's
         // columnDefs prop only flips next render, so applying this tick
         // would drop entries for the custom colIds. Drained by the
         // `columns` effect once the store update propagates.
         if (savedCustomCols.length > 0) {
-          pendingColumnStateRef.current = display.columnState;
+          pendingColumnStateRef.current = columnState;
         } else if (gridApi?.applyColumnState) {
           gridApi.applyColumnState({
-            state: display.columnState,
+            state: columnState,
             applyOrder: true,
           });
           // Bake order into the array too (applyColumnState is clobbered on rebuild).
-          setColumns(
-            reorderColumns(columns, columnStateToOrder(display.columnState)),
-          );
+          setColumns(reorderColumns(columns, columnStateToOrder(columnState)));
         } else {
-          pendingColumnStateRef.current = display.columnState;
+          pendingColumnStateRef.current = columnState;
         }
       }
       if (Array.isArray(config.extra_filters)) {
@@ -778,6 +781,7 @@ const UsersView = ({
     hasData === true ||
     (isLoading && searchState !== "empty") ||
     searchState === "searching" ||
+    searchState === "error" ||
     hasActiveFilter;
 
   return (

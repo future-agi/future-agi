@@ -130,6 +130,26 @@ def _get_client():
     so a settings-client is never shared across threads and a concurrent caller
     with a different key cannot close a client this thread is mid-query on. The
     empty-settings path is unchanged."""
+    cfg = get_v2_config()
+    if cfg["server_enforced_readonly"]:
+        global _client
+        if _client is not None:
+            return _client
+        with _client_lock:
+            if _client is None:
+                from tracer.services.clickhouse.server_readonly import (
+                    ServerEnforcedReadOnlyNativeClient,
+                )
+
+                _client = ServerEnforcedReadOnlyNativeClient(
+                    host=cfg["host"],
+                    port=cfg["tcp_port"],
+                    username=cfg["user"],
+                    password=cfg["password"] or "",
+                    database=cfg["database"],
+                )
+        return _client
+
     overrides = current_settings()
     if overrides:
         key = tuple(sorted(overrides.items()))
@@ -146,7 +166,6 @@ def _get_client():
                 pass
         import clickhouse_connect
 
-        cfg = get_v2_config()
         client = clickhouse_connect.get_client(
             host=cfg["host"],
             port=cfg["http_port"],
@@ -159,14 +178,12 @@ def _get_client():
         _settings_tls.client = client
         _settings_tls.key = key
         return client
-    global _client
     if _client is not None:
         return _client
     with _client_lock:
         if _client is None:
             import clickhouse_connect
 
-            cfg = get_v2_config()
             _client = clickhouse_connect.get_client(
                 host=cfg["host"],
                 port=cfg["http_port"],
@@ -200,6 +217,9 @@ def _reset_client() -> None:
 
 def resolve_external_session_ids(
     trace_session_ids: Iterable[object],
+    *,
+    timeout_ms: int | None = None,
+    settings: dict | None = None,
 ) -> dict[str, str | None]:
     """Batch-resolve ``{trace_session_id (str) -> external_session_id}`` from the
     CH ``trace_sessions_dict``.
@@ -224,13 +244,21 @@ def resolve_external_session_ids(
     try:
         # arrayJoin over the literal id list resolves the whole batch in ONE
         # round-trip. dictGetOrNull keeps the missing-key → NULL semantics.
+        query_kwargs = {"parameters": {"ids": list(ids)}}
+        query_settings = dict(settings or {})
+        if timeout_ms is not None:
+            if timeout_ms <= 0:
+                raise ValueError("timeout_ms must be positive")
+            query_settings["max_execution_time"] = timeout_ms / 1000
+        if query_settings:
+            query_kwargs["settings"] = query_settings
         result = client.query(
             (
                 f"SELECT toString(sid), "
                 f"dictGetOrNull('{_DICT_NAME}', '{_LABEL_ATTR}', sid) "
                 f"FROM (SELECT arrayJoin(%(ids)s::Array(UUID)) AS sid)"
             ),
-            parameters={"ids": list(ids)},
+            **query_kwargs,
         )
     except Exception:
         # A read error is real (parity must not silently degrade). Reset the

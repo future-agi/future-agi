@@ -22,6 +22,9 @@ from unittest.mock import Mock
 import pytest
 
 from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryBuilder
+from tracer.services.clickhouse.v2.query_builders.trace_list import (
+    TraceListQueryBuilderV2,
+)
 
 
 @pytest.fixture
@@ -56,7 +59,7 @@ class TestBuildContentQuery:
         assert "attrs_number" in query
         assert "attrs_bool" in query
         assert "attributes_extra" in query
-        assert "toJSONString(metadata) AS metadata" in query
+        assert "toJSONString(latest_metadata) AS metadata" in query
         assert "trace_dict" in query and "trace_tags" in query
 
     def test_prewhere_and_params(self, project_id, trace_ids):
@@ -70,15 +73,16 @@ class TestBuildContentQuery:
         query, params = builder.build_content_query(trace_ids)
         assert "project_id = %(project_id)s" in query
         assert params["project_id"] == project_id
-        # content query uses the v2 is_deleted column
-        assert "is_deleted = 0" in query
+        # Content is filtered only after every physical root is collapsed to
+        # its latest direct-write version.
+        assert "latest_is_deleted = 0" in query
         assert "_peerdb_is_deleted" not in query
 
     def test_root_span_only(self, project_id, trace_ids):
         builder = TraceListQueryBuilder(project_id=project_id)
         query, _ = builder.build_content_query(trace_ids)
-        assert "parent_span_id IS NULL OR parent_span_id = ''" in query
-        assert "LIMIT 1 BY trace_id" in query
+        assert "latest_parent_span_id IS NULL OR latest_parent_span_id = ''" in query
+        assert "LIMIT 1 BY project_id, trace_id" in query
 
     def test_multi_project_scoping(self, trace_ids):
         pids = [str(uuid.uuid4()), str(uuid.uuid4())]
@@ -99,7 +103,84 @@ class TestBuildContentQuery:
     def test_no_window_standalone(self, project_id, trace_ids):
         builder = TraceListQueryBuilder(project_id=project_id)
         query, _ = builder.build_content_query(trace_ids)
-        assert "start_time" not in query
+        assert "start_time >= %(start_date)s" not in query
+
+    def test_exact_page_root_identity_and_project_version_scope(self, project_id):
+        builder = TraceListQueryBuilder(
+            project_id=project_id,
+            project_version_id="00000000-0000-4000-8000-000000000099",
+        )
+        identity = (
+            project_id,
+            "trace-reused",
+            "selected-root",
+            datetime(2026, 7, 1, 12, 0),
+        )
+        query, params = builder.build_content_query(
+            ["trace-reused"], root_identities=[identity]
+        )
+
+        assert "toUnixTimestamp64Micro(start_time)" in query
+        assert "IN %(content_root_identities)s" in query
+        assert params["content_root_identities"] == (
+            (
+                project_id,
+                "trace-reused",
+                "selected-root",
+                1_782_907_200_000_000,
+            ),
+        )
+        assert params["content_root_dates"] == (identity[3].date(),)
+        assert "latest_project_version_id = %(project_version_id)s" in query
+        assert params["project_version_id"] == builder.project_version_id
+        assert "argMax(tuple(input), _peerdb_version).1" in query
+
+
+@pytest.mark.unit
+class TestBuildContentQueryV2TraceTags:
+    def test_reads_bounded_latest_trace_tags_without_dictionary(
+        self, project_id, trace_ids
+    ):
+        query, params = TraceListQueryBuilderV2(
+            project_id=project_id
+        ).build_content_query(trace_ids)
+
+        assert "dictGet" not in query
+        assert "trace_dict" not in query
+        assert "FROM traces" in query
+        assert "AND id IN %(content_trace_ids)s" in query
+        assert params["content_trace_ids"] == tuple(trace_ids)
+
+    def test_collapses_latest_trace_version_and_discards_latest_tombstone(
+        self, project_id, trace_ids
+    ):
+        query, _ = TraceListQueryBuilderV2(project_id=project_id).build_content_query(
+            trace_ids
+        )
+
+        assert "argMax(tags, _version) AS latest_trace_tags" in query
+        assert "argMax(is_deleted, _version) AS latest_trace_is_deleted" in query
+        assert "GROUP BY project_id, id" in query
+        assert "HAVING latest_trace_is_deleted = 0" in query
+        assert "ifNull(nullIf(latest_trace_tags, ''), '[]') AS trace_tags" in query
+
+    def test_joins_tags_on_project_and_trace_identity(self, project_id, trace_ids):
+        query, _ = TraceListQueryBuilderV2(project_id=project_id).build_content_query(
+            trace_ids
+        )
+
+        assert "PREWHERE project_id = %(project_id)s" in query
+        assert "latest_physical_roots.project_id = trace_tags_project_id" in query
+        assert "latest_physical_roots.trace_id = trace_tags_trace_id" in query
+
+    def test_multi_project_tags_keep_the_same_project_scope(self, trace_ids):
+        project_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+        query, params = TraceListQueryBuilderV2(
+            project_ids=project_ids
+        ).build_content_query(trace_ids)
+
+        assert query.count("project_id IN %(project_ids)s") == 2
+        assert params["project_ids"] == tuple(project_ids)
 
 
 # ---------------------------------------------------------------------------
@@ -168,9 +249,9 @@ class TestBuildSpanCountScoping:
     def test_project_scoping_and_deletion(self, project_id, trace_ids):
         builder = TraceListQueryBuilder(project_id=project_id)
         query, params = builder.build_span_count_query(trace_ids)
-        assert "project_id = %(project_id)s" in query
+        assert "PREWHERE project_id = %(project_id)s" in query
         assert params["project_id"] == project_id
-        assert "is_deleted = 0" in query
+        assert "WHERE is_deleted = 0" in query
         assert "_peerdb_is_deleted" not in query
         assert "trace_id IN %(sc_trace_ids)s" in query
 
@@ -178,8 +259,28 @@ class TestBuildSpanCountScoping:
         pids = [str(uuid.uuid4())]
         builder = TraceListQueryBuilder(project_ids=pids)
         query, params = builder.build_span_count_query(trace_ids)
-        assert "project_id IN %(project_ids)s" in query
+        assert "PREWHERE project_id IN %(project_ids)s" in query
         assert params["project_ids"] == tuple(pids)
+
+    def test_start_time_window_after_build(self, project_id, trace_ids):
+        builder = TraceListQueryBuilder(project_id=project_id)
+        builder.build()
+
+        query, params = builder.build_span_count_query(trace_ids)
+
+        assert "start_time >= %(start_date)s - INTERVAL 1 DAY" in query
+        assert "start_time < %(end_date)s + INTERVAL 1 DAY" in query
+        assert params["start_date"] == builder.start_date
+        assert params["end_date"] == builder.end_date
+
+    def test_no_window_standalone(self, project_id, trace_ids):
+        builder = TraceListQueryBuilder(project_id=project_id)
+
+        query, params = builder.build_span_count_query(trace_ids)
+
+        assert "start_time" not in query
+        assert "start_date" not in params
+        assert "end_date" not in params
 
 
 # ---------------------------------------------------------------------------
@@ -474,12 +575,11 @@ class TestBuildCountQuery:
         query, params = builder.build_count_query()
         assert "project_version_id" not in query
 
-    def test_search_fragment(self, project_id):
+    def test_search_count_requires_bounded_selector(self, project_id):
         builder = TraceListQueryBuilder(project_id=project_id, search="boom")
-        builder.build()
-        query, params = builder.build_count_query()
-        assert "trace_name ILIKE %(search)s" in query
-        assert params["search"] == "%boom%"
+        assert builder.supports_bounded_filter_scan() is True
+        with pytest.raises(ValueError, match="bounded_search_required"):
+            builder.build_count_query()
 
     def test_start_time_window_no_created_at_skew(self, project_id):
         builder = TraceListQueryBuilder(project_id=project_id)
@@ -547,26 +647,77 @@ class TestOuterWindowStartTime:
 
 @pytest.mark.unit
 class TestEvalQueryDeletionPredicate:
-    def test_rewrite_safe_deleted_predicate(self, project_id):
-        builder = TraceListQueryBuilder(
-            project_id=project_id, eval_config_ids=["ec1"]
-        )
+    def test_rewrite_safe_deleted_predicate(self, project_id, settings):
+        settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
+        builder = TraceListQueryBuilder(project_id=project_id, eval_config_ids=["ec1"])
         query, _ = builder.build_eval_query(["t1"])
-        # legacy tracer_eval_logger uses `deleted`, not `is_deleted` — the v2
-        # rewriter must leave this form untouched.
-        assert "(deleted = 0 OR deleted IS NULL)" in query
-        assert "_peerdb_is_deleted = 0" in query
+        # Collapse the newest physical eval version first, then apply both the
+        # CDC tombstone and app soft-delete state in the outer query. Filtering
+        # either marker inside LIMIT 1 BY would resurrect an older live row.
+        assert "_peerdb_is_deleted AS latest_state_0" in query
+        assert "deleted AS latest_state_1" in query
+        assert "latest_state_0 = 0" in query
+        assert "(latest_state_1 = 0 OR latest_state_1 IS NULL)" in query
 
-    def test_created_at_pruning_only_after_build(self, project_id):
-        # build_eval_query guards the created_at fragment on self.start_date
-        builder = TraceListQueryBuilder(
-            project_id=project_id, eval_config_ids=["ec1"]
-        )
-        # no prior build(): start_date is None → no created_at fragment
+    def test_eval_replay_does_not_drop_late_evals_for_old_traces(self, project_id):
+        builder = TraceListQueryBuilder(project_id=project_id, eval_config_ids=["ec1"])
         query_no_build, _ = builder.build_eval_query(["t1"])
         assert "created_at >= %(start_date)s" not in query_no_build
 
-        builder.build()  # sets start_date
+        # Even after build() captures the trace window, eval identity is the
+        # finite trace/config pair. Evals may be run days or months later.
+        builder.build()
         query_after, params = builder.build_eval_query(["t1"])
-        assert "created_at >= %(start_date)s - INTERVAL 1 DAY" in query_after
-        assert "start_date" in params
+        assert "created_at >= %(start_date)s" not in query_after
+        assert "start_date" not in params
+        assert params["trace_ids"] == ("t1",)
+        assert params["eval_config_ids"] == ("ec1",)
+
+    def test_page_500_by_11_eval_replay_is_packed_below_result_row_cap(
+        self, project_id
+    ):
+        trace_ids = [f"trace-{index}" for index in range(500)]
+        config_ids = [f"config-{index}" for index in range(11)]
+        builder = TraceListQueryBuilder(
+            project_id=project_id,
+            eval_config_ids=config_ids,
+        )
+
+        query, params = builder.build_eval_replay_query(trace_ids)
+
+        assert "groupArray(tuple(" in query
+        assert ")) AS eval_rows" in query
+        assert "GROUP BY trace_id" in query
+        assert params["trace_ids"] == tuple(trace_ids)
+        assert params["eval_config_ids"] == tuple(config_ids)
+
+        packed_rows = [
+            {
+                "trace_id": trace_id,
+                "eval_rows": [
+                    (
+                        config_id,
+                        0.75,
+                        50.0,
+                        1,
+                        0,
+                        1,
+                        [],
+                        0,
+                        0,
+                        0,
+                        None,
+                    )
+                    for config_id in config_ids
+                ],
+            }
+            for trace_id in trace_ids
+        ]
+        expanded = builder.expand_eval_replay_rows(packed_rows)
+
+        assert len(packed_rows) == 500
+        assert len(expanded) == 5_500
+        assert expanded[0]["trace_id"] == "trace-0"
+        assert expanded[0]["eval_config_id"] == "config-0"
+        assert expanded[-1]["trace_id"] == "trace-499"
+        assert expanded[-1]["eval_config_id"] == "config-10"

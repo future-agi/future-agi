@@ -24,24 +24,20 @@ def _try_session_navigation_ch(
     Returns ``(next_session_id, previous_session_id)`` on success, or
     ``None`` if ClickHouse is disabled or the query failed.
     """
-    from tracer.services.clickhouse.query_builders.session_analytics import (
-        SessionAnalyticsQueryBuilder,
+    from tracer.services.clickhouse.read_budget import ReadDeadline
+    from tracer.services.clickhouse.v2.query_builders.session_analytics import (
+        SessionAnalyticsQueryBuilderV2,
     )
-    from tracer.services.clickhouse.query_service import (
-        AnalyticsQueryService,
-    )
+    from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
 
     try:
-        service = AnalyticsQueryService()
+        service = V2AnalyticsQueryService()
+        deadline = ReadDeadline.start(3000)
         query_data = _get_navigation_query_data(request, query_data)
         filters = query_data.get("filters", [])
         sort_params = query_data.get("sort_params", [])
 
-        builder = SessionAnalyticsQueryBuilder(project_id=str(project_id))
-
-        # Get session navigation data
-        nav_query, nav_params = builder.build_session_navigation_query()
-
+        end_user_ids = []
         user_id = query_data.get("user_id")
         if user_id:
             from tracer.services.clickhouse.v2.end_user_dict_reader import (
@@ -51,35 +47,27 @@ def _try_session_navigation_ch(
             end_user_ids = resolve_end_user_ids_by_user_id(
                 user_id, project_id=project_id
             )
-            if end_user_ids:
-                nav_params["end_user_ids"] = end_user_ids
-                nav_query = nav_query.replace(
-                    "AND trace_session_id IS NOT NULL",
-                    "AND trace_session_id IS NOT NULL AND end_user_id IN %(end_user_ids)s",
-                )
-            else:
+            if not end_user_ids:
                 return None
 
-        nav_result = service.execute_ch_query(nav_query, nav_params)
+        builder = SessionAnalyticsQueryBuilderV2(
+            project_id=str(project_id),
+            filters=filters,
+            end_user_ids=end_user_ids,
+        )
+
+        # Latest-live session metrics and first/last root messages are returned
+        # together, avoiding the legacy raw-RMT scan and two extra round trips.
+        nav_query, nav_params = builder.build_session_navigation_query()
+
+        nav_result = service.execute_ch_query(
+            nav_query,
+            nav_params,
+            timeout_ms=deadline.remaining_ms(),
+        )
 
         if not nav_result.data:
             return None
-
-        session_ids = [str(row["trace_session_id"]) for row in nav_result.data]
-
-        # Get first/last messages for these sessions
-        first_q, last_q, msg_params = builder.build_first_last_message_query(
-            session_ids
-        )
-        first_result = service.execute_ch_query(first_q, msg_params)
-        last_result = service.execute_ch_query(last_q, msg_params)
-
-        first_msg_map = {
-            str(r["trace_session_id"]): r.get("input", "") for r in first_result.data
-        }
-        last_msg_map = {
-            str(r["trace_session_id"]): r.get("input", "") for r in last_result.data
-        }
 
         # Build result list matching PG format
         result = []
@@ -99,8 +87,8 @@ def _try_session_navigation_ch(
                     "total_traces_count": int(row.get("trace_count") or 0),
                     "start_time": started_at,
                     "end_time": ended_at,
-                    "first_message": first_msg_map.get(sid, ""),
-                    "last_message": last_msg_map.get(sid, ""),
+                    "first_message": row.get("first_message", ""),
+                    "last_message": row.get("last_message", ""),
                     "session_id": sid,
                     "created_at": started_at,
                     "user_id": None,
@@ -160,7 +148,12 @@ def get_session_navigation(request, project_id, current_session_id, query_data=N
     Returns ``(None, None)`` when ClickHouse is unavailable; callers
     render the page without prev/next arrows in that case.
     """
-    ch_result = _try_session_navigation_ch(request, project_id, current_session_id)
+    ch_result = _try_session_navigation_ch(
+        request,
+        project_id,
+        current_session_id,
+        query_data,
+    )
     if ch_result is None:
         return None, None
     return ch_result

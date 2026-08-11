@@ -25,6 +25,7 @@ import { enqueueSnackbar } from "notistack";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import { useExecuteCompositeEval } from "../../hooks/useCompositeEval";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 
 const defaultValues = {
   templateType: "Futureagi",
@@ -380,10 +381,10 @@ const LeftInputSection = ({
       } catch (error) {
         if (!handleCreditError(error)) {
           enqueueSnackbar(
-            error?.result ||
-              error?.detail ||
-              error?.message ||
+            getSafeActionErrorMessage(
+              error,
               "Failed to run composite evaluation",
+            ),
             { variant: "error" },
           );
         }
@@ -428,6 +429,7 @@ const LeftInputSection = ({
   };
 
   const { mutate: evaluateMutate, isPending: isEvaluating } = useMutation({
+    meta: { errorHandled: true },
     mutationFn: (data) =>
       axios.post(endpoints.develop.eval.evalPlayground, data),
     onSuccess: (data, variable) => {
@@ -445,10 +447,7 @@ const LeftInputSection = ({
     onError: (error) => {
       if (!handleCreditError(error)) {
         enqueueSnackbar(
-          error?.result ||
-            error?.detail ||
-            error?.message ||
-            "Failed to run evaluation",
+          getSafeActionErrorMessage(error, "Failed to run evaluation"),
           { variant: "error" },
         );
       }

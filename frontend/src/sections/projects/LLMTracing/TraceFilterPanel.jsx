@@ -48,10 +48,48 @@ import {
   getPickerOptionLabel,
   getPickerOptionSearchText,
   getPickerOptionSecondaryLabel,
+  getPickerOptionType,
   getPickerOptionValue,
+  getPickerValueIdentity,
+  normalizePickerValues,
   usesFreeTextValue,
 } from "./filterValuePickerUtils";
 import { ID_ONLY_FIELDS } from "./idFields";
+import {
+  getAttributeLookupMessage,
+  getFilterValueReadMessage,
+  getQueryReadMessage,
+} from "src/utils/queryReadState";
+import { useExactTraceAttributeProperties } from "./useExactTraceAttributeProperties";
+import {
+  normalizeVoiceCallStatus,
+  VOICE_CALL_FILTER_FIELDS,
+} from "./voiceCallFilterFields";
+
+function useSingleFlightPageRequest({ identity, enabled, request }) {
+  const activeRequestRef = useRef(null);
+
+  return useCallback(() => {
+    const activeRequest = activeRequestRef.current;
+    if (activeRequest?.identity === identity) return activeRequest.promise;
+    if (!enabled) return Promise.resolve();
+
+    const response = request();
+    const promise = Promise.resolve(response);
+    // React Query returns a promise. Keep synchronous test/legacy callbacks
+    // compatible without leaving a phantom request latched until a microtask.
+    if (!response || typeof response.then !== "function") return promise;
+    const nextRequest = { identity, promise };
+    activeRequestRef.current = nextRequest;
+    const clearRequest = () => {
+      if (activeRequestRef.current === nextRequest) {
+        activeRequestRef.current = null;
+      }
+    };
+    promise.then(clearRequest, clearRequest);
+    return promise;
+  }, [enabled, identity, request]);
+}
 
 // ---------------------------------------------------------------------------
 // Trace filter fields (for Query tab via shared FilterPanel)
@@ -96,6 +134,7 @@ const SPAN_ID_FIELD = {
 //                        consumers such as sessions/users).
 // Exported for direct unit testing.
 export const getTraceFilterFields = (tab) => {
+  if (tab === "voiceCalls") return VOICE_CALL_FILTER_FIELDS;
   if (tab === "trace") return [TRACE_ID_FIELD, ...BASE_TRACE_FILTER_FIELDS];
   if (tab === "spans")
     return [TRACE_ID_FIELD, SPAN_ID_FIELD, ...BASE_TRACE_FILTER_FIELDS];
@@ -118,16 +157,78 @@ export const toStaticFilterProperty = (field, isSpansView = false) => {
   return {
     id: field.value,
     name: field.label,
-    category: "system",
+    category: field.category || "system",
     // Pinned so the eval-task wire encoding doesn't have to guess
     // from `category` alone — without this every static field would
     // round-trip through the chain with apiColType=undefined and
     // get coerced to SPAN_ATTRIBUTE downstream.
-    apiColType: "SYSTEM_METRIC",
+    apiColType: field.apiColType || "SYSTEM_METRIC",
     type: field.type === "enum" ? "string" : field.type,
     ...(field.choices ? { choices: field.choices } : {}),
+    ...(field.responseKey ? { responseKey: field.responseKey } : {}),
+    ...(field.searchAliases ? { searchAliases: field.searchAliases } : {}),
+    ...(field.dynamicAliases ? { dynamicAliases: field.dynamicAliases } : {}),
+    ...(field.legacyWireValues
+      ? { legacyWireValues: field.legacyWireValues }
+      : {}),
+    ...(field.allowCustomValue !== undefined
+      ? { allowCustomValue: field.allowCustomValue }
+      : {}),
   };
 };
+
+// Static fields are authoritative for their own ids. Voice fields also own a
+// small set of legacy/system aliases published by the dashboard catalog. Only
+// suppress those aliases in the System category: a raw span attribute with the
+// same spelling remains a distinct, selectable field under Attributes.
+export function mergeTraceFilterProperties({
+  tab,
+  isSpansView = false,
+  dynamicProperties = [],
+  filterFields = [],
+}) {
+  const staticProps = getTraceFilterFields(tab).map((field) =>
+    toStaticFilterProperty(field, isSpansView),
+  );
+  const canonicalIds = new Set(staticProps.map((property) => property.id));
+  const coveredSystemAliases = new Set(
+    staticProps.flatMap((property) => [
+      property.responseKey,
+      ...(property.legacyWireValues || []),
+      ...(property.dynamicAliases || []),
+    ]),
+  );
+  const dynamicExtras = dynamicProperties.filter((property) => {
+    const isSystemProperty =
+      property.category === "system" || property.apiColType === "SYSTEM_METRIC";
+    return !(
+      isSystemProperty &&
+      (canonicalIds.has(property.id) || coveredSystemAliases.has(property.id))
+    );
+  });
+  const dynamicSystemIds = dynamicExtras
+    .filter(
+      (property) =>
+        property.category === "system" ||
+        property.apiColType === "SYSTEM_METRIC",
+    )
+    .map((property) => property.id);
+  const allIds = new Set([
+    ...canonicalIds,
+    ...coveredSystemAliases,
+    ...dynamicSystemIds,
+  ]);
+  const fieldExtras = filterFields
+    .filter((field) => !allIds.has(field.id || field.value))
+    .map((field) => ({
+      id: field.id || field.value,
+      name: field.name || field.label,
+      category: "system",
+      apiColType: "SYSTEM_METRIC",
+      type: field.type || "string",
+    }));
+  return [...staticProps, ...dynamicExtras, ...fieldExtras];
+}
 
 // ---------------------------------------------------------------------------
 // Category config for dashboard-style property picker
@@ -225,6 +326,15 @@ const ARRAY_OPS = [
   { value: "is_not_null", label: "is not empty" },
 ];
 
+const MAP_OPS = [
+  { value: "equals", label: "equals" },
+  { value: "not_equals", label: "not equals" },
+  { value: "contains", label: "contains entries" },
+  { value: "not_contains", label: "does not contain entries" },
+  { value: "is_null", label: "is empty" },
+  { value: "is_not_null", label: "is not empty" },
+];
+
 const CATEGORICAL_OPS = [
   { value: "equals", label: "is" },
   { value: "not_equals", label: "is not" },
@@ -272,6 +382,7 @@ const NUMERIC_TYPES = new Set([
 const DATE_TYPES = new Set(["date", "datetime", "timestamp"]);
 const BOOLEAN_TYPES = new Set(["boolean", "bool"]);
 const ARRAY_TYPES = new Set(["array", "list", "json"]);
+const MAP_TYPES = new Set(["map", "object"]);
 
 const normalizeFieldType = (rawType) => {
   if (!rawType) return "string";
@@ -280,7 +391,50 @@ const normalizeFieldType = (rawType) => {
   if (DATE_TYPES.has(t)) return "date";
   if (BOOLEAN_TYPES.has(t)) return "boolean";
   if (ARRAY_TYPES.has(t)) return "array";
+  if (MAP_TYPES.has(t)) return "map";
   return "string";
+};
+
+const isPlainObject = (value) =>
+  value !== null &&
+  typeof value === "object" &&
+  !Array.isArray(value) &&
+  (Object.getPrototypeOf(value) === Object.prototype ||
+    Object.getPrototypeOf(value) === null);
+
+// Map predicates deliberately accept only the same finite shape as the API:
+// one non-empty, flat JSON object whose values are non-null scalar values.
+// Returning null instead of throwing lets the editor hold partial JSON without
+// firing a broken auto-apply request while the user is still typing.
+export const parseMapFilterValue = (rawValue) => {
+  let value = rawValue;
+  if (typeof rawValue === "string") {
+    const trimmed = rawValue.trim();
+    if (!trimmed) return null;
+    try {
+      value = JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+  }
+  if (!isPlainObject(value) || Object.keys(value).length === 0) return null;
+  const entries = Object.entries(value);
+  if (
+    entries.some(
+      ([key, member]) =>
+        !key ||
+        member === null ||
+        member === undefined ||
+        (typeof member === "object" && member !== null) ||
+        (typeof member === "number" && !Number.isFinite(member)) ||
+        !["string", "number", "boolean"].includes(typeof member),
+    )
+  ) {
+    return null;
+  }
+  return Object.fromEntries(
+    entries.sort(([left], [right]) => left.localeCompare(right)),
+  );
 };
 
 export const isValidNumericInput = (v) => {
@@ -327,6 +481,7 @@ const getOperators = (fieldType) => {
   if (t === "date") return DATE_OPS;
   if (t === "boolean") return BOOLEAN_OPS;
   if (t === "array") return ARRAY_OPS;
+  if (t === "map") return MAP_OPS;
   return STRING_OPS;
 };
 
@@ -370,6 +525,7 @@ const DEFAULT_OP_FOR_TYPE = {
   date: "equals",
   boolean: "equals",
   array: "contains",
+  map: "contains",
   string: "in",
   categorical: "equals",
   thumbs: "equals",
@@ -391,16 +547,28 @@ const NO_VALUE_OPS = new Set(["is_null", "is_not_null"]);
 // nothing is applyable. Shared by the debounced auto-apply and the
 // flush-on-close path so both compute the filter set identically.
 const computeValidFilters = (rows) => {
-  const valid = rows.map(normalizeFilterRowOperator).filter((r) => {
-    if (!r.field) return false;
-    if (NO_VALUE_OPS.has(r.operator)) return true;
-    const ops = getOperatorsForFilter(r);
-    const opDef = ops.find((o) => o.value === r.operator);
-    if (opDef?.range)
-      return Array.isArray(r.value) && r.value[0] !== "" && r.value[1] !== "";
-    if (Array.isArray(r.value)) return r.value.length > 0;
-    return r.value !== "" && r.value !== undefined && r.value !== null;
-  });
+  const valid = rows
+    .map(normalizeFilterRowOperator)
+    .map((row) => {
+      if (
+        normalizeFieldType(row.fieldType) === "map" &&
+        !NO_VALUE_OPS.has(row.operator)
+      ) {
+        const value = parseMapFilterValue(row.value);
+        return value ? { ...row, value } : null;
+      }
+      return row;
+    })
+    .filter((r) => {
+      if (!r?.field) return false;
+      if (NO_VALUE_OPS.has(r.operator)) return true;
+      const ops = getOperatorsForFilter(r);
+      const opDef = ops.find((o) => o.value === r.operator);
+      if (opDef?.range)
+        return Array.isArray(r.value) && r.value[0] !== "" && r.value[1] !== "";
+      if (Array.isArray(r.value)) return r.value.length > 0;
+      return r.value !== "" && r.value !== undefined && r.value !== null;
+    });
   return valid.length ? valid : null;
 };
 
@@ -414,6 +582,7 @@ export const serializeFilterSet = (filters) =>
       field: f.field,
       operator: normalizeFilterRowOperator(f).operator,
       value: f.value,
+      valueTypes: f.valueTypes,
     })),
   );
 
@@ -437,6 +606,15 @@ export const hasIncompleteNumericRow = (rows) =>
       r.value !== null &&
       !isCompleteNumericValue(r.value)
     );
+  });
+
+export const hasIncompleteMapRow = (rows) =>
+  rows.some((row) => {
+    if (normalizeFieldType(row.fieldType) !== "map") return false;
+    if (NO_VALUE_OPS.has(row.operator)) return false;
+    if (row.value === "" || row.value === undefined || row.value === null)
+      return false;
+    return parseMapFilterValue(row.value) === null;
   });
 
 // Scalar ops — value picker forces single-select. Multi-value goes via in/not_in.
@@ -472,7 +650,11 @@ const EXCLUDED_METRICS = new Set([
   // duplicate of node_type — both map to observation_type
   "span_kind",
 ]);
-const PROPERTY_PICKER_RENDER_LIMIT = 250;
+// Keep the initial DOM bounded, then reveal already-fetched properties in
+// deliberate batches. This is a render batch, not a result ceiling: every
+// retained key remains reachable without forcing thousands of menu rows into
+// the first paint.
+const PROPERTY_PICKER_RENDER_BATCH_SIZE = 500;
 
 const normalizePropertySearchText = (value) =>
   String(value || "")
@@ -481,23 +663,124 @@ const normalizePropertySearchText = (value) =>
     .replace(/\s+/g, " ")
     .trim();
 
+// Canonical field identity is deliberately stricter than fuzzy picker search.
+// Attribute ids are case- and punctuation-sensitive backend keys: `trace_id`
+// and `trace.id` must never become the same identity merely because both are
+// convenient fuzzy matches. System fields may additionally match their exact
+// display label (for example `call_id` <-> `Call ID`), while punctuation is
+// still preserved so a raw attribute lookup cannot be shadowed by `Trace ID`.
+const normalizeCanonicalPropertyIdentity = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+
+const propertyMatchesRawId = (property, rawQuery) =>
+  Boolean(rawQuery) && String(property?.id || "").trim() === rawQuery;
+
+const propertyMatchesCanonicalSystemIdentity = (property, rawQuery) => {
+  if (!rawQuery || property?.category !== "system") return false;
+  const query = normalizeCanonicalPropertyIdentity(rawQuery);
+  return [property?.id, property?.name].some(
+    (candidate) => normalizeCanonicalPropertyIdentity(candidate) === query,
+  );
+};
+
+const getUnambiguousCanonicalSystemMatches = (properties, rawQuery) => {
+  const systemMatches = (properties || []).filter((property) =>
+    propertyMatchesCanonicalSystemIdentity(property, rawQuery),
+  );
+  const hasDistinctRawAttribute = (properties || []).some(
+    (property) =>
+      property?.category === "attribute" &&
+      propertyMatchesRawId(property, rawQuery),
+  );
+  return systemMatches.length === 1 && !hasDistinctRawAttribute
+    ? systemMatches
+    : [];
+};
+
 export function filterPropertiesForPicker({
   properties,
   category = "all",
   search = "",
   hasCategorySidebar = true,
 }) {
+  const rawQuery = String(search || "").trim();
   const query = normalizePropertySearchText(search);
   let list = properties || [];
-  if (hasCategorySidebar && category !== "all") {
+  // Text search is global.  A category selected during an earlier browse must
+  // not hide an exact system field (for example the Voice Calls `call_id`)
+  // while showing unrelated nested attributes with the same leaf name.
+  if (!query && hasCategorySidebar && category !== "all") {
     list = list.filter((property) => property.category === category);
   }
   if (!query) return list;
+  const rawIdMatches = list.filter((property) =>
+    propertyMatchesRawId(property, rawQuery),
+  );
+  // A backend key that is already present wins by its raw identity. Do not use
+  // punctuation-normalized equality here: that previously let `trace_id`
+  // conceal the distinct `trace.id` key and its remaining cursor pages.
+  if (rawIdMatches.length > 0) return rawIdMatches;
+  const canonicalSystemMatches = getUnambiguousCanonicalSystemMatches(
+    list,
+    rawQuery,
+  );
+  // Friendly system labels remain exact selections (`call_id` / `Call ID`).
+  // Aliases and fuzzy punctuation matches stay discoverable below but cannot
+  // claim identity or terminate backend attribute discovery.
+  if (canonicalSystemMatches.length > 0) return canonicalSystemMatches;
   return list.filter((property) => {
     const name = normalizePropertySearchText(property.name);
     const id = normalizePropertySearchText(property.id);
-    return name.includes(query) || id.includes(query);
+    const aliases = (property.searchAliases || []).some((alias) =>
+      normalizePropertySearchText(alias).includes(query),
+    );
+    return name.includes(query) || id.includes(query) || aliases;
   });
+}
+
+// Attribute discovery is deliberately bounded. If the exact lookup cannot
+// find a key (or is temporarily unavailable), users must still be able to
+// enter a known key without broadening the backend read. The fallback is
+// string-typed; a successful exact lookup always wins and preserves the
+// backend-provided number/boolean/array/map type.
+// eslint-disable-next-line react-refresh/only-export-components
+export function buildManualAttributeProperty({
+  search,
+  category,
+  properties,
+  enabled = true,
+  hasCategorySidebar = true,
+}) {
+  const exactName = String(search || "").trim();
+  if (
+    !enabled ||
+    !hasCategorySidebar ||
+    (category !== "all" && category !== "attribute") ||
+    !exactName ||
+    exactName.length > 512
+  ) {
+    return null;
+  }
+  if (
+    (properties || []).some(
+      (property) =>
+        property.category === "attribute" && property.id === exactName,
+    )
+  ) {
+    return null;
+  }
+  return {
+    id: exactName,
+    name: exactName,
+    category: "attribute",
+    rawCategory: "custom_attribute",
+    type: "string",
+    apiColType: "SPAN_ATTRIBUTE",
+    isManualExactAttribute: true,
+  };
 }
 
 const resolveFieldCategory = (explicitCategory, prop, fallback = "system") => {
@@ -505,6 +788,52 @@ const resolveFieldCategory = (explicitCategory, prop, fallback = "system") => {
   if (prop) return prop.category;
   return fallback;
 };
+
+// A backend field id is only unique inside its column type/category. This
+// lookup keeps a raw attribute such as `cost_cents` bound to its Attribute
+// metadata even when a canonical System field has the same id.
+const PROPERTY_CATEGORY_TO_API_COL_TYPE = {
+  system: "SYSTEM_METRIC",
+  attribute: "SPAN_ATTRIBUTE",
+  eval: "EVAL_METRIC",
+  annotation: "ANNOTATION",
+};
+
+export function findTraceFilterProperty(properties, filter) {
+  let matches = (properties || []).filter(
+    (property) => property.id === filter?.field,
+  );
+  if (filter?.apiColType) {
+    matches = matches.filter(
+      (property) =>
+        (property.apiColType ||
+          PROPERTY_CATEGORY_TO_API_COL_TYPE[property.category]) ===
+        filter.apiColType,
+    );
+  }
+  if (filter?.fieldCategory) {
+    matches = matches.filter(
+      (property) => property.category === filter.fieldCategory,
+    );
+  }
+  return matches[0];
+}
+
+const queryPropertyIdentity = (property) =>
+  `__field_identity__${JSON.stringify([
+    property.apiColType || "",
+    property.category || "",
+    property.id,
+  ])}`;
+
+export function buildQueryPropertyEntries(properties) {
+  return {
+    entries: (properties || []).map((property) => [
+      queryPropertyIdentity(property),
+      property,
+    ]),
+  };
+}
 
 const ANNOTATOR_FILTER_PROPERTY = {
   id: "annotator",
@@ -654,12 +983,66 @@ export function useTraceFilterProperties(
       buildTraceFilterProperties(metrics, { isSimulator, sourceScope }),
     staleTime: 5 * 60_000,
     gcTime: 15 * 60_000,
+    meta: { errorHandled: true },
   });
 }
 
 // ---------------------------------------------------------------------------
 // PropertyPicker — dashboard-style two-column picker
 // ---------------------------------------------------------------------------
+export function mergeRetainedAttributeProperties(
+  properties,
+  retainedAttributeProperties,
+  { canonical = false } = {},
+) {
+  const catalog = properties || [];
+  const nonAttributes = catalog.filter(
+    (property) => property.category !== "attribute",
+  );
+  // Field id alone is not an identity: a raw span attribute may legitimately
+  // have the same key as a system metric (for example `cost_cents`). Keep one
+  // retained Attribute entry per raw id without reserving System ids.
+  const retainedAttributes = Array.from(
+    new Map(
+      (retainedAttributeProperties || [])
+        .filter((property) => property.category === "attribute")
+        .map((property) => [property.id, property]),
+    ).values(),
+  );
+  const retainedIds = new Set(
+    retainedAttributes.map((property) => property.id),
+  );
+  const catalogAttributeFallback = canonical
+    ? []
+    : catalog.filter(
+        (property) =>
+          property.category === "attribute" && !retainedIds.has(property.id),
+      );
+  return [...nonAttributes, ...retainedAttributes, ...catalogAttributeFallback];
+}
+
+export function shouldUseRetainedAttributePages({
+  enabled,
+  source,
+  readState,
+  attributes,
+  browseStatus,
+}) {
+  const supportedSource = source === "traces" || source === "spans";
+  const hasAuthoritativeKeys = (attributes?.length || 0) > 0;
+  const inventoryIsTerminal = browseStatus === "exhausted";
+
+  // An empty continuation page only proves that its bounded physical slices
+  // contained no attributes. Keep the compatibility catalog visible until
+  // the retained-data walk yields a key or reaches a terminal state.
+  return (
+    enabled &&
+    supportedSource &&
+    readState === "complete" &&
+    (hasAuthoritativeKeys || inventoryIsTerminal)
+  );
+}
+
 function PropertyPicker({
   anchorEl,
   open,
@@ -667,34 +1050,188 @@ function PropertyPicker({
   properties,
   onSelect,
   categories = CATEGORIES,
+  projectId,
+  source = "traces",
+  enableExactAttributeLookup = true,
+  catalogError = false,
 }) {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
+  const autoAttributeScrollPageUsedRef = useRef(false);
+  const [visiblePropertyLimit, setVisiblePropertyLimit] = useState(
+    PROPERTY_PICKER_RENDER_BATCH_SIZE,
+  );
   const hasCategorySidebar = categories && categories.length > 0;
+  const {
+    data: exactAttributeProperties,
+    isFetching: exactAttributeLoading,
+    fetchNextPage: fetchNextAttributePage,
+    hasNextPage: hasNextAttributePage,
+    isFetchingNextPage: isFetchingNextAttributePage,
+    isFetchNextPageError: isNextAttributePageError,
+    queryReadState: exactAttributeReadState,
+    browseStatus: exactAttributeBrowseStatus,
+    pageCount: exactAttributePageCount,
+    exactSearchMatched: exactAttributeSearchMatched = false,
+    cursorRetryExhausted: exactAttributeCursorRetryExhausted = false,
+    debouncedSearch,
+    refetch: refetchAttributePages,
+  } = useExactTraceAttributeProperties({
+    projectId,
+    search,
+    source,
+    enabled: enableExactAttributeLookup && open,
+  });
+
+  useEffect(() => {
+    if (!open) {
+      autoAttributeScrollPageUsedRef.current = false;
+      setSearch("");
+      setCategory("all");
+    }
+  }, [open]);
+
+  useEffect(() => {
+    autoAttributeScrollPageUsedRef.current = false;
+  }, [debouncedSearch, projectId, source]);
+
+  useEffect(() => {
+    setVisiblePropertyLimit(PROPERTY_PICKER_RENDER_BATCH_SIZE);
+  }, [open, search, category, projectId, source]);
+
+  useEffect(() => {
+    // A completed cursor page (including an empty one), a continuation error,
+    // or a locally revealed render batch finishes the prior scroll action.
+    // The next natural downward gesture may therefore advance once without
+    // requiring the user to scroll upward merely to clear a permanent latch.
+    autoAttributeScrollPageUsedRef.current = false;
+  }, [exactAttributePageCount, isNextAttributePageError, visiblePropertyLimit]);
+
+  const usesRetainedAttributePages = shouldUseRetainedAttributePages({
+    enabled: enableExactAttributeLookup,
+    source,
+    readState: exactAttributeReadState,
+    attributes: exactAttributeProperties,
+    browseStatus: exactAttributeBrowseStatus,
+  });
+
+  const propertiesWithExactAttribute = useMemo(() => {
+    // `/tracer/dashboard/metrics/` still carries a bounded compatibility
+    // sample of attributes for older consumers.  Once the cursor endpoint is
+    // healthy, it is the canonical picker inventory: re-appending the metrics
+    // sample makes a continuation look broken because newly fetched keys were
+    // already rendered.  Keep the sample only as a degraded-read fallback.
+    return mergeRetainedAttributeProperties(
+      properties,
+      exactAttributeProperties,
+      {
+        canonical: usesRetainedAttributePages,
+      },
+    );
+  }, [properties, exactAttributeProperties, usesRetainedAttributePages]);
 
   const filtered = useMemo(
     () =>
       filterPropertiesForPicker({
-        properties,
+        properties: propertiesWithExactAttribute,
         category,
         search,
         hasCategorySidebar,
       }),
-    [properties, category, search, hasCategorySidebar],
+    [propertiesWithExactAttribute, category, search, hasCategorySidebar],
   );
 
   const counts = useMemo(() => {
-    const c = { all: properties.length };
-    for (const p of properties) c[p.category] = (c[p.category] || 0) + 1;
+    const c = { all: propertiesWithExactAttribute.length };
+    for (const p of propertiesWithExactAttribute)
+      c[p.category] = (c[p.category] || 0) + 1;
     return c;
-  }, [properties]);
-  const visibleProperties = filtered.slice(0, PROPERTY_PICKER_RENDER_LIMIT);
-  const hiddenCount = Math.max(
-    filtered.length - PROPERTY_PICKER_RENDER_LIMIT,
-    0,
+  }, [propertiesWithExactAttribute]);
+  const visibleProperties = filtered.slice(0, visiblePropertyLimit);
+  const hiddenCount = Math.max(filtered.length - visiblePropertyLimit, 0);
+  // Only a backend-certified raw attribute identity is terminal. A matching
+  // system raw id cannot stop discovery because a raw attribute may
+  // legitimately use the same spelling.
+  const canLoadNextAttributePage =
+    hasNextAttributePage && !exactAttributeSearchMatched;
+  const exactAttributeDiscoveryTerminal =
+    exactAttributeCursorRetryExhausted ||
+    exactAttributeBrowseStatus === "exhausted" ||
+    exactAttributeReadState === "error" ||
+    exactAttributeReadState === "degraded";
+  const manualAttributeProperty = useMemo(
+    () =>
+      debouncedSearch === search.trim() && !exactAttributeLoading
+        ? buildManualAttributeProperty({
+            search,
+            category,
+            properties: propertiesWithExactAttribute,
+            // Do not guess that an unseen retained key is text while the
+            // cursor still has older typed pages. A manual future-key entry is
+            // offered only after the frozen retained catalog is exhausted.
+            enabled:
+              enableExactAttributeLookup &&
+              exactAttributeDiscoveryTerminal &&
+              !hasNextAttributePage,
+            hasCategorySidebar,
+          })
+        : null,
+    [
+      category,
+      debouncedSearch,
+      enableExactAttributeLookup,
+      exactAttributeDiscoveryTerminal,
+      exactAttributeLoading,
+      hasCategorySidebar,
+      hasNextAttributePage,
+      propertiesWithExactAttribute,
+      search,
+    ],
   );
 
   const paperWidth = hasCategorySidebar ? 480 : 320;
+  const loadNextAttributePage = useSingleFlightPageRequest({
+    identity: JSON.stringify([projectId, source, debouncedSearch]),
+    enabled: canLoadNextAttributePage && !isFetchingNextAttributePage,
+    request: () => {
+      autoAttributeScrollPageUsedRef.current = true;
+      return fetchNextAttributePage();
+    },
+  });
+  const revealNextPropertyBatch = useCallback(() => {
+    autoAttributeScrollPageUsedRef.current = true;
+    setVisiblePropertyLimit((current) =>
+      Math.min(current + PROPERTY_PICKER_RENDER_BATCH_SIZE, filtered.length),
+    );
+  }, [filtered.length]);
+  const handlePropertyScroll = useCallback(
+    (event) => {
+      const { scrollTop, clientHeight, scrollHeight } = event.currentTarget;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight <= 40;
+      // One wheel/touchpad gesture must advance at most one cursor page.  A
+      // fast response can otherwise leave the list pinned at the bottom and
+      // consume every continuation (or race a later one) without user intent.
+      if (!isNearBottom) {
+        autoAttributeScrollPageUsedRef.current = false;
+        return;
+      }
+      if (
+        !autoAttributeScrollPageUsedRef.current &&
+        (hiddenCount > 0 ||
+          (canLoadNextAttributePage && !isFetchingNextAttributePage))
+      ) {
+        if (hiddenCount > 0) revealNextPropertyBatch();
+        else loadNextAttributePage();
+      }
+    },
+    [
+      canLoadNextAttributePage,
+      hiddenCount,
+      isFetchingNextAttributePage,
+      loadNextAttributePage,
+      revealNextPropertyBatch,
+    ],
+  );
 
   return (
     <Popper
@@ -722,7 +1259,11 @@ function PropertyPicker({
               fullWidth
               placeholder="Search properties..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                const nextSearch = e.target.value;
+                setSearch(nextSearch);
+                if (nextSearch.trim()) setCategory("all");
+              }}
               autoFocus
               InputProps={{
                 startAdornment: (
@@ -747,6 +1288,50 @@ function PropertyPicker({
                 sx: { fontSize: 13 },
               }}
             />
+            {search.trim() &&
+              debouncedSearch === search.trim() &&
+              exactAttributeReadState !== "complete" && (
+                <Typography
+                  role="status"
+                  sx={{ mt: 0.75, fontSize: 11, color: "warning.main" }}
+                >
+                  {getAttributeLookupMessage(exactAttributeReadState)}
+                </Typography>
+              )}
+            {!search.trim() &&
+              enableExactAttributeLookup &&
+              (source === "traces" || source === "spans") &&
+              exactAttributeReadState !== "complete" &&
+              !exactAttributeLoading && (
+                <Typography
+                  role="status"
+                  sx={{ mt: 0.75, fontSize: 11, color: "warning.main" }}
+                >
+                  {getAttributeLookupMessage(exactAttributeReadState)}
+                </Typography>
+              )}
+            {!search.trim() && catalogError && (
+              <Typography
+                role="status"
+                sx={{ mt: 0.75, fontSize: 11, color: "warning.main" }}
+              >
+                {getQueryReadMessage("error")}
+              </Typography>
+            )}
+            {enableExactAttributeLookup &&
+              (source === "traces" || source === "spans") &&
+              exactAttributeReadState !== "complete" &&
+              !isNextAttributePageError &&
+              !exactAttributeCursorRetryExhausted &&
+              !exactAttributeLoading && (
+                <Button
+                  size="small"
+                  onClick={() => refetchAttributePages?.()}
+                  sx={{ mt: 0.5, px: 0, minWidth: 0, fontSize: 11 }}
+                >
+                  Retry attribute suggestions
+                </Button>
+              )}
           </Box>
           <Divider />
           <Box sx={{ display: "flex", flex: 1, overflow: "hidden" }}>
@@ -817,23 +1402,35 @@ function PropertyPicker({
                 ))}
               </Box>
             )}
-            <Box sx={{ flex: 1, overflow: "auto", maxHeight: 280 }}>
-              {filtered.length === 0 && (
-                <Typography
-                  sx={{
-                    p: 2,
-                    textAlign: "center",
-                    fontSize: 12,
-                    color: "text.disabled",
-                  }}
-                >
-                  No properties found
-                </Typography>
+            <Box
+              data-filter-property-options-list
+              onScroll={handlePropertyScroll}
+              sx={{ flex: 1, overflow: "auto", maxHeight: 280 }}
+            >
+              {filtered.length === 0 &&
+                !manualAttributeProperty &&
+                !exactAttributeLoading && (
+                  <Typography
+                    sx={{
+                      p: 2,
+                      textAlign: "center",
+                      fontSize: 12,
+                      color: "text.disabled",
+                    }}
+                  >
+                    No properties found
+                  </Typography>
+                )}
+              {filtered.length === 0 && exactAttributeLoading && (
+                <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
+                  <CircularProgress size={16} />
+                </Box>
               )}
               {visibleProperties.map((prop, idx) => (
                 <Box
                   key={`${prop.category}:${prop.id}:${idx}`}
                   data-filter-property-option={prop.id}
+                  data-filter-property-category={prop.category}
                   data-filter-property-label={prop.name}
                   onClick={() => {
                     onSelect(prop);
@@ -848,6 +1445,8 @@ function PropertyPicker({
                     px: 1.5,
                     py: 0.6,
                     cursor: "pointer",
+                    contentVisibility: "auto",
+                    containIntrinsicSize: "28px",
                     "&:hover": { bgcolor: "action.hover" },
                   }}
                 >
@@ -892,6 +1491,95 @@ function PropertyPicker({
                   )}
                 </Box>
               ))}
+              {manualAttributeProperty && (
+                <Box
+                  data-filter-property-option={manualAttributeProperty.id}
+                  data-filter-property-manual-exact
+                  onClick={() => {
+                    onSelect(manualAttributeProperty);
+                    onClose();
+                    setSearch("");
+                    setCategory("all");
+                  }}
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 1,
+                    px: 1.5,
+                    py: 0.75,
+                    cursor: "pointer",
+                    borderTop: filtered.length > 0 ? "1px solid" : "none",
+                    borderColor: "divider",
+                    "&:hover": { bgcolor: "action.hover" },
+                  }}
+                >
+                  <Iconify
+                    icon="mdi:plus-circle-outline"
+                    width={16}
+                    sx={{ color: "primary.main", flexShrink: 0 }}
+                  />
+                  <Typography noWrap sx={{ fontSize: 12, flex: 1 }}>
+                    Use exact attribute:{" "}
+                    <strong>{manualAttributeProperty.id}</strong>
+                  </Typography>
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    label="text"
+                    sx={{ height: 16, fontSize: 9, flexShrink: 0 }}
+                  />
+                </Box>
+              )}
+              {isFetchingNextAttributePage && (
+                <Box sx={{ display: "flex", justifyContent: "center", py: 1 }}>
+                  <CircularProgress size={14} />
+                </Box>
+              )}
+              {isNextAttributePageError && !isFetchingNextAttributePage && (
+                <Typography
+                  role="status"
+                  sx={{
+                    px: 1.5,
+                    pt: 0.75,
+                    fontSize: 11,
+                    color: "warning.main",
+                  }}
+                >
+                  More attributes could not be loaded. Please retry.
+                </Typography>
+              )}
+              {hiddenCount > 0 && (
+                <Box
+                  sx={{ display: "flex", justifyContent: "center", py: 0.5 }}
+                >
+                  <Button
+                    data-filter-property-show-more
+                    size="small"
+                    onClick={revealNextPropertyBatch}
+                    sx={{ fontSize: 11 }}
+                  >
+                    {`Show ${Math.min(hiddenCount, PROPERTY_PICKER_RENDER_BATCH_SIZE)} more properties`}
+                  </Button>
+                </Box>
+              )}
+              {hiddenCount === 0 &&
+                canLoadNextAttributePage &&
+                !isFetchingNextAttributePage && (
+                  <Box
+                    sx={{ display: "flex", justifyContent: "center", py: 0.5 }}
+                  >
+                    <Button
+                      data-filter-property-load-more
+                      size="small"
+                      onClick={loadNextAttributePage}
+                      sx={{ fontSize: 11 }}
+                    >
+                      {isNextAttributePageError
+                        ? "Retry loading attributes"
+                        : "Load more attributes"}
+                    </Button>
+                  </Box>
+                )}
               {hiddenCount > 0 && (
                 <Typography
                   sx={{
@@ -903,7 +1591,8 @@ function PropertyPicker({
                     borderColor: "divider",
                   }}
                 >
-                  {hiddenCount} more properties. Search to narrow the list.
+                  {hiddenCount} loaded properties remain. Continue scrolling or
+                  use the button above.
                 </Typography>
               )}
             </Box>
@@ -926,21 +1615,17 @@ const SESSION_VALUE_FIELDS = new Set([
 ]);
 
 const FREE_TEXT_NO_OPTIONS_TEXT =
-  "No values in the last 7 days — type to search, or add an exact value";
+  "No retained values found — type to search, or add an exact value";
 
-function normalizePickerValues(values) {
-  const rawValues = Array.isArray(values) ? values : values ? [values] : [];
-  const cleanValues = rawValues
-    .map((item) => String(getPickerOptionValue(item)).trim())
-    .filter(Boolean);
-  return Array.from(new Set(cleanValues));
-}
+const pickerValueKey = (value, storageType) =>
+  getPickerValueIdentity(value, storageType);
 
 function ValuePicker({
   propertyId,
   propertyCategory,
   projectId,
   value = [],
+  valueTypes = [],
   onChange,
   source = "traces",
   property,
@@ -949,6 +1634,21 @@ function ValuePicker({
   const [anchorEl, setAnchorEl] = useState(null);
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 500);
+  // A touchpad/wheel gesture can keep the options list pinned at the bottom
+  // while a fast continuation response appends the next page. Without a
+  // per-open gate, the remaining inertial scroll events drain every cursor
+  // page and leave a high-cardinality attribute looking permanently busy.
+  // Load one exact continuation automatically; the existing Load more button
+  // remains available for every subsequent page.
+  const autoScrollPageUsedRef = useRef(false);
+
+  useEffect(() => {
+    if (!anchorEl) autoScrollPageUsedRef.current = false;
+  }, [anchorEl]);
+
+  useEffect(() => {
+    autoScrollPageUsedRef.current = false;
+  }, [debouncedSearch, projectId, propertyId, source]);
 
   // If the property declares its own static choices (e.g. the Project filter
   // on the cross-project user-detail page), use them directly. Skips both
@@ -979,28 +1679,65 @@ function ValuePicker({
   // page can only be found by the backend. Other field types keep
   // client-side filtering of the fetched page.
   const usesBackendSearch =
-    !hasStaticChoices &&
-    (isIdOnlyField || metricType === "custom_attribute");
+    !hasStaticChoices && (isIdOnlyField || metricType === "custom_attribute");
 
   // Primary: dashboard API values
   const {
     data: dashboardOptions = [],
     isLoading: dashLoading,
     isError: dashError,
+    queryReadState: dashboardReadState,
+    browseStatus: dashboardBrowseStatus,
+    browseLimitReached: dashboardBrowseLimitReached,
+    fetchNextPage: fetchNextDashboardPage,
+    hasNextPage: hasNextDashboardPage,
+    isFetchingNextPage: isFetchingNextDashboardPage,
+    refetch: refetchDashboardOptions,
   } = useDashboardFilterValues({
     metricName: propertyId,
     metricType,
     projectIds: projectId ? [projectId] : [],
     source,
     search: usesBackendSearch ? debouncedSearch : "",
+    pageSize: 10,
+    attributeType:
+      propertyCategory === "attribute"
+        ? property?.attributeTypesExact === true &&
+          property?.attributeTypes?.length === 1
+          ? property?.type === "text"
+            ? "string"
+            : ["float", "integer"].includes(property?.type)
+              ? "number"
+              : property?.type
+          : undefined
+        : undefined,
     enabled:
       !hasStaticChoices &&
       Boolean(anchorEl) &&
       (!isIdOnlyField || Boolean(debouncedSearch)),
   });
+  // `exhausted` is the authoritative terminal state. `limit_reached` remains
+  // resumable when the hook validated an advancing signed cursor.
+  const hasMoreDashboardValues =
+    Boolean(hasNextDashboardPage) && dashboardBrowseStatus !== "exhausted";
+  const loadNextDashboardValues = useSingleFlightPageRequest({
+    identity: JSON.stringify([
+      projectId,
+      source,
+      propertyId,
+      usesBackendSearch ? debouncedSearch : "",
+    ]),
+    enabled: hasMoreDashboardValues && !isFetchingNextDashboardPage,
+    request: fetchNextDashboardPage,
+  });
 
   // Fallback: session filter values endpoint (for session-specific fields)
-  const { data: sessionOptions = [], isLoading: sessionLoading } = useQuery({
+  const {
+    data: sessionOptions = [],
+    isLoading: sessionLoading,
+    isError: sessionError,
+    refetch: refetchSessionOptions,
+  } = useQuery({
     queryKey: ["session-filter-values", projectId, propertyId, debouncedSearch],
     queryFn: () =>
       axios.get(endpoints.project.getSessionFilterValues(), {
@@ -1016,20 +1753,80 @@ function ValuePicker({
     enabled:
       !hasStaticChoices && isSessionField && !!projectId && Boolean(anchorEl),
     staleTime: 30_000,
+    retry: false,
+    meta: { errorHandled: true },
   });
 
   // Source: static choices > session endpoint > dashboard API
-  const options = hasStaticChoices
+  const rawOptions = hasStaticChoices
     ? property.choices
     : isSessionField
       ? sessionOptions
       : dashboardOptions;
+  const isCanonicalVoiceStatus =
+    propertyId === "call_status" && property?.apiColType === "SYSTEM_METRIC";
+  // Keep the picker on the same canonical vocabulary as the rendered voice
+  // rows even while an older backend is rolling out. Provider values such as
+  // `ended` and `done` must appear once as `completed`, never as raw aliases.
+  const options = useMemo(() => {
+    if (!isCanonicalVoiceStatus) return rawOptions;
+    const seen = new Set();
+    return rawOptions.flatMap((option) => {
+      const canonical = normalizeVoiceCallStatus(getPickerOptionValue(option));
+      if (canonical === "" || canonical == null || seen.has(canonical)) {
+        return [];
+      }
+      seen.add(canonical);
+      if (typeof option === "string") return [canonical];
+      return [{ ...option, value: canonical, label: canonical }];
+    });
+  }, [isCanonicalVoiceStatus, rawOptions]);
   const isLoading = hasStaticChoices
     ? false
     : isSessionField
       ? sessionLoading
       : dashLoading;
-  const isError = !hasStaticChoices && !isSessionField && dashError;
+  const readState = hasStaticChoices
+    ? "complete"
+    : isSessionField
+      ? sessionError
+        ? "error"
+        : "complete"
+      : dashError
+        ? "error"
+        : dashboardReadState;
+  const readMessage = getFilterValueReadMessage(readState);
+  const refetchOptions = isSessionField
+    ? refetchSessionOptions
+    : refetchDashboardOptions;
+
+  const handleOptionsScroll = useCallback(
+    (event) => {
+      const { scrollTop, clientHeight, scrollHeight } = event.currentTarget;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight <= 40;
+      // Re-arm only after the user leaves the bottom edge. Appending a page
+      // can keep inertial scroll events pinned at the edge; those events must
+      // not drain the remaining cursor chain. A later deliberate scroll back
+      // to the bottom still auto-loads the next exact page.
+      if (!isNearBottom) {
+        autoScrollPageUsedRef.current = false;
+        return;
+      }
+      if (
+        !autoScrollPageUsedRef.current &&
+        hasMoreDashboardValues &&
+        !isFetchingNextDashboardPage
+      ) {
+        autoScrollPageUsedRef.current = true;
+        loadNextDashboardValues();
+      }
+    },
+    [
+      hasMoreDashboardValues,
+      isFetchingNextDashboardPage,
+      loadNextDashboardValues,
+    ],
+  );
 
   const filtered = useMemo(() => {
     if (!search || isSessionField || isIdOnlyField) return options;
@@ -1039,26 +1836,68 @@ function ValuePicker({
     );
   }, [options, search, isSessionField, isIdOnlyField]);
 
-  const selectedValues = useMemo(() => normalizePickerValues(value), [value]);
+  const selectedValues = useMemo(() => {
+    const normalized = normalizePickerValues(value);
+    return isCanonicalVoiceStatus
+      ? normalizeVoiceCallStatus(normalized)
+      : normalized;
+  }, [isCanonicalVoiceStatus, value]);
+  const selectedValueTypes = useMemo(
+    () =>
+      selectedValues.map((_, index) =>
+        Array.isArray(valueTypes) ? valueTypes[index] : undefined,
+      ),
+    [selectedValues, valueTypes],
+  );
+
+  const selectedIndexFor = useCallback(
+    (optionValue, optionType) =>
+      selectedValues.findIndex((selectedValue, index) => {
+        if (!Object.is(selectedValue, optionValue)) return false;
+        const selectedType = selectedValueTypes[index];
+        // Legacy/saved filters predate typed value provenance. Treat their
+        // scalar as selected until the user makes a typed choice, at which
+        // point the storage family is persisted explicitly.
+        return !optionType || !selectedType || selectedType === optionType;
+      }),
+    [selectedValues, selectedValueTypes],
+  );
 
   const toggleValue = useCallback(
     (val) => {
       // Use the shared helper to read the picker option's stable value
       // (handles both string and {value, label} object shapes).
-      const strVal = getPickerOptionValue(val);
+      const optionValue = getPickerOptionValue(val);
+      const optionType = getPickerOptionType(val);
+      const selectedIndex = selectedIndexFor(optionValue, optionType);
       if (singleSelect) {
         // Clicking the already-selected value clears; clicking a different
         // value replaces — standard single-select dropdown UX.
-        onChange(value.includes(strVal) ? [] : [strVal]);
+        onChange(
+          selectedIndex >= 0 ? [] : [optionValue],
+          selectedIndex >= 0 ? [] : [optionType],
+        );
+        return;
+      }
+      if (selectedIndex >= 0) {
+        onChange(
+          selectedValues.filter((_, index) => index !== selectedIndex),
+          selectedValueTypes.filter((_, index) => index !== selectedIndex),
+        );
         return;
       }
       onChange(
-        selectedValues.includes(strVal)
-          ? selectedValues.filter((v) => v !== strVal)
-          : [...selectedValues, strVal],
+        [...selectedValues, optionValue],
+        [...selectedValueTypes, optionType],
       );
     },
-    [selectedValues, value, onChange, singleSelect],
+    [
+      selectedIndexFor,
+      selectedValueTypes,
+      selectedValues,
+      onChange,
+      singleSelect,
+    ],
   );
 
   const customSearchValue = search.trim();
@@ -1102,7 +1941,9 @@ function ValuePicker({
             {isLoading
               ? "Loading..."
               : options.length === 0
-                ? "No recent values"
+                ? readState === "error" || readState === "degraded"
+                  ? "Enter an exact value or retry"
+                  : "Search or enter an exact value"
                 : singleSelect
                   ? "Select a value..."
                   : "Select values..."}
@@ -1112,15 +1953,20 @@ function ValuePicker({
           // in a list", which mis-signals multi-select.
           (() => {
             const v = selectedValues[0];
+            const selectedType = selectedValueTypes[0];
             const match = options.find((o) => {
               const ov = typeof o === "string" ? o : o.value;
-              return ov === v;
+              const optionType = getPickerOptionType(o);
+              return (
+                Object.is(ov, v) &&
+                (!selectedType || !optionType || selectedType === optionType)
+              );
             });
             const displayLabel =
-              (typeof match === "string" ? match : match?.label) || v;
+              (typeof match === "string" ? match : match?.label) ?? String(v);
             return (
               <Typography
-                key={v}
+                key={pickerValueKey(v, selectedValueTypes[0])}
                 noWrap
                 title={displayLabel}
                 sx={{
@@ -1137,26 +1983,38 @@ function ValuePicker({
             );
           })()
         ) : (
-          selectedValues.slice(0, 3).map((v) => {
+          selectedValues.slice(0, 3).map((v, selectedIndex) => {
+            const selectedType = selectedValueTypes[selectedIndex];
             const match = options.find((o) => {
               const ov = typeof o === "string" ? o : o.value;
-              return ov === v;
+              const optionType = getPickerOptionType(o);
+              return (
+                Object.is(ov, v) &&
+                (!selectedType || !optionType || selectedType === optionType)
+              );
             });
             const displayLabel =
-              (typeof match === "string" ? match : match?.label) || v;
+              (typeof match === "string" ? match : match?.label) ?? String(v);
             const secondaryLabel = getPickerOptionSecondaryLabel(match);
             const chipTitle = secondaryLabel
               ? `${displayLabel} (${secondaryLabel})`
               : displayLabel;
             return (
               <Chip
-                key={v}
+                key={pickerValueKey(v, selectedType)}
                 label={displayLabel}
                 title={chipTitle}
                 size="small"
                 onDelete={(e) => {
                   e.stopPropagation();
-                  onChange(selectedValues.filter((x) => x !== v));
+                  onChange(
+                    selectedValues.filter(
+                      (_, index) => index !== selectedIndex,
+                    ),
+                    selectedValueTypes.filter(
+                      (_, index) => index !== selectedIndex,
+                    ),
+                  );
                 }}
                 deleteIcon={<Iconify icon="mdi:close" width={10} />}
                 sx={{
@@ -1226,13 +2084,49 @@ function ValuePicker({
           </Typography>
         </Box>
         <Divider />
-        <Box sx={{ maxHeight: 220, overflow: "auto" }}>
+        <Box
+          data-filter-value-options-list
+          onScroll={handleOptionsScroll}
+          sx={{ maxHeight: 220, overflow: "auto" }}
+        >
           {isLoading && (
             <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
               <CircularProgress size={16} />
             </Box>
           )}
-          {!isLoading && !search && (isError || filtered.length === 0) && (
+          {!isLoading && readMessage && (
+            <Box
+              role="status"
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 1,
+                px: 1.5,
+                py: 1,
+              }}
+            >
+              <Typography
+                sx={{
+                  fontSize: 11,
+                  color:
+                    readState === "sampled" ? "text.secondary" : "warning.main",
+                }}
+              >
+                {readMessage}
+              </Typography>
+              {(readState === "error" || readState === "degraded") && (
+                <Button
+                  size="small"
+                  onClick={() => refetchOptions()}
+                  sx={{ minWidth: "auto", fontSize: 11, flexShrink: 0 }}
+                >
+                  Retry
+                </Button>
+              )}
+            </Box>
+          )}
+          {!isLoading && !readMessage && !search && filtered.length === 0 && (
             <Typography
               sx={{
                 p: 1.5,
@@ -1241,23 +2135,22 @@ function ValuePicker({
                 color: "text.disabled",
               }}
             >
-              {isError
-                ? "Values not available for this property"
-                : FREE_TEXT_NO_OPTIONS_TEXT}
+              {FREE_TEXT_NO_OPTIONS_TEXT}
             </Typography>
           )}
           {/* Custom-value row is rendered below in the showCustomValueRow
               block — keeps a single source of truth for the "Specify"
               fallback (search did not match any fetched option). */}
           {filtered.map((opt) => {
-            const strVal = getPickerOptionValue(opt);
+            const optionValue = getPickerOptionValue(opt);
+            const optionType = getPickerOptionType(opt);
             const label = getPickerOptionLabel(opt);
             const secondaryLabel = getPickerOptionSecondaryLabel(opt);
-            const isSelected = selectedValues.includes(strVal);
+            const isSelected = selectedIndexFor(optionValue, optionType) >= 0;
             return (
               <Box
-                key={strVal}
-                data-filter-value-option={strVal}
+                key={pickerValueKey(optionValue, optionType)}
+                data-filter-value-option={String(optionValue)}
                 onClick={() => toggleValue(opt)}
                 sx={{
                   display: "flex",
@@ -1320,9 +2213,12 @@ function ValuePicker({
                   // singleSelect: replace the selection. Otherwise: append
                   // (but skip if the value is already selected).
                   if (singleSelect) {
-                    onChange([customSearchValue]);
+                    onChange([customSearchValue], [undefined]);
                   } else if (!selectedValues.includes(customSearchValue)) {
-                    onChange([...selectedValues, customSearchValue]);
+                    onChange(
+                      [...selectedValues, customSearchValue],
+                      [...selectedValueTypes, undefined],
+                    );
                   }
                   setSearch("");
                 }}
@@ -1350,6 +2246,37 @@ function ValuePicker({
               </Box>
             </>
           )}
+          {isFetchingNextDashboardPage && (
+            <Box sx={{ display: "flex", justifyContent: "center", py: 1 }}>
+              <CircularProgress size={14} />
+            </Box>
+          )}
+          {!isLoading &&
+            dashboardBrowseLimitReached &&
+            metricType === "custom_attribute" && (
+              <Typography
+                role="status"
+                sx={{
+                  px: 1.5,
+                  py: 0.75,
+                  fontSize: 11,
+                  color: "text.secondary",
+                }}
+              >
+                Recent value limit reached. Search or enter an exact value.
+              </Typography>
+            )}
+          {hasMoreDashboardValues && !isFetchingNextDashboardPage && (
+            <Box sx={{ display: "flex", justifyContent: "center", py: 0.5 }}>
+              <Button
+                size="small"
+                onClick={loadNextDashboardValues}
+                sx={{ fontSize: 11 }}
+              >
+                Load more
+              </Button>
+            </Box>
+          )}
         </Box>
         {selectedValues.length > 0 && (
           <>
@@ -1367,7 +2294,7 @@ function ValuePicker({
               </Typography>
               <Button
                 size="small"
-                onClick={() => onChange([])}
+                onClick={() => onChange([], [])}
                 sx={{
                   textTransform: "none",
                   fontSize: 11,
@@ -1402,13 +2329,18 @@ function FilterRow({
   freeSoloValues = false,
   operatorFilter,
   defaultOperatorForType,
+  enableExactAttributeLookup = true,
+  catalogError = false,
+  attributeSource,
 }) {
   const [pickerAnchor, setPickerAnchor] = useState(null);
-  const selectedProp = properties.find((p) => p.id === filter.field);
+  const selectedProp = findTraceFilterProperty(properties, filter);
   const normalizedType = normalizeFieldType(filter.fieldType);
   const isNumber = normalizedType === "number";
   const isDate = normalizedType === "date";
   const isBoolean = normalizedType === "boolean";
+  const isArray = normalizedType === "array";
+  const isMap = normalizedType === "map";
   const allOps = getOperatorsForFilter(filter);
   // Optional per-flow allowlist; currentOpDef resolves against the full set.
   const ops = operatorFilter ? allOps.filter(operatorFilter) : allOps;
@@ -1433,6 +2365,13 @@ function FilterRow({
     (Array.isArray(filter.value)
       ? filter.value.some((v) => !isValidNumericInput(v))
       : !isValidNumericInput(filter.value));
+  const rowHasInvalidMap =
+    isMap &&
+    !NO_VALUE_OPS.has(safeOperator) &&
+    filter.value !== "" &&
+    filter.value !== undefined &&
+    filter.value !== null &&
+    parseMapFilterValue(filter.value) === null;
 
   const handlePropertySelect = useCallback(
     (prop) => {
@@ -1452,7 +2391,7 @@ function FilterRow({
         ? "is"
         : defaultOperatorForType?.[nt] || DEFAULT_OP_FOR_TYPE[nt] || "equals";
       let defaultValue;
-      if (nt === "number" || nt === "date") defaultValue = "";
+      if (nt === "number" || nt === "date" || nt === "map") defaultValue = "";
       else if (nt === "boolean") defaultValue = "true";
       else if (nt === "text") defaultValue = "";
       else defaultValue = [];
@@ -1461,9 +2400,12 @@ function FilterRow({
         fieldName: prop.name,
         fieldCategory: prop.category,
         fieldType: nt,
+        attributeTypes: prop.attributeTypes,
+        attributeTypesExact: prop.attributeTypesExact,
         apiColType: prop.apiColType,
         operator: defaultOp,
         value: defaultValue,
+        valueTypes: [],
       });
     },
     [index, onChange, defaultOperatorForType],
@@ -1484,6 +2426,7 @@ function FilterRow({
       // Multi → single: drop stale extra picks.
       if (
         SINGLE_VALUE_OPS.has(newOp) &&
+        !isArray &&
         Array.isArray(newVal) &&
         newVal.length > 1
       ) {
@@ -1496,9 +2439,20 @@ function FilterRow({
             ? []
             : [newVal];
       }
-      onChange(index, { ...filter, operator: newOp, value: newVal });
+      const nextValueTypes = Array.isArray(filter.valueTypes)
+        ? filter.valueTypes.slice(
+            0,
+            Array.isArray(newVal) ? newVal.length : newVal === "" ? 0 : 1,
+          )
+        : [];
+      onChange(index, {
+        ...filter,
+        operator: newOp,
+        value: newVal,
+        valueTypes: nextValueTypes,
+      });
     },
-    [index, filter, safeOperator, isNumber, isDate, onChange],
+    [index, filter, safeOperator, isNumber, isDate, isArray, onChange],
   );
 
   const renderValueInput = () => {
@@ -1706,6 +2660,37 @@ function FilterRow({
       );
     }
 
+    if (isMap) {
+      const value = isPlainObject(filter.value)
+        ? JSON.stringify(filter.value)
+        : filter.value ?? "";
+      return (
+        <TextField
+          size="small"
+          type="text"
+          placeholder='{"key":"value"}'
+          value={value}
+          error={rowHasInvalidMap}
+          helperText={
+            rowHasInvalidMap
+              ? "Enter a non-empty flat JSON object with scalar values"
+              : undefined
+          }
+          onChange={(event) => updateRow({ value: event.target.value })}
+          sx={{
+            flex: "1 1 220px",
+            minWidth: 0,
+            maxWidth: "100%",
+            position: "relative",
+          }}
+          inputProps={{
+            style: { fontSize: 12, height: 12, padding: "6px 8px" },
+          }}
+          FormHelperTextProps={NUMERIC_HELPER_TEXT_PROPS}
+        />
+      );
+    }
+
     if (usesFreeTextValue(filter.fieldType, source)) {
       return (
         <TextField
@@ -1729,11 +2714,23 @@ function FilterRow({
         fieldType={normalizedType}
         projectId={projectId}
         value={filter.value}
+        valueTypes={filter.valueTypes}
         source={source}
-        property={properties.find((p) => p.id === filter.field)}
+        property={
+          selectedProp || {
+            id: filter.field,
+            category: filter.fieldCategory,
+            apiColType: filter.apiColType,
+            type: filter.fieldType,
+            attributeTypes: filter.attributeTypes,
+            attributeTypesExact: filter.attributeTypesExact,
+          }
+        }
         freeSoloValues={rowFreeSoloValues}
-        singleSelect={SINGLE_VALUE_OPS.has(safeOperator)}
-        onChange={(newVal) => updateRow({ value: newVal })}
+        singleSelect={SINGLE_VALUE_OPS.has(safeOperator) && !isArray}
+        onChange={(newVal, newValueTypes = []) =>
+          updateRow({ value: newVal, valueTypes: newValueTypes })
+        }
       />
     );
   };
@@ -1747,15 +2744,15 @@ function FilterRow({
         width: "100%",
         minWidth: 0,
         flexWrap: "wrap",
-        mb: rowHasInvalidNumeric ? 1.5 : 0,
+        mb: rowHasInvalidNumeric || rowHasInvalidMap ? 1.5 : 0,
       }}
     >
       <CustomTooltip
-        show={!!selectedProp?.name}
+        show={!!(selectedProp?.name || filter.fieldName || filter.field)}
         arrow
         size="small"
         type="black"
-        title={selectedProp?.name || ""}
+        title={selectedProp?.name || filter.fieldName || filter.field || ""}
       >
         <Button
           ref={(el) => el}
@@ -1784,7 +2781,10 @@ function FilterRow({
               textOverflow: "ellipsis",
             }}
           >
-            {selectedProp?.name || "Property"}
+            {selectedProp?.name ||
+              filter.fieldName ||
+              filter.field ||
+              "Property"}
           </Typography>
         </Button>
       </CustomTooltip>
@@ -1795,6 +2795,10 @@ function FilterRow({
         properties={properties}
         categories={categories}
         onSelect={handlePropertySelect}
+        projectId={projectId}
+        source={attributeSource || source}
+        enableExactAttributeLookup={enableExactAttributeLookup}
+        catalogError={catalogError}
       />
 
       <Select
@@ -1837,6 +2841,7 @@ const DEFAULT_ROW = {
   fieldCategory: "system",
   operator: "in",
   value: [],
+  valueTypes: [],
 };
 
 const TraceFilterPanel = ({
@@ -1866,13 +2871,19 @@ const TraceFilterPanel = ({
   const { observeId: routeObserveId } = useParams();
   const observeId = projectIdProp || routeObserveId;
   const skipDynamicProperties = Boolean(propertiesOverride);
-  const dynamicPropertySource = isSpansView ? "spans" : "traces";
-  const { data: dynamicProperties = [], isLoading: dynamicPropsLoading } =
-    useTraceFilterProperties(observeId, {
-      enabled: !skipDynamicProperties,
-      isSimulator,
-      sourceScope: dynamicPropertySource,
-    });
+  const dynamicPropertySource =
+    isSpansView || tab === "spans" ? "spans" : "traces";
+  const exactAttributeSource =
+    source === "traces" ? dynamicPropertySource : source;
+  const {
+    data: dynamicProperties = [],
+    isLoading: dynamicPropsLoading,
+    isError: dynamicPropsError,
+  } = useTraceFilterProperties(observeId, {
+    enabled: !skipDynamicProperties,
+    isSimulator,
+    sourceScope: dynamicPropertySource,
+  });
   // Merge: static trace fields + dynamic dashboard properties + any extra static fields
   const properties = useMemo(() => {
     if (propertiesOverride) {
@@ -1880,26 +2891,12 @@ const TraceFilterPanel = ({
         ? propertiesOverride.filter(propertyFilter)
         : propertiesOverride;
     }
-    // Start with static trace fields (trace_name, status, model, etc.) —
-    // prepend trace_id / span_id when rendered inside the LLM Tracing
-    // trace or span tab. In spans view, relabel "Trace Name" to "Span Name".
-    const staticProps = getTraceFilterFields(tab).map((f) =>
-      toStaticFilterProperty(f, isSpansView),
-    );
-    const knownIds = new Set(staticProps.map((p) => p.id));
-    // Add dynamic properties not already covered by static fields
-    const dynamicExtras = dynamicProperties.filter((p) => !knownIds.has(p.id));
-    // Add any extra filterFields not already covered
-    const allIds = new Set([...knownIds, ...dynamicExtras.map((p) => p.id)]);
-    const fieldExtras = (filterFields || [])
-      .filter((f) => !allIds.has(f.id))
-      .map((f) => ({
-        id: f.id || f.value,
-        name: f.name || f.label,
-        category: "system",
-        type: f.type || "string",
-      }));
-    const merged = [...staticProps, ...dynamicExtras, ...fieldExtras];
+    const merged = mergeTraceFilterProperties({
+      tab,
+      isSpansView,
+      dynamicProperties,
+      filterFields,
+    });
     return propertyFilter ? merged.filter(propertyFilter) : merged;
   }, [
     dynamicProperties,
@@ -1909,10 +2906,6 @@ const TraceFilterPanel = ({
     tab,
     isSpansView,
   ]);
-  const propertyById = useMemo(
-    () => Object.fromEntries(properties.map((p) => [p.id, p])),
-    [properties],
-  );
   const propsLoading = skipDynamicProperties ? false : dynamicPropsLoading;
   const effectiveCategories = categoriesOverride ?? CATEGORIES;
   const effectiveDefaultRow = defaultRowOverride || DEFAULT_ROW;
@@ -1942,32 +2935,162 @@ const TraceFilterPanel = ({
     error: aiError,
   } = useAIFilter(aiFilterSchema);
   const [rows, setRows] = useState([{ ...DEFAULT_ROW }]);
+  const [queryFieldSearch, setQueryFieldSearch] = useState("");
+  const [pinnedQueryAttributeProperties, setPinnedQueryAttributeProperties] =
+    useState([]);
   // Serialized snapshot of the filter set last sent to onApply. Auto-apply
   // compares against this so we only hit the API when the applyable filter set
   // actually changes — picking a field/operator with no value, or re-opening
   // the popover, yields the same set and is skipped.
   const lastAppliedRef = useRef(undefined);
 
-  // Convert dashboard properties to QueryInput format (same IDs as dashboard API)
+  const queryAttributeLookupEnabled = Boolean(
+    open &&
+      showQueryTab &&
+      activeTab === "query" &&
+      observeId &&
+      (exactAttributeSource === "traces" || exactAttributeSource === "spans"),
+  );
+  const {
+    data: queryExactAttributeProperties = [],
+    isFetching: queryAttributeLoading,
+    fetchNextPage: fetchNextQueryAttributePage,
+    hasNextPage: hasNextQueryAttributePage,
+    isFetchingNextPage: isFetchingNextQueryAttributePage,
+    queryReadState: queryAttributeReadState,
+    browseStatus: queryAttributeBrowseStatus,
+    debouncedSearch: debouncedQueryFieldSearch,
+  } = useExactTraceAttributeProperties({
+    projectId: observeId,
+    search: queryFieldSearch,
+    source: exactAttributeSource,
+    enabled: queryAttributeLookupEnabled,
+  });
+
+  useEffect(() => {
+    setQueryFieldSearch("");
+    setPinnedQueryAttributeProperties([]);
+  }, [observeId, exactAttributeSource]);
+
+  const filteredQueryExactAttributeProperties = useMemo(
+    () =>
+      propertyFilter
+        ? queryExactAttributeProperties.filter(propertyFilter)
+        : queryExactAttributeProperties,
+    [propertyFilter, queryExactAttributeProperties],
+  );
+  const queryUsesRetainedAttributePages = shouldUseRetainedAttributePages({
+    enabled: queryAttributeLookupEnabled,
+    source: exactAttributeSource,
+    readState: queryAttributeReadState,
+    attributes: filteredQueryExactAttributeProperties,
+    browseStatus: queryAttributeBrowseStatus,
+  });
+  const selectedQueryAttributeProperties = useMemo(
+    () =>
+      rows.flatMap((row) => {
+        if (
+          !row.field ||
+          (row.fieldCategory !== "attribute" &&
+            row.apiColType !== "SPAN_ATTRIBUTE")
+        ) {
+          return [];
+        }
+        return [
+          {
+            id: row.field,
+            name: row.fieldName || row.field,
+            category: "attribute",
+            rawCategory: "custom_attribute",
+            type: row.fieldType || "string",
+            attributeTypes: row.attributeTypes,
+            attributeTypesExact: row.attributeTypesExact,
+            apiColType: row.apiColType || "SPAN_ATTRIBUTE",
+          },
+        ];
+      }),
+    [rows],
+  );
+  const queryProperties = useMemo(() => {
+    const discovered = mergeRetainedAttributeProperties(
+      properties,
+      filteredQueryExactAttributeProperties,
+      { canonical: queryUsesRetainedAttributePages },
+    );
+    const selectedAttributesById = new Map();
+    for (const property of [
+      ...selectedQueryAttributeProperties,
+      ...pinnedQueryAttributeProperties,
+    ]) {
+      selectedAttributesById.set(property.id, property);
+    }
+    return mergeRetainedAttributeProperties(discovered, [
+      ...selectedAttributesById.values(),
+    ]);
+  }, [
+    filteredQueryExactAttributeProperties,
+    pinnedQueryAttributeProperties,
+    properties,
+    queryUsesRetainedAttributePages,
+    selectedQueryAttributeProperties,
+  ]);
+
+  const queryPropertyRegistry = useMemo(
+    () => buildQueryPropertyEntries(queryProperties),
+    [queryProperties],
+  );
+  const { entries: queryPropertyEntries } = queryPropertyRegistry;
+
+  // QueryInput needs a unique UI identity for same-id fields. The converter
+  // below maps that identity back to the raw backend id before applying.
   const queryFilterFields = useMemo(() => {
-    return properties.map((p) => ({
-      value: p.id,
+    return queryPropertyEntries.map(([identity, p]) => ({
+      value: identity,
       label: p.name,
       type: p.type || "string",
       choices: p.choices,
       panelType: p.type || "string",
       category: p.category, // system, eval, annotation, attribute
+      rawCategory: p.rawCategory,
       apiColType: p.apiColType,
+      attributeTypes: p.attributeTypes,
+      attributeTypesExact: p.attributeTypesExact,
     }));
-  }, [properties]);
+  }, [queryPropertyEntries]);
   const queryFieldMap = useMemo(
     () => Object.fromEntries(queryFilterFields.map((f) => [f.value, f])),
     [queryFilterFields],
   );
+  const queryPropertyById = useMemo(
+    () => Object.fromEntries(queryPropertyEntries),
+    [queryPropertyEntries],
+  );
+  const queryIdentityForFilter = useCallback(
+    (filter) => {
+      const property = findTraceFilterProperty(queryProperties, filter);
+      return property ? queryPropertyIdentity(property) : filter.field;
+    },
+    [queryProperties],
+  );
+  const loadNextQueryAttributePage = useSingleFlightPageRequest({
+    identity: JSON.stringify([
+      observeId,
+      exactAttributeSource,
+      debouncedQueryFieldSearch,
+    ]),
+    enabled:
+      Boolean(hasNextQueryAttributePage) && !isFetchingNextQueryAttributePage,
+    request: fetchNextQueryAttributePage,
+  });
 
   // Query tab — fetch values for the selected field
   const [queryField, setQueryField] = useState(null);
-  const queryFieldProp = properties.find((p) => p.id === queryField);
+  const [queryValueSearch, setQueryValueSearch] = useState({
+    field: null,
+    value: "",
+  });
+  const debouncedQueryValueSearch = useDebounce(queryValueSearch, 500);
+  const queryFieldProp = queryPropertyById[queryField];
   const queryMetricType = (() => {
     const cat = queryFieldProp?.category || "system";
     if (cat === "system") return "system_metric";
@@ -1976,20 +3099,65 @@ const TraceFilterPanel = ({
     if (cat === "attribute") return "custom_attribute";
     return "system_metric";
   })();
-  const { data: queryValueOptions = [], isLoading: queryValuesLoading } =
-    useDashboardFilterValues({
-      metricName: queryField || "",
-      metricType: queryMetricType,
-      projectIds: observeId ? [observeId] : [],
+  const shouldFetchQueryValues = Boolean(
+    open &&
+      activeTab === "query" &&
+      queryField &&
+      !queryFieldProp?.choices?.length,
+  );
+  const effectiveQueryValueSearch =
+    debouncedQueryValueSearch?.field === queryField
+      ? debouncedQueryValueSearch.value
+      : "";
+  const {
+    data: queryValueOptions = [],
+    isLoading: queryValuesLoading,
+    isError: queryValuesError,
+    queryReadState: queryValuesReadState,
+    fetchNextPage: fetchNextQueryValuesPage,
+    hasNextPage: hasNextQueryValuesPage,
+    isFetchingNextPage: isFetchingNextQueryValuesPage,
+  } = useDashboardFilterValues({
+    metricName: queryFieldProp?.id || queryField || "",
+    metricType: queryMetricType,
+    projectIds: observeId ? [observeId] : [],
+    source,
+    search:
+      queryMetricType === "custom_attribute" ? effectiveQueryValueSearch : "",
+    pageSize: queryMetricType === "custom_attribute" ? 10 : undefined,
+    attributeType:
+      queryMetricType === "custom_attribute"
+        ? queryFieldProp?.attributeTypesExact === true &&
+          queryFieldProp?.attributeTypes?.length === 1
+          ? queryFieldProp?.type === "text"
+            ? "string"
+            : ["float", "integer"].includes(queryFieldProp?.type)
+              ? "number"
+              : queryFieldProp?.type
+          : undefined
+        : undefined,
+    enabled: shouldFetchQueryValues,
+  });
+  const loadNextQueryValuesPage = useSingleFlightPageRequest({
+    identity: JSON.stringify([
+      observeId,
       source,
-    });
+      queryField,
+      effectiveQueryValueSearch,
+    ]),
+    enabled: Boolean(hasNextQueryValuesPage) && !isFetchingNextQueryValuesPage,
+    request: fetchNextQueryValuesPage,
+  });
+  const queryValuesMessage = getQueryReadMessage(
+    queryValuesError ? "error" : queryValuesReadState,
+  );
 
   useEffect(() => {
     if (open) {
       if (currentFilters?.length) {
         // Enrich rows with fieldCategory and fieldType from properties lookup
         const enriched = currentFilters.map((f) => {
-          const prop = propertyById[f.field];
+          const prop = findTraceFilterProperty(properties, f);
           const fieldType = f.fieldType || prop?.type || "string";
           // ID-only fields (trace_id / span_id) bypass the string-op
           // rewrite — ID_ONLY_OPS = [{ value: "is" }] so anything other
@@ -2017,9 +3185,13 @@ const TraceFilterPanel = ({
             fieldCategory: resolveFieldCategory(f.fieldCategory, prop),
             fieldName: f.fieldName || prop?.name,
             fieldType,
+            attributeTypes: f.attributeTypes || prop?.attributeTypes,
+            attributeTypesExact:
+              f.attributeTypesExact ?? prop?.attributeTypesExact,
             apiColType: f.apiColType || prop?.apiColType,
             operator: hydratedOp,
             value,
+            valueTypes: f.valueTypes,
           });
         });
         setRows(enriched);
@@ -2051,25 +3223,33 @@ const TraceFilterPanel = ({
     (tokens) =>
       tokens.map((t) => {
         const queryFieldDef = queryFieldMap[t.field];
-        const prop = propertyById[t.field];
-        return {
-          field: t.field,
-          fieldName: prop?.name || queryFieldDef?.label,
-          fieldCategory: resolveFieldCategory(undefined, prop || queryFieldDef),
-          fieldType:
-            prop?.type ||
-            queryFieldDef?.panelType ||
-            (queryFieldDef?.type === "enum" ? "categorical" : "string"),
-          apiColType: prop?.apiColType || queryFieldDef?.apiColType,
-          operator: QUERY_TO_BASIC_OP[t.operator] || t.operator,
-          value: NO_VALUE_OPS.has(t.operator)
-            ? ""
+        const prop = queryPropertyById[t.field];
+        const fieldType =
+          prop?.type ||
+          queryFieldDef?.panelType ||
+          (queryFieldDef?.type === "enum" ? "categorical" : "string");
+        const value = NO_VALUE_OPS.has(t.operator)
+          ? ""
+          : normalizeFieldType(fieldType) === "map"
+            ? t.value
             : Array.isArray(t.value)
               ? t.value
-              : [t.value],
+              : [t.value];
+        return {
+          field: prop?.id || t.field,
+          fieldName: prop?.name || queryFieldDef?.label,
+          fieldCategory: resolveFieldCategory(undefined, prop || queryFieldDef),
+          fieldType,
+          attributeTypes: prop?.attributeTypes || queryFieldDef?.attributeTypes,
+          attributeTypesExact:
+            prop?.attributeTypesExact ?? queryFieldDef?.attributeTypesExact,
+          apiColType: prop?.apiColType || queryFieldDef?.apiColType,
+          operator: QUERY_TO_BASIC_OP[t.operator] || t.operator,
+          valueTypes: t.valueTypes,
+          value,
         };
       }),
-    [propertyById, queryFieldMap],
+    [queryFieldMap, queryPropertyById],
   );
 
   const handleQueryTokensChange = useCallback(
@@ -2082,13 +3262,16 @@ const TraceFilterPanel = ({
 
   const queryGetOperators = useCallback(
     (type, field) => {
-      const ops = getOperatorsForFilter({ field, fieldType: type });
+      const ops = getOperatorsForFilter({
+        field: queryPropertyById[field]?.id || field,
+        fieldType: type,
+      });
       const allowed = operatorFilter ? ops.filter(operatorFilter) : ops;
       return allowed.map((op) =>
         NO_VALUE_OPS.has(op.value) ? { ...op, noValue: true } : op,
       );
     },
-    [operatorFilter],
+    [operatorFilter, queryPropertyById],
   );
 
   const handleChange = useCallback((idx, updated) => {
@@ -2112,9 +3295,13 @@ const TraceFilterPanel = ({
   // Apply only when the resulting filter set differs from the last one sent.
   const applyIfChanged = useCallback(
     (sourceRows) => {
-      // Hold while a numeric row is mid-edit so partial/invalid values don't
-      // auto-fire and a half-filled range doesn't drop the applied filter.
-      if (hasIncompleteNumericRow(sourceRows)) return;
+      // Hold while a typed editor is incomplete so partial values do not
+      // auto-fire or drop the last valid, already-applied filter.
+      if (
+        hasIncompleteNumericRow(sourceRows) ||
+        hasIncompleteMapRow(sourceRows)
+      )
+        return;
       const next = computeValidFilters(sourceRows);
       const serialized = serializeFilterSet(next);
       if (serialized === lastAppliedRef.current) return;
@@ -2176,7 +3363,12 @@ const TraceFilterPanel = ({
     });
     if (aiFilters.length > 0) {
       const aiRows = aiFilters.map((f) => {
-        const prop = properties.find((p) => p.id === f.field);
+        // Attribute fields are intentionally excluded from aiFilterSchema;
+        // keep same-id raw attributes from hijacking an AI-selected system id.
+        const prop = properties.find(
+          (property) =>
+            property.id === f.field && property.category !== "attribute",
+        );
         const fieldType = prop?.type || "string";
         return {
           field: f.field,
@@ -2356,6 +3548,13 @@ const TraceFilterPanel = ({
                     freeSoloValues={freeSoloValues}
                     operatorFilter={operatorFilter}
                     defaultOperatorForType={defaultOperatorForType}
+                    enableExactAttributeLookup={Boolean(
+                      observeId &&
+                        (exactAttributeSource === "traces" ||
+                          exactAttributeSource === "spans"),
+                    )}
+                    catalogError={!skipDynamicProperties && dynamicPropsError}
+                    attributeSource={exactAttributeSource}
                   />
                 ))}
               </Stack>
@@ -2414,17 +3613,63 @@ const TraceFilterPanel = ({
                         r.value !== undefined &&
                         r.value !== null;
                 })
-                .map((r) => ({
-                  field: r.field,
-                  operator:
-                    BASIC_TO_QUERY_OP[normalizeFilterRowOperator(r).operator] ||
-                    normalizeFilterRowOperator(r).operator,
-                  value: Array.isArray(r.value) ? r.value : r.value || "",
-                }))}
+                .map((r) => {
+                  const normalizedRow = normalizeFilterRowOperator(r);
+                  const value =
+                    normalizeFieldType(r.fieldType) === "map" &&
+                    isPlainObject(r.value)
+                      ? JSON.stringify(r.value)
+                      : Array.isArray(r.value)
+                        ? r.value
+                        : r.value ?? "";
+                  return {
+                    field: queryIdentityForFilter(r),
+                    operator:
+                      BASIC_TO_QUERY_OP[normalizedRow.operator] ||
+                      normalizedRow.operator,
+                    value,
+                    valueTypes: r.valueTypes,
+                  };
+                })}
               valueOptions={queryValueOptions}
+              fieldLoading={
+                queryAttributeLookupEnabled &&
+                (queryAttributeLoading ||
+                  queryFieldSearch.trim() !== debouncedQueryFieldSearch)
+              }
+              fieldLoadingMore={isFetchingNextQueryAttributePage}
+              hasMoreFields={Boolean(hasNextQueryAttributePage)}
+              onLoadMoreFields={loadNextQueryAttributePage}
+              onFieldSearchChange={setQueryFieldSearch}
               valueLoading={queryValuesLoading}
-              onFieldChange={setQueryField}
+              valueLoadingMore={isFetchingNextQueryValuesPage}
+              hasMoreValues={Boolean(hasNextQueryValuesPage)}
+              onLoadMoreValues={loadNextQueryValuesPage}
+              onValueSearchChange={(value, field) =>
+                setQueryValueSearch({ field: field ?? queryField, value })
+              }
+              onFieldChange={(field) => {
+                setQueryValueSearch({ field, value: "" });
+                setQueryField(field);
+                setQueryFieldSearch("");
+                const selectedProperty = queryPropertyById[field];
+                if (selectedProperty?.category === "attribute") {
+                  setPinnedQueryAttributeProperties((current) =>
+                    mergeRetainedAttributeProperties(current, [
+                      selectedProperty,
+                    ]),
+                  );
+                }
+              }}
             />
+            {shouldFetchQueryValues && queryValuesMessage && (
+              <Typography
+                role="status"
+                sx={{ fontSize: 11, color: "warning.main", mt: 0.75, px: 0.5 }}
+              >
+                {queryValuesMessage}
+              </Typography>
+            )}
             <Stack
               direction="row"
               justifyContent="flex-end"
@@ -2461,7 +3706,7 @@ TraceFilterPanel.propTypes = {
   onApply: PropTypes.func.isRequired,
   filterFields: PropTypes.array,
   source: PropTypes.string,
-  tab: PropTypes.oneOf(["trace", "spans"]),
+  tab: PropTypes.oneOf(["trace", "spans", "voiceCalls"]),
   projectId: PropTypes.string,
   properties: PropTypes.array,
   ValuePickerOverride: PropTypes.elementType,

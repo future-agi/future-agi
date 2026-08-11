@@ -15,6 +15,10 @@ from tracer.serializers.filters import (
     eval_task_filters_field,
     filter_list_query_param_field,
 )
+from tracer.services.filter_principal_context import (
+    FilterPrincipalContextError,
+    bind_request_my_annotations_principal,
+)
 
 
 class PaginationQuerySerializer(serializers.Serializer):
@@ -110,6 +114,15 @@ class EvalTaskSerializer(serializers.ModelSerializer):
     # indefinitely and don't have a meaningful "expected" total.
     progress = serializers.SerializerMethodField()
     filters = eval_task_filters_field(required=False, allow_null=True, default=dict)
+
+    def validate_filters(self, value):
+        """Never persist a client-selected principal for user-relative filters."""
+
+        request = self.context.get("request")
+        try:
+            return bind_request_my_annotations_principal(request, value)
+        except FilterPrincipalContextError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
 
     class Meta:
         model = EvalTask

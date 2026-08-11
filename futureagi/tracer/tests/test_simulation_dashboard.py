@@ -12,7 +12,6 @@ Tests cover:
 
 import unittest
 from datetime import datetime, timedelta
-from unittest.mock import patch
 
 from tracer.services.clickhouse.query_builders.simulation_dashboard import (
     SIMULATION_AGGREGATIONS,
@@ -151,15 +150,17 @@ class TestSimulationQueryBuilderSystemMetric(unittest.TestCase):
         builder = SimulationQueryBuilder(self._make_config("ended_reason", "avg"))
         queries = builder.build_all_queries()
         sql, _, _ = queries[0]
-        self.assertIn("uniqIf(c.ended_reason", sql)
+        self.assertIn("uniqExactIf(c.ended_reason", sql)
         self.assertIn("c.ended_reason IS NOT NULL AND c.ended_reason != ''", sql)
-        self.assertNotIn("uniq(c.ended_reason)", sql)
+        self.assertNotIn("uniqIf(c.ended_reason", sql)
 
     def test_ended_reason_count_counts_non_empty_reasons(self):
         builder = SimulationQueryBuilder(self._make_config("ended_reason", "count"))
         queries = builder.build_all_queries()
         sql, _, _ = queries[0]
-        self.assertIn("countIf(c.ended_reason IS NOT NULL AND c.ended_reason != '')", sql)
+        self.assertIn(
+            "countIf(c.ended_reason IS NOT NULL AND c.ended_reason != '')", sql
+        )
 
     def test_ended_reason_count_distinct_ignores_empty_reasons(self):
         builder = SimulationQueryBuilder(
@@ -167,7 +168,7 @@ class TestSimulationQueryBuilderSystemMetric(unittest.TestCase):
         )
         queries = builder.build_all_queries()
         sql, _, _ = queries[0]
-        self.assertIn("uniqIf(c.ended_reason", sql)
+        self.assertIn("uniqExactIf(c.ended_reason", sql)
         self.assertIn("c.ended_reason IS NOT NULL AND c.ended_reason != ''", sql)
 
     def test_success_rate_metric(self):
@@ -215,7 +216,7 @@ class TestSimulationQueryBuilderSystemMetric(unittest.TestCase):
             builder = SimulationQueryBuilder(self._make_config(metric, "avg"))
             queries = builder.build_all_queries()
             sql, _, _ = queries[0]
-            self.assertIn("uniqIf(", sql)
+            self.assertIn("uniqExactIf(", sql)
             self.assertIn(sql_snippet, sql)
 
     def test_persona_string_metrics_are_queryable(self):
@@ -227,7 +228,7 @@ class TestSimulationQueryBuilderSystemMetric(unittest.TestCase):
             builder = SimulationQueryBuilder(self._make_config(metric, "avg"))
             queries = builder.build_all_queries()
             sql, _, _ = queries[0]
-            self.assertIn("uniqIf(", sql)
+            self.assertIn("uniqExactIf(", sql)
             self.assertIn(field_snippet, sql)
 
     def test_string_metric_reports_actual_aggregation(self):

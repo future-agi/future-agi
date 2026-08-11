@@ -1,4 +1,3 @@
-/* eslint-disable react/prop-types */
 import React, {
   useState,
   useEffect,
@@ -6,6 +5,7 @@ import React, {
   useCallback,
   useRef,
 } from "react";
+import PropTypes from "prop-types";
 import {
   Alert,
   Box,
@@ -81,12 +81,22 @@ import {
   fromAxisConfigPayload,
   getAggColumnLabel,
   getAutoDecimals,
+  getExactDashboardResult,
+  getDashboardMetricSeriesState,
+  getPlottedChartSeries,
   getSeriesAverage,
   getSuggestedUnitConfig,
   getUnitRendering,
   getYAxisRangeWarning,
+  shouldConnectAcrossMissingBuckets,
   toAxisConfigPayload,
 } from "./widgetUtils";
+import {
+  AGGREGATION_PREPARING_MESSAGE,
+  createAggregationPollController,
+  getAggregationRefreshState,
+  getExactAggregationReadState,
+} from "src/utils/queryReadState";
 import {
   AGGREGATION_OPTIONS,
   ALL_AGGREGATIONS,
@@ -433,6 +443,18 @@ function ToggleButtons({ options, value, onChange, theme }) {
   );
 }
 
+ToggleButtons.propTypes = {
+  options: PropTypes.arrayOf(
+    PropTypes.shape({
+      label: PropTypes.node.isRequired,
+      value: PropTypes.any,
+    }),
+  ).isRequired,
+  value: PropTypes.any,
+  onChange: PropTypes.func.isRequired,
+  theme: PropTypes.object.isRequired,
+};
+
 function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
   return (
     <Box sx={{ mb: 3 }}>
@@ -696,6 +718,15 @@ function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
   );
 }
 
+AxisSection.propTypes = {
+  title: PropTypes.string.isRequired,
+  config: PropTypes.object.isRequired,
+  onChange: PropTypes.func.isRequired,
+  theme: PropTypes.object.isRequired,
+  showReset: PropTypes.bool,
+  onReset: PropTypes.func,
+};
+
 function AggregationPicker({
   value,
   onChange,
@@ -882,6 +913,19 @@ function AggregationPicker({
   );
 }
 
+AggregationPicker.propTypes = {
+  value: PropTypes.string.isRequired,
+  onChange: PropTypes.func.isRequired,
+  theme: PropTypes.object.isRequired,
+  extraOptions: PropTypes.arrayOf(
+    PropTypes.shape({
+      label: PropTypes.string.isRequired,
+      value: PropTypes.string.isRequired,
+    }),
+  ),
+  allowedAggregations: PropTypes.arrayOf(PropTypes.string),
+};
+
 // Filter value picker popup — fetches distinct values for a given attribute
 function FilterValuePickerPopup({
   anchorEl,
@@ -1063,6 +1107,14 @@ function FilterValuePickerPopup({
   );
 }
 
+FilterValuePickerPopup.propTypes = {
+  anchorEl: PropTypes.object,
+  filter: PropTypes.object,
+  onClose: PropTypes.func.isRequired,
+  onApply: PropTypes.func.isRequired,
+  source: PropTypes.string.isRequired,
+};
+
 export default function WidgetEditorView() {
   const theme = useTheme();
   const navigate = useNavigate();
@@ -1080,7 +1132,14 @@ export default function WidgetEditorView() {
   const updateMutation = useUpdateWidget();
   const deleteMutation = useDeleteWidget();
   const queryMutation = useDashboardQuery();
+  const mutateDashboardQuery = queryMutation.mutate;
+  const resetDashboardQuery = queryMutation.reset;
   const { data: simulationAgents = [] } = useSimulationAgents();
+  const [lastExactPreview, setLastExactPreview] = useState(null);
+  const currentPreviewSignatureRef = useRef("");
+  const previewPollTimerRef = useRef(null);
+  const previewGenerationRef = useRef(0);
+  const [isPreviewRefreshing, setIsPreviewRefreshing] = useState(false);
 
   // Build a map: agent_definition_id → observability project for cross-source correlation
   const simAgentObsMap = useMemo(() => {
@@ -1733,6 +1792,13 @@ export default function WidgetEditorView() {
       if (m.outputType) base.output_type = m.outputType;
     } else if (backendType === "custom_attribute") {
       base.attribute_key = m.id;
+      // Preserve the typed-Map family returned by the metric catalog. Omitting
+      // this field made the API default numeric attributes (for example
+      // call.total_turns) to string and reject avg/percentile queries before
+      // ClickHouse was reached.
+      base.attribute_type = normalizeDashboardDataType(
+        m.dataType || m.data_type || "string",
+      );
     } else if (backendType === "custom_column") {
       base.column_id = m.id;
       if (m.columnDataType) base.data_type = m.columnDataType;
@@ -1765,7 +1831,9 @@ export default function WidgetEditorView() {
       source: b.source || "traces",
     };
     if (backendType === "custom_attribute") {
-      base.attribute_type = "string";
+      base.attribute_type = normalizeDashboardDataType(
+        b.dataType || b.data_type || "string",
+      );
     }
     if (backendType === "annotation_metric") {
       base.label_id = b.id;
@@ -1803,6 +1871,98 @@ export default function WidgetEditorView() {
     };
   }, [timePreset, customDateRange, granularity, metrics, filters, breakdowns]);
 
+  const previewQueryConfig = buildQueryConfig();
+  const previewQuerySignature = JSON.stringify(previewQueryConfig);
+  currentPreviewSignatureRef.current = previewQuerySignature;
+
+  useEffect(() => {
+    previewGenerationRef.current += 1;
+    clearTimeout(previewPollTimerRef.current);
+    previewPollTimerRef.current = null;
+    setIsPreviewRefreshing(false);
+  }, [previewQuerySignature]);
+
+  useEffect(
+    () => () => {
+      previewGenerationRef.current += 1;
+      clearTimeout(previewPollTimerRef.current);
+    },
+    [],
+  );
+
+  const runPreviewQuery = useCallback(
+    (queryConfig, { refresh = false } = {}) => {
+      const signature = JSON.stringify(queryConfig);
+      const generation = previewGenerationRef.current + 1;
+      previewGenerationRef.current = generation;
+      clearTimeout(previewPollTimerRef.current);
+      previewPollTimerRef.current = null;
+      const pollingController = createAggregationPollController();
+      let refreshWasQueued = false;
+
+      const isCurrent = () =>
+        previewGenerationRef.current === generation &&
+        currentPreviewSignatureRef.current === signature;
+
+      const schedulePoll = () => {
+        if (!isCurrent() || previewPollTimerRef.current !== null) return;
+        pollingController.start();
+        const delay = pollingController.nextDelay();
+        if (delay === false) {
+          setIsPreviewRefreshing(false);
+          return;
+        }
+        previewPollTimerRef.current = window.setTimeout(() => {
+          previewPollTimerRef.current = null;
+          pollingController.recordAttempt();
+          execute(false);
+        }, delay);
+      };
+
+      const execute = (forceRefresh) => {
+        mutateDashboardQuery(
+          { queryConfig, refresh: forceRefresh },
+          {
+            onSuccess: (response) => {
+              if (!isCurrent()) return;
+
+              const exactResult = getExactDashboardResult(response);
+              const { isRefreshing, refreshFailed } =
+                getAggregationRefreshState(response);
+              const readState = getExactAggregationReadState(response);
+              pollingController.recordSuccess();
+              if (exactResult) {
+                setLastExactPreview({ signature, result: exactResult });
+              }
+              if (
+                isRefreshing &&
+                !refreshFailed &&
+                (exactResult || readState === "pending")
+              ) {
+                refreshWasQueued = true;
+                setIsPreviewRefreshing(true);
+                schedulePoll();
+                return;
+              }
+              setIsPreviewRefreshing(false);
+            },
+            onError: () => {
+              if (!isCurrent()) return;
+              if (refreshWasQueued && pollingController.recordFailure()) {
+                schedulePoll();
+                return;
+              }
+              setIsPreviewRefreshing(false);
+            },
+          },
+        );
+      };
+
+      execute(refresh);
+    },
+    [mutateDashboardQuery],
+  );
+
   // Auto-preview when config changes (debounced)
   const previewTimerRef = useRef(null);
   useEffect(() => {
@@ -1810,10 +1970,10 @@ export default function WidgetEditorView() {
     if (metrics.length > 0 && !customWithoutRange) {
       clearTimeout(previewTimerRef.current);
       previewTimerRef.current = setTimeout(() => {
-        queryMutation.mutate(buildQueryConfig());
+        runPreviewQuery(buildQueryConfig());
       }, 400);
     } else {
-      queryMutation.reset();
+      resetDashboardQuery();
     }
     return () => clearTimeout(previewTimerRef.current);
   }, [
@@ -1837,6 +1997,8 @@ export default function WidgetEditorView() {
         .map((f) => ({ id: f.id, op: f.operator, val: f.value })),
     ),
     JSON.stringify(breakdowns.filter((b) => b.id).map((b) => b.id)),
+    runPreviewQuery,
+    resetDashboardQuery,
   ]);
 
   const openPicker = (e, mode, targetIndex = null, metricIndex = null) => {
@@ -2103,33 +2265,16 @@ export default function WidgetEditorView() {
 
   // Chart preview
   // Backend returns: { metrics: [{ name, aggregation, unit, series: [{ name, data: [{ timestamp, value }] }] }] }
-  const previewResult = queryMutation.data?.data?.result;
-  const previewSeries = useMemo(() => {
-    if (!previewResult?.metrics) return [];
-    const allSeries = [];
-    for (const metric of previewResult.metrics) {
-      for (const s of metric.series || []) {
-        const isSingleMetric = previewResult.metrics.length === 1;
-        let seriesLabel;
-        if (s.name === "total") {
-          seriesLabel = `${metric.name} (${metric.aggregation})`;
-        } else if (isSingleMetric) {
-          seriesLabel = s.name;
-        } else {
-          seriesLabel = `${metric.name} / ${s.name} (${metric.aggregation})`;
-        }
-        allSeries.push({
-          name: seriesLabel,
-          unit: metric.unit ?? "",
-          data: (s.data || []).map((point) => ({
-            x: new Date(point.timestamp).getTime(),
-            y: point.value != null ? Number(point.value) : null,
-          })),
-        });
-      }
-    }
-    return allSeries;
-  }, [previewResult]);
+  const activeExactPreview =
+    lastExactPreview?.signature === previewQuerySignature
+      ? lastExactPreview
+      : null;
+  const previewResult = activeExactPreview?.result;
+  const { renderableMetrics: previewRenderableMetrics, series: previewSeries } =
+    useMemo(
+      () => getDashboardMetricSeriesState(previewResult?.metrics),
+      [previewResult?.metrics],
+    );
 
   // Auto-select top 10 series when there are more than 10 breakdown series
   const MAX_CHART_SERIES = 10;
@@ -2173,6 +2318,8 @@ export default function WidgetEditorView() {
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
   const isLineChart = apexType === "line";
+  const connectsAcrossMissingBuckets =
+    shouldConnectAcrossMissingBuckets(apexType);
 
   const aggColumnLabel = useMemo(
     () => getAggColumnLabel(metrics, ALL_AGGREGATIONS),
@@ -2184,6 +2331,13 @@ export default function WidgetEditorView() {
     if (visibleSeries === null) return previewSeries;
     return previewSeries.filter((_, i) => visibleSeries.has(i));
   }, [previewSeries, visibleSeries]);
+
+  // Match the saved-dashboard renderer: null means an absent aggregate
+  // bucket, not zero, so line previews connect the neighbouring exact points.
+  const plottedChartSeries = useMemo(
+    () => getPlottedChartSeries(chartSeries, connectsAcrossMissingBuckets),
+    [chartSeries, connectsAcrossMissingBuckets],
+  );
 
   const outOfRangeWarning = useMemo(
     () => getYAxisRangeWarning(chartSeries, axisConfig),
@@ -2200,8 +2354,8 @@ export default function WidgetEditorView() {
   );
   const leftAxisFormatConfig = useMemo(() => {
     const leftAxis = axisConfig.leftY || {};
-    const metricUnits = (previewResult?.metrics || []).map(
-      (m) => m?.unit ?? "",
+    const metricUnits = previewRenderableMetrics.map(
+      ({ metric }) => metric?.unit ?? "",
     );
     const isMixedUnits = new Set(metricUnits).size > 1;
     const effectiveUnit = isMixedUnits
@@ -2216,7 +2370,7 @@ export default function WidgetEditorView() {
           "prefix"
         : suggestedLeftAxisUnit.prefixSuffix,
     };
-  }, [axisConfig.leftY, suggestedLeftAxisUnit, previewResult?.metrics]);
+  }, [axisConfig.leftY, suggestedLeftAxisUnit, previewRenderableMetrics]);
 
   useEffect(() => {
     const currentUnit = axisConfig.leftY.unit;
@@ -2819,9 +2973,15 @@ export default function WidgetEditorView() {
     metrics.length > 0 && !(timePreset === "custom" && !customDateRange);
 
   const previewLoading =
-    queryMutation.isPending ||
+    (queryMutation.isPending && !activeExactPreview) ||
     (isEditing && !initialized) ||
-    (canPreview && queryMutation.isIdle);
+    (canPreview && queryMutation.isIdle && !activeExactPreview);
+
+  const emptyPreviewMessage = canPreview
+    ? activeExactPreview
+      ? "No data for this selection"
+      : AGGREGATION_PREPARING_MESSAGE
+    : "Fill in the required fields to see preview";
 
   const cleanupDragRef = useRef(null);
   const handleDragStart = useCallback(
@@ -3140,18 +3300,24 @@ export default function WidgetEditorView() {
           </MenuItem>
           <Divider />
           <MenuItem
-            disabled={metrics.length === 0}
+            disabled={metrics.length === 0 || isPreviewRefreshing}
             onClick={() => {
               setMoreMenuAnchor(null);
               if (metrics.length > 0) {
-                queryMutation.mutate(buildQueryConfig());
+                runPreviewQuery(buildQueryConfig(), { refresh: true });
               }
             }}
           >
             <ListItemIcon>
-              <Iconify icon="mdi:refresh" width={18} />
+              {isPreviewRefreshing ? (
+                <CircularProgress size={16} />
+              ) : (
+                <Iconify icon="mdi:refresh" width={18} />
+              )}
             </ListItemIcon>
-            <ListItemText>Refresh Data</ListItemText>
+            <ListItemText>
+              {isPreviewRefreshing ? "Refreshing Data" : "Refresh Data"}
+            </ListItemText>
           </MenuItem>
         </Menu>
 
@@ -3389,7 +3555,7 @@ export default function WidgetEditorView() {
                 }}
               >
                 <Typography variant="body2" color="text.secondary">
-                  Fill in the required fields to see preview
+                  {emptyPreviewMessage}
                 </Typography>
               </Box>
             )}
@@ -4072,7 +4238,7 @@ export default function WidgetEditorView() {
                           <ReactApexChart
                             key={`${axisConfig.leftY.unit}-${axisConfig.leftY.prefixSuffix}-${axisConfig.leftY.abbreviation}-${axisConfig.leftY.decimals}-${axisConfig.leftY.outOfBounds}-${axisConfig.rightY.unit}-${axisConfig.rightY.prefixSuffix}-${axisConfig.rightY.abbreviation}-${axisConfig.rightY.decimals}-${axisConfig.rightY.outOfBounds}-${JSON.stringify(axisConfig.seriesAxis)}-${axisConfig.rightY.visible}`}
                             options={chartOptions}
-                            series={chartSeries}
+                            series={plottedChartSeries}
                             type={apexType}
                             height="100%"
                           />
@@ -4082,7 +4248,7 @@ export default function WidgetEditorView() {
                   </Box>
                 ) : (
                   <Typography variant="body2" color="text.secondary">
-                    Fill in the required fields to see preview
+                    {emptyPreviewMessage}
                   </Typography>
                 )}
               </Box>
@@ -4256,8 +4422,7 @@ export default function WidgetEditorView() {
                           display: "block",
                         }}
                       >
-                        {metrics[idx]?.name || ""} -{" "}
-                        {metrics[idx]?.aggregation || "avg"}
+                        {s.metricName || ""} - {s.aggregation || "avg"}
                       </Typography>
                     </Box>
                   );

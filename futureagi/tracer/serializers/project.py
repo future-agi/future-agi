@@ -82,6 +82,19 @@ class ProjectGraphDataQuerySerializer(StrictInputSerializer):
     project_id = serializers.UUIDField()
     interval = serializers.CharField(required=False, default="hour", allow_blank=False)
     filters = filter_list_query_param_field(required=False, default=list)
+    allow_sampled = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text=(
+            "Deprecated compatibility parameter; accepted but ignored. "
+            "Aggregate graph results are always exact."
+        ),
+    )
+    refresh = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Recompute and atomically replace the last complete exact result.",
+    )
 
 
 class ProjectUserMetricsRequestSerializer(StrictInputSerializer):

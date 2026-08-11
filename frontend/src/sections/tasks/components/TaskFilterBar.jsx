@@ -11,6 +11,8 @@ import { useWatch } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import { getRandomId } from "src/utils/utils";
 import TraceFilterPanel, {
+  findTraceFilterProperty,
+  parseMapFilterValue,
   useTraceFilterProperties,
 } from "src/sections/projects/LLMTracing/TraceFilterPanel";
 import {
@@ -25,6 +27,11 @@ import {
   getPickerOptionLabel,
   getPickerOptionSecondaryLabel,
 } from "src/sections/projects/LLMTracing/filterValuePickerUtils";
+import {
+  fromVoiceCallApiValue,
+  getVoiceCallFilterField,
+  toVoiceCallApiValue,
+} from "src/sections/projects/LLMTracing/voiceCallFilterFields";
 
 // ── Operator handling — canonical backend ops ──
 //
@@ -42,6 +49,37 @@ const HYDRATE_STRING_OP = { equals: "in", not_equals: "not_in" };
 
 const isStringLike = (fieldType) =>
   fieldType === "text" || fieldType === "string";
+
+const canonicalTaskFilterType = (fieldType, value) => {
+  const type = String(fieldType || "string").toLowerCase();
+  if (type === "number") return "number";
+  if (type === "boolean") return "boolean";
+  if (["date", "datetime", "timestamp"].includes(type)) return "datetime";
+  if (["array", "list"].includes(type)) return "array";
+  if (["map", "object"].includes(type)) return "map";
+  if (type === "json") {
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? "map"
+      : "array";
+  }
+  if (["categorical", "thumbs", "annotator"].includes(type)) return type;
+  return "text";
+};
+
+const hydratedTaskFieldType = (filterType, value, category) => {
+  const type = String(filterType || "text").toLowerCase();
+  if (type === "number" || type === "boolean") return type;
+  if (type === "datetime" || type === "date") return "date";
+  if (type === "array" || type === "list") return "array";
+  if (type === "map" || type === "object") return "map";
+  if (type === "json") {
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? "map"
+      : "array";
+  }
+  if (["categorical", "thumbs", "annotator"].includes(type)) return type;
+  return type === "text" && category === "annotation" ? "text" : "string";
+};
 
 const coerceForType = (val, fieldType) => {
   if (val === null || val === undefined || val === "") return val;
@@ -80,26 +118,44 @@ const OP_DISPLAY = {
 
 // Panel filter → form row(s). List/range ops keep array `filterValue`;
 // no-value ops drop it; other ops explode into one scalar row per value.
-function convertNewToOld(newFilters) {
+// eslint-disable-next-line react-refresh/only-export-components
+export function convertNewToOld(newFilters, { rowType } = {}) {
+  const isVoiceCalls = String(rowType || "").toLowerCase() === "voicecalls";
   const out = [];
   (newFilters || []).forEach((f) => {
     if (!f?.field) return;
-    const isAttribute = f.fieldCategory === "attribute";
-    const fieldType = f.fieldType || "string";
-    const filterType =
-      fieldType === "number"
-        ? "number"
-        : fieldType === "boolean"
-          ? "boolean"
-          : "text";
+    // A simulator project still exposes raw span attributes. Matching an
+    // attribute named `call.status` must not turn it into the normalized
+    // lifecycle SYSTEM_METRIC merely because the row type is voiceCalls.
+    const isExplicitAttribute =
+      f.fieldCategory === "attribute" || f.apiColType === "SPAN_ATTRIBUTE";
+    const voiceField =
+      isVoiceCalls && !isExplicitAttribute
+        ? getVoiceCallFilterField(f.field)
+        : undefined;
+    const canonicalField = voiceField?.value || f.field;
+    const fieldCategory =
+      voiceField?.category ||
+      (isExplicitAttribute ? "attribute" : f.fieldCategory);
+    const isAttribute = fieldCategory === "attribute";
+    const fieldType = voiceField?.type || f.fieldType || "string";
+    const filterType = canonicalTaskFilterType(fieldType, f.value);
     const op = f.operator || "equals";
+    // Panel values use the canonical field's displayed units. Legacy wire
+    // scaling is applied only while hydrating old form rows; once edited, the
+    // request is emitted under the canonical id and canonical units.
+    const encodeValue = (value) =>
+      voiceField ? toVoiceCallApiValue(canonicalField, value) : value;
 
     const base = {
-      property: isAttribute ? "attributes" : f.field,
-      propertyId: f.field,
-      fieldCategory: f.fieldCategory || "system",
-      fieldLabel: f.fieldName || f.fieldLabel || f.field,
-      apiColType: resolveApiColType(f.apiColType, f.fieldCategory),
+      property: isAttribute ? "attributes" : canonicalField,
+      propertyId: canonicalField,
+      fieldCategory: fieldCategory || "system",
+      fieldLabel:
+        voiceField?.label || f.fieldName || f.fieldLabel || canonicalField,
+      apiColType:
+        voiceField?.apiColType ||
+        resolveApiColType(f.apiColType, fieldCategory),
     };
 
     if (NO_VALUE_OPS.has(op)) {
@@ -107,6 +163,38 @@ function convertNewToOld(newFilters) {
         id: getRandomId(),
         ...base,
         filterConfig: { filterType, filterOp: op },
+      });
+      return;
+    }
+
+    if (filterType === "array") {
+      const values = (Array.isArray(f.value) ? f.value : [f.value]).filter(
+        (value) => value !== undefined && value !== null && value !== "",
+      );
+      if (values.length === 0) return;
+      out.push({
+        id: getRandomId(),
+        ...base,
+        filterConfig: {
+          filterType,
+          filterOp: op,
+          filterValue: values,
+        },
+      });
+      return;
+    }
+
+    if (filterType === "map") {
+      const value = parseMapFilterValue(f.value);
+      if (!value) return;
+      out.push({
+        id: getRandomId(),
+        ...base,
+        filterConfig: {
+          filterType,
+          filterOp: op,
+          filterValue: value,
+        },
       });
       return;
     }
@@ -120,7 +208,7 @@ function convertNewToOld(newFilters) {
         filterConfig: {
           filterType,
           filterOp: op,
-          filterValue: coerceForType(arr.slice(0, 2), fieldType),
+          filterValue: encodeValue(coerceForType(arr.slice(0, 2), fieldType)),
         },
       });
       return;
@@ -137,7 +225,12 @@ function convertNewToOld(newFilters) {
         filterConfig: {
           filterType,
           filterOp: op,
-          filterValue: coerceForType(arr, fieldType),
+          filterValue: encodeValue(coerceForType(arr, fieldType)),
+          ...(isAttribute &&
+            Array.isArray(f.valueTypes) &&
+            f.valueTypes.length === arr.length && {
+              attributeValueTypes: f.valueTypes,
+            }),
         },
       });
       return;
@@ -154,7 +247,7 @@ function convertNewToOld(newFilters) {
         filterConfig: {
           filterType,
           filterOp: op,
-          filterValue: coerceForType(v, fieldType),
+          filterValue: encodeValue(coerceForType(v, fieldType)),
         },
       });
     });
@@ -168,20 +261,35 @@ function convertNewToOld(newFilters) {
 // HYDRATE_STRING_OP) collapse same-(field, op) rows into one multi-value
 // panel row — grouping any other op (e.g. not_contains) would let the chip
 // + panel UI fold "exclude A AND exclude B" into a single "[A, B]" row.
-function convertOldToNew(oldFilters) {
+// eslint-disable-next-line react-refresh/only-export-components
+export function convertOldToNew(oldFilters, { rowType } = {}) {
+  const isVoiceCalls = String(rowType || "").toLowerCase() === "voicecalls";
   const groups = new Map();
   const result = [];
   (oldFilters || []).forEach((f) => {
     if (!f) return;
-    const isAttribute = f.property === "attributes";
-    const field = isAttribute ? f.propertyId : f.property;
-    if (!field) return;
+    const isAttribute =
+      f.property === "attributes" ||
+      f.fieldCategory === "attribute" ||
+      f.apiColType === "SPAN_ATTRIBUTE" ||
+      f?.filterConfig?.colType === "SPAN_ATTRIBUTE";
+    const persistedField = isAttribute ? f.propertyId : f.property;
+    if (!persistedField) return;
+    const voiceField =
+      isVoiceCalls && !isAttribute
+        ? getVoiceCallFilterField(persistedField)
+        : undefined;
+    const field = voiceField?.value || persistedField;
 
     const rawOp = f?.filterConfig?.filterOp || "equals";
-    const category = f.fieldCategory || (isAttribute ? "attribute" : "system");
+    const category =
+      voiceField?.category ||
+      f.fieldCategory ||
+      (isAttribute ? "attribute" : "system");
     const ft = f?.filterConfig?.filterType;
+    const rawValue = f?.filterConfig?.filterValue;
     const fieldType =
-      ft === "number" ? "number" : ft === "boolean" ? "boolean" : "string";
+      voiceField?.type || hydratedTaskFieldType(ft, rawValue, category);
 
     let op = rawOp;
     const hydrated = isStringLike(fieldType) && HYDRATE_STRING_OP[op];
@@ -199,11 +307,18 @@ function convertOldToNew(oldFilters) {
       if (!entry) {
         entry = {
           field,
-          fieldLabel: f.fieldLabel || field,
+          fieldLabel: voiceField?.label || f.fieldLabel || field,
           fieldType,
           fieldCategory: category,
+          apiColType:
+            voiceField?.apiColType ||
+            resolveApiColType(
+              f.apiColType || f?.filterConfig?.colType,
+              category,
+            ),
           operator: op,
           value: [],
+          valueTypes: [],
         };
         groups.set(key, entry);
         result.push(entry);
@@ -211,32 +326,46 @@ function convertOldToNew(oldFilters) {
     } else {
       entry = {
         field,
-        fieldLabel: f.fieldLabel || field,
+        fieldLabel: voiceField?.label || f.fieldLabel || field,
         fieldType,
         fieldCategory: category,
         // Preserved so the panel re-renders the right chip on edit-open.
         apiColType: resolveApiColType(
-          f.apiColType || f?.filterConfig?.colType,
+          voiceField?.apiColType || f.apiColType || f?.filterConfig?.colType,
           category,
         ),
         operator: op,
         value: [],
+        valueTypes: [],
       };
       result.push(entry);
     }
 
     if (NO_VALUE_OPS.has(op)) return;
 
-    const val = f?.filterConfig?.filterValue;
+    const val = voiceField
+      ? fromVoiceCallApiValue(persistedField, f?.filterConfig?.filterValue)
+      : f?.filterConfig?.filterValue;
+    const valueTypes = f?.filterConfig?.attributeValueTypes;
     if (RANGE_OPS.has(op)) {
       entry.value = Array.isArray(val) ? val : [];
       return;
     }
     if (val === undefined || val === null || val === "") return;
+    if (fieldType === "map") {
+      entry.value = parseMapFilterValue(val) || val;
+      return;
+    }
+    if (fieldType === "array") {
+      entry.value = Array.isArray(val) ? [...val] : [val];
+      return;
+    }
     if (Array.isArray(val)) {
       entry.value.push(...val);
+      if (Array.isArray(valueTypes)) entry.valueTypes.push(...valueTypes);
     } else {
       entry.value.push(val);
+      if (Array.isArray(valueTypes)) entry.valueTypes.push(valueTypes[0]);
     }
   });
   return result;
@@ -247,7 +376,9 @@ const FilterChip = ({ filter, onRemove }) => {
   const opLabel = OP_DISPLAY[filter.operator] || filter.operator || "equals";
   const valueStr = Array.isArray(filter.value)
     ? filter.value.join(", ")
-    : String(filter.value ?? "");
+    : filter.value && typeof filter.value === "object"
+      ? JSON.stringify(filter.value)
+      : String(filter.value ?? "");
 
   return (
     <Box
@@ -313,13 +444,20 @@ FilterChip.propTypes = {
   onRemove: PropTypes.func.isRequired,
 };
 
-// Task rowType → TraceFilterPanel `tab`. Sessions / voiceCalls have no
-// id-field tab. Casing is normalized to handle inconsistent callers.
+// Task rowType → TraceFilterPanel field registry.
 const rowTypeToFilterTab = (rowType) => {
   const key = String(rowType || "").toLowerCase();
   if (key === "spans" || key === "span") return "spans";
   if (key === "traces" || key === "trace") return "trace";
+  if (key === "voicecalls" || key === "voicecall") return "voiceCalls";
   return null;
+};
+
+const rowTypeToFilterSource = (rowType) => {
+  const key = String(rowType || "").toLowerCase();
+  if (key === "sessions" || key === "session") return "sessions";
+  if (key.startsWith("voice")) return "traces";
+  return "traces";
 };
 
 // ── Main ──
@@ -333,7 +471,7 @@ const TaskFilterBar = ({
   // Read the form filters (old format) and mirror them in local state (new format).
   const formFilters = useWatch({ control, name: "filters" });
   const [panelFilters, setPanelFilters] = useState(() =>
-    convertOldToNew(formFilters),
+    convertOldToNew(formFilters, { rowType }),
   );
   const suppressNextSync = useRef(false);
 
@@ -341,12 +479,6 @@ const TaskFilterBar = ({
   const { data: properties = [] } = useTraceFilterProperties(projectId, {
     isSimulator,
   });
-  const propertyById = useMemo(() => {
-    const map = {};
-    for (const p of properties) map[p.id] = p;
-    return map;
-  }, [properties]);
-
   // Resolve annotator user UUIDs → "Name (email)" for chip values.
   const hasAnnotatorFilter = panelFilters.some((f) => f.field === "annotator");
   const { data: annotatorOptions = [] } = useDashboardFilterValues({
@@ -371,7 +503,7 @@ const TaskFilterBar = ({
   const enrichedFilters = useMemo(
     () =>
       panelFilters.map((f) => {
-        const prop = propertyById[f.field];
+        const prop = findTraceFilterProperty(properties, f);
         let next = f;
         if (!f.fieldName && f.fieldLabel === f.field && prop) {
           next = { ...next, fieldLabel: prop.name };
@@ -385,7 +517,7 @@ const TaskFilterBar = ({
         }
         return next;
       }),
-    [panelFilters, propertyById, annotatorLabelById],
+    [panelFilters, properties, annotatorLabelById],
   );
 
   // Keep local panel state in sync with form filters when they change externally
@@ -395,8 +527,8 @@ const TaskFilterBar = ({
       suppressNextSync.current = false;
       return;
     }
-    setPanelFilters(convertOldToNew(formFilters));
-  }, [formFilters]);
+    setPanelFilters(convertOldToNew(formFilters, { rowType }));
+  }, [formFilters, rowType]);
 
   const [anchorEl, setAnchorEl] = useState(null);
   // Anchor the panel to the filter bar row (not the "+", which drifts as chips
@@ -409,12 +541,12 @@ const TaskFilterBar = ({
     (next) => {
       setPanelFilters(next || []);
       suppressNextSync.current = true;
-      setValue("filters", convertNewToOld(next), {
+      setValue("filters", convertNewToOld(next, { rowType }), {
         shouldDirty: true,
         shouldValidate: false,
       });
     },
-    [setValue],
+    [setValue, rowType],
   );
 
   const handleRemove = useCallback(
@@ -556,6 +688,7 @@ const TaskFilterBar = ({
         projectId={projectId}
         isSimulator={isSimulator}
         tab={rowTypeToFilterTab(rowType)}
+        source={rowTypeToFilterSource(rowType)}
         onApply={(next) => applyPanelFilters(next || [])}
       />
     </Box>

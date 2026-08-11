@@ -10,6 +10,7 @@ import { useSearchParams } from "react-router-dom";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { formatDate } from "src/utils/report-utils";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
@@ -102,6 +103,7 @@ const TaskCreatePage = () => {
   const name = useWatch({ control, name: "name" });
 
   const { mutate: createTask, isPending } = useMutation({
+    meta: { errorHandled: true },
     mutationFn: (data) =>
       axios.post(endpoints.project.createEvalTask(), { ...data }),
     onSuccess: (resp) => {
@@ -119,7 +121,10 @@ const TaskCreatePage = () => {
     },
     onError: (err) => {
       enqueueSnackbar(
-        err?.response?.data?.result || err?.message || "Failed to create task",
+        getSafeActionErrorMessage(
+          err,
+          "Task could not be created. Review the filters and try again.",
+        ),
         { variant: "error" },
       );
     },

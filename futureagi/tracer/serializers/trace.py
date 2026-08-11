@@ -1,3 +1,5 @@
+import json
+
 from django.db.models import Q
 from rest_framework import serializers
 
@@ -6,9 +8,16 @@ from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
+from tracer.serializers.cursor_pagination import (
+    CURSOR_HELP_TEXT,
+    validate_cursor_exclusivity,
+)
 from tracer.serializers.filters import (
+    BOUNDED_PAGE_NUMBER_HELP_TEXT,
+    JsonObjectField,
     SortParamListQueryParamField,
     StrictInputSerializer,
+    bounded_filter_list_query_param_field,
     filter_list_query_param_field,
 )
 
@@ -145,14 +154,54 @@ class CommaSeparatedStringListField(serializers.Field):
         return value or []
 
 
+class JSONOrCommaSeparatedStringListField(CommaSeparatedStringListField):
+    """Accept an exact JSON string list, retaining CSV compatibility.
+
+    Attribute paths are user data and may themselves contain commas. New
+    callers send a JSON array so those keys round-trip exactly; the historical
+    comma-separated shape remains accepted for simple keys.
+    """
+
+    def to_internal_value(self, data):
+        if data in (None, ""):
+            return []
+        if isinstance(data, str) and data.lstrip().startswith("["):
+            try:
+                data = json.loads(data)
+            except json.JSONDecodeError as exc:
+                raise serializers.ValidationError(
+                    "Value must be a JSON string array."
+                ) from exc
+            if not isinstance(data, list):
+                raise serializers.ValidationError("Value must be a JSON string array.")
+            if not all(isinstance(item, str) for item in data):
+                raise serializers.ValidationError(
+                    "Every attribute key must be a string."
+                )
+        return super().to_internal_value(data)
+
+
 class TraceListQuerySerializer(StrictInputSerializer):
     project_version_id = serializers.UUIDField(required=True)
     trace_ids = CommaSeparatedStringListField(required=False, default=list)
-    filters = filter_list_query_param_field(required=False, default=list)
+    filters = bounded_filter_list_query_param_field(required=False, default=list)
     sort_params = SortParamListQueryParamField(required=False, default=list)
-    page_number = serializers.IntegerField(required=False, default=0, min_value=0)
+    page_number = serializers.IntegerField(
+        required=False,
+        default=0,
+        min_value=0,
+        help_text=BOUNDED_PAGE_NUMBER_HELP_TEXT,
+    )
     page_size = serializers.IntegerField(
         required=False, default=30, min_value=1, max_value=500
+    )
+    allow_sampled = serializers.BooleanField(
+        required=False,
+        help_text=(
+            "Omit for backward-compatible complete bounded pages, which may "
+            "label total_rows as a lower bound. Send false to require an exact "
+            "total, or true to opt in explicitly to lower-bound totals."
+        ),
     )
 
 
@@ -160,16 +209,77 @@ class TraceObserveListQuerySerializer(StrictInputSerializer):
     project_id = serializers.UUIDField(required=False)
     project_version_id = serializers.UUIDField(required=False)
     session_id = serializers.UUIDField(required=False)
-    filters = filter_list_query_param_field(required=False, default=list)
-    page_number = serializers.IntegerField(required=False, default=0, min_value=0)
+    filters = bounded_filter_list_query_param_field(required=False, default=list)
+    page_number = serializers.IntegerField(
+        required=False,
+        default=0,
+        min_value=0,
+        help_text=BOUNDED_PAGE_NUMBER_HELP_TEXT,
+    )
     page_size = serializers.IntegerField(
         required=False, default=30, min_value=1, max_value=500
     )
+    cursor = serializers.CharField(
+        required=False, allow_blank=False, max_length=4096, help_text=CURSOR_HELP_TEXT
+    )
+    cursor_mode = serializers.BooleanField(required=False, default=False)
+    attribute_keys = JSONOrCommaSeparatedStringListField(
+        required=False,
+        help_text=(
+            "JSON-encoded list of custom attribute keys to hydrate; only "
+            "requested keys are returned. Each key resolves to its latest live "
+            "span value by (start_time, span_id). Comma-separated simple keys "
+            "remain supported."
+        ),
+    )
+    allow_sampled = serializers.BooleanField(
+        required=False,
+        help_text=(
+            "Omit for backward-compatible complete bounded pages, which may "
+            "label total_rows as a lower bound. Send false to require an exact "
+            "total. Send true to opt in explicitly to lower-bound totals and, "
+            "on the first page, a clearly labelled bounded partial result when "
+            "the full ordered prefix cannot be proven inside the read budget."
+        ),
+    )
     interval = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        attribute_keys = tuple(dict.fromkeys(attrs.get("attribute_keys") or ()))
+        if len(attribute_keys) > 100 or any(len(key) > 512 for key in attribute_keys):
+            raise serializers.ValidationError(
+                {
+                    "attribute_keys": "Request at most 100 attribute keys (512 chars each)."
+                }
+            )
+        if sum(len(key.encode("utf-8")) for key in attribute_keys) > 2_048:
+            raise serializers.ValidationError(
+                {
+                    "attribute_keys": (
+                        "Combined attribute keys must be at most 2048 UTF-8 bytes."
+                    )
+                }
+            )
+        attrs["attribute_keys"] = list(attribute_keys)
+        return validate_cursor_exclusivity(self, attrs, page_field="page_number")
 
 
 class TraceObserveListMetadataSerializer(serializers.Serializer):
     total_rows = serializers.IntegerField()
+    total_rows_exact = serializers.IntegerField(required=False, allow_null=True)
+    total_rows_is_lower_bound = serializers.BooleanField(required=False)
+    has_more = serializers.BooleanField(required=False)
+    next_cursor = serializers.CharField(required=False, allow_null=True)
+    query_complete = serializers.BooleanField(required=False)
+    query_status = serializers.ChoiceField(
+        choices=("complete", "degraded"), required=False
+    )
+    query_error_code = serializers.CharField(required=False, allow_null=True)
+    query_elapsed_ms = serializers.FloatField(required=False)
+    query_count = serializers.IntegerField(required=False, min_value=0)
+    query_rows_returned = serializers.IntegerField(required=False, min_value=0)
+    query_result_payload_bytes = serializers.IntegerField(required=False, min_value=0)
 
 
 class TraceObserveColumnConfigSerializer(serializers.Serializer):
@@ -209,17 +319,201 @@ class TraceObserveListResponseSerializer(serializers.Serializer):
     result = TraceObserveListResultSerializer()
 
 
+class TracePrototypeListResultSerializer(serializers.Serializer):
+    """Prototype trace list wire shape (uses ``column_config``)."""
+
+    column_config = TraceObserveColumnConfigSerializer(many=True)
+    metadata = TraceObserveListMetadataSerializer()
+    table = serializers.ListField(
+        child=serializers.DictField(child=JsonValueField(allow_null=True))
+    )
+
+
+class TracePrototypeListResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = TracePrototypeListResultSerializer()
+
+
 class TraceExportQuerySerializer(StrictInputSerializer):
     project_id = serializers.UUIDField()
     filters = filter_list_query_param_field(required=False, default=list)
 
 
 class TraceVoiceCallListQuerySerializer(TraceExportQuerySerializer):
-    page = serializers.IntegerField(required=False, default=1, min_value=1)
+    page = serializers.IntegerField(
+        required=False,
+        default=1,
+        min_value=1,
+        help_text=(
+            "One-based numbered page. Pages whose required ordered work exceeds "
+            "the finite read contract return HTTP 422 with code "
+            "page_depth_exceeded; request an earlier page, use the additive "
+            "continuation cursor, or narrow the time range."
+        ),
+    )
     page_size = serializers.IntegerField(
         required=False, default=30, min_value=1, max_value=500
     )
     remove_simulation_calls = serializers.BooleanField(required=False, default=False)
+    cursor = serializers.CharField(
+        required=False, allow_blank=False, max_length=4096, help_text=CURSOR_HELP_TEXT
+    )
+    cursor_mode = serializers.BooleanField(required=False, default=False)
+    allow_sampled = serializers.BooleanField(
+        required=False,
+        help_text=(
+            "Omit for backward-compatible complete bounded pages, which may "
+            "label count as a lower bound. Send false to require an exact "
+            "total. Send true to opt in explicitly to lower-bound totals and, "
+            "on the first page, a clearly labelled bounded partial result when "
+            "the full ordered prefix cannot be proven inside the read budget."
+        ),
+    )
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        return validate_cursor_exclusivity(
+            self,
+            attrs,
+            page_field="page",
+            first_page=1,
+        )
+
+
+class TraceVoiceCallListResponseSerializer(serializers.Serializer):
+    count = serializers.IntegerField(min_value=0)
+    count_is_lower_bound = serializers.BooleanField()
+    total_pages = serializers.IntegerField(min_value=0)
+    current_page = serializers.IntegerField(min_value=1)
+    next = serializers.IntegerField(min_value=1, allow_null=True)
+    previous = serializers.IntegerField(min_value=1, allow_null=True)
+    results = serializers.ListField(
+        child=serializers.DictField(child=JsonValueField(allow_null=True))
+    )
+    config = TraceObserveColumnConfigSerializer(many=True)
+    has_more = serializers.BooleanField()
+    next_cursor = serializers.CharField(required=False, allow_null=True)
+    query_complete = serializers.BooleanField()
+    query_status = serializers.ChoiceField(choices=("complete", "degraded"))
+    query_error_code = serializers.CharField(required=False)
+
+
+class TraceVoiceCallDetailQuerySerializer(StrictInputSerializer):
+    """Strict compatibility contract for the voice-call detail identity."""
+
+    trace_id = serializers.UUIDField(
+        required=False,
+        help_text="Voice-call trace UUID. Supply this or the legacy traceId alias.",
+    )
+    traceId = serializers.UUIDField(  # noqa: N815 - public compatibility alias
+        required=False,
+        help_text="Legacy alias for trace_id; when both are supplied they must match.",
+    )
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        trace_id = attrs.get("trace_id")
+        legacy_trace_id = attrs.get("traceId")
+        if trace_id is None and legacy_trace_id is None:
+            raise serializers.ValidationError(
+                {"trace_id": "Supply trace_id or the legacy traceId alias."}
+            )
+        if (
+            trace_id is not None
+            and legacy_trace_id is not None
+            and trace_id != legacy_trace_id
+        ):
+            raise serializers.ValidationError(
+                {"traceId": "traceId must match trace_id when both are supplied."}
+            )
+        attrs["trace_id"] = trace_id or legacy_trace_id
+        attrs.pop("traceId", None)
+        return attrs
+
+
+class TraceVoiceCallDetailResultSerializer(serializers.Serializer):
+    """Stable voice-call detail shape shared by every provider adapter.
+
+    Provider payloads are normalized by ``ObservabilityService`` before this
+    response is built.  Keep the normalized fields explicit here: documenting
+    the whole result as an arbitrary JSON object made generated clients unable
+    to distinguish a valid detail response from any other object.
+    """
+
+    id = serializers.CharField()
+    trace_id = serializers.CharField()
+    project_id = serializers.CharField()
+    provider_call_id = serializers.CharField(allow_null=True)
+
+    phone_number = serializers.CharField(required=False, allow_null=True)
+    customer_name = serializers.CharField(required=False, allow_null=True)
+    call_id = serializers.CharField(required=False, allow_null=True)
+    status = serializers.CharField(required=False, allow_null=True)
+    started_at = serializers.CharField(required=False, allow_null=True)
+    ended_at = serializers.CharField(required=False, allow_null=True)
+    created_at = serializers.CharField(required=False, allow_null=True)
+    duration_seconds = serializers.IntegerField(required=False, allow_null=True)
+    recording_url = serializers.CharField(required=False, allow_null=True)
+    stereo_recording_url = serializers.CharField(required=False, allow_null=True)
+    cost_cents = serializers.FloatField(required=False, allow_null=True)
+    cost_breakdown = JsonObjectField(required=False, allow_null=True)
+    error_message = serializers.CharField(required=False, allow_null=True)
+    call_summary = serializers.CharField(required=False, allow_null=True)
+    ended_reason = serializers.CharField(required=False, allow_null=True)
+    overall_score = serializers.FloatField(required=False, allow_null=True)
+    response_time_ms = serializers.FloatField(required=False, allow_null=True)
+    response_time_seconds = serializers.FloatField(required=False, allow_null=True)
+    assistant_id = serializers.CharField(required=False, allow_null=True)
+    assistant_phone_number = serializers.CharField(required=False, allow_null=True)
+    call_type = serializers.CharField(required=False, allow_null=True)
+    message_count = serializers.IntegerField(required=False, allow_null=True)
+    transcript_available = serializers.BooleanField(required=False, allow_null=True)
+
+    transcript = serializers.ListField(
+        child=serializers.DictField(child=JsonValueField(allow_null=True)),
+        required=False,
+        allow_null=True,
+    )
+    messages = serializers.ListField(
+        child=serializers.DictField(child=JsonValueField(allow_null=True)),
+        required=False,
+        allow_null=True,
+    )
+    analysis_data = JsonObjectField(required=False, allow_null=True)
+    evaluation_data = JsonObjectField(required=False, allow_null=True)
+
+    recording = JsonObjectField()
+    recording_available = serializers.BooleanField()
+    call_metadata = JsonObjectField()
+    observation_span = serializers.ListField(
+        child=serializers.DictField(child=JsonValueField(allow_null=True))
+    )
+    eval_outputs = JsonObjectField()
+
+    call_execution_id = serializers.CharField(required=False, allow_null=True)
+    test_execution_id = serializers.CharField(required=False, allow_null=True)
+    scenario_id = serializers.CharField(required=False, allow_null=True)
+    scenario_name = serializers.CharField(required=False, allow_null=True)
+    scenario_graph_id = serializers.CharField(required=False, allow_null=True)
+    scenario_graph = JsonObjectField(required=False)
+
+    turn_count = serializers.IntegerField(allow_null=True)
+    talk_ratio = serializers.FloatField(allow_null=True)
+    agent_talk_percentage = serializers.FloatField(allow_null=True)
+    bot_talk_pct = serializers.IntegerField(allow_null=True)
+    user_talk_pct = serializers.IntegerField(allow_null=True)
+    avg_agent_latency_ms = serializers.IntegerField(allow_null=True)
+    user_wpm = serializers.IntegerField(allow_null=True)
+    bot_wpm = serializers.IntegerField(allow_null=True)
+    user_interruption_count = serializers.IntegerField(allow_null=True)
+    ai_interruption_count = serializers.IntegerField(allow_null=True)
+
+
+class TraceVoiceCallDetailResponseSerializer(serializers.Serializer):
+    """GeneralMethods envelope for one normalized voice-call detail."""
+
+    status = serializers.BooleanField()
+    result = TraceVoiceCallDetailResultSerializer()
 
 
 class TraceIndexQuerySerializer(StrictInputSerializer):
@@ -237,6 +531,66 @@ class TraceObserveIndexQuerySerializer(StrictInputSerializer):
 class TraceAgentGraphQuerySerializer(StrictInputSerializer):
     project_id = serializers.UUIDField()
     filters = filter_list_query_param_field(required=False, default=list)
+    refresh = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Recompute and atomically replace the last exact graph snapshot.",
+    )
+
+
+class TraceAgentGraphNodeSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField()
+    type = serializers.CharField()
+    span_count = serializers.IntegerField(min_value=0)
+    avg_latency_ms = serializers.FloatField(min_value=0)
+    total_tokens = serializers.IntegerField(min_value=0)
+    total_cost = serializers.FloatField(min_value=0)
+    error_count = serializers.IntegerField(min_value=0)
+    trace_count = serializers.IntegerField(min_value=0, allow_null=True)
+    trace_count_exact = serializers.BooleanField(required=False)
+    is_aggregate = serializers.BooleanField(required=False)
+    member_count = serializers.IntegerField(required=False, min_value=0)
+
+
+class TraceAgentGraphEdgeSerializer(serializers.Serializer):
+    source = serializers.CharField()
+    target = serializers.CharField()
+    transition_count = serializers.IntegerField(min_value=0)
+    avg_latency_ms = serializers.FloatField(min_value=0)
+    total_tokens = serializers.IntegerField(min_value=0)
+    total_cost = serializers.FloatField(min_value=0)
+    error_count = serializers.IntegerField(min_value=0)
+    trace_count = serializers.IntegerField(min_value=0, allow_null=True)
+    trace_count_exact = serializers.BooleanField(required=False)
+    is_self_loop = serializers.BooleanField()
+    is_aggregate = serializers.BooleanField(required=False)
+
+
+class TraceAgentGraphResultSerializer(serializers.Serializer):
+    nodes = TraceAgentGraphNodeSerializer(many=True)
+    edges = TraceAgentGraphEdgeSerializer(many=True)
+    path_edges = TraceAgentGraphEdgeSerializer(many=True)
+    graph_collapsed = serializers.BooleanField(required=False)
+    graph_node_limit = serializers.IntegerField(required=False, min_value=1)
+    omitted_node_count = serializers.IntegerField(required=False, min_value=0)
+    query_complete = serializers.BooleanField(required=False)
+    query_status = serializers.ChoiceField(
+        choices=("complete", "pending"), required=False
+    )
+    query_sampled = serializers.BooleanField(required=False)
+    query_count = serializers.IntegerField(required=False, min_value=0)
+    query_rows_returned = serializers.IntegerField(required=False, min_value=0)
+    query_elapsed_ms = serializers.FloatField(required=False, min_value=0)
+    query_completed_at = serializers.DateTimeField(required=False)
+    query_cached = serializers.BooleanField(required=False)
+    query_refresh_failed = serializers.BooleanField(required=False)
+    query_refreshing = serializers.BooleanField(required=False)
+
+
+class TraceAgentGraphResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = TraceAgentGraphResultSerializer()
 
 
 class UsersQuerySerializer(StrictInputSerializer):
@@ -247,6 +601,65 @@ class UsersQuerySerializer(StrictInputSerializer):
     sort_params = SortParamListQueryParamField(required=False, default=list)
     filters = filter_list_query_param_field(required=False, default=list)
     export = serializers.BooleanField(required=False, default=False)
+    cursor = serializers.CharField(
+        required=False, allow_blank=False, max_length=4096, help_text=CURSOR_HELP_TEXT
+    )
+    cursor_mode = serializers.BooleanField(required=False, default=False)
+    requested_columns = JSONOrCommaSeparatedStringListField(
+        required=False,
+        default=list,
+        help_text=(
+            "JSON-encoded list of visible Users-table fields. Raw-derived "
+            "metrics are hydrated only when explicitly requested."
+        ),
+    )
+    attribute_keys = JSONOrCommaSeparatedStringListField(
+        required=False,
+        default=list,
+        help_text=(
+            "JSON-encoded list of visible custom user attribute keys. Only "
+            "these keys (plus keys required by filters) are hydrated."
+        ),
+    )
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        requested_columns = tuple(dict.fromkeys(attrs.get("requested_columns") or ()))
+        attribute_keys = tuple(dict.fromkeys(attrs.get("attribute_keys") or ()))
+        if len(requested_columns) > 100 or any(
+            len(column) > 128 for column in requested_columns
+        ):
+            raise serializers.ValidationError(
+                {
+                    "requested_columns": (
+                        "Request at most 100 Users columns (128 chars each)."
+                    )
+                }
+            )
+        if len(attribute_keys) > 100 or any(len(key) > 512 for key in attribute_keys):
+            raise serializers.ValidationError(
+                {
+                    "attribute_keys": (
+                        "Request at most 100 attribute keys (512 chars each)."
+                    )
+                }
+            )
+        if sum(len(key.encode("utf-8")) for key in attribute_keys) > 2_048:
+            raise serializers.ValidationError(
+                {
+                    "attribute_keys": (
+                        "Combined attribute keys must be at most 2048 UTF-8 bytes."
+                    )
+                }
+            )
+        attrs["requested_columns"] = list(requested_columns)
+        attrs["attribute_keys"] = list(attribute_keys)
+        return validate_cursor_exclusivity(
+            self,
+            attrs,
+            page_field="current_page_index",
+            first_page=0,
+        )
 
 
 class UsersTableRowSerializer(serializers.Serializer):
@@ -277,6 +690,13 @@ class UsersResultSerializer(serializers.Serializer):
     table = serializers.ListField(child=serializers.JSONField())
     total_count = serializers.IntegerField()
     total_pages = serializers.IntegerField()
+    count_is_lower_bound = serializers.BooleanField(required=False)
+    has_more = serializers.BooleanField(required=False)
+    next_cursor = serializers.CharField(required=False, allow_null=True)
+    query_complete = serializers.BooleanField(required=False)
+    query_status = serializers.ChoiceField(
+        choices=("complete", "degraded"), required=False
+    )
 
 
 class UsersResponseSerializer(serializers.Serializer):

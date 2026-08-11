@@ -11,33 +11,57 @@ through that ONE polymorphic method. A metric may target the migrated `spans`
 schema (system_metric / custom_attribute) OR a non-migrated legacy table
 (eval_metric → `usage_apicalllog`, annotation_metric → `model_hub_score`, both
 still on `_peerdb_is_deleted` / `deleted`). `V2RewriteMixin`'s blanket auto-wrap
-can't make that per-metric distinction — it would rename `_peerdb_is_deleted` →
-`is_deleted` on the legacy tables too. So both dispatch methods are excluded
-from the mixin and the rewrite is applied here, per metric. For legacy-table
-metrics that JOIN onto spans (breakdowns/filters by trace dimensions), the
-full rewrite is applied first (fixing spans refs like `s._peerdb_is_deleted` →
-`s.is_deleted`, `s.span_attr_str` → `s.attrs_string`), then the legacy-table
-aliases are restored (e.g. `e.is_deleted` → `e._peerdb_is_deleted`).
+cannot distinguish aliases by physical table. Both dispatch methods are
+therefore excluded from the mixin and the rewrite is applied here after
+protecting/restoring every legacy-table alias. That matters for mixed queries
+too: a system metric can JOIN `model_hub_score` for an annotation breakdown
+while its spans columns still need the v2 rewrite.
 """
 
 from __future__ import annotations
 
 import re
+from datetime import datetime
 
-from tracer.services.clickhouse.query_builders.dashboard import DashboardQueryBuilder
+from tracer.services.clickhouse.query_builders.dashboard import (
+    AGGREGATIONS,
+    DashboardQueryBuilder,
+    _sanitize_attr_key,
+)
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.query_builders.filters import (
     rewrite_and_apply_v2_settings,
 )
 
-
-# Metric types whose SQL reads tables NOT migrated to the CH 25.3 spans schema.
-_LEGACY_TABLE_METRIC_TYPES = frozenset({"eval_metric", "annotation_metric"})
-
 # Tables whose columns must NOT be rewritten (they keep `_peerdb_is_deleted`).
 _LEGACY_TABLE_RE = re.compile(
     r"(?:usage_apicalllog|model_hub_score)\s+AS\s+(\w+)", re.IGNORECASE
 )
+
+# The eval-metric builder uses candidate-scoped subqueries over the legacy
+# usage table. Their outer aliases no longer appear immediately after the
+# table token, so `_LEGACY_TABLE_RE` cannot discover them. Protect only the
+# explicitly generated usage aliases while the spans portion is rewritten.
+_USAGE_CDC_COLUMN_RE = re.compile(
+    r"\b(?P<alias>e|ev_(?:bd|f)\d+|usage_[A-Za-z0-9_]+)\."
+    r"(?P<column>_peerdb_is_deleted|_peerdb_version)\b"
+)
+
+
+def _protect_usage_cdc_columns(sql: str) -> str:
+    return _USAGE_CDC_COLUMN_RE.sub(
+        lambda match: (
+            f"{match.group('alias')}.__usage_legacy_"
+            f"{match.group('column').removeprefix('_peerdb_')}__"
+        ),
+        sql,
+    )
+
+
+def _restore_usage_cdc_columns(sql: str) -> str:
+    return sql.replace(".__usage_legacy_is_deleted__", "._peerdb_is_deleted").replace(
+        ".__usage_legacy_version__", "._peerdb_version"
+    )
 
 
 class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
@@ -45,26 +69,140 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
 
     Both `build_metric_query` and `build_all_queries` are excluded from the
     mixin's blanket rewrite because they are polymorphic over metric type (see
-    module docstring). `build_metric_query` applies the rewrite itself, per
-    metric:
-
-    * Non-legacy metrics (system_metric, custom_attribute): full rewrite.
-    * Legacy metrics (eval_metric, annotation_metric): full rewrite first
-      (so spans-JOINed refs like ``s._peerdb_is_deleted`` become
-      ``s.is_deleted``), then legacy-table aliases are restored
-      (``e.is_deleted`` → ``e._peerdb_is_deleted``).
+    module docstring). `build_metric_query` applies the rewrite itself, then
+    restores protected legacy aliases. This covers both legacy metrics and
+    mixed queries such as a system metric with an annotation/eval breakdown.
     """
 
     # dashboard_attr_rollup ships only in the v2 schema, so the fast-path is safe only here.
     _attr_rollup_available: bool = True
 
+    # Product reads use the direct-write curated dimension. This avoids a
+    # runtime dependency on the optional ClickHouse dictionary (the locked
+    # read-only production identity is intentionally not granted dictionary
+    # access) while preserving latest-live + id-remap semantics.
+    _direct_end_users_available: bool = True
+
+    # Project-scope trace-attached annotations through the direct-write traces
+    # table. The locked production read-only identity has no dictionary grants.
+    _direct_trace_project_scope_available: bool = True
+
+    # CH25 spans is partitioned by toDate(start_time). Do not inherit the
+    # legacy created_at partition hint: it is redundant for correctness and
+    # makes root metric queries ineligible for proj_root_spans.
+    _spans_partitioned_by_created_at: bool = False
+
+    # Aggregate values are customer-visible totals. Always collapse the
+    # direct-write ReplacingMergeTree explicitly; background merges and
+    # query-local settings are not correctness boundaries.
+    _latest_state_spans_required: bool = True
+
     _v2_rewrite_exclude = frozenset({"build_metric_query", "build_all_queries"})
+
+    def __init__(self, query_config: dict) -> None:
+        super().__init__(query_config)
+        # A preset range is relative to ``now``. Freeze it once per request so
+        # every concurrent metric uses identical endpoints—even across
+        # midnight while an asynchronous dashboard refresh is running.
+        self._resolved_time_range = super().parse_time_range()
+
+    def parse_time_range(self) -> tuple[datetime, datetime]:
+        return self._resolved_time_range
+
+    def _build_custom_attr_query(
+        self,
+        metric: dict,
+        aggregation: str,
+        bucket_fn: str,
+        per_metric_filters: list[dict],
+        params: dict,
+    ) -> tuple[str, dict]:
+        """Stream the common numeric custom-metric shape without ``FINAL``.
+
+        ``FINAL`` over a wide window materializes every physical span version
+        before the Map key can be reduced.  For a metric with no filters or
+        breakdowns, collapse versions in table sort-key order instead and
+        carry only the requested numeric value.  Mutable predicates remain
+        outside ``argMax`` so a later tombstone or key removal wins exactly.
+        More complex shapes keep the general builder path.
+        """
+
+        if (
+            metric.get("attribute_type", "number") != "number"
+            or self.breakdowns
+            or self.global_filters
+            or per_metric_filters
+        ):
+            return super()._build_custom_attr_query(
+                metric,
+                aggregation,
+                bucket_fn,
+                per_metric_filters,
+                params,
+            )
+
+        attr_key = _sanitize_attr_key(metric.get("attribute_key", ""))
+        params = dict(params)
+        params["custom_metric_attr_key"] = attr_key
+        aggregate = AGGREGATIONS.get(aggregation, "avg({col})").format(
+            col="metric_value"
+        )
+        sql = f"""
+            WITH latest_custom_metric_spans AS (
+                SELECT
+                    project_id,
+                    observation_type,
+                    service_name,
+                    toStartOfHour(start_time) AS identity_hour,
+                    trace_id,
+                    id,
+                    argMax(
+                        tuple(
+                            is_deleted,
+                            start_time,
+                            mapContains(
+                                attrs_number,
+                                %(custom_metric_attr_key)s
+                            ),
+                            attrs_number[%(custom_metric_attr_key)s]
+                        ),
+                        _version
+                    ) AS latest_metric_state
+                FROM spans
+                PREWHERE project_id IN %(project_ids)s
+                  AND start_time >= %(start_date)s
+                  AND start_time < %(end_date)s
+                GROUP BY
+                    project_id,
+                    observation_type,
+                    service_name,
+                    identity_hour,
+                    trace_id,
+                    id
+            ), live_custom_metric_spans AS (
+                SELECT
+                    tupleElement(latest_metric_state, 2) AS start_time,
+                    tupleElement(latest_metric_state, 4) AS metric_value
+                FROM latest_custom_metric_spans
+                WHERE tupleElement(latest_metric_state, 1) = 0
+                  AND tupleElement(latest_metric_state, 3) = 1
+                  AND tupleElement(latest_metric_state, 2) >= %(start_date)s
+                  AND tupleElement(latest_metric_state, 2) < %(end_date)s
+            )
+            SELECT
+                {bucket_fn}(start_time) AS time_bucket,
+                {aggregate} AS value
+            FROM live_custom_metric_spans
+            GROUP BY time_bucket
+            ORDER BY time_bucket
+        """
+        return sql, params
 
     def build_metric_query(self, metric: dict) -> tuple[str, dict]:
         sql, params = super().build_metric_query(metric)
+        sql = _protect_usage_cdc_columns(sql)
         sql = rewrite_and_apply_v2_settings(sql)
-        if metric.get("type") not in _LEGACY_TABLE_METRIC_TYPES:
-            return sql, params
+        sql = _restore_usage_cdc_columns(sql)
         # Mixed-table query: rewrite already fixed spans refs, now restore
         # _peerdb_is_deleted for every legacy-table alias.
         for alias in _LEGACY_TABLE_RE.findall(sql):

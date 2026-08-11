@@ -23,10 +23,14 @@ Two main query modes:
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import structlog
 
+from tracer.services.clickhouse.eval_logger_table import (
+    eval_logger_source,
+    eval_logger_version_column,
+)
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder, _parse_dt
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 
@@ -46,7 +50,6 @@ MONTHLY_TOKENS_SPENT = "monthly_tokens_spent"
 EVALUATION_METRICS = "evaluation_metrics"
 
 SPANS_TABLE = "spans"
-EVAL_TABLE = "tracer_eval_logger"
 
 
 class MonitorMetricsQueryBuilder(BaseQueryBuilder):
@@ -65,13 +68,17 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
             (used for PASS_FAIL and CHOICES eval types).
     """
 
+    # Legacy spans are time-ranged by their indexed arrival timestamp. CH25
+    # overrides this with ``start_time``, its partition and primary-key time.
+    _SPANS_TIME_COLUMN = "created_at"
+
     def __init__(
         self,
         project_id: str,
-        filters: Optional[Dict] = None,
-        eval_config_id: Optional[str] = None,
-        eval_output_type: Optional[str] = None,
-        threshold_metric_value: Optional[str] = None,
+        filters: dict | None = None,
+        eval_config_id: str | None = None,
+        eval_output_type: str | None = None,
+        threshold_metric_value: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id, **kwargs)
@@ -82,7 +89,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
 
         # Translate monitor filters to CH WHERE fragments
         self._filter_clause = ""
-        self._filter_params: Dict[str, Any] = {}
+        self._filter_params: dict[str, Any] = {}
         self._translate_filters()
 
     @staticmethod
@@ -90,14 +97,13 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         """Return exact choice membership against CH's JSON-string list column."""
         choice_array = "JSONExtract(output_str_list, 'Array(String)')"
         return (
-            f"(has({choice_array}, %({param_name})s) "
-            f"OR output_str = %({param_name})s)"
+            f"(has({choice_array}, %({param_name})s) OR output_str = %({param_name})s)"
         )
 
     def _translate_filters(self) -> None:
         """Translate raw monitor filter JSON into CH WHERE clause fragments."""
-        ch_conditions: List[str] = []
-        params: Dict[str, Any] = {}
+        ch_conditions: list[str] = []
+        params: dict[str, Any] = {}
 
         if not self.raw_filters:
             self._filter_clause = ""
@@ -116,7 +122,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                     ch_conditions.append(clause)
                     params.update(p)
             elif key == "observation_type":
-                pname = f"mf_obs_type"
+                pname = "mf_obs_type"
                 if isinstance(value, list):
                     params[pname] = tuple(value)
                     ch_conditions.append(f"observation_type IN %({pname})s")
@@ -137,11 +143,12 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                 params["mf_dr_start"] = _parse_dt(value[0])
                 params["mf_dr_end"] = _parse_dt(value[1])
                 ch_conditions.append(
-                    "created_at BETWEEN %(mf_dr_start)s AND %(mf_dr_end)s"
+                    f"{self._SPANS_TIME_COLUMN} BETWEEN "
+                    "%(mf_dr_start)s AND %(mf_dr_end)s"
                 )
             elif key == "created_at" and value:
                 params["mf_created_at"] = _parse_dt(value)
-                ch_conditions.append("created_at >= %(mf_created_at)s")
+                ch_conditions.append(f"{self._SPANS_TIME_COLUMN} >= %(mf_created_at)s")
             elif key == "project_id":
                 # Already handled by project_where()
                 pass
@@ -149,7 +156,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         self._filter_clause = " AND ".join(ch_conditions) if ch_conditions else ""
         self._filter_params = params
 
-    def build(self) -> Tuple[str, Dict[str, Any]]:
+    def build(self) -> tuple[str, dict[str, Any]]:
         """Not used directly -- use build_metric_value_query or build_time_series_query."""
         raise NotImplementedError(
             "Use build_metric_value_query() or build_time_series_query() instead."
@@ -164,7 +171,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         metric_type: str,
         start_time: datetime,
         end_time: datetime,
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """Build a query that returns a single metric value for the time window.
 
         Returns:
@@ -183,7 +190,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                 SELECT count() AS value
                 FROM {SPANS_TABLE}
                 {base_where}
-                  AND created_at BETWEEN %(start_time)s AND %(end_time)s
+                  AND {self._SPANS_TIME_COLUMN} BETWEEN
+                      %(start_time)s AND %(end_time)s
                   AND status = 'ERROR'
             """
 
@@ -195,15 +203,17 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                     END AS value
                 FROM {SPANS_TABLE}
                 {base_where}
-                  AND created_at BETWEEN %(start_time)s AND %(end_time)s
+                  AND {self._SPANS_TIME_COLUMN} BETWEEN
+                      %(start_time)s AND %(end_time)s
                   AND observation_type = 'tool'
             """
 
         elif metric_type == ERROR_FREE_SESSION_RATES:
             query = f"""
                 SELECT
-                    CASE WHEN uniq(session_id) = 0 THEN NULL
-                         ELSE uniqIf(session_id, error_count = 0) / uniq(session_id)
+                    CASE WHEN uniqExact(session_id) = 0 THEN NULL
+                         ELSE uniqExactIf(session_id, error_count = 0)
+                              / uniqExact(session_id)
                     END AS value
                 FROM (
                     SELECT
@@ -211,7 +221,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                         countIf(status = 'ERROR') AS error_count
                     FROM {SPANS_TABLE}
                     {base_where}
-                      AND created_at BETWEEN %(start_time)s AND %(end_time)s
+                      AND {self._SPANS_TIME_COLUMN} BETWEEN
+                          %(start_time)s AND %(end_time)s
                       AND session_id != ''
                       AND session_id IS NOT NULL
                     GROUP BY session_id
@@ -221,8 +232,9 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         elif metric_type == SERVICE_PROVIDER_ERROR_RATES:
             query = f"""
                 SELECT
-                    CASE WHEN uniq(provider) = 0 THEN NULL
-                         ELSE uniqIf(provider, error_count = 0) / uniq(provider)
+                    CASE WHEN uniqExact(provider) = 0 THEN NULL
+                         ELSE uniqExactIf(provider, error_count = 0)
+                              / uniqExact(provider)
                     END AS value
                 FROM (
                     SELECT
@@ -230,7 +242,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                         countIf(status = 'ERROR') AS error_count
                     FROM {SPANS_TABLE}
                     {base_where}
-                      AND created_at BETWEEN %(start_time)s AND %(end_time)s
+                      AND {self._SPANS_TIME_COLUMN} BETWEEN
+                          %(start_time)s AND %(end_time)s
                       AND provider != ''
                       AND provider IS NOT NULL
                     GROUP BY provider
@@ -245,7 +258,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                     END AS value
                 FROM {SPANS_TABLE}
                 {base_where}
-                  AND created_at BETWEEN %(start_time)s AND %(end_time)s
+                  AND {self._SPANS_TIME_COLUMN} BETWEEN
+                      %(start_time)s AND %(end_time)s
                   AND observation_type = 'llm'
             """
 
@@ -254,7 +268,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                 SELECT avg(latency_ms) AS value
                 FROM {SPANS_TABLE}
                 {base_where}
-                  AND created_at BETWEEN %(start_time)s AND %(end_time)s
+                  AND {self._SPANS_TIME_COLUMN} BETWEEN
+                      %(start_time)s AND %(end_time)s
             """
 
         elif metric_type == LLM_RESPONSE_TIME:
@@ -262,7 +277,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                 SELECT avg(latency_ms) AS value
                 FROM {SPANS_TABLE}
                 {base_where}
-                  AND created_at BETWEEN %(start_time)s AND %(end_time)s
+                  AND {self._SPANS_TIME_COLUMN} BETWEEN
+                      %(start_time)s AND %(end_time)s
                   AND observation_type = 'llm'
             """
 
@@ -271,7 +287,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                 SELECT sum(total_tokens) AS value
                 FROM {SPANS_TABLE}
                 {base_where}
-                  AND created_at BETWEEN %(start_time)s AND %(end_time)s
+                  AND {self._SPANS_TIME_COLUMN} BETWEEN
+                      %(start_time)s AND %(end_time)s
             """
 
         elif metric_type == DAILY_TOKENS_SPENT:
@@ -279,8 +296,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                 SELECT sum(total_tokens) AS value
                 FROM {SPANS_TABLE}
                 {base_where}
-                  AND created_at >= %(start_time)s
-                  AND created_at < %(end_time)s
+                  AND {self._SPANS_TIME_COLUMN} >= %(start_time)s
+                  AND {self._SPANS_TIME_COLUMN} < %(end_time)s
             """
 
         elif metric_type == MONTHLY_TOKENS_SPENT:
@@ -288,8 +305,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                 SELECT sum(total_tokens) AS value
                 FROM {SPANS_TABLE}
                 {base_where}
-                  AND created_at >= %(start_time)s
-                  AND created_at < %(end_time)s
+                  AND {self._SPANS_TIME_COLUMN} >= %(start_time)s
+                  AND {self._SPANS_TIME_COLUMN} < %(end_time)s
             """
 
         elif metric_type == EVALUATION_METRICS:
@@ -301,22 +318,20 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         return query, params
 
     def _build_eval_metric_value_query(
-        self, params: Dict[str, Any]
-    ) -> Tuple[str, Dict[str, Any]]:
-        """Build the eval metric value query against tracer_eval_logger."""
+        self, params: dict[str, Any]
+    ) -> tuple[str, dict[str, Any]]:
+        """Build the eval metric value query against the authoritative logger."""
         if not self.eval_config_id:
             return "SELECT NULL AS value", params
 
         params["eval_config_id"] = self.eval_config_id
 
-        eval_where = self._eval_base_where()
+        eval_rows = self._eval_rows_source()
 
         if self.eval_output_type == "SCORE":
             query = f"""
                 SELECT ifNotFinite(avg(output_float), NULL) AS value
-                FROM {EVAL_TABLE} FINAL
-                {eval_where}
-                  AND created_at BETWEEN %(start_time)s AND %(end_time)s
+                FROM {eval_rows}
             """
         elif self.eval_output_type == "PASS_FAIL":
             output_bool_val = 1 if self.threshold_metric_value == "Passed" else 0
@@ -325,9 +340,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                 SELECT avg(
                     CASE WHEN output_bool = %(output_bool_val)s THEN 1.0 ELSE 0.0 END
                 ) AS value
-                FROM {EVAL_TABLE} FINAL
-                {eval_where}
-                  AND created_at BETWEEN %(start_time)s AND %(end_time)s
+                FROM {eval_rows}
             """
         elif self.eval_output_type == "CHOICES":
             if not self.threshold_metric_value:
@@ -338,9 +351,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                 SELECT avg(
                     CASE WHEN {choice_match} THEN 1.0 ELSE 0.0 END
                 ) AS value
-                FROM {EVAL_TABLE} FINAL
-                {eval_where}
-                  AND created_at BETWEEN %(start_time)s AND %(end_time)s
+                FROM {eval_rows}
             """
         else:
             query = "SELECT NULL AS value"
@@ -356,7 +367,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         metric_type: str,
         start_time: datetime,
         end_time: datetime,
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """Build a query that returns mean and stddev for historical analysis.
 
         For rate-based and latency metrics, computes per-row stats.
@@ -383,7 +394,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                         CASE WHEN status = 'ERROR' THEN 1.0 ELSE 0.0 END AS is_error
                     FROM {SPANS_TABLE}
                     {base_where}
-                      AND created_at BETWEEN %(start_time)s AND %(end_time)s
+                      AND {self._SPANS_TIME_COLUMN} BETWEEN
+                          %(start_time)s AND %(end_time)s
                       AND observation_type = 'tool'
                 )
             """
@@ -398,7 +410,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                         CASE WHEN countIf(status = 'ERROR') > 0 THEN 0.0 ELSE 1.0 END AS is_error_free
                     FROM {SPANS_TABLE}
                     {base_where}
-                      AND created_at BETWEEN %(start_time)s AND %(end_time)s
+                      AND {self._SPANS_TIME_COLUMN} BETWEEN
+                          %(start_time)s AND %(end_time)s
                       AND session_id != ''
                       AND session_id IS NOT NULL
                     GROUP BY session_id
@@ -415,7 +428,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                         CASE WHEN countIf(status = 'ERROR') > 0 THEN 0.0 ELSE 1.0 END AS is_error_free
                     FROM {SPANS_TABLE}
                     {base_where}
-                      AND created_at BETWEEN %(start_time)s AND %(end_time)s
+                      AND {self._SPANS_TIME_COLUMN} BETWEEN
+                          %(start_time)s AND %(end_time)s
                       AND provider != ''
                       AND provider IS NOT NULL
                     GROUP BY provider
@@ -432,7 +446,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                         CASE WHEN status = 'ERROR' THEN 1.0 ELSE 0.0 END AS is_error
                     FROM {SPANS_TABLE}
                     {base_where}
-                      AND created_at BETWEEN %(start_time)s AND %(end_time)s
+                      AND {self._SPANS_TIME_COLUMN} BETWEEN
+                          %(start_time)s AND %(end_time)s
                       AND observation_type = 'llm'
                 )
             """
@@ -444,7 +459,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                     stddevSamp(latency_ms) AS stddev
                 FROM {SPANS_TABLE}
                 {base_where}
-                  AND created_at BETWEEN %(start_time)s AND %(end_time)s
+                  AND {self._SPANS_TIME_COLUMN} BETWEEN
+                      %(start_time)s AND %(end_time)s
             """
 
         elif metric_type == LLM_RESPONSE_TIME:
@@ -454,7 +470,8 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                     stddevSamp(latency_ms) AS stddev
                 FROM {SPANS_TABLE}
                 {base_where}
-                  AND created_at BETWEEN %(start_time)s AND %(end_time)s
+                  AND {self._SPANS_TIME_COLUMN} BETWEEN
+                      %(start_time)s AND %(end_time)s
                   AND observation_type = 'llm'
             """
 
@@ -469,23 +486,21 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         return query, params
 
     def _build_eval_stats_query(
-        self, params: Dict[str, Any]
-    ) -> Tuple[str, Dict[str, Any]]:
+        self, params: dict[str, Any]
+    ) -> tuple[str, dict[str, Any]]:
         """Build eval metric stats (mean/stddev) query."""
         if not self.eval_config_id:
             return "SELECT NULL AS mean, NULL AS stddev", params
 
         params["eval_config_id"] = self.eval_config_id
-        eval_where = self._eval_base_where()
+        eval_rows = self._eval_rows_source()
 
         if self.eval_output_type == "SCORE":
             query = f"""
                 SELECT
                     ifNotFinite(avg(output_float), NULL) AS mean,
                     ifNotFinite(stddevSamp(output_float), NULL) AS stddev
-                FROM {EVAL_TABLE} FINAL
-                {eval_where}
-                  AND created_at BETWEEN %(start_time)s AND %(end_time)s
+                FROM {eval_rows}
             """
         elif self.eval_output_type == "PASS_FAIL":
             output_bool_val = 1 if self.threshold_metric_value == "Passed" else 0
@@ -497,9 +512,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                 FROM (
                     SELECT
                         CASE WHEN output_bool = %(output_bool_val)s THEN 1.0 ELSE 0.0 END AS pass_value
-                    FROM {EVAL_TABLE} FINAL
-                    {eval_where}
-                      AND created_at BETWEEN %(start_time)s AND %(end_time)s
+                    FROM {eval_rows}
                 )
             """
         elif self.eval_output_type == "CHOICES":
@@ -514,9 +527,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
                 FROM (
                     SELECT
                         CASE WHEN {choice_match} THEN 1.0 ELSE 0.0 END AS choice_value
-                    FROM {EVAL_TABLE} FINAL
-                    {eval_where}
-                      AND created_at BETWEEN %(start_time)s AND %(end_time)s
+                    FROM {eval_rows}
                 )
             """
         else:
@@ -534,7 +545,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         start_time: datetime,
         end_time: datetime,
         frequency_seconds: int,
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """Build a time-bucketed query for graph data.
 
         Returns:
@@ -547,15 +558,21 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         params["end_time"] = _parse_dt(end_time)
         params["freq_seconds"] = frequency_seconds
 
-        bucket_expr = "toDateTime(intDiv(toUInt32(created_at), %(freq_seconds)s) * %(freq_seconds)s)"
+        span_bucket_expr = (
+            "toDateTime(intDiv(toUInt32("
+            f"{self._SPANS_TIME_COLUMN}"
+            "), %(freq_seconds)s) * %(freq_seconds)s)"
+        )
 
         base_where = self._spans_base_where()
-        time_filter = "AND created_at BETWEEN %(start_time)s AND %(end_time)s"
+        time_filter = (
+            f"AND {self._SPANS_TIME_COLUMN} BETWEEN %(start_time)s AND %(end_time)s"
+        )
 
         if metric_type in (TOKEN_USAGE, DAILY_TOKENS_SPENT, MONTHLY_TOKENS_SPENT):
             query = f"""
                 SELECT
-                    {bucket_expr} AS timestamp,
+                    {span_bucket_expr} AS timestamp,
                     sum(total_tokens) AS value
                 FROM {SPANS_TABLE}
                 {base_where}
@@ -567,7 +584,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         elif metric_type == COUNT_OF_ERRORS:
             query = f"""
                 SELECT
-                    {bucket_expr} AS timestamp,
+                    {span_bucket_expr} AS timestamp,
                     countIf(status = 'ERROR') AS value
                 FROM {SPANS_TABLE}
                 {base_where}
@@ -579,7 +596,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         elif metric_type == SPAN_RESPONSE_TIME:
             query = f"""
                 SELECT
-                    {bucket_expr} AS timestamp,
+                    {span_bucket_expr} AS timestamp,
                     avg(latency_ms) AS value
                 FROM {SPANS_TABLE}
                 {base_where}
@@ -591,7 +608,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         elif metric_type == LLM_RESPONSE_TIME:
             query = f"""
                 SELECT
-                    {bucket_expr} AS timestamp,
+                    {span_bucket_expr} AS timestamp,
                     avg(latency_ms) AS value
                 FROM {SPANS_TABLE}
                 {base_where}
@@ -608,7 +625,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
             params["obs_type_ts"] = obs_type
             query = f"""
                 SELECT
-                    {bucket_expr} AS timestamp,
+                    {span_bucket_expr} AS timestamp,
                     CASE WHEN count() = 0 THEN 0
                          ELSE countIf(status = 'ERROR') / count()
                     END AS value
@@ -624,12 +641,13 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
             query = f"""
                 SELECT
                     timestamp,
-                    CASE WHEN uniq(session_id) = 0 THEN 0
-                         ELSE uniqIf(session_id, error_count = 0) / uniq(session_id)
+                    CASE WHEN uniqExact(session_id) = 0 THEN 0
+                         ELSE uniqExactIf(session_id, error_count = 0)
+                              / uniqExact(session_id)
                     END AS value
                 FROM (
                     SELECT
-                        {bucket_expr} AS timestamp,
+                        {span_bucket_expr} AS timestamp,
                         session_id,
                         countIf(status = 'ERROR') AS error_count
                     FROM {SPANS_TABLE}
@@ -647,12 +665,13 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
             query = f"""
                 SELECT
                     timestamp,
-                    CASE WHEN uniq(provider) = 0 THEN 0
-                         ELSE uniqIf(provider, error_count = 0) / uniq(provider)
+                    CASE WHEN uniqExact(provider) = 0 THEN 0
+                         ELSE uniqExactIf(provider, error_count = 0)
+                              / uniqExact(provider)
                     END AS value
                 FROM (
                     SELECT
-                        {bucket_expr} AS timestamp,
+                        {span_bucket_expr} AS timestamp,
                         provider,
                         countIf(status = 'ERROR') AS error_count
                     FROM {SPANS_TABLE}
@@ -667,7 +686,11 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
             """
 
         elif metric_type == EVALUATION_METRICS:
-            query, params = self._build_eval_time_series_query(params, bucket_expr)
+            eval_bucket_expr = (
+                "toDateTime(intDiv(toUInt32(created_at), %(freq_seconds)s) "
+                "* %(freq_seconds)s)"
+            )
+            query, params = self._build_eval_time_series_query(params, eval_bucket_expr)
 
         else:
             query = "SELECT NULL AS timestamp, NULL AS value WHERE 1 = 0"
@@ -676,16 +699,15 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
 
     def _build_eval_time_series_query(
         self,
-        params: Dict[str, Any],
+        params: dict[str, Any],
         bucket_expr: str,
-    ) -> Tuple[str, Dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any]]:
         """Build eval metric time-series query."""
         if not self.eval_config_id:
             return "SELECT NULL AS timestamp, NULL AS value WHERE 1 = 0", params
 
         params["eval_config_id"] = self.eval_config_id
-        eval_where = self._eval_base_where()
-        time_filter = "AND created_at BETWEEN %(start_time)s AND %(end_time)s"
+        eval_rows = self._eval_rows_source()
 
         if self.eval_output_type == "SCORE":
             agg = "avg(output_float)"
@@ -708,9 +730,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
             SELECT
                 {bucket_expr} AS timestamp,
                 ifNotFinite({agg}, NULL) AS value
-            FROM {EVAL_TABLE} FINAL
-            {eval_where}
-              {time_filter}
+            FROM {eval_rows}
             GROUP BY timestamp
             ORDER BY timestamp
         """
@@ -728,23 +748,44 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
             clause += f" AND {self._filter_clause}"
         return clause
 
-    def _eval_base_where(self) -> str:
-        """Return the base WHERE clause for eval_logger table queries.
+    def _eval_rows_source(self) -> str:
+        """Return finite latest-live eval rows for this monitor window.
 
-        Scopes to the eval config and ensures the observation_span belongs
-        to the project via a subquery on spans.
+        Eval storage is an independent rollout choice from the CH25 spans
+        schema.  Production currently keeps fresh rows in the legacy-named
+        PeerDB-shaped table, while prepared stacks may select the v2 table.
+        Collapse physical versions only after config/time/project candidate
+        pruning, then apply the selected table's live-row predicate outside
+        the collapse so a tombstone cannot resurrect an older eval.
         """
         filter_extra = ""
         if self._filter_clause:
             filter_extra = f" AND {self._filter_clause}"
-
-        return (
-            f"WHERE custom_eval_config_id = toUUID(%(eval_config_id)s) "
-            f"AND is_deleted = 0 "
-            f"AND observation_span_id IN ("
-            f"  SELECT id FROM {SPANS_TABLE} "
-            f"  WHERE project_id = %(project_id)s "
-            f"  AND is_deleted = 0"
-            f"  {filter_extra}"
-            f")"
+        eval_table, _ = eval_logger_source()
+        _, live_predicate = eval_logger_source(
+            "latest_eval", include_cdc_tombstone_guard=True
         )
+        version_column = eval_logger_version_column(eval_table)
+        return f"""
+            (
+                SELECT *
+                FROM (
+                    SELECT eval_scan.*
+                    FROM {eval_table} AS eval_scan
+                    PREWHERE eval_scan.custom_eval_config_id =
+                        toUUID(%(eval_config_id)s)
+                      AND eval_scan.created_at BETWEEN
+                        %(start_time)s AND %(end_time)s
+                    WHERE eval_scan.observation_span_id IN (
+                        SELECT id
+                        FROM {SPANS_TABLE}
+                        WHERE project_id = %(project_id)s
+                          AND is_deleted = 0
+                          {filter_extra}
+                    )
+                    ORDER BY eval_scan.{version_column} DESC
+                    LIMIT 1 BY eval_scan.id
+                ) AS latest_eval
+                WHERE {live_predicate}
+            ) AS monitor_eval_rows
+        """

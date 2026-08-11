@@ -1,3 +1,4 @@
+import math
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -15,6 +16,64 @@ VAPI_PAGE_LIMIT = 100
 VAPI_MAX_PAGES = 10
 OBSERVABILITY_VERIFY_TIMEOUT_SECONDS = 30
 RETELL_CALL_HYDRATION_BOUND = 250
+
+
+def _normalize_voice_call_status(value: object) -> str | None:
+    """Return the canonical lifecycle value rendered by voice-call rows."""
+
+    if value is None:
+        return None
+    token = str(value).strip().lower()
+    if token in {
+        "ended",
+        "done",
+        "complete",
+        "completed",
+        "success",
+        "succeeded",
+        "ok",
+    }:
+        return "completed"
+    if token in {
+        "in-progress",
+        "in_progress",
+        "ongoing",
+        "started",
+        "initiated",
+        "processing",
+        "scheduled",
+        "created",
+        "dialing",
+        "connecting",
+        "ringing",
+        "queued",
+        "pending",
+    }:
+        return "in-progress"
+    if token in {"failed", "failure", "error", "errored"}:
+        return "failed"
+    if token in {
+        "dropped",
+        "cancelled",
+        "canceled",
+        "aborted",
+        "hung-up",
+        "hung_up",
+    }:
+        return "dropped"
+    if token in {
+        "not-connected",
+        "not_connected",
+        "no-answer",
+        "no_answer",
+        "unanswered",
+        "busy",
+    }:
+        return "not-connected"
+    # The public voice status is a closed five-value vocabulary. Unknown
+    # non-empty provider states are safest as transitional/in-progress; raw
+    # SPAN_ATTRIBUTE filters still expose the provider token unchanged.
+    return "in-progress" if token else None
 
 
 class ObservabilityService:
@@ -704,7 +763,7 @@ class ObservabilityService:
             "ended_at": ended_at,
             "duration_seconds": duration_seconds,
             "recording_url": recording_url,
-            "cost_cents": cost * 100 if cost else None,
+            "cost_cents": cost * 100 if cost is not None else None,
             "cost_breakdown": cost_breakdown,
             "call_metadata": raw_log_get("callMetadata"),
             "error_message": raw_log_get("errorMessage"),
@@ -765,9 +824,14 @@ class ObservabilityService:
         recording_url = raw_log_get("recording_url")
         transcripts = raw_log_get("transcript_with_tool_calls") or []
         call_cost_object = raw_log_get("call_cost") or {}
-        duration_seconds = None
-        if started_at_timestamp and ended_at_timestamp:
-            duration_seconds = int(ended_at_timestamp - started_at_timestamp)
+        duration_ms = raw_log_get("duration_ms")
+        try:
+            duration_ms = float(duration_ms)
+            duration_seconds = (
+                int(duration_ms / 1000) if math.isfinite(duration_ms) else None
+            )
+        except (TypeError, ValueError):
+            duration_seconds = None
         cost_cents = call_cost_object.get("combined_cost")
         phone_number = raw_log_get("to_number")
         metadata = raw_log_get("metadata") or {}
@@ -938,9 +1002,21 @@ class ObservabilityService:
                 else {}
             )
             duration = attrs.get("call.duration")
+            combined_cost = attrs.get("combined_cost")
+            total_cost = attrs.get("cost_breakdown.total")
+            cost_cents = (
+                combined_cost
+                if combined_cost is not None
+                else total_cost * 100
+                if total_cost is not None
+                else None
+            )
             return {
                 "call_id": sim_meta.get("call_execution_id"),
-                "status": attrs.get("call.status") or "completed",
+                "status": _normalize_voice_call_status(attrs.get("call.status"))
+                or "completed",
+                "call_type": attrs.get("call_type"),
+                "cost_cents": cost_cents,
                 "started_at": None,  # span start_time is authoritative
                 "duration_seconds": int(duration) if duration is not None else None,
                 "recording_url": attrs.get("conversation.recording.mono.combined"),
@@ -1034,12 +1110,7 @@ class ObservabilityService:
             "id": None,
             "call_id": raw_log.get("conversation_id"),
             "phone_number": None,
-            # Normalize ConvAI 'done'/'ended' to 'completed' to match other providers.
-            "status": (
-                "completed"
-                if raw_log.get("status") in ("done", "ended")
-                else raw_log.get("status")
-            ),
+            "status": _normalize_voice_call_status(raw_log.get("status")),
             "started_at": started_at,
             "created_at": started_at,
             "duration_seconds": metadata.get("call_duration_secs"),
@@ -1075,7 +1146,7 @@ class ObservabilityService:
             "id": None,
             "call_id": raw_log.get("call_id"),
             "phone_number": raw_log.get("to"),
-            "status": raw_log.get("status"),
+            "status": _normalize_voice_call_status(raw_log.get("status")),
             "started_at": raw_log.get("started_at") or raw_log.get("created_at"),
             # The list's date column binds created_at.
             "created_at": raw_log.get("created_at") or raw_log.get("started_at"),
@@ -1100,7 +1171,7 @@ class ObservabilityService:
             "id": None,
             "call_id": raw_log.get("sid"),
             "phone_number": raw_log.get("to"),
-            "status": raw_log.get("status"),
+            "status": _normalize_voice_call_status(raw_log.get("status")),
             "started_at": raw_log.get("start_time"),
             # The list's date column binds created_at.
             "created_at": raw_log.get("start_time") or raw_log.get("date_created"),

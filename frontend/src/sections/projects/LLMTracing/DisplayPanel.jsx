@@ -109,16 +109,12 @@ PanelCheck.propTypes = {
 };
 
 // ---------------------------------------------------------------------------
-// View mode tab button (Graph View / Agent Graph / Agent Path)
+// View mode tab button. Agent Path is intentionally not exposed: the current
+// telemetry records hierarchy, not authoritative chronological transitions.
 // ---------------------------------------------------------------------------
 const VIEW_MODES = [
   { key: "graph", label: "Graph View", icon: "mdi:chart-line" },
   { key: "agentGraph", label: "Agent Graph", icon: "mdi:graph-outline" },
-  {
-    key: "agentPath",
-    label: "Agent Path",
-    icon: "mdi:transit-connection-variant",
-  },
 ];
 
 const ViewTabButton = ({

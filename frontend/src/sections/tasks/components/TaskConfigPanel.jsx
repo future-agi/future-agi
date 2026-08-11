@@ -32,6 +32,7 @@ import TaskSchedulingSection from "./TaskSchedulingSection";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { PROJECT_SOURCE } from "src/utils/constants";
 import TaskFilterBar from "./TaskFilterBar";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 
 const ROW_TYPE_OPTIONS = [
   { value: "spans", label: "Spans", icon: "solar:layers-outline" },
@@ -442,9 +443,10 @@ const TaskConfigPanel = ({
         }
       } catch (error) {
         enqueueSnackbar(
-          error?.response?.data?.result ||
-            error?.response?.data?.error ||
-            "Failed to save evaluation",
+          getSafeActionErrorMessage(
+            error,
+            "Evaluation could not be saved. Please retry.",
+          ),
           { variant: "error" },
         );
         throw error;

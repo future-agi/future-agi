@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import structlog
 from django.core.exceptions import ObjectDoesNotExist
@@ -15,6 +15,9 @@ from model_hub.models.choices import (
 )
 from simulate.serializers import CallTranscriptSerializer
 from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
+
+if TYPE_CHECKING:
+    from model_hub.models.annotation_queues import AutomationRule
 
 logger = structlog.get_logger(__name__)
 
@@ -774,7 +777,14 @@ def _ch_session_fields_for_item(session_id):
         return None
 
 
-def _batch_ch_spans(span_ids, *, project_id=None, include_heavy=True, caller="render"):
+def _batch_ch_spans(
+    span_ids,
+    *,
+    project_id=None,
+    include_heavy=True,
+    caller="render",
+    reject_ambiguous_ids=False,
+):
     """Batch CH point-read for a render path: ``{str(id): CHSpan}`` over *span_ids*
     in one query. CH error → ``{}`` (FAIL OPEN — the per-item collector branch then
     renders the ``deleted`` sentinel, same as a single-read miss). Backs
@@ -783,7 +793,10 @@ def _batch_ch_spans(span_ids, *, project_id=None, include_heavy=True, caller="re
     omit for prior behavior — see :func:`_batch_ch_trace_roots` on why not ``org_id``.
     ``include_heavy`` defaults True (the render path needs the preview/content columns);
     the add path passes ``False`` to read only the identity/status columns it gates and
-    stamps on, so a large scoped add stays a sub-second point read, not a heavy scan."""
+    stamps on, so a large scoped add stays a sub-second point read, not a heavy scan.
+    ``reject_ambiguous_ids`` omits any bare id that resolves to more than one physical
+    span; the enumerated add path enables it because QueueItem cannot store the full
+    physical identity tuple."""
     if not span_ids:
         return {}
     from tracer.services.clickhouse.v2 import get_reader
@@ -805,7 +818,33 @@ def _batch_ch_spans(span_ids, *, project_id=None, include_heavy=True, caller="re
             caller=caller,
         )
         return {}
-    return {str(span.id): span for span in spans}
+    if not reject_ambiguous_ids:
+        return {str(span.id): span for span in spans}
+
+    # QueueItem's existing API/storage contract accepts only a bare span id,
+    # while ClickHouse's physical span identity is (trace_id, id, start_time).
+    # Never let a dict overwrite silently choose one physical row when the OTel
+    # span id was reused in another trace. Omitting the ambiguous id makes the
+    # add-items response report it as unresolved instead of adding the wrong row.
+    resolved = {}
+    ambiguous_ids = set()
+    for span in spans:
+        span_id = str(span.id)
+        if span_id in ambiguous_ids:
+            continue
+        if span_id in resolved:
+            resolved.pop(span_id, None)
+            ambiguous_ids.add(span_id)
+            continue
+        resolved[span_id] = span
+
+    if ambiguous_ids:
+        logger.warning(
+            "annotation_queue_ambiguous_span_identity",
+            count=len(ambiguous_ids),
+            caller=caller,
+        )
+    return resolved
 
 
 # Chunk the trace-id IN-list so one batch can't grow unbounded; a queue's selection
@@ -1130,7 +1169,11 @@ def _resolve_ch_sources_bulk(source_type, ids, *, project_id, organization, work
         }
     if source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
         spans = _batch_ch_spans(
-            ids, project_id=pid, include_heavy=False, caller="add_items"
+            ids,
+            project_id=pid,
+            include_heavy=False,
+            caller="add_items",
+            reject_ambiguous_ids=True,
         )
         return {(source_type, str(span_id)): span for span_id, span in spans.items()}
     if source_type == QueueItemSourceType.TRACE_SESSION.value:
@@ -2282,6 +2325,17 @@ RULE_TRIGGER_INTERVALS = {
 # auto-assign + finalize work bounded enough to fit inside an HTTP timeout.
 RULE_RUN_SYNC_THRESHOLD = 500
 
+# Automation writes are intentionally bounded.  The ClickHouse bulk selector
+# can prove an exact prefix plus one sentinel up to this size; if the sentinel
+# exists we fail before creating any QueueItem so a run is never a silent
+# partial selection.
+AUTOMATION_RULE_MATCH_LIMIT = 10_000
+AUTOMATION_RULE_MATCH_LIMIT_ERROR = (
+    "Automation rules support at most 10,000 matching items per run. "
+    "This rule matched more than 10,000 items, so nothing was added. "
+    "Narrow the filters or shorten the time range and run it again."
+)
+
 
 def is_automation_rule_due(rule, now=None):
     """Return True when a non-manual automation rule should run."""
@@ -2648,16 +2702,20 @@ def _resolve_dataset_rule_ids(rule, filters, dataset_id, cap):
         rows = rows.filter(id__in=matching_cells.values_list("row_id", flat=True))
 
     rows = rows.order_by("order", "id")
-    total_matching = rows.count()
-    ids = list(rows.values_list("id", flat=True)[:cap])
+    # Fetch one bounded sentinel row instead of counting the full filtered
+    # queryset.  At or below the cap this is the exact total; above it the
+    # cap+1 value is sufficient for the caller's all-or-nothing overflow
+    # guard, without an unbounded COUNT(*) on a large dataset.
+    candidate_ids = list(rows.values_list("id", flat=True)[: cap + 1])
+    truncated = len(candidate_ids) > cap
+    ids = candidate_ids[:cap]
+    total_matching = len(ids) + (1 if truncated else 0)
     return total_matching, ids
 
 
 def _add_source_ids_to_queue(
     rule, source_ids, total_matching, dry_run=False, project_id=None
 ):
-    from model_hub.models.annotation_queues import QueueItem
-
     fk_field = get_fk_field_name(rule.source_type)
     if not fk_field:
         return {"matched": 0, "added": 0, "duplicates": 0, "error": "Invalid FK field"}
@@ -2671,6 +2729,20 @@ def _add_source_ids_to_queue(
         if total_matching > len(source_ids):
             result["truncated"] = True
         return result
+
+    # The resolver returns at most ``cap`` ids plus an exact overflow signal.
+    # Refuse the entire run before any queue read/write when it cannot prove
+    # the full selection fits within the supported ceiling.
+    if total_matching > len(source_ids):
+        return {
+            "matched": total_matching,
+            "added": 0,
+            "duplicates": 0,
+            "truncated": True,
+            "error": AUTOMATION_RULE_MATCH_LIMIT_ERROR,
+        }
+
+    from model_hub.models.annotation_queues import QueueItem
 
     candidate_ids = list(dict.fromkeys(source_ids))
     existing_source_ids = {
@@ -2925,7 +2997,12 @@ def _evaluate_filter_mode_rule(
     )
 
 
-def evaluate_rule(rule, dry_run=False, user=None, cap=1000):
+def evaluate_rule(
+    rule: "AutomationRule",
+    dry_run: bool = False,
+    user: Any | None = None,
+    cap: int = AUTOMATION_RULE_MATCH_LIMIT,
+) -> dict[str, Any]:
     """Evaluate an automation rule and add matching items to the queue.
     Returns dict with 'matched', 'added', 'duplicates' counts.
     """
@@ -3161,6 +3238,18 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
         if truncated:
             result["truncated"] = True
         return result
+
+    if truncated:
+        # Deterministic all-or-nothing semantics: never enqueue only the first
+        # page of a larger selection.  This check precedes every QueueItem
+        # query, bulk_create, rule watermark update, assignment, and email.
+        return {
+            "matched": matched,
+            "added": 0,
+            "duplicates": 0,
+            "truncated": True,
+            "error": AUTOMATION_RULE_MATCH_LIMIT_ERROR,
+        }
 
     added = 0
     duplicates = 0

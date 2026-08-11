@@ -54,10 +54,12 @@ const CustomColumnDialog = ({
 
   const filteredAttributes = useMemo(() => {
     const allAttrs = attributes || [];
-    // Exclude attributes that are standard (non-custom) columns
-    const standardIds = new Set(
+    // Visible first-class columns are already shown. Keep hidden first-class
+    // attributes selectable: choosing one promotes it to a persisted custom
+    // visibility override without creating a duplicate grid column.
+    const visibleStandardIds = new Set(
       (existingColumns || [])
-        .filter((c) => c.groupBy !== "Custom Columns")
+        .filter((c) => c.groupBy !== "Custom Columns" && c.isVisible !== false)
         .map((c) => c.id),
     );
     // Build the union of API-surfaced attributes and currently-added
@@ -70,7 +72,7 @@ const CustomColumnDialog = ({
     const merged = [];
     for (const attr of allAttrs) {
       const key = attrKey(attr);
-      if (standardIds.has(key) || seen.has(key)) continue;
+      if (visibleStandardIds.has(key) || seen.has(key)) continue;
       seen.add(key);
       merged.push(attr);
     }

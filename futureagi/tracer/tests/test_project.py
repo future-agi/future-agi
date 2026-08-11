@@ -5,19 +5,17 @@ Tests for /tracer/project/ endpoints.
 """
 
 import json
-import uuid
-from datetime import UTC, timedelta
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
-from django.utils import timezone
+from clickhouse_driver.errors import ServerException
 from rest_framework import status
 
 from accounts.models.user import OrgApiKey
 from model_hub.models.ai_model import AIModel
-from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
-from tracer.models.trace import Trace
-from tracer.models.trace_session import TraceSession
 
 AUTH_REQUIRED_STATUS_CODES = (
     status.HTTP_401_UNAUTHORIZED,
@@ -31,10 +29,6 @@ def get_result(response):
     return data.get("result", data)
 
 
-def _iso_z(value):
-    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-
-
 def _chart_filter(column_id, filter_type, filter_op, filter_value, col_type=None):
     filter_config = {
         "filter_type": filter_type,
@@ -44,17 +38,6 @@ def _chart_filter(column_id, filter_type, filter_op, filter_value, col_type=None
     if col_type:
         filter_config["col_type"] = col_type
     return {"column_id": column_id, "filter_config": filter_config}
-
-
-def _traffic_sum(graph_payload):
-    return sum(
-        int(row.get("traffic", 0))
-        for row in get_result_from_graph(graph_payload)["system_metrics"]["traffic"]
-    )
-
-
-def get_result_from_graph(payload):
-    return payload.get("result", payload)
 
 
 @pytest.mark.integration
@@ -203,6 +186,342 @@ class TestObserveProjectListAPI:
         assert data["metadata"]["total_rows"] == 1
         assert data["table"][0]["id"] == str(observe_project.id)
         assert data["table"][0]["issues"] == 0
+
+    def test_list_projects_reads_latest_activity_from_direct_ch25(
+        self, auth_client, observe_project
+    ):
+        last_active = datetime(2026, 8, 11, 12, tzinfo=UTC)
+        day = last_active.strftime("%Y-%m-%d")
+        remaining_timeouts = iter((30_000, 20_000, 10_000))
+        deadline = SimpleNamespace(remaining_ms=lambda: next(remaining_timeouts))
+        with (
+            patch("tracer.views.project.V2AnalyticsQueryService") as service_class,
+            patch("tracer.views.project.timezone.now", return_value=last_active),
+            patch(
+                "tracer.views.project.ReadDeadline.start",
+                return_value=deadline,
+            ) as deadline_start,
+        ):
+            service = service_class.return_value
+
+            def activity_rows(_query, params, **_kwargs):
+                if params["activity_end"] != "2026-08-12":
+                    return SimpleNamespace(data=[])
+                return SimpleNamespace(
+                    data=[
+                        {
+                            "project_id_text": str(observe_project.id),
+                            "volume": 3,
+                            "last_active": last_active,
+                            "daily_volume": [(day, 3)],
+                        }
+                    ]
+                )
+
+            service.execute_ch_query.side_effect = activity_rows
+            response = auth_client.get("/tracer/project/list_projects/")
+
+        assert response.status_code == status.HTTP_200_OK
+        row = get_result(response)["table"][0]
+        assert row["last_30_days_vol"] == 3
+        assert row["last_active"] == last_active.isoformat()
+        assert row["daily_volume"][-1] == 3
+        assert len(row["daily_volume"]) == 30
+        assert row["activity_query_complete"] is True
+        assert row["activity_error_code"] is None
+
+        deadline_start.assert_called_once_with(30_000)
+        assert service.execute_ch_query.call_count == 3
+        query = service.execute_ch_query.call_args_list[0].args[0]
+        compact_query = " ".join(query.split())
+        assert "FROM spans FINAL" not in compact_query
+        assert "WITH latest_physical_spans AS" in compact_query
+        assert "FROM traces" not in compact_query
+        assert "trace_count_rollup" not in compact_query
+        assert "argMax(" in compact_query
+        assert "tuple( parent_span_id, start_time, is_deleted )" in compact_query
+        assert "_version ) AS latest_span_state" in compact_query
+        assert "PREWHERE project_id IN %(pids)s" in compact_query
+        assert "start_time >= toDateTime64(" in compact_query
+        assert "start_time < toDateTime64(" in compact_query
+        assert "WHERE latest_span_state.3 = 0" in compact_query
+        assert "AND latest_span_state.1 = ''" in compact_query
+        assert "toDate(latest_span_state.2) AS day" in compact_query
+        assert (
+            "GROUP BY project_id, observation_type, service_name, "
+            "toStartOfHour(start_time), trace_id, id"
+        ) in compact_query
+        assert "GROUP BY project_id, day" in compact_query
+        assert [call.args[1] for call in service.execute_ch_query.call_args_list] == [
+            {
+                "pids": [str(observe_project.id)],
+                "activity_start": "2026-05-14",
+                "activity_end": "2026-06-13",
+                "volume_start": "2026-07-13",
+            },
+            {
+                "pids": [str(observe_project.id)],
+                "activity_start": "2026-06-13",
+                "activity_end": "2026-07-13",
+                "volume_start": "2026-07-13",
+            },
+            {
+                "pids": [str(observe_project.id)],
+                "activity_start": "2026-07-13",
+                "activity_end": "2026-08-12",
+                "volume_start": "2026-07-13",
+            },
+        ]
+        assert [
+            call.kwargs["timeout_ms"]
+            for call in service.execute_ch_query.call_args_list
+        ] == [30_000, 20_000, 10_000]
+        for call in service.execute_ch_query.call_args_list:
+            call_kwargs = call.kwargs
+            assert call_kwargs["settings"]["max_threads"] == 1
+            assert call_kwargs["settings"]["max_block_size"] == 8_192
+            assert "max_rows_to_read" not in call_kwargs["settings"]
+            assert (
+                call_kwargs["settings"]["max_bytes_to_read"] == 8 * 1024 * 1024 * 1024
+            )
+            assert (
+                call_kwargs["settings"]["max_memory_usage"] == 36 * 1024 * 1024 * 1024
+            )
+            assert call_kwargs["settings"]["max_result_rows"] == 1_000
+            assert "use_skip_indexes_if_final" not in call_kwargs["settings"]
+            assert "force_optimize_projection" not in call_kwargs["settings"]
+
+    def test_list_projects_latest_root_versions_use_event_time_and_tombstones(
+        self, auth_client, observe_project
+    ):
+        now = datetime(2026, 8, 11, 12, tzinfo=UTC)
+        pid = str(observe_project.id)
+        versions = [
+            {
+                "id": "deleted-trace",
+                "project_id": pid,
+                "start_time": now - timedelta(days=1),
+                "created_at": now,
+                "is_deleted": 0,
+                "version": 10,
+            },
+            {
+                "id": "deleted-trace",
+                "project_id": pid,
+                "start_time": now - timedelta(days=1),
+                "created_at": now,
+                "is_deleted": 1,
+                "version": 11,
+            },
+            {
+                "id": "resurrected-trace",
+                "project_id": pid,
+                "start_time": now - timedelta(hours=2),
+                "created_at": now,
+                "is_deleted": 0,
+                "version": 20,
+            },
+            {
+                "id": "resurrected-trace",
+                "project_id": pid,
+                "start_time": now - timedelta(hours=2),
+                "created_at": now,
+                "is_deleted": 1,
+                "version": 21,
+            },
+            {
+                "id": "resurrected-trace",
+                "project_id": pid,
+                "start_time": now - timedelta(hours=2),
+                "created_at": now,
+                "is_deleted": 0,
+                "version": 22,
+            },
+            {
+                "id": "older-live-trace",
+                "project_id": pid,
+                "start_time": now - timedelta(days=45),
+                "created_at": now,
+                "is_deleted": 0,
+                "version": 30,
+            },
+            {
+                # A historical span imported today must stay outside the 90D
+                # activity window; PG Trace.created_at would misclassify it.
+                "id": "late-historical-import",
+                "project_id": pid,
+                "start_time": now - timedelta(days=120),
+                "created_at": now,
+                "is_deleted": 0,
+                "version": 40,
+            },
+        ]
+
+        with (
+            patch("tracer.views.project.V2AnalyticsQueryService") as service_class,
+            patch("tracer.views.project.timezone.now", return_value=now),
+        ):
+            service = service_class.return_value
+
+            def execute_latest_state(query, params, **_kwargs):
+                compact_query = " ".join(query.split())
+                assert "FROM spans FINAL" not in compact_query
+                assert "WITH latest_physical_spans AS" in compact_query
+                assert "WHERE latest_span_state.3 = 0" in compact_query
+                assert "AND latest_span_state.1 = ''" in compact_query
+                assert "created_at" not in compact_query
+                assert params["pids"] == [pid]
+
+                chunk_start = datetime.fromisoformat(params["activity_start"]).replace(
+                    tzinfo=UTC
+                )
+                chunk_end = datetime.fromisoformat(params["activity_end"]).replace(
+                    tzinfo=UTC
+                )
+                latest = {}
+                for version in versions:
+                    if not chunk_start <= version["start_time"] < chunk_end:
+                        continue
+                    identity = (version["project_id"], version["id"])
+                    current = latest.get(identity)
+                    if current is None or version["version"] > current["version"]:
+                        latest[identity] = version
+                live = [row for row in latest.values() if not row["is_deleted"]]
+                recent = [
+                    row
+                    for row in live
+                    if row["start_time"].date() >= now.date() - timedelta(days=29)
+                ]
+                daily = {}
+                for row in recent:
+                    day = row["start_time"].strftime("%Y-%m-%d")
+                    daily[day] = daily.get(day, 0) + 1
+                if not live:
+                    return SimpleNamespace(data=[])
+                return SimpleNamespace(
+                    data=[
+                        {
+                            "project_id_text": pid,
+                            "volume": len(recent),
+                            "last_active": max(row["start_time"] for row in live),
+                            "daily_volume": sorted(daily.items()),
+                        }
+                    ]
+                )
+
+            service.execute_ch_query.side_effect = execute_latest_state
+            response = auth_client.get("/tracer/project/list_projects/")
+
+        assert response.status_code == status.HTTP_200_OK
+        row = get_result(response)["table"][0]
+        assert row["last_30_days_vol"] == 1
+        assert row["daily_volume"][-1] == 1
+        assert len(row["daily_volume"]) == 30
+        assert row["last_active"] == (now - timedelta(hours=2)).isoformat()
+        assert service.execute_ch_query.call_count == 3
+
+    def test_list_projects_discards_activity_atomically_on_malformed_result(
+        self, auth_client, observe_project
+    ):
+        now = datetime(2026, 8, 11, 12, tzinfo=UTC)
+        with (
+            patch("tracer.views.project.V2AnalyticsQueryService") as service_class,
+            patch("tracer.views.project.timezone.now", return_value=now),
+        ):
+            service = service_class.return_value
+            service.execute_ch_query.return_value = SimpleNamespace(
+                data=[
+                    {
+                        "project_id_text": str(observe_project.id),
+                        "volume": 5,
+                        "last_active": now,
+                        "daily_volume": [("2026-08-11", "not-an-integer")],
+                    }
+                ]
+            )
+            response = auth_client.get("/tracer/project/list_projects/")
+
+        assert response.status_code == status.HTTP_200_OK
+        row = get_result(response)["table"][0]
+        assert row["last_30_days_vol"] is None
+        assert row["daily_volume"] is None
+        assert row["last_active"] is None
+        assert row["activity_query_complete"] is False
+        assert row["activity_error_code"] == "project_activity_unavailable"
+        service.execute_ch_query.assert_called_once()
+
+    def test_list_projects_discards_activity_atomically_when_exact_read_fails(
+        self, auth_client, observe_project
+    ):
+        now = datetime(2026, 8, 11, 12, tzinfo=UTC)
+        with (
+            patch("tracer.views.project.V2AnalyticsQueryService") as service_class,
+            patch("tracer.views.project.timezone.now", return_value=now),
+        ):
+            service = service_class.return_value
+            service.execute_ch_query.side_effect = RuntimeError(
+                "bounded exact read unavailable"
+            )
+            response = auth_client.get("/tracer/project/list_projects/")
+
+        assert response.status_code == status.HTTP_200_OK
+        row = get_result(response)["table"][0]
+        assert row["last_30_days_vol"] is None
+        assert row["daily_volume"] is None
+        assert row["last_active"] is None
+        assert row["activity_query_complete"] is False
+        assert row["activity_error_code"] == "project_activity_unavailable"
+        service.execute_ch_query.assert_called_once()
+
+    def test_list_projects_discards_earlier_chunk_when_later_chunk_fails(
+        self, auth_client, observe_project
+    ):
+        now = datetime(2026, 8, 11, 12, tzinfo=UTC)
+        with (
+            patch("tracer.views.project.V2AnalyticsQueryService") as service_class,
+            patch("tracer.views.project.timezone.now", return_value=now),
+        ):
+            service = service_class.return_value
+            service.execute_ch_query.side_effect = [
+                SimpleNamespace(
+                    data=[
+                        {
+                            "project_id_text": str(observe_project.id),
+                            "volume": 0,
+                            "last_active": now - timedelta(days=70),
+                            "daily_volume": [],
+                        }
+                    ]
+                ),
+                RuntimeError("second exact chunk unavailable"),
+            ]
+            response = auth_client.get("/tracer/project/list_projects/")
+
+        assert response.status_code == status.HTTP_200_OK
+        row = get_result(response)["table"][0]
+        assert row["last_30_days_vol"] is None
+        assert row["daily_volume"] is None
+        assert row["last_active"] is None
+        assert row["activity_query_complete"] is False
+        assert row["activity_error_code"] == "project_activity_unavailable"
+        assert service.execute_ch_query.call_count == 2
+
+    def test_list_projects_skips_unbounded_locked_profile_read(
+        self, auth_client, observe_project
+    ):
+        with patch("tracer.views.project.V2AnalyticsQueryService") as service_class:
+            service = service_class.return_value
+            service.supports_per_query_read_settings = False
+            response = auth_client.get("/tracer/project/list_projects/")
+
+        assert response.status_code == status.HTTP_200_OK
+        row = get_result(response)["table"][0]
+        assert row["last_30_days_vol"] is None
+        assert row["daily_volume"] is None
+        assert row["last_active"] is None
+        assert row["activity_query_complete"] is False
+        assert row["activity_error_code"] == "project_activity_unavailable"
+        service.execute_ch_query.assert_not_called()
 
 
 @pytest.mark.integration
@@ -673,171 +992,187 @@ class TestProjectGraphDataAPI:
 
     def test_get_graph_data_success(self, auth_client, project):
         """Get graph data for a project."""
-        response = auth_client.get(
-            "/tracer/project/get_graph_data/",
-            {"project_id": str(project.id), "interval": "hour"},
-        )
+        exact_metrics = {
+            "latency": [],
+            "tokens": [],
+            "cost": [],
+            "traffic": [],
+            "query_complete": True,
+            "query_status": "complete",
+            "query_sampled": False,
+        }
+        with patch(
+            "tracer.views.project.get_all_system_metrics",
+            return_value=exact_metrics,
+        ):
+            response = auth_client.get(
+                "/tracer/project/get_graph_data/",
+                {"project_id": str(project.id), "interval": "hour"},
+            )
         assert response.status_code == status.HTTP_200_OK
         data = get_result(response)
-        assert "system_metrics" in data
-        assert "evaluations" in data
+        assert data == {"system_metrics": exact_metrics, "evaluations": {}}
+
+    @pytest.mark.parametrize(
+        ("failure", "expected_status", "expected_code"),
+        [
+            (
+                ServerException("private timeout stack", code=159),
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "service_unavailable",
+            ),
+            (
+                RuntimeError("private programming defect"),
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "server_error",
+            ),
+        ],
+    )
+    def test_get_graph_data_classifies_and_sanitizes_failures(
+        self,
+        auth_client,
+        project,
+        failure,
+        expected_status,
+        expected_code,
+    ):
+        with patch(
+            "tracer.views.project.get_all_system_metrics",
+            side_effect=failure,
+        ):
+            response = auth_client.get(
+                "/tracer/project/get_graph_data/",
+                {"project_id": str(project.id), "interval": "hour"},
+            )
+
+        assert response.status_code == expected_status
+        assert response.json()["code"] == expected_code
+        assert "private" not in str(response.json())
+
+    @patch("tracer.views.project.get_all_system_metrics")
+    def test_get_graph_data_rejects_sample_even_with_legacy_opt_in(
+        self,
+        get_metrics,
+        auth_client,
+        observe_project,
+    ):
+        get_metrics.return_value = {
+            "latency": [{"timestamp": "2026-08-03T00:00:00Z", "latency": 12}],
+            "tokens": [],
+            "cost": [],
+            "traffic": [],
+            "query_complete": False,
+            "query_status": "sampled",
+            "query_sampled": True,
+            "query_error_code": "sample_limit",
+            "query_sampling_strategy": "time_stratified_latest_state",
+            "query_sampling_strata": 8,
+            "query_sampling_strata_completed": 8,
+        }
+        params = {"project_id": str(observe_project.id), "interval": "day"}
+
+        legacy_response = auth_client.get(
+            "/tracer/project/get_graph_data/",
+            params,
+        )
+        opted_in_response = auth_client.get(
+            "/tracer/project/get_graph_data/",
+            {**params, "allow_sampled": "true"},
+        )
+
+        assert legacy_response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert opted_in_response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+
+    @patch("tracer.views.project.fetch_annotation_graph_ch")
+    @patch("tracer.views.project.V2AnalyticsQueryService")
+    def test_users_aggregate_graph_rejects_sample_even_with_legacy_opt_in(
+        self,
+        _analytics,
+        fetch_annotation,
+        auth_client,
+        observe_project,
+    ):
+        fetch_annotation.return_value = {
+            "metric_name": "annotation-id",
+            "data": [{"timestamp": "2026-08-03T00:00:00Z", "value": 50}],
+            "query_complete": False,
+            "query_status": "sampled",
+            "query_sampled": True,
+            "query_error_code": "sample_limit",
+            "query_sampling_strategy": "time_stratified_latest_state",
+            "query_sampling_strata": 8,
+            "query_sampling_strata_completed": 8,
+        }
+        request_body = {
+            "project_id": str(observe_project.id),
+            "interval": "day",
+            "filters": [],
+            "property": "average",
+            "req_data_config": {
+                "id": "annotation-id",
+                "type": "ANNOTATION",
+                "output_type": "SCORE",
+            },
+        }
+
+        legacy_response = auth_client.post(
+            "/tracer/project/get_users_aggregate_graph_data/",
+            request_body,
+            format="json",
+        )
+        opted_in_response = auth_client.post(
+            ("/tracer/project/get_users_aggregate_graph_data/?allow_sampled=true"),
+            request_body,
+            format="json",
+        )
+
+        assert legacy_response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert opted_in_response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
 
     def test_get_graph_data_applies_observe_chart_filters(
         self, auth_client, observe_project
     ):
         """Observe chart graphs must honor non-date filters from the UI."""
-        suffix = uuid.uuid4().hex[:8]
-        session = TraceSession.objects.create(
-            project=observe_project,
-            name=f"Chart filter session {suffix}",
-            bookmarked=False,
-        )
-        trace_a = Trace.objects.create(
-            project=observe_project,
-            session=session,
-            name=f"Chart filter trace A {suffix}",
-        )
-        trace_b = Trace.objects.create(
-            project=observe_project,
-            name=f"Chart filter trace B {suffix}",
-        )
-
-        now = timezone.now()
-        span_a = ObservationSpan.objects.create(
-            id=f"chart_filter_a_{suffix}",
-            project=observe_project,
-            trace=trace_a,
-            name=f"Chart filter target {suffix}",
-            observation_type="llm",
-            start_time=now - timedelta(milliseconds=400),
-            end_time=now,
-            latency_ms=100,
-            prompt_tokens=2,
-            completion_tokens=3,
-            total_tokens=5,
-            cost=0.01,
-            status="OK",
-            span_attributes={"api_journey_marker": f"target-{suffix}"},
-        )
-        ObservationSpan.objects.create(
-            id=f"chart_filter_a_child_{suffix}",
-            project=observe_project,
-            trace=trace_a,
-            parent_span_id=span_a.id,
-            name=f"Chart filter session peer {suffix}",
-            observation_type="tool",
-            start_time=now - timedelta(milliseconds=300),
-            end_time=now,
-            latency_ms=200,
-            prompt_tokens=4,
-            completion_tokens=6,
-            total_tokens=10,
-            cost=0.02,
-            status="OK",
-            span_attributes={"api_journey_marker": f"peer-{suffix}"},
-        )
-        span_b = ObservationSpan.objects.create(
-            id=f"chart_filter_b_{suffix}",
-            project=observe_project,
-            trace=trace_b,
-            name=f"Chart filter other {suffix}",
-            observation_type="llm",
-            start_time=now - timedelta(milliseconds=200),
-            end_time=now,
-            latency_ms=300,
-            prompt_tokens=8,
-            completion_tokens=12,
-            total_tokens=20,
-            cost=0.03,
-            status="OK",
-            span_attributes={"api_journey_marker": f"other-{suffix}"},
-        )
-
         date_filter = _chart_filter(
             "created_at",
             "datetime",
             "between",
-            [_iso_z(now - timedelta(days=1)), _iso_z(now + timedelta(days=1))],
+            ["2026-08-01T00:00:00Z", "2026-08-02T00:00:00Z"],
         )
+        attribute_filter = _chart_filter(
+            "api_journey_marker",
+            "text",
+            "equals",
+            "target-value",
+            col_type="SPAN_ATTRIBUTE",
+        )
+        exact_metrics = {
+            "latency": [],
+            "tokens": [],
+            "cost": [],
+            "traffic": [],
+            "query_complete": True,
+            "query_status": "complete",
+            "query_sampled": False,
+        }
 
-        def get_chart(filters):
+        with patch(
+            "tracer.views.project.get_all_system_metrics",
+            return_value=exact_metrics,
+        ) as get_metrics:
             response = auth_client.get(
                 "/tracer/project/get_graph_data/",
                 {
                     "project_id": str(observe_project.id),
                     "interval": "day",
-                    "filters": json.dumps(filters),
+                    "filters": json.dumps([date_filter, attribute_filter]),
                 },
             )
-            assert response.status_code == status.HTTP_200_OK
-            return get_result(response)
 
-        assert _traffic_sum(get_chart([date_filter])) == 3
-        assert (
-            _traffic_sum(
-                get_chart(
-                    [
-                        date_filter,
-                        _chart_filter(
-                            "trace_id",
-                            "text",
-                            "equals",
-                            str(trace_a.id),
-                            col_type="SYSTEM_METRIC",
-                        ),
-                    ]
-                )
-            )
-            == 2
-        )
-        assert (
-            _traffic_sum(
-                get_chart(
-                    [
-                        date_filter,
-                        _chart_filter(
-                            "session_id",
-                            "text",
-                            "equals",
-                            str(session.id),
-                            col_type="SYSTEM_METRIC",
-                        ),
-                    ]
-                )
-            )
-            == 2
-        )
-        assert (
-            _traffic_sum(
-                get_chart(
-                    [
-                        date_filter,
-                        _chart_filter(
-                            "span_id",
-                            "text",
-                            "equals",
-                            span_b.id,
-                            col_type="SYSTEM_METRIC",
-                        ),
-                    ]
-                )
-            )
-            == 1
-        )
-        assert (
-            _traffic_sum(
-                get_chart(
-                    [
-                        date_filter,
-                        _chart_filter(
-                            "api_journey_marker",
-                            "text",
-                            "equals",
-                            f"target-{suffix}",
-                            col_type="SPAN_ATTRIBUTE",
-                        ),
-                    ]
-                )
-            )
-            == 1
-        )
+        assert response.status_code == status.HTTP_200_OK
+        kwargs = get_metrics.call_args.kwargs
+        assert kwargs["system_metric_filters"] == {
+            "project_id": str(observe_project.id)
+        }
+        assert kwargs["filters"] == [date_filter, attribute_filter]
+        assert kwargs["interval"] == "day"

@@ -156,7 +156,7 @@ const EvalPickerContent = ({ onStepChange }) => {
       {/* Step content */}
       <Box sx={{ flex: 1, overflow: "auto", minHeight: 0 }}>
         <ErrorBoundary
-          fallbackRender={({ error, resetErrorBoundary }) => (
+          fallbackRender={({ resetErrorBoundary }) => (
             <Box
               sx={{
                 display: "flex",
@@ -179,17 +179,6 @@ const EvalPickerContent = ({ onStepChange }) => {
                 sx={{ maxWidth: 400, textAlign: "center" }}
               >
                 Something went wrong loading this evaluation.
-              </Typography>
-              <Typography
-                variant="caption"
-                color="text.disabled"
-                sx={{
-                  maxWidth: 400,
-                  textAlign: "center",
-                  fontFamily: "monospace",
-                }}
-              >
-                {error?.message}
               </Typography>
               <Button
                 size="small"

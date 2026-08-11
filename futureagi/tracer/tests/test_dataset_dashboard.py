@@ -14,8 +14,7 @@ Covers:
 """
 
 import uuid
-from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch
+from datetime import datetime
 
 import pytest
 
@@ -64,7 +63,7 @@ def eval_score_config(base_query_config):
     eval_id = str(uuid.uuid4())
     base_query_config["metrics"] = [
         {
-            "id": f"faithfulness_avg",
+            "id": "faithfulness_avg",
             "name": "faithfulness",
             "type": "eval_metric",
             "aggregation": "avg",
@@ -218,7 +217,7 @@ class TestDatasetDimensions:
         assert set(DATASET_FILTER_COLUMNS.keys()) == expected
 
     def test_breakdown_columns_use_supported_expressions(self):
-        for name, expr in DATASET_BREAKDOWN_COLUMNS.items():
+        for _name, expr in DATASET_BREAKDOWN_COLUMNS.items():
             assert "c." in expr or "dictGet" in expr or "toString" in expr
 
 
@@ -260,7 +259,7 @@ class TestDatasetSystemMetricQueries:
         ]
         builder = DatasetQueryBuilder(base_query_config)
         sql, _ = builder.build_metric_query(base_query_config["metrics"][0])
-        assert "quantile(0.9)(response_time)" in sql
+        assert "quantileExact(0.9)(response_time)" in sql
 
     def test_cell_error_rate_avg(self, base_query_config):
         base_query_config["metrics"] = [
@@ -270,9 +269,7 @@ class TestDatasetSystemMetricQueries:
         sql, _ = builder.build_metric_query(base_query_config["metrics"][0])
         assert "CASE WHEN status = 'error'" in sql
 
-    def test_dataset_string_metric_defaults_to_count_distinct(
-        self, base_query_config
-    ):
+    def test_dataset_string_metric_defaults_to_count_distinct(self, base_query_config):
         base_query_config["metrics"] = [
             {
                 "id": "dataset",
@@ -286,13 +283,11 @@ class TestDatasetSystemMetricQueries:
         queries = builder.build_all_queries()
         sql, _, metric_info = queries[0]
 
-        assert "uniqIf(" in sql
+        assert "uniqExactIf(" in sql
         assert "dataset_dict" in sql
         assert metric_info["aggregation"] == "count_distinct"
 
-    def test_dataset_string_metric_count_counts_present_values(
-        self, base_query_config
-    ):
+    def test_dataset_string_metric_count_counts_present_values(self, base_query_config):
         base_query_config["metrics"] = [
             {
                 "id": "dataset",
@@ -321,7 +316,7 @@ class TestDatasetSystemMetricQueries:
 
         sql, _ = builder.build_metric_query(base_query_config["metrics"][0])
 
-        assert "uniqIf(" in sql
+        assert "uniqExactIf(" in sql
         assert "column_dict" in sql
         assert "source" in sql
 
@@ -400,7 +395,7 @@ class TestDatasetEvalMetricQueries:
         eval_score_config["metrics"][0]["aggregation"] = "p90"
         builder = DatasetQueryBuilder(eval_score_config)
         sql, _ = builder.build_metric_query(eval_score_config["metrics"][0])
-        assert "quantile(0.9)" in sql
+        assert "quantileExact(0.9)" in sql
 
     def test_passfail_defaults_to_pass_rate(self, eval_passfail_config):
         builder = DatasetQueryBuilder(eval_passfail_config)

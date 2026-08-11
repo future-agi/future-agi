@@ -12,8 +12,16 @@ from typing import Any
 
 import structlog
 from django.conf import settings
+from tracer.services.clickhouse.server_readonly import (
+    ensure_read_statement,
+    without_query_settings,
+)
 
 logger = structlog.get_logger(__name__)
+
+_QUERY_TRANSPORT_GRACE_SECONDS = 5.0
+_TOO_MANY_SIMULTANEOUS_QUERIES_CODE = 202
+_READ_ADMISSION_RETRY_DELAYS_SECONDS = (0.025, 0.075, 0.150)
 
 # Try to import clickhouse-driver, gracefully handle if not installed
 try:
@@ -43,6 +51,7 @@ class ClickHouseClient:
         user: str | None = None,
         password: str | None = None,
         database: str | None = None,
+        server_enforced_readonly: bool | None = None,
     ):
         """
         Initialize ClickHouse client with connection settings.
@@ -51,11 +60,20 @@ class ClickHouseClient:
         """
         ch_settings = getattr(settings, "CLICKHOUSE", {})
 
-        self.host = host or ch_settings.get("CH_HOST")
-        self.port = int(port or ch_settings.get("CH_PORT", 9000))
-        self.user = user or ch_settings.get("CH_USERNAME", "default")
-        self.password = password or ch_settings.get("CH_PASSWORD", "")
-        self.database = database or ch_settings.get("CH_DATABASE", "default")
+        self.host = ch_settings.get("CH_HOST") if host is None else host
+        self.port = int(ch_settings.get("CH_PORT", 9000) if port is None else port)
+        self.user = ch_settings.get("CH_USERNAME", "default") if user is None else user
+        self.password = (
+            ch_settings.get("CH_PASSWORD", "") if password is None else password
+        )
+        self.database = (
+            ch_settings.get("CH_DATABASE", "default") if database is None else database
+        )
+        self.server_enforced_readonly = (
+            bool(ch_settings.get("CH_SERVER_ENFORCED_READONLY", False))
+            if server_enforced_readonly is None
+            else bool(server_enforced_readonly)
+        )
 
         # Connection settings
         self.connect_timeout = ch_settings.get("CH_CONNECT_TIMEOUT", 10)
@@ -84,7 +102,11 @@ class ClickHouseClient:
         """Check if ClickHouse connection is configured."""
         return bool(self.host)
 
-    def _create_client(self) -> CHDriver:
+    def _create_client(
+        self,
+        *,
+        send_receive_timeout_seconds: float | None = None,
+    ) -> CHDriver:
         """Create a new ClickHouse driver connection."""
         if not CLICKHOUSE_AVAILABLE:
             raise RuntimeError(
@@ -94,6 +116,12 @@ class ClickHouseClient:
         if not self.host:
             raise ValueError("ClickHouse host is not configured")
 
+        driver_settings = (
+            None
+            if self.server_enforced_readonly
+            else {"use_numpy": False, "max_block_size": 100000}
+        )
+
         return CHDriver(
             host=self.host,
             port=self.port,
@@ -101,11 +129,12 @@ class ClickHouseClient:
             password=self.password,
             database=self.database,
             connect_timeout=self.connect_timeout,
-            send_receive_timeout=max(self.send_timeout, self.receive_timeout),
-            settings={
-                "use_numpy": False,
-                "max_block_size": 100000,
-            },
+            send_receive_timeout=(
+                max(self.send_timeout, self.receive_timeout)
+                if send_receive_timeout_seconds is None
+                else send_receive_timeout_seconds
+            ),
+            settings=driver_settings,
         )
 
     def _get_client(self) -> CHDriver:
@@ -138,6 +167,11 @@ class ClickHouseClient:
             with client.connection() as conn:
                 conn.execute("SELECT 1")
         """
+        if self.server_enforced_readonly:
+            raise RuntimeError(
+                "Raw ClickHouse connections are disabled for the "
+                "server-enforced read-only client."
+            )
         client = self._get_client()
         try:
             yield client
@@ -165,6 +199,10 @@ class ClickHouseClient:
         Returns:
             List of result tuples, or (results, column_types) if with_column_types=True
         """
+        if self.server_enforced_readonly:
+            query = without_query_settings(query)
+            ensure_read_statement(query)
+            settings = None
         client = self._get_client()
         t_start = time.monotonic()
 
@@ -215,6 +253,48 @@ class ClickHouseClient:
         timeout_ms: int | None = None,
         settings: dict[str, Any] | None = None,
     ) -> tuple[list[tuple], list[tuple], float]:
+        """Execute a guarded read while preserving the historical result tuple."""
+
+        result = self._execute_read(
+            query,
+            params,
+            timeout_ms=timeout_ms,
+            settings=settings,
+            include_progress=False,
+        )
+        return result[0], result[1], result[2]
+
+    def execute_read_with_progress(
+        self,
+        query: str,
+        params: dict[str, Any] | None = None,
+        timeout_ms: int | None = None,
+        settings: dict[str, Any] | None = None,
+    ) -> tuple[list[tuple], list[tuple], float, int | None, int | None]:
+        """Execute a guarded read and include native rows/bytes progress."""
+
+        result = self._execute_read(
+            query,
+            params,
+            timeout_ms=timeout_ms,
+            settings=settings,
+            include_progress=True,
+        )
+        assert len(result) == 5
+        return result
+
+    def _execute_read(
+        self,
+        query: str,
+        params: dict[str, Any] | None = None,
+        timeout_ms: int | None = None,
+        settings: dict[str, Any] | None = None,
+        *,
+        include_progress: bool,
+    ) -> (
+        tuple[list[tuple], list[tuple], float]
+        | tuple[list[tuple], list[tuple], float, int | None, int | None]
+    ):
         """
         Execute a read-only query with ClickHouse readonly=2 setting.
 
@@ -229,15 +309,54 @@ class ClickHouseClient:
             timeout_ms: Optional query timeout in milliseconds (maps to max_execution_time)
 
         Returns:
-            Tuple of (rows, column_types, query_time_ms)
+            Tuple of (rows, column_types, query_time_ms), optionally followed
+            by native read_rows and read_bytes progress.
         """
-        client = self._get_client()
-        t_start = time.monotonic()
+        query_settings: dict[str, Any] | None
+        if self.server_enforced_readonly:
+            # A ClickHouse profile locked at readonly=1 rejects *all* client
+            # setting changes, including an otherwise harmless readonly=2 or
+            # max_execution_time override.  The SOS/read-replica lane relies on
+            # the server profile for those ceilings, so transmit no settings at
+            # connection or query scope.  Production's ordinary application
+            # role keeps the existing per-query guardrails below.
+            query_settings = None
+            query = without_query_settings(query)
+            ensure_read_statement(query)
+            logger.debug(
+                "Using server-enforced ClickHouse read settings",
+                requested_setting_keys=sorted((settings or {}).keys()),
+                requested_timeout_ms=timeout_ms,
+            )
+        else:
+            query_settings = {**(settings or {}), "readonly": 2}
+            if timeout_ms is not None:
+                # max_execution_time is in seconds
+                query_settings["max_execution_time"] = max(timeout_ms / 1000.0, 0.001)
 
-        query_settings = {**(settings or {}), "readonly": 2}
+        configured_transport_timeout = float(
+            max(self.send_timeout, self.receive_timeout)
+        )
+        requested_transport_timeout = configured_transport_timeout
         if timeout_ms is not None:
-            # max_execution_time is in seconds
-            query_settings["max_execution_time"] = max(timeout_ms / 1000.0, 0.001)
+            requested_transport_timeout = max(
+                configured_transport_timeout,
+                (timeout_ms / 1000.0) + _QUERY_TRANSPORT_GRACE_SECONDS,
+            )
+        # Pooled connections are created with the ordinary application
+        # transport timeout. A long background exact query needs a matching
+        # native socket envelope, but widening a pooled connection would leak
+        # that policy into later API reads. Use and retire one dedicated
+        # connection only when the requested query deadline exceeds the pool.
+        dedicated_client = requested_transport_timeout > configured_transport_timeout
+        client = (
+            self._create_client(
+                send_receive_timeout_seconds=requested_transport_timeout,
+            )
+            if dedicated_client
+            else self._get_client()
+        )
+        t_start = time.monotonic()
 
         try:
             logger.debug(
@@ -245,26 +364,89 @@ class ClickHouseClient:
                 query=query[:200],
                 timeout_ms=timeout_ms,
             )
-            result = client.execute(
-                query,
-                params or {},
-                with_column_types=True,
-                settings=query_settings,
-            )
+            retry_attempt = 0
+            while True:
+                try:
+                    result = client.execute(
+                        query,
+                        params or {},
+                        with_column_types=True,
+                        settings=query_settings,
+                    )
+                    break
+                except CHError as exc:
+                    if getattr(
+                        exc, "code", None
+                    ) != _TOO_MANY_SIMULTANEOUS_QUERIES_CODE or retry_attempt >= len(
+                        _READ_ADMISSION_RETRY_DELAYS_SECONDS
+                    ):
+                        raise
+
+                    retry_delay = _READ_ADMISSION_RETRY_DELAYS_SECONDS[retry_attempt]
+                    elapsed_seconds = time.monotonic() - t_start
+                    if (
+                        timeout_ms is not None
+                        and elapsed_seconds + retry_delay >= timeout_ms / 1000.0
+                    ):
+                        raise
+
+                    retry_attempt += 1
+                    logger.warning(
+                        "ClickHouse read admission temporarily saturated",
+                        error_code=_TOO_MANY_SIMULTANEOUS_QUERIES_CODE,
+                        retry_attempt=retry_attempt,
+                        retry_delay_ms=round(retry_delay * 1000),
+                        backend="clickhouse",
+                    )
+                    time.sleep(retry_delay)
+
+                    # Preserve the caller's immutable settings while ensuring
+                    # a retry cannot extend the original wall-clock deadline.
+                    if query_settings is not None and timeout_ms is not None:
+                        remaining_seconds = max(
+                            (timeout_ms / 1000.0) - (time.monotonic() - t_start),
+                            0.001,
+                        )
+                        query_settings = {
+                            **query_settings,
+                            "max_execution_time": remaining_seconds,
+                        }
 
             rows, column_types = result
             query_time_ms = (time.monotonic() - t_start) * 1000
             rows_returned = len(rows) if rows else 0
+            progress = getattr(getattr(client, "last_query", None), "progress", None)
+
+            def progress_metric(name: str) -> int | None:
+                try:
+                    value = int(getattr(progress, name))
+                except (AttributeError, TypeError, ValueError):
+                    return None
+                return value if value >= 0 else None
+
+            read_rows = progress_metric("rows")
+            read_bytes = progress_metric("bytes")
 
             logger.info(
                 "ClickHouse read query completed",
                 query=query[:200],
                 query_time_ms=round(query_time_ms, 2),
                 rows_returned=rows_returned,
+                read_rows=read_rows,
+                read_bytes=read_bytes,
                 backend="clickhouse",
             )
 
-            return rows, column_types, round(query_time_ms, 2)
+            rounded_query_time_ms = round(query_time_ms, 2)
+            if include_progress:
+                return (
+                    rows,
+                    column_types,
+                    rounded_query_time_ms,
+                    read_rows,
+                    read_bytes,
+                )
+            return rows, column_types, rounded_query_time_ms
 
         except CHError as e:
             query_time_ms = (time.monotonic() - t_start) * 1000
@@ -277,7 +459,13 @@ class ClickHouseClient:
             )
             raise
         finally:
-            self._return_client(client)
+            if dedicated_client:
+                try:
+                    client.disconnect()
+                except Exception:
+                    pass
+            else:
+                self._return_client(client)
 
     def execute_iter(
         self,
@@ -289,6 +477,14 @@ class ClickHouseClient:
 
         Useful for large result sets to avoid loading all data into memory.
         """
+        if self.server_enforced_readonly:
+            query = without_query_settings(query)
+            ensure_read_statement(query)
+            raise RuntimeError(
+                "Direct execute_iter is disabled for the server-enforced "
+                "read-only client; use the managed native block stream."
+            )
+
         client = self._get_client()
 
         try:
@@ -315,6 +511,12 @@ class ClickHouseClient:
         Returns:
             Number of rows inserted
         """
+        if self.server_enforced_readonly:
+            raise RuntimeError(
+                "ClickHouse inserts are disabled for the server-enforced "
+                "read-only client."
+            )
+
         if not data:
             return 0
 

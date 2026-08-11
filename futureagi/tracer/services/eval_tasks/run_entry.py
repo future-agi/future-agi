@@ -95,7 +95,13 @@ def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
     task_id = entry.eval_task_id
     template_id = config.eval_template_id
 
-    with eval_read_source("clickhouse"), writing_onto_entry(entry.id):
+    with (
+        eval_read_source("clickhouse"),
+        writing_onto_entry(
+            entry.id,
+            output_metadata=entry.output_metadata,
+        ),
+    ):
         if entry.target_type == EvalTargetType.SPAN:
             span = get_observation_span(
                 entry.observation_span_id,
@@ -128,8 +134,21 @@ def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
                 ),
                 project_id=config.project_id,
             )
+            task_selection = (
+                entry.output_metadata.get("_task_selection")
+                if isinstance(entry.output_metadata, dict)
+                else None
+            )
+            filter_witnesses = (
+                task_selection.get("filter_witnesses")
+                if isinstance(task_selection, dict)
+                else None
+            )
             run_params = resolve_trace_mapping_lean_first(
-                config.mapping, trace, template_id
+                config.mapping,
+                trace,
+                template_id,
+                filter_witnesses=filter_witnesses,
             )
             _execute_evaluation_for_trace(
                 trace=trace,

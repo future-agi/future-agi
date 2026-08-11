@@ -13,28 +13,34 @@ exercised with the DB-facing managers monkeypatched (mirrors the fakes in
 test_filter_operator_matrix.py), so the tests stay @pytest.mark.unit.
 
 The RECENT FIXES pinned here:
-  1. eval_logger_source() legacy predicate = "(deleted = 0 OR deleted IS NULL)"
-     (NOT _peerdb_is_deleted); v2 table -> "is_deleted = 0".
-  2. rewrite_v1_sql_to_v2 renames _peerdb_is_deleted->is_deleted but leaves a
-     bare "deleted" untouched — so a v2-translated EVAL_METRIC filter never
-     emits a broken "is_deleted" against tracer_eval_logger.
-  3. _build_eval_condition multi-value CHOICE OR-join is wrapped in parens so
+  1. Candidate-scoped ``ORDER BY version DESC LIMIT 1 BY id`` resolves the
+     newest physical eval row before live/error/value predicates are applied.
+  2. Legacy reads enforce both PeerDB and app tombstones after version collapse;
+     v2 reads enforce ``is_deleted`` after version collapse.
+  3. The v2 whole-fragment rewriter protects legacy eval-table
+     ``_peerdb_version``/``_peerdb_is_deleted`` while still rewriting spans.
+  4. _build_eval_condition multi-value CHOICE OR-join is wrapped in parens so
      the config/deleted/error guards scope ALL values (precedence fix).
-  4. SCORE value/100 scaling; PASS_FAIL Passed/Failed -> output_bool.
+  5. SCORE value/100 scaling; PASS_FAIL Passed/Failed -> output_bool.
 """
+
 from __future__ import annotations
 
 import uuid
 
 import pytest
+from django.db import DatabaseError
 
-from tracer.services.clickhouse.eval_logger_table import eval_logger_source
+from tracer.services.clickhouse.eval_logger_table import (
+    eval_logger_live_state_columns,
+    eval_logger_source,
+    eval_logger_version_column,
+)
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
     rewrite_v1_sql_to_v2,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fakes so the EVAL_METRIC path resolves config ids + output type without a DB.
@@ -155,14 +161,25 @@ class TestEvalLoggerSource:
         assert table == "tracer_eval_logger"
         assert pred == "(deleted = 0 OR deleted IS NULL)"
 
-    def test_any_non_v2_table_name_uses_deleted_predicate(self, settings):
-        # Only a `_v2` suffix flips to is_deleted; anything else is legacy.
-        # Use a novel (non-canonical) name so the else-branch generality is
-        # actually exercised, not just the canonical legacy table again.
-        settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger_shadow"
-        table, pred = eval_logger_source()
-        assert table == "tracer_eval_logger_shadow"
-        assert pred == "(deleted = 0 OR deleted IS NULL)"
+    def test_unknown_table_name_is_rejected_before_sql_generation(self, settings):
+        from django.core.exceptions import ImproperlyConfigured
+
+        for unsupported in (
+            "",
+            "tracer_eval_logger_shadow",
+            "tracer_eval_logger; DROP TABLE spans",
+            ["tracer_eval_logger"],
+        ):
+            settings.CH25_EVAL_LOGGER_TABLE = unsupported
+            for resolver in (
+                eval_logger_source,
+                eval_logger_version_column,
+                eval_logger_live_state_columns,
+            ):
+                with pytest.raises(
+                    ImproperlyConfigured, match="supported eval-logger table"
+                ):
+                    resolver()
 
     def test_legacy_alias_prefixes_deleted_column(self, settings):
         settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
@@ -195,9 +212,7 @@ class TestEvalLoggerSource:
         # engine's FINAL does not drop CDC tombstones.
         settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
         _, pred = eval_logger_source(include_cdc_tombstone_guard=True)
-        assert pred == (
-            "_peerdb_is_deleted = 0 AND (deleted = 0 OR deleted IS NULL)"
-        )
+        assert pred == ("_peerdb_is_deleted = 0 AND (deleted = 0 OR deleted IS NULL)")
 
     def test_cdc_tombstone_guard_flag_respects_alias(self, settings):
         settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
@@ -264,10 +279,22 @@ class TestEvalScoreCompilation:
         # span-list Phase-2 rewrite removed). A regression re-adding it must
         # turn this red, so pin its absence rather than just its presence.
         assert "FINAL" not in where
-        assert "(deleted = 0 OR deleted IS NULL)" in where
-        assert "_peerdb_is_deleted" not in where
+        assert "latest_eval._peerdb_is_deleted = 0" in where
+        assert "(latest_eval.deleted = 0 OR latest_eval.deleted IS NULL)" in where
+        assert "ORDER BY eval_scan._peerdb_version DESC" in where
+        assert "LIMIT 1 BY eval_scan.id" in where
         # errored eval rows always excluded from value-match filters.
         assert "AND error = 0" in where
+
+        # Candidate/config/date work happens before collapse; state/value work
+        # happens after it. This ordering prevents stale matching/live rows
+        # from being resurrected by a newer value, error, or tombstone.
+        collapse = where.index("LIMIT 1 BY eval_scan.id")
+        latest = where.index(") AS latest_eval", collapse)
+        assert where.index("eval_scan.custom_eval_config_id") < collapse
+        assert where.index("latest_eval._peerdb_is_deleted") > latest
+        assert where.index("AND error = 0") > latest
+        assert where.index("output_float >") > latest
 
     def test_score_greater_than_divides_value_by_100(self, monkeypatch):
         eval_id, _ = _patch_eval(monkeypatch, "SCORE")
@@ -320,9 +347,7 @@ class TestEvalScoreCompilation:
 
     def test_score_is_null_checks_output_float_absence(self, monkeypatch):
         eval_id, _ = _patch_eval(monkeypatch, "SCORE")
-        where, _ = _translate(
-            ClickHouseFilterBuilder, _eval_filter(eval_id, "is_null")
-        )
+        where, _ = _translate(ClickHouseFilterBuilder, _eval_filter(eval_id, "is_null"))
         # is_null → NOT IN a subquery of rows that HAVE a value.
         assert "output_float IS NOT NULL" in where
         assert "NOT IN (" in where
@@ -386,9 +411,7 @@ class TestEvalPassFailCompilation:
 
     def test_pass_fail_is_null_uses_output_bool_presence(self, monkeypatch):
         eval_id, _ = _patch_eval(monkeypatch, "PASS_FAIL")
-        where, _ = _translate(
-            ClickHouseFilterBuilder, _eval_filter(eval_id, "is_null")
-        )
+        where, _ = _translate(ClickHouseFilterBuilder, _eval_filter(eval_id, "is_null"))
         assert "output_bool IS NOT NULL" in where
         assert "NOT IN (" in where
 
@@ -432,8 +455,8 @@ class TestEvalChoiceCompilation:
         where, _ = _translate(
             ClickHouseFilterBuilder, _eval_filter(eval_id, "in", ["a", "b"])
         )
-        assert "(deleted = 0 OR deleted IS NULL)" in where
-        assert "_peerdb_is_deleted" not in where
+        assert "latest_eval._peerdb_is_deleted = 0" in where
+        assert "(latest_eval.deleted = 0 OR latest_eval.deleted IS NULL)" in where
 
     def test_choice_contains_uses_ilike(self, monkeypatch):
         eval_id, _ = _patch_eval(monkeypatch, "CHOICE")
@@ -477,9 +500,7 @@ class TestEvalChoiceCompilation:
 
     def test_choice_is_null_checks_choice_presence(self, monkeypatch):
         eval_id, _ = _patch_eval(monkeypatch, "CHOICE")
-        where, _ = _translate(
-            ClickHouseFilterBuilder, _eval_filter(eval_id, "is_null")
-        )
+        where, _ = _translate(ClickHouseFilterBuilder, _eval_filter(eval_id, "is_null"))
         assert "notEmpty(" in where
         assert "output_str IS NOT NULL" in where
         assert "NOT IN (" in where
@@ -500,7 +521,7 @@ class TestEvalModeAndConfig:
             query_mode=ClickHouseFilterBuilder.QUERY_MODE_TRACE,
         )
         assert where.startswith("trace_id IN (")
-        assert "SELECT trace_id FROM" in where
+        assert "SELECT toString(latest_eval.trace_id) FROM" in where
 
     def test_span_mode_matches_span_id(self, monkeypatch):
         eval_id, _ = _patch_eval(monkeypatch, "SCORE")
@@ -509,8 +530,12 @@ class TestEvalModeAndConfig:
             _eval_filter(eval_id, "greater_than", 50),
             query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
         )
-        assert where.startswith("id IN (")
-        assert "SELECT observation_span_id FROM" in where
+        assert where.startswith("tuple(trace_id, id) IN (")
+        assert (
+            "SELECT tuple(toString(latest_eval.trace_id), "
+            "toString(latest_eval.observation_span_id)) FROM" in where
+        )
+        assert "AND NOT isNull(eval_scan.trace_id)" in where
 
     def test_config_ids_bound_as_param_tuple(self, monkeypatch):
         cfg_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
@@ -524,16 +549,35 @@ class TestEvalModeAndConfig:
     def test_no_matching_config_returns_impossible_sentinel(self, monkeypatch):
         # Empty config resolution → a filter that matches nothing (rather than
         # silently dropping the eval filter).
-        eval_id, _ = _patch_eval(
-            monkeypatch, "SCORE", config_ids=[], exists=False
-        )
+        eval_id, _ = _patch_eval(monkeypatch, "SCORE", config_ids=[], exists=False)
         where, _ = _translate(
             ClickHouseFilterBuilder, _eval_filter(eval_id, "greater_than", 50)
         )
         assert where == (
-            "trace_id IN "
-            "(SELECT toUUID('00000000-0000-0000-0000-000000000000'))"
+            "trace_id IN (SELECT toUUID('00000000-0000-0000-0000-000000000000'))"
         )
+
+    def test_metadata_database_failure_propagates_instead_of_false_empty(
+        self,
+        monkeypatch,
+    ):
+        from tracer.models.custom_eval_config import CustomEvalConfig
+
+        class _UnavailableConfigManager:
+            @staticmethod
+            def filter(**_kwargs):
+                raise DatabaseError("metadata backend unavailable")
+
+        monkeypatch.setattr(
+            CustomEvalConfig,
+            "objects",
+            _UnavailableConfigManager(),
+        )
+        with pytest.raises(DatabaseError, match="metadata backend unavailable"):
+            _translate(
+                ClickHouseFilterBuilder,
+                _eval_filter(str(uuid.uuid4()), "greater_than", 50),
+            )
 
 
 # ===========================================================================
@@ -543,12 +587,9 @@ class TestEvalModeAndConfig:
 
 @pytest.mark.unit
 class TestEvalMetricThroughV2:
-    def test_v2_eval_metric_keeps_deleted_predicate_intact(
+    def test_v2_eval_metric_uses_authoritative_legacy_named_table(
         self, monkeypatch, settings
     ):
-        # The legacy tracer_eval_logger lacks is_deleted. When the eval filter
-        # is compiled by the v2 builder, the rewriter must NOT turn the
-        # `(deleted = 0 OR deleted IS NULL)` predicate into `is_deleted`.
         settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
         eval_id, _ = _patch_eval(monkeypatch, "SCORE")
         where, _ = _translate(
@@ -557,12 +598,12 @@ class TestEvalMetricThroughV2:
         assert "FROM tracer_eval_logger " in where
         # No table-level FINAL survives the v2 rewrite either (OOM guard).
         assert "FINAL" not in where
-        assert "(deleted = 0 OR deleted IS NULL)" in where
-        # No stray is_deleted against the legacy table.
-        assert "is_deleted" not in where
-        assert "_peerdb_is_deleted" not in where
+        assert "ORDER BY eval_scan._peerdb_version DESC" in where
+        assert "latest_eval._peerdb_is_deleted = 0" in where
+        assert "(latest_eval.deleted = 0 OR latest_eval.deleted IS NULL)" in where
+        assert "FROM tracer_eval_logger_v2 " not in where
 
-    def test_v2_choice_eval_metric_keeps_deleted_predicate(
+    def test_v2_choice_eval_metric_uses_configured_eval_table(
         self, monkeypatch, settings
     ):
         settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
@@ -570,8 +611,31 @@ class TestEvalMetricThroughV2:
         where, _ = _translate(
             ClickHouseFilterBuilderV2, _eval_filter(eval_id, "in", ["a", "b"])
         )
-        assert "(deleted = 0 OR deleted IS NULL)" in where
-        assert "is_deleted" not in where
+        assert "FROM tracer_eval_logger " in where
+        assert "ORDER BY eval_scan._peerdb_version DESC" in where
+        assert "latest_eval._peerdb_is_deleted = 0" in where
+        assert "(latest_eval.deleted = 0 OR latest_eval.deleted IS NULL)" in where
+
+    def test_v2_eval_table_uses_native_latest_state_columns(
+        self, monkeypatch, settings
+    ):
+        settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger_v2"
+        eval_id, _ = _patch_eval(monkeypatch, "SCORE")
+        where, _ = _translate(
+            ClickHouseFilterBuilderV2, _eval_filter(eval_id, "equals", 80)
+        )
+
+        assert "FROM tracer_eval_logger_v2 AS eval_scan" in where
+        assert "ORDER BY eval_scan._version DESC" in where
+        assert "LIMIT 1 BY eval_scan.id" in where
+        assert "latest_eval.is_deleted = 0" in where
+        assert "_peerdb_version" not in where
+        assert "_peerdb_is_deleted" not in where
+
+        latest = where.index(") AS latest_eval")
+        assert where.index("latest_eval.is_deleted = 0") > latest
+        assert where.index("AND error = 0") > latest
+        assert where.index("output_float =") > latest
 
 
 # ===========================================================================
@@ -599,43 +663,43 @@ class TestHasEvalHasAnnotationShape:
         where, _ = ClickHouseFilterBuilder(project_id="p1").translate(
             self._bool_filter("has_eval", True)
         )
-        assert "FROM tracer_eval_logger AS el " in where
-        # id-membership subquery needs no version resolution → no FINAL.
+        assert "FROM tracer_eval_logger AS eval_scan " in where
         assert "FINAL" not in where
-        assert "(el.deleted = 0 OR el.deleted IS NULL)" in where
-        assert "_peerdb_is_deleted" not in where
+        assert "ORDER BY eval_scan._peerdb_version DESC" in where
+        assert "LIMIT 1 BY eval_scan.id" in where
+        assert "latest_eval._peerdb_is_deleted = 0" in where
+        assert "(latest_eval.deleted = 0 OR latest_eval.deleted IS NULL)" in where
         # spans-side scoping keeps this from matching every project.
         assert "sp.is_deleted = 0" in where
         assert "sp.project_id" in where
 
-    def test_has_eval_v2_keeps_legacy_deleted_predicate(self, settings):
-        # v2 builder + legacy eval table: the aliased deleted predicate must
-        # survive the rewrite (el.deleted is NOT renamed to el.is_deleted).
+    def test_has_eval_v2_uses_authoritative_legacy_named_table(self, settings):
         settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
         where, _ = ClickHouseFilterBuilderV2(project_id="p1").translate(
             self._bool_filter("has_eval", True)
         )
-        assert "FROM tracer_eval_logger AS el " in where
+        assert "FROM tracer_eval_logger AS eval_scan " in where
         assert "FINAL" not in where
-        assert "(el.deleted = 0 OR el.deleted IS NULL)" in where
-        # spans-side `is_deleted` IS legitimately rewritten from _peerdb_*,
-        # but the eval-logger `el.deleted` alias must stay bare.
-        assert "el.is_deleted" not in where
+        assert "ORDER BY eval_scan._peerdb_version DESC" in where
+        assert "latest_eval._peerdb_is_deleted = 0" in where
+        assert "(latest_eval.deleted = 0 OR latest_eval.deleted IS NULL)" in where
 
     def test_has_eval_v2_table_uses_is_deleted(self, settings):
         settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger_v2"
         where, _ = ClickHouseFilterBuilder(project_id="p1").translate(
             self._bool_filter("has_eval", True)
         )
-        assert "FROM tracer_eval_logger_v2 AS el " in where
+        assert "FROM tracer_eval_logger_v2 AS eval_scan " in where
         assert "FINAL" not in where
-        assert "el.is_deleted = 0" in where
+        assert "ORDER BY eval_scan._version DESC" in where
+        assert "latest_eval.is_deleted = 0" in where
 
-    def test_has_eval_false_produces_no_condition(self):
-        where, _ = ClickHouseFilterBuilder(project_id="p1").translate(
-            self._bool_filter("has_eval", False)
-        )
-        assert where == ""
+    def test_has_eval_false_produces_candidate_scoped_anti_membership(self):
+        where, _ = ClickHouseFilterBuilder(
+            project_id="p1", candidate_ids_param="candidate_trace_ids"
+        ).translate(self._bool_filter("has_eval", False))
+        assert "trace_id NOT IN" in where
+        assert "toString(eval_scan.trace_id) IN %(candidate_trace_ids)s" in where
 
     def test_has_annotation_true_generates_in_subquery(self):
         where, _ = ClickHouseFilterBuilder(project_id="p1").translate(
@@ -650,3 +714,24 @@ class TestHasEvalHasAnnotationShape:
             self._bool_filter("has_annotation", False)
         )
         assert "trace_id NOT IN" in where
+
+    @pytest.mark.parametrize(
+        "column_id", ["has_eval", "has_annotation", "my_annotations"]
+    )
+    @pytest.mark.parametrize("filter_op", ["not_equals", "is_null", "is_not_null"])
+    def test_boolean_meta_filters_reject_non_equals_operations(
+        self,
+        column_id: str,
+        filter_op: str,
+    ) -> None:
+        filter_item = self._bool_filter(column_id, True)[0]
+        filter_item["filter_config"]["filter_op"] = filter_op
+        if column_id == "my_annotations":
+            filter_item["filter_config"]["user_id"] = (
+                "00000000-0000-4000-8000-000000000002"
+            )
+
+        with pytest.raises(ValueError, match="supports only the equals operation"):
+            ClickHouseFilterBuilder(
+                project_id="p1", candidate_ids_param="candidate_trace_ids"
+            ).translate([filter_item])

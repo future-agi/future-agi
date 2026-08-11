@@ -144,6 +144,44 @@ describe("AddToQueueDialog", () => {
     expect(screen.queryByText("Annotator Queue")).not.toBeInTheDocument();
   });
 
+  it("scopes enumerated span resolution to the selected project", async () => {
+    const user = userEvent.setup();
+    useAnnotationQueuesList.mockReturnValue({
+      data: {
+        results: [
+          {
+            id: "manager-queue",
+            name: "Manager Queue",
+            status: "active",
+            viewer_role: "manager",
+            viewer_roles: ["manager"],
+          },
+        ],
+      },
+      isLoading: false,
+    });
+
+    renderDialog({
+      sourceType: "observation_span",
+      sourceIds: ["span-1"],
+      projectId: "project-1",
+      itemName: "Span",
+    });
+
+    await user.click(await screen.findByText("Manager Queue"));
+
+    await waitFor(() => {
+      expect(addItems).toHaveBeenCalledWith(
+        {
+          queueId: "manager-queue",
+          items: [{ source_type: "observation_span", source_id: "span-1" }],
+          project_id: "project-1",
+        },
+        expect.objectContaining({ onSuccess: expect.any(Function) }),
+      );
+    });
+  });
+
   it("surfaces partial backend skips when some selected traces are unavailable", async () => {
     const user = userEvent.setup();
     useAnnotationQueuesList.mockReturnValue({

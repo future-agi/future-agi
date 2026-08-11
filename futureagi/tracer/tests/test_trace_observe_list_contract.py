@@ -71,6 +71,26 @@ class TestTraceObserveListResponseContract:
         serializer = TraceObserveListResponseSerializer(data=self._payload([]))
         assert serializer.is_valid(), serializer.errors
 
+    def test_accepts_additive_bounded_page_metadata(self):
+        payload = self._payload([])
+        payload["result"]["metadata"].update(
+            {
+                "total_rows_is_lower_bound": True,
+                "has_more": False,
+                "query_complete": False,
+                "query_status": "degraded",
+                "query_error_code": "read_budget_exceeded",
+                "query_elapsed_ms": 749.25,
+                "query_count": 2,
+                "query_rows_returned": 125,
+                "query_result_payload_bytes": 8192,
+            }
+        )
+
+        serializer = TraceObserveListResponseSerializer(data=payload)
+
+        assert serializer.is_valid(), serializer.errors
+
     def test_rejects_missing_metadata(self):
         payload = {
             "status": True,
@@ -114,3 +134,25 @@ class TestTraceObserveListResponseContract:
         ].rsplit("/", 1)[-1]
         config_items = definitions[result_ref]["properties"]["config"]["items"]
         assert config_items == {"$ref": "#/definitions/TraceObserveColumnConfig"}
+
+    def test_swagger_exposes_additive_bounded_page_metadata(self):
+        definitions = _swagger()["definitions"]
+        result_ref = definitions["TraceObserveListResponse"]["properties"]["result"][
+            "$ref"
+        ].rsplit("/", 1)[-1]
+        metadata_ref = definitions[result_ref]["properties"]["metadata"]["$ref"].rsplit(
+            "/", 1
+        )[-1]
+        metadata = definitions[metadata_ref]["properties"]
+
+        assert {
+            "total_rows_is_lower_bound",
+            "has_more",
+            "query_complete",
+            "query_status",
+            "query_error_code",
+            "query_elapsed_ms",
+            "query_count",
+            "query_rows_returned",
+            "query_result_payload_bytes",
+        } <= metadata.keys()

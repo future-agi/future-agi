@@ -1,12 +1,128 @@
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import {
-  startOfDay,
-  endOfDay,
-  startOfMinute,
-  subDays,
-} from "date-fns";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { startOfDay, endOfDay, startOfMinute, subDays } from "date-fns";
 import axios, { endpoints } from "src/utils/axios";
+import {
+  AGGREGATION_REQUEST_TIMEOUT_MS,
+  awaitAggregationRequestWithDeadline,
+  createAggregationPollController,
+  getAggregationRefreshState,
+  getExactAggregationReadState,
+  getQueryCompletedAt,
+} from "src/utils/queryReadState";
+
+const readAggregationResult = (data) => {
+  const queryReadState = getExactAggregationReadState(data);
+  const { isRefreshing, refreshFailed } = getAggregationRefreshState(data);
+  if (queryReadState === "pending") {
+    return {
+      result: null,
+      queryPending: true,
+      queryRefreshing: isRefreshing,
+      queryRefreshFailed: refreshFailed,
+      queryCompletedAt: null,
+    };
+  }
+  if (queryReadState !== "complete") {
+    throw new Error("Exact evaluation usage data is not available");
+  }
+  return {
+    result: data.result,
+    queryPending: false,
+    queryRefreshing: isRefreshing,
+    queryRefreshFailed: refreshFailed,
+    queryCompletedAt: getQueryCompletedAt(data)?.toISOString() || null,
+  };
+};
+
+function useAggregationPolling(identity) {
+  const pollingControllerRef = useRef(null);
+  if (pollingControllerRef.current === null) {
+    pollingControllerRef.current = createAggregationPollController();
+  }
+  const [aggregationTransportFailed, setAggregationTransportFailed] =
+    useState(false);
+  const [aggregationPollingPaused, setAggregationPollingPaused] =
+    useState(false);
+
+  const reset = useCallback(() => {
+    pollingControllerRef.current.reset();
+    setAggregationTransportFailed(false);
+    setAggregationPollingPaused(false);
+  }, []);
+
+  useEffect(() => reset(), [identity, reset]);
+
+  const record = useCallback(({ queryRefreshing, queryRefreshFailed }) => {
+    pollingControllerRef.current.recordSuccess();
+    setAggregationTransportFailed(false);
+    setAggregationPollingPaused(false);
+    const shouldPoll = queryRefreshing && !queryRefreshFailed;
+    if (!shouldPoll) {
+      pollingControllerRef.current.stop();
+      return;
+    }
+    pollingControllerRef.current.start();
+  }, []);
+
+  const recordFailure = useCallback(() => {
+    if (
+      pollingControllerRef.current.isActive() &&
+      !pollingControllerRef.current.recordFailure()
+    ) {
+      setAggregationTransportFailed(true);
+      setAggregationPollingPaused(false);
+    }
+  }, []);
+
+  const recordAttempt = useCallback(() => {
+    pollingControllerRef.current.recordAttempt();
+  }, []);
+
+  // A 2xx body that violates the exact-aggregation contract is deterministic,
+  // not a transient transport outage. Stop polling immediately so retained
+  // pending metadata cannot hide the failure or disable an explicit retry.
+  const recordTerminalFailure = useCallback(() => {
+    pollingControllerRef.current.terminate();
+    setAggregationTransportFailed(true);
+    setAggregationPollingPaused(false);
+  }, []);
+
+  const refetchInterval = useCallback((query) => {
+    const data = query.state.data;
+    if (!data?.queryRefreshing || data?.queryRefreshFailed) {
+      pollingControllerRef.current.stop();
+      return false;
+    }
+    pollingControllerRef.current.start();
+    const delay = pollingControllerRef.current.nextDelay();
+    if (delay === false) {
+      if (
+        pollingControllerRef.current.getTerminationReason() === "poll_budget"
+      ) {
+        setAggregationPollingPaused(true);
+      }
+    }
+    return delay;
+  }, []);
+
+  const isFailureTerminal = useCallback(
+    () => !pollingControllerRef.current.isActive(),
+    [],
+  );
+
+  return {
+    record,
+    recordAttempt,
+    recordFailure,
+    recordTerminalFailure,
+    refetchInterval,
+    reset,
+    isFailureTerminal,
+    aggregationTransportFailed,
+    aggregationPollingPaused,
+  };
+}
 
 /**
  * Compute explicit start/end dates for date options that map to calendar
@@ -40,26 +156,128 @@ function getDateParams(dateOption, dateFilter) {
 /**
  * Fetch chart + stats for a period. Does NOT depend on page/pageSize.
  */
-export function useEvalUsageChart(templateId, period = "30d", dateOption, dateFilter) {
+export function useEvalUsageChart(
+  templateId,
+  period = "30d",
+  dateOption,
+  dateFilter,
+) {
   const dateParams = useMemo(
     () => getDateParams(dateOption, dateFilter),
     [dateOption, dateFilter],
   );
-  return useQuery({
+  const forceRefreshRef = useRef(false);
+  const lastExactSnapshotRef = useRef(null);
+  const pollIdentity = useMemo(
+    () => JSON.stringify([templateId, period, dateParams]),
+    [dateParams, period, templateId],
+  );
+  const {
+    record,
+    recordAttempt,
+    recordFailure,
+    recordTerminalFailure,
+    refetchInterval,
+    reset,
+    isFailureTerminal,
+    aggregationTransportFailed,
+    aggregationPollingPaused,
+  } = useAggregationPolling(pollIdentity);
+  const query = useQuery({
     queryKey: ["evals", "usage-chart", templateId, period, dateParams],
-    queryFn: async () => {
-      const { data } = await axios.get(
-        endpoints.develop.eval.getEvalUsage(templateId),
-        { params: { page: 0, page_size: 1, period, ...dateParams } },
-      );
-      const result = data?.result;
-      return { stats: result?.stats, chart: result?.chart };
+    queryFn: async ({ signal }) => {
+      recordAttempt();
+      const refresh = forceRefreshRef.current;
+      forceRefreshRef.current = false;
+      let data;
+      try {
+        ({ data } = await awaitAggregationRequestWithDeadline(
+          (requestSignal) =>
+            axios.get(endpoints.develop.eval.getEvalUsage(templateId), {
+              params: {
+                page: 0,
+                page_size: 1,
+                period,
+                ...dateParams,
+                ...(refresh ? { refresh: true } : {}),
+              },
+              signal: requestSignal,
+            }),
+          { timeoutMs: AGGREGATION_REQUEST_TIMEOUT_MS, signal },
+        ));
+      } catch (error) {
+        if (!signal.aborted) recordFailure();
+        throw error;
+      }
+      let aggregation;
+      try {
+        aggregation = readAggregationResult(data);
+      } catch (error) {
+        recordTerminalFailure();
+        throw error;
+      }
+      record(aggregation);
+      const result = aggregation.result || {};
+      const nextData = {
+        stats: result.stats,
+        chart: result.chart,
+        queryPending: aggregation.queryPending,
+        queryRefreshing: aggregation.queryRefreshing,
+        queryRefreshFailed: aggregation.queryRefreshFailed,
+        queryCompletedAt: aggregation.queryCompletedAt,
+      };
+      if (!aggregation.queryPending) {
+        lastExactSnapshotRef.current = {
+          identity: pollIdentity,
+          data: nextData,
+        };
+        return nextData;
+      }
+      const previous = lastExactSnapshotRef.current;
+      return previous?.identity === pollIdentity
+        ? {
+            ...previous.data,
+            queryPending: true,
+            queryRefreshing: aggregation.queryRefreshing,
+            queryRefreshFailed: aggregation.queryRefreshFailed,
+          }
+        : nextData;
     },
     enabled:
       !!templateId &&
       !(dateOption === "Custom" && !(dateFilter?.[0] && dateFilter?.[1])),
-    staleTime: 30_000, // cache chart for 30s
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchInterval,
+    refetchIntervalInBackground: false,
+    retry: false,
+    meta: { errorHandled: true },
   });
+  const refetch = query.refetch;
+  const refresh = useCallback(() => {
+    reset();
+    forceRefreshRef.current = true;
+    return refetch({ cancelRefetch: true });
+  }, [refetch, reset]);
+
+  const terminalError =
+    !query.isFetching &&
+    (aggregationTransportFailed ||
+      (query.isError && isFailureTerminal()) ||
+      query.data?.queryRefreshFailed === true);
+  const data =
+    (terminalError || aggregationPollingPaused) && query.data?.queryRefreshing
+      ? { ...query.data, queryRefreshing: false }
+      : query.data;
+
+  return {
+    ...query,
+    data,
+    isError: terminalError,
+    isPollingPaused: aggregationPollingPaused,
+    refresh,
+  };
 }
 
 /**
@@ -73,22 +291,127 @@ export function useEvalUsageLogs(
     () => getDateParams(dateOption, dateFilter),
     [dateOption, dateFilter],
   );
-  return useQuery({
-    queryKey: ["evals", "usage-logs", templateId, period, page, pageSize, dateParams],
-    queryFn: async () => {
-      const { data } = await axios.get(
-        endpoints.develop.eval.getEvalUsage(templateId),
-        { params: { page, page_size: pageSize, period, ...dateParams } },
-      );
-      const result = data?.result || {};
-      return {
+  const forceRefreshRef = useRef(false);
+  const lastExactSnapshotRef = useRef(null);
+  const pollIdentity = useMemo(
+    () => JSON.stringify([templateId, period, page, pageSize, dateParams]),
+    [dateParams, page, pageSize, period, templateId],
+  );
+  const {
+    record,
+    recordAttempt,
+    recordFailure,
+    recordTerminalFailure,
+    refetchInterval,
+    reset,
+    isFailureTerminal,
+    aggregationTransportFailed,
+    aggregationPollingPaused,
+  } = useAggregationPolling(pollIdentity);
+  const query = useQuery({
+    queryKey: [
+      "evals",
+      "usage-logs",
+      templateId,
+      period,
+      page,
+      pageSize,
+      dateParams,
+    ],
+    queryFn: async ({ signal }) => {
+      recordAttempt();
+      const refresh = forceRefreshRef.current;
+      forceRefreshRef.current = false;
+      let data;
+      try {
+        ({ data } = await awaitAggregationRequestWithDeadline(
+          (requestSignal) =>
+            axios.get(endpoints.develop.eval.getEvalUsage(templateId), {
+              params: {
+                page,
+                page_size: pageSize,
+                period,
+                ...dateParams,
+                ...(refresh ? { refresh: true } : {}),
+              },
+              signal: requestSignal,
+            }),
+          { timeoutMs: AGGREGATION_REQUEST_TIMEOUT_MS, signal },
+        ));
+      } catch (error) {
+        if (!signal.aborted) recordFailure();
+        throw error;
+      }
+      let aggregation;
+      try {
+        aggregation = readAggregationResult(data);
+      } catch (error) {
+        recordTerminalFailure();
+        throw error;
+      }
+      record(aggregation);
+      const result = aggregation.result || {};
+      const nextData = {
         table: result.table || [],
         pagination: result.logs || {},
+        queryPending: aggregation.queryPending,
+        queryRefreshing: aggregation.queryRefreshing,
+        queryRefreshFailed: aggregation.queryRefreshFailed,
+        queryCompletedAt: aggregation.queryCompletedAt,
       };
+      if (!aggregation.queryPending) {
+        lastExactSnapshotRef.current = {
+          identity: pollIdentity,
+          data: nextData,
+        };
+        return nextData;
+      }
+      const previous = lastExactSnapshotRef.current;
+      return previous?.identity === pollIdentity
+        ? {
+            ...previous.data,
+            queryPending: true,
+            queryRefreshing: aggregation.queryRefreshing,
+            queryRefreshFailed: aggregation.queryRefreshFailed,
+          }
+        : nextData;
     },
     enabled:
       !!templateId &&
       !(dateOption === "Custom" && !(dateFilter?.[0] && dateFilter?.[1])),
-    keepPreviousData: true,
+    // TanStack Query v5 replaced the boolean v4 option with placeholderData.
+    // Keep the exact previous page visible while the next exact page loads.
+    placeholderData: keepPreviousData,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchInterval,
+    refetchIntervalInBackground: false,
+    retry: false,
+    meta: { errorHandled: true },
   });
+  const refetch = query.refetch;
+  const refresh = useCallback(() => {
+    reset();
+    forceRefreshRef.current = true;
+    return refetch({ cancelRefetch: true });
+  }, [refetch, reset]);
+
+  const terminalError =
+    !query.isFetching &&
+    (aggregationTransportFailed ||
+      (query.isError && isFailureTerminal()) ||
+      query.data?.queryRefreshFailed === true);
+  const data =
+    (terminalError || aggregationPollingPaused) && query.data?.queryRefreshing
+      ? { ...query.data, queryRefreshing: false }
+      : query.data;
+
+  return {
+    ...query,
+    data,
+    isError: terminalError,
+    isPollingPaused: aggregationPollingPaused,
+    refresh,
+  };
 }

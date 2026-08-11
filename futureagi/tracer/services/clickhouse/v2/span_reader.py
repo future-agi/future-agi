@@ -462,16 +462,35 @@ class CHSpanReader:
         password: str = "",
         database: str = "default",
         timeout_sec: int = 30,
+        server_enforced_readonly: bool = False,
+        native_port: int | None = None,
     ):
-        self._client = clickhouse_connect.get_client(
-            host=host,
-            port=port,
-            username=username,
-            password=password,
-            database=database,
-            send_receive_timeout=timeout_sec,
-            settings=current_settings() or None,
-        )
+        if server_enforced_readonly:
+            if native_port is None:
+                raise ValueError(
+                    "native_port is required for a server-enforced read-only reader"
+                )
+            from tracer.services.clickhouse.server_readonly import (
+                ServerEnforcedReadOnlyNativeClient,
+            )
+
+            self._client = ServerEnforcedReadOnlyNativeClient(
+                host=host,
+                port=native_port,
+                username=username,
+                password=password,
+                database=database,
+            )
+        else:
+            self._client = clickhouse_connect.get_client(
+                host=host,
+                port=port,
+                username=username,
+                password=password,
+                database=database,
+                send_receive_timeout=timeout_sec,
+                settings=current_settings() or None,
+            )
 
     def close(self) -> None:
         self._client.close()
@@ -1806,6 +1825,9 @@ class CHSpanReader:
         session_id: str | list[str] | None = None,
         created_at_gte: datetime | None = None,
         created_at_range: tuple[datetime, datetime] | None = None,
+        created_at_half_open_range: tuple[datetime, datetime] | None = None,
+        start_time_gte: datetime | None = None,
+        start_time_range: tuple[datetime, datetime] | None = None,
         roots_only: bool = False,
     ) -> int:
         """Replaces ObservationSpan.objects.filter(<Q-object>).count() for
@@ -1818,6 +1840,12 @@ class CHSpanReader:
         ``roots_only`` counts one row per trace (root span = empty parent),
         turning this into a trace count — used where the PG path counted
         ``Trace`` rows in a window rather than spans.
+
+        ``start_time_*`` is the event-time contract for normal CH25 product
+        windows and enables partition/primary-key pruning. ``created_at_*`` is
+        retained only for callers that deliberately require ingestion-time
+        parity (legacy/arrival reconciliation); the two meanings are never
+        silently remapped.
 
         Codex wave-2 fixes (2026-05-26):
           • P1: created_at_* predicates target the CH `created_at` column
@@ -1877,6 +1905,21 @@ class CHSpanReader:
         if created_at_range:
             where.append("created_at BETWEEN %(cr_s)s AND %(cr_e)s")
             params["cr_s"], params["cr_e"] = created_at_range
+        if created_at_half_open_range:
+            where.append("created_at >= %(chr_s)s")
+            where.append("created_at < %(chr_e)s")
+            params["chr_s"], params["chr_e"] = created_at_half_open_range
+        # Normal CH25 product windows use event time: ``start_time`` is the
+        # partition/primary-key time column. Keep the created_at arguments
+        # above only for the retired/continuous arrival-parity callers that
+        # deliberately mean ingestion time.
+        if start_time_gte:
+            where.append("start_time >= %(stg)s")
+            params["stg"] = start_time_gte
+        if start_time_range:
+            where.append("start_time >= %(str_s)s")
+            where.append("start_time < %(str_e)s")
+            params["str_s"], params["str_e"] = start_time_range
         # roots_only counts distinct traces, not root rows — a trace with more
         # than one parentless span must count once (mirrors the GROUP BY tid /
         # first-root-per-trace dedupe elsewhere in this reader).
@@ -2150,13 +2193,16 @@ class CHSpanReader:
         params: dict[str, Any] | None = None,
         *,
         batch_size: int = 10_000,
+        settings: dict[str, Any] | None = None,
     ) -> Iterator[list[str]]:
         """Stream a query's first column as strings, re-chunked to ``batch_size``
         so neither the client nor the caller holds the full result in memory — a
         large historical scan can be consumed in waves."""
         batch: list[str] = []
         with self._client.query_row_block_stream(
-            sql, parameters=params or {}
+            sql,
+            parameters=params or {},
+            settings=settings or {},
         ) as stream:
             for block in stream:
                 for row in block:

@@ -25,6 +25,9 @@ import TotalRowsStatusBar from "src/sections/develop-detail/Common/TotalRowsStat
 import { useQuery } from "@tanstack/react-query";
 import { generateAnnotationColumnsForTracing } from "src/sections/projects/LLMTracing/common";
 import { useShallowToggleAnnotationsStore } from "src/sections/agents/store";
+import { getListTotalState } from "src/sections/projects/LLMTracing/listTotalMetadata";
+import { parsePrototypeSpanListResponse } from "src/api/project/telemetry-list-contract";
+import { getSpanPhysicalRowId } from "src/sections/projects/LLMTracing/spanPhysicalIdentity";
 
 const defaultFilter = {
   column_id: "",
@@ -35,32 +38,14 @@ const defaultFilter = {
   },
 };
 
-const normalizeColumnConfig = (column = {}) => ({
-  ...column,
-  isVisible: column.isVisible ?? column.is_visible,
-  groupBy: column.groupBy ?? column.group_by,
-  outputType: column.outputType ?? column.output_type,
-  reverseOutput: column.reverseOutput ?? column.reverse_output,
-  annotationLabelType:
-    column.annotationLabelType ?? column.annotation_label_type,
-  choicesMap: column.choicesMap ?? column.choices_map,
-  evalTemplateId: column.evalTemplateId ?? column.eval_template_id,
-  sourceField: column.sourceField ?? column.source_field,
-  parentEvalId: column.parentEvalId ?? column.parent_eval_id,
-});
-
-const normalizeSpanListPayload = (payload = {}) => {
-  const metadata = payload.metadata || {};
+const normalizeSpanListPayload = (payload) => {
+  const normalized = parsePrototypeSpanListResponse(payload);
+  const metadata = normalized.metadata;
+  const totalState = getListTotalState(metadata);
 
   return {
-    columnConfig: (
-      payload.columnConfig ||
-      payload.column_config ||
-      payload.config ||
-      []
-    ).map(normalizeColumnConfig),
-    table: payload.table || [],
-    totalRows: metadata.totalRows ?? metadata.total_rows ?? 0,
+    ...normalized,
+    ...totalState,
   };
 };
 
@@ -300,25 +285,27 @@ const SpanTab = React.forwardRef(
                 },
               },
             );
-            const res = normalizeSpanListPayload(results?.data?.result);
+            const res = normalizeSpanListPayload(results.data);
             const columns = res.columnConfig.map((o) => ({
               ...o,
               id: o.id,
             }));
             setColumns(columns);
 
-            params.api.totalRowCount = res.totalRows;
-            params.success({
-              rowData: res.table,
-              totalRows: res.totalRows,
-            });
+            params.api.totalRowCount = res.totalRowCount;
+            params.api.totalRowCountLowerBound = res.totalRowCountLowerBound;
+            params.api.totalRowCountIsLowerBound =
+              res.totalRowCountIsLowerBound;
+            const successPayload = { rowData: res.table };
+            if (!res.totalRowCountIsLowerBound) {
+              successPayload.totalRows = res.totalRows;
+            }
+            params.success(successPayload);
           } catch (error) {
             params.fail();
           }
         },
-        getRowId: ({ data }) => {
-          return data.rowId;
-        },
+        getRowId: ({ data }) => getSpanPhysicalRowId(data),
       }),
       [debouncedValidatedFilters, runId, setColumns],
     );
@@ -337,6 +324,7 @@ const SpanTab = React.forwardRef(
               setFilters={setFilters}
               filterDefinition={filterDefinition}
               onClose={() => setFilterOpen(false)}
+              projectId={projectId}
             />
           </Box>
         </Collapse>
@@ -381,9 +369,7 @@ const SpanTab = React.forwardRef(
                   fromSpansView: true,
                 });
               }}
-              getRowId={({ data }) => {
-                return data.span_id;
-              }}
+              getRowId={({ data }) => getSpanPhysicalRowId(data)}
               statusBar={statusBar}
             />
           </Box>

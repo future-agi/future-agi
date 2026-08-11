@@ -70,6 +70,7 @@ RUN_ENTRY_RETRY_POLICY = RetryPolicy(
 )
 
 _CONTROL_TIMEOUT = timedelta(minutes=30)
+_RECONCILE_TIMEOUT = timedelta(hours=3)
 _RUN_ENTRY_TIMEOUT = timedelta(hours=12)
 _HEARTBEAT = timedelta(minutes=5)
 
@@ -143,7 +144,11 @@ async def _reconcile(task_id: str) -> None:
     await workflow.execute_activity(
         "reconcile_eval_task_activity",
         ReconcileActivityInput(task_id=task_id),
-        start_to_close_timeout=_CONTROL_TIMEOUT,
+        # Exact 100k historical selection is intentionally off the HTTP path.
+        # It remains heartbeating and each ClickHouse statement is bounded, but
+        # the fully buffered multi-query proof may legitimately outlive the
+        # ordinary 30-minute control activity ceiling.
+        start_to_close_timeout=_RECONCILE_TIMEOUT,
         heartbeat_timeout=_HEARTBEAT,
         retry_policy=CONTROL_RETRY_POLICY,
     )
