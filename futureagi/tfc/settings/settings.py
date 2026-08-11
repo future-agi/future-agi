@@ -136,6 +136,7 @@ INSTALLED_APPS = [
     # MCP Server (protocol layer for external AI clients)
     "mcp_server",
     "agentcc",
+    "sources",
     # gRPC framework
     "django_socio_grpc",
     # "djstripe"
