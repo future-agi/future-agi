@@ -1,10 +1,12 @@
 import re
 import zipfile
 import xml.etree.ElementTree as ET
+import structlog
 from django.db import transaction
-from django.core.files.base import File
 from sources.models.source_book import SourceBook
 from sources.models.scan_page import ScanPage
+
+logger = structlog.get_logger(__name__)
 
 
 class TranskribusParserService:
@@ -107,7 +109,12 @@ class TranskribusParserService:
                     try:
                         raw_ocr_text, ocr_metadata = cls.parse_page_xml(raw_bytes)
                     except Exception as e:
-                        # Skip or log malformed XML files
+                        logger.warning(
+                            "Skipping malformed PAGE-XML file in Transkribus archive",
+                            xml_path=xml_path,
+                            error=str(e),
+                            exc_info=True,
+                        )
                         continue
                     
                     # Extract page number from filename if possible (e.g., page_0001.xml -> 1)
@@ -118,7 +125,7 @@ class TranskribusParserService:
                     page_label = f"Page {page_number}"
                     
                     # Deduplicate/update if page already exists, otherwise create
-                    page, created = ScanPage.objects.update_or_create(
+                    page, _ = ScanPage.objects.update_or_create(
                         book=book,
                         page_number=page_number,
                         defaults={

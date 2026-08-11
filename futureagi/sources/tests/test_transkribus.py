@@ -5,7 +5,6 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from sources.models.source_book import SourceBook
 from sources.models.scan_page import ScanPage
-from sources.models.target_passage import TargetPassage
 from sources.services.transkribus_parser import TranskribusParserService
 from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace

@@ -1,3 +1,4 @@
+import structlog
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -16,6 +17,16 @@ from sources.serializers import (
 )
 from sources.services.transkribus_parser import TranskribusParserService
 
+logger = structlog.get_logger(__name__)
+
+
+def _get_org_and_workspace(request):
+    org = getattr(request, "organization", None)
+    if not org and hasattr(request, "user"):
+        org = getattr(request.user, "organization", None)
+    workspace = getattr(request, "workspace", None)
+    return org, workspace
+
 
 class SourceBookViewSet(BaseModelViewSetMixin, ModelViewSet):
     permission_classes = [IsAuthenticated]
@@ -30,11 +41,7 @@ class SourceBookViewSet(BaseModelViewSetMixin, ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        org = getattr(self.request, "organization", None)
-        if not org and hasattr(self.request, "user"):
-            from accounts.utils import get_user_organization
-            org = get_user_organization(self.request.user)
-        workspace = getattr(self.request, "workspace", None)
+        org, workspace = _get_org_and_workspace(self.request)
         serializer.save(organization=org, workspace=workspace)
 
     @action(detail=True, methods=["post"], url_path="import-transkribus")
@@ -44,12 +51,7 @@ class SourceBookViewSet(BaseModelViewSetMixin, ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         uploaded_file = serializer.validated_data["file"]
-
-        org = getattr(request, "organization", None)
-        if not org and hasattr(request, "user"):
-            from accounts.utils import get_user_organization
-            org = get_user_organization(request.user)
-        workspace = getattr(request, "workspace", None)
+        org, workspace = _get_org_and_workspace(request)
 
         try:
             pages = TranskribusParserService.import_transkribus_zip(
@@ -66,8 +68,9 @@ class SourceBookViewSet(BaseModelViewSetMixin, ModelViewSet):
                 status=status.HTTP_201_CREATED,
             )
         except Exception as e:
+            logger.error("Failed to import Transkribus ZIP archive", error=str(e), exc_info=True)
             return Response(
-                {"error": f"Failed to import Transkribus ZIP: {str(e)}"},
+                {"error": "Failed to import Transkribus ZIP archive. Please ensure the uploaded file is a valid PAGE-XML archive."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -85,11 +88,7 @@ class ScanPageViewSet(BaseModelViewSetMixin, ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        org = getattr(self.request, "organization", None)
-        if not org and hasattr(self.request, "user"):
-            from accounts.utils import get_user_organization
-            org = get_user_organization(self.request.user)
-        workspace = getattr(self.request, "workspace", None)
+        org, workspace = _get_org_and_workspace(self.request)
         serializer.save(organization=org, workspace=workspace)
 
 
@@ -106,9 +105,6 @@ class TargetPassageViewSet(BaseModelViewSetMixin, ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        org = getattr(self.request, "organization", None)
-        if not org and hasattr(self.request, "user"):
-            from accounts.utils import get_user_organization
-            org = get_user_organization(self.request.user)
-        workspace = getattr(self.request, "workspace", None)
+        org, workspace = _get_org_and_workspace(self.request)
         serializer.save(organization=org, workspace=workspace)
+
