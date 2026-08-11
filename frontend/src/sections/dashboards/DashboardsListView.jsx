@@ -34,112 +34,26 @@ import SvgColor from "src/components/svg-color";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { useSnackbar } from "src/components/snackbar";
-import { fDate, fDateTime, fToNowStrict } from "src/utils/format-time";
-
-const AVATAR_COLORS = [
-  "#7C4DFF",
-  "#FF6B6B",
-  "#5BE49B",
-  "#FFB547",
-  "#36B5FF",
-  "#FF85C0",
-  "#00BFA6",
-  "#8C9EFF",
-];
-
-const DASHBOARD_LIST_COLUMNS =
-  "minmax(220px, 1fr) 96px 112px minmax(160px, 220px) 88px 32px";
-const DASHBOARD_LIST_CONTENT_COLUMNS =
-  "minmax(220px, 1fr) 96px 112px minmax(160px, 220px)";
-
-const VISUALLY_HIDDEN_SX = {
-  border: 0,
-  clip: "rect(0 0 0 0)",
-  height: 1,
-  margin: -1,
-  overflow: "hidden",
-  padding: 0,
-  position: "absolute",
-  whiteSpace: "nowrap",
-  width: 1,
-};
-
-function getAvatarColor(name) {
-  let hash = 0;
-  for (let i = 0; i < (name || "").length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-}
-
-function getInitials(name) {
-  if (!name) return "?";
-  const parts = name.trim().split(/\s+/);
-  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-  return name.slice(0, 2).toUpperCase();
-}
-
-function timeAgo(date) {
-  if (!date) return "";
-  try {
-    return fToNowStrict(date);
-  } catch {
-    return "";
-  }
-}
-
-function getDashboardCreatorName(db) {
-  return db?.created_by?.name || "";
-}
-
-function getDashboardCreatorLabel(db) {
-  return getDashboardCreatorName(db) || "Unknown creator";
-}
-
-function formatDashboardListDate(date) {
-  if (!date) return "—";
-  try {
-    return fDate(date) || "—";
-  } catch {
-    return "—";
-  }
-}
-
-function formatDashboardTooltipDate(date) {
-  if (!date) return "";
-  try {
-    return fDateTime(date) || "";
-  } catch {
-    return "";
-  }
-}
-
-function formatDashboardWidgetCount(count) {
-  const numericCount = Number(count || 0);
-  const safeCount = Number.isFinite(numericCount) ? numericCount : 0;
-
-  return `${safeCount} widget${safeCount === 1 ? "" : "s"}`;
-}
-
-function getDashboardViewers(db) {
-  const users = [];
-  const seen = new Set();
-  const addUser = (u, time) => {
-    if (!u || !u.email || seen.has(u.email)) return;
-    seen.add(u.email);
-    users.push({ ...u, displayName: u.name || "Unknown user", time });
-  };
-  addUser(db.updated_by, db.updated_at);
-  addUser(db.created_by, db.created_at);
-  return users;
-}
-
-function getDashboardPeopleSummary(db) {
-  const count = getDashboardViewers(db).length;
-  if (!count) return "No people";
-
-  return `${count} ${count === 1 ? "person" : "people"}`;
-}
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import useCanEditDashboard from "./hooks/useCanEditDashboard";
+import {
+  DASHBOARD_LIST_COLUMNS,
+  DASHBOARD_LIST_CONTENT_COLUMNS,
+  VISUALLY_HIDDEN_SX,
+} from "./constants";
+import {
+  formatDashboardListDate,
+  formatDashboardTooltipDate,
+  formatDashboardWidgetCount,
+  getAvatarColor,
+  getDashboardCreatorLabel,
+  getDashboardCreatorName,
+  getDashboardPeopleSummary,
+  getDashboardViewers,
+  getInitials,
+  labelCreatorsWithStableUnknownIndex,
+  timeAgo,
+} from "./utils";
 
 function ViewerAvatars({ db, dashboardName }) {
   const theme = useTheme();
@@ -369,7 +283,7 @@ function ViewerAvatars({ db, dashboardName }) {
 }
 
 ViewerAvatars.propTypes = {
-  dashboardName: PropTypes.string.isRequired,
+  dashboardName: PropTypes.string,
   db: PropTypes.shape({
     created_by: PropTypes.shape({
       name: PropTypes.string,
@@ -413,21 +327,8 @@ export default function DashboardsListView() {
     });
 
     const entries = Array.from(map, ([email, name]) => ({ email, name }));
-    const unnamedCount = entries.filter((creator) => !creator.name).length;
-    let unnamedIndex = 0;
 
-    return entries.map((creator) => {
-      if (creator.name) return creator;
-
-      unnamedIndex += 1;
-      return {
-        ...creator,
-        name:
-          unnamedCount > 1
-            ? `Unknown creator ${unnamedIndex}`
-            : "Unknown creator",
-      };
-    });
+    return labelCreatorsWithStableUnknownIndex(entries);
   }, [dashboards]);
 
   const filteredDashboards = useMemo(() => {
@@ -676,19 +577,12 @@ export default function DashboardsListView() {
               View Docs
             </Typography>
           </Button>
-          <Button
-            variant="contained"
-            color="primary"
-            startIcon={
-              createMutation.isPending ? (
-                <CircularProgress size={16} color="inherit" />
-              ) : (
-                <Iconify icon="mdi:plus" />
-              )
-            }
-            onClick={handleCreate}
-            disabled={createMutation.isPending}
-            sx={{ height: "38px", width: { xs: "100%", sm: "auto" } }}
+          <CustomTooltip
+            show={!canCreate}
+            type=""
+            title="You don't have permission to create dashboards."
+            size="small"
+            arrow
           >
             <span>
               <Button
@@ -744,6 +638,10 @@ export default function DashboardsListView() {
                 columnGap: 1.5,
                 alignItems: "center",
                 px: 2,
+                // Rows below carry a 1px border. With border-box sizing that
+                // border eats into their content width, so the header needs a
+                // border of the same width or its tracks sit ~1px off theirs.
+                border: "1px solid transparent",
                 color: "text.disabled",
               }}
             >
@@ -994,28 +892,33 @@ export default function DashboardsListView() {
                     >
                       People:
                     </Typography>
-                    <ViewerAvatars db={db} dashboardName={db.name} />
+                    <ViewerAvatars
+                      db={db}
+                      dashboardName={db.name || "this dashboard"}
+                    />
                   </Stack>
 
-                  <IconButton
-                    className="row-actions"
-                    size="small"
-                    onClick={(e) => handleDelete(e, db)}
-                    aria-label={`Delete ${db.name}`}
-                    sx={{
-                      opacity: { xs: 1, md: 0 },
-                      transition: "opacity 0.15s",
-                      flexShrink: 0,
-                      width: 32,
-                      height: 32,
-                      justifySelf: "end",
-                      gridColumn: { xs: "2 / 3", md: "auto" },
-                      gridRow: { xs: "1 / 2", md: "auto" },
-                      "@media (hover: none)": { opacity: 1 },
-                    }}
-                  >
-                    <Iconify icon="mdi:delete-outline" width={18} />
-                  </IconButton>
+                  {canDelete && (
+                    <IconButton
+                      className="row-actions"
+                      size="small"
+                      onClick={(e) => handleDelete(e, db)}
+                      aria-label={`Delete ${db.name}`}
+                      sx={{
+                        opacity: { xs: 1, md: 0 },
+                        transition: "opacity 0.15s",
+                        flexShrink: 0,
+                        width: 32,
+                        height: 32,
+                        justifySelf: "end",
+                        gridColumn: { xs: "2 / 3", md: "auto" },
+                        gridRow: { xs: "1 / 2", md: "auto" },
+                        "@media (hover: none)": { opacity: 1 },
+                      }}
+                    >
+                      <Iconify icon="mdi:delete-outline" width={18} />
+                    </IconButton>
+                  )}
                 </Box>
               );
             })}

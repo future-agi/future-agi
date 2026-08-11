@@ -20,6 +20,16 @@ const h = vi.hoisted(() => ({
     mutate: vi.fn(),
     isPending: false,
   },
+  permissions: {
+    canCreate: true,
+    canUpdate: true,
+    canDelete: true,
+    isReadOnly: false,
+  },
+}));
+
+vi.mock("../hooks/useCanEditDashboard", () => ({
+  default: () => h.permissions,
 }));
 
 vi.mock("src/hooks/useDashboards", () => ({
@@ -110,6 +120,12 @@ describe("DashboardsListView list metadata", () => {
     h.dashboards = DASHBOARDS;
     h.createDashboard.isPending = false;
     h.deleteDashboard.isPending = false;
+    h.permissions = {
+      canCreate: true,
+      canUpdate: true,
+      canDelete: true,
+      isReadOnly: false,
+    };
   });
 
   it("renders column headers above non-empty dashboard rows", () => {
@@ -356,5 +372,63 @@ describe("DashboardsListView list metadata", () => {
       "dash-2",
       expect.any(Object),
     );
+  });
+
+  it("hides every row delete action from users without delete permission", () => {
+    h.permissions = {
+      canCreate: true,
+      canUpdate: false,
+      canDelete: false,
+      isReadOnly: true,
+    };
+
+    render(<DashboardsListView />);
+
+    // The rows still render, but no row offers a delete affordance at all.
+    expect(
+      screen.getByRole("link", { name: /Latency Overview/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Delete Latency Overview" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Delete Fallback Owner Dashboard" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Delete / }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("disables dashboard creation for users without create permission", () => {
+    h.permissions = {
+      canCreate: false,
+      canUpdate: true,
+      canDelete: true,
+      isReadOnly: false,
+    };
+
+    render(<DashboardsListView />);
+
+    const createButton = screen.getByRole("button", {
+      name: /Create Dashboard/,
+    });
+
+    expect(createButton).toBeDisabled();
+
+    fireEvent.click(createButton);
+
+    expect(h.createDashboard.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("fires a single create action per click for permitted users", () => {
+    render(<DashboardsListView />);
+
+    const createButtons = screen.getAllByRole("button", {
+      name: /Create Dashboard/,
+    });
+
+    // A nested button would render the create control twice and double-fire
+    // handleCreate on a single click.
+    expect(createButtons).toHaveLength(1);
   });
 });
