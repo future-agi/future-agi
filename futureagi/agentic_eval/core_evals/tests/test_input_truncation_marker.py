@@ -22,3 +22,9 @@ def test_truncate_string_never_exceeds_max_chars(max_chars):
     long_input = "x" * 5000
     result = _truncate_string(long_input, max_chars)
     assert len(result) <= max_chars, f"overflow at max_chars={max_chars}: len={len(result)}"
+
+
+@pytest.mark.unit
+def test_truncate_string_short_input_returned_verbatim():
+    # The identity half of the contract: input within the limit passes through untouched.
+    assert _truncate_string("short", 50) == "short"
