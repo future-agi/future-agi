@@ -37,31 +37,36 @@ const CHILD_RUN_CONFIG_KEYS = [
   "data_injection",
 ];
 
+const camelizeKey = (key) =>
+  key.replace(/_([a-z])/g, (_, char) => char.toUpperCase());
+
+const readRunConfigKey = (source, nested, key) => {
+  const camelKey = camelizeKey(key);
+  return (
+    source[key] ?? source[camelKey] ?? nested[key] ?? nested[camelKey] ?? null
+  );
+};
+
+const isEmptyCollection = (value) => {
+  if (Array.isArray(value)) return value.length === 0;
+  return typeof value === "object" && Object.keys(value).length === 0;
+};
+
 export function buildCompositeChildRunConfig(evalMeta) {
   const source = evalMeta || {};
+  const rawNested = source.config?.run_config ?? source.config?.runConfig;
   const nested =
-    source.config?.run_config && typeof source.config.run_config === "object"
-      ? source.config.run_config
+    rawNested && typeof rawNested === "object" && !Array.isArray(rawNested)
+      ? rawNested
       : {};
 
   const runConfig = {};
   for (const key of CHILD_RUN_CONFIG_KEYS) {
-    const value = source[key] ?? nested[key];
+    const value = readRunConfigKey(source, nested, key);
     if (value === undefined || value === null) continue;
-    if (Array.isArray(value) && value.length === 0) continue;
-    if (
-      !Array.isArray(value) &&
-      typeof value === "object" &&
-      Object.keys(value).length === 0
-    ) {
-      continue;
-    }
+    if (typeof value === "object" && isEmptyCollection(value)) continue;
+    if (key === "error_localizer_enabled" && value !== true) continue;
     runConfig[key] = value;
-  }
-
-  if (!runConfig.model) {
-    const fallbackModel = source.config?.model || source.evalTemplate?.model;
-    if (fallbackModel) runConfig.model = fallbackModel;
   }
 
   return runConfig;

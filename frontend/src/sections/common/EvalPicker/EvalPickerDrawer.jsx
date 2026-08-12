@@ -12,7 +12,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { useQueryClient } from "@tanstack/react-query";
 import Iconify from "src/components/iconify";
-import axios, { endpoints } from "src/utils/axios";
+import { evalDetailQuery } from "src/sections/evals/hooks/useEvalDetail";
 import EvalPickerProvider from "./context/EvalPickerProvider";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
 import EvalPickerList from "./EvalPickerList";
@@ -47,6 +47,10 @@ const EvalPickerContent = ({ onStepChange }) => {
   useEffect(() => {
     onStepChange?.(step);
   }, [step, onStepChange]);
+  // Code evals have no judge model, so they never need the config step.
+  // Everything else does unless a model is already resolved — the list row
+  // carries no `model`, so the detail endpoint is the only source. It shares
+  // the expand panel's cache entry, so an expanded row costs no extra fetch.
   const needsModelSelection = useCallback(
     async (evalData) => {
       const normalized = normalizeEvalPickerEval(evalData);
@@ -55,22 +59,18 @@ const EvalPickerContent = ({ onStepChange }) => {
 
       const templateId =
         normalized?.templateId || evalData?.template_id || evalData?.id;
-      if (!templateId) return false;
+      if (!templateId) return true;
 
       try {
         const detail = await queryClient.fetchQuery({
-          queryKey: ["evals", "detail", templateId],
-          queryFn: async () => {
-            const { data } = await axios.get(
-              endpoints.develop.eval.getEvalDetail(templateId),
-            );
-            return data?.result;
-          },
+          ...evalDetailQuery(templateId),
           staleTime: 30000,
         });
         return !detail?.model;
       } catch {
-        return false;
+        // Fail toward the config screen: adding a child with no model fails
+        // silently at run time, while an unnecessary model picker doesn't.
+        return true;
       }
     },
     [queryClient],
