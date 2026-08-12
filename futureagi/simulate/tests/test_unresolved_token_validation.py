@@ -251,6 +251,15 @@ async def test_unresolved_tokens_fail_the_call_execution(
         ).count
     )()
     assert failed_creates == 1
+    # And the failed call must not ALSO be processed as launchable: exactly ONE
+    # CreateCallExecution in total (the FAILED one -- no stray ONGOING sibling), and
+    # its id appears exactly once in the returned call list. Guards the `continue`
+    # that ends the validation-failure block against falling through.
+    total_creates = await sync_to_async(
+        CreateCallExecution.objects.filter(call_execution=call_execution).count
+    )()
+    assert total_creates == 1
+    assert len(result.call_ids) == len(set(result.call_ids))
 
 
 @pytest.mark.unit
