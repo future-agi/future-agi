@@ -23,6 +23,7 @@ import {
   Switch,
   IconButton,
 } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import SectionHeader from "../components/SectionHeader";
@@ -766,9 +767,7 @@ const LogsTab = ({ gatewayId }) => {
 
   if (isLoading) {
     return (
-      <Box display="flex" justifyContent="center" py={4}>
-        <CircularProgress />
-      </Box>
+      <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />
     );
   }
 

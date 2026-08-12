@@ -1111,6 +1111,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "evaluation_data",
             "error_message",
             "observation_span",
+            "call_logs",
+            "raw_log",
         }
     )
 
@@ -2591,7 +2593,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             project_id = proj_result.data[0]["project_id"]
             if not Project.objects.filter(
                 id=project_id,
-                organization_id=request.user.organization_id,
+                organization=_get_request_organization(request),
             ).exists():
                 return self._gm.not_found("trace_id not found")
 
@@ -2700,7 +2702,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     _st.isoformat() if hasattr(_st, "isoformat") else str(_st)
                 )
         simulation_context = _simulation_context_for_voice_call(
-            organization_id=request.user.organization_id,
+            organization_id=getattr(_get_request_organization(request), "id", None),
             span_attributes=span_attrs,
             eval_attributes=eval_attrs,
             raw_log=raw_log,
@@ -3843,10 +3845,20 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         #      typed-Map classifier.
         #   2. `attrs_string` / `attrs_number` / `attrs_bool` Maps — the
         #      common-case typed attributes (gen_ai.* keys for LLM spans).
-        # We SELECT all three and reconstruct the flat dict on the Python
-        # side, matching the pattern used by the trace-tree fetch above
-        # (~line 1195). `FINAL` collapses ReplacingMergeTree duplicates;
-        # the `idx_id` bloom filter keeps the PREWHERE scan cheap.
+        # We SELECT all three and reconstruct the flat dict on the Python side,
+        # matching the pattern used by the trace-tree fetch above (~line 1195).
+        # Dedup via `FINAL` + `use_skip_indexes_if_final = 1` (the CHSpanReader
+        # idiom): bare `FINAL` without the setting disables the `idx_id` skip
+        # index and full-scans the table; with it the skip index prunes. NB: no
+        # `is_deleted = 0` predicate — the two-arg ReplacingMergeTree(_version,
+        # is_deleted) engine already drops tombstones under FINAL, and pairing
+        # that predicate with the setting arms a resurrection bug (the is_deleted
+        # minmax index prunes tombstone granules before the merge). See
+        # `_FINAL_SKIP_INDEX_SETTINGS` in services/clickhouse/v2/span_reader.py.
+        # The ~900 KB `call_logs` blob lands in `attrs_string` (collector path,
+        # a JSON string) or in `attributes_extra` (backfill path, a list in the
+        # JSON overflow) — strip it from both at read so it's never transferred.
+        # `raw_log` / `metrics_data` stay (still read downstream).
         page_rows = result.data[:page_size]
         span_ids = [
             str(row.get("span_id", "")) for row in page_rows if row.get("span_id")
@@ -3855,12 +3867,17 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         if span_ids:
             attrs_result = analytics.execute_ch_query(
                 "SELECT id, provider, "
-                "attributes_extra AS span_attributes, "
-                "attrs_string, attrs_number, attrs_bool "
+                "concat('{', arrayStringConcat(arrayMap("
+                "kv -> concat('\"', kv.1, '\":', kv.2), "
+                "arrayFilter(kv -> kv.1 != 'call_logs', "
+                "JSONExtractKeysAndValuesRaw(attributes_extra))), ','), '}') "
+                "AS span_attributes, "
+                "mapFilter((k, v) -> k != 'call_logs', attrs_string) AS attrs_string, "
+                "attrs_number, attrs_bool "
                 "FROM spans FINAL "
-                "PREWHERE id IN %(span_ids)s "
-                "WHERE is_deleted = 0",
-                {"span_ids": tuple(span_ids)},
+                "PREWHERE id IN %(span_ids)s AND project_id = %(project_id)s "
+                "SETTINGS use_skip_indexes_if_final = 1",
+                {"span_ids": tuple(span_ids), "project_id": str(project_id)},
                 timeout_ms=10000,
             )
             for arow in attrs_result.data:
@@ -4027,9 +4044,18 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 else []
             )
 
-            # Include span attributes for custom columns (skip heavy/nested values)
+            # Include span attributes for custom columns (skip heavy/nested values).
+            # provider_transcript / fi.conversation.transcript / metrics_data are
+            # detail-only transcript payloads — never in a list row.
             for key, value in span_attrs.items():
-                if key in ("raw_log", "call") or key in entry:
+                if key in (
+                    "raw_log",
+                    "call",
+                    "call_logs",
+                    "provider_transcript",
+                    "fi.conversation.transcript",
+                    "metrics_data",
+                ) or key in entry:
                     continue
                 if isinstance(value, (str, int, float, bool)):
                     entry[key] = value

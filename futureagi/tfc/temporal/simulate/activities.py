@@ -1242,18 +1242,6 @@ def _create_dataset_scenario_sync(
     from django.shortcuts import get_object_or_404
 
     try:
-        from ee.agenthub.scenario_graph.graph_generator import (
-            ConversationGraphGenerator,
-        )
-        from ee.agenthub.synthetic_data_agent.synthetic_data_agent import (
-            SyntheticDataAgent,
-        )
-    except ImportError:
-        if settings.DEBUG:
-            logger.warning("Could not import ee.agenthub.scenario_graph.graph_generator", exc_info=True)
-        return None
-
-    try:
         close_old_connections()
 
         user = User.objects.get(id=user_id)
@@ -1301,6 +1289,22 @@ def _create_dataset_scenario_sync(
             deleted=False,
             organization=scenario.organization,
         )
+
+        # Enterprise-only imports; deferred so the source-dataset scope check runs on OSS.
+        try:
+            from ee.agenthub.scenario_graph.graph_generator import (
+                ConversationGraphGenerator,
+            )
+            from ee.agenthub.synthetic_data_agent.synthetic_data_agent import (
+                SyntheticDataAgent,
+            )
+        except ImportError:
+            if settings.DEBUG:
+                logger.warning(
+                    "Could not import ee.agenthub.scenario_graph.graph_generator",
+                    exc_info=True,
+                )
+            return None
 
         # Determine simulation mode
         mode = "voice" if agent_definition.agent_type == "voice" else "chat"

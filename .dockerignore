@@ -1,0 +1,174 @@
+# Root build context (docker-compose.dev.yml builds Dockerfile.oss with
+# `context: .`). futureagi/.dockerignore is NOT read for these builds — Docker
+# only reads <context>/.dockerignore — so every rule that matters there has to
+# be restated here.
+#
+# Patterns are relative to the context root, so a bare `.env` would only match
+# `/.env`. Secrets live under futureagi/, hence the `**/` prefixes throughout.
+
+# ---------------------------------------------------------------------------
+# Secrets and credentials — never bake these into a published image
+# ---------------------------------------------------------------------------
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.test
+**/*_Creds.json
+**/*_creds.json
+**/*_credentials.json
+**/*-credentials.json
+**/credentials.json
+**/service-account*.json
+**/Vertex_AI_Creds.json
+**/Vertex.json
+**/vertex.json
+**/*.pem
+**/*.key
+!**/test*.key
+**/*.p12
+**/*.pfx
+
+# ---------------------------------------------------------------------------
+# Other services — the backend image only needs futureagi/
+# ---------------------------------------------------------------------------
+frontend/
+agentcc-gateway/
+fi-collector/
+
+# ---------------------------------------------------------------------------
+# Version control and CI
+# ---------------------------------------------------------------------------
+.git/
+.gitignore
+.gitattributes
+.github/
+.gitlab-ci.yml
+
+# ---------------------------------------------------------------------------
+# Node
+# ---------------------------------------------------------------------------
+**/node_modules/
+**/.yarn/
+**/.pnp.*
+**/npm-debug.log*
+**/yarn-error.log*
+
+# ---------------------------------------------------------------------------
+# Python caches and virtualenvs
+# ---------------------------------------------------------------------------
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+**/*.so
+**/.venv/
+**/.venv*/
+**/venv/
+**/env.bak/
+**/.uv-cache/
+**/pip-wheel-metadata/
+**/wheels/
+
+# ---------------------------------------------------------------------------
+# Testing and coverage artifacts
+# ---------------------------------------------------------------------------
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.hypothesis/
+**/.tox/
+**/.nox/
+**/htmlcov/
+**/coverage/
+**/coverage-reports/
+**/test-reports/
+**/test-logs/
+**/test-results/
+**/playwright-report/
+**/.coverage
+**/.coverage.*
+**/*.cover
+
+# ---------------------------------------------------------------------------
+# Editors and OS
+# ---------------------------------------------------------------------------
+**/.vscode/
+**/.cursor/
+**/.idea/
+**/.claude/
+**/*.swp
+**/*.swo
+**/*~
+**/.DS_Store
+
+# ---------------------------------------------------------------------------
+# Docs (not needed in the image)
+# ---------------------------------------------------------------------------
+**/*.md
+docs/
+changelog/
+
+# ---------------------------------------------------------------------------
+# Runtime output — media, logs, databases
+# ---------------------------------------------------------------------------
+**/media/
+**/logs/
+**/*.log
+**/*.sqlite3
+**/*.db
+**/db.sqlite3-journal
+**/static/
+
+# ---------------------------------------------------------------------------
+# Docker files
+# ---------------------------------------------------------------------------
+**/docker-compose*.yml
+**/Dockerfile
+**/Dockerfile.*
+**/.dockerignore
+
+# ---------------------------------------------------------------------------
+# Build artifacts
+# ---------------------------------------------------------------------------
+**/dist/
+**/build/
+**/*.egg-info/
+**/*.egg
+**/*.out
+
+# ---------------------------------------------------------------------------
+# Bind-mounted data directories (multi-GB)
+# ---------------------------------------------------------------------------
+**/minio_data/
+**/postgres_data/
+**/clickhouse_data/
+**/redis_data/
+**/*_data/
+**/dumps/
+
+# ---------------------------------------------------------------------------
+# ML weights and caches
+# ---------------------------------------------------------------------------
+**/*.safetensors
+**/*.bin
+**/*.pt
+**/*.pth
+**/*.gguf
+**/*.onnx
+**/model_cache/
+**/embedding_cache/
+**/checkpoints/
+
+# ---------------------------------------------------------------------------
+# Temporary files
+# ---------------------------------------------------------------------------
+**/*.tmp
+**/*.bak
+**/*.backup
+**/celerybeat-schedule
+
+# Private EE artifacts: gitignored, so a fresh clone never has them. Exclude
+# from local builds too so the image matches what an OSS user can build.
+futureagi/ee/cloud/
+futureagi/ee/billing.yaml
+futureagi/ee/Dockerfile.cloud
+futureagi/ee/.github/

@@ -126,6 +126,78 @@ class TestFetchComparisonTranscripts:
 
 
 @pytest.mark.unit
+class TestNonVapiProviderComparison:
+    """Bland (and any provider whose raw payload isn't VAPI/Retell-shaped) must
+    compare via the persisted CallTranscript rows + model fields, not render
+    blank. Regression: the retell branch swallowed the empty-list case, and
+    metrics/duration were read only from a VAPI payload."""
+
+    @staticmethod
+    def _patch_call_transcript(rows):
+        # rows: list of (speaker_role, content)
+        transcript_rows = [
+            SimpleNamespace(speaker_role=r, content=c) for r, c in rows
+        ]
+
+        class _SpeakerRole:
+            ASSISTANT = "assistant"
+            USER = "user"
+
+        class _QuerySet:
+            def filter(self, **kwargs):
+                return self
+
+            def order_by(self, *args):
+                return transcript_rows
+
+            def count(self):
+                return len(transcript_rows)
+
+        return patch(
+            "simulate.models.test_execution.CallTranscript",
+            SimpleNamespace(objects=_QuerySet(), SpeakerRole=_SpeakerRole),
+        )
+
+    def test_bland_transcripts_come_from_call_transcript_rows(self):
+        call = SimpleNamespace(
+            provider_call_data={
+                "bland": {"transcripts": [{"user": "assistant", "text": "x"}]}
+            }
+        )
+        with self._patch_call_transcript(
+            [("assistant", "Hello"), ("user", "Hi there")]
+        ):
+            out = session_comparison._extract_transcripts_from_provider_call_data(
+                call
+            )
+        assert out == [
+            {"role": "assistant", "messages": ["Hello"]},
+            {"role": "user", "messages": ["Hi there"]},
+        ]
+
+    def test_bland_metrics_use_model_fields_and_call_transcript(self):
+        call = SimpleNamespace(
+            provider_call_data={"bland": {}},
+            duration_seconds=66,
+            avg_agent_latency_ms=None,
+            user_wpm=None,
+            bot_wpm=None,
+            talk_ratio=None,
+        )
+        with self._patch_call_transcript(
+            [("assistant", "a"), ("user", "b"), ("assistant", "c")]
+        ):
+            metrics = session_comparison._extract_metrics_from_provider_call_data(
+                call
+            )
+        assert metrics["duration"] == 66
+        assert metrics["total_turns"] == 3
+        # None per-turn metrics degrade to 0 for a provider with no timing.
+        assert metrics["avg_agent_latency_ms"] == 0
+        assert metrics["talk_ratio"] == 0
+
+
+@pytest.mark.unit
 class TestConvertTraceToChatMessages:
     def test_returns_empty_list_for_none_or_empty_input(self):
         assert session_comparison.convert_trace_to_chat_messages(None) == []

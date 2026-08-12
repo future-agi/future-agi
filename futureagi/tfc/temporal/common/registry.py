@@ -747,7 +747,7 @@ def _ensure_activities_registered() -> None:
     except ImportError as e:
         log.warning("could_not_load_dataset_optimization_activities", error=str(e))
 
-    # Register billing activities (Stripe usage reporting, dunning)
+    # Register billing activities (Stripe usage reporting)
     try:
         from tfc.temporal.billing import get_activities as get_billing_activities
 

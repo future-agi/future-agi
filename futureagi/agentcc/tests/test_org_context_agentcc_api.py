@@ -74,6 +74,7 @@ class TestAgentccRequestOrganizationContext:
         assert session.organization_id == org_b.id
         assert session.organization_id != user.organization_id
 
+    @pytest.mark.requires_ee
     def test_webhook_create_uses_active_request_organization(
         self, user, secondary_org_context, secondary_org_client
     ):
@@ -242,6 +243,7 @@ class TestAgentccRequestOrganizationContext:
         assert policy.deleted is True
         assert policy.deleted_at is not None
 
+    @pytest.mark.requires_ee
     def test_email_alert_create_uses_active_request_organization(
         self, user, secondary_org_context, secondary_org_client
     ):
@@ -268,26 +270,21 @@ class TestAgentccRequestOrganizationContext:
         self, user, secondary_org_context, secondary_org_client, settings
     ):
         settings.INTEGRATION_ENCRYPTION_KEY = Fernet.generate_key().decode()
+        org_b, _ = secondary_org_context
 
-        create_response = secondary_org_client.post(
-            "/agentcc/email-alerts/",
-            {
-                "name": "secondary_alert_secret",
-                "recipients": ["alerts@example.com"],
-                "events": ["budget.exceeded"],
-                "provider": "sendgrid",
-                "provider_config": {
-                    "api_key": "sg.original-secret",
-                    "from_email": "old@example.com",
-                },
-            },
-            format="json",
+        alert = AgentccEmailAlert.no_workspace_objects.create(
+            organization=org_b,
+            name="secondary_alert_secret",
+            recipients=["alerts@example.com"],
+            events=["budget.exceeded"],
+            provider="sendgrid",
+            encrypted_config=CredentialManager.encrypt(
+                {"api_key": "sg.original-secret", "from_email": "old@example.com"}
+            ),
         )
-        assert create_response.status_code == 200, create_response.json()
-        alert_id = create_response.json()["result"]["id"]
 
         update_response = secondary_org_client.patch(
-            f"/agentcc/email-alerts/{alert_id}/",
+            f"/agentcc/email-alerts/{alert.id}/",
             {
                 "provider_config": {"from_email": "new@example.com"},
                 "cooldown_minutes": 10,
@@ -296,7 +293,7 @@ class TestAgentccRequestOrganizationContext:
         )
 
         assert update_response.status_code == 200, update_response.json()
-        alert = AgentccEmailAlert.no_workspace_objects.get(id=alert_id)
+        alert.refresh_from_db()
         config = CredentialManager.decrypt(bytes(alert.encrypted_config))
         assert config["api_key"] == "sg.original-secret"
         assert config["from_email"] == "new@example.com"

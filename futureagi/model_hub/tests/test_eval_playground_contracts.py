@@ -3,6 +3,9 @@ import json
 import pytest
 from rest_framework import status
 
+pytest.importorskip("ee.usage.models.usage", reason="requires ee/")
+pytestmark = pytest.mark.requires_ee
+
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
 from ee.usage.models.usage import APICallLog, APICallStatusChoices
@@ -650,6 +653,32 @@ def test_eval_template_bulk_delete_soft_deletes_eval_settings(auth_client, user)
     response = auth_client.post(
         "/model-hub/eval-templates/bulk-delete/",
         {"template_ids": [str(template.id)]},
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    template.refresh_from_db()
+    setting.refresh_from_db()
+    assert template.deleted is True
+    assert setting.deleted is True
+    assert setting.deleted_at is not None
+
+
+@pytest.mark.django_db
+def test_eval_template_single_delete_soft_deletes_eval_settings(auth_client, user):
+    template = _create_code_eval_template(
+        user.organization, name="single-delete-cascades-settings"
+    )
+    setting = EvalSettings.objects.create(
+        eval_id=template.id,
+        user=user,
+        source="eval_playground",
+        column_config=[{"id": "column1", "name": "Evaluation ID"}],
+    )
+
+    response = auth_client.post(
+        "/model-hub/delete-eval-template/",
+        {"eval_template_id": str(template.id)},
         format="json",
     )
 

@@ -1,6 +1,8 @@
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin
-from django.http import HttpResponseRedirect
+from django.core.exceptions import PermissionDenied
+from django.db.models import Q
+from django.http import HttpResponseNotAllowed, HttpResponseRedirect, JsonResponse
 from django.template.response import TemplateResponse
 from django.urls import path
 from django.utils.html import format_html, format_html_join
@@ -8,6 +10,7 @@ from django.utils.html import format_html, format_html_join
 from accounts.models.auth_token import AuthToken
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from accounts.services.sos_service import build_sos_handoff_url
 
 from .models import (
     Organization,
@@ -473,3 +476,178 @@ class BlockedKeyProxy(User):
 
 
 admin.site.register(BlockedKeyProxy, BlockedKeysAdmin)
+
+
+def has_sos_access(user):
+    """Whether `user` may start an SOS session.
+
+    The admin exists for SOS support work, so staff status is the grant: any
+    non-superuser staff account sees the SOS page and nothing else. Superusers
+    keep the full admin.
+    """
+    return bool(user.is_authenticated and user.is_active and user.is_staff)
+
+
+class SOSLoginAdmin(admin.ModelAdmin):
+    """Custom admin view to start an SOS (support impersonation) session.
+
+    Search for an active user and mint them a token pair, then hand off to the
+    frontend's /sos route which stores the tokens and flips on SOS Mode. Same
+    effect as the Appsmith-facing SOSLoginView, but gated on the operator's own
+    admin session instead of the shared API_KEY, so the operator is identifiable
+    and the handoff is audit-logged.
+
+    Access requires an active staff account (`is_staff`) — see `has_sos_access`.
+    Superusers qualify, since Django's admin already grants them staff status.
+    """
+
+    RESULT_LIMIT = 50
+
+    def get_urls(self):
+        return [
+            path(
+                "",
+                self.admin_site.admin_view(self.sos_login_view),
+                name="accounts_sosloginproxy_changelist",
+            ),
+            path(
+                "login/",
+                self.admin_site.admin_view(self.start_sos_session_view),
+                name="accounts_sosloginproxy_login",
+            ),
+            path(
+                "copy-link/",
+                self.admin_site.admin_view(self.copy_sos_link_view),
+                name="accounts_sosloginproxy_copy_link",
+            ),
+        ]
+
+    def sos_login_view(self, request):
+        if not has_sos_access(request.user):
+            raise PermissionDenied("SOS login requires staff access.")
+
+        query = request.GET.get("q", "").strip()
+        users, total_count = [], 0
+
+        if query:
+            matches = (
+                User.objects.filter(is_active=True)
+                .filter(
+                    Q(email__icontains=query)
+                    | Q(name__icontains=query)
+                    | Q(organization__name__icontains=query)
+                )
+                .select_related("organization")
+                .order_by("email")
+            )
+            total_count = matches.count()
+            users = list(matches[: self.RESULT_LIMIT])
+
+        context = {
+            **self.admin_site.each_context(request),
+            "title": "SOS Login (impersonate user)",
+            "query": query,
+            "users": users,
+            "total_count": total_count,
+            "limit": self.RESULT_LIMIT,
+            "truncated": total_count > self.RESULT_LIMIT,
+            "opts": type(
+                "Opts", (), {"app_label": "accounts", "model_name": "sos_login"}
+            )(),
+        }
+        return TemplateResponse(request, "admin/sos_login.html", context)
+
+    def _build_sos_url(self, request, user_id, source):
+        """Delegate to the SOS service; returns (url, error_message)."""
+        return build_sos_handoff_url(user_id, source=source, operator=request.user)
+
+    def start_sos_session_view(self, request):
+        if request.method != "POST":
+            return HttpResponseNotAllowed(["POST"])
+
+        if not has_sos_access(request.user):
+            self.message_user(
+                request,
+                "SOS login requires staff access.",
+                messages.ERROR,
+            )
+            return HttpResponseRedirect("../")
+
+        url, error = self._build_sos_url(
+            request, request.POST.get("user_id", ""), "django_admin"
+        )
+        if error:
+            self.message_user(request, error, messages.ERROR)
+            return HttpResponseRedirect("../")
+
+        return HttpResponseRedirect(url)
+
+    def copy_sos_link_view(self, request):
+        if request.method != "POST":
+            return HttpResponseNotAllowed(["POST"])
+
+        if not has_sos_access(request.user):
+            return JsonResponse(
+                {"error": "SOS login requires staff access."},
+                status=403,
+            )
+
+        url, error = self._build_sos_url(
+            request, request.POST.get("user_id", ""), "django_admin_copy_link"
+        )
+        if error:
+            return JsonResponse({"error": error}, status=400)
+
+        return JsonResponse({"url": url})
+
+    def has_module_permission(self, request):
+        return has_sos_access(request.user)
+
+    def has_view_permission(self, request, obj=None):
+        return has_sos_access(request.user)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class SOSLoginProxy(User):
+    class Meta:
+        proxy = True
+        verbose_name = "SOS Login"
+        verbose_name_plural = "SOS Login (impersonate user)"
+
+
+admin.site.register(SOSLoginProxy, SOSLoginAdmin)
+
+
+_original_get_app_list = admin.AdminSite.get_app_list
+
+
+def _sos_only_app_list(self, request, app_label=None):
+    """Restrict non-superusers to the SOS page.
+
+    Without this, "staff sees only SOS" holds only because such accounts happen
+    to carry no other model permissions. Filtering the index makes it a rule
+    rather than an accident. Direct URLs are already refused by each admin's own
+    permission checks.
+    """
+    app_list = _original_get_app_list(self, request, app_label)
+    if request.user.is_superuser:
+        return app_list
+
+    for app in app_list:
+        app["models"] = [
+            model
+            for model in app["models"]
+            if model["object_name"] == SOSLoginProxy.__name__
+        ]
+    return [app for app in app_list if app["models"]]
+
+
+admin.AdminSite.get_app_list = _sos_only_app_list

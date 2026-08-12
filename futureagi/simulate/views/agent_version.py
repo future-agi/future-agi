@@ -519,6 +519,8 @@ class AgentVersionEvalSummaryView(APIView):
 
             return self._gm.success_response(final_data)
 
+        except AgentVersion.DoesNotExist:
+            return self._gm.not_found("Agent version not found.")
         except Exception:
             return self._gm.internal_server_error_response(
                 get_error_message("UNABLE_TO_FETCH_EVAL_SUMMARY")
@@ -563,6 +565,8 @@ class AgentVersionCallExecutionView(APIView):
 
             return paginator.get_paginated_response(serializer.data)
 
+        except AgentVersion.DoesNotExist:
+            return self._gm.not_found("Agent version not found.")
         except NotFound:
             raise
         except Exception:

@@ -370,6 +370,105 @@ class TestStructuredKnowledgeBaseViewSet:
         deleted = auth_client.delete(f"/model-hub/kb/{missing_id}/")
         assert deleted.status_code == status.HTTP_404_NOT_FOUND
 
+    def test_put_on_missing_structured_kb_returns_404(self, auth_client):
+        response = auth_client.put(
+            f"/model-hub/kb/{uuid.uuid4()}/",
+            {
+                "name": "missing",
+                "embedding_model": "BAAI/bge-small-en-v1.5",
+                "chunk_size": 256,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_create_rejects_unknown_field(self, auth_client):
+        with patch("tfc.ee_gating.check_ee_feature", return_value=None):
+            response = auth_client.post(
+                "/model-hub/kb/",
+                {
+                    "name": "unknown-field-kb",
+                    "embedding_model": "BAAI/bge-small-en-v1.5",
+                    "chunk_size": 256,
+                    "not_a_field": "nope",
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not StructuredKnowledgeBase.objects.filter(
+            name="unknown-field-kb"
+        ).exists()
+
+    def test_create_requires_chunk_size(self, auth_client):
+        with patch("tfc.ee_gating.check_ee_feature", return_value=None):
+            response = auth_client.post(
+                "/model-hub/kb/",
+                {"name": "no-chunk-kb", "embedding_model": "BAAI/bge-small-en-v1.5"},
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not StructuredKnowledgeBase.objects.filter(name="no-chunk-kb").exists()
+
+    def test_create_rejects_unsupported_embedding_model(self, auth_client):
+        with patch("tfc.ee_gating.check_ee_feature", return_value=None):
+            response = auth_client.post(
+                "/model-hub/kb/",
+                {
+                    "name": "bad-model-kb",
+                    "embedding_model": "not-a-real/embedding-model",
+                    "chunk_size": 256,
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not StructuredKnowledgeBase.objects.filter(name="bad-model-kb").exists()
+
+    def test_create_contract_drops_client_supplied_organization(self, organization):
+        """A client-supplied ``organization`` never reaches ``validated_data``.
+
+        The view saves the serializer the decorator validated, so a writable
+        ``organization`` would hand ``create()`` an Organization instance where
+        the field expects a pk.
+        """
+        from model_hub.serializers.kb import KnowledgeBaseCreateSerializer
+
+        serializer = KnowledgeBaseCreateSerializer(
+            data={
+                "name": "contract-org-kb",
+                "embedding_model": "BAAI/bge-small-en-v1.5",
+                "chunk_size": 256,
+                "organization": str(organization.id),
+            }
+        )
+
+        assert serializer.is_valid(), serializer.errors
+        assert "organization" not in serializer.validated_data
+
+    def test_partial_update_rejects_unknown_field(
+        self, auth_client, organization, workspace
+    ):
+        kb = StructuredKnowledgeBase.objects.create(
+            name="patch-unknown-kb",
+            organization=organization,
+            workspace=workspace,
+            chunk_size=256,
+            embedding_model="BAAI/bge-small-en-v1.5",
+        )
+
+        response = auth_client.patch(
+            f"/model-hub/kb/{kb.id}/",
+            {"name": "renamed", "not_a_field": "nope"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        kb.refresh_from_db()
+        assert kb.name == "patch-unknown-kb"
+
     def test_supported_embedding_models_aliases(self, auth_client):
         for path in (
             "/model-hub/kb/supported-embedding-models",

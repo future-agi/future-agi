@@ -22,6 +22,7 @@ import React, {
   useState,
 } from "react";
 import Iconify from "src/components/iconify";
+import { useMapToVariable } from "./useMapToVariable";
 import axios, { endpoints } from "src/utils/axios";
 import { canonicalEntries, canonicalKeys } from "src/utils/utils";
 import CustomAudioPlayer from "src/components/custom-audio/CustomAudioPlayer";
@@ -36,6 +37,7 @@ import {
   useExecuteCompositeEval,
   useExecuteCompositeEvalAdhoc,
 } from "../hooks/useCompositeEval";
+import RequiredMark from "src/components/RequiredMark";
 import {
   NEVER_PICKABLE_TOPLEVEL,
   VOICE_ONLY_METRICS,
@@ -269,6 +271,13 @@ const SimulationTestMode = React.forwardRef(
         ? { ...initialMapping }
         : {},
     );
+
+    // Shared click-to-map behaviour for the Columns/Value table rows.
+    const { renderRowMapAction, mapMenu, rowHoverSx } = useMapToVariable({
+      variables,
+      mapping,
+      setMapping,
+    });
     // displayKey ("scenario_<col_name>") -> scenario column UUID. The backend
     // resolver at run time only accepts scenario column UUIDs, not names, so
     // we persist the UUID while the dropdown still shows the friendly label.
@@ -594,8 +603,7 @@ const SimulationTestMode = React.forwardRef(
           }
 
           // simulation_call_type (modality) wins over call_type (Inbound/Outbound).
-          const callType =
-            callData.simulation_call_type || callData.call_type;
+          const callType = callData.simulation_call_type || callData.call_type;
           const isTextCall =
             typeof callType === "string" &&
             ["text", "chat", "prompt"].includes(callType.toLowerCase());
@@ -1057,7 +1065,8 @@ const SimulationTestMode = React.forwardRef(
         {/* Simulation (Run Test) selector */}
         <Box>
           <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
-            Simulation<span style={{ color: "#d32f2f" }}>*</span>
+            Simulation
+            <RequiredMark />
           </Typography>
           <Autocomplete
             size="small"
@@ -1534,6 +1543,7 @@ const SimulationTestMode = React.forwardRef(
                             borderColor: "divider",
                             "&:last-child": { borderBottom: "none" },
                             "&:hover": { backgroundColor: "action.hover" },
+                            ...rowHoverSx,
                           }}
                         >
                           <Tooltip
@@ -1650,6 +1660,7 @@ const SimulationTestMode = React.forwardRef(
                               </Tooltip>
                             )}
                           </Box>
+                          {renderRowMapAction(key)}
                         </Box>
                       );
                     })}
@@ -1698,9 +1709,7 @@ const SimulationTestMode = React.forwardRef(
                     size="small"
                     disabled={isMappingPending}
                     options={
-                      showCurrent
-                        ? [currentValue, ...fieldNames]
-                        : fieldNames
+                      showCurrent ? [currentValue, ...fieldNames] : fieldNames
                     }
                     value={mapping[variable] || null}
                     onChange={(_, val) =>
@@ -1828,6 +1837,9 @@ const SimulationTestMode = React.forwardRef(
             </Box>
           </Box>
         )}
+
+        {/* Map-from-table menu — shared across mapping surfaces */}
+        {mapMenu}
 
         {/* Result */}
         {result && (

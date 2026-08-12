@@ -272,6 +272,12 @@ def _normalize_eval_value(value, output_type):
     a single-element list. Values that are already lists, None, or for other
     output types are returned unchanged.
     """
+    if output_type == "choices" and isinstance(value, dict):
+        choices = value.get("choices")
+        if isinstance(choices, list):
+            return choices
+        choice = value.get("choice")
+        return [choice] if choice is not None else []
     if output_type == "choices" and value is not None and not isinstance(value, list):
         return [value]
     return value
