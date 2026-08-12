@@ -992,16 +992,20 @@ class TestCompositeChildModelResolution:
         kwargs = self._run(organization, workspace)
         assert kwargs["model"] is None
 
-    def test_child_run_config_enables_the_error_localizer(
+    def test_child_run_config_does_not_enable_the_error_localizer(
         self, db, organization, workspace
     ):
+        # Composites do not support error localization yet, and the child runs
+        # under its own single template so the worker-side guard never catches
+        # it — a child's own flag must not create (and bill) a task the user
+        # never enabled on the composite.
         kwargs = self._run(
             organization,
             workspace,
             link_config={"run_config": {"error_localizer_enabled": True}},
             error_localizer=False,
         )
-        assert kwargs["error_localizer"] is True
+        assert kwargs["error_localizer"] is False
 
     def test_composite_error_localizer_still_applies_to_every_child(
         self, db, organization, workspace

@@ -28,6 +28,8 @@ from model_hub.utils.scoring import determine_pass_fail, score_eval_output
 
 logger = logging.getLogger(__name__)
 
+PER_CHILD_ERROR_LOCALIZER_ENABLED = False
+
 
 @dataclass
 class CompositeRunOutcome:
@@ -127,7 +129,11 @@ def _execute_child(
             or None
         )
         effective_error_localizer = bool(
-            error_localizer or link_run_config.get("error_localizer_enabled")
+            error_localizer
+            or (
+                PER_CHILD_ERROR_LOCALIZER_ENABLED
+                and link_run_config.get("error_localizer_enabled")
+            )
         )
 
         result = run_eval_func(
@@ -329,9 +335,10 @@ def execute_composite_children_sync(
       version → child template → `model`. A composite has no model of its
       own, so `model` is a fallback for model-less children (system evals),
       not an override.
-    - Enable the error localizer for a child when either the composite-level
-      `error_localizer` or the child's own `run_config.error_localizer_enabled`
-      is set.
+    - Enable the error localizer for a child from the composite-level
+      `error_localizer` only. The child's own
+      `run_config.error_localizer_enabled` is captured on the link but not
+      honoured — see `PER_CHILD_ERROR_LOCALIZER_ENABLED`.
     - Aggregate only when `parent.aggregation_enabled`; otherwise return
       raw child results with a null aggregate.
     - Defer pass/fail until a numeric aggregate is actually available.
