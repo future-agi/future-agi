@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 
 from model_hub.views.ai_eval_writer import AIEvalWriterView
 from model_hub.views.ai_filter import AIFilterView
+from model_hub.views.async_tasks import AsyncTaskListView
 from model_hub.views.annotation_queues import (
     AnnotationQueueViewSet,
     AutomationRuleViewSet,
@@ -289,6 +290,7 @@ urlpatterns = [
         include(queue_items_router.urls),
     ),
     path("upload-file/", UploadFileView.as_view(), name="upload-file"),
+    path("async-tasks/", AsyncTaskListView.as_view(), name="async-tasks"),
     # Custom Models
     path("custom-models/", CustomAIModelView.as_view(), name="custom-model-view"),
     path(
