@@ -5968,6 +5968,91 @@ export default function WidgetEditorView() {
                       AXIS
                     </Typography>
 
+                    {/* Axis Assignment */}
+                    <Box>
+                      <Typography
+                        variant="subtitle2"
+                        fontWeight={700}
+                        sx={{ mb: 1.5 }}
+                      >
+                        Axis Assignment
+                      </Typography>
+                      {previewSeries.map((s, si) => {
+                        const seriesColor = getSeriesColor(
+                          s.name,
+                          seriesColorMap,
+                        );
+                        return (
+                          <Stack
+                            key={si}
+                            direction="row"
+                            alignItems="center"
+                            justifyContent="space-between"
+                            sx={{ mb: 1 }}
+                          >
+                            <Stack
+                              direction="row"
+                              alignItems="center"
+                              gap={1}
+                              sx={{ flex: 1, minWidth: 0 }}
+                            >
+                              <Box
+                                sx={{
+                                  width: 22,
+                                  height: 22,
+                                  borderRadius: 0.5,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  bgcolor: seriesColor + "22",
+                                  color: seriesColor,
+                                  fontSize: "11px",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {LETTER_LABELS[si] || si}
+                              </Box>
+                              <Iconify
+                                icon="mdi:chart-line"
+                                width={16}
+                                sx={{
+                                  color: seriesColor,
+                                  flexShrink: 0,
+                                }}
+                              />
+                              <Typography
+                                variant="body2"
+                                noWrap
+                                sx={{ fontWeight: 500 }}
+                              >
+                                {s.name?.split(" (")[0] || s.name}
+                              </Typography>
+                            </Stack>
+                            <ToggleButtons
+                              options={[
+                                { label: "L", value: "left" },
+                                { label: "R", value: "right" },
+                              ]}
+                              value={axisConfig.seriesAxis[si] || "left"}
+                              onChange={(v) => setSeriesAxis(si, v)}
+                              theme={theme}
+                            />
+                          </Stack>
+                        );
+                      })}
+                      {previewSeries.length === 0 && (
+                        <Typography
+                          variant="body2"
+                          color="text.secondary"
+                          sx={{ fontStyle: "italic" }}
+                        >
+                          Add metrics to see axis assignments
+                        </Typography>
+                      )}
+                    </Box>
+
+                    <Divider sx={{ my: 2 }} />
+
                     {/* Left Y-Axis */}
                     <AxisSection
                       title="Left Y-Axis"
@@ -6074,91 +6159,6 @@ export default function WidgetEditorView() {
                           }}
                         />
                       </Stack>
-                    </Box>
-
-                    <Divider sx={{ my: 2 }} />
-
-                    {/* Axis Assignment */}
-                    <Box>
-                      <Typography
-                        variant="subtitle2"
-                        fontWeight={700}
-                        sx={{ mb: 1.5 }}
-                      >
-                        Axis Assignment
-                      </Typography>
-                      {previewSeries.map((s, si) => {
-                        const seriesColor = getSeriesColor(
-                          s.name,
-                          seriesColorMap,
-                        );
-                        return (
-                          <Stack
-                            key={si}
-                            direction="row"
-                            alignItems="center"
-                            justifyContent="space-between"
-                            sx={{ mb: 1 }}
-                          >
-                            <Stack
-                              direction="row"
-                              alignItems="center"
-                              gap={1}
-                              sx={{ flex: 1, minWidth: 0 }}
-                            >
-                              <Box
-                                sx={{
-                                  width: 22,
-                                  height: 22,
-                                  borderRadius: 0.5,
-                                  display: "flex",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                  bgcolor: seriesColor + "22",
-                                  color: seriesColor,
-                                  fontSize: "11px",
-                                  fontWeight: 700,
-                                }}
-                              >
-                                {LETTER_LABELS[si] || si}
-                              </Box>
-                              <Iconify
-                                icon="mdi:chart-line"
-                                width={16}
-                                sx={{
-                                  color: seriesColor,
-                                  flexShrink: 0,
-                                }}
-                              />
-                              <Typography
-                                variant="body2"
-                                noWrap
-                                sx={{ fontWeight: 500 }}
-                              >
-                                {s.name?.split(" (")[0] || s.name}
-                              </Typography>
-                            </Stack>
-                            <ToggleButtons
-                              options={[
-                                { label: "L", value: "left" },
-                                { label: "R", value: "right" },
-                              ]}
-                              value={axisConfig.seriesAxis[si] || "left"}
-                              onChange={(v) => setSeriesAxis(si, v)}
-                              theme={theme}
-                            />
-                          </Stack>
-                        );
-                      })}
-                      {previewSeries.length === 0 && (
-                        <Typography
-                          variant="body2"
-                          color="text.secondary"
-                          sx={{ fontStyle: "italic" }}
-                        >
-                          Add metrics to see axis assignments
-                        </Typography>
-                      )}
                     </Box>
                   </>
                 )}
