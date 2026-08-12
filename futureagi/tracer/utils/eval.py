@@ -3898,6 +3898,25 @@ def evaluate_trace_session_observe(
             f"CustomEvalConfig with id {custom_eval_config_id} does not exist."
         ) from None
 
+    # Resolve the eval TASK's project to scope the CH read below. A task may
+    # run configs authored in a sibling project (see fix(eval-tasks): scope
+    # runtime target loads by the task's project), so the session data lives
+    # under the TASK's project, not necessarily the config's. This is
+    # intentionally separate from the org-scope/billing anchor above
+    # (``custom_eval_config.project``, used on the vehicle below) — that one
+    # stays the config's project per the comment there; only the CH lookup
+    # scope needs to follow the data.
+    ch_scope_project_id = str(custom_eval_config.project_id)
+    if eval_task_id:
+        try:
+            ch_scope_project_id = str(
+                EvalTask.objects.values_list("project_id", flat=True).get(
+                    id=eval_task_id
+                )
+            )
+        except EvalTask.DoesNotExist:
+            pass
+
     # Resolve the eval TARGET's identity from CH (DESIGN §5 / Slice C), NOT the
     # PG ``TraceSession`` table: a net-new session (first seen post-flip) has no
     # PG row, and a straddler queried by its NEW deterministic id would 404 the
@@ -3910,9 +3929,9 @@ def evaluate_trace_session_observe(
         resolve_session_fields,
     )
 
-    _fields = resolve_session_fields(
-        [session_id], project_id=str(custom_eval_config.project_id)
-    ).get(str(session_id))
+    _fields = resolve_session_fields([session_id], project_id=ch_scope_project_id).get(
+        str(session_id)
+    )
     if not _fields:
         # Parity with the old ``.get`` raising DoesNotExist: no live curated
         # session names this id (unknown / tombstoned / wrong project's id that
