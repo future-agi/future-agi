@@ -75,16 +75,23 @@ import {
 } from "src/api/contracts/filter-contract";
 
 import {
+  buildDistributionQueryConfig,
   DEFAULT_DECIMALS,
   escapeHtml,
+  formatDistributionBucketLabel,
+  formatDistributionCount,
   formatValueWithConfig,
   fromAxisConfigPayload,
   getAggColumnLabel,
   getAutoDecimals,
+  getDistributionConfigError,
   getSeriesAverage,
+  getSeriesTotal,
   getSuggestedUnitConfig,
   getUnitRendering,
   getYAxisRangeWarning,
+  isDistributionChart,
+  isDistributionMetric,
   toAxisConfigPayload,
 } from "./widgetUtils";
 import {
@@ -167,6 +174,12 @@ const CHART_TYPES = [
     label: "Stacked Column",
     value: "stacked_column",
     icon: "mdi:chart-bar-stacked",
+    group: "column",
+  },
+  {
+    label: "Distribution",
+    value: "distribution",
+    icon: "mdi:chart-histogram",
     group: "column",
   },
   {
@@ -702,11 +715,13 @@ function AggregationPicker({
   theme,
   extraOptions,
   allowedAggregations,
+  disabled = false,
 }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const [showPercentiles, setShowPercentiles] = useState(false);
 
   const handleOpen = (e) => {
+    if (disabled) return;
     setAnchorEl(e.currentTarget);
     setShowPercentiles(false);
   };
@@ -748,10 +763,17 @@ function AggregationPicker({
         label={current?.label || value}
         size="small"
         variant="outlined"
-        onClick={handleOpen}
-        deleteIcon={<Iconify icon="mdi:chevron-down" width={14} />}
-        onDelete={handleOpen}
-        sx={{ mt: 1, cursor: "pointer", fontSize: "12px" }}
+        disabled={disabled}
+        onClick={disabled ? undefined : handleOpen}
+        deleteIcon={
+          disabled ? undefined : <Iconify icon="mdi:chevron-down" width={14} />
+        }
+        onDelete={disabled ? undefined : handleOpen}
+        sx={{
+          mt: 1,
+          cursor: disabled ? "default" : "pointer",
+          fontSize: "12px",
+        }}
       />
       <Popper
         open={open}
@@ -1264,7 +1286,7 @@ export default function WidgetEditorView() {
       custom_attribute: "custom_attribute",
       custom_column: "custom_column",
     };
-    return paginatedMetrics
+    const options = paginatedMetrics
       .filter((m) => pickerMode !== "metric" || m.role !== "dimension")
       .map((m) => ({
         id: m.name,
@@ -1280,7 +1302,10 @@ export default function WidgetEditorView() {
         unit: m.unit,
         choices: m.choices,
       }));
-  }, [paginatedMetrics, pickerMode]);
+    return isDistributionChart(chartType) && pickerMode === "metric"
+      ? options.filter(isDistributionMetric)
+      : options;
+  }, [paginatedMetrics, pickerMode, chartType]);
 
   // Infinite scroll handler for the picker's right panel
   const pickerListRef = useRef(null);
@@ -1411,6 +1436,7 @@ export default function WidgetEditorView() {
             name: m.displayName || m.display_name || m.name || m.id,
             type: frontendType,
             source,
+            outputType: m.outputType || m.output_type,
             filters: restoredFilters,
           };
         });
@@ -1780,7 +1806,7 @@ export default function WidgetEditorView() {
 
   const buildQueryConfig = useCallback(() => {
     const timeRange = buildTimeRangePayload(timePreset, customDateRange);
-    return {
+    const queryConfig = {
       project_ids: [],
       time_range: timeRange,
       granularity,
@@ -1801,13 +1827,32 @@ export default function WidgetEditorView() {
         .filter((b) => b.id)
         .map((b) => buildBreakdownPayload(b)),
     };
-  }, [timePreset, customDateRange, granularity, metrics, filters, breakdowns]);
+    return isDistributionChart(chartType)
+      ? buildDistributionQueryConfig(queryConfig)
+      : queryConfig;
+  }, [
+    timePreset,
+    customDateRange,
+    granularity,
+    metrics,
+    filters,
+    breakdowns,
+    chartType,
+  ]);
+
+  const distributionConfigError = useMemo(
+    () =>
+      isDistributionChart(chartType)
+        ? getDistributionConfigError(metrics, breakdowns)
+        : null,
+    [chartType, metrics, breakdowns],
+  );
 
   // Auto-preview when config changes (debounced)
   const previewTimerRef = useRef(null);
   useEffect(() => {
     const customWithoutRange = timePreset === "custom" && !customDateRange;
-    if (metrics.length > 0 && !customWithoutRange) {
+    if (metrics.length > 0 && !customWithoutRange && !distributionConfigError) {
       clearTimeout(previewTimerRef.current);
       previewTimerRef.current = setTimeout(() => {
         queryMutation.mutate(buildQueryConfig());
@@ -1821,6 +1866,8 @@ export default function WidgetEditorView() {
     timePreset,
     customDateRange,
     granularity,
+    chartType,
+    distributionConfigError,
     metrics
       .map(
         (m) =>
@@ -1855,8 +1902,12 @@ export default function WidgetEditorView() {
     // id = backend key, name = display name, type = frontend category key
     if (pickerMode === "metric") {
       // Determine default aggregation based on output type (dataset evals)
-      let defaultAgg = "avg";
-      if (option.outputType && EVAL_DEFAULT_AGGREGATIONS[option.outputType]) {
+      let defaultAgg = isDistributionChart(chartType) ? "count" : "avg";
+      if (
+        !isDistributionChart(chartType) &&
+        option.outputType &&
+        EVAL_DEFAULT_AGGREGATIONS[option.outputType]
+      ) {
         defaultAgg = EVAL_DEFAULT_AGGREGATIONS[option.outputType];
       } else if (option.columnDataType === "boolean") {
         defaultAgg = "true_rate";
@@ -1866,10 +1917,17 @@ export default function WidgetEditorView() {
         defaultAgg = "count";
       }
       if (
+        !isDistributionChart(chartType) &&
         option.allowedAggregations?.length &&
         !option.allowedAggregations.includes(defaultAgg)
       ) {
         [defaultAgg] = option.allowedAggregations;
+      }
+      if (isDistributionChart(chartType) && !isDistributionMetric(option)) {
+        enqueueSnackbar("Choose a numeric trace eval metric", {
+          variant: "warning",
+        });
+        return;
       }
       const newMetric = {
         ...option,
@@ -1912,7 +1970,15 @@ export default function WidgetEditorView() {
         updated[pickerTargetIndex] = newMetric;
         setMetrics(updated);
       } else {
-        if (metrics.length >= 5) return;
+        if (metrics.length >= (isDistributionChart(chartType) ? 1 : 5)) {
+          enqueueSnackbar(
+            isDistributionChart(chartType)
+              ? "Distribution charts support one metric"
+              : "A widget supports up to five metrics",
+            { variant: "warning" },
+          );
+          return;
+        }
         setMetrics([...metrics, newMetric]);
       }
     } else if (pickerMode === "filter") {
@@ -2020,9 +2086,19 @@ export default function WidgetEditorView() {
   };
 
   const handleUpdateMetricAggregation = (index, agg) => {
+    if (isDistributionChart(chartType)) return;
     const updated = [...metrics];
     updated[index] = { ...updated[index], aggregation: agg };
     setMetrics(updated);
+  };
+
+  const handleChartTypeChange = (nextChartType) => {
+    setChartType(nextChartType);
+    if (isDistributionChart(nextChartType)) {
+      setMetrics((currentMetrics) =>
+        currentMetrics.map((metric) => ({ ...metric, aggregation: "count" })),
+      );
+    }
   };
 
   const handleRemoveMetricFilter = (metricIdx, filterIdx) => {
@@ -2054,6 +2130,10 @@ export default function WidgetEditorView() {
   const handleSave = async () => {
     if (metrics.length === 0) {
       enqueueSnackbar("Add at least one metric", { variant: "warning" });
+      return;
+    }
+    if (distributionConfigError) {
+      enqueueSnackbar(distributionConfigError, { variant: "warning" });
       return;
     }
 
@@ -2122,14 +2202,16 @@ export default function WidgetEditorView() {
           name: seriesLabel,
           unit: metric.unit ?? "",
           data: (s.data || []).map((point) => ({
-            x: new Date(point.timestamp).getTime(),
+            x: isDistributionChart(chartType)
+              ? formatDistributionBucketLabel(point)
+              : new Date(point.timestamp).getTime(),
             y: point.value != null ? Number(point.value) : null,
           })),
         });
       }
     }
     return allSeries;
-  }, [previewResult]);
+  }, [previewResult, chartType]);
 
   // Auto-select top 10 series when there are more than 10 breakdown series
   const MAX_CHART_SERIES = 10;
@@ -2161,6 +2243,7 @@ export default function WidgetEditorView() {
       stacked_column: "bar",
       bar: "bar",
       stacked_bar: "bar",
+      distribution: "bar",
       pie: "pie",
       table: "line",
       metric: "line",
@@ -2169,15 +2252,26 @@ export default function WidgetEditorView() {
   }, [chartType]);
   const isStacked = chartType.startsWith("stacked_");
   const isHorizontal = chartType === "bar" || chartType === "stacked_bar";
+  const isDistribution = isDistributionChart(chartType);
   const isPie = chartType === "pie";
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
   const isLineChart = apexType === "line";
 
+  const formatPointLabel = (point, dateFormat) =>
+    isDistribution ? String(point.x) : format(new Date(point.x), dateFormat);
+
   const aggColumnLabel = useMemo(
     () => getAggColumnLabel(metrics, ALL_AGGREGATIONS),
     [metrics],
   );
+  const summaryColumnLabel = isDistribution ? "Total Count" : aggColumnLabel;
+  const getSeriesSummary = (points) =>
+    isDistribution ? getSeriesTotal(points) : getSeriesAverage(points);
+  const formatSeriesSummary = (value) => {
+    if (value == null) return "-";
+    return isDistribution ? formatDistributionCount(value) : value.toFixed(2);
+  };
 
   // Filtered series for chart — respects checkbox visibility, preserving original colors
   const chartSeries = useMemo(() => {
@@ -2276,10 +2370,12 @@ export default function WidgetEditorView() {
   const isDark = theme.palette.mode === "dark";
   const formatValFn = useCallback(
     (val) =>
-      formatValueWithConfig(val, leftAxisFormatConfig, {
-        fallbackDecimals: autoDecimals,
-      }),
-    [autoDecimals, leftAxisFormatConfig],
+      isDistribution
+        ? formatDistributionCount(val)
+        : formatValueWithConfig(val, leftAxisFormatConfig, {
+            fallbackDecimals: autoDecimals,
+          }),
+    [autoDecimals, leftAxisFormatConfig, isDistribution],
   );
 
   const chartOptions = useMemo(() => {
@@ -2355,7 +2451,13 @@ export default function WidgetEditorView() {
       (cfg, fallbackDecimals = autoDecimals, includeUnit = true) =>
       (val) =>
         formatValueWithConfig(val, cfg, { fallbackDecimals, includeUnit });
-    const formatVal = makeFormatter(leftAxisFormatConfig);
+    const formatVal = isDistribution
+      ? formatDistributionCount
+      : makeFormatter(leftAxisFormatConfig);
+    const xAxisLabel =
+      axisConfig.xAxis.label || (isDistribution ? "Score range" : "");
+    const yAxisLabel =
+      axisConfig.leftY.label || (isDistribution ? "Count" : "");
     return {
       chart: {
         type: apexType,
@@ -2499,24 +2601,26 @@ export default function WidgetEditorView() {
             axisTicks: { show: false },
           }
         : {
-            type: "datetime",
+            type: isDistribution ? "category" : "datetime",
             tickAmount: Math.min(chartSeries[0]?.data?.length || 10, 12),
             labels: {
               show: axisConfig.xAxis.visible,
               style: { colors: theme.palette.text.secondary, fontSize: "11px" },
-              datetimeUTC: false,
-              datetimeFormatter: {
-                year: "MMMM",
-                month: "MMMM",
-                day: "MMM dd",
-                hour: "HH:mm",
-              },
+              ...(!isDistribution && {
+                datetimeUTC: false,
+                datetimeFormatter: {
+                  year: "MMMM",
+                  month: "MMMM",
+                  day: "MMM dd",
+                  hour: "HH:mm",
+                },
+              }),
             },
             axisBorder: { show: false },
             axisTicks: { show: false },
-            ...(axisConfig.xAxis.label && {
+            ...(xAxisLabel && {
               title: {
-                text: axisConfig.xAxis.label,
+                text: xAxisLabel,
                 style: {
                   fontSize: "12px",
                   color: theme.palette.text.secondary,
@@ -2550,9 +2654,9 @@ export default function WidgetEditorView() {
             ...(axisConfig.leftY.max !== "" && {
               max: Number(axisConfig.leftY.max),
             }),
-            ...(axisConfig.leftY.label && {
+            ...(yAxisLabel && {
               title: {
-                text: axisConfig.leftY.label,
+                text: yAxisLabel,
                 style: {
                   fontSize: "12px",
                   color: theme.palette.text.secondary,
@@ -2647,51 +2751,64 @@ export default function WidgetEditorView() {
       },
       colors: chartColors,
       legend: { show: false, height: 0 },
-      tooltip: isStacked
+      tooltip: isDistribution
         ? {
             enabled: true,
-            shared: true,
-            intersect: false,
+            shared: false,
+            intersect: true,
             theme: theme.palette.mode,
             style: { fontSize: "12px" },
-            x: {
-              format: "MMM dd, yyyy",
-            },
+            x: { formatter: (value) => `Score range: ${value}` },
             y: {
-              formatter: formatVal,
+              formatter: (value) =>
+                `${formatDistributionCount(value)} evaluations`,
             },
           }
-        : {
-            enabled: true,
-            shared: false,
-            intersect: isLineChart,
-            custom: ({ series, seriesIndex, dataPointIndex, w }) => {
-              const sName = w.globals.seriesNames[seriesIndex] || "";
-              const color = w.globals.colors[seriesIndex] || "#6366F1";
-              const val = series[seriesIndex]?.[dataPointIndex];
-              const prevVal =
-                dataPointIndex > 0
-                  ? series[seriesIndex]?.[dataPointIndex - 1]
-                  : null;
-              const ts = w.globals.seriesX[seriesIndex]?.[dataPointIndex];
-              const dateStr = ts ? format(new Date(ts), "MMM dd, yyyy") : "";
-              const fmtVal = formatVal(val);
-              const bg = isDark ? "#1e1e2e" : "#fff";
-              const _border = isDark
-                ? "rgba(255,255,255,0.08)"
-                : "rgba(0,0,0,0.06)";
-              const textPrimary = isDark ? "#fff" : "#1a1a2e";
-              const textSecondary = isDark
-                ? "rgba(255,255,255,0.5)"
-                : "rgba(0,0,0,0.45)";
-              let changeHtml = "";
-              if (prevVal != null && prevVal !== 0 && val != null) {
-                const pct = ((val - prevVal) / Math.abs(prevVal)) * 100;
-                const sign = pct >= 0 ? "+" : "";
-                const changeColor = pct >= 0 ? "#22C55E" : "#FF4842";
-                changeHtml = `<div style="display:flex;align-items:center;gap:6px;margin-top:6px"><span style="color:${changeColor};font-weight:600;font-size:14px">${sign}${pct.toFixed(2)}%</span><span style="color:${textSecondary};font-size:13px">from previous</span></div>`;
-              }
-              return `<div style="display:flex;background:${bg};border:none;border-radius:12px;box-shadow:0 8px 24px ${isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.08)"};overflow:hidden;min-width:200px">
+        : isStacked
+          ? {
+              enabled: true,
+              shared: true,
+              intersect: false,
+              theme: theme.palette.mode,
+              style: { fontSize: "12px" },
+              x: {
+                format: "MMM dd, yyyy",
+              },
+              y: {
+                formatter: formatVal,
+              },
+            }
+          : {
+              enabled: true,
+              shared: false,
+              intersect: isLineChart,
+              custom: ({ series, seriesIndex, dataPointIndex, w }) => {
+                const sName = w.globals.seriesNames[seriesIndex] || "";
+                const color = w.globals.colors[seriesIndex] || "#6366F1";
+                const val = series[seriesIndex]?.[dataPointIndex];
+                const prevVal =
+                  dataPointIndex > 0
+                    ? series[seriesIndex]?.[dataPointIndex - 1]
+                    : null;
+                const ts = w.globals.seriesX[seriesIndex]?.[dataPointIndex];
+                const dateStr = ts ? format(new Date(ts), "MMM dd, yyyy") : "";
+                const fmtVal = formatVal(val);
+                const bg = isDark ? "#1e1e2e" : "#fff";
+                const _border = isDark
+                  ? "rgba(255,255,255,0.08)"
+                  : "rgba(0,0,0,0.06)";
+                const textPrimary = isDark ? "#fff" : "#1a1a2e";
+                const textSecondary = isDark
+                  ? "rgba(255,255,255,0.5)"
+                  : "rgba(0,0,0,0.45)";
+                let changeHtml = "";
+                if (prevVal != null && prevVal !== 0 && val != null) {
+                  const pct = ((val - prevVal) / Math.abs(prevVal)) * 100;
+                  const sign = pct >= 0 ? "+" : "";
+                  const changeColor = pct >= 0 ? "#22C55E" : "#FF4842";
+                  changeHtml = `<div style="display:flex;align-items:center;gap:6px;margin-top:6px"><span style="color:${changeColor};font-weight:600;font-size:14px">${sign}${pct.toFixed(2)}%</span><span style="color:${textSecondary};font-size:13px">from previous</span></div>`;
+                }
+                return `<div style="display:flex;background:${bg};border:none;border-radius:12px;box-shadow:0 8px 24px ${isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.08)"};overflow:hidden;min-width:200px">
                 <div style="width:4px;flex-shrink:0;background:${color}"></div>
                 <div style="padding:14px 16px;flex:1">
                   <div style="font-weight:700;font-size:14px;color:${textPrimary};line-height:1.3">${escapeHtml(sName)}</div>
@@ -2702,14 +2819,15 @@ export default function WidgetEditorView() {
                   ${changeHtml}
                 </div>
               </div>`;
+              },
             },
-          },
     };
   }, [
     apexType,
     isLineChart,
     isStacked,
     isHorizontal,
+    isDistribution,
     isPie,
     chartSeries,
     chartColors,
@@ -3044,8 +3162,15 @@ export default function WidgetEditorView() {
           )}
           {!isReadOnly && (
             <MenuItem
+              disabled={Boolean(distributionConfigError)}
               onClick={() => {
                 setMoreMenuAnchor(null);
+                if (distributionConfigError) {
+                  enqueueSnackbar(distributionConfigError, {
+                    variant: "warning",
+                  });
+                  return;
+                }
                 const dupData = {
                   name: `${chartName || "Untitled widget"} (copy)`,
                   width: 12,
@@ -3079,16 +3204,16 @@ export default function WidgetEditorView() {
               if (!previewSeries.length) return;
               const header = [
                 "Metric",
-                aggColumnLabel,
+                summaryColumnLabel,
                 ...(previewSeries[0]?.data || []).map((pt) =>
-                  format(new Date(pt.x), "yyyy-MM-dd"),
+                  formatPointLabel(pt, "yyyy-MM-dd"),
                 ),
               ];
               const rows = previewSeries.map((s) => {
-                const avg = getSeriesAverage(s.data);
+                const summary = getSeriesSummary(s.data);
                 return [
                   s.name,
-                  avg == null ? "—" : avg.toFixed(2),
+                  formatSeriesSummary(summary),
                   ...s.data.map((pt) => (pt.y != null ? pt.y : "")),
                 ];
               });
@@ -3115,16 +3240,16 @@ export default function WidgetEditorView() {
               if (!previewSeries.length) return;
               const header = [
                 "Metric",
-                aggColumnLabel,
+                summaryColumnLabel,
                 ...(previewSeries[0]?.data || []).map((pt) =>
-                  format(new Date(pt.x), "yyyy-MM-dd"),
+                  formatPointLabel(pt, "yyyy-MM-dd"),
                 ),
               ];
               const rows = previewSeries.map((s) => {
-                const avg = getSeriesAverage(s.data);
+                const summary = getSeriesSummary(s.data);
                 return [
                   s.name,
-                  avg == null ? "—" : avg.toFixed(2),
+                  formatSeriesSummary(summary),
                   ...s.data.map((pt) => (pt.y != null ? pt.y : "")),
                 ];
               });
@@ -3140,10 +3265,10 @@ export default function WidgetEditorView() {
           </MenuItem>
           <Divider />
           <MenuItem
-            disabled={metrics.length === 0}
+            disabled={metrics.length === 0 || Boolean(distributionConfigError)}
             onClick={() => {
               setMoreMenuAnchor(null);
-              if (metrics.length > 0) {
+              if (metrics.length > 0 && !distributionConfigError) {
                 queryMutation.mutate(buildQueryConfig());
               }
             }}
@@ -3326,7 +3451,7 @@ export default function WidgetEditorView() {
             <FormControl size="small" sx={{ minWidth: 120 }}>
               <Select
                 value={chartType}
-                onChange={(e) => setChartType(e.target.value)}
+                onChange={(e) => handleChartTypeChange(e.target.value)}
                 sx={{ fontSize: "13px", "& .MuiSelect-select": { py: 0.7 } }}
                 renderValue={(val) => {
                   const ct = CHART_TYPES.find((t) => t.value === val);
@@ -3356,6 +3481,11 @@ export default function WidgetEditorView() {
           </Stack>
 
           {/* Chart + View toggles + Data table */}
+          {distributionConfigError && (
+            <Alert severity="warning" sx={{ mx: 1, mt: 1 }}>
+              {distributionConfigError}
+            </Alert>
+          )}
           <Box
             sx={{
               flex: 1,
@@ -3919,7 +4049,7 @@ export default function WidgetEditorView() {
                                           whiteSpace: "nowrap",
                                         }}
                                       >
-                                        {format(new Date(pt.x), dateFmt)}
+                                        {formatPointLabel(pt, dateFmt)}
                                       </td>
                                       {chartSeries.map((s, si) => {
                                         const val = s.data[ri]?.y;
@@ -4307,12 +4437,12 @@ export default function WidgetEditorView() {
                         .includes(tableSearch.toLowerCase()),
                   )
                   .sort((a, b) => {
-                    const avgA = getSeriesAverage(previewSeries[a].data);
-                    const avgB = getSeriesAverage(previewSeries[b].data);
+                    const summaryA = getSeriesSummary(previewSeries[a].data);
+                    const summaryB = getSeriesSummary(previewSeries[b].data);
                     const scoreA =
-                      avgA == null ? Number.NEGATIVE_INFINITY : avgA;
+                      summaryA == null ? Number.NEGATIVE_INFINITY : summaryA;
                     const scoreB =
-                      avgB == null ? Number.NEGATIVE_INFINITY : avgB;
+                      summaryB == null ? Number.NEGATIVE_INFINITY : summaryB;
                     return scoreB - scoreA;
                   });
 
@@ -4435,7 +4565,7 @@ export default function WidgetEditorView() {
                                 zIndex: 2,
                               }}
                             >
-                              {aggColumnLabel}
+                              {summaryColumnLabel}
                             </th>
                             {displayData.map((pt, ci) => (
                               <th
@@ -4455,8 +4585,8 @@ export default function WidgetEditorView() {
                                   zIndex: 2,
                                 }}
                               >
-                                {format(
-                                  new Date(pt.x),
+                                {formatPointLabel(
+                                  pt,
                                   granularity === "minute"
                                     ? "HH:mm"
                                     : granularity === "hour"
@@ -4472,7 +4602,7 @@ export default function WidgetEditorView() {
                             const s = previewSeries[si];
                             const checked =
                               visibleSeries === null || visibleSeries.has(si);
-                            const avg = getSeriesAverage(s.data);
+                            const summary = getSeriesSummary(s.data);
                             const color = getSeriesColor(
                               s.name,
                               seriesColorMap,
@@ -4533,18 +4663,20 @@ export default function WidgetEditorView() {
                                     borderLeft: `1px solid ${theme.palette.divider}`,
                                   }}
                                 >
-                                  {avg == null
-                                    ? "—"
-                                    : formatValueWithConfig(
-                                        avg,
-                                        s.unit
-                                          ? {
-                                              ...leftAxisFormatConfig,
-                                              ...getUnitRendering(s.unit),
-                                            }
-                                          : leftAxisFormatConfig,
-                                        { fallbackDecimals: autoDecimals },
-                                      )}
+                                  {summary == null
+                                    ? "-"
+                                    : isDistribution
+                                      ? formatDistributionCount(summary)
+                                      : formatValueWithConfig(
+                                          summary,
+                                          s.unit
+                                            ? {
+                                                ...leftAxisFormatConfig,
+                                                ...getUnitRendering(s.unit),
+                                              }
+                                            : leftAxisFormatConfig,
+                                          { fallbackDecimals: autoDecimals },
+                                        )}
                                 </td>
                                 {s.data.map((pt, ci) => {
                                   if (!displayIndicesSet.has(ci)) return null;
@@ -4945,16 +5077,21 @@ export default function WidgetEditorView() {
                       </Stack>
                       <AggregationPicker
                         value={
-                          m.allowedAggregations?.length &&
-                          !m.allowedAggregations.includes(m.aggregation)
-                            ? m.allowedAggregations[0]
-                            : m.aggregation
+                          isDistribution
+                            ? "count"
+                            : m.allowedAggregations?.length &&
+                                !m.allowedAggregations.includes(m.aggregation)
+                              ? m.allowedAggregations[0]
+                              : m.aggregation
                         }
                         onChange={(val) =>
                           handleUpdateMetricAggregation(i, val)
                         }
                         theme={theme}
-                        allowedAggregations={m.allowedAggregations}
+                        allowedAggregations={
+                          isDistribution ? ["count"] : m.allowedAggregations
+                        }
+                        disabled={isDistribution}
                         extraOptions={
                           m.source === "datasets" ||
                           m.source === "simulation" ||
@@ -5858,9 +5995,12 @@ export default function WidgetEditorView() {
                       direction="row"
                       justifyContent="space-between"
                       alignItems="center"
-                      onClick={(e) => openPicker(e, "breakdown")}
+                      onClick={(e) => {
+                        if (!isDistribution) openPicker(e, "breakdown");
+                      }}
                       sx={{
-                        cursor: "pointer",
+                        cursor: isDistribution ? "default" : "pointer",
+                        opacity: isDistribution ? 0.5 : 1,
                         borderRadius: 1,
                         px: 1,
                         py: 0.5,
@@ -5918,10 +6058,14 @@ export default function WidgetEditorView() {
                           variant="body2"
                           sx={{
                             flex: 1,
-                            cursor: "pointer",
+                            cursor: isDistribution ? "default" : "pointer",
                             "&:hover": { color: "primary.main" },
                           }}
-                          onClick={(e) => openPicker(e, "breakdown", i)}
+                          onClick={(e) => {
+                            if (!isDistribution) {
+                              openPicker(e, "breakdown", i);
+                            }
+                          }}
                         >
                           {b.name || "Select attribute"}
                         </Typography>

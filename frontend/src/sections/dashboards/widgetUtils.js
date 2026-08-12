@@ -1,5 +1,76 @@
 export const DEFAULT_DECIMALS = 2;
 
+export const isDistributionChart = (chartType) => chartType === "distribution";
+
+const DISTRIBUTION_OUTPUT_TYPES = new Set(["SCORE", "NUMERIC"]);
+
+const normalizeDistributionOutputType = (outputType) =>
+  String(outputType || "SCORE")
+    .replaceAll("/", "_")
+    .replaceAll(" ", "_")
+    .toUpperCase();
+
+export const isDistributionMetric = (metric) => {
+  const outputType = normalizeDistributionOutputType(
+    metric?.output_type || metric?.outputType,
+  );
+  const source = metric?.source || "traces";
+
+  return (
+    metric?.type === "eval_metric" &&
+    ["traces", "both", "all"].includes(source) &&
+    DISTRIBUTION_OUTPUT_TYPES.has(outputType)
+  );
+};
+
+export const getDistributionConfigError = (metrics = [], breakdowns = []) => {
+  if (metrics.length !== 1) {
+    return "Distribution charts require exactly one numeric eval metric.";
+  }
+  if (!isDistributionMetric(metrics[0])) {
+    return "Distribution charts require a numeric trace eval metric.";
+  }
+  if (breakdowns.some((breakdown) => breakdown?.id)) {
+    return "Distribution charts do not support breakdowns.";
+  }
+  return null;
+};
+
+export const buildDistributionQueryConfig = (queryConfig) => ({
+  ...queryConfig,
+  query_mode: "distribution",
+  metrics: (queryConfig.metrics || []).map((metric) => ({
+    ...metric,
+    aggregation: "count",
+  })),
+});
+
+const formatBucketBoundary = (value) => {
+  if (
+    value === null ||
+    value === undefined ||
+    (typeof value === "string" && value.trim() === "")
+  ) {
+    return "";
+  }
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "";
+  return number.toLocaleString(undefined, { maximumFractionDigits: 6 });
+};
+
+export const formatDistributionBucketLabel = (point) => {
+  const start = formatBucketBoundary(point?.bucket_start);
+  const end = formatBucketBoundary(point?.bucket_end);
+  return start && end ? `${start} - ${end}` : "Unknown range";
+};
+
+export const formatDistributionCount = (value) => {
+  const count = Number(value);
+  return Number.isFinite(count)
+    ? count.toLocaleString(undefined, { maximumFractionDigits: 0 })
+    : "-";
+};
+
 const toAxisPayload = ({ prefixSuffix, outOfBounds, ...axis } = {}) => ({
   ...axis,
   ...(prefixSuffix !== undefined && { prefix_suffix: prefixSuffix }),
@@ -65,6 +136,19 @@ export const getSeriesAverage = (points = []) => {
     count += 1;
   }
   return count > 0 ? total / count : null;
+};
+
+export const getSeriesTotal = (points = []) => {
+  let total = 0;
+  let hasValue = false;
+  for (const pt of points) {
+    if (pt?.y == null) continue;
+    const y = Number(pt.y);
+    if (!Number.isFinite(y)) continue;
+    total += y;
+    hasValue = true;
+  }
+  return hasValue ? total : null;
 };
 
 export const getAutoDecimals = (series = []) => {

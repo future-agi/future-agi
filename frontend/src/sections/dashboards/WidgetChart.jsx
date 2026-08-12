@@ -9,6 +9,8 @@ import { format } from "date-fns";
 import {
   DEFAULT_DECIMALS,
   escapeHtml,
+  formatDistributionBucketLabel,
+  formatDistributionCount,
   formatValueWithConfig,
   fromAxisConfigPayload,
   getAutoDecimals,
@@ -16,6 +18,7 @@ import {
   getSuggestedUnitConfig,
   getUnitRendering,
   getYAxisRangeWarning,
+  isDistributionChart,
   seriesHasDataPoints,
 } from "./widgetUtils";
 import { toTimeRangePayload } from "./dashboardDateRange";
@@ -76,6 +79,7 @@ function getApexType(chartType) {
     stacked_column: "bar",
     bar: "bar",
     stacked_bar: "bar",
+    distribution: "bar",
     pie: "pie",
   };
   return map[chartType] || "line";
@@ -104,6 +108,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
   const apexType = getApexType(chartType);
   const isStacked = chartType.startsWith("stacked_");
   const isHorizontal = chartType === "bar" || chartType === "stacked_bar";
+  const isDistribution = isDistributionChart(chartType);
   const isPie = chartType === "pie";
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
@@ -160,7 +165,9 @@ export default function WidgetChart({ widget, globalDateRange }) {
             name: label,
             unit: metric.unit ?? "",
             data: (ms.data || []).map((point) => ({
-              x: new Date(point.timestamp).getTime(),
+              x: isDistribution
+                ? formatDistributionBucketLabel(point)
+                : new Date(point.timestamp).getTime(),
               y: point.value != null ? Number(point.value) : null,
             })),
           });
@@ -168,7 +175,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
       }
     }
     return s;
-  }, [result]);
+  }, [result, isDistribution]);
 
   // Auto-select top 10 series by total value when there are many breakdown series
   const MAX_CHART_SERIES = 10;
@@ -228,12 +235,9 @@ export default function WidgetChart({ widget, globalDateRange }) {
   const leftAxisFormatConfig = useMemo(() => {
     const suggested = getSuggestedUnitConfig(result?.metrics || []);
     const leftAxis = axisConfig?.leftY || {};
-    const metricUnits = (result?.metrics || [])
-      .map((m) => m?.unit ?? "");
+    const metricUnits = (result?.metrics || []).map((m) => m?.unit ?? "");
     const isMixedUnits = new Set(metricUnits).size > 1;
-    const effectiveUnit = isMixedUnits
-      ? ""
-      : leftAxis.unit || suggested.unit;
+    const effectiveUnit = isMixedUnits ? "" : leftAxis.unit || suggested.unit;
     return {
       ...leftAxis,
       unit: effectiveUnit,
@@ -302,7 +306,9 @@ export default function WidgetChart({ widget, globalDateRange }) {
     (cfg, fallbackDecimals = autoDecimals, includeUnit = true) =>
     (val) =>
       formatValueWithConfig(val, cfg, { fallbackDecimals, includeUnit });
-  const formatVal = makeFormatter(leftAxisFormatConfig);
+  const formatVal = isDistribution
+    ? formatDistributionCount
+    : makeFormatter(leftAxisFormatConfig);
 
   if (queryMutation.isPending) {
     return (
@@ -398,10 +404,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
           const avg = getSeriesAverage(s.data);
           return (
             <Box key={i} sx={{ textAlign: "center" }}>
-              <Typography
-                variant="h3"
-                sx={{ color: colorFor(s.name) }}
-              >
+              <Typography variant="h3" sx={{ color: colorFor(s.name) }}>
                 {avg == null ? "—" : formatVal(avg)}
               </Typography>
               <Typography variant="caption" color="text.secondary">
@@ -465,7 +468,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
                   minWidth: 100,
                 }}
               >
-                Time
+                {isDistribution ? "Score range" : "Time"}
               </th>
               {series.map((s, i) => (
                 <th
@@ -544,7 +547,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {format(new Date(pt.x), dateFmt)}
+                    {isDistribution ? pt.x : format(new Date(pt.x), dateFmt)}
                   </td>
                   {series.map((s, si) => {
                     const val = s.data[ri]?.y;
@@ -1042,29 +1045,32 @@ export default function WidgetChart({ widget, globalDateRange }) {
     dataLabels: { enabled: false },
     plotOptions: { bar: { horizontal: isHorizontal } },
     xaxis: {
-      type: isHorizontal ? undefined : "datetime",
+      type: isHorizontal ? undefined : isDistribution ? "category" : "datetime",
       tickAmount: Math.min(chartSeries[0]?.data?.length || 10, 12),
       labels: {
         show: axisConfig?.xAxis?.visible !== false,
         style: { colors: theme.palette.text.secondary, fontSize: "11px" },
-        datetimeUTC: false,
-        ...(!isHorizontal && {
-          datetimeFormatter: {
-            year: "MMMM",
-            month: "MMMM",
-            day: "MMM dd",
-            hour: "HH:mm",
-          },
-        }),
+        ...(!isHorizontal &&
+          !isDistribution && {
+            datetimeUTC: false,
+            datetimeFormatter: {
+              year: "MMMM",
+              month: "MMMM",
+              day: "MMM dd",
+              hour: "HH:mm",
+            },
+          }),
       },
       axisBorder: { show: false },
       axisTicks: { show: false },
-      ...(axisConfig?.xAxis?.label && {
-        title: {
-          text: axisConfig.xAxis.label,
-          style: { fontSize: "12px", color: theme.palette.text.secondary },
-        },
-      }),
+      ...(axisConfig?.xAxis?.label || isDistribution
+        ? {
+            title: {
+              text: axisConfig?.xAxis?.label || "Score range",
+              style: { fontSize: "12px", color: theme.palette.text.secondary },
+            },
+          }
+        : {}),
       crosshairs: {
         show: true,
         width: 1,
@@ -1089,12 +1095,17 @@ export default function WidgetChart({ widget, globalDateRange }) {
             leftCfg.min !== "" && { min: Number(leftCfg.min) }),
           ...(leftCfg.max !== undefined &&
             leftCfg.max !== "" && { max: Number(leftCfg.max) }),
-          ...(leftCfg.label && {
-            title: {
-              text: leftCfg.label,
-              style: { fontSize: "12px", color: theme.palette.text.secondary },
-            },
-          }),
+          ...(leftCfg.label || isDistribution
+            ? {
+                title: {
+                  text: leftCfg.label || "Count",
+                  style: {
+                    fontSize: "12px",
+                    color: theme.palette.text.secondary,
+                  },
+                },
+              }
+            : {}),
           labels: {
             style: { colors: theme.palette.text.secondary, fontSize: "11px" },
             formatter: formatVal,
@@ -1167,59 +1178,74 @@ export default function WidgetChart({ widget, globalDateRange }) {
         filter: { type: "none" },
       },
     },
-    tooltip: isStacked
+    tooltip: isDistribution
       ? {
           enabled: true,
-          shared: true,
-          intersect: false,
+          shared: false,
+          intersect: true,
           theme: theme.palette.mode,
           style: { fontSize: "12px" },
-          x: {
-            format: "MMM dd, yyyy",
-          },
+          x: { formatter: (value) => `Score range: ${value}` },
           y: {
-            formatter: (val, { seriesIndex } = {}) => {
-              const seriesUnit = chartSeries[seriesIndex]?.unit;
-              const cfg = seriesUnit
-                ? { ...leftAxisFormatConfig, ...getUnitRendering(seriesUnit) }
-                : leftAxisFormatConfig;
-              return makeFormatter(cfg)(val);
-            },
+            formatter: (value) =>
+              `${formatDistributionCount(value)} evaluations`,
           },
         }
-      : {
-          enabled: true,
-          shared: false,
-          intersect: isLineChart,
-          custom: ({ series: s, seriesIndex, dataPointIndex, w }) => {
-            const sName = w.globals.seriesNames[seriesIndex] || "";
-            const color = w.globals.colors[seriesIndex] || "#6366F1";
-            const val = s[seriesIndex]?.[dataPointIndex];
-            const prevVal =
-              dataPointIndex > 0 ? s[seriesIndex]?.[dataPointIndex - 1] : null;
-            const ts = w.globals.seriesX[seriesIndex]?.[dataPointIndex];
-            const dateStr = ts ? format(new Date(ts), "MMM dd, yyyy") : "";
-            const seriesUnit = chartSeries[seriesIndex]?.unit;
-            const perSeriesCfg = seriesUnit
-              ? { ...leftAxisFormatConfig, ...getUnitRendering(seriesUnit) }
-              : leftAxisFormatConfig;
-            const fmtVal = makeFormatter(perSeriesCfg)(val);
-            const bg = isDark ? "#1e1e2e" : "#fff";
-            const _border = isDark
-              ? "rgba(255,255,255,0.08)"
-              : "rgba(0,0,0,0.06)";
-            const textPrimary = isDark ? "#fff" : "#1a1a2e";
-            const textSecondary = isDark
-              ? "rgba(255,255,255,0.5)"
-              : "rgba(0,0,0,0.45)";
-            let changeHtml = "";
-            if (prevVal != null && prevVal !== 0 && val != null) {
-              const pct = ((val - prevVal) / Math.abs(prevVal)) * 100;
-              const sign = pct >= 0 ? "+" : "";
-              const changeColor = pct >= 0 ? "#22C55E" : "#FF4842";
-              changeHtml = `<div style="display:flex;align-items:center;gap:6px;margin-top:6px"><span style="color:${changeColor};font-weight:600;font-size:14px">${sign}${pct.toFixed(2)}%</span><span style="color:${textSecondary};font-size:13px">from previous</span></div>`;
-            }
-            return `<div style="display:flex;background:${bg};border:none;border-radius:12px;box-shadow:0 8px 24px ${isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.08)"};overflow:hidden;min-width:200px">
+      : isStacked
+        ? {
+            enabled: true,
+            shared: true,
+            intersect: false,
+            theme: theme.palette.mode,
+            style: { fontSize: "12px" },
+            x: {
+              format: "MMM dd, yyyy",
+            },
+            y: {
+              formatter: (val, { seriesIndex } = {}) => {
+                const seriesUnit = chartSeries[seriesIndex]?.unit;
+                const cfg = seriesUnit
+                  ? { ...leftAxisFormatConfig, ...getUnitRendering(seriesUnit) }
+                  : leftAxisFormatConfig;
+                return makeFormatter(cfg)(val);
+              },
+            },
+          }
+        : {
+            enabled: true,
+            shared: false,
+            intersect: isLineChart,
+            custom: ({ series: s, seriesIndex, dataPointIndex, w }) => {
+              const sName = w.globals.seriesNames[seriesIndex] || "";
+              const color = w.globals.colors[seriesIndex] || "#6366F1";
+              const val = s[seriesIndex]?.[dataPointIndex];
+              const prevVal =
+                dataPointIndex > 0
+                  ? s[seriesIndex]?.[dataPointIndex - 1]
+                  : null;
+              const ts = w.globals.seriesX[seriesIndex]?.[dataPointIndex];
+              const dateStr = ts ? format(new Date(ts), "MMM dd, yyyy") : "";
+              const seriesUnit = chartSeries[seriesIndex]?.unit;
+              const perSeriesCfg = seriesUnit
+                ? { ...leftAxisFormatConfig, ...getUnitRendering(seriesUnit) }
+                : leftAxisFormatConfig;
+              const fmtVal = makeFormatter(perSeriesCfg)(val);
+              const bg = isDark ? "#1e1e2e" : "#fff";
+              const _border = isDark
+                ? "rgba(255,255,255,0.08)"
+                : "rgba(0,0,0,0.06)";
+              const textPrimary = isDark ? "#fff" : "#1a1a2e";
+              const textSecondary = isDark
+                ? "rgba(255,255,255,0.5)"
+                : "rgba(0,0,0,0.45)";
+              let changeHtml = "";
+              if (prevVal != null && prevVal !== 0 && val != null) {
+                const pct = ((val - prevVal) / Math.abs(prevVal)) * 100;
+                const sign = pct >= 0 ? "+" : "";
+                const changeColor = pct >= 0 ? "#22C55E" : "#FF4842";
+                changeHtml = `<div style="display:flex;align-items:center;gap:6px;margin-top:6px"><span style="color:${changeColor};font-weight:600;font-size:14px">${sign}${pct.toFixed(2)}%</span><span style="color:${textSecondary};font-size:13px">from previous</span></div>`;
+              }
+              return `<div style="display:flex;background:${bg};border:none;border-radius:12px;box-shadow:0 8px 24px ${isDark ? "rgba(0,0,0,0.5)" : "rgba(0,0,0,0.08)"};overflow:hidden;min-width:200px">
               <div style="width:4px;flex-shrink:0;background:${color}"></div>
               <div style="padding:14px 16px;flex:1">
                 <div style="font-weight:700;font-size:14px;color:${textPrimary};line-height:1.3">${escapeHtml(sName)}</div>
@@ -1230,8 +1256,8 @@ export default function WidgetChart({ widget, globalDateRange }) {
                 ${changeHtml}
               </div>
             </div>`;
+            },
           },
-        },
     grid: {
       borderColor: theme.palette.divider,
       strokeDashArray: 3,
