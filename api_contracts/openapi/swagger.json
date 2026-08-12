@@ -94788,6 +94788,13 @@
                     "maximum": 10,
                     "minimum": 1,
                     "x-nullable": true
+                },
+                "configuration": {
+                    "title": "Configuration",
+                    "description": "Legacy compatibility configuration (may carry template_format). Mirrors run_prompt_config.",
+                    "type": "object",
+                    "additionalProperties": true,
+                    "x-nullable": true
                 }
             },
             "default": {

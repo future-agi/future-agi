@@ -174,6 +174,20 @@ class PromptConfigSerializer(serializers.Serializer):
     run_prompt_config = serializers.DictField(
         child=JsonValueField(allow_null=True), required=False
     )
+    # Legacy compatibility config: older clients send the whole config object
+    # here (model, temperature, tools, template_format, ...). The backend reads
+    # model params from this key when present (see async_prompt_runner), so the
+    # contract must expose it for frontend contract tests to assert the wire
+    # shape. Kept alongside run_prompt_config — both are expressible.
+    configuration = serializers.DictField(
+        child=JsonValueField(allow_null=True),
+        required=False,
+        help_text=(
+            "Legacy compatibility config object. Older clients send the entire "
+            "config here (model, temperature, tools, template_format, ...). "
+            "Backend reads model params from this key when present."
+        ),
+    )
     messages = serializers.ListField(
         # content can be a string or a list of typed parts — keep values open.
         child=serializers.DictField(child=JsonValueField()),
