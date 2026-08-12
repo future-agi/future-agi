@@ -24,14 +24,19 @@ row's status; "spans sent by the SDK will not arrive" tells them what breaks.
 Keep them plain and free of mode wording.
 
 This endpoint only reports. It never starts or stops anything — bringing model
-serving up or down stays an operator decision, which is why neither mode blocks
-on it: an install run purely for observability is a legitimate deployment.
+serving up or down stays an operator decision. What the mode decides is whether
+that decision stops you: an install run purely for observability is a legitimate
+*experiment* deployment, so a missing evaluator only warns there, while a live
+deployment treats it as a broken install.
 
-What the modes actually disagree about is the supporting infrastructure. Only
-seven services are interdependent enough that nothing works without them, and
-those block in both modes. The rest are feature-level: a capability is lost, the
-application still runs, and a live deployment says so loudly where an
-experimenting one stays quiet.
+That is the shape of the disagreement between the modes. Live requires every
+check. Experiment requires only the seven that are interdependent enough that
+nothing works without them — the application database, the tracing warehouse,
+the LLM gateway, the async task engine, trace ingestion, and the backend and
+frontend themselves. The rest are feature-level there: a capability is lost, the
+application still runs, and the row warns instead of blocking. SSL goes one
+further and reports SKIPPED in experiment, because a local stack is not expected
+to hold a certificate at all.
 """
 
 import os
