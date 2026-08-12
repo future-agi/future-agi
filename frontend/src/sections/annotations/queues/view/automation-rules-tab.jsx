@@ -43,6 +43,12 @@ const SKELETON_ROWS = Array.from({ length: 3 }, (_, i) => ({
 }));
 
 const AUTOMATION_RULE_ROW_HEIGHT = 52;
+const AUTOMATION_RULES_GRID_SX = {
+  "& .ag-layout-auto-height .ag-center-cols-viewport, & .ag-layout-auto-height .ag-center-cols-container":
+    {
+      minHeight: `${AUTOMATION_RULE_ROW_HEIGHT}px`,
+    },
+};
 
 // ---------------------------------------------------------------------------
 // Cell renderers
@@ -255,7 +261,6 @@ export default function AutomationRulesTab({ queueId, queue }) {
   }, []);
 
   const getRowId = useCallback((params) => params.data?.id, []);
-  const getRowHeight = useCallback(() => AUTOMATION_RULE_ROW_HEIGHT, []);
 
   const CustomNoRowsOverlay = useCallback(
     () => (
@@ -306,7 +311,7 @@ export default function AutomationRulesTab({ queueId, queue }) {
         </Button>
       </Stack>
 
-      <Box>
+      <Box sx={AUTOMATION_RULES_GRID_SX}>
         <AgGridReact
           ref={gridRef}
           theme={agTheme}
@@ -316,7 +321,6 @@ export default function AutomationRulesTab({ queueId, queue }) {
           defaultColDef={defaultColDef}
           context={gridContext}
           rowHeight={AUTOMATION_RULE_ROW_HEIGHT}
-          getRowHeight={getRowHeight}
           headerHeight={42}
           pagination={false}
           animateRows={false}

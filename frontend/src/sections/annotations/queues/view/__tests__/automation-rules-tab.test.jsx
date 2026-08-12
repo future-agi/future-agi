@@ -8,7 +8,18 @@ const { capturedProps } = vi.hoisted(() => ({ capturedProps: {} }));
 vi.mock("ag-grid-react", () => {
   const MockAgGridReact = React.forwardRef((props, _ref) => {
     Object.assign(capturedProps, props);
-    return null;
+    return (
+      <div className="ag-layout-auto-height">
+        <div
+          className="ag-center-cols-viewport"
+          data-testid="automation-rules-grid-viewport"
+        />
+        <div
+          className="ag-center-cols-container"
+          data-testid="automation-rules-grid-container"
+        />
+      </div>
+    );
   });
   MockAgGridReact.displayName = "AgGridReactMock";
   return { AgGridReact: MockAgGridReact };
@@ -57,15 +68,19 @@ describe("AutomationRulesTab", () => {
     Object.keys(capturedProps).forEach((key) => delete capturedProps[key]);
   });
 
-  it("keeps every automation-rule row at the same height", () => {
-    render(<AutomationRulesTab queueId="queue-1" queue={{}} />);
+  it("keeps the auto-height grid body aligned with its fixed-height rows", () => {
+    const { getByTestId } = render(
+      <AutomationRulesTab queueId="queue-1" queue={{}} />,
+    );
 
-    expect(capturedProps.getRowHeight).toEqual(expect.any(Function));
+    expect(capturedProps.rowHeight).toBe(52);
+    expect(capturedProps.getRowHeight).toBeUndefined();
     expect(
-      [
-        { data: { id: "rule-1", name: "Short" } },
-        { data: { id: "rule-2", name: "A longer rule name" } },
-      ].map(capturedProps.getRowHeight),
-    ).toEqual([52, 52]);
+      getComputedStyle(getByTestId("automation-rules-grid-viewport")).minHeight,
+    ).toBe("52px");
+    expect(
+      getComputedStyle(getByTestId("automation-rules-grid-container"))
+        .minHeight,
+    ).toBe("52px");
   });
 });
