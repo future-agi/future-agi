@@ -512,9 +512,11 @@ async def create_call_execution_records(
                             )
                             activity.logger.error(
                                 "call_record_unresolved_tokens",
-                                row_id=str(row_id),
-                                unresolved=missing_cols,
-                                ended_reason=ended_reason,
+                                extra={
+                                    "row_id": str(row_id),
+                                    "unresolved": missing_cols,
+                                    "ended_reason": ended_reason,
+                                },
                             )
                             call_execution.status = CallExecution.CallStatus.FAILED
                             call_execution.ended_reason = ended_reason
