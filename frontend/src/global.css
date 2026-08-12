@@ -229,7 +229,7 @@
   --score-green-light: rgba(0, 162, 81, 0.14);
   --score-green-strong: rgba(0, 162, 81, 0.25);
 
-  --eval-score-yellow-bg: #4b3901;
+  --eval-score-yellow-bg: rgba(75, 57, 1, 0.5);
   --eval-score-yellow-text: #edbe00;
 
   /* Monaco editor */
