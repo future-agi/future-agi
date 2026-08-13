@@ -49,3 +49,48 @@ export const DATE_CHIP_SX = {
   height: 28,
   borderRadius: "6px",
 };
+
+export const AVATAR_COLORS = [
+  "#7C4DFF",
+  "#FF6B6B",
+  "#5BE49B",
+  "#FFB547",
+  "#36B5FF",
+  "#FF85C0",
+  "#00BFA6",
+  "#8C9EFF",
+];
+
+/**
+ * Grid track definition for the dashboards list.
+ *
+ * The header row and every data row must render with the same tracks, so both
+ * read this single definition. `DASHBOARD_LIST_COLUMNS` includes the trailing
+ * 32px row-action track; `DASHBOARD_LIST_CONTENT_COLUMNS` covers the metadata
+ * columns only, for contexts that render without the action column.
+ */
+export const DASHBOARD_LIST_COLUMNS =
+  "minmax(220px, 1fr) 96px 112px minmax(160px, 220px) 88px 32px";
+
+export const DASHBOARD_LIST_CONTENT_COLUMNS =
+  "minmax(220px, 1fr) 96px 112px minmax(160px, 220px)";
+
+/**
+ * Standard visually-hidden box.
+ *
+ * Values are explicit CSS strings on purpose: MUI's `sx` runs bare numbers
+ * through its sizing transform (any number <= 1 becomes a percentage) and its
+ * spacing transform (`margin: -1` becomes -8px), which would turn this into a
+ * full-size overlay rather than the intended 1px clip box.
+ */
+export const VISUALLY_HIDDEN_SX = {
+  border: 0,
+  clip: "rect(0 0 0 0)",
+  height: "1px",
+  margin: "-1px",
+  overflow: "hidden",
+  padding: 0,
+  position: "absolute",
+  whiteSpace: "nowrap",
+  width: "1px",
+};
