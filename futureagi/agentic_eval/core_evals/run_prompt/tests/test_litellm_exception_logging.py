@@ -29,6 +29,7 @@ def test_format_audio_output_logs_token_counting_failure():
         input_length=5,
     )
 
+
 @pytest.mark.unit
 def test_create_payload_logs_model_validation_failure():
     """Payload creation should continue when LiteLLM cannot validate a custom model."""
