@@ -22,10 +22,9 @@ import {
 } from "./widgetUtils";
 import WidgetPieCharts from "./WidgetPieCharts";
 import { toTimeRangePayload } from "./dashboardDateRange";
+import { NO_DATA_FOR_RANGE_MESSAGE } from "./constants";
 
 const CHART_HEIGHT_FALLBACK = 280;
-const NO_DATA_FOR_RANGE_MESSAGE =
-  "No data available for this time period. Try a broader range.";
 const COLORS = [
   "#7B56DB", // purple (primary)
   "#1ABCFE", // cyan
@@ -579,27 +578,8 @@ export default function WidgetChart({ widget, globalDateRange }) {
   }
 
   if (isPie) {
-    // Buckets can exist but hold only nulls, which clears seriesHasDataPoints'
-    // guard yet leaves nothing to draw. An all-zero metric is different: it has
-    // values, so its panel stays and explains itself.
-    if (!pieGroups.some((g) => g.hasValues)) {
-      return (
-        <Box
-          sx={{
-            width: "100%",
-            height: "100%",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            p: 2,
-          }}
-        >
-          <Typography variant="body2" color="text.secondary" textAlign="center">
-            {NO_DATA_FOR_RANGE_MESSAGE}
-          </Typography>
-        </Box>
-      );
-    }
+    // The all-null case is answered inside WidgetPieCharts so the editor
+    // preview and the saved widget cannot drift apart.
     return (
       <Box
         ref={containerRef}

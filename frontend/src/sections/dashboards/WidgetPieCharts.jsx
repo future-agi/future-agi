@@ -15,6 +15,7 @@ import {
   measureDonut,
   sameGeometry,
 } from "./widgetPieUtils";
+import { NO_DATA_FOR_RANGE_MESSAGE } from "./constants";
 
 // One donut per metric (TH-6530). A pie encodes part-of-a-whole, so slices must
 // belong to a single metric. Shared by the editor preview and the saved widget
@@ -242,6 +243,25 @@ export default function WidgetPieCharts({
   const legendNames = [
     ...new Set(groups.flatMap((g) => g.slices.map((s) => s.name))),
   ];
+
+  // Buckets can come back holding only nulls, which clears the caller's
+  // "has data points" check yet leaves nothing to draw. Answering that here
+  // rather than at a call site keeps the editor and the saved widget in step.
+  // An all-zero metric is different: it has values, so its panel stays and
+  // explains itself.
+  if (!groups.some((g) => g.hasValues)) {
+    return (
+      <Stack
+        alignItems="center"
+        justifyContent="center"
+        sx={{ width: "100%", height: "100%", p: 2 }}
+      >
+        <Typography variant="body2" color="text.secondary" textAlign="center">
+          {NO_DATA_FOR_RANGE_MESSAGE}
+        </Typography>
+      </Stack>
+    );
+  }
 
   return (
     <Box

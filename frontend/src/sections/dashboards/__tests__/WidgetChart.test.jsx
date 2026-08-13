@@ -2,6 +2,8 @@ import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "src/utils/test-utils";
 import WidgetChart from "../WidgetChart";
+import WidgetPieCharts from "../WidgetPieCharts";
+import { NO_DATA_FOR_RANGE_MESSAGE } from "../constants";
 
 const h = vi.hoisted(() => ({
   query: { data: null, isPending: false, isError: false, mutate: vi.fn() },
@@ -346,5 +348,46 @@ describe("WidgetChart — pie with multiple metrics (TH-6530)", () => {
 
     expect(screen.queryByTestId("apex-donut")).not.toBeInTheDocument();
     expect(screen.getByText(NO_DATA_MESSAGE)).toBeInTheDocument();
+  });
+});
+
+// Review comment 4 on PR #2074: the guard lived at one of the two call sites,
+// so the editor and the saved widget answered all-null data differently.
+describe("WidgetPieCharts — nothing to draw in any metric", () => {
+  const group = (metricIndex, metricName, hasValues, slices = []) => ({
+    metricIndex,
+    metricName,
+    aggregation: "sum",
+    unit: "",
+    hasValues,
+    slices,
+  });
+  const renderPies = (groups) =>
+    render(
+      <WidgetPieCharts
+        groups={groups}
+        colorFor={() => "#000000"}
+        baseFormatConfig={{}}
+        fallbackDecimals={2}
+      />,
+    );
+
+  it("shows a single no-data message, not one panel per metric", () => {
+    renderPies([group(0, "Tokens", false), group(1, "Latency", false)]);
+    expect(screen.getByText(NO_DATA_FOR_RANGE_MESSAGE)).toBeInTheDocument();
+    expect(
+      screen.queryAllByText(/Nothing to chart for this metric/),
+    ).toHaveLength(0);
+  });
+
+  it("still renders per-metric panels when one metric has data", () => {
+    renderPies([
+      group(0, "Tokens", true, [{ name: "alpha", value: 5 }]),
+      group(1, "Latency", false),
+    ]);
+    expect(screen.queryByText(NO_DATA_FOR_RANGE_MESSAGE)).toBeNull();
+    expect(
+      screen.getByText(/Nothing to chart for this metric/),
+    ).toBeInTheDocument();
   });
 });

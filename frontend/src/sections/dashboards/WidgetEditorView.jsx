@@ -3292,37 +3292,45 @@ export default function WidgetEditorView() {
                   // slice by — without one every metric is a single value and
                   // would render as a meaningless 100% circle (TH-6530).
                   const pieDisabled = ct.value === "pie" && !hasBreakdown;
-                  const item = (
+                  const label = (
+                    <Stack direction="row" alignItems="center" gap={0.5}>
+                      <Iconify icon={ct.icon} width={16} />
+                      {ct.label}
+                    </Stack>
+                  );
+                  return [
+                    showDivider && <Divider key={`div-${i}`} />,
+                    // The tooltip goes inside the MenuItem, never around it:
+                    // Select matches its current value against `props.value` on
+                    // its direct children, and a wrapper has none. A legacy
+                    // breakdown-less pie widget is exactly the case where the
+                    // disabled item is also the selected one, so wrapping it
+                    // made MUI log an out-of-range value and forward option
+                    // props onto the wrapper.
                     <MenuItem
                       key={ct.value}
                       value={ct.value}
                       disabled={pieDisabled}
                     >
-                      <Stack direction="row" alignItems="center" gap={0.5}>
-                        <Iconify icon={ct.icon} width={16} />
-                        {ct.label}
-                      </Stack>
-                    </MenuItem>
-                  );
-                  return [
-                    showDivider && <Divider key={`div-${i}`} />,
-                    // Only wrap when disabled: Select reads `value` off its
-                    // direct children, so a permanent wrapper would break
-                    // selection. A disabled MenuItem kills pointer events, so
-                    // the span is what actually receives the hover.
-                    pieDisabled ? (
-                      <CustomTooltip
-                        key={ct.value}
-                        show
-                        size="small"
-                        title="Add a breakdown to slice the pie by"
-                        placement="right"
-                      >
-                        <span style={{ display: "block" }}>{item}</span>
-                      </CustomTooltip>
-                    ) : (
-                      item
-                    ),
+                      {pieDisabled ? (
+                        <CustomTooltip
+                          show
+                          size="small"
+                          title="Add a breakdown to slice the pie by"
+                          placement="right"
+                        >
+                          {/* A disabled MenuItem sets pointer-events: none, so
+                              the trigger has to opt back in to receive hover —
+                              and span the whole row, or the dead area beside
+                              the label swallows the pointer. */}
+                          <Stack sx={{ pointerEvents: "auto", width: "100%" }}>
+                            {label}
+                          </Stack>
+                        </CustomTooltip>
+                      ) : (
+                        label
+                      )}
+                    </MenuItem>,
                   ];
                 })}
               </Select>
