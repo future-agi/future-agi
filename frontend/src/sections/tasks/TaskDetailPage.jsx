@@ -3,6 +3,7 @@ import {
   Box,
   Button,
   CircularProgress,
+  MenuItem,
   Stack,
   Tab,
   Tabs,
@@ -21,6 +22,7 @@ import TaskLogsView from "src/sections/common/EvalsTasks/TaskLogsView";
 import { useGetTaskData } from "src/sections/common/EvalsTasks/common";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import CustomPopover, { usePopover } from "src/components/custom-popover";
 import TaskHeader from "./components/TaskHeader";
 import TaskConfigPanel from "./components/TaskConfigPanel";
 import TaskLivePreview from "./components/TaskLivePreview";
@@ -72,6 +74,7 @@ const TaskDetailPage = () => {
   const canEditTask =
     RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][role];
   const queryClient = useQueryClient();
+  const popover = usePopover();
   const [tab, setTab] = useState("details");
   const [confirmOpen, setConfirmOpen] = useState(false);
 
@@ -200,6 +203,52 @@ const TaskDetailPage = () => {
       enqueueSnackbar("Task renamed", { variant: "success" });
     },
   });
+
+  const { mutate: duplicateTask, isPending: isDuplicating } = useMutation({
+    mutationFn: (payload) =>
+      axios.post(endpoints.project.createEvalTask(), payload),
+    onSuccess: (resp) => {
+      queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
+      enqueueSnackbar("Your task has been duplicated", { variant: "success" });
+      const newId = resp?.data?.result?.id;
+      navigate(newId ? `/dashboard/tasks/${newId}` : "/dashboard/tasks");
+    },
+    onError: (err) => {
+      enqueueSnackbar(
+        err?.response?.data?.result || err?.message || "Failed to duplicate task",
+        { variant: "error" },
+      );
+    },
+  });
+
+  const handleDuplicate = () => {
+    if (!taskDetails || isDuplicating) return;
+    const src = getDefaultTaskValues(taskDetails, null);
+    const { filters: wireFilters, attributeFilters } = getNewTaskFilters(
+      src,
+      src.project,
+    );
+
+    const payload = {
+      name: `${src.name}-duplicate`,
+      project: src.project,
+      run_type: src.runType,
+      row_type: src.rowType,
+      ...(src.runType !== "continuous" && src.spansLimit
+        ? { spans_limit: src.spansLimit }
+        : {}),
+      sampling_rate: src.samplingRate,
+      evals_details: src.evalsDetails,
+      filters: {
+        ...wireFilters,
+        ...(attributeFilters?.length > 0
+          ? { filters: attributeFilters }
+          : {}),
+      },
+    };
+    duplicateTask(payload);
+    popover.onClose();
+  };
 
   // Transform form → update payload (same logic as EditTaskDrawerV2)
   const handleSave = useCallback(() => {
@@ -354,6 +403,35 @@ const TaskDetailPage = () => {
           Resume
         </Button>
       )}
+      <Button
+        variant="outlined"
+        size="small"
+        onClick={popover.onOpen}
+        endIcon={<Iconify icon="solar:chevron-down-linear" width={14} />}
+        sx={{
+          textTransform: "none",
+          fontWeight: 500,
+          fontSize: "12px",
+          height: 30,
+        }}
+      >
+        Actions
+      </Button>
+
+      <CustomPopover
+        open={popover.open}
+        onClose={popover.onClose}
+        arrow="top-right"
+        sx={{ width: 140 }}
+      >
+        <MenuItem
+          onClick={handleDuplicate}
+          disabled={!canEditTask || isDuplicating}
+        >
+          <Iconify icon="solar:copy-linear" width={16} />
+          Duplicate
+        </MenuItem>
+      </CustomPopover>
     </>
   );
 
