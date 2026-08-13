@@ -1749,9 +1749,13 @@ class RunPrompt:
                         f"({model_max}) for {self.model}, clamping to {model_max}"
                     )
                     payload["max_tokens"] = model_max
-            except Exception:
+            except Exception as e:
                 # Unknown model (e.g. custom) — skip validation, pass through
-                pass
+                logger.debug(
+                    "Failed to validate max tokens for model",
+                    model=self.model,
+                    error=str(e),
+                )
 
         # Handle models that require max_completion_tokens instead of max_tokens
         # OpenAI reasoning models have special parameter requirements:
