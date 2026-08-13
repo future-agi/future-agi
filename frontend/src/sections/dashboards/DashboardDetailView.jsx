@@ -42,6 +42,7 @@ import {
   useCreateWidget,
 } from "src/hooks/useDashboards";
 import { format } from "date-fns";
+import { useDebounce } from "src/hooks/use-debounce";
 import Iconify from "src/components/iconify";
 import {
   DATE_PRESETS,
@@ -573,10 +574,10 @@ function DraggableWidgetCard({
           {/* Chart */}
           <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
             <WidgetChart
-              key={`${widget.id}:${datePreset || "default"}${
+              key={`${widget.id}${
                 globalDateRange
                   ? `:${globalDateRange.start}:${globalDateRange.end}`
-                  : ""
+                  : ":default"
               }`}
               widget={widget}
               globalDateRange={globalDateRange}
@@ -666,6 +667,7 @@ export default function DashboardDetailView() {
     () => resolveGlobalDateRange(datePreset, customDateRange),
     [datePreset, customDateRange],
   );
+  const debouncedGlobalDateRange = useDebounce(globalDateRange, 500);
 
   // Widget context menu
   const [menuAnchor, setMenuAnchor] = useState(null);
@@ -1367,7 +1369,7 @@ export default function DashboardDetailView() {
                               dashboardId={dashboardId}
                               navigate={navigate}
                               onMenuOpen={handleWidgetMenuOpen}
-                              globalDateRange={globalDateRange}
+                              globalDateRange={debouncedGlobalDateRange}
                               isDragActive={!!activeWidget}
                               rowHeight={rowHeight}
                               datePreset={datePreset}
