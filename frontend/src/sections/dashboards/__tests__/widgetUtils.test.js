@@ -226,6 +226,13 @@ describe("getSeriesScalar", () => {
     expect(getSeriesScalar(pts(10, 20, 30), "count")).toBe(60);
   });
 
+  it("does not sum count_distinct, whose buckets overlap", () => {
+    // The same 100 users active on each of three days is 100 distinct users,
+    // not 300. An unweighted mean is the closest answer the per-bucket
+    // response supports.
+    expect(getSeriesScalar(pts(100, 100, 100), "count_distinct")).toBe(100);
+  });
+
   it("sums the dataset count aggregations too, which are counts like any other", () => {
     // pass_count/fail_count are selectable for dataset metrics; averaging them
     // would report a per-bucket figure as if it were the period total.
@@ -379,7 +386,7 @@ describe("groupPieSeries", () => {
     expect(groups[0]).toMatchObject({ slices: [], hasValues: false });
   });
 
-  it("caps each metric at its own top 10 slices by value, so one metric cannot crowd out another", () => {
+  it("caps each metric at its own top slices by value, so one metric cannot crowd out another", () => {
     const many = Array.from({ length: 12 }, (_, i) =>
       s(0, "Tokens", "sum", "tokens", `p${i}`, [i + 1]),
     );
@@ -389,10 +396,47 @@ describe("groupPieSeries", () => {
     ]);
     expect(groups).toHaveLength(2);
     expect(groups[0].slices).toHaveLength(10);
-    expect(groups[0].slices.map((x) => x.value)).toEqual([
-      12, 11, 10, 9, 8, 7, 6, 5, 4, 3,
-    ]);
     expect(groups[1].slices).toEqual([{ name: "only", value: 5 }]);
+  });
+
+  it("folds everything past the cap into one Other slice, so the ring still adds up", () => {
+    // 1..12 sums to 78. Dropping the tail would leave the ring normalised over
+    // 72 and the centre reporting 72 as the metric's total.
+    const groups = groupPieSeries(
+      Array.from({ length: 12 }, (_, i) =>
+        s(0, "Tokens", "sum", "tokens", `p${i}`, [i + 1]),
+      ),
+    );
+    const [g] = groups;
+    expect(g.slices).toHaveLength(10);
+    expect(g.slices.slice(0, 9).map((x) => x.value)).toEqual([
+      12, 11, 10, 9, 8, 7, 6, 5, 4,
+    ]);
+    // 3 + 2 + 1, named so the fold is visible rather than silent
+    expect(g.slices[9]).toEqual({ name: "Other (3)", value: 6 });
+    expect(g.slices.reduce((a, x) => a + x.value, 0)).toBe(78);
+  });
+
+  it("does not invent an Other slice for a non-additive aggregation", () => {
+    // Summing per-project averages into one "Other" would be a made-up number,
+    // so the tail is dropped instead and the centre stays blank.
+    const groups = groupPieSeries(
+      Array.from({ length: 12 }, (_, i) =>
+        s(0, "Latency", "avg", "ms", `p${i}`, [i + 1]),
+      ),
+    );
+    expect(groups[0].slices).toHaveLength(10);
+    expect(groups[0].slices.some((x) => /^Other/.test(x.name))).toBe(false);
+  });
+
+  it("leaves a metric alone when it is exactly at the cap", () => {
+    const groups = groupPieSeries(
+      Array.from({ length: 10 }, (_, i) =>
+        s(0, "Tokens", "sum", "tokens", `p${i}`, [i + 1]),
+      ),
+    );
+    expect(groups[0].slices).toHaveLength(10);
+    expect(groups[0].slices.some((x) => /^Other/.test(x.name))).toBe(false);
   });
 
   it("returns an empty array for no series", () => {
@@ -404,12 +448,14 @@ describe("isAdditiveAggregation", () => {
   it("is true only for aggregations whose slices sum to a real total", () => {
     expect(isAdditiveAggregation("sum")).toBe(true);
     expect(isAdditiveAggregation("count")).toBe(true);
-    expect(isAdditiveAggregation("count_distinct")).toBe(true);
     expect(isAdditiveAggregation("pass_count")).toBe(true);
     expect(isAdditiveAggregation("fail_count")).toBe(true);
   });
 
   it("is false where summing the slices would invent a quantity", () => {
+    // The backend evaluates count_distinct as uniq() per time bucket, so
+    // anyone active in more than one bucket is counted once per bucket.
+    expect(isAdditiveAggregation("count_distinct")).toBe(false);
     // The sum of three per-project averages is not an average of anything.
     expect(isAdditiveAggregation("avg")).toBe(false);
     expect(isAdditiveAggregation("max")).toBe(false);

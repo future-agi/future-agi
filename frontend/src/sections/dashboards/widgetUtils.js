@@ -57,10 +57,13 @@ export const escapeHtml = (str) => {
 // Aggregations whose bucket values recombine exactly by summing. Keep the
 // count family complete: the dataset metrics add pass_count/fail_count, and
 // averaging a count reports a per-bucket figure as if it were the total.
+//
+// count_distinct is deliberately absent. The backend evaluates it as
+// `uniq({col})` per time bucket, so an entity present in several buckets is
+// counted once per bucket and summing multiplies it by the bucket count.
 const ADDITIVE_AGGREGATIONS = new Set([
   "sum",
   "count",
-  "count_distinct",
   "pass_count",
   "fail_count",
 ]);
@@ -130,15 +133,34 @@ export const groupPieSeries = (series = []) => {
     if (value <= 0) continue;
     group.slices.push({ name: s.breakdownName, value });
   }
-  return [...byMetric.values()].map((group) => ({
-    ...group,
-    slices:
-      group.slices.length > MAX_PIE_SLICES
-        ? [...group.slices]
-            .sort((a, b) => b.value - a.value)
-            .slice(0, MAX_PIE_SLICES)
-        : group.slices,
-  }));
+  return [...byMetric.values()].map((group) => {
+    if (group.slices.length <= MAX_PIE_SLICES) return { ...group };
+
+    const ranked = [...group.slices].sort((a, b) => b.value - a.value);
+
+    // Values that do not add up cannot be folded into a remainder without
+    // inventing a quantity, so the tail is dropped instead. getCenterValue
+    // already refuses to print a total for these.
+    if (!isAdditiveAggregation(group.aggregation)) {
+      return { ...group, slices: ranked.slice(0, MAX_PIE_SLICES) };
+    }
+
+    // Otherwise carry the remainder as one slice. Dropping it would leave the
+    // ring normalised over a subset and the centre reporting that subset as
+    // the metric's total.
+    const kept = ranked.slice(0, MAX_PIE_SLICES - 1);
+    const rest = ranked.slice(MAX_PIE_SLICES - 1);
+    return {
+      ...group,
+      slices: [
+        ...kept,
+        {
+          name: `Other (${rest.length})`,
+          value: rest.reduce((sum, slice) => sum + slice.value, 0),
+        },
+      ],
+    };
+  });
 };
 
 export const getAutoDecimals = (series = []) => {
