@@ -2367,8 +2367,13 @@ class EvalTemplateDetailView(APIView):
             detail_criteria = template.criteria or (
                 default_version.criteria if default_version else ""
             )
+            # Turing is oss_locked: off-cloud deployments without it must not
+            # be handed a model they'd get 402'd on. Leave it unset instead.
+            from tfc.ee_gates import _turing_denied_off_cloud
+
+            fallback_model = None if _turing_denied_off_cloud() else "turing_large"
             detail_model = template.model or (
-                default_version.model if default_version else "turing_large"
+                default_version.model if default_version else fallback_model
             )
 
             # Normalize legacy short model names to full turing_* values

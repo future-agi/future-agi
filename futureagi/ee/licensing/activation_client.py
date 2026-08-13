@@ -16,8 +16,10 @@ import os
 import threading
 import time
 from dataclasses import dataclass
+from typing import Callable
 
 import structlog
+
 from ee.licensing.validator import hash_key
 
 logger = structlog.get_logger(__name__)
@@ -44,13 +46,10 @@ _cached_token: ServiceToken | None = None
 
 
 def get_activation_url() -> str:
-    return (
-        os.getenv(
-            "FUTURE_AGI_LICENSE_URL",
-            "https://api.futureagi.com",
-        ).rstrip("/")
-        + "/v1/self-hosted/activations"
-    )
+    return os.getenv(
+        "FUTURE_AGI_LICENSE_URL",
+        "https://api.futureagi.com",
+    ).rstrip("/") + "/v1/self-hosted/activations"
 
 
 def get_service_token() -> ServiceToken | None:
@@ -122,6 +121,56 @@ def _activate() -> ServiceToken | None:
         return None
 
 
+def dispatch_managed_request(
+    *,
+    url: str,
+    api_key: str,
+    json_body: dict,
+    timeout: float,
+    on_unauthorized: Callable[[], None],
+) -> dict:
+    """POST to the managed gateway and map failures to typed errors.
+
+    Shared transport for both managed-AI auth models: the self-hosted
+    activation-token flow (``call_managed_service``) and the cloud
+    internal-key flow (``ee.licensing.managed_ai``). Only the 401 response
+    is handled differently between them, so callers pass ``on_unauthorized``
+    (which must raise); every other status maps identically here so the two
+    paths cannot drift.
+    """
+    import httpx
+
+    try:
+        response = httpx.post(
+            url,
+            json=json_body,
+            timeout=timeout,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+    except httpx.TimeoutException:
+        raise ManagedServiceError("GATEWAY_TIMEOUT", "Managed AI gateway timed out")
+    except httpx.ConnectError:
+        raise ManagedServiceError("GATEWAY_UNREACHABLE", "Cannot reach managed AI gateway")
+
+    if response.status_code == 401:
+        on_unauthorized()
+        # Callers must raise in on_unauthorized; guard in case one does not.
+        raise ManagedServiceError(
+            "GATEWAY_UNAUTHORIZED", "Managed AI gateway rejected credentials"
+        )
+    if response.status_code == 403:
+        raise ManagedServiceError("FEATURE_DENIED", "Feature not included in license scope")
+    if response.status_code == 429:
+        raise ManagedServiceError("RATE_LIMITED", "Managed AI rate limit exceeded")
+    if response.status_code >= 500:
+        raise ManagedServiceError("SERVICE_ERROR", f"Managed AI service error ({response.status_code})")
+
+    return response.json()
+
+
 def call_managed_service(
     path: str = "/v1/chat/completions",
     *,
@@ -130,54 +179,30 @@ def call_managed_service(
 ) -> dict:
     """Make an authenticated request to the FutureAGI managed gateway.
 
-    Raises ManagedServiceError on auth/service failures with typed codes.
+    Self-hosted EE auth: exchange the license for a short-lived service
+    token, then call the gateway with it. Raises ManagedServiceError on
+    auth/service failures with typed codes.
     """
     token = get_service_token()
     if token is None:
         raise ManagedServiceError("ACTIVATION_FAILED", "Could not obtain service token")
 
     if token.scope == "oss" and not token.access_token:
-        raise ManagedServiceError(
-            "NO_ENTERPRISE_LICENSE", "Managed AI requires an Enterprise license"
-        )
+        raise ManagedServiceError("NO_ENTERPRISE_LICENSE", "Managed AI requires an Enterprise license")
 
-    import httpx
-
-    url = token.gateway_url.rstrip("/") + path
-    try:
-        response = httpx.post(
-            url,
-            json=json_body,
-            timeout=timeout,
-            headers={
-                "Authorization": f"Bearer {token.access_token}",
-                "Content-Type": "application/json",
-            },
-        )
-    except httpx.TimeoutException:
-        raise ManagedServiceError("GATEWAY_TIMEOUT", "Managed AI gateway timed out")
-    except httpx.ConnectError:
-        raise ManagedServiceError(
-            "GATEWAY_UNREACHABLE", "Cannot reach managed AI gateway"
-        )
-
-    if response.status_code == 401:
+    def _on_unauthorized() -> None:
         invalidate_token()
         raise ManagedServiceError(
             "TOKEN_EXPIRED", "Service token rejected — will refresh on next call"
         )
-    if response.status_code == 403:
-        raise ManagedServiceError(
-            "FEATURE_DENIED", "Feature not included in license scope"
-        )
-    if response.status_code == 429:
-        raise ManagedServiceError("RATE_LIMITED", "Managed AI rate limit exceeded")
-    if response.status_code >= 500:
-        raise ManagedServiceError(
-            "SERVICE_ERROR", f"Managed AI service error ({response.status_code})"
-        )
 
-    return response.json()
+    return dispatch_managed_request(
+        url=token.gateway_url.rstrip("/") + path,
+        api_key=token.access_token,
+        json_body=json_body,
+        timeout=timeout,
+        on_unauthorized=_on_unauthorized,
+    )
 
 
 class ManagedServiceError(Exception):

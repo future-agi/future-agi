@@ -21,7 +21,17 @@ function resolveApiHost() {
   return API_HOST_MAP[window.location.hostname] || "http://localhost:8000";
 }
 
+function resolveHelpLink() {
+  // Runtime > build-time. Empty in OSS images unless the operator sets
+  // VITE_HELP_LINK, which is why OSS callers need their own fallback.
+  const runtime =
+    (typeof window !== "undefined" && window.__FUTURE_AGI_CONFIG__) || {};
+  const link = runtime.VITE_HELP_LINK || import.meta.env.VITE_HELP_LINK || "";
+  return link.trim();
+}
+
 export const HOST_API = resolveApiHost();
+export const HELP_LINK = resolveHelpLink();
 export const GENERATE_LINK = import.meta.env.VITE_GENERATE_LINK;
 export const ASSETS_API = import.meta.env.VITE_ASSETS_API;
 export const CURRENT_ENVIRONMENT = import.meta.env.VITE_ENVIRONMENT;

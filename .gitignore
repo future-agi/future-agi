@@ -257,6 +257,9 @@ frontend/scripts/.artifacts/
 install-*.log
 uninstall-*.log
 *.core
+# Local compose override (developer testing, not shipped)
+docker-compose.override.yml
+
 
 # ee/ private-repo .gitignore — not part of the public monorepo
 # (ee/LICENSE stays tracked: source-available code needs a license file)

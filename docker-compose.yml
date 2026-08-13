@@ -1,4 +1,3 @@
-
 name: futureagi
 
 # PeerDB CDC shared config — used by 5 PeerDB containers
@@ -151,6 +150,9 @@ services:
       # -> API_HOST_MAP[hostname] -> http://localhost:8000. Override per
       # deployment (e.g. https://api.example.com for split-domain).
       VITE_HOST_API: ${VITE_HOST_API:-}
+      # Empty -> the sidebar "Help" entry points at the community Discord.
+      # Set it to send users to your own support channel instead.
+      VITE_HELP_LINK: ${VITE_HELP_LINK:-}
     depends_on:
       - backend
     restart: unless-stopped
@@ -210,11 +212,10 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-
   worker-default:
     <<: &queue-worker
       image: futureagi/future-agi:${FUTURE_AGI_VERSION:-latest}
-      profiles: ["workers"]
+      profiles: ["workers","full"]
       env_file:
         - path: .env
           required: false
@@ -424,6 +425,7 @@ services:
       # same `postgres` service Django uses (PG_USER/PG_PASSWORD/PG_DB).
       FI_PG_WRITE: postgres://${PG_USER:-futureagi}:${PG_PASSWORD:-futureagi}@postgres:5432/${PG_DB:-futureagi}?sslmode=disable
       FI_PG_READ: postgres://${PG_USER:-futureagi}:${PG_PASSWORD:-futureagi}@postgres:5432/${PG_DB:-futureagi}?sslmode=disable
+      FI_AUTH_REDIS_ADDR: redis:6379
       FI_GRPC_ADDR: ":4317"
       # OTLP/HTTP receiver — needed by browser SDKs + lightweight clients.
       # `FI_HTTP_ADDR=disable` turns the listener off if you front the
@@ -435,6 +437,8 @@ services:
       - fi-collector-data:/var/lib/fi-collector
     depends_on:
       clickhouse:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
 
@@ -515,10 +519,9 @@ services:
       start_period: 90s
     restart: unless-stopped
 
-
   temporal-ui:
     image: temporalio/ui:2.43.3
-    profiles: ["observability"]
+    profiles: ["observability","full"]
     ports:
       - "${TEMPORAL_UI_PORT:-8085}:8080"
     environment:
@@ -531,7 +534,7 @@ services:
 
   temporal-admin-tools:
     image: temporalio/admin-tools
-    profiles: ["observability"]
+    profiles: ["observability","full"]
     environment:
       TEMPORAL_CLI_ADDRESS: temporal:7233
     stdin_open: true
@@ -551,7 +554,7 @@ services:
 
   peerdb-catalog:
     image: postgres:16-alpine
-    profiles: ["full"]
+    profiles: ["peerdb","full"]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -567,7 +570,7 @@ services:
 
   peerdb-temporal:
     image: temporalio/auto-setup:1.29
-    profiles: ["full"]
+    profiles: ["peerdb","full"]
     environment:
       DB: postgres12
       DB_PORT: 5432
@@ -590,7 +593,7 @@ services:
 
   peerdb-minio:
     image: minio/minio:latest
-    profiles: ["full"]
+    profiles: ["peerdb","full"]
     environment:
       MINIO_ROOT_USER: _peerdb_minioadmin
       MINIO_ROOT_PASSWORD: _peerdb_minioadmin
@@ -608,7 +611,7 @@ services:
 
   peerdb-flow-api:
     image: ghcr.io/peerdb-io/flow-api:stable-v0.36.9
-    profiles: ["full"]
+    profiles: ["peerdb","full"]
     environment:
       <<: [*peerdb-catalog, *peerdb-flow-env, *peerdb-minio-env]
       PEERDB_ALLOWED_TARGETS:
@@ -619,7 +622,7 @@ services:
 
   peerdb-flow-worker:
     image: ghcr.io/peerdb-io/flow-worker:stable-v0.36.9
-    profiles: ["full"]
+    profiles: ["peerdb","full"]
     environment:
       <<: [*peerdb-catalog, *peerdb-flow-env, *peerdb-minio-env]
     depends_on:
@@ -629,7 +632,7 @@ services:
 
   peerdb-flow-snapshot-worker:
     image: ghcr.io/peerdb-io/flow-snapshot-worker:stable-v0.36.9
-    profiles: ["full"]
+    profiles: ["peerdb","full"]
     environment:
       <<: [*peerdb-catalog, *peerdb-flow-env, *peerdb-minio-env]
     depends_on:
@@ -639,7 +642,7 @@ services:
 
   peerdb-server:
     image: ghcr.io/peerdb-io/peerdb-server:stable-v0.36.9
-    profiles: ["full"]
+    profiles: ["peerdb","full"]
     stop_signal: SIGINT
     environment:
       <<: *peerdb-catalog
@@ -655,7 +658,7 @@ services:
 
   peerdb-ui:
     image: ghcr.io/peerdb-io/peerdb-ui:stable-v0.36.9
-    profiles: ["full"]
+    profiles: ["peerdb","full"]
     environment:
       <<: *peerdb-catalog
       PEERDB_FLOW_SERVER_HTTP: http://peerdb-flow-api:8113
@@ -671,7 +674,7 @@ services:
 
   peerdb-temporal-init:
     image: temporalio/admin-tools
-    profiles: ["full"]
+    profiles: ["peerdb","full"]
     restart: "no"
     environment:
       TEMPORAL_CLI_ADDRESS: peerdb-temporal:7233
@@ -690,7 +693,7 @@ services:
 
   peerdb-init:
     image: postgres:16-alpine
-    profiles: ["full"]
+    profiles: ["peerdb","full"]
     restart: "no"
     environment:
       SRC_PG_HOST: postgres

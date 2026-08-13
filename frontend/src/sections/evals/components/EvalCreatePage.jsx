@@ -164,6 +164,7 @@ const EvalCreatePage = () => {
 
   // Mode: single or composite
   const [mode, setMode] = useState("single");
+  const isComposite = mode === "composite";
 
   // --- Single eval state ---
   const [name, setName] = useState("");
@@ -579,8 +580,7 @@ const EvalCreatePage = () => {
     // needed since the composite hasn't been (and won't be) saved as a
     // single-eval draft. Single evals still need their draft up to date
     // so the playground sees the latest instructions/code/config.
-
-    if (fagiLocked && evalType !== "code" && !model) {
+    if (fagiLocked && evalType !== "code" && !model && !isComposite) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
       return;
@@ -615,6 +615,7 @@ const EvalCreatePage = () => {
     }
   }, [
     mode,
+    isComposite,
     draftId,
     fagiLocked,
     evalType,

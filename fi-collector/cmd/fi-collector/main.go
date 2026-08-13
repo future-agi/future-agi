@@ -71,7 +71,7 @@ func main() {
 		rdb = redis.NewClient(&redis.Options{Addr: cfg.Auth.RedisAddr})
 		defer rdb.Close()
 	} else {
-		log.Warn("FI_AUTH_REDIS_ADDR not set — quota enforcement and usage metering are disabled")
+		log.Warn("FI_AUTH_REDIS_ADDR not set — quota enforcement, usage metering, key-revocation and project-delete cache invalidation are disabled; auth cache entries only expire via TTL")
 	}
 
 	authenticator, err := auth.New(context.Background(), cfg.Auth, rdb, log)

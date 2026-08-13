@@ -962,7 +962,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   }, []);
 
   const handleTestEvaluation = useCallback(() => {
-    if (fagiLocked && evalType !== "code" && !model) {
+    if (fagiLocked && evalType !== "code" && !model && !isComposite) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
       return;
@@ -973,10 +973,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     sourceRef.current?.runTest?.(templateId);
     // Safety timeout
     setTimeout(() => setIsTesting((v) => (v ? false : v)), 60000);
-  }, [templateId, fagiLocked, evalType, model]);
+  }, [templateId, fagiLocked, evalType, model, isComposite]);
 
   const handleAdd = useCallback(() => {
-    if (fagiLocked && evalType !== "code" && !model) {
+    if (fagiLocked && evalType !== "code" && !model && !isComposite) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
       return;
@@ -1139,6 +1139,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     connectorIds,
     knowledgeBaseIds,
     contextOptions,
+    isComposite,
     compositeChildWeights,
     errorLocalizerActive,
     hasValidPromptMessages,
