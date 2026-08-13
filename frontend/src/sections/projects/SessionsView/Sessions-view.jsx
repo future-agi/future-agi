@@ -18,11 +18,9 @@ import React, {
   useState,
 } from "react";
 import { useParams, useNavigate } from "react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import { Helmet } from "react-helmet-async";
-import { formatDate } from "src/utils/report-utils";
-import { endOfToday, sub } from "date-fns";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
@@ -32,6 +30,8 @@ import FilterChips from "../LLMTracing/FilterChips";
 import { useLLMTracingFilters } from "../LLMTracing/useLLMTracingFilters";
 import { buildAddEvalsDraft } from "../LLMTracing/buildAddEvalsDraft";
 import SelectAllBanner from "../LLMTracing/SelectAllBanner";
+import { getSelectionCountState } from "../LLMTracing/listTotalMetadata";
+import { singleProjectIdFromFilters } from "../LLMTracing/GraphSection/graphFilterUtils";
 
 // Lazy-load graph
 const PrimaryGraph = lazy(
@@ -77,6 +77,8 @@ import {
   isColumnOrderDirty,
 } from "../LLMTracing/savedViewColumns";
 import { filtersContentEqual } from "../saved-view-utils";
+import { getDefaultDateRangeForMode } from "../dateRangeDefaults";
+import { useCursorAttributeInventory } from "../LLMTracing/useCursorAttributeInventory";
 
 // ---------------------------------------------------------------------------
 // Base session filter fields (always available)
@@ -136,14 +138,6 @@ const defaultFilterBase = [
   },
 ];
 
-const getDefaultDateRange = () => ({
-  dateFilter: [
-    formatDate(sub(new Date(), { months: 6 })),
-    formatDate(endOfToday()),
-  ],
-  dateOption: "6M",
-});
-
 // Date label helper — mirrors LLMTracingView so the toolbar button reflects
 // the restored URL state (shows picked dates for Custom, "Past N" for presets).
 const PRESET_DATE_LABELS = {
@@ -189,7 +183,10 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   } = useObserveHeader();
 
   // --- Filter & date state (reuse trace filter hook) ---
-  const defaultDateFilter = useMemo(() => getDefaultDateRange(), []);
+  const defaultDateFilter = useMemo(
+    () => getDefaultDateRangeForMode(isUserMode, "6M"),
+    [isUserMode],
+  );
   const [sessionColumns, setSessionColumns] = useState([]);
 
   const { validatedFilters, setDateFilter, dateFilter } = useLLMTracingFilters(
@@ -213,6 +210,12 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const [externalFilterAnchor, setExternalFilterAnchor] = useState(null);
 
   const hasActiveFilter = extraFilters.length > 0;
+  const toolbarProjectId = useMemo(
+    () =>
+      observeId ||
+      (isUserMode ? singleProjectIdFromFilters(extraFilters) : null),
+    [extraFilters, isUserMode, observeId],
+  );
 
   const handleAddEvals = useCallback(() => {
     const url = buildAddEvalsDraft({
@@ -726,12 +729,19 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     setCreatedReplay: s.setCreatedReplay,
   }));
 
-  const { totalRowCount, toggledNodes, selectAll } =
-    useSessionsGridStoreShallow((s) => ({
-      totalRowCount: s.totalRowCount,
-      toggledNodes: s.toggledNodes,
-      selectAll: s.selectAll,
-    }));
+  const {
+    totalRowCount,
+    totalRowCountLowerBound,
+    totalRowCountIsLowerBound,
+    toggledNodes,
+    selectAll,
+  } = useSessionsGridStoreShallow((s) => ({
+    totalRowCount: s.totalRowCount,
+    totalRowCountLowerBound: s.totalRowCountLowerBound,
+    totalRowCountIsLowerBound: s.totalRowCountIsLowerBound,
+    toggledNodes: s.toggledNodes,
+    selectAll: s.selectAll,
+  }));
 
   const { mutate: createReplaySessions } = useCreateReplaySessions();
 
@@ -752,12 +762,19 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       toggledNodes: toggled,
       selectAll: !!ssState.selectAll,
       totalRowCount: params.api.totalRowCount,
+      totalRowCountLowerBound: params.api.totalRowCountLowerBound,
+      totalRowCountIsLowerBound: params.api.totalRowCountIsLowerBound,
     });
   }, []);
 
-  const selectedCount = selectAll
-    ? totalRowCount - toggledNodes.length
-    : toggledNodes.length;
+  const selectedCountState = getSelectionCountState({
+    selectAll,
+    toggledNodes,
+    totalRowCount,
+    totalRowCountLowerBound,
+    totalRowCountIsLowerBound,
+  });
+  const selectedCount = selectedCountState.count;
 
   const [queueAnchorEl, setQueueAnchorEl] = useState(null);
   // Opt-in for filter-mode bulk add — set when the SelectAllBanner is
@@ -934,16 +951,22 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const [openCustomColumn, setOpenCustomColumn] = useState(false);
   const pendingCustomColumnsRef = useRef([]);
 
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", observeId],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: { filters: JSON.stringify({ project_id: observeId }) },
-      }),
-    select: (data) => data.data?.result,
+  const [customAttributeSearch, setCustomAttributeSearch] = useState("");
+  const preservedCustomAttributeKeys = useMemo(
+    () =>
+      (sessionColumns || [])
+        .filter((column) => column?.groupBy === "Custom Columns")
+        .map((column) => column.id)
+        .filter(Boolean),
+    [sessionColumns],
+  );
+  const { attributes, inventoryControlProps } = useCursorAttributeInventory({
+    projectId: observeId,
+    discoveryMode: "eval_mapping",
+    search: customAttributeSearch,
+    preservedKeys: preservedCustomAttributeKeys,
     enabled: Boolean(observeId),
   });
-  const attributes = useMemo(() => evalAttributes || [], [evalAttributes]);
 
   const handleAddCustomColumns = useCallback((newCols) => {
     setSessionColumns((prev) => {
@@ -975,6 +998,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       {/* ObserveToolbar — portals into tab bar */}
       <ObserveToolbar
         mode="sessions"
+        projectId={toolbarProjectId}
         // Date
         dateLabel={getDateLabel(dateFilter)}
         dateFilter={dateFilter}
@@ -1048,6 +1072,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         }}
         // Bulk actions
         selectedCount={selectedCount}
+        selectedCountIsLowerBound={selectedCountState.isLowerBound}
         allMatching={sessionFilterSelectionMode}
         onClearSelection={() => {
           sessionGridApiRef.current?.api?.deselectAll();
@@ -1138,7 +1163,12 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         visibleCount={
           sessionGridApiRef.current?.api?.getDisplayedRowCount?.() || 0
         }
-        totalMatching={totalRowCount || 0}
+        totalMatching={
+          totalRowCountIsLowerBound
+            ? totalRowCountLowerBound || 0
+            : totalRowCount || 0
+        }
+        totalMatchingIsLowerBound={totalRowCountIsLowerBound}
         noun="session"
         onSelectAll={() => setSessionFilterSelectionMode(true)}
       />
@@ -1188,6 +1218,8 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         existingColumns={sessionColumns}
         onAddColumns={handleAddCustomColumns}
         onRemoveColumns={handleRemoveCustomColumns}
+        onAttributeSearchChange={setCustomAttributeSearch}
+        inventoryControlProps={inventoryControlProps}
       />
     </>
   );

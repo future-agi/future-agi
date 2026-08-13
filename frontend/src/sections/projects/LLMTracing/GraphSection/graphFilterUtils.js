@@ -75,3 +75,28 @@ export const selectPanelGraphFilters = (
   extraFilters,
   compareExtraFilters,
 ) => (filterTarget === "compare" ? compareExtraFilters : extraFilters);
+
+/**
+ * Return the one project selected by a positive Project filter.
+ *
+ * Cross-project user detail has no route-level project id. Its property,
+ * retained-attribute, and value catalogs can become project-scoped only after
+ * the user chooses Project in the filter panel. Do not guess a scope for a
+ * multi-project, negative, or otherwise non-equality predicate.
+ */
+export const singleProjectIdFromFilters = (filters) => {
+  const projectFilters = (filters || []).filter(
+    (filter) => filter?.column_id === "project_id",
+  );
+  if (projectFilters.length !== 1) return null;
+
+  const config = projectFilters[0]?.filter_config || {};
+  const operator = config.filter_op;
+  if (!new Set(["equals", "is", "in"]).has(operator)) return null;
+
+  const rawValue = config.filter_value;
+  const values = (Array.isArray(rawValue) ? rawValue : [rawValue]).filter(
+    (value) => typeof value === "string" && value.length > 0,
+  );
+  return values.length === 1 ? values[0] : null;
+};

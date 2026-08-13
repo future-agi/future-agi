@@ -295,12 +295,32 @@ export const getAttributesDefinition = (
       const isEnriched = typeof attr === "object" && attr !== null;
       const attrKey = isEnriched ? attr.key : attr;
       const attrType = isEnriched ? attr.type : null;
+      const attributeTypes = Array.from(
+        new Set(
+          (Array.isArray(attr?.types) && attr.types.length > 0
+            ? attr.types
+            : attrType
+              ? [attrType]
+              : []
+          ).filter(Boolean),
+        ),
+      );
 
       // Use existing filter type if set, otherwise infer from enriched metadata
       const existingType = attrFilterTypeHash?.[attrKey];
+      const scalarAttributeTypes = attributeTypes.filter((candidate) =>
+        ["string", "number", "boolean"].includes(candidate),
+      );
+      const hasMixedScalarTypes = scalarAttributeTypes.length > 1;
       let type;
       if (existingType) {
         type = existingType;
+      } else if (hasMixedScalarTypes) {
+        // A single number/boolean editor cannot represent a key whose values
+        // span multiple ClickHouse scalar stores. Route mixed keys through the
+        // typed autocomplete; the chosen option then sets the scalar wire type
+        // or aligned list provenance.
+        type = "text";
       } else if (attrType === "number") {
         type = "number";
       } else if (attrType === "boolean") {
@@ -323,6 +343,8 @@ export const getAttributesDefinition = (
         allowTypeChange: true,
         showOperator: true,
         filterType,
+        attributeTypes,
+        attributeTypesExact: attr?.types_exact === true,
         // Flag for autocomplete on string attributes
         ...(type === "text" && isEnriched && { asyncOptions: true }),
       };

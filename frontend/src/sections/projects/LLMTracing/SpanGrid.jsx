@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import { Box, useTheme } from "@mui/material";
+import { Box, Typography, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import PropTypes from "prop-types";
@@ -42,8 +42,38 @@ import { APP_CONSTANTS } from "src/utils/constants";
 import { useShallowToggleAnnotationsStore } from "../../agents/store";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import NoRowsOverlay from "src/sections/project-detail/CompareDrawer/NoRowsOverlay";
+import {
+  failServerSideGridRead,
+  getQueryReadMessage,
+  getQueryReadState,
+} from "src/utils/queryReadState";
+import {
+  createListCursorPagination,
+  isListCursorContinuationLimitError,
+  loadExactListPage,
+  retryServerSideCursorLoad,
+  resumePendingListPage,
+} from "./listCursorPagination";
+import ListCursorContinuationNotice from "./ListCursorContinuationNotice";
+import { getListTotalState } from "./listTotalMetadata";
+import { getSpanPhysicalRowId } from "./spanPhysicalIdentity";
+import {
+  parseAxiosResult,
+  parseSpanObserveListResponse,
+} from "src/api/project/observe-contracts";
+import {
+  getCanonicalColumnSnapshot,
+  mergeColumnsWithAuthoritativeConfig,
+} from "./defaultColumns";
 
 const ROWS_LIMIT = 25;
+const loadSpanObservePage = (params, signal) =>
+  axios
+    .get(endpoints.project.getSpansForObserveProject(), { params, signal })
+    .then((response) =>
+      parseAxiosResult(response, parseSpanObserveListResponse),
+    );
 
 const getSpanListColumnDefs = (col) => {
   const colId = col?.id;
@@ -188,6 +218,7 @@ const SpanGrid = React.forwardRef(
       metricFilters,
       pendingCustomColumnsRef,
       canonicalOrderRef,
+      canonicalColumnsRef,
       enabled = true,
     },
     gridRef,
@@ -206,19 +237,41 @@ const SpanGrid = React.forwardRef(
     }));
     const [openQuickFilter, setOpenQuickFilter] = useState(null);
     const [selectedAll, setSelectedAll] = useState(false);
+    const [readState, setReadState] = useState("complete");
+    const readStateRef = useRef("complete");
+    const readMessage = getQueryReadMessage(readState);
+    const [continuationNotice, setContinuationNotice] = useState(null);
+    const [gridLoading, setGridLoading] = useState(enabled);
+    const firstPageRequestRef = useRef(0);
+    const preserveRowsDuringNextRefreshRef = useRef(false);
 
     // Use ref to track latest columns for comparison without triggering dataSource recreation
     const columnsRef = useRef(columns);
+    const authoritativeConfigProjectRef = useRef(null);
     useEffect(() => {
       columnsRef.current = columns;
     }, [columns]);
 
     // Prefetch cache: stores next page data so scroll feels instant
     const prefetchCache = useRef(new Map());
+    const cursorPagination = useRef(createListCursorPagination());
 
-    const refreshGrid = useCallback(() => {
-      gridRef?.current?.api?.refreshServerSide({ purge: true });
-    }, [gridRef]);
+    const refreshGrid = useCallback(
+      (purge = true) => {
+        prefetchCache.current.clear();
+        cursorPagination.current.reset();
+        preserveRowsDuringNextRefreshRef.current = !purge;
+        if (purge) setGridLoading(enabled);
+        gridRef?.current?.api?.refreshServerSide({ purge });
+      },
+      [enabled, gridRef],
+    );
+    const continueCursorSearch = useCallback(() => {
+      if (!continuationNotice) return;
+      if (retryServerSideCursorLoad(gridRef?.current?.api)) {
+        setContinuationNotice(null);
+      }
+    }, [continuationNotice, gridRef]);
     const filterRequestKey = useMemo(
       () =>
         JSON.stringify({
@@ -236,9 +289,19 @@ const SpanGrid = React.forwardRef(
     useEffect(() => {
       if (previousFilterRequestKeyRef.current === filterRequestKey) return;
       previousFilterRequestKeyRef.current = filterRequestKey;
+      setGridLoading(enabled);
       prefetchCache.current.clear();
-      refreshGrid();
-    }, [filterRequestKey, refreshGrid]);
+      cursorPagination.current.reset();
+      refreshGrid(true);
+    }, [enabled, filterRequestKey, refreshGrid]);
+
+    // Keep the last exact same-query rows during a manual refresh. A query-key
+    // change uses the purge path above and shows a neutral loading state.
+    useEffect(() => {
+      const handler = () => refreshGrid(false);
+      window.addEventListener("observe-refresh", handler);
+      return () => window.removeEventListener("observe-refresh", handler);
+    }, [refreshGrid]);
 
     // Clear AG Grid's internal selection when the project changes — the
     // zustand reset handled in the header only clears our mirror, not AG
@@ -385,132 +448,226 @@ const SpanGrid = React.forwardRef(
     const dataSource = useMemo(
       () => {
         prefetchCache.current.clear();
+        cursorPagination.current.reset();
         return {
           getRows: async (params) => {
             if (!enabled) {
-              params.success({ rowData: [], rowCount: 0 });
+              // Disabled/unresolved is not an exact empty response. Reporting
+              // success here makes AG Grid publish "No spans" without ever
+              // calling the list API.
+              params.fail();
               return;
             }
+            let pageNumber = 0;
+            let firstPageRequestId = null;
+            let requestGeneration = null;
+            let continuationPending = false;
             try {
               setLoading(true);
               const { request } = params;
+              requestGeneration = cursorPagination.current.generation();
 
               const pageSize = request.endRow - request.startRow;
-              const pageNumber = Math.floor(request.startRow / pageSize);
+              pageNumber = Math.floor(request.startRow / pageSize);
+              if (pageNumber === 0) {
+                firstPageRequestId = ++firstPageRequestRef.current;
+                const preserveExistingRows =
+                  preserveRowsDuringNextRefreshRef.current;
+                preserveRowsDuringNextRefreshRef.current = false;
+                if (!preserveExistingRows) setGridLoading(true);
+                readStateRef.current = "complete";
+                setReadState("complete");
+                setContinuationNotice(null);
+              }
 
-              const buildParams = (page) => ({
-                // Omit project_id when null — backend treats absent
-                // project_id as org-scoped (used by user-detail page).
-                ...(observeId ? { project_id: observeId } : {}),
-                page_number: page,
-                page_size: ROWS_LIMIT,
-                filters: JSON.stringify(
-                  toBackendFilters([
-                    ...filters,
-                    ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-                    ...(extraFilters || EMPTY_EXTRA_FILTERS),
-                    ...(metricFilters || []),
-                  ]),
-                ),
-              });
+              const buildParams = (page) =>
+                cursorPagination.current.requestParams(page, {
+                  // Omit project_id when null — backend treats absent
+                  // project_id as org-scoped (used by user-detail page).
+                  ...(observeId ? { project_id: observeId } : {}),
+                  page_size: ROWS_LIMIT,
+                  filters: JSON.stringify(
+                    toBackendFilters([
+                      ...filters,
+                      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                      ...(extraFilters || EMPTY_EXTRA_FILTERS),
+                      ...(metricFilters || []),
+                    ]),
+                  ),
+                });
 
               // Use prefetched data if available, otherwise fetch
-              const cached = prefetchCache.current.get(pageNumber);
+              let cached = prefetchCache.current.get(pageNumber);
               prefetchCache.current.delete(pageNumber);
-              const results =
-                cached ||
-                (await axios.get(
-                  endpoints.project.getSpansForObserveProject(),
-                  { params: buildParams(pageNumber) },
-                ));
+              const exactPage = await loadExactListPage({
+                pagination: cursorPagination.current,
+                pageNumber,
+                targetRowCount: ROWS_LIMIT,
+                loadResponse: (signal) => {
+                  const prefetched = cached;
+                  cached = undefined;
+                  return (
+                    prefetched ||
+                    loadSpanObservePage(buildParams(pageNumber), signal)
+                  );
+                },
+                rowsFromResponse: (response) => response.data.table,
+                metadataFromResponse: (response) => response.data.metadata,
+                rowIdentity: getSpanPhysicalRowId,
+                isCurrent: () =>
+                  cursorPagination.current.isCurrent(requestGeneration),
+                nextResponse: (_cursor, signal) =>
+                  loadSpanObservePage(buildParams(pageNumber), signal),
+              });
+              if (!cursorPagination.current.isCurrent(requestGeneration)) {
+                // A newer filter/range owns the grid now. Do not let this stale
+                // response replace its loading state with an empty overlay.
+                params.fail();
+                return;
+              }
 
-              const res = results?.data?.result;
+              const results = exactPage.response;
+              const res = results.data;
+              const rows = exactPage.rows;
+              const metadata = exactPage.metadata;
+              if (
+                resumePendingListPage({
+                  page: exactPage,
+                  resume: () => {
+                    if (cursorPagination.current.isCurrent(requestGeneration)) {
+                      params.fail();
+                      if (params.api?.retryServerSideLoads) {
+                        params.api.retryServerSideLoads();
+                      } else {
+                        params.api?.refreshServerSide?.({ purge: false });
+                      }
+                    }
+                  },
+                })
+              ) {
+                continuationPending = true;
+                return;
+              }
+              const nextReadState = getQueryReadState(results.data);
+              const visibleListReadState =
+                rows.length > 0 || nextReadState === "sampled"
+                  ? "complete"
+                  : nextReadState;
+              if (pageNumber === 0 || visibleListReadState !== "complete") {
+                readStateRef.current = visibleListReadState;
+                setReadState(visibleListReadState);
+              }
               const newCols = normalizeConfigKeys(res?.config);
 
               // Use ref to get latest columns for comparison without triggering dataSource recreation
               // Compare only non-custom columns to avoid unnecessary re-renders
               if (newCols) {
-                // Canonical order, to restore default when leaving a saved view.
+                // The response config is authoritative and has not had saved-
+                // view state applied. Capture it even on a cold saved-view load.
+                const canonical = getCanonicalColumnSnapshot(newCols);
                 if (canonicalOrderRef)
-                  canonicalOrderRef.current = newCols.map((c) => c.id);
-                const currentNonCustom = (columnsRef.current || []).filter(
-                  (c) => c.groupBy !== "Custom Columns",
-                );
-                const existingCustom = (columnsRef.current || []).filter(
-                  (c) => c.groupBy === "Custom Columns",
-                );
+                  canonicalOrderRef.current = canonical.order;
+                if (canonicalColumnsRef)
+                  canonicalColumnsRef.current = canonical.columns;
+                const firstAuthoritativeConfig =
+                  authoritativeConfigProjectRef.current !== observeId;
+                authoritativeConfigProjectRef.current = observeId;
+                const currentColumns = columnsRef.current || [];
                 const pending = pendingCustomColumnsRef?.current || [];
-                const existingIds = new Set(existingCustom.map((c) => c.id));
-                const dedupedPending = pending.filter(
-                  (c) => !existingIds.has(c.id),
-                );
                 // Diff by ID set — order isn't a schema change (TH-4996).
                 const newIds = new Set(newCols.map((c) => c.id));
-                const currentIdSet = new Set(currentNonCustom.map((c) => c.id));
+                // A persisted custom may now be a first-class API field. Count
+                // that id as represented so the collision alias doesn't make
+                // every subsequent page look like a schema change.
+                const currentIdSet = new Set(
+                  currentColumns
+                    .filter(
+                      (column) =>
+                        column.groupBy !== "Custom Columns" ||
+                        newIds.has(column.id),
+                    )
+                    .map((column) => column.id),
+                );
                 const idSetChanged =
                   newIds.size !== currentIdSet.size ||
                   [...newIds].some((id) => !currentIdSet.has(id));
-                const hasPending = dedupedPending.length > 0;
-                if (idSetChanged || hasPending) {
-                  const allCustom = [...existingCustom, ...dedupedPending];
+                const hasPending = pending.length > 0;
+                if (idSetChanged || hasPending || firstAuthoritativeConfig) {
                   if (pending.length > 0 && pendingCustomColumnsRef) {
                     pendingCustomColumnsRef.current = [];
                   }
-                  let finalNonCustom;
-                  if (idSetChanged) {
-                    const newById = new Map(newCols.map((nc) => [nc.id, nc]));
-                    const seen = new Set();
-                    const kept = currentNonCustom
-                      .filter((cc) => newById.has(cc.id))
-                      .map((cc) => {
-                        seen.add(cc.id);
-                        return {
-                          ...newById.get(cc.id),
-                          isVisible: cc.isVisible,
-                        };
-                      });
-                    const added = newCols.filter((nc) => !seen.has(nc.id));
-                    finalNonCustom = [...kept, ...added];
-                  } else {
-                    finalNonCustom = currentNonCustom;
-                  }
                   setColumns(
-                    allCustom.length > 0
-                      ? [...finalNonCustom, ...allCustom]
-                      : finalNonCustom,
+                    mergeColumnsWithAuthoritativeConfig(
+                      currentColumns,
+                      newCols,
+                      pending,
+                    ),
                   );
                 }
               }
 
-              const rows = res?.table || [];
-              const totalRows = res?.metadata?.total_rows;
-              params.api.totalRowCount = totalRows;
-              useSpanGridStore.setState({ totalRowCount: totalRows || 0 });
+              const totalState = getListTotalState(metadata);
+              params.api.totalRowCount = totalState.totalRowCount;
+              params.api.totalRowCountLowerBound =
+                totalState.totalRowCountLowerBound;
+              params.api.totalRowCountIsLowerBound =
+                totalState.totalRowCountIsLowerBound;
+              useSpanGridStore.setState(totalState);
 
               // Infinite-scroll: don't expose total upfront → scrollbar grows as you scroll
-              const isLastPage = rows.length < ROWS_LIMIT;
+              const isLastPage = exactPage.isLastPage;
               const lastRow = isLastPage ? request.startRow + rows.length : -1;
 
               params.success({
                 rowData: rows,
                 rowCount: lastRow,
               });
+              setContinuationNotice(null);
 
               // Prefetch next page so scroll feels instant
-              if (!isLastPage) {
-                axios
-                  .get(endpoints.project.getSpansForObserveProject(), {
-                    params: buildParams(pageNumber + 1),
-                  })
+              if (exactPage.canPrefetch) {
+                loadSpanObservePage(buildParams(pageNumber + 1))
                   .then((res) => {
-                    prefetchCache.current.set(pageNumber + 1, res);
+                    if (cursorPagination.current.isCurrent(requestGeneration)) {
+                      prefetchCache.current.set(pageNumber + 1, res);
+                    }
                   })
                   .catch(() => {});
               }
-            } catch {
-              params.fail();
+            } catch (error) {
+              if (isListCursorContinuationLimitError(error)) {
+                // Preserve the exact checkpoint and current rows. A deliberate
+                // refresh may continue; do not publish a false empty page or
+                // surface this bounded pause as a query error.
+                setContinuationNotice(true);
+                params.fail();
+                return;
+              }
+              if (
+                cursorPagination.current.canRecoverFromContinuationError(
+                  pageNumber,
+                  error,
+                )
+              ) {
+                prefetchCache.current.clear();
+                cursorPagination.current.disableCursor();
+                params.fail();
+                params.api?.refreshServerSide?.({ purge: true });
+                return;
+              }
+              readStateRef.current = "error";
+              setReadState("error");
+              failServerSideGridRead(params);
             } finally {
-              setLoading(false);
+              if (
+                !continuationPending &&
+                firstPageRequestId !== null &&
+                firstPageRequestId === firstPageRequestRef.current &&
+                cursorPagination.current.isCurrent(requestGeneration)
+              ) {
+                setGridLoading(false);
+              }
+              if (!continuationPending) setLoading(false);
             }
           },
         };
@@ -519,13 +676,12 @@ const SpanGrid = React.forwardRef(
       // which would cause dataSource recreation on visibility changes
       // eslint-disable-next-line react-hooks/exhaustive-deps
       [
-        filters,
-        JSON.stringify(extraFilters),
-        JSON.stringify(metricFilters),
-        observeId,
+        // Keep an in-flight semantic request alive when the parent rebuilds
+        // equivalent filter arrays. Resetting the datasource in that case
+        // invalidates the cursor generation and leaves the grid loading after
+        // the completed page has already published its rows/empty result.
+        filterRequestKey,
         setLoading,
-        hasEvalFilter,
-        enabled,
       ],
     );
 
@@ -561,7 +717,9 @@ const SpanGrid = React.forwardRef(
         ? params.api.getServerSideSelectionState() || {}
         : {};
       const nodes = params.api.getSelectedNodes?.() || [];
-      const idsFromNodes = nodes.map((n) => n.data?.span_id).filter(Boolean);
+      const idsFromNodes = nodes
+        .map((n) => getSpanPhysicalRowId(n.data))
+        .filter(Boolean);
       const toggled = isServerSide ? ssState.toggledNodes || [] : idsFromNodes;
       useSpanGridStore.setState({
         toggledNodes: toggled,
@@ -595,7 +753,7 @@ const SpanGrid = React.forwardRef(
               : {};
             const nodes = event.api.getSelectedNodes?.() || [];
             const idsFromNodes = nodes
-              .map((n) => n.data?.span_id)
+              .map((n) => getSpanPhysicalRowId(n.data))
               .filter(Boolean);
             const toggled = isServerSide
               ? ssState.toggledNodes || []
@@ -629,13 +787,36 @@ const SpanGrid = React.forwardRef(
       return () => resetMetricIds();
     }, [resetMetricIds]);
     return (
-      <Box sx={{ height: "calc(100vh - 270px)" }}>
+      <Box
+        sx={{
+          height: "calc(100vh - 270px)",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        {readMessage && (
+          <Box
+            role="status"
+            sx={{
+              px: 1.5,
+              py: 0.75,
+              fontSize: 12,
+              color: "warning.main",
+              bgcolor: "warning.lighter",
+              borderBottom: "1px solid",
+              borderColor: "warning.light",
+            }}
+          >
+            {readMessage}
+          </Box>
+        )}
+        <ListCursorContinuationNotice
+          pending={Boolean(continuationNotice)}
+          onContinue={continueCursorSearch}
+        />
         <AgGridReact
-          className={
-            cellHeight && cellHeight !== "Short"
-              ? "cell-wrap clean-data-table"
-              : "clean-data-table"
-          }
+          style={{ flex: 1, minHeight: 0 }}
+          className={`${cellHeight && cellHeight !== "Short" ? "cell-wrap " : ""}clean-data-table${continuationNotice ? " ag-grid-cursor-paused" : ""}`}
           // rowSelection={{ mode: "multiRow" }}
           rowHeight={userTraceRowHeightMapping[cellHeight]?.height ?? 40}
           theme={agTheme.withParams({
@@ -665,7 +846,27 @@ const SpanGrid = React.forwardRef(
           tooltipHideDelay={2000}
           tooltipInteraction={true}
           serverSideDatasource={dataSource}
+          loading={
+            gridLoading ||
+            previousFilterRequestKeyRef.current !== filterRequestKey
+          }
           suppressServerSideFullWidthLoadingRow={true}
+          noRowsOverlayComponent={() =>
+            continuationNotice
+              ? null
+              : NoRowsOverlay(
+                  <Typography
+                    sx={{
+                      fontSize: 14,
+                      fontWeight: 400,
+                      color: "text.secondary",
+                    }}
+                  >
+                    {getQueryReadMessage(readStateRef.current) ||
+                      "No spans found"}
+                  </Typography>,
+                )
+          }
           onCellClicked={handleCellClick}
           onSelectionChanged={onSelectionChanged}
           // onGridReady={(params) => {
@@ -692,9 +893,7 @@ const SpanGrid = React.forwardRef(
           // suppressColumnVirtualisation={true}
           statusBar={statusBar}
           blockLoadDebounceMillis={300}
-          getRowId={(d) => {
-            return d?.data?.span_id;
-          }}
+          getRowId={(d) => getSpanPhysicalRowId(d?.data)}
         />
         <LLMTracingSpanDetailDrawer refreshGrid={refreshGrid} />
         <NumberQuickFilterPopover

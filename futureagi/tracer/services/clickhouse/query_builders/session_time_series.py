@@ -14,7 +14,7 @@ for sessions as it does for traces — same metric IDs, same response
 shape — but the numbers reflect session-level aggregation.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import NIL_UUID, BaseQueryBuilder
@@ -95,9 +95,7 @@ class SessionTimeSeriesQueryBuilder(BaseQueryBuilder):
         )
         resolved_ts = resolved_id_expr("rs.trace_session_id", "ts_remap")
         session_id_clause = self._build_session_id_clause(resolved_ts)
-        session_id_fragment = (
-            f"WHERE {session_id_clause}" if session_id_clause else ""
-        )
+        session_id_fragment = f"WHERE {session_id_clause}" if session_id_clause else ""
 
         # Two-level aggregation:
         # Inner: per-session aggregates from ALL spans in the session
@@ -281,3 +279,99 @@ class SessionTimeSeriesQueryBuilder(BaseQueryBuilder):
             "avg_traces_per_session": avg_traces_data,
             "total_cost": total_cost_sum_data,
         }
+
+
+class SessionRollupTimeSeriesQueryBuilder(SessionTimeSeriesQueryBuilder):
+    """Build an interactive date-only graph from retained session states.
+
+    This deliberately does not resolve ``trace_session_id_remap``. A global
+    remap join defeats the purpose of the row-reduced fast path on projects
+    with billions of spans. The response is consequently labelled as a
+    materialized-rollup estimate by the dispatcher rather than exact data.
+    """
+
+    ROLLUP_TABLE = "spans_per_session"
+
+    def build(self) -> tuple[str, dict[str, Any]]:
+        if any(
+            (item.get("column_id") or item.get("columnId"))
+            not in {"created_at", "start_time"}
+            or self.is_datetime_complement_filter(item)
+            for item in self.filters
+        ):
+            raise ValueError(
+                "session rollup graphs accept only positive datetime filters"
+            )
+        self.start_date, self.end_date = self.parse_time_range(
+            self.filters,
+            strict=True,
+        )
+        self.params["start_date"] = self.start_date
+        self.params["end_date"] = self.end_date
+        rollup_scan_start = self.start_date.replace(
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        rollup_scan_end = self.end_date.replace(
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        if rollup_scan_end < self.end_date:
+            rollup_scan_end += timedelta(hours=1)
+        self.params["rollup_scan_start"] = rollup_scan_start
+        self.params["rollup_scan_end"] = rollup_scan_end
+        bucket_fn = self.time_bucket_expr(self.interval)
+        query = self._rollup_query(bucket_fn=bucket_fn)
+        return query, self.params
+
+    def _rollup_query(
+        self,
+        *,
+        bucket_fn: str,
+    ) -> str:
+        source = self._rollup_session_source()
+        return f"""
+        SELECT
+            {bucket_fn}(session_start) AS time_bucket,
+            avg(session_latency) AS avg_latency,
+            sum(session_total_tokens) AS total_tokens,
+            avg(session_total_cost) AS avg_cost,
+            count() AS traffic_count,
+            sum(session_prompt_tokens) AS prompt_tokens,
+            sum(session_completion_tokens) AS completion_tokens,
+            countIf(session_error_count > 0) * 100.0
+                / greatest(count(), 1) AS error_rate,
+            count() AS session_count,
+            avg(dateDiff('second', session_start,
+                coalesce(session_end, session_start))) AS avg_duration,
+            CAST(NULL, 'Nullable(Float64)') AS avg_traces_per_session,
+            sum(session_total_cost) AS total_cost_sum
+        FROM ({source}) AS sessions
+        WHERE session_start >= %(start_date)s
+          AND session_start < %(end_date)s
+        GROUP BY time_bucket
+        ORDER BY time_bucket
+        """
+
+    def _rollup_session_source(self) -> str:
+        return f"""
+            SELECT
+                sps.trace_session_id AS session_id,
+                minMerge(sps.first_seen) AS session_start,
+                maxMerge(sps.last_seen) AS session_end,
+                sumMerge(sps.total_tokens_sum) AS session_total_tokens,
+                sumMerge(sps.prompt_tokens_sum) AS session_prompt_tokens,
+                sumMerge(sps.completion_tokens_sum)
+                    AS session_completion_tokens,
+                sumMerge(sps.cost_sum) AS session_total_cost,
+                (quantilesTDigestMerge(0.5, 0.95, 0.99)(sps.latency_q))[1]
+                    AS session_latency,
+                countIfMerge(sps.error_count) AS session_error_count
+            FROM {self.ROLLUP_TABLE} AS sps
+            PREWHERE sps.project_id = toUUID(%(project_id)s)
+              AND sps.hour_first_seen >= %(rollup_scan_start)s
+              AND sps.hour_first_seen < %(rollup_scan_end)s
+            GROUP BY session_id
+        """

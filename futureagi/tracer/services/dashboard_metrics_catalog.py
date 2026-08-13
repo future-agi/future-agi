@@ -15,12 +15,8 @@ from django.core.cache import cache
 
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project, ProjectSourceChoices
-from tracer.services.clickhouse.client import (
-    get_clickhouse_client,
-    is_clickhouse_enabled,
-)
-from tracer.services.clickhouse.query_service import AnalyticsQueryService
-from tracer.utils.sql_queries import SQL_query_handler
+from tracer.services.annotation_label_source import AnnotationLabelScoresProjectPG
+from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
 
 logger = structlog.get_logger(__name__)
 
@@ -171,6 +167,7 @@ def build_metrics_catalog(
     project_ids_param: str = "",
     agent_definition_id: str = "",
     per_eval_config: bool = False,
+    include_custom_attributes: bool = True,
 ):
     """Assemble the full unified metrics catalog for the workspace.
 
@@ -515,16 +512,28 @@ def build_metrics_catalog(
         pid.strip() for pid in req_project_ids_str.split(",") if pid.strip()
     ]
 
-    workspace_project_ids = {
-        str(pid)
-        for pid in Project.objects.filter(workspace=workspace).values_list(
-            "id", flat=True
-        )
-    }
     if req_project_ids:
+        workspace_project_ids = {
+            str(pid)
+            for pid in Project.objects.filter(
+                workspace=workspace,
+                id__in=req_project_ids,
+            ).values_list("id", flat=True)
+        }
         project_ids = [pid for pid in req_project_ids if pid in workspace_project_ids]
+    elif include_custom_attributes:
+        project_ids = [
+            str(pid)
+            for pid in Project.objects.filter(workspace=workspace).values_list(
+                "id", flat=True
+            )
+        ]
     else:
-        project_ids = list(workspace_project_ids)
+        # Workspace-wide evals, annotations, and dataset columns already use
+        # their native workspace predicates below. The cursor-backed editor
+        # obtains trace attributes separately, so do not materialize every
+        # project id merely to discard a capped ClickHouse attribute catalog.
+        project_ids = []
 
     filter_by_project = bool(req_project_ids and project_ids)
 
@@ -554,12 +563,11 @@ def build_metrics_catalog(
     def _discover_span_attributes():
         attrs = []
         try:
-            if is_clickhouse_enabled() and project_ids:
-                analytics = AnalyticsQueryService()
+            if project_ids:
+                analytics = V2AnalyticsQueryService()
                 rows = analytics.get_span_attribute_keys_ch_for_projects(
                     project_ids,
                     recent_days=None,
-                    timeout_ms=15000,
                     outer_limit=2000,
                 )
                 for r in rows:
@@ -567,15 +575,6 @@ def build_metrics_catalog(
                     t = r.get("type", "string")
                     if k:
                         attrs.append({"key": k, "type": t})
-            elif project_ids:
-                for pid in project_ids:
-                    keys = SQL_query_handler.get_span_attributes_for_project(pid)
-                    for key in keys:
-                        k = key if isinstance(key, str) else str(key)
-                        if k not in [
-                            a.get("key") if isinstance(a, dict) else a for a in attrs
-                        ]:
-                            attrs.append({"key": k, "type": "string"})
         except Exception as exc:
             logger.warning(
                 "dashboard_span_attribute_discovery_failed",
@@ -583,52 +582,48 @@ def build_metrics_catalog(
             )
         return attrs
 
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        f_attrs = pool.submit(_discover_span_attributes)
+    if include_custom_attributes:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            f_attrs = pool.submit(_discover_span_attributes)
+    else:
+        f_attrs = None
 
     # 3. Eval metrics (PG-heavy chain, runs in main thread)
     try:
         from model_hub.models.evals_metric import EvalTemplate
 
         used_template_ids = []
-        if is_clickhouse_enabled():
-            from tracer.services.clickhouse.client import (
-                get_clickhouse_client,
+        if filter_by_project:
+            # Resolve the candidate config ids from the authoritative project
+            # metadata first.  The direct-write eval table is sorted by
+            # ``custom_eval_config_id``; candidate-scoped discovery therefore
+            # prunes by its leading key and never needs the legacy trace
+            # dictionary or CDC eval table.
+            candidate_config_ids = list(
+                CustomEvalConfig.objects.filter(
+                    project_id__in=project_ids,
+                    deleted=False,
+                ).values_list("id", flat=True)
             )
-
-            ch = get_clickhouse_client()
-
-            if filter_by_project:
-                result = ch.execute_read(
-                    "SELECT DISTINCT toString(custom_eval_config_id) AS tid "
-                    "FROM tracer_eval_logger "
-                    "WHERE _peerdb_is_deleted = 0 AND deleted = 0 "
-                    "AND custom_eval_config_id != toUUID('00000000-0000-0000-0000-000000000000') "
-                    "AND created_at >= now() - INTERVAL 90 DAY "
-                    "AND dictGet('trace_dict', 'project_id', trace_id) IN %(project_ids)s",
-                    {"project_ids": project_ids},
-                    timeout_ms=5000,
-                )
-            else:
-                ws_id = str(workspace.id)
-                result = ch.execute_read(
-                    "SELECT DISTINCT source_id FROM usage_apicalllog "
-                    "WHERE workspace_id = toUUID(%(ws_id)s) "
-                    "AND status = 'success' AND length(source_id) > 0 "
-                    "AND _peerdb_is_deleted = 0",
-                    {"ws_id": ws_id},
-                    timeout_ms=5000,
-                )
-
-            raw_rows = result[0] if isinstance(result, tuple) else result
-            used_template_ids = [
-                (
-                    r[0]
-                    if isinstance(r, (list, tuple))
-                    else r.get("tid", r.get("source_id", ""))
-                )
-                for r in raw_rows
-            ]
+            if candidate_config_ids:
+                try:
+                    analytics = V2AnalyticsQueryService()
+                    used_template_ids = analytics.get_eval_config_ids_for_candidates_ch(
+                        [str(value) for value in candidate_config_ids],
+                        timeout_ms=5000,
+                        window_days=90,
+                    )
+                except Exception:
+                    # Metric discovery is availability-sensitive: a transient
+                    # CH timeout must not make every configured evaluation
+                    # disappear from the settings/task picker.  Falling back
+                    # to the already tenant-scoped config metadata preserves
+                    # the selectable fields without exposing the DB failure.
+                    logger.warning(
+                        "dashboard_eval_usage_discovery_failed",
+                        exc_info=True,
+                    )
+                    used_template_ids = []
 
         if not used_template_ids and filter_by_project:
             used_template_ids = list(
@@ -693,12 +688,11 @@ def build_metrics_catalog(
         from model_hub.models.develop_annotations import AnnotationsLabels
 
         if filter_by_project:
-            # Used-label ids via dispatched ANNOTATION_LABELS source (no dropped-table JOIN).
-            from tracer.services.clickhouse.v2.dispatch import (
-                get_query_builder_class,
-            )
-
-            source = get_query_builder_class("ANNOTATION_LABELS")()
+            # Pin the post-direct-write source.  It scopes the score metadata
+            # by the denormalized tracer project id and never joins the removed
+            # Postgres span table; routing flags cannot send this endpoint back
+            # to the legacy span-join implementation.
+            source = AnnotationLabelScoresProjectPG()
             used_label_ids: set = set()
             for pid in project_ids:
                 used_label_ids.update(source.label_ids_for_project(pid))
@@ -733,11 +727,27 @@ def build_metrics_catalog(
 
             if label_type == "categorical":
                 options = settings.get("options", [])
-                metric_entry["choices"] = [
-                    opt.get("label", "")
-                    for opt in options
-                    if isinstance(opt, dict) and opt.get("label")
-                ]
+                legacy_choices = []
+                choice_options = []
+                for option in options:
+                    if not isinstance(option, dict):
+                        continue
+                    raw_value = option.get("value")
+                    if raw_value is None or raw_value == "":
+                        raw_value = option.get("label") or option.get("name")
+                    if raw_value is None or raw_value == "":
+                        continue
+                    raw_label = option.get("label") or option.get("name")
+                    label = str(raw_label if raw_label not in (None, "") else raw_value)
+                    if raw_label not in (None, ""):
+                        legacy_choices.append(label)
+                    choice_options.append({"value": raw_value, "label": label})
+                metric_entry["choices"] = legacy_choices
+                # Keep the legacy label-only list for older consumers, while
+                # exposing the real stored value separately. A category whose
+                # value differs from its display label must never serialize a
+                # filter using the label by accident.
+                metric_entry["choice_options"] = choice_options
             elif label_type == "thumbs_up_down":
                 metric_entry["choices"] = ["Thumbs Up", "Thumbs Down"]
 
@@ -746,7 +756,7 @@ def build_metrics_catalog(
         logger.exception("annotation_metrics_failed")
 
     # Collect span attributes from background thread
-    custom_attributes = f_attrs.result()
+    custom_attributes = f_attrs.result() if f_attrs is not None else []
     for attr in custom_attributes:
         k = attr["key"] if isinstance(attr, dict) else attr
         t = attr.get("type", "string") if isinstance(attr, dict) else "string"
@@ -1207,6 +1217,7 @@ def get_cached_metrics_catalog(
     project_ids_param: str = "",
     agent_definition_id: str = "",
     per_eval_config: bool = False,
+    include_custom_attributes: bool = True,
     ttl: int = 60,
 ):
     """Return the metrics catalog, using a short-TTL Django cache.
@@ -1223,7 +1234,8 @@ def get_cached_metrics_catalog(
     )
     cache_key = (
         f"dashboard:metrics_catalog:v2:{workspace.id}:"
-        f"{pids_key}:{agent_definition_id}:{int(per_eval_config)}"
+        f"{pids_key}:{agent_definition_id}:{int(per_eval_config)}:"
+        f"{int(include_custom_attributes)}"
     )
     try:
         metrics = cache.get(cache_key)
@@ -1236,6 +1248,7 @@ def get_cached_metrics_catalog(
             project_ids_param=project_ids_param,
             agent_definition_id=agent_definition_id,
             per_eval_config=per_eval_config,
+            include_custom_attributes=include_custom_attributes,
         )
         try:
             cache.set(cache_key, metrics, timeout=ttl)

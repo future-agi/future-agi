@@ -63,11 +63,13 @@ import {
   getDatasetOptionId,
   getQueueScopeId,
   getRuleSubmitDisabledTooltipTitle,
+  getTraceRulePanelMode,
   getSubmittableFilters,
   isDatasetFilterValid,
   isQueueScopeLocked,
   isScopeReady,
   makeDatasetDefaultFilter,
+  removeSubmittableFilterAtIndex,
   resolveRuleScopeId,
   transformDatasetFilter,
 } from "src/sections/annotations/queues/utils/automation-rule-utils";
@@ -482,9 +484,8 @@ function TraceRuleFilters({
     sourceType === "trace" && !!projectId,
   );
   const isVoiceProject = projectDetails?.source === PROJECT_SOURCE.SIMULATOR;
-  const panelSource = sourceType === "trace_session" ? "sessions" : "traces";
-  const isSpanSource = sourceType === "observation_span";
-  const filterFields =
+  const panelMode = getTraceRulePanelMode(sourceType, { isVoiceProject });
+  const sessionProperties =
     sourceType === "trace_session" ? SESSION_RULE_FILTER_FIELDS : undefined;
 
   const snakeFilters = useMemo(() => getSubmittableFilters(filters), [filters]);
@@ -553,12 +554,13 @@ function TraceRuleFilters({
         open={filterOpen}
         onClose={() => setFilterOpen(false)}
         projectId={projectId}
-        source={panelSource}
-        tab={isSpanSource ? "spans" : undefined}
-        isSpansView={isSpanSource}
-        filterFields={filterFields}
+        source={panelMode.source}
+        tab={panelMode.tab}
+        isSpansView={panelMode.isSpansView}
+        properties={sessionProperties}
+        categories={sessionProperties ? [] : undefined}
         isSimulator={isVoiceProject}
-        key={`${projectId}-${panelSource}-${isVoiceProject ? "voice" : "trace"}`}
+        key={`${projectId}-${panelMode.source}-${panelMode.tab || "none"}`}
         currentFilters={getSubmittableFilters(filters).map(apiFilterToPanel)}
         onApply={(newPanelFilters) => {
           onInteraction?.();
@@ -589,17 +591,7 @@ function TraceRuleFilters({
         onRemoveFilter={(index) => {
           onInteraction?.();
           setFilterAnchorEl(null);
-          const target = snakeFilters[index];
-          if (!target) return;
-          setFilters((prev) =>
-            prev.filter((filter) => {
-              const colMatches = filter.column_id === target.column_id;
-              const opMatches =
-                filter.filter_config?.filter_op ===
-                target.filter_config?.filter_op;
-              return !(colMatches && opMatches);
-            }),
-          );
+          setFilters((prev) => removeSubmittableFilterAtIndex(prev, index));
         }}
         onClearAll={() => {
           onInteraction?.();
@@ -639,7 +631,10 @@ function SimulationRuleFilters({
     queryKey: ["automation-rule-simulation-eval-fields", agentDefinitionId],
     queryFn: () =>
       axios.get(endpoints.dashboard.metrics, {
-        params: { agent_definition_id: agentDefinitionId },
+        params: {
+          agent_definition_id: agentDefinitionId,
+          exclude_custom_attributes: true,
+        },
       }),
     enabled: Boolean(agentDefinitionId),
     select: (response) =>
@@ -728,17 +723,7 @@ function SimulationRuleFilters({
         onRemoveFilter={(index) => {
           onInteraction?.();
           setFilterAnchorEl(null);
-          const target = snakeFilters[index];
-          if (!target) return;
-          setFilters((prev) =>
-            prev.filter((filter) => {
-              const colMatches = filter.column_id === target.column_id;
-              const opMatches =
-                filter.filter_config?.filter_op ===
-                target.filter_config?.filter_op;
-              return !(colMatches && opMatches);
-            }),
-          );
+          setFilters((prev) => removeSubmittableFilterAtIndex(prev, index));
         }}
         onClearAll={() => {
           onInteraction?.();

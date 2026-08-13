@@ -194,14 +194,19 @@ const ObserveListView = forwardRef(
           header: "Volume (30d)",
           size: 200,
           enableSorting: false,
-          cell: ({ row }) => (
-            <Box sx={{ width: "100%", overflow: "hidden" }}>
-              <VolumeBarChart
-                dailyVolume={row.original.daily_volume || []}
-                height={22}
-              />
-            </Box>
-          ),
+          cell: ({ row }) =>
+            row.original.activity_query_complete === false ? (
+              <Typography variant="body2" color="text.disabled">
+                Unavailable
+              </Typography>
+            ) : (
+              <Box sx={{ width: "100%", overflow: "hidden" }}>
+                <VolumeBarChart
+                  dailyVolume={row.original.daily_volume || []}
+                  height={22}
+                />
+              </Box>
+            ),
         },
         {
           id: "tags",
@@ -220,6 +225,13 @@ const ObserveListView = forwardRef(
           size: 160,
           enableSorting: false,
           cell: ({ getValue, row }) => {
+            if (row.original.activity_query_complete === false) {
+              return (
+                <Typography variant="body2" color="text.disabled">
+                  Unavailable
+                </Typography>
+              );
+            }
             // Validity-aware fallback: an unparseable last_active must not win over a valid updated_at.
             const parsed =
               toValidDate(getValue()) ?? toValidDate(row.original?.updated_at);

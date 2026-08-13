@@ -12,22 +12,52 @@ import axios, { endpoints } from "src/utils/axios";
  * every page change.
  */
 
-const buildParams = ({ evalTaskId, period, evalId }) => {
+const buildParams = ({
+  evalTaskId,
+  period,
+  evalId,
+  dateRange,
+  endInclusive,
+}) => {
   const params = { eval_task_id: evalTaskId, period };
   if (evalId) params.eval_id = evalId;
+  if (dateRange?.[0] && dateRange?.[1]) {
+    params.start_date = new Date(dateRange[0]).toISOString();
+    const endDate = new Date(dateRange[1]);
+    if (endInclusive) endDate.setDate(endDate.getDate() + 1);
+    params.end_date = endDate.toISOString();
+  }
   return params;
 };
 
 /**
  * Fetch chart + stats + configured-evals list. Independent of pagination.
  */
-export function useTaskUsageChart(evalTaskId, { period = "30d", evalId } = {}) {
+export function useTaskUsageChart(
+  evalTaskId,
+  { period = "30d", evalId, dateRange, endInclusive = false } = {},
+) {
   return useQuery({
-    queryKey: ["tasks", "usage-chart", evalTaskId, period, evalId || null],
+    queryKey: [
+      "tasks",
+      "usage-chart",
+      evalTaskId,
+      period,
+      evalId || null,
+      dateRange?.[0] || null,
+      dateRange?.[1] || null,
+      endInclusive,
+    ],
     queryFn: async () => {
       const { data } = await axios.get(endpoints.project.getEvalTaskUsage(), {
         params: {
-          ...buildParams({ evalTaskId, period, evalId }),
+          ...buildParams({
+            evalTaskId,
+            period,
+            evalId,
+            dateRange,
+            endInclusive,
+          }),
           // The chart hook ignores the paginated `logs` block; we still
           // need to send valid pagination params or the BE serializer
           // 400s. page is 1-indexed (DRF PageNumberPagination).
@@ -40,11 +70,12 @@ export function useTaskUsageChart(evalTaskId, { period = "30d", evalId } = {}) {
         stats: result.stats,
         chart: result.chart,
         evals: result.evals,
-        // Backend echoes the period it actually applied. If it differs
-        // from `period`, the user picked a window that excluded all
-        // runs and the backend fell back to "all time".
+        // Backend echoes the exact bounded window it applied. Empty windows
+        // stay empty; they are never widened to all task history.
         periodUsed: result.period_used,
         periodRequested: result.period_requested,
+        querySampled: !!result.query_sampled,
+        queryStatus: result.query_status,
       };
     },
     enabled: !!evalTaskId,
@@ -58,7 +89,14 @@ export function useTaskUsageChart(evalTaskId, { period = "30d", evalId } = {}) {
  */
 export function useTaskUsageLogs(
   evalTaskId,
-  { page = 0, pageSize = 25, period = "30d", evalId } = {},
+  {
+    page = 0,
+    pageSize = 25,
+    period = "30d",
+    evalId,
+    dateRange,
+    endInclusive = false,
+  } = {},
 ) {
   return useQuery({
     queryKey: [
@@ -67,15 +105,25 @@ export function useTaskUsageLogs(
       evalTaskId,
       period,
       evalId || null,
+      dateRange?.[0] || null,
+      dateRange?.[1] || null,
+      endInclusive,
       page,
       pageSize,
     ],
     queryFn: async () => {
       const { data } = await axios.get(endpoints.project.getEvalTaskUsage(), {
         params: {
-          ...buildParams({ evalTaskId, period, evalId }),
+          ...buildParams({
+            evalTaskId,
+            period,
+            evalId,
+            dateRange,
+            endInclusive,
+          }),
           page: page + 1,
           page_size: pageSize,
+          include_summary: false,
         },
       });
       return data?.result?.logs;

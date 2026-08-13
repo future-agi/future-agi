@@ -101,6 +101,267 @@ describe("useCallLogs", () => {
     });
   });
 
+  it("uses an opaque voice continuation without also sending a numbered page", async () => {
+    renderHook(
+      () =>
+        useCallLogs({
+          module: "project",
+          id: "project-1",
+          page: 2,
+          pageLimit: 25,
+          params: { project_id: "project-1" },
+          paginationParams: {
+            cursor_mode: true,
+            cursor: "signed-voice-page-2",
+            page_size: 25,
+          },
+        }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(axiosMocks.get).toHaveBeenCalledTimes(1));
+    expect(axiosMocks.get).toHaveBeenCalledWith(axiosMocks.projectGetCallLogs, {
+      params: {
+        project_id: "project-1",
+        cursor_mode: true,
+        cursor: "signed-voice-page-2",
+        page_size: 25,
+      },
+    });
+  });
+
+  it("preserves exact voice totals across short cursor responses", async () => {
+    const pagination = createListCursorPagination({
+      pageParam: "page",
+      pageOffset: 1,
+    });
+    axiosMocks.get
+      .mockResolvedValueOnce({
+        data: {
+          result: {
+            results: [{ id: "call-1" }],
+            has_more: true,
+            next_cursor: "after-call-1",
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          result: {
+            results: Array.from({ length: 15 }, (_, index) => ({
+              id: `call-${index + 2}`,
+            })),
+            count: 16,
+            count_is_lower_bound: false,
+            total_pages: 1,
+            has_more: false,
+            next_cursor: null,
+          },
+        },
+      });
+
+    const paginationParams = pagination.requestParams(0, { page_size: 25 });
+    const { result } = renderHook(
+      () =>
+        useCallLogs({
+          module: "project",
+          id: "project-1",
+          page: 1,
+          pageLimit: 25,
+          params: { project_id: "project-1" },
+          paginationParams,
+          paginationRevision: 0,
+          cursorPagination: pagination,
+          paginationGeneration: pagination.generation(),
+        }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.data?.results).toHaveLength(16));
+    expect(axiosMocks.get).toHaveBeenNthCalledWith(
+      1,
+      axiosMocks.projectGetCallLogs,
+      {
+        params: {
+          project_id: "project-1",
+          cursor_mode: true,
+          page: 1,
+          page_size: 25,
+        },
+        signal: expect.any(AbortSignal),
+      },
+    );
+    expect(axiosMocks.get).toHaveBeenNthCalledWith(
+      2,
+      axiosMocks.projectGetCallLogs,
+      {
+        params: {
+          project_id: "project-1",
+          page_size: 25,
+          cursor_mode: true,
+          cursor: "after-call-1",
+        },
+        signal: expect.any(AbortSignal),
+      },
+    );
+    expect(result.current.data.__exactPage).toEqual(
+      expect.objectContaining({
+        pending: false,
+        isLastPage: true,
+        canPrefetch: false,
+      }),
+    );
+    expect(result.current.data).toEqual(
+      expect.objectContaining({
+        count: 16,
+        count_is_lower_bound: false,
+        total_pages: 1,
+      }),
+    );
+  });
+
+  it("keeps the searched custom-property filter on voice p1 and p2", async () => {
+    const pagination = createListCursorPagination({
+      pageParam: "page",
+      pageOffset: 1,
+    });
+    const propertyFilters = JSON.stringify([
+      {
+        column_id: "prompt_slug",
+        filter_config: {
+          col_type: "SPAN_ATTRIBUTE",
+          filter_op: "equals",
+          filter_value: "rejected",
+        },
+      },
+    ]);
+    axiosMocks.get
+      .mockResolvedValueOnce({
+        data: {
+          result: {
+            results: [{ id: "voice-call-1" }],
+            count: 2,
+            count_is_lower_bound: false,
+            has_more: true,
+            next_cursor: "signed-voice-property-page-2",
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          result: {
+            results: [{ id: "voice-call-2" }],
+            count: 2,
+            count_is_lower_bound: false,
+            has_more: false,
+            next_cursor: null,
+          },
+        },
+      });
+
+    const { result, rerender } = renderHook(
+      ({ page }) =>
+        useCallLogs({
+          module: "project",
+          id: "project-colly",
+          page,
+          pageLimit: 1,
+          params: {
+            project_id: "project-colly",
+            filters: propertyFilters,
+          },
+          cursorPagination: pagination,
+          paginationGeneration: pagination.generation(),
+        }),
+      { initialProps: { page: 1 }, wrapper: createWrapper() },
+    );
+
+    await waitFor(() =>
+      expect(result.current.data?.results).toEqual([{ id: "voice-call-1" }]),
+    );
+    rerender({ page: 2 });
+    await waitFor(() =>
+      expect(result.current.data?.results).toEqual([{ id: "voice-call-2" }]),
+    );
+
+    expect(axiosMocks.get.mock.calls[0][1].params).toEqual({
+      project_id: "project-colly",
+      filters: propertyFilters,
+      cursor_mode: true,
+      page: 1,
+      page_size: 1,
+    });
+    expect(axiosMocks.get.mock.calls[1][1].params).toEqual({
+      project_id: "project-colly",
+      filters: propertyFilters,
+      cursor_mode: true,
+      cursor: "signed-voice-property-page-2",
+      page_size: 1,
+    });
+    expect(axiosMocks.get.mock.calls[1][1].params).not.toHaveProperty("page");
+    expect(result.current.data.results[0].id).not.toBe("voice-call-1");
+  });
+
+  it("retries voice page one once without cursor fields on a legacy API", async () => {
+    const pagination = createListCursorPagination({
+      pageParam: "page",
+      pageOffset: 1,
+    });
+    axiosMocks.get
+      .mockRejectedValueOnce({
+        response: {
+          status: 400,
+          data: {
+            attr: "cursor_mode",
+            detail: "cursor_mode: Unknown field.",
+            details: { cursor_mode: ["Unknown field."] },
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          result: {
+            results: [{ id: "legacy-call" }],
+            count: 1,
+            total_pages: 1,
+          },
+        },
+      });
+
+    const paginationParams = pagination.requestParams(0, { page_size: 25 });
+    const { result } = renderHook(
+      () =>
+        useCallLogs({
+          module: "project",
+          id: "project-1",
+          page: 1,
+          pageLimit: 25,
+          params: { project_id: "project-1" },
+          paginationParams,
+          cursorPagination: pagination,
+          paginationGeneration: pagination.generation(),
+        }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() =>
+      expect(result.current.data?.results).toEqual([{ id: "legacy-call" }]),
+    );
+    expect(axiosMocks.get).toHaveBeenCalledTimes(2);
+    expect(axiosMocks.get.mock.calls[0][1].params).toEqual({
+      project_id: "project-1",
+      page_size: 25,
+      cursor_mode: true,
+      page: 1,
+    });
+    expect(axiosMocks.get.mock.calls[1][1].params).toEqual({
+      project_id: "project-1",
+      page_size: 25,
+      page: 1,
+    });
+    expect(pagination.mode()).toBe("numbered");
+  });
+
   it("does not prefetch agent call logs without an agent version", () => {
     const queryClient = { prefetchQuery: vi.fn() };
 
@@ -136,6 +397,22 @@ describe("getCallLogsColumnDefs", () => {
       ]),
     );
   });
+
+  it("uses the canonical grid label for all 15 filterable voice fields", () => {
+    const columnsByField = new Map(
+      getCallLogsColumnDefs([], false, null, "project").map((column) => [
+        column.field,
+        column,
+      ]),
+    );
+
+    expect(VOICE_CALL_FILTER_FIELDS).toHaveLength(15);
+    VOICE_CALL_FILTER_FIELDS.forEach((field) => {
+      expect(columnsByField.get(field.responseKey)?.headerName).toBe(
+        field.columnLabel || field.label,
+      );
+    });
+  });
 });
 
 import {
@@ -143,3 +420,5 @@ import {
   prefetchCallLogs,
   useCallLogs,
 } from "../helper";
+import { createListCursorPagination } from "src/sections/projects/LLMTracing/listCursorPagination";
+import { VOICE_CALL_FILTER_FIELDS } from "src/sections/projects/LLMTracing/voiceCallFilterFields";

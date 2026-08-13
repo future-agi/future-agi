@@ -19,6 +19,8 @@ import {
   useCreateDiscussionComment,
   useDeleteDiscussionComment,
   useGetOrCreateDefaultQueue,
+  useAddLabelToQueue,
+  useRemoveLabelFromQueue,
   useAnnotateDetail,
   useAssignQueueItems,
   useCompleteItem,
@@ -220,10 +222,84 @@ describe("Annotation Queues API", () => {
           variant: "error",
         });
       });
+      expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
       expect(axios.post).toHaveBeenCalledWith(
         "/model-hub/annotation-queues/get-or-create-default/",
         { project_id: "project-1" },
       );
+    });
+
+    it("lets an inline caller own the exact entitlement error without any toast", async () => {
+      const backendMessage =
+        "You've reached the 10 annotation queues limit across this organization.";
+      axios.post.mockRejectedValueOnce({
+        error: { code: "ENTITLEMENT_LIMIT", message: backendMessage },
+      });
+
+      const queryClient = createTestQueryClient();
+      const { result } = renderHook(
+        () => useGetOrCreateDefaultQueue({ notifyOnError: false }),
+        { wrapper: createQueryWrapper(queryClient) },
+      );
+
+      result.current.mutate({ projectId: "project-1" });
+
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(enqueueSnackbar).not.toHaveBeenCalled();
+      const mutation = queryClient.getMutationCache().getAll().at(-1);
+      expect(mutation?.options.meta).toEqual({ errorHandled: true });
+    });
+  });
+
+  describe("default queue label mutations", () => {
+    const infrastructureError = {
+      response: {
+        status: 503,
+        data: {
+          detail:
+            "Code: 159. DB::Exception: Timeout exceeded\nStack trace: SELECT secret FROM spans",
+        },
+      },
+    };
+
+    it("sanitizes add-label failures and owns the global error policy", async () => {
+      axios.post.mockRejectedValueOnce(infrastructureError);
+      const queryClient = createTestQueryClient();
+      const { result } = renderHook(() => useAddLabelToQueue(), {
+        wrapper: createQueryWrapper(queryClient),
+      });
+
+      result.current.mutate({ queueId: "queue-1", labelId: "label-1" });
+
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Failed to add label to queue",
+        { variant: "error" },
+      );
+      expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
+      expect(
+        queryClient.getMutationCache().getAll().at(-1)?.options.meta,
+      ).toEqual({ errorHandled: true });
+    });
+
+    it("sanitizes remove-label failures and owns the global error policy", async () => {
+      axios.post.mockRejectedValueOnce(infrastructureError);
+      const queryClient = createTestQueryClient();
+      const { result } = renderHook(() => useRemoveLabelFromQueue(), {
+        wrapper: createQueryWrapper(queryClient),
+      });
+
+      result.current.mutate({ queueId: "queue-1", labelId: "label-1" });
+
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Failed to remove label from queue",
+        { variant: "error" },
+      );
+      expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
+      expect(
+        queryClient.getMutationCache().getAll().at(-1)?.options.meta,
+      ).toEqual({ errorHandled: true });
     });
   });
 
@@ -1494,6 +1570,29 @@ describe("Annotation Queues API", () => {
           { variant: "warning" },
         );
       });
+    });
+
+    it("shows the backend's exact all-or-nothing ceiling message", async () => {
+      const message =
+        "Automation rules support at most 10,000 matching items per run. This rule matched more than 10,000 items, so nothing was added.";
+      axios.post.mockRejectedValueOnce({
+        response: { status: 400, data: { result: message } },
+      });
+
+      const queryClient = createTestQueryClient();
+      const { result } = renderHook(() => useEvaluateRule(), {
+        wrapper: createQueryWrapper(queryClient),
+      });
+      result.current.mutate({ queueId: "queue-1", ruleId: "rule-1" });
+
+      await waitFor(() => {
+        expect(enqueueSnackbar).toHaveBeenCalledWith(message, {
+          variant: "error",
+        });
+      });
+      expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
+      const mutation = queryClient.getMutationCache().getAll().at(-1);
+      expect(mutation?.options.meta).toEqual({ errorHandled: true });
     });
   });
 });

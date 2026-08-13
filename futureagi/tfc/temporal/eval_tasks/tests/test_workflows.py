@@ -559,6 +559,165 @@ class TestHistoricalWorkflow:
 
 @pytest.mark.django_db(transaction=True)
 class TestContinuousWorkflow:
+    async def test_deterministic_reconcile_rejection_still_fails_task(
+        self, workflow_environment, eval_task, monkeypatch
+    ):
+        from temporalio.client import WorkflowFailureError
+        from temporalio.common import RetryPolicy
+
+        import tfc.temporal.eval_tasks.workflows as wf
+        from tfc.temporal.eval_tasks import get_activities, get_workflows
+        from tfc.temporal.eval_tasks.types import ContinuousDrainState
+        from tfc.temporal.eval_tasks.workflows import ContinuousEvalTaskWorkflow
+        from tracer.models.eval_task import RunType
+        from tracer.selectors.eval_tasks.row_resolver import EvalTaskSelectionRejected
+
+        def _deterministic_rejection(_task):
+            raise EvalTaskSelectionRejected(
+                "Evaluation task row selection contains a filter that cannot be "
+                "resolved safely. Update the filters and retry."
+            )
+
+        monkeypatch.setattr(
+            "tracer.services.eval_tasks.reconciler.reconcile",
+            _deterministic_rejection,
+        )
+        monkeypatch.setattr(wf, "CONTROL_RETRY_POLICY", RetryPolicy(maximum_attempts=1))
+        await sync_to_async(EvalTask.objects.filter(id=eval_task.id).update)(
+            run_type=RunType.CONTINUOUS
+        )
+
+        env = workflow_environment
+        queue = f"eval-task-test-{uuid.uuid4().hex[:8]}"
+        task_id = str(eval_task.id)
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=get_workflows(),
+            activities=get_activities(),
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            handle = await env.client.start_workflow(
+                ContinuousEvalTaskWorkflow.run,
+                ContinuousDrainState(task_id=task_id, task_queue=queue),
+                id=f"eval-task-{task_id}",
+                task_queue=queue,
+            )
+            with pytest.raises(WorkflowFailureError):
+                await handle.result()
+
+        await asyncio.sleep(0.2)
+        await sync_to_async(close_old_connections)()
+        assert await _task_status(task_id) == EvalTaskStatus.FAILED
+
+    async def test_transient_reconcile_exhaustion_defers_without_failing_task(
+        self,
+        workflow_environment,
+        eval_task,
+        make_pending_entries,
+        monkeypatch,
+    ):
+        """A continuous task survives bounded CH pressure after activity retries.
+
+        The reconciler buffers before writes, so each failed attempt leaves the
+        persisted cursor parked. The workflow must keep the task running, sleep,
+        and retry instead of taking the catch-all FAILED path.
+        """
+        from temporalio.common import RetryPolicy
+
+        import tfc.temporal.eval_tasks.workflows as wf
+        from tfc.temporal.eval_tasks import get_activities, get_workflows
+        from tfc.temporal.eval_tasks.types import ContinuousDrainState
+        from tfc.temporal.eval_tasks.workflows import ContinuousEvalTaskWorkflow
+        from tracer.models.eval_task import RunType
+        from tracer.selectors.eval_tasks.row_resolver import (
+            EvalTaskReadBudgetExceeded,
+        )
+
+        attempts = 0
+        run_entry_calls = 0
+        attempts_lock = threading.Lock()
+
+        def _transient_budget(_task):
+            nonlocal attempts
+            with attempts_lock:
+                attempts += 1
+            raise EvalTaskReadBudgetExceeded(
+                "Evaluation task row selection exceeded its read budget. "
+                "Narrow the time range and retry."
+            )
+
+        def _must_not_run(_entry):
+            nonlocal run_entry_calls
+            run_entry_calls += 1
+            raise AssertionError("stale pending work must not drain before reconcile")
+
+        monkeypatch.setattr(
+            "tracer.services.eval_tasks.reconciler.reconcile", _transient_budget
+        )
+        monkeypatch.setattr(
+            "tracer.services.eval_tasks.run_entry.run_entry", _must_not_run
+        )
+        # Exercise the workflow's post-exhaustion path without waiting for all
+        # five production backoff attempts in this orchestration test.
+        monkeypatch.setattr(wf, "CONTROL_RETRY_POLICY", RetryPolicy(maximum_attempts=1))
+
+        original_cursor = eval_task.created_at
+        await sync_to_async(make_pending_entries)(eval_task, 1)
+        await sync_to_async(EvalTask.objects.filter(id=eval_task.id).update)(
+            run_type=RunType.CONTINUOUS,
+            continuous_cursor=original_cursor,
+        )
+
+        env = workflow_environment
+        queue = f"eval-task-test-{uuid.uuid4().hex[:8]}"
+        task_id = str(eval_task.id)
+        async with Worker(
+            env.client,
+            task_queue=queue,
+            workflows=get_workflows(),
+            activities=get_activities(),
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            handle = await env.client.start_workflow(
+                ContinuousEvalTaskWorkflow.run,
+                ContinuousDrainState(
+                    task_id=task_id,
+                    task_queue=queue,
+                    poll_interval_seconds=1,
+                ),
+                id=f"eval-task-{task_id}",
+                task_queue=queue,
+            )
+
+            retried_after_sleep = False
+            for _ in range(50):
+                with attempts_lock:
+                    retried_after_sleep = attempts >= 2
+                if retried_after_sleep:
+                    break
+                await asyncio.sleep(0.2)
+
+            assert retried_after_sleep is True
+            assert await _task_status(task_id) == EvalTaskStatus.RUNNING
+            persisted_cursor = await sync_to_async(
+                lambda: EvalTask.objects.get(id=task_id).continuous_cursor
+            )()
+            assert persisted_cursor == original_cursor
+            counts = await _status_counts(task_id)
+            assert counts["pending"] == 1 and counts["running"] == 0
+            assert run_entry_calls == 0
+
+            await handle.cancel()
+            try:
+                await handle.result()
+            except Exception:
+                pass
+
+        await asyncio.sleep(0.2)
+        await sync_to_async(close_old_connections)()
+        assert await _task_status(task_id) == EvalTaskStatus.RUNNING
+
     async def test_drains_then_loops_without_finalizing(
         self, workflow_environment, eval_task, make_pending_entries, monkeypatch
     ):

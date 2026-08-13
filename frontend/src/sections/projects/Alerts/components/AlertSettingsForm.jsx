@@ -1,5 +1,5 @@
 import { Box, Button, Divider, Stack, Typography } from "@mui/material";
-import React, { useCallback, useEffect, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Controller, useFieldArray, useForm } from "react-hook-form";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import {
@@ -41,6 +41,11 @@ import { useDebounce } from "src/hooks/use-debounce";
 import { useAlertStore } from "../store/useAlertStore";
 import { useAlertSheetView } from "../store/useAlertSheetView";
 import { useOrganization } from "src/contexts/OrganizationContext";
+import AttributeInventoryControls from "src/sections/projects/LLMTracing/AttributeInventoryControls";
+import {
+  attributeInventoryKey,
+  useCursorAttributeInventory,
+} from "src/sections/projects/LLMTracing/useCursorAttributeInventory";
 
 const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
@@ -264,23 +269,31 @@ export default function AlertSettingsForm({
     }
   }, [queryPayload, setThresholdOperator, setWarningValue, setCriticalValue]);
 
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", observeId],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          filters: JSON.stringify({
-            project_id: observeId,
-          }),
-        },
+  const [attributeSearch, setAttributeSearch] = useState("");
+  const preservedAttributeKeys = useMemo(
+    () =>
+      fields
+        .filter((filter) => filter?.property === "attributes")
+        .map((filter) => filter.propertyId)
+        .filter(Boolean),
+    [fields],
+  );
+  const { filteredAttributes, inventoryControlProps } =
+    useCursorAttributeInventory({
+      projectId: observeId,
+      discoveryMode: "filter",
+      search: attributeSearch,
+      preservedKeys: preservedAttributeKeys,
+      enabled: Boolean(observeId),
+    });
+  const evalAttributes = useMemo(
+    () =>
+      filteredAttributes.map((attribute) => {
+        const key = attributeInventoryKey(attribute);
+        return { label: key, value: key };
       }),
-    enabled: !!observeId,
-    select: (data) =>
-      data.data?.result?.map((attr) => ({
-        label: attr,
-        value: attr,
-      })),
-  });
+    [filteredAttributes],
+  );
 
   const addFilter = () => {
     append({
@@ -560,8 +573,14 @@ export default function AlertSettingsForm({
                   update={update}
                   getValues={getValues}
                   compact={false}
+                  onAttributeSearchChange={setAttributeSearch}
                 />
               ))}
+              <AttributeInventoryControls
+                {...inventoryControlProps}
+                showSearch={false}
+                search={attributeSearch}
+              />
               <Box>
                 <Button
                   startIcon={

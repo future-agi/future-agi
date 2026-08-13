@@ -1,26 +1,34 @@
 import time
 
 import structlog
+from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
-from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.viewsets import GenericViewSet
 
-logger = structlog.get_logger(__name__)
 from accounts.utils import get_request_organization
 from tfc.utils.api_contracts import hide_swagger_schema_for_actions
 from tfc.utils.general_methods import GeneralMethods
-from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.serializers.monitor import (
     FetchGraphSerializer,
 )
+from tracer.services.clickhouse.graph_dispatch import graph_payload_is_publishable
+from tracer.services.filter_principal_context import (
+    FilterPrincipalContextError,
+    bind_request_my_annotations_principal,
+)
 from tracer.utils.graphs_optimized import (
+    EvalGraphConfigurationError,
+    EvalGraphReadError,
+    SystemMetricGraphReadError,
     get_all_system_metrics,
     get_eval_graph_data,
     get_system_metric_data,
 )
+
+logger = structlog.get_logger(__name__)
 
 
 @hide_swagger_schema_for_actions(
@@ -91,9 +99,14 @@ class ChartsView(GenericViewSet):
             validated_data = serializer.validated_data
             req_data_config = validated_data.get("req_data_config")
             interval = validated_data.get("interval")
-            filters = validated_data.get("filters")
+            filters = bind_request_my_annotations_principal(
+                request,
+                validated_data.get("filters"),
+            )
             property = validated_data.get("property")
             project_id = validated_data.get("project_id")
+            allow_sampled = validated_data["allow_sampled"]
+            refresh = validated_data.get("refresh", False)
 
             if not project_id:
                 return self._gm.bad_request("Project id is required")
@@ -119,6 +132,8 @@ class ChartsView(GenericViewSet):
                 return self._gm.bad_request("Project does not exist")
 
             project_id = str(project.id)
+            organization_id = str(project.organization_id)
+            workspace_id = str(request.workspace.id)
 
             if data_type == "EVAL":
                 metric_data = get_eval_graph_data(
@@ -128,6 +143,9 @@ class ChartsView(GenericViewSet):
                     req_data_config=req_data_config,
                     eval_logger_filters={"project_id": project_id},
                     observe_type="charts",
+                    refresh=refresh,
+                    organization_id=organization_id,
+                    workspace_id=workspace_id,
                 )
 
             elif data_type == "SYSTEM_METRICS":
@@ -136,6 +154,9 @@ class ChartsView(GenericViewSet):
                     filters=filters,
                     property=property,
                     system_metric_filters={"project_id": project_id},
+                    refresh=refresh,
+                    organization_id=organization_id,
+                    workspace_id=workspace_id,
                 )
 
             elif data_type == "SYSTEM_METRIC":
@@ -146,6 +167,9 @@ class ChartsView(GenericViewSet):
                     req_data_config=req_data_config,
                     system_metric_filters={"project_id": project_id},
                     observe_type="charts",
+                    refresh=refresh,
+                    organization_id=organization_id,
+                    workspace_id=workspace_id,
                 )
 
             else:
@@ -153,6 +177,15 @@ class ChartsView(GenericViewSet):
 
             if not metric_data:
                 return self._gm.bad_request("Metric data is not valid")
+            if not graph_payload_is_publishable(
+                metric_data,
+                allow_sampled=allow_sampled,
+            ):
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Graph data is temporarily unavailable. Please retry.",
+                    code="service_unavailable",
+                )
 
             elapsed_time = time.time() - start_time
             logger.info(
@@ -162,10 +195,30 @@ class ChartsView(GenericViewSet):
 
             return self._gm.success_response(metric_data)
 
-        except Exception as e:
+        except EvalGraphConfigurationError as exc:
+            return self._gm.bad_request(str(exc))
+        except FilterPrincipalContextError as exc:
+            return self._gm.bad_request(str(exc))
+        except (EvalGraphReadError, SystemMetricGraphReadError):
             elapsed_time = time.time() - start_time
-            logger.error(
-                f"fetch_graph_v2 failed after {elapsed_time:.3f}s: {str(e)}",
-                exc_info=True,
+            logger.exception(
+                "fetch_graph_clickhouse_read_failed",
+                elapsed_seconds=round(elapsed_time, 3),
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Graph data is temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
+        except Exception as exc:
+            elapsed_time = time.time() - start_time
+            logger.exception(
+                "fetch_graph_v2_failed",
+                elapsed_seconds=round(elapsed_time, 3),
+                error_type=type(exc).__name__,
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "Unable to fetch graph data. Please retry.",
+                code="internal_error",
+            )

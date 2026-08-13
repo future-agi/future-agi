@@ -4,6 +4,7 @@ import {
   buildDefaultDateEntry,
   combineGraphFilters,
   selectPanelGraphFilters,
+  singleProjectIdFromFilters,
 } from "../graphFilterUtils";
 import { FILTER_FOR_HAS_EVAL } from "../../common";
 
@@ -82,9 +83,9 @@ describe("combineGraphFilters", () => {
       dateFilter,
       hasEvalFilter: false,
     });
-    expect(
-      withExplicit.filter((f) => f.column_id === CREATED_AT),
-    ).toHaveLength(1);
+    expect(withExplicit.filter((f) => f.column_id === CREATED_AT)).toHaveLength(
+      1,
+    );
 
     const withDefault = combineGraphFilters({
       filters: [],
@@ -133,5 +134,49 @@ describe("selectPanelGraphFilters", () => {
   it("hydrates from primary filters otherwise", () => {
     expect(selectPanelGraphFilters("primary", primary, compare)).toBe(primary);
     expect(selectPanelGraphFilters(undefined, primary, compare)).toBe(primary);
+  });
+});
+
+describe("singleProjectIdFromFilters", () => {
+  it.each([
+    ["equals", "project-1"],
+    ["is", "project-1"],
+    ["in", ["project-1"]],
+  ])("extracts one positive project scope for %s", (filterOp, filterValue) => {
+    expect(
+      singleProjectIdFromFilters([
+        {
+          column_id: "project_id",
+          filter_config: {
+            filter_type: "text",
+            filter_op: filterOp,
+            filter_value: filterValue,
+          },
+        },
+      ]),
+    ).toBe("project-1");
+  });
+
+  it.each([
+    ["in", ["project-1", "project-2"]],
+    ["not_in", ["project-1"]],
+    ["not_equals", "project-1"],
+  ])("does not invent a single scope for %s %j", (filterOp, filterValue) => {
+    expect(
+      singleProjectIdFromFilters([
+        {
+          column_id: "project_id",
+          filter_config: { filter_op: filterOp, filter_value: filterValue },
+        },
+      ]),
+    ).toBeNull();
+  });
+
+  it("fails closed when multiple Project filters are present", () => {
+    const filter = {
+      column_id: "project_id",
+      filter_config: { filter_op: "in", filter_value: ["project-1"] },
+    };
+    expect(singleProjectIdFromFilters([filter, filter])).toBeNull();
   });
 });

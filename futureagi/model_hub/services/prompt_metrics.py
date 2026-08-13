@@ -69,7 +69,7 @@ def fetch_prompt_metrics(request: FetchPromptMetricsRequest):
 
         eval_configs = _get_eval_configs_for_prompt(prompt_template)
 
-        results = fetch_prompt_metrics_query_sql_cte(
+        results, total_count = fetch_prompt_metrics_query_sql_cte(
             prompt_template, eval_configs, filters, page_number, page_size
         )
         column_config = get_default_prompt_metrics_config()
@@ -127,7 +127,7 @@ def fetch_prompt_metrics(request: FetchPromptMetricsRequest):
             "prompt_template_name": prompt_template.name,
             "table": table_data,
             "config": column_config,
-            "metadata": {"total_rows": len(table_data)},
+            "metadata": {"total_rows": total_count},
         }
 
         return response

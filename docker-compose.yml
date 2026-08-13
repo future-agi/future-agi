@@ -27,6 +27,9 @@ x-backend-env: &backend-env
   EE_LICENSE_KEY: ${EE_LICENSE_KEY:-}
   DJANGO_SETTINGS_MODULE: tfc.settings.settings
   FAST_STARTUP: ${FAST_STARTUP:-false}
+  # Exact analytics are isolated from shared tasks_xl so one cold graph cannot
+  # multiply ClickHouse pressure or starve unrelated XL work.
+  EXACT_AGGREGATION_TASK_QUEUE: ${EXACT_AGGREGATION_TASK_QUEUE:-exact_aggregation}
   OTEL_ENABLED: ${OTEL_ENABLED:-false}
   INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
   FUTURE_AGI_VERSION: ${FUTURE_AGI_VERSION:-unknown}
@@ -262,6 +265,26 @@ services:
       TEMPORAL_TASK_QUEUE: tasks_xl
       TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${TEMPORAL_TASKS_XL_MAX_ACTIVITIES:-10}
       TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: ${TEMPORAL_TASKS_XL_MAX_WORKFLOWS:-20}
+
+  worker-exact-aggregation:
+    <<: *queue-worker
+    # Unlike the other per-queue workers this admission boundary is always on;
+    # the generic worker deliberately excludes exact_aggregation.
+    profiles: []
+    environment:
+      <<: *backend-env
+      SERVICE_TYPE: temporal-worker
+      TEMPORAL_TASK_QUEUE: exact_aggregation
+      # This always-on worker must never become an additional schema/migration
+      # runner. Keep literal fail-closed values here instead of inheriting the
+      # local-stack defaults from backend-env.
+      NO_STARTUP_DB_MUTATIONS: "true"
+      CH25_DROP_LEGACY_CDC_CHAIN: "false"
+      CH25_TRACE_DUAL_WRITE: "false"
+      CH_DUAL_WRITE: "false"
+      # This worker is the cluster admission boundary for expensive exact reads.
+      TEMPORAL_MAX_CONCURRENT_ACTIVITIES: 1
+      TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: 1
 
   worker-trace-ingestion:
     <<: *queue-worker

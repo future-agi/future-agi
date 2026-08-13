@@ -11,9 +11,8 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useQuery } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import { fetchAllObserveProjects } from "src/api/project/observe-project-list";
 import { backButtonSx } from "../styles";
-import { unwrapResponse } from "../utils";
 
 export default function StepProjectMapping({ data, onUpdate, onNext, onBack }) {
   const langfuseProjects = data.langfuseProjects || [];
@@ -25,15 +24,7 @@ export default function StepProjectMapping({ data, onUpdate, onNext, onBack }) {
     isError: projectsError,
   } = useQuery({
     queryKey: ["project-list-observe"],
-    queryFn: () => axios.get(endpoints.project.projectObserveList),
-    select: (d) => {
-      const result = unwrapResponse(d);
-      return (
-        result?.table ||
-        result?.results ||
-        (Array.isArray(result) ? result : [])
-      );
-    },
+    queryFn: ({ signal }) => fetchAllObserveProjects({ signal }),
   });
 
   const projectOptions = useMemo(() => {

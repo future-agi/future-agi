@@ -281,12 +281,12 @@ describe("OpenAPI runtime contract", () => {
     expect(result).toMatchObject({ ok: true });
   });
 
-  it("does not enforce inferred legacy contracts until the endpoint is runtime-backed", () => {
+  it("enforces the bounded project-list query contract", () => {
     const endpoint = findOpenApiEndpoint(
       "/tracer/project/list_projects/",
       "get",
     );
-    expect(endpoint.contract.runtimeRequestValidation).toBe(false);
+    expect(endpoint.contract.runtimeRequestValidation).toBe(true);
 
     expect(
       validateContractedRequestConfig({
@@ -298,7 +298,21 @@ describe("OpenAPI runtime contract", () => {
           page_size: 25,
         },
       }),
-    ).toMatchObject({ ok: true, skipped: true });
+    ).toMatchObject({ ok: true });
+
+    for (const params of [
+      { project_type: "observe", page_number: -1, page_size: 25 },
+      { project_type: "observe", page_number: 0, page_size: 101 },
+      { project_type: "observe", page: 1, limit: 25 },
+    ]) {
+      expect(
+        validateContractedRequestConfig({
+          url: "/tracer/project/list_projects/",
+          method: "get",
+          params,
+        }).ok,
+      ).toBe(false);
+    }
   });
 
   it("validates list query params the way DRF query serializers receive them", () => {
@@ -594,6 +608,105 @@ describe("OpenAPI runtime contract", () => {
         tracesOfSessionResponse([{ trace_id: undefined }]),
       ),
     ).toMatchObject({ ok: false });
+  });
+
+  it("accepts array span attributes and JSON scalar picker values", () => {
+    const readState = {
+      query_complete: true,
+      query_status: "complete",
+      query_window_start: "2026-01-01T00:00:00Z",
+      query_window_end: "2026-01-08T00:00:00Z",
+    };
+
+    expect(
+      validateContractedResponse({
+        status: 200,
+        config: {
+          url: "/api/traces/span-attribute-keys/?project_id=p1",
+          method: "get",
+        },
+        data: {
+          result: [{ key: "json_choices", type: "array", count: 4 }],
+          ...readState,
+        },
+      }),
+    ).toMatchObject({ ok: true });
+
+    expect(
+      validateContractedResponse({
+        status: 200,
+        config: {
+          url: "/api/traces/span-attribute-values/?project_id=p1&key=json_choices",
+          method: "get",
+        },
+        data: {
+          result: [
+            { value: "Rejected", type: "array", count: 4 },
+            { value: 7, type: "array", count: 3 },
+            { value: false, type: "array", count: 2 },
+            { value: null, type: "array", count: 1 },
+          ],
+          ...readState,
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("accepts either project or workspace scope for span-attribute keys", () => {
+    expect(
+      validateContractedRequestConfig({
+        url: "/api/traces/span-attribute-keys/",
+        method: "get",
+        params: { workspace_scope: true, page_size: 50 },
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      validateContractedRequestConfig({
+        url: "/api/traces/span-attribute-keys/",
+        method: "get",
+        params: { project_id: "c4de3065-12b5-488c-a814-aa1c8e3f856f" },
+      }),
+    ).toMatchObject({ ok: true });
+
+    // The workspace widening belongs only to key inventory. The detail
+    // endpoint remains project-scoped and must keep its required project_id.
+    expect(
+      validateContractedRequestConfig({
+        url: "/api/traces/span-attribute-detail/",
+        method: "get",
+        params: { key: "historical.attribute" },
+      }),
+    ).toMatchObject({ ok: false });
+  });
+
+  it("accepts every JSON value shape in dashboard filter-picker options", () => {
+    expect(
+      OPENAPI_CONTRACT.definitions.DashboardFilterValueOption.properties.value[
+        "x-json-value"
+      ],
+    ).toBe(true);
+
+    expect(
+      validateContractedResponse({
+        status: 200,
+        config: {
+          url: "/tracer/dashboard/filter_values/?metric_name=final_status",
+          method: "get",
+        },
+        data: {
+          status: true,
+          result: {
+            values: [
+              { value: "Rechazado", label: "Rechazado" },
+              { value: 7, label: "7" },
+              { value: false, label: "false" },
+              { value: ["nested", 1], label: "nested array" },
+              { value: { nested: true }, label: "nested object" },
+            ],
+          },
+        },
+      }),
+    ).toMatchObject({ ok: true });
   });
 
   it("accepts queue items with null names, listed assignees, and a null source preview", () => {

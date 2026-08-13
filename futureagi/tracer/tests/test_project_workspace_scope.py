@@ -1,4 +1,7 @@
 import uuid
+from datetime import UTC, datetime
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
 from rest_framework import status
@@ -9,7 +12,6 @@ from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
-
 
 pytestmark = [pytest.mark.integration, pytest.mark.api]
 
@@ -63,6 +65,156 @@ def _assert_not_mutated(project_id, *, name, config, session_config, tags):
 
 
 class TestProjectWorkspaceScope:
+    @patch("tracer.views.project.UserDetailTimeSeriesQueryBuilderV2")
+    @patch("tracer.views.project.V2AnalyticsQueryService")
+    def test_user_detail_graph_uses_30_second_read_without_row_cap(
+        self,
+        analytics_service,
+        builder_cls,
+        auth_client,
+        observe_project,
+    ):
+        analytics = Mock()
+        analytics.supports_per_query_read_settings = True
+        analytics.execute_ch_query.return_value = SimpleNamespace(data=[])
+        analytics_service.return_value = analytics
+
+        builder = Mock()
+        builder.build.return_value = ("SELECT 1", {"project_id": observe_project.id})
+        builder.start_date = datetime(2026, 1, 1, tzinfo=UTC)
+        builder.end_date = datetime(2026, 1, 2, tzinfo=UTC)
+        builder.format_time_series.return_value = []
+        builder_cls.return_value = builder
+
+        response = auth_client.post(
+            (
+                "/tracer/project/get_user_graph_data/"
+                f"?project_id={observe_project.id}&end_user_id={uuid.uuid4()}"
+            ),
+            {"interval": "day", "filters": []},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        call = analytics.execute_ch_query.call_args
+        assert 0 < call.kwargs["timeout_ms"] <= 30_000
+        settings = call.kwargs["settings"]
+        assert "max_rows_to_read" not in settings
+        assert settings["max_bytes_to_read"] == 36 * 1024 * 1024 * 1024
+        assert settings["max_memory_usage"] == 36 * 1024 * 1024 * 1024
+        assert settings["max_result_rows"] == 10_000
+        assert settings["max_result_bytes"] == 32 * 1024 * 1024
+        assert settings["max_threads"] == 1
+
+    @patch("tracer.views.project.UserListQueryBuilderV2")
+    @patch("tracer.views.project.V2AnalyticsQueryService")
+    def test_user_metrics_uses_30_second_read_without_row_cap(
+        self,
+        analytics_service,
+        builder_cls,
+        auth_client,
+        observe_project,
+    ):
+        analytics = Mock()
+        analytics.supports_per_query_read_settings = True
+        analytics.execute_ch_query.return_value = SimpleNamespace(data=[])
+        analytics_service.return_value = analytics
+
+        builder = Mock()
+        builder.build.return_value = ("SELECT 1", {"project_id": observe_project.id})
+        builder.format_rows.return_value = {"table": []}
+        builder_cls.return_value = builder
+
+        response = auth_client.post(
+            "/tracer/project/get_user_metrics/",
+            {
+                "project_id": str(observe_project.id),
+                "end_user_id": str(uuid.uuid4()),
+                "filters": [],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        call = analytics.execute_ch_query.call_args
+        assert 0 < call.kwargs["timeout_ms"] <= 30_000
+        settings = call.kwargs["settings"]
+        assert "max_rows_to_read" not in settings
+        assert settings["max_bytes_to_read"] == 36 * 1024 * 1024 * 1024
+        assert settings["max_memory_usage"] == 36 * 1024 * 1024 * 1024
+        assert settings["max_result_rows"] == 10_000
+        assert settings["max_result_bytes"] == 32 * 1024 * 1024
+        assert settings["max_threads"] == 1
+
+    @pytest.mark.parametrize(
+        ("path", "payload"),
+        (
+            (
+                "/tracer/project/get_user_metrics/",
+                {"filters": []},
+            ),
+            (
+                "/tracer/project/get_user_graph_data/",
+                {"interval": "day", "filters": []},
+            ),
+        ),
+    )
+    @patch("tracer.views.project.V2AnalyticsQueryService")
+    def test_user_detail_reads_fail_closed_when_query_limits_are_locked(
+        self,
+        analytics_service,
+        path,
+        payload,
+        auth_client,
+        observe_project,
+    ):
+        end_user_id = str(uuid.uuid4())
+        analytics = Mock()
+        analytics.supports_per_query_read_settings = False
+        analytics_service.return_value = analytics
+        if path.endswith("get_user_metrics/"):
+            payload = {
+                **payload,
+                "project_id": str(observe_project.id),
+                "end_user_id": end_user_id,
+            }
+        else:
+            path = f"{path}?project_id={observe_project.id}&end_user_id={end_user_id}"
+
+        response = auth_client.post(path, payload, format="json")
+
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        analytics.execute_ch_query.assert_not_called()
+
+    @patch("tracer.views.project.fetch_eval_graph_ch")
+    def test_user_eval_graph_rejects_config_from_another_project_before_ch(
+        self,
+        mock_fetch_eval_graph,
+        auth_client,
+        observe_project,
+        custom_eval_config,
+    ):
+        response = auth_client.post(
+            "/tracer/project/get_users_aggregate_graph_data/",
+            {
+                "project_id": str(observe_project.id),
+                "interval": "day",
+                "filters": [],
+                "property": "average",
+                "req_data_config": {
+                    "type": "EVAL",
+                    "id": str(custom_eval_config.id),
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Evaluation config is not available for this project" in str(
+            response.json()
+        )
+        mock_fetch_eval_graph.assert_not_called()
+
     def test_custom_project_mutations_reject_same_org_other_workspace_project(
         self, auth_client, organization, user
     ):

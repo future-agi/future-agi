@@ -12,6 +12,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useAgTheme } from "src/hooks/use-ag-theme";
 import {
   Box,
+  Button,
   MenuItem,
   Pagination,
   PaginationItem,
@@ -38,6 +39,16 @@ import { ShowComponent } from "src/components/show";
 import { useShallowToggleAnnotationsStore } from "../store";
 import NoRowsOverlay from "src/sections/project-detail/CompareDrawer/NoRowsOverlay";
 import { APP_CONSTANTS } from "src/utils/constants";
+import {
+  getQueryReadMessage,
+  getQueryReadState,
+} from "src/utils/queryReadState";
+import {
+  LIST_CURSOR_CONTINUATION_NOTICE,
+  createListCursorPagination,
+  isListCursorContinuationLimitError,
+  isListCursorProtocolError,
+} from "src/sections/projects/LLMTracing/listCursorPagination";
 
 const CELL_HEIGHT_MAP = { Short: 40, Medium: 52, Large: 68, "Extra Large": 88 };
 
@@ -113,8 +124,25 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
   const [page, setPage] = useState(1);
   const [pageLimit, setPageLimit] = useState(15);
   const [totalPages, setTotalPages] = useState(1);
-  const [lastFilters, setLastFilters] = useState(params?.filters);
+  const [cursorTransportRevision, advanceCursorTransport] = useState(0);
+  const cursorPagination = useRef(
+    createListCursorPagination({ pageParam: "page", pageOffset: 1 }),
+  );
   const { selectedVersion } = useAgentDetailsStore();
+  const cursorQuerySignature = JSON.stringify({
+    id,
+    module,
+    selectedVersion,
+    params,
+  });
+  // LLMTracingView builds request params inline. Keep the latest equivalent
+  // object available to effects without making its reference an effect
+  // dependency: otherwise any unrelated parent render re-runs a stale
+  // next-page prefetch for the same semantic query.
+  const paramsRef = useRef(params);
+  paramsRef.current = params;
+  const [lastCursorQuerySignature, setLastCursorQuerySignature] =
+    useState(cursorQuerySignature);
   const [callLogsColumnDefs, setCallLogsColumnDefs] = useState(null);
   const previousConfigRef = useRef({
     configLength: undefined,
@@ -147,9 +175,12 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     },
     [activeCallId],
   );
-  // Derived state: reset page synchronously when filters change (avoids extra API call)
-  if (lastFilters !== params?.filters) {
-    setLastFilters(params?.filters);
+  // Reset the opaque chain synchronously whenever any query-shaping input
+  // changes. A cursor is signed against the complete normalized request, not
+  // only the visible filter array.
+  if (lastCursorQuerySignature !== cursorQuerySignature) {
+    cursorPagination.current.reset();
+    setLastCursorQuerySignature(cursorQuerySignature);
     setPage(1);
   }
 
@@ -191,21 +222,160 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     }),
     [],
   );
-  const { data, isLoading, queryKey } = useCallLogs({
+  const bufferedPage =
+    module === "project"
+      ? cursorPagination.current.bufferedVisiblePage(page - 1)
+      : null;
+  const paginationRequest =
+    module === "project"
+      ? {
+          generation: cursorPagination.current.generation(),
+          // Terminal overflow is already buffered by the preceding visible
+          // page and intentionally has no continuation cursor.
+          params:
+            bufferedPage?.metadata?.has_more === false
+              ? undefined
+              : cursorPagination.current.requestParams(page - 1, {
+                  page_size: pageLimit,
+                }),
+        }
+      : { generation: null, params: undefined };
+  const { data, isLoading, error, queryKey } = useCallLogs({
     module,
     id: id,
     version: selectedVersion,
     page,
     pageLimit,
     params,
+    paginationParams: paginationRequest.params,
+    paginationRevision: cursorTransportRevision,
+    cursorPagination:
+      module === "project" ? cursorPagination.current : undefined,
+    paginationGeneration: paginationRequest.generation,
     enabled,
   });
+  const exactPage = data?.__exactPage || data?.result?.__exactPage || null;
+  const hasBufferedSameGenerationError =
+    module === "project" &&
+    Boolean(error) &&
+    cursorPagination.current.isCurrent(paginationRequest.generation) &&
+    Boolean(bufferedPage) &&
+    !isListCursorProtocolError(error);
+  const cursorContinuationPaused =
+    module === "project" &&
+    (exactPage?.pending === true ||
+      isListCursorContinuationLimitError(error) ||
+      hasBufferedSameGenerationError);
+  const readState = useMemo(
+    () =>
+      getQueryReadState(data, {
+        isError: Boolean(error) && !cursorContinuationPaused,
+      }),
+    [cursorContinuationPaused, data, error],
+  );
+  const responseRows =
+    isListCursorContinuationLimitError(error) || hasBufferedSameGenerationError
+      ? bufferedPage?.rows || []
+      : Array.isArray(data?.results)
+        ? data.results
+        : [];
+  const hasCursorContinuation =
+    module === "project" &&
+    (exactPage
+      ? exactPage.pending === true || exactPage.isLastPage === false
+      : data?.has_more === true &&
+        typeof data?.next_cursor === "string" &&
+        data.next_cursor.length > 0);
+  const hasCursorContract =
+    module === "project" &&
+    typeof data?.has_more === "boolean" &&
+    Object.prototype.hasOwnProperty.call(data || {}, "next_cursor");
+  const readMessage =
+    cursorContinuationPaused ||
+    responseRows.length > 0 ||
+    readState === "sampled" ||
+    hasCursorContinuation
+      ? null
+      : getQueryReadMessage(readState);
+  const isCompleteRead = readState === "complete";
+  const isUsableListRead =
+    !error &&
+    (isCompleteRead || responseRows.length > 0 || hasCursorContinuation);
+
+  useEffect(() => {
+    if (
+      module !== "project" ||
+      isLoading ||
+      error ||
+      !data ||
+      !cursorPagination.current.isCurrent(paginationRequest.generation)
+    ) {
+      return;
+    }
+    try {
+      if (exactPage) {
+        return;
+      }
+      if (responseRows.length === 0 && hasCursorContinuation) {
+        cursorPagination.current.recordEmptyContinuation(page - 1, data);
+        // Keep the same visible pagination page. The project query key includes
+        // the advanced opaque cursor, so this rerender fetches the next bounded
+        // transport prefix without flashing an empty page to the user.
+        advanceCursorTransport((revision) => revision + 1);
+        return;
+      }
+      cursorPagination.current.recordResponse(page - 1, data);
+    } catch (cursorError) {
+      if (
+        cursorPagination.current.canRecoverFromContinuationError(
+          page - 1,
+          cursorError,
+        )
+      ) {
+        cursorPagination.current.disableCursor();
+        setPage(1);
+      }
+    }
+  }, [
+    data,
+    error,
+    exactPage,
+    hasCursorContinuation,
+    isLoading,
+    module,
+    page,
+    paginationRequest.generation,
+    responseRows.length,
+  ]);
+
+  const continueCursorSearch = useCallback(() => {
+    if (!cursorContinuationPaused) return;
+    advanceCursorTransport((revision) => revision + 1);
+  }, [cursorContinuationPaused]);
 
   useEffect(() => {
     if (!isLoading) {
-      setTotalPages(data?.total_pages || 1);
+      const reportedPages = Number(data?.total_pages) || 1;
+      const continuationFloor = hasCursorContinuation ? page + 1 : page;
+      setTotalPages(
+        isUsableListRead
+          ? Math.max(
+              1,
+              continuationFloor,
+              hasCursorContract ? page : reportedPages,
+            )
+          : 1,
+      );
     }
-  }, [data?.total_pages, isLoading]);
+  }, [
+    data?.has_more,
+    data?.total_pages,
+    hasCursorContract,
+    hasCursorContinuation,
+    isLoading,
+    isUsableListRead,
+    page,
+  ]);
 
   const rows = useMemo(() => {
     if (isLoading) {
@@ -218,8 +388,8 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
         status: "",
       }));
     }
-    return data?.results || [];
-  }, [data, isLoading]);
+    return responseRows;
+  }, [isLoading, responseRows]);
 
   // Pass full column list to parent (base + eval/annotation) for DisplayPanel.
   // Use a ref to avoid re-firing when callLogsColumnDefs reference changes
@@ -248,14 +418,33 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
 
   // Prefetch next page so pagination feels instant
   useEffect(() => {
-    if (data?.results?.length > 0 && page < totalPages) {
+    if (
+      isUsableListRead &&
+      responseRows.length > 0 &&
+      page < totalPages &&
+      (!exactPage || exactPage.canPrefetch)
+    ) {
+      const nextPaginationParams =
+        module === "project"
+          ? cursorPagination.current.requestParams(page, {
+              page_size: pageLimit,
+            })
+          : undefined;
       prefetchCallLogs(queryClient, {
         module,
         id,
         version: selectedVersion,
         page: page + 1,
         pageLimit,
-        params,
+        params: paramsRef.current,
+        paginationParams: nextPaginationParams,
+        paginationRevision: cursorTransportRevision,
+        cursorPagination:
+          module === "project" ? cursorPagination.current : undefined,
+        paginationGeneration:
+          module === "project"
+            ? cursorPagination.current.generation()
+            : undefined,
       });
     }
   }, [
@@ -267,7 +456,11 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     id,
     selectedVersion,
     pageLimit,
-    params,
+    cursorQuerySignature,
+    exactPage,
+    cursorTransportRevision,
+    isUsableListRead,
+    responseRows.length,
   ]);
 
   const configLength = data?.config?.length;
@@ -424,6 +617,50 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
           },
         }}
       >
+        {cursorContinuationPaused && (
+          <Box
+            role="status"
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 1,
+              px: 1.5,
+              py: 0.75,
+              color: "text.secondary",
+              bgcolor: "action.hover",
+              borderBottom: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Typography variant="caption">
+              {LIST_CURSOR_CONTINUATION_NOTICE}
+            </Typography>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={continueCursorSearch}
+            >
+              Continue search
+            </Button>
+          </Box>
+        )}
+        {readMessage && (
+          <Box
+            role="status"
+            sx={{
+              px: 1.5,
+              py: 0.75,
+              fontSize: 12,
+              color: "warning.main",
+              bgcolor: "warning.lighter",
+              borderBottom: "1px solid",
+              borderColor: "warning.light",
+            }}
+          >
+            {readMessage}
+          </Box>
+        )}
         {/* Grid fills available space */}
         <Box sx={{ flex: 1, minHeight: 0 }}>
           <AgGridReact
@@ -446,6 +683,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
             onColumnMoved={onColumnMoved}
             defaultColDef={defaultColDef}
             rowData={rows}
+            loading={false}
             suppressServerSideFullWidthLoadingRow={true}
             rowSelection={
               onSelectionChanged
@@ -459,17 +697,20 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
             }
             pagination={false}
             noRowsOverlayComponent={() =>
-              NoRowsOverlay(
-                <Typography
-                  sx={{
-                    fontSize: 14,
-                    fontWeight: 400,
-                    color: "text.secondary",
-                  }}
-                >
-                  {showErrors ? "No error found" : "No calls found"}
-                </Typography>,
-              )
+              cursorContinuationPaused
+                ? null
+                : NoRowsOverlay(
+                    <Typography
+                      sx={{
+                        fontSize: 14,
+                        fontWeight: 400,
+                        color: "text.secondary",
+                      }}
+                    >
+                      {readMessage ||
+                        (showErrors ? "No error found" : "No calls found")}
+                    </Typography>,
+                  )
             }
             getRowStyle={getRowStyle}
             onRowClicked={(params) => {
@@ -485,10 +726,8 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
                     onSelectionChanged(traceIds);
                     if (onSelectionMeta) {
                       const currentPageSize = rows?.length || 0;
-                      // `data.count` is the exact matching-row count from
-                      // the backend (CH or PG), not `totalPages * pageLimit`
-                      // which rounds up to a page multiple and overstates
-                      // the banner by up to `pageLimit - 1` rows.
+                      // Keep the backend's explicit lower-bound marker with
+                      // the count; callers must not present it as exact.
                       const totalMatching =
                         typeof data?.count === "number" ? data.count : null;
                       const unavailableSelectedCount = selectedRows.filter(
@@ -506,6 +745,8 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
                         totalPages,
                         pageLimit,
                         totalMatching,
+                        totalMatchingIsLowerBound:
+                          data?.count_is_lower_bound === true,
                       });
                     }
                   }
@@ -547,6 +788,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
               id="page-size-select"
               value={pageLimit}
               onChange={(e) => {
+                cursorPagination.current.reset();
                 setPage(1);
                 setPageLimit(Number(e.target.value));
               }}
@@ -561,11 +803,12 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
           </Stack>
 
           <Pagination
-            count={totalPages}
+            count={isUsableListRead ? totalPages : 1}
             variant="outlined"
             shape="rounded"
-            page={page}
+            page={isUsableListRead ? page : 1}
             color="primary"
+            disabled={!isUsableListRead}
             onChange={(e, value) => {
               setPage(value);
             }}

@@ -251,6 +251,101 @@ async function runGeneration(schemaPath) {
     return source.replace(pattern, replacement);
   }
 
+  function assertReplaceInNamedBlock(
+    source,
+    declaration,
+    anchor,
+    replacement,
+    label,
+  ) {
+    const start = source.indexOf(declaration);
+    if (start < 0) {
+      throw new Error(
+        `Contract post-processing failed: declaration for "${label}" no longer matches.`,
+      );
+    }
+    const nextExport = source.indexOf("\nexport ", start + declaration.length);
+    const end = nextExport < 0 ? source.length : nextExport;
+    const block = source.slice(start, end);
+    const rewritten = block.replaceAll(anchor, replacement);
+    if (rewritten === block) {
+      throw new Error(
+        `Contract post-processing failed: block anchor for "${label}" no longer matches.`,
+      );
+    }
+    return source.slice(0, start) + rewritten + source.slice(end);
+  }
+
+  function assertReplaceRegexInNamedBlock(
+    source,
+    declaration,
+    pattern,
+    replacement,
+    label,
+  ) {
+    const start = source.indexOf(declaration);
+    if (start < 0) {
+      throw new Error(
+        `Contract post-processing failed: declaration for "${label}" no longer matches.`,
+      );
+    }
+    const nextExport = source.indexOf("\nexport ", start + declaration.length);
+    const end = nextExport < 0 ? source.length : nextExport;
+    const block = source.slice(start, end);
+    const rewritten = block.replace(pattern, replacement);
+    if (rewritten === block) {
+      throw new Error(
+        `Contract post-processing failed: block regex anchor for "${label}" no longer matches.`,
+      );
+    }
+    return source.slice(0, start) + rewritten + source.slice(end);
+  }
+
+  const voiceCallDetailNullableFields = [
+    "provider_call_id",
+    "phone_number",
+    "customer_name",
+    "call_id",
+    "status",
+    "started_at",
+    "ended_at",
+    "created_at",
+    "duration_seconds",
+    "recording_url",
+    "stereo_recording_url",
+    "cost_cents",
+    "cost_breakdown",
+    "error_message",
+    "call_summary",
+    "ended_reason",
+    "overall_score",
+    "response_time_ms",
+    "response_time_seconds",
+    "assistant_id",
+    "assistant_phone_number",
+    "call_type",
+    "message_count",
+    "transcript_available",
+    "transcript",
+    "messages",
+    "analysis_data",
+    "evaluation_data",
+    "call_execution_id",
+    "test_execution_id",
+    "scenario_id",
+    "scenario_name",
+    "scenario_graph_id",
+    "turn_count",
+    "talk_ratio",
+    "agent_talk_percentage",
+    "bot_talk_pct",
+    "user_talk_pct",
+    "avg_agent_latency_ms",
+    "user_wpm",
+    "bot_wpm",
+    "user_interruption_count",
+    "ai_interruption_count",
+  ];
   const schemasOutputPath = path.join(outputDir, "api.schemas.ts");
   if (fs.existsSync(schemasOutputPath)) {
     let schemas = fs.readFileSync(schemasOutputPath, "utf8");
@@ -275,11 +370,513 @@ async function runGeneration(schemaPath) {
       "x-string-or-object TS aliases → string | object",
     );
 
+    // Orval ignores x-json-value and narrows arbitrary JSON to object-only.
+    // Define one recursive JSON type, then use it for every field carrying the
+    // extension (including dynamic trace/span list row cells).
+    schemas = assertReplace(
+      schemas,
+      `/**
+ * Any valid JSON value.
+ */
+export type SpanAttributeTopValueApiValue = { [key: string]: unknown };`,
+      `export type JsonValueApi =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValueApi[]
+  | { [key: string]: JsonValueApi };
+
+/** @deprecated Use JsonValueApi. */
+export type SpanAttributeJsonValueApi = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type SpanAttributeTopValueApiValue = JsonValueApi;`,
+      "declare recursive JSON TS type",
+    );
+    for (const jsonAlias of [
+      "SpanAttributeValueApiValue",
+      "DashboardFilterValueOptionApiValue",
+      "SpanListColumnConfigApiSettings",
+      "SpanListColumnConfigApiChoicesMap",
+      "SpanListColumnConfigApiAnnotators",
+      "TraceObserveColumnConfigApiSettings",
+      "TraceObserveColumnConfigApiChoicesMap",
+      "TraceObserveColumnConfigApiAnnotators",
+    ]) {
+      schemas = assertReplace(
+        schemas,
+        `/**
+ * Any valid JSON value.
+ */
+export type ${jsonAlias} = { [key: string]: unknown };`,
+        `/**
+ * Any valid JSON value.
+ */
+export type ${jsonAlias} = JsonValueApi;`,
+        `${jsonAlias} → recursive JSON value`,
+      );
+    }
+
+    for (const rowType of [
+      "TracePrototypeListResultApiTableItem",
+      "TraceObserveListResultApiTableItem",
+      "SpanPrototypeListResultApiTableItem",
+      "SpanObserveListResultApiTableItem",
+      "TraceVoiceCallListResponseApiResultsItem",
+      "TraceVoiceCallDetailResultApiTranscriptItem",
+      "TraceVoiceCallDetailResultApiMessagesItem",
+      "TraceVoiceCallDetailResultApiObservationSpanItem",
+    ]) {
+      schemas = assertReplace(
+        schemas,
+        `export type ${rowType} = {[key: string]: { [key: string]: unknown }};`,
+        `export type ${rowType} = { [key: string]: JsonValueApi };`,
+        `${rowType} → recursive JSON row`,
+      );
+    }
+
+    // Orval drops Swagger 2.0 x-nullable from generated TypeScript. Voice
+    // detail deliberately returns null when a provider did not emit an
+    // optional value or a computed metric could not be derived, so preserve
+    // that wire contract in the generated client instead of lying to callers.
+    for (const field of voiceCallDetailNullableFields) {
+      schemas = assertReplaceRegexInNamedBlock(
+        schemas,
+        "export interface TraceVoiceCallDetailResultApi {",
+        new RegExp(`(^\\s*${field}\\??: [^;]+)(;)$`, "m"),
+        "$1 | null$2",
+        `TraceVoiceCallDetailResultApi.${field} nullable`,
+      );
+    }
+
+    const columnConfigNullableFields = [
+      ["group_by?: string;", "group_by?: string | null;"],
+      ["output_type?: string;", "output_type?: string | null;"],
+      ["reverse_output?: boolean;", "reverse_output?: boolean | null;"],
+      [
+        "annotation_label_type?: string;",
+        "annotation_label_type?: string | null;",
+      ],
+      ["choices?: string[];", "choices?: (string | null)[] | null;"],
+      ["eval_template_id?: string;", "eval_template_id?: string | null;"],
+      ["source_field?: string;", "source_field?: string | null;"],
+      ["parent_eval_id?: string;", "parent_eval_id?: string | null;"],
+    ];
+    for (const configType of [
+      "SpanListColumnConfigApi",
+      "TraceObserveColumnConfigApi",
+    ]) {
+      for (const [anchor, replacement] of columnConfigNullableFields) {
+        schemas = assertReplaceInNamedBlock(
+          schemas,
+          `export interface ${configType} {`,
+          anchor,
+          replacement,
+          `${configType} nullable ${anchor}`,
+        );
+      }
+    }
+
+    for (const metadataType of [
+      "SpanListMetadataApi",
+      "TraceObserveListMetadataApi",
+    ]) {
+      for (const field of [
+        "total_rows_exact",
+        "next_cursor",
+        "query_error_code",
+      ]) {
+        const valueType = field === "total_rows_exact" ? "number" : "string";
+        schemas = assertReplaceInNamedBlock(
+          schemas,
+          `export interface ${metadataType} {`,
+          `${field}?: ${valueType};`,
+          `${field}?: ${valueType} | null;`,
+          `${metadataType}.${field} nullable`,
+        );
+      }
+    }
+
+    for (const graphType of [
+      "TraceAgentGraphNodeApi",
+      "TraceAgentGraphEdgeApi",
+    ]) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        `export interface ${graphType} {`,
+        "trace_count: number;",
+        "trace_count: number | null;",
+        `${graphType}.trace_count nullable`,
+      );
+    }
+
+    for (const field of ["next", "previous"]) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        "export interface TraceVoiceCallListResponseApi {",
+        `${field}: number;`,
+        `${field}: number | null;`,
+        `TraceVoiceCallListResponseApi.${field} nullable`,
+      );
+    }
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export interface TraceVoiceCallListResponseApi {",
+      "next_cursor?: string;",
+      "next_cursor?: string | null;",
+      "TraceVoiceCallListResponseApi.next_cursor nullable",
+    );
+
     fs.writeFileSync(schemasOutputPath, schemas);
   }
 
   if (fs.existsSync(zodOutputPath)) {
     let zod = fs.readFileSync(zodOutputPath, "utf8");
+
+    zod = assertReplace(
+      zod,
+      `import * as zod from 'zod';`,
+      `import * as zod from 'zod';
+
+type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+const jsonValueSchema: zod.ZodType<JsonValue> =
+  zod.lazy(() =>
+    zod.union([
+      zod.string(),
+      zod.number(),
+      zod.boolean(),
+      zod.null(),
+      zod.array(jsonValueSchema),
+      zod.record(jsonValueSchema),
+    ]),
+  );`,
+      "recursive JSON zod schema",
+    );
+    zod = assertReplaceRegex(
+      zod,
+      /(export const ApiTracesSpanAttributeDetailListResponse = zod\.object\(\{[\s\S]*?"top_values": zod\.array\(zod\.object\(\{\n {2}"value": )zod\.object\(\{\n\n\}\)\.passthrough\(\)\.describe\('Any valid JSON value\.'\),/,
+      "$1jsonValueSchema.describe('Any valid JSON value.'),",
+      "SpanAttributeTopValue zod value → recursive JSON value",
+    );
+    zod = assertReplaceRegex(
+      zod,
+      /(export const ApiTracesSpanAttributeValuesListResponse = zod\.object\(\{[\s\S]*?"result": zod\.array\(zod\.object\(\{\n {2}"value": )zod\.object\(\{\n\n\}\)\.passthrough\(\)\.describe\('Any valid JSON value\.'\),/,
+      "$1jsonValueSchema.describe('Any valid JSON value.'),",
+      "SpanAttributeValue zod value → recursive JSON value",
+    );
+    zod = assertReplaceRegex(
+      zod,
+      /(export const TracerDashboardFilterValuesResponse = zod\.object\(\{[\s\S]*?"values": zod\.array\(zod\.object\(\{\n {2}"value": )zod\.object\(\{\n\n\}\)\.passthrough\(\)\.describe\('Any valid JSON value\.'\),/,
+      "$1jsonValueSchema.describe('Any valid JSON value.'),",
+      "DashboardFilterValueOption zod value → recursive JSON value",
+    );
+
+    const listResponseExports = [
+      "TracerTraceListTracesResponse",
+      "TracerTraceListTracesOfSessionResponse",
+      "TracerTraceSessionListSessionsResponse",
+      "TracerObservationSpanListSpansResponse",
+      "TracerObservationSpanListSpansObserveResponse",
+      "TracerTraceListVoiceCallsResponse",
+    ];
+    for (const exportName of listResponseExports) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        `export const ${exportName} = zod.object({`,
+        /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+        "jsonValueSchema",
+        `${exportName} JSON cells → recursive JSON value`,
+      );
+    }
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const TracerTraceVoiceCallDetailResponse = zod.object({",
+      /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+      "jsonValueSchema",
+      "TracerTraceVoiceCallDetailResponse JSON cells → recursive JSON value",
+    );
+
+    // As with the generated TypeScript model above, Orval ignores Swagger
+    // 2.0 x-nullable. Keep the generated runtime parser aligned with the
+    // provider-normalized response so legitimate nulls do not blank the
+    // detail drawer.
+    for (const [anchor, replacement] of [
+      [
+        '"provider_call_id": zod.string().min(1),',
+        '"provider_call_id": zod.string().min(1).nullable(),',
+      ],
+      [
+        '"phone_number": zod.string().min(1).optional(),',
+        '"phone_number": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"customer_name": zod.string().min(1).optional(),',
+        '"customer_name": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"call_id": zod.string().min(1).optional(),',
+        '"call_id": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"status": zod.string().min(1).optional(),',
+        '"status": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"started_at": zod.string().min(1).optional(),',
+        '"started_at": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"ended_at": zod.string().min(1).optional(),',
+        '"ended_at": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"created_at": zod.string().min(1).optional(),',
+        '"created_at": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"duration_seconds": zod.number().optional(),',
+        '"duration_seconds": zod.number().nullish(),',
+      ],
+      [
+        '"recording_url": zod.string().optional(),',
+        '"recording_url": zod.string().nullish(),',
+      ],
+      [
+        '"stereo_recording_url": zod.string().min(1).optional(),',
+        '"stereo_recording_url": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"cost_cents": zod.number().optional(),',
+        '"cost_cents": zod.number().nullish(),',
+      ],
+      [
+        '"cost_breakdown": zod.record(zod.string(), zod.unknown()).optional(),',
+        '"cost_breakdown": zod.record(zod.string(), zod.unknown()).nullish(),',
+      ],
+      [
+        '"error_message": zod.string().min(1).optional(),',
+        '"error_message": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"call_summary": zod.string().optional(),',
+        '"call_summary": zod.string().nullish(),',
+      ],
+      [
+        '"ended_reason": zod.string().min(1).optional(),',
+        '"ended_reason": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"overall_score": zod.number().optional(),',
+        '"overall_score": zod.number().nullish(),',
+      ],
+      [
+        '"response_time_ms": zod.number().optional(),',
+        '"response_time_ms": zod.number().nullish(),',
+      ],
+      [
+        '"response_time_seconds": zod.number().optional(),',
+        '"response_time_seconds": zod.number().nullish(),',
+      ],
+      [
+        '"assistant_id": zod.string().min(1).optional(),',
+        '"assistant_id": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"assistant_phone_number": zod.string().min(1).optional(),',
+        '"assistant_phone_number": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"call_type": zod.string().min(1).optional(),',
+        '"call_type": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"message_count": zod.number().optional(),',
+        '"message_count": zod.number().nullish(),',
+      ],
+      [
+        '"transcript_available": zod.boolean().optional(),',
+        '"transcript_available": zod.boolean().nullish(),',
+      ],
+      [
+        "\"transcript\": zod.array(zod.record(zod.string(), jsonValueSchema.describe('Any valid JSON value.'))).optional(),",
+        "\"transcript\": zod.array(zod.record(zod.string(), jsonValueSchema.describe('Any valid JSON value.'))).nullish(),",
+      ],
+      [
+        "\"messages\": zod.array(zod.record(zod.string(), jsonValueSchema.describe('Any valid JSON value.'))).optional(),",
+        "\"messages\": zod.array(zod.record(zod.string(), jsonValueSchema.describe('Any valid JSON value.'))).nullish(),",
+      ],
+      [
+        '"analysis_data": zod.record(zod.string(), zod.unknown()).optional(),',
+        '"analysis_data": zod.record(zod.string(), zod.unknown()).nullish(),',
+      ],
+      [
+        '"evaluation_data": zod.record(zod.string(), zod.unknown()).optional(),',
+        '"evaluation_data": zod.record(zod.string(), zod.unknown()).nullish(),',
+      ],
+      [
+        '"call_execution_id": zod.string().min(1).optional(),',
+        '"call_execution_id": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"test_execution_id": zod.string().min(1).optional(),',
+        '"test_execution_id": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"scenario_id": zod.string().min(1).optional(),',
+        '"scenario_id": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"scenario_name": zod.string().min(1).optional(),',
+        '"scenario_name": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"scenario_graph_id": zod.string().min(1).optional(),',
+        '"scenario_graph_id": zod.string().min(1).nullish(),',
+      ],
+      ['"turn_count": zod.number(),', '"turn_count": zod.number().nullable(),'],
+      ['"talk_ratio": zod.number(),', '"talk_ratio": zod.number().nullable(),'],
+      [
+        '"agent_talk_percentage": zod.number(),',
+        '"agent_talk_percentage": zod.number().nullable(),',
+      ],
+      [
+        '"bot_talk_pct": zod.number(),',
+        '"bot_talk_pct": zod.number().nullable(),',
+      ],
+      [
+        '"user_talk_pct": zod.number(),',
+        '"user_talk_pct": zod.number().nullable(),',
+      ],
+      [
+        '"avg_agent_latency_ms": zod.number(),',
+        '"avg_agent_latency_ms": zod.number().nullable(),',
+      ],
+      ['"user_wpm": zod.number(),', '"user_wpm": zod.number().nullable(),'],
+      ['"bot_wpm": zod.number(),', '"bot_wpm": zod.number().nullable(),'],
+      [
+        '"user_interruption_count": zod.number(),',
+        '"user_interruption_count": zod.number().nullable(),',
+      ],
+      [
+        '"ai_interruption_count": zod.number()',
+        '"ai_interruption_count": zod.number().nullable()',
+      ],
+    ]) {
+      zod = assertReplaceInNamedBlock(
+        zod,
+        "export const TracerTraceVoiceCallDetailResponse = zod.object({",
+        anchor,
+        replacement,
+        `TracerTraceVoiceCallDetailResponse nullable ${anchor}`,
+      );
+    }
+    const columnConfigNullableZodFields = [
+      [
+        '"group_by": zod.string().min(1).optional(),',
+        '"group_by": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"output_type": zod.string().min(1).optional(),',
+        '"output_type": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"reverse_output": zod.boolean().optional(),',
+        '"reverse_output": zod.boolean().nullish(),',
+      ],
+      [
+        '"annotation_label_type": zod.string().min(1).optional(),',
+        '"annotation_label_type": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"choices": zod.array(zod.string().min(1)).optional(),',
+        '"choices": zod.array(zod.string().min(1).nullable()).nullish(),',
+      ],
+      [
+        '"eval_template_id": zod.string().min(1).optional(),',
+        '"eval_template_id": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"source_field": zod.string().min(1).optional(),',
+        '"source_field": zod.string().min(1).nullish(),',
+      ],
+      [
+        '"parent_eval_id": zod.string().min(1).optional()',
+        '"parent_eval_id": zod.string().min(1).nullish()',
+      ],
+    ];
+    for (const exportName of listResponseExports) {
+      for (const [anchor, replacement] of columnConfigNullableZodFields) {
+        zod = assertReplaceInNamedBlock(
+          zod,
+          `export const ${exportName} = zod.object({`,
+          anchor,
+          replacement,
+          `${exportName} nullable column config`,
+        );
+      }
+    }
+
+    for (const exportName of listResponseExports.slice(0, -1)) {
+      for (const [field, pattern] of [
+        [
+          "total_rows_exact",
+          /("total_rows_exact": zod\.number\(\)(?:\.min\([^)]*\))?)\.optional\(\),/,
+        ],
+        [
+          "next_cursor",
+          /("next_cursor": zod\.string\(\)\.min\(1\))\.optional\(\),/,
+        ],
+        [
+          "query_error_code",
+          /("query_error_code": zod\.string\(\)\.min\(1\))\.optional\(\),/,
+        ],
+      ]) {
+        zod = assertReplaceRegexInNamedBlock(
+          zod,
+          `export const ${exportName} = zod.object({`,
+          pattern,
+          "$1.nullish(),",
+          `${exportName}.${field} nullable`,
+        );
+      }
+    }
+
+    for (const field of ["next", "previous"]) {
+      zod = assertReplaceInNamedBlock(
+        zod,
+        "export const TracerTraceListVoiceCallsResponse = zod.object({",
+        `"${field}": zod.number().min(1),`,
+        `"${field}": zod.number().min(1).nullable(),`,
+        `TracerTraceListVoiceCallsResponse.${field} nullable`,
+      );
+    }
+    zod = assertReplaceInNamedBlock(
+      zod,
+      "export const TracerTraceListVoiceCallsResponse = zod.object({",
+      '"next_cursor": zod.string().min(1).optional(),',
+      '"next_cursor": zod.string().min(1).nullish(),',
+      "TracerTraceListVoiceCallsResponse.next_cursor nullable",
+    );
+
+    for (const fieldPrefix of ["Nodes", "Edges", "PathEdges"]) {
+      zod = assertReplaceInNamedBlock(
+        zod,
+        "export const TracerTraceAgentGraphResponse = zod.object({",
+        `"trace_count": zod.number().min(tracerTraceAgentGraphResponseResult${fieldPrefix}ItemTraceCountMin),`,
+        `"trace_count": zod.number().min(tracerTraceAgentGraphResponseResult${fieldPrefix}ItemTraceCountMin).nullable(),`,
+        `TracerTraceAgentGraphResponse.${fieldPrefix}.trace_count nullable`,
+      );
+    }
 
     // x-string-or-array: orval generates zod.object({}).passthrough() for these
     // fields. Use the unique description emitted by StringOrArrayField as anchor.

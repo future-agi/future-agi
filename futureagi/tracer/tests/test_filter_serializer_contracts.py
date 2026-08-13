@@ -1,5 +1,8 @@
 import json
 
+import pytest
+from rest_framework.fields import empty
+
 from model_hub.serializers.contracts import (
     EvalApiLogTableQuerySerializer,
     EvalMetricQuerySerializer,
@@ -13,7 +16,10 @@ from tracer.serializers.eval_task import (
     EditEvalTaskSerializer,
     EvalTaskListQuerySerializer,
 )
-from tracer.serializers.filters import ObserveGraphDataRequestSerializer
+from tracer.serializers.filters import (
+    ObserveGraphDataQuerySerializer,
+    ObserveGraphDataRequestSerializer,
+)
 from tracer.serializers.monitor import FetchGraphSerializer
 from tracer.serializers.observation_span import (
     ObservationAttributeListQuerySerializer,
@@ -49,6 +55,7 @@ from tracer.serializers.trace_session import (
     TraceSessionListQuerySerializer,
     TraceSessionRetrieveQuerySerializer,
 )
+from tracer.views.trace_session import TraceSessionView
 
 
 def _span_attr_filter(filter_op="equals", filter_value="alpha"):
@@ -64,6 +71,48 @@ def _span_attr_filter(filter_op="equals", filter_value="alpha"):
 
 
 class TestFilterSerializerContracts:
+    @pytest.mark.parametrize(
+        "serializer_class",
+        [
+            TraceObserveListQuerySerializer,
+            SpanObserveListQuerySerializer,
+            TraceSessionListQuerySerializer,
+        ],
+    )
+    def test_cursor_capable_page_help_does_not_deny_cursor_support(
+        self, serializer_class
+    ):
+        serializer = serializer_class()
+
+        assert "cursor" in serializer.fields
+        assert "page_depth_exceeded" in serializer.fields["page_number"].help_text
+        assert (
+            "does not provide cursor" not in serializer.fields["page_number"].help_text
+        )
+
+    @pytest.mark.parametrize(
+        "serializer_class",
+        [
+            TraceObserveListQuerySerializer,
+            SpanObserveListQuerySerializer,
+            TraceSessionListQuerySerializer,
+        ],
+    )
+    def test_cursor_capable_lists_reject_ambiguous_numbered_pagination(
+        self, serializer_class
+    ):
+        with_cursor_and_page = serializer_class(
+            data={"cursor": "signed-token", "page_number": 0}
+        )
+        deep_cursor_start = serializer_class(
+            data={"cursor_mode": True, "page_number": 1}
+        )
+
+        assert not with_cursor_and_page.is_valid()
+        assert "cursor" in with_cursor_and_page.errors
+        assert not deep_cursor_start.is_valid()
+        assert "cursor_mode" in deep_cursor_start.errors
+
     def test_users_query_serializer_decodes_strict_filter_query_param(self):
         serializer = UsersQuerySerializer(
             data={
@@ -75,6 +124,47 @@ class TestFilterSerializerContracts:
         assert serializer.is_valid(), serializer.errors
         filters = serializer.validated_data["filters"]
         assert filters[0]["filter_config"]["filter_op"] == "equals"
+
+    @pytest.mark.parametrize(
+        "attribute_key",
+        ["raw.payload", "llm.input_messages.0", "input.value.text"],
+    )
+    def test_users_query_serializer_rejects_reserved_projection_attribute_keys(
+        self, attribute_key
+    ):
+        serializer = UsersQuerySerializer(
+            data={"attribute_keys": json.dumps([attribute_key])}
+        )
+
+        assert not serializer.is_valid()
+        assert "attribute_keys" in serializer.errors
+
+    def test_users_query_serializer_rejects_reserved_filter_attribute_key(self):
+        payload = _span_attr_filter()
+        payload["column_id"] = "output.value"
+        serializer = UsersQuerySerializer(data={"filters": json.dumps([payload])})
+
+        assert not serializer.is_valid()
+        assert "filters" in serializer.errors
+
+    def test_users_cursor_rejects_ambiguous_numbered_pagination(self):
+        with_cursor_and_page = UsersQuerySerializer(
+            data={"cursor": "signed-token", "current_page_index": 0}
+        )
+        deep_cursor_start = UsersQuerySerializer(
+            data={"cursor_mode": True, "current_page_index": 1}
+        )
+
+        assert not with_cursor_and_page.is_valid()
+        assert "cursor" in with_cursor_and_page.errors
+        assert not deep_cursor_start.is_valid()
+        assert "cursor_mode" in deep_cursor_start.errors
+
+    def test_users_cursor_first_page_is_additive(self):
+        serializer = UsersQuerySerializer(data={"cursor_mode": True, "page_size": 25})
+
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["cursor_mode"] is True
 
     def test_users_query_serializer_rejects_camel_case_filter_config(self):
         payload = _span_attr_filter()
@@ -222,6 +312,24 @@ class TestFilterSerializerContracts:
             "project-b",
         ]
 
+    def test_dashboard_filter_values_project_ids_preserves_csv_wire_and_list_runtime(
+        self,
+    ):
+        field = DashboardFilterValuesQuerySerializer().fields["project_ids"]
+
+        assert field.default == ""
+        assert field.Meta.swagger_schema_fields == {
+            "type": "string",
+            "default": "",
+        }
+        assert field.to_representation("") == ""
+
+        serializer = DashboardFilterValuesQuerySerializer(
+            data={"metric_name": "final_status"}
+        )
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["project_ids"] == []
+
     def test_dashboard_filter_values_query_accepts_sessions_source(self):
         serializer = DashboardFilterValuesQuerySerializer(
             data={
@@ -233,6 +341,20 @@ class TestFilterSerializerContracts:
 
         assert serializer.is_valid(), serializer.errors
         assert serializer.validated_data["source"] == "sessions"
+
+    @pytest.mark.parametrize("search", ["x" * 513, "é" * 257])
+    def test_dashboard_filter_values_query_rejects_oversized_search(self, search):
+        serializer = DashboardFilterValuesQuerySerializer(
+            data={
+                "metric_name": "final_status",
+                "metric_type": "custom_attribute",
+                "source": "traces",
+                "search": search,
+            }
+        )
+
+        assert not serializer.is_valid()
+        assert "search" in serializer.errors
 
     def test_session_filter_values_query_accepts_canonical_columns_only(self):
         serializer = TraceSessionFilterValuesQuerySerializer(
@@ -254,6 +376,26 @@ class TestFilterSerializerContracts:
 
         assert not serializer.is_valid()
         assert "column" in serializer.errors
+
+    def test_session_filter_values_action_disables_automatic_pagination(self):
+        """The action owns its page/page_size query contract.
+
+        Leaving DRF's default paginator enabled makes drf-yasg reject the
+        action because both sources declare those parameters.
+        """
+        assert (
+            TraceSessionView.get_session_filter_values.kwargs["pagination_class"]
+            is None
+        )
+
+    def test_session_filter_values_uses_runtime_backed_query_contract(self):
+        contract = TraceSessionView.get_session_filter_values._swagger_auto_schema[
+            "get"
+        ]
+
+        assert contract["runtime_request_validation"] is True
+        assert contract["runtime_response_validation"] is True
+        assert contract["query_serializer"] is TraceSessionFilterValuesQuerySerializer
 
     def test_session_list_query_accepts_canonical_filters_and_sort(self):
         serializer = TraceSessionListQuerySerializer(
@@ -500,6 +642,46 @@ class TestFilterSerializerContracts:
         assert serializer.is_valid(), serializer.errors
         assert serializer.validated_data["filters"][0]["column_id"] == "customer_tier"
 
+    def test_trace_observe_list_query_accepts_exact_json_attribute_keys(self):
+        serializer = TraceObserveListQuerySerializer(
+            data={
+                "attribute_keys": json.dumps(
+                    ["final_status", "metadata.path,with-comma", "final_status"]
+                )
+            }
+        )
+
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["attribute_keys"] == [
+            "final_status",
+            "metadata.path,with-comma",
+        ]
+
+    def test_trace_observe_list_query_defaults_missing_attribute_keys_to_empty(self):
+        serializer = TraceObserveListQuerySerializer(data={})
+
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["attribute_keys"] == []
+
+    @pytest.mark.parametrize(
+        "attribute_keys",
+        [
+            json.dumps([f"key-{index}" for index in range(101)]),
+            json.dumps(["x" * 513]),
+            json.dumps([f"{index}-" + "x" * 510 for index in range(5)]),
+            json.dumps(["ok", 1]),
+        ],
+    )
+    def test_trace_observe_list_query_rejects_unsafe_attribute_key_payloads(
+        self, attribute_keys
+    ):
+        serializer = TraceObserveListQuerySerializer(
+            data={"attribute_keys": attribute_keys}
+        )
+
+        assert not serializer.is_valid()
+        assert "attribute_keys" in serializer.errors
+
     def test_trace_observe_list_query_rejects_camel_case_aliases(self):
         serializer = TraceObserveListQuerySerializer(
             data={
@@ -525,6 +707,42 @@ class TestFilterSerializerContracts:
 
         assert not serializer.is_valid()
         assert "projectId" in serializer.errors
+
+    def test_trace_export_query_accepts_exact_attribute_columns(self):
+        serializer = TraceExportQuerySerializer(
+            data={
+                "project_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "attribute_keys": json.dumps(
+                    ["prompt_slug", "metadata.path,with-comma", "prompt_slug"]
+                ),
+            }
+        )
+
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["attribute_keys"] == [
+            "prompt_slug",
+            "metadata.path,with-comma",
+        ]
+
+    @pytest.mark.parametrize(
+        "attribute_keys",
+        [
+            json.dumps([f"key-{index}" for index in range(101)]),
+            json.dumps(["x" * 513]),
+            json.dumps([f"{index}-" + "x" * 510 for index in range(5)]),
+            json.dumps(["ok", 1]),
+        ],
+    )
+    def test_trace_export_query_rejects_unsafe_attribute_columns(self, attribute_keys):
+        serializer = TraceExportQuerySerializer(
+            data={
+                "project_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "attribute_keys": attribute_keys,
+            }
+        )
+
+        assert not serializer.is_valid()
+        assert "attribute_keys" in serializer.errors
 
     def test_trace_voice_call_query_accepts_canonical_pagination(self):
         serializer = TraceVoiceCallListQuerySerializer(
@@ -622,6 +840,70 @@ class TestFilterSerializerContracts:
 
         assert serializer.is_valid(), serializer.errors
         assert serializer.validated_data["filters"][0]["column_id"] == "customer_tier"
+        assert serializer.validated_data["allow_sampled"] is False
+
+    def test_graph_query_serializers_accept_explicit_sample_opt_in(self):
+        observe = ObserveGraphDataQuerySerializer(data={"allow_sampled": "true"})
+        project = ProjectGraphDataQuerySerializer(
+            data={
+                "project_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "allow_sampled": "true",
+            }
+        )
+        public_chart = FetchGraphSerializer(
+            data={
+                "project_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "interval": "day",
+                "req_data_config": json.dumps(
+                    {"id": "latency", "type": "SYSTEM_METRIC"}
+                ),
+                "allow_sampled": "true",
+            }
+        )
+
+        for serializer in (observe, project, public_chart):
+            assert serializer.is_valid(), serializer.errors
+            assert serializer.validated_data["allow_sampled"] is True
+
+    def test_list_query_sample_contract_distinguishes_omitted_false_and_true(self):
+        project_version_id = "1372e742-a10b-4d98-9ca4-31ef4d67115f"
+        serializers_and_base_data = (
+            (TraceListQuerySerializer, {"project_version_id": project_version_id}),
+            (SpanListQuerySerializer, {"project_version_id": project_version_id}),
+            (TraceObserveListQuerySerializer, {}),
+            (SpanObserveListQuerySerializer, {}),
+            (
+                TraceVoiceCallListQuerySerializer,
+                {"project_id": project_version_id},
+            ),
+            (TraceSessionListQuerySerializer, {}),
+        )
+        for serializer_class, base_data in serializers_and_base_data:
+            omitted = serializer_class(data=base_data)
+            strict = serializer_class(
+                data={
+                    **base_data,
+                    "allow_sampled": "false",
+                }
+            )
+            opted_in = serializer_class(
+                data={
+                    **base_data,
+                    "allow_sampled": "true",
+                }
+            )
+
+            assert omitted.is_valid(), omitted.errors
+            assert "allow_sampled" not in omitted.validated_data
+            assert strict.is_valid(), strict.errors
+            assert strict.validated_data["allow_sampled"] is False
+            assert opted_in.is_valid(), opted_in.errors
+            assert opted_in.validated_data["allow_sampled"] is True
+            field = serializer_class().fields["allow_sampled"]
+            assert field.default is empty
+            help_text = field.help_text
+            assert "Omit for backward-compatible" in help_text
+            assert "false to require an exact total" in help_text
 
     def test_project_graph_query_rejects_camel_case_project_id(self):
         serializer = ProjectGraphDataQuerySerializer(

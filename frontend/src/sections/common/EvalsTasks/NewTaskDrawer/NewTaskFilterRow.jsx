@@ -23,6 +23,7 @@ const NewTaskFilterRow = ({
   update,
   getValues,
   compact = true,
+  onAttributeSearchChange,
 }) => {
   const filterData =
     useWatch({ control, name: "filters", defaultValue: [] })?.[index] ?? {};
@@ -164,6 +165,7 @@ const NewTaskFilterRow = ({
               fullWidth={compact}
               showClear={false}
               placeholder="Select Attribute"
+              onSearchChange={onAttributeSearchChange}
             />
             {/* </Box> */}
             {propertyId && (
@@ -221,6 +223,7 @@ NewTaskFilterRow.propTypes = {
   update: PropTypes.func,
   getValues: PropTypes.func,
   compact: PropTypes,
+  onAttributeSearchChange: PropTypes.func,
 };
 
 export default NewTaskFilterRow;

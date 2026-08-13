@@ -12,6 +12,7 @@ import { scoreKeys } from "src/api/scores/scores";
 import { selectContractedList } from "src/api/contract-validation";
 import { ModelHubAnnotationQueuesForSourceResponse } from "src/generated/api-contracts/api.zod";
 import { paramsSerializer } from "src/utils/utils";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 
 const QUEUE_ENTRY_CONSUMED_FIELDS = [
   "queue",
@@ -1344,6 +1345,7 @@ export const useDeleteAutomationRule = () => {
 export const useEvaluateRule = () => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { errorHandled: true },
     mutationFn: ({ queueId, ruleId }) =>
       axios.post(
         annotationQueueEndpoints.automationRuleEvaluate(queueId, ruleId),
@@ -1397,7 +1399,9 @@ export const useEvaluateRule = () => {
         });
         return;
       }
-      enqueueSnackbar("Failed to evaluate rule", { variant: "error" });
+      enqueueSnackbar(extractErrorMessage(error, "Failed to evaluate rule"), {
+        variant: "error",
+      });
     },
   });
 };
@@ -1575,9 +1579,13 @@ export const useQueueItemsForSource = (sources = [], options = {}) => {
 // Default queue hooks
 // ---------------------------------------------------------------------------
 
-export const useGetOrCreateDefaultQueue = () => {
+export const useGetOrCreateDefaultQueue = ({ notifyOnError = true } = {}) => {
   const queryClient = useQueryClient();
   return useMutation({
+    // This hook owns notification policy.  Marking the mutation handled keeps
+    // the app-level MutationCache from stacking a generic "Something went
+    // wrong" toast beside the exact entitlement response.
+    meta: { errorHandled: true },
     mutationFn: ({ projectId, datasetId, agentDefinitionId }) =>
       axios.post(annotationQueueEndpoints.getOrCreateDefault, {
         ...(projectId && { project_id: projectId }),
@@ -1599,6 +1607,7 @@ export const useGetOrCreateDefaultQueue = () => {
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
     },
     onError: (error) => {
+      if (!notifyOnError) return;
       const msg = extractErrorMessage(error, "Failed to get default queue");
       enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
         variant: "error",
@@ -1610,6 +1619,9 @@ export const useGetOrCreateDefaultQueue = () => {
 export const useAddLabelToQueue = () => {
   const queryClient = useQueryClient();
   return useMutation({
+    // This mutation owns its user-facing failure state. Suppress the global
+    // MutationCache toast so one request cannot render two error messages.
+    meta: { errorHandled: true },
     mutationFn: ({ queueId, labelId }) =>
       axios.post(annotationQueueEndpoints.addLabel(queueId), {
         label_id: labelId,
@@ -1621,8 +1633,11 @@ export const useAddLabelToQueue = () => {
       });
     },
     onError: (error) => {
-      const msg = extractErrorMessage(error, "Failed to add label to queue");
-      enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
+      const msg = getSafeActionErrorMessage(
+        error,
+        "Failed to add label to queue",
+      );
+      enqueueSnackbar(msg, {
         variant: "error",
       });
     },
@@ -1632,6 +1647,7 @@ export const useAddLabelToQueue = () => {
 export const useRemoveLabelFromQueue = () => {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: { errorHandled: true },
     mutationFn: ({ queueId, labelId }) =>
       axios.post(annotationQueueEndpoints.removeLabel(queueId), {
         label_id: labelId,
@@ -1643,11 +1659,11 @@ export const useRemoveLabelFromQueue = () => {
       });
     },
     onError: (error) => {
-      const msg = extractErrorMessage(
+      const msg = getSafeActionErrorMessage(
         error,
         "Failed to remove label from queue",
       );
-      enqueueSnackbar(typeof msg === "string" ? msg : JSON.stringify(msg), {
+      enqueueSnackbar(msg, {
         variant: "error",
       });
     },

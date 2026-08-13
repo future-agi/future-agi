@@ -1,15 +1,19 @@
 import json
-import traceback
 import uuid as uuid_module
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from itertools import islice
 
 import structlog
 from django.db import models, transaction
-from django.db.models import Avg, Count, F, Func, Max, Q, Value
+from django.db.models import Count, Exists, F, Func, Max, OuterRef, Prefetch, Q, Value
+from django.db.models.functions import Cast, Coalesce, Left, Length, NullIf
 from django.utils import timezone
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
+from rest_framework.fields import DateTimeField
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.utils.urls import replace_query_param
 from rest_framework.viewsets import ModelViewSet
 
 from model_hub.models.evals_metric import EvalTemplate
@@ -18,15 +22,18 @@ from tfc.temporal.eval_tasks.client import (
     start_eval_task_workflow_sync,
 )
 from tfc.utils.api_contracts import validated_request
-from tfc.utils.api_serializers import EmptyRequestSerializer
+from tfc.utils.api_serializers import (
+    ApiErrorResponseSerializer,
+    EmptyRequestSerializer,
+)
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
-from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus, RunType
-from tracer.models.observation_span import EvalEntryStatus, EvalLogger
+from tracer.models.observation_span import EvalEntryStatus, EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.serializers.eval_task import (
+    EVAL_TASK_USAGE_MAX_PAGE,
     EditEvalTaskSerializer,
     EvalTaskCreateResponseSerializer,
     EvalTaskDeleteRequestSerializer,
@@ -37,10 +44,15 @@ from tracer.serializers.eval_task import (
     EvalTaskSerializer,
     EvalTaskUpdateRequestSerializer,
     EvalTaskUpdateResponseSerializer,
-    PaginationQuerySerializer,
+    EvalTaskUsageQuerySerializer,
+    EvalTaskUsageResponseSerializer,
 )
 from tracer.services.eval_tasks.edit_options import validate_edit_action
 from tracer.services.eval_tasks.entries import soft_delete_live
+from tracer.services.filter_principal_context import (
+    FilterPrincipalContextError,
+    bind_request_my_annotations_principal,
+)
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import get_default_eval_task_config
 
@@ -67,14 +79,19 @@ class _RegexpReplace(Func):
     output_field = models.TextField()
 
 
-# Re-exported for back-compat; canonical definition lives in `tracer.utils.eval`.
-from tracer.utils.eval import _walk_dotted_path  # noqa: E402, F401
+_USAGE_DETAIL_TEXT_MAX_CHARS = 8 * 1024
+_USAGE_JSON_PREVIEW_MAX_CHARS = 2 * 1024
+_USAGE_MAPPING_PATH_LIMIT = 16
+_USAGE_MAPPING_ENTRY_LIMIT = 16
+_USAGE_MAPPING_JSON_MAX_CHARS = 8 * 1024
+_USAGE_OMITTED_FIELDS_LIMIT = 24
 
-# Per-variable size cap to keep the panel payload bounded — a single
-# log row that maps a giant JSON document into the eval would otherwise
-# bloat the response. 8KB per variable is enough for typical
-# prompts/messages while protecting against pathological inputs.
-_INPUT_VAR_MAX_BYTES = 8 * 1024
+
+def _bounded_usage_text(value):
+    text = "" if value is None else str(value)
+    if len(text) <= _USAGE_DETAIL_TEXT_MAX_CHARS:
+        return text
+    return f"{text[:_USAGE_DETAIL_TEXT_MAX_CHARS]} [truncated]"
 
 
 def _extract_partial_input_warnings(output_metadata):
@@ -92,57 +109,560 @@ def _extract_partial_input_warnings(output_metadata):
     ]
 
 
-def _resolve_input_variables(custom_eval_config, obs_span):
+_USAGE_PERIOD_DELTAS = {
+    "30m": timedelta(minutes=30),
+    "6h": timedelta(hours=6),
+    "1d": timedelta(days=1),
+    "7d": timedelta(days=7),
+    "30d": timedelta(days=30),
+    "90d": timedelta(days=90),
+    "180d": timedelta(days=180),
+    "365d": timedelta(days=365),
+}
+_USAGE_BUCKET_DELTAS = {
+    "30m": timedelta(minutes=5),
+    "6h": timedelta(minutes=30),
+    "1d": timedelta(hours=1),
+    "7d": timedelta(hours=6),
+    "30d": timedelta(days=1),
+    "90d": timedelta(days=1),
+    "180d": timedelta(days=1),
+    "365d": timedelta(days=1),
+}
+_USAGE_BUCKET_ORIGIN = datetime(2000, 1, 1, tzinfo=UTC)
+_USAGE_MAX_CHART_POINTS = 367
+_USAGE_AGGREGATION_ROW_LIMIT = 5_000
+
+
+def _usage_bucket_delta(period, start_date, end_date, *, custom=False):
+    if not custom:
+        return _USAGE_BUCKET_DELTAS[period]
+    duration = end_date - start_date
+    if duration <= timedelta(minutes=30):
+        return timedelta(minutes=5)
+    if duration <= timedelta(hours=6):
+        return timedelta(minutes=30)
+    if duration <= timedelta(days=1):
+        return timedelta(hours=1)
+    if duration <= timedelta(days=7):
+        return timedelta(hours=6)
+    return timedelta(days=1)
+
+
+def _floor_usage_bucket(value, bucket_delta):
+    elapsed = value - _USAGE_BUCKET_ORIGIN
+    bucket_count = int(elapsed.total_seconds() // bucket_delta.total_seconds())
+    return _USAGE_BUCKET_ORIGIN + bucket_count * bucket_delta
+
+
+def _build_usage_chart(aggregate_rows, start_date, end_date, bucket_delta):
+    """Zero-fill an already aggregated, finite set of usage buckets."""
+
+    rows_by_bucket = {row["bucket"]: row for row in aggregate_rows}
+    current_bucket = _floor_usage_bucket(start_date, bucket_delta)
+    last_bucket = _floor_usage_bucket(
+        end_date - timedelta(microseconds=1), bucket_delta
+    )
+    chart_data = []
+    while current_bucket <= last_bucket:
+        if len(chart_data) >= _USAGE_MAX_CHART_POINTS:
+            raise ValueError("Evaluation usage chart exceeds its bounded point limit")
+        row = rows_by_bucket.get(current_bucket, {})
+        avg_score = row.get("avg_score")
+        chart_data.append(
+            {
+                "timestamp": current_bucket.isoformat(),
+                "calls": int(row.get("calls") or 0),
+                "pass_count": int(row.get("pass_count") or 0),
+                "fail_count": int(row.get("fail_count") or 0),
+                "avg_score": round(float(avg_score), 3)
+                if avg_score is not None
+                else None,
+                "avg_latency_ms": 0,
+            }
+        )
+        current_bucket += bucket_delta
+    return chart_data
+
+
+def _bounded_usage_aggregation_candidates_queryset(base_qs):
+    return base_qs.order_by("-created_at", "-id").values_list("id", flat=True)[
+        : _USAGE_AGGREGATION_ROW_LIMIT + 1
+    ]
+
+
+def _bounded_usage_aggregation_rows(base_qs):
+    """Read a deterministic, finite newest-first aggregation candidate page.
+
+    Candidate IDs are materialized before any ObservationSpan join. Date
+    filters applied by the caller can therefore inspect at most 5,000 point
+    identities rather than scanning an eval task's entire history.
     """
-    Resolve the eval mapping against the span to produce a
-    `{var_name: value}` dict for the side panel's "Input Variables"
-    section. Values can be strings, numbers, dicts, or lists — the
-    frontend renders them through JsonValueTree so nested objects are
-    browsable in the same way as the trace detail drawer.
+
+    candidate_ids = list(_bounded_usage_aggregation_candidates_queryset(base_qs))
+    sampled = len(candidate_ids) > _USAGE_AGGREGATION_ROW_LIMIT
+    candidate_ids = candidate_ids[:_USAGE_AGGREGATION_ROW_LIMIT]
+    return candidate_ids, sampled
+
+
+def _hydrate_usage_aggregation_rows(candidate_ids, *, span_start=None, span_end=None):
+    """Hydrate only a finite set of aggregation candidates."""
+
+    rows_qs = EvalLogger.objects.filter(
+        id__in=candidate_ids,
+        error=False,
+        observation_span_id__isnull=False,
+    )
+    if span_start is not None:
+        rows_qs = rows_qs.filter(observation_span__created_at__gte=span_start)
+    if span_end is not None:
+        rows_qs = rows_qs.filter(observation_span__created_at__lte=span_end)
+    return list(
+        rows_qs.order_by("-created_at", "-id").values(
+            "id",
+            "created_at",
+            "observation_span_id",
+            "custom_eval_config_id",
+            "custom_eval_config__name",
+            "custom_eval_config__eval_template_id",
+            "custom_eval_config__eval_template__output_type_normalized",
+            "output_bool",
+            "output_float",
+            "output_str_list",
+        )[:_USAGE_AGGREGATION_ROW_LIMIT]
+    )
+
+
+def _usage_aggregation_metadata(*, candidate_count, sampled, matched_count):
+    return {
+        "query_complete": not sampled,
+        "sampled": sampled,
+        "error": "sample_limit" if sampled else None,
+        "provenance": "newest_eval_task_candidates",
+        "row_limit": _USAGE_AGGREGATION_ROW_LIMIT,
+        "rows_scanned": candidate_count,
+        "rows_matched": matched_count,
+    }
+
+
+def _bounded_usage_count(queryset):
+    """Return a finite count and whether it is only a proven lower bound."""
+
+    count = queryset.order_by().values("id")[: _USAGE_AGGREGATION_ROW_LIMIT + 1].count()
+    return min(
+        count, _USAGE_AGGREGATION_ROW_LIMIT
+    ), count > _USAGE_AGGREGATION_ROW_LIMIT
+
+
+def _bounded_period_usage_rows(queryset):
+    """Return finite newest usage rows for stats and chart publication."""
+
+    rows = list(
+        queryset.order_by("-created_at", "-id").values(
+            "created_at", "error", "output_bool", "output_float"
+        )[: _USAGE_AGGREGATION_ROW_LIMIT + 1]
+    )
+    sampled = len(rows) > _USAGE_AGGREGATION_ROW_LIMIT
+    if sampled:
+        rows = rows[:_USAGE_AGGREGATION_ROW_LIMIT]
+    return rows, sampled
+
+
+def _usage_logs_page_metadata(
+    *,
+    include_summary,
+    runs_period,
+    period_sampled,
+    page_number,
+    page_size,
+    page_row_count,
+    more_rows_exist,
+    page_limit_reached=False,
+):
+    """Publish internally consistent page-plus-one count metadata.
+
+    Summary reads know the selected-period count exactly unless their finite
+    5,000-row sample filled. Log-only reads deliberately skip that count, so
+    the current page plus its lookahead is the proven lower bound.
     """
-    if not custom_eval_config or not obs_span:
+
+    if include_summary and not period_sampled:
+        logs_count = runs_period
+        total_pages = max(1, (logs_count + page_size - 1) // page_size)
+        return logs_count, total_pages, False
+
+    if page_number > 1 and page_row_count == 0:
+        raise ValueError("Evaluation usage page is out of range.")
+
+    offset = (page_number - 1) * page_size if page_row_count else 0
+    known_page_count = offset + page_row_count + int(more_rows_exist)
+    logs_count = max(runs_period if include_summary else 0, known_page_count)
+    count_is_lower_bound = (
+        period_sampled if include_summary else more_rows_exist
+    ) or page_limit_reached
+    lower_bound_pages = (logs_count + page_size - 1) // page_size
+    total_pages = max(
+        1,
+        lower_bound_pages,
+        page_number + int(more_rows_exist and not page_limit_reached),
+    )
+    if page_limit_reached:
+        total_pages = page_number
+    return logs_count, total_pages, count_is_lower_bound
+
+
+def _bounded_usage_preview(value, original_length):
+    text = "" if value is None else str(value)
+    if original_length is not None and original_length > len(text):
+        return f"{text} [truncated]"
+    return text
+
+
+def _usage_json_path_expression(field_name, path, *, literal=False):
+    """Extract JSONB through parameterized text path segments.
+
+    ``KeyTransform`` compiles a single numeric-looking key such as ``"0"``
+    to PostgreSQL's integer ``-> 0`` array operator. Eval mappings historically
+    treat the root span-attribute object as a dict, so use
+    ``jsonb_extract_path(jsonb, text...)`` to keep root keys textual while still
+    allowing numeric nested segments to address arrays.
+    """
+
+    segments = (str(path),) if literal else tuple(str(path).split("."))
+    return Func(
+        F(field_name),
+        *(Value(segment) for segment in segments),
+        function="jsonb_extract_path",
+        output_field=models.JSONField(),
+    )
+
+
+def _usage_json_text_annotation(field_name, path):
+    source = Coalesce(
+        Cast(
+            _usage_json_path_expression(field_name, path),
+            output_field=models.TextField(),
+        ),
+        Value(""),
+        output_field=models.TextField(),
+    )
+    return (
+        Left(source, _USAGE_JSON_PREVIEW_MAX_CHARS),
+        Length(source),
+    )
+
+
+def _usage_json_literal_text_annotation(field_name, key):
+    source = Coalesce(
+        Cast(
+            _usage_json_path_expression(field_name, key, literal=True),
+            output_field=models.TextField(),
+        ),
+        Value(""),
+        output_field=models.TextField(),
+    )
+    return (
+        Left(source, _USAGE_JSON_PREVIEW_MAX_CHARS),
+        Length(source),
+    )
+
+
+def _bounded_usage_logs_queryset(queryset):
+    """Project a log page without transferring large span/eval JSON blobs."""
+
+    empty_text = Value("", output_field=models.TextField())
+    reason_source = Coalesce(
+        NullIf("eval_explanation", Value("")),
+        "error_message",
+        empty_text,
+        output_field=models.TextField(),
+    )
+    output_source = Coalesce("output_str", empty_text, output_field=models.TextField())
+    error_source = Coalesce(
+        "error_message", empty_text, output_field=models.TextField()
+    )
+    warnings_preview, warnings_length = _usage_json_text_annotation(
+        "output_metadata", "warnings"
+    )
+    explanation_source = Coalesce(
+        Cast("results_explanation", output_field=models.TextField()),
+        Value(""),
+        output_field=models.TextField(),
+    )
+    return (
+        queryset.annotate(
+            usage_reason=Left(reason_source, _USAGE_DETAIL_TEXT_MAX_CHARS),
+            usage_reason_length=Length(reason_source),
+            usage_output_str=Left(output_source, _USAGE_DETAIL_TEXT_MAX_CHARS),
+            usage_output_str_length=Length(output_source),
+            usage_error_message=Left(error_source, _USAGE_DETAIL_TEXT_MAX_CHARS),
+            usage_error_message_length=Length(error_source),
+            usage_warnings=warnings_preview,
+            usage_warnings_length=warnings_length,
+            usage_results_explanation=Left(
+                explanation_source, _USAGE_JSON_PREVIEW_MAX_CHARS
+            ),
+            usage_results_explanation_length=Length(explanation_source),
+        )
+        .select_related(
+            "custom_eval_config",
+            "custom_eval_config__eval_template",
+            "trace_session",
+        )
+        .only(
+            "id",
+            "created_at",
+            "error",
+            "output_bool",
+            "output_float",
+            "target_type",
+            "observation_span_id",
+            "trace_id",
+            "trace_session_id",
+            "trace_session__id",
+            "trace_session__name",
+            "custom_eval_config_id",
+            "custom_eval_config__id",
+            "custom_eval_config__name",
+            "custom_eval_config__model",
+            "custom_eval_config__eval_template_id",
+            "custom_eval_config__eval_template__output_type_normalized",
+        )
+        .order_by("-created_at", "-id")
+    )
+
+
+def _bounded_usage_span_projection(span_ids, mapping_paths, *, project_id=None):
+    """Fetch finite span identity plus only the JSON paths this page needs."""
+
+    annotations = {}
+    input_preview, input_length = _usage_json_text_annotation(
+        "span_attributes", "input"
+    )
+    input_value_preview, input_value_length = _usage_json_literal_text_annotation(
+        "span_attributes", "input.value"
+    )
+    annotations.update(
+        usage_input=input_preview,
+        usage_input_length=input_length,
+        usage_input_value=input_value_preview,
+        usage_input_value_length=input_value_length,
+    )
+    for ordinal, path in enumerate(mapping_paths):
+        preview, length = _usage_json_text_annotation("span_attributes", path)
+        annotations[f"usage_mapping_{ordinal}"] = preview
+        annotations[f"usage_mapping_{ordinal}_length"] = length
+    spans_qs = ObservationSpan.all_objects.filter(id__in=span_ids)
+    if project_id is not None:
+        spans_qs = spans_qs.filter(project_id=project_id)
+    return (
+        spans_qs.annotate(**annotations)
+        .values("id", "name", "trace_id", *annotations)
+        .order_by()
+    )
+
+
+def _parse_usage_json_preview(value, original_length):
+    if value in (None, ""):
+        return None
+    if original_length is not None and original_length > len(value):
+        return f"{value} [truncated]"
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def _usage_preview_was_truncated(value, original_length):
+    return bool(value) and original_length is not None and original_length > len(value)
+
+
+def _append_usage_omission(omitted_fields, field_name):
+    if len(omitted_fields) < _USAGE_OMITTED_FIELDS_LIMIT:
+        omitted_fields.append(field_name)
+    elif "additional_fields" not in omitted_fields:
+        omitted_fields.append("additional_fields")
+
+
+def _bounded_usage_config_mappings(config_ids):
+    """Fetch each config mapping once and never transfer oversized JSON."""
+
+    if not config_ids:
         return {}
-    mapping = custom_eval_config.mapping or {}
-    if not isinstance(mapping, dict):
-        return {}
-    span_attrs = obs_span.span_attributes or {}
-    resolved = {}
-    for var_name, field_path in mapping.items():
-        if not field_path:
+    mapping_text = Cast("mapping", output_field=models.TextField())
+    rows = (
+        CustomEvalConfig.all_objects.filter(id__in=config_ids)
+        .annotate(
+            usage_mapping_json=Left(mapping_text, _USAGE_MAPPING_JSON_MAX_CHARS),
+            usage_mapping_length=Length(mapping_text),
+        )
+        .values("id", "usage_mapping_json", "usage_mapping_length")
+    )
+    result = {}
+    for row in rows:
+        mapping = {}
+        oversized = (row["usage_mapping_length"] or 0) > _USAGE_MAPPING_JSON_MAX_CHARS
+        if not oversized:
+            try:
+                parsed = json.loads(row["usage_mapping_json"] or "{}")
+                if isinstance(parsed, dict):
+                    mapping = parsed
+            except (TypeError, ValueError):
+                pass
+        result[str(row["id"])] = {"mapping": mapping, "oversized": oversized}
+    return result
+
+
+def _bounded_usage_span_context(logs_page, *, project_id=None):
+    """Return bounded per-span input/mapping context for at most one log page."""
+
+    span_ids = {log.observation_span_id for log in logs_page if log.observation_span_id}
+    config_ids = {
+        str(log.custom_eval_config_id) for log in logs_page if log.custom_eval_config_id
+    }
+    config_mappings = _bounded_usage_config_mappings(config_ids)
+    bounded_entries_by_config = {}
+    invalid_entries_by_config = {}
+    ordered_paths = []
+    for config_id in sorted(config_ids):
+        mapping_record = config_mappings.get(config_id, {})
+        mapping = mapping_record.get("mapping") or {}
+        candidate_entries = list(islice(mapping.items(), _USAGE_MAPPING_ENTRY_LIMIT))
+        valid_entries = [
+            (str(variable), path)
+            for variable, path in candidate_entries
+            if isinstance(path, str) and path
+        ]
+        bounded_entries_by_config[config_id] = valid_entries
+        invalid_entries_by_config[config_id] = len(candidate_entries) - len(
+            valid_entries
+        )
+        for _, path in valid_entries:
+            if (
+                path not in ordered_paths
+                and len(ordered_paths) < _USAGE_MAPPING_PATH_LIMIT
+            ):
+                ordered_paths.append(path)
+    mapping_paths = ordered_paths
+    rows_by_id = {
+        str(row["id"]): row
+        for row in _bounded_usage_span_projection(
+            span_ids, mapping_paths, project_id=project_id
+        )
+    }
+    contexts = {}
+    for log in logs_page:
+        row = rows_by_id.get(str(log.observation_span_id))
+        if not row:
             continue
-        value = _walk_dotted_path(span_attrs, field_path)
-        # Soft-flatten fallback — mirror the frontend behavior in
-        # `TaskLivePreview.resolveMapping`: if the user mapped to a bare
-        # name like "input" but the actual data is nested under
-        # `span_attributes.input`, the SDK convention is to expose both.
-        # On the backend our `span_attrs` IS the span_attributes dict,
-        # so the bare name lookup already works — no extra step needed.
-        if value is None:
-            continue
-        # Cap per-variable size — drop the value entirely if it's huge
-        # rather than truncating into invalid JSON.
-        try:
-            serialized_size = len(json.dumps(value, default=str))
-            if serialized_size > _INPUT_VAR_MAX_BYTES:
-                resolved[var_name] = (
-                    f"[truncated — {serialized_size:,} bytes, exceeds "
-                    f"{_INPUT_VAR_MAX_BYTES:,} byte limit]"
-                )
+        input_value = _parse_usage_json_preview(
+            row["usage_input"], row["usage_input_length"]
+        )
+        if not input_value:
+            input_value = _parse_usage_json_preview(
+                row["usage_input_value"], row["usage_input_value_length"]
+            )
+        if not input_value:
+            input_value = row["name"] or ""
+        mappings = {}
+        config_id = (
+            str(log.custom_eval_config_id) if log.custom_eval_config_id else None
+        )
+        config_record = config_mappings.get(config_id, {})
+        config_mapping = config_record.get("mapping") or {}
+        config_entries = bounded_entries_by_config.get(config_id, [])
+        path_ordinals = {path: i for i, path in enumerate(mapping_paths)}
+        for variable, path in config_entries:
+            ordinal = path_ordinals.get(path)
+            if ordinal is None:
                 continue
-        except (TypeError, ValueError):
-            # Non-serializable value (rare for span data); just stringify.
-            resolved[var_name] = str(value)[:_INPUT_VAR_MAX_BYTES]
+            resolved = _parse_usage_json_preview(
+                row[f"usage_mapping_{ordinal}"],
+                row[f"usage_mapping_{ordinal}_length"],
+            )
+            if resolved is not None:
+                mappings[str(variable)] = resolved
+        omitted_fields = []
+        if config_record.get("oversized"):
+            _append_usage_omission(omitted_fields, "input_variables.mapping_oversized")
+        elif len(config_mapping) > _USAGE_MAPPING_ENTRY_LIMIT:
+            _append_usage_omission(omitted_fields, "input_variables.additional_entries")
+        if invalid_entries_by_config.get(config_id):
+            _append_usage_omission(omitted_fields, "input_variables.invalid_entries")
+        if _usage_preview_was_truncated(
+            row["usage_input"], row["usage_input_length"]
+        ) or _usage_preview_was_truncated(
+            row["usage_input_value"], row["usage_input_value_length"]
+        ):
+            _append_usage_omission(omitted_fields, "span_input_tail")
+        for variable, path in config_entries:
+            ordinal = path_ordinals.get(path)
+            if ordinal is None:
+                _append_usage_omission(omitted_fields, f"input_variables.{variable}")
+            elif _usage_preview_was_truncated(
+                row[f"usage_mapping_{ordinal}"],
+                row[f"usage_mapping_{ordinal}_length"],
+            ):
+                _append_usage_omission(
+                    omitted_fields, f"input_variables.{variable}_tail"
+                )
+        contexts[str(log.id)] = {
+            "name": row["name"],
+            "trace_id": row["trace_id"],
+            "input": input_value,
+            "input_variables": mappings,
+            "omitted_fields": omitted_fields,
+        }
+    return contexts
+
+
+def _aggregate_usage_chart_rows(rows, bucket_delta):
+    """Aggregate one finite usage page into chart buckets in memory."""
+
+    buckets = defaultdict(
+        lambda: {
+            "calls": 0,
+            "pass_count": 0,
+            "fail_count": 0,
+            "score_sum": 0.0,
+            "score_count": 0,
+        }
+    )
+    for row in rows:
+        bucket = _floor_usage_bucket(row["created_at"], bucket_delta)
+        values = buckets[bucket]
+        values["calls"] += 1
+        if row["error"]:
+            values["fail_count"] += 1
             continue
-        resolved[var_name] = value
-    return resolved
+        if row["output_bool"] is True:
+            values["pass_count"] += 1
+            values["score_sum"] += 1.0
+            values["score_count"] += 1
+        elif row["output_bool"] is False:
+            values["fail_count"] += 1
+            values["score_count"] += 1
+        if row["output_float"] is not None:
+            values["score_sum"] += float(row["output_float"])
+            values["score_count"] += 1
+
+    return [
+        {
+            "bucket": bucket,
+            "calls": values["calls"],
+            "pass_count": values["pass_count"],
+            "fail_count": values["fail_count"],
+            "avg_score": (
+                values["score_sum"] / values["score_count"]
+                if values["score_count"]
+                else None
+            ),
+        }
+        for bucket, values in sorted(buckets.items())
+    ]
 
 
-def _truthy(v):
-    """Match common DRF bool query-param conventions."""
-    return str(v).lower() in ("true", "1", "yes")
-
-
-def _compute_eval_aggregation(base_qs):
+def _compute_eval_aggregation(rows):
     """Per-eval-config rollup for one eval task.
 
     Returns a dict keyed by ``CustomEvalConfig.name`` so the FE can render
@@ -157,69 +677,77 @@ def _compute_eval_aggregation(base_qs):
       * ``deterministic`` → ``{choice: pct}`` dict, 2 dp. Only choices that
         actually appeared in the data are included.
 
-    The deterministic branch iterates rows in Python because PostgreSQL
-    JSONB array unnesting isn't expressible cleanly through the ORM and
-    the row count per (eval_task × eval_config) is bounded.
+    The input is the finite newest-first page returned by
+    :func:`_bounded_usage_aggregation_rows`; this function never evaluates a
+    queryset or performs another database read.
     """
-    # Imported lazily to avoid the module-import cycle bite (tracer.views
-    # → tracer.models pulls things that import this view at import time).
-    from tracer.models.custom_eval_config import CustomEvalConfig
-
-    config_ids = list(
-        base_qs.values_list("custom_eval_config_id", flat=True).distinct()
-    )
-    configs = CustomEvalConfig.objects.filter(id__in=config_ids).select_related(
-        "eval_template"
-    )
+    grouped = defaultdict(list)
+    config_metadata = {}
+    for row in rows:
+        config_id = row["custom_eval_config_id"]
+        if config_id is None:
+            continue
+        grouped[config_id].append(row)
+        config_metadata[config_id] = {
+            "name": row["custom_eval_config__name"] or "Evaluation",
+            "template_id": row["custom_eval_config__eval_template_id"],
+            "output_type": row[
+                "custom_eval_config__eval_template__output_type_normalized"
+            ]
+            or "pass_fail",
+        }
 
     result = {}
-    for cfg in configs:
-        output_type = (
-            cfg.eval_template.output_type_normalized
-            if cfg.eval_template
-            else "pass_fail"
-        )
-        rows = base_qs.filter(custom_eval_config_id=cfg.id, error=False)
-
+    for config_id, config_rows in grouped.items():
+        metadata = config_metadata[config_id]
+        output_type = metadata["output_type"]
         aggregated_score = None
         if output_type == "percentage":
-            avg = (
-                rows.exclude(output_float__isnull=True)
-                .aggregate(avg=Avg("output_float"))
-                .get("avg")
-            )
-            aggregated_score = round(avg, 4) if avg is not None else None
+            scores = [
+                float(row["output_float"])
+                for row in config_rows
+                if row["output_float"] is not None
+            ]
+            aggregated_score = round(sum(scores) / len(scores), 4) if scores else None
         elif output_type == "pass_fail":
-            bool_rows = rows.exclude(output_bool__isnull=True)
-            total = bool_rows.count()
-            passed = bool_rows.filter(output_bool=True).count()
-            aggregated_score = round(passed / total * 100, 2) if total else None
+            choices = [
+                row["output_bool"]
+                for row in config_rows
+                if row["output_bool"] is not None
+            ]
+            aggregated_score = (
+                round(sum(choice is True for choice in choices) / len(choices) * 100, 2)
+                if choices
+                else None
+            )
         elif output_type == "deterministic":
             counter = Counter()
             tally = 0
-            for lst in rows.values_list("output_str_list", flat=True):
-                if not lst:
+            for choices in (row["output_str_list"] for row in config_rows):
+                if not choices:
                     continue
                 tally += 1
-                # One count per choice per row — a multi-choice row that
-                # picks {"A","B"} contributes 1 to each, not 2 to one.
-                counter.update(set(lst))
+                counter.update(set(choices))
             aggregated_score = (
-                {c: round(n / tally * 100, 2) for c, n in counter.items()}
+                {
+                    choice: round(count / tally * 100, 2)
+                    for choice, count in counter.items()
+                }
                 if tally
                 else {}
             )
 
-        result[cfg.name] = {
-            "id": str(cfg.id),
-            "name": cfg.name,
+        name = metadata["name"]
+        result[name] = {
+            "id": str(config_id),
+            "name": name,
             "output_type": output_type,
             "aggregated_score": aggregated_score,
         }
     return result
 
 
-def _compute_span_aggregation(base_qs):
+def _compute_span_aggregation(rows):
     """Per-span pivot of raw eval values for one eval task.
 
     Returns ``{span_id → {eval_name → {id, name, output_type, value}}}``.
@@ -230,44 +758,223 @@ def _compute_span_aggregation(base_qs):
     When the same ``(span, eval_config)`` has multiple rows (re-runs),
     the latest by ``created_at`` wins via the ORDER BY + first-seen set.
     """
-    qs = (
-        base_qs.filter(observation_span_id__isnull=False, error=False)
-        .select_related("custom_eval_config__eval_template")
-        .order_by("observation_span_id", "custom_eval_config_id", "-created_at")
-    )
-
     result = defaultdict(dict)
     seen = set()
-    for log in qs.iterator(chunk_size=1000):
-        key = (log.observation_span_id, log.custom_eval_config_id)
+    for row in rows:
+        observation_span_id = row["observation_span_id"]
+        config_id = row["custom_eval_config_id"]
+        if observation_span_id is None or config_id is None:
+            continue
+        key = (observation_span_id, config_id)
         if key in seen:
             continue
         seen.add(key)
 
-        cfg = log.custom_eval_config
-        if cfg is None:
-            continue
         output_type = (
-            cfg.eval_template.output_type_normalized
-            if cfg.eval_template
-            else "pass_fail"
+            row["custom_eval_config__eval_template__output_type_normalized"]
+            or "pass_fail"
         )
         if output_type == EvalTemplate.OutputTypeNormalized.PERCENTAGE:
-            value = log.output_float
+            value = row["output_float"]
         elif output_type == EvalTemplate.OutputTypeNormalized.PASS_FAIL:
-            value = log.output_bool
+            value = row["output_bool"]
         elif output_type == EvalTemplate.OutputTypeNormalized.DETERMINISTIC:
-            value = log.output_str_list
+            value = row["output_str_list"]
         else:
             value = None
 
-        result[str(log.observation_span_id)][cfg.name] = {
-            "id": str(cfg.id),
-            "name": cfg.name,
+        name = row["custom_eval_config__name"] or "Evaluation"
+        result[str(observation_span_id)][name] = {
+            "id": str(config_id),
+            "name": name,
             "output_type": output_type,
             "value": value,
         }
     return dict(result)
+
+
+_EVAL_TASK_LIST_NUMBER_FIELDS = {"sampling_rate": "sampling_rate"}
+_EVAL_TASK_LIST_DATETIME_FIELDS = {
+    "created_at": "created_at",
+    "last_run": "last_run",
+}
+# Keep every result-table text filter and text sort in ``FilterEngine``.
+# Python's Unicode ``str.lower`` and code-point ordering are not equivalent to
+# PostgreSQL's locale-dependent ILIKE/collation semantics, and a different
+# ordering would move rows across page boundaries.
+_EVAL_TASK_LIST_SORT_FIELDS = {
+    **_EVAL_TASK_LIST_NUMBER_FIELDS,
+    **_EVAL_TASK_LIST_DATETIME_FIELDS,
+}
+
+
+def _eval_task_number_filter_q(field_name, filter_op, filter_value):
+    """Compile FilterEngine's NORMAL numeric semantics for one model field."""
+
+    if filter_op == "is_null":
+        return Q(**{f"{field_name}__isnull": True})
+    if filter_op == "is_not_null":
+        return Q(**{f"{field_name}__isnull": False})
+
+    if filter_op in ("between", "not_between"):
+        if not (
+            isinstance(filter_value, list)
+            and len(filter_value) == 2
+            and all(isinstance(value, int | float) for value in filter_value)
+        ):
+            return None
+        lower, upper = filter_value
+        inside = Q(**{f"{field_name}__gte": lower}) & Q(**{f"{field_name}__lte": upper})
+        if filter_op == "not_between":
+            return Q(**{f"{field_name}__isnull": False}) & ~inside
+        return inside
+
+    if not isinstance(filter_value, int | float):
+        return None
+    lookup = {
+        "greater_than": "gt",
+        "less_than": "lt",
+        "equals": "exact",
+        "greater_than_or_equal": "gte",
+        "less_than_or_equal": "lte",
+    }.get(filter_op)
+    if filter_op == "not_equals":
+        return Q(**{f"{field_name}__isnull": False}) & ~Q(**{field_name: filter_value})
+    if lookup is None:
+        return None
+    return Q(**{f"{field_name}__{lookup}": filter_value})
+
+
+def _eval_task_filter_datetime(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=UTC)
+    except ValueError:
+        return None
+
+
+def _eval_task_datetime_filter_q(field_name, filter_op, filter_value):
+    """Compile FilterEngine's strict UTC datetime operations."""
+
+    if filter_op == "is_null":
+        return Q(**{f"{field_name}__isnull": True})
+    if filter_op == "is_not_null":
+        return Q(**{f"{field_name}__isnull": False})
+
+    if filter_op in ("between", "not_between"):
+        if not isinstance(filter_value, list) or len(filter_value) != 2:
+            return None
+        bounds = [_eval_task_filter_datetime(value) for value in filter_value]
+        if any(value is None for value in bounds):
+            return None
+        inside = Q(**{f"{field_name}__gte": bounds[0]}) & Q(
+            **{f"{field_name}__lte": bounds[1]}
+        )
+        if filter_op == "not_between":
+            return Q(**{f"{field_name}__isnull": False}) & ~inside
+        return inside
+
+    value = _eval_task_filter_datetime(filter_value)
+    if value is None:
+        return None
+    if filter_op == "equals":
+        return Q(**{f"{field_name}__date": value.date()})
+    if filter_op == "not_equals":
+        return Q(**{f"{field_name}__isnull": False}) & ~Q(
+            **{f"{field_name}__date": value.date()}
+        )
+    lookup = {
+        "greater_than": "gt",
+        "less_than": "lt",
+        "greater_than_or_equal": "gte",
+        "less_than_or_equal": "lte",
+    }.get(filter_op)
+    if lookup is None:
+        return None
+    return Q(**{f"{field_name}__{lookup}": value})
+
+
+def _eval_task_list_orm_queryset(
+    queryset, *, filters, sort_params, include_project_name
+):
+    """Return an exactly translatable task-list queryset, or ``None``.
+
+    ``FilterEngine`` accepts arbitrary result-dict fields. Only the scalar
+    public task columns whose Python semantics can be reproduced in SQL take
+    this path. Everything else deliberately falls back to the legacy engine.
+    """
+
+    sort_fields = dict(_EVAL_TASK_LIST_SORT_FIELDS)
+
+    candidate = queryset
+    for filter_item in filters:
+        column_id, filter_config = FilterEngine._normalize_filter_params(filter_item)
+        if not column_id or not filter_config:
+            continue
+        if filter_config.get("col_type") not in (None, "NORMAL"):
+            return None
+
+        filter_type = filter_config.get("filter_type")
+        filter_op = filter_config.get("filter_op")
+        filter_value = filter_config.get("filter_value")
+        condition = None
+        if filter_type == "number" and column_id in _EVAL_TASK_LIST_NUMBER_FIELDS:
+            condition = _eval_task_number_filter_q(
+                _EVAL_TASK_LIST_NUMBER_FIELDS[column_id], filter_op, filter_value
+            )
+        elif filter_type == "datetime" and column_id in _EVAL_TASK_LIST_DATETIME_FIELDS:
+            condition = _eval_task_datetime_filter_q(
+                _EVAL_TASK_LIST_DATETIME_FIELDS[column_id], filter_op, filter_value
+            )
+        else:
+            return None
+        if condition is None:
+            return None
+        candidate = candidate.filter(condition)
+
+    if sort_params:
+        ordering = []
+        for sort_param in sort_params:
+            field_name = sort_fields.get(sort_param.get("column_id"))
+            if field_name is None:
+                return None
+            if sort_param.get("direction", "asc") == "desc":
+                ordering.append(F(field_name).desc(nulls_first=True))
+            else:
+                ordering.append(F(field_name).asc(nulls_last=True))
+        # Python's stable sorts preserve the queryset's original -created_at
+        # order whenever every requested key ties.
+        ordering.append(F("created_at").desc())
+        candidate = candidate.order_by(*ordering)
+    else:
+        candidate = candidate.order_by("-created_at")
+    return candidate
+
+
+def _serialize_eval_task_list_page(tasks, *, include_project_name):
+    datetime_field = DateTimeField()
+    result = []
+    for eval_task in tasks:
+        row = {
+            "id": str(eval_task.id),
+            "name": eval_task.name,
+            "status": eval_task.status,
+            "run_type": eval_task.run_type,
+            "filters_applied": eval_task.filters,
+            "created_at": datetime_field.to_representation(eval_task.created_at),
+            "evals_applied": [
+                eval_config.name for eval_config in eval_task._list_evals
+            ],
+            "sampling_rate": eval_task.sampling_rate,
+            "last_run": datetime_field.to_representation(eval_task.last_run)
+            if eval_task.last_run is not None
+            else None,
+        }
+        if include_project_name:
+            row["project_name"] = eval_task.project.name
+        result.append(row)
+    return result
 
 
 class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
@@ -401,6 +1108,47 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
         return queryset
 
+    def _eval_task_orm_page(self, queryset, query_data, *, include_project_name):
+        filters = query_data.get("filters", [])
+        sort_params = query_data.get("sort_params", [])
+        queryset = _eval_task_list_orm_queryset(
+            queryset,
+            filters=filters,
+            sort_params=sort_params,
+            include_project_name=include_project_name,
+        )
+        if queryset is None:
+            return None
+
+        # Both legacy list implementations discard tasks whose related manager
+        # has no visible CustomEvalConfig. The related manager subclasses
+        # CustomEvalConfig.objects, so deleted configs are invisible here too.
+        active_eval = CustomEvalConfig.objects.filter(eval_tasks=OuterRef("pk"))
+        queryset = queryset.annotate(_has_active_eval=Exists(active_eval)).filter(
+            _has_active_eval=True
+        )
+        total_rows = queryset.count()
+
+        page_number = query_data.get("page_number", 0)
+        page_size = query_data.get("page_size", 30)
+        start = int(page_number) * int(page_size)
+        end = start + int(page_size)
+        page_queryset = (
+            queryset.prefetch_related(None)
+            .select_related("project")
+            .prefetch_related(
+                Prefetch(
+                    "evals",
+                    queryset=CustomEvalConfig.objects.only("id", "name"),
+                    to_attr="_list_evals",
+                )
+            )[start:end]
+        )
+        result = _serialize_eval_task_list_page(
+            list(page_queryset), include_project_name=include_project_name
+        )
+        return result, total_rows
+
     @validated_request(request_serializer=EvalTaskSerializer)
     def update(self, request, *args, **kwargs):
         return super().update(request, *args, **kwargs)
@@ -428,13 +1176,17 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
     @validated_request(
         request_serializer=EvalTaskSerializer,
-        responses={200: EvalTaskCreateResponseSerializer},
+        responses={
+            200: EvalTaskCreateResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        },
     )
     def create(self, request, *args, **kwargs):
         try:
-            data = request.data
+            data = request.data.copy()
             data["status"] = EvalTaskStatus.PENDING
-            filters = data.get("filters", {})
+            filters = data.get("filters") or {}
             project_id = data.get("project")
             if (
                 project_id
@@ -466,12 +1218,25 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
             return self._gm.success_response({"id": eval_task.id})
 
-        except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(str(e))
+        except ValidationError as exc:
+            return self._gm.bad_request(exc.detail)
+        except FilterPrincipalContextError as exc:
+            return self._gm.bad_request(str(exc))
+        except Exception as exc:
+            logger.exception(
+                "eval_task.create_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation task could not be created")
 
     @action(detail=False, methods=["get"], pagination_class=None)
-    @validated_request(query_serializer=EvalTaskListQuerySerializer)
+    @validated_request(
+        query_serializer=EvalTaskListQuerySerializer,
+        responses={
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        },
+    )
     def list_eval_tasks(self, request, *args, **kwargs):
         """
         List Eval Tasks filtered
@@ -480,71 +1245,72 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             query_data = request.validated_query_data
 
             queryset = self.get_queryset()
-            serializer = self.get_serializer(queryset, many=True)
-            eval_tasks = serializer.data
+            orm_page = self._eval_task_orm_page(
+                queryset, query_data, include_project_name=False
+            )
+            if orm_page is not None:
+                result, total_rows = orm_page
+            else:
+                # Compatibility path for arbitrary result-dict filters/sorts
+                # whose FilterEngine behavior cannot be translated exactly.
+                serializer = self.get_serializer(queryset, many=True)
+                eval_tasks = serializer.data
 
-            # Collect all eval IDs to batch query CustomEvalConfig (avoids N+1)
-            all_eval_ids = set()
-            for eval_task in eval_tasks:
-                all_eval_ids.update(eval_task.get("evals", []))
+                # Collect all eval IDs to batch query CustomEvalConfig (avoids N+1)
+                all_eval_ids = set()
+                for eval_task in eval_tasks:
+                    all_eval_ids.update(eval_task.get("evals", []))
 
-            # Single query to fetch all CustomEvalConfigs
-            eval_configs = CustomEvalConfig.objects.filter(
-                id__in=all_eval_ids, deleted=False
-            ).values("id", "name")
-            eval_name_lookup = {str(ec["id"]): ec["name"] for ec in eval_configs}
+                eval_configs = CustomEvalConfig.objects.filter(
+                    id__in=all_eval_ids, deleted=False
+                ).values("id", "name")
+                eval_name_lookup = {str(ec["id"]): ec["name"] for ec in eval_configs}
 
-            result = []
+                result = []
+                for eval_task in eval_tasks:
+                    eval_ids = eval_task.get("evals", [])
+                    if not eval_ids:
+                        continue
+                    eval_names = [
+                        eval_name_lookup.get(str(eval_id))
+                        for eval_id in eval_ids
+                        if str(eval_id) in eval_name_lookup
+                    ]
+                    result.append(
+                        {
+                            "id": str(eval_task["id"]),
+                            "name": eval_task["name"],
+                            "status": eval_task["status"],
+                            "run_type": eval_task.get("run_type"),
+                            "filters_applied": eval_task["filters"],
+                            "created_at": eval_task["created_at"],
+                            "evals_applied": eval_names,
+                            "sampling_rate": eval_task["sampling_rate"],
+                            "last_run": eval_task["last_run"],
+                        }
+                    )
 
-            for eval_task in eval_tasks:
-                eval_ids = eval_task.get("evals", [])
-                if not eval_ids:
-                    continue
+                filters = query_data.get("filters", [])
+                if filters:
+                    result = FilterEngine(result).apply_filters(filters)
 
-                # Use the lookup instead of querying in loop
-                eval_names = [
-                    eval_name_lookup.get(str(eval_id))
-                    for eval_id in eval_ids
-                    if str(eval_id) in eval_name_lookup
-                ]
+                sort_params = query_data.get("sort_params", [])
+                if sort_params:
+                    for sort_param in reversed(sort_params):
+                        sort_key = sort_param.get("column_id")
+                        reverse = sort_param.get("direction", "asc") == "desc"
 
-                parsed_data = {
-                    "id": str(eval_task["id"]),
-                    "name": eval_task["name"],
-                    "status": eval_task["status"],
-                    "run_type": eval_task.get("run_type"),
-                    "filters_applied": eval_task["filters"],
-                    "created_at": eval_task["created_at"],
-                    "evals_applied": eval_names,
-                    "sampling_rate": eval_task["sampling_rate"],
-                    "last_run": eval_task["last_run"],
-                }
-                result.append(parsed_data)
+                        def sort_key_func(x):
+                            value = x.get(sort_key)  # noqa: B023
+                            return (value is None, value)
 
-            filters = query_data.get("filters", [])
-            if filters:
-                filter_engine = FilterEngine(result)
-                result = filter_engine.apply_filters(filters)
+                        result.sort(key=sort_key_func, reverse=reverse)
 
-            sort_params = query_data.get("sort_params", [])
-            if sort_params:
-                for sort_param in reversed(sort_params):
-                    sort_key = sort_param.get("column_id")
-                    sort_direction = sort_param.get("direction", "asc")
-                    reverse = sort_direction == "desc"
-
-                    def sort_key_func(x):
-                        value = x.get(sort_key)  # noqa: B023
-                        return (value is None, value)
-
-                    result.sort(key=sort_key_func, reverse=reverse)
-
-            total_rows = len(result)
-            page_number = query_data.get("page_number", 0)
-            page_size = query_data.get("page_size", 30)
-            start = int(page_number) * int(page_size)
-            end = start + int(page_size)
-            result = result[start:end]
+                total_rows = len(result)
+                page_number = query_data.get("page_number", 0)
+                page_size = query_data.get("page_size", 30)
+                start = int(page_number) * int(page_size)
+                result = result[start : start + int(page_size)]
 
             # Update config to include project name
             config = get_default_eval_task_config()
@@ -559,9 +1325,12 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
             return self._gm.success_response(response)
 
-        except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(f"error fetching the eval tasks list {str(e)}")
+        except Exception as exc:
+            logger.exception(
+                "eval_task.list_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation tasks could not be loaded")
 
     # Maximum number of distinct error groups returned per task. Most tasks
     # produce 1-5 distinct error types; this cap is a safety net for tasks
@@ -570,6 +1339,12 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
     _WARNING_GROUPS_LIMIT = 20
     _WARNING_LOG_SCAN_LIMIT = 1000
 
+    @validated_request(
+        responses={
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        }
+    )
     @action(detail=False, methods=["get"])
     def get_eval_task_logs(self, request, *args, **kwargs):
         try:
@@ -726,9 +1501,12 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         except EvalTask.DoesNotExist:
             return self._gm.bad_request(f"EvalTask with id {eval_task_id} not found.")
 
-        except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(str(e))
+        except Exception as exc:
+            logger.exception(
+                "eval_task.logs_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation task logs could not be loaded")
 
     # ──────────────────────────────────────────────────────────────────
     # GET /tracer/eval-task/get_usage/?eval_task_id=<id>&period=<>&...
@@ -739,280 +1517,218 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
     # response shape of `EvalUsageStatsView` so the frontend can reuse
     # `UsageChart`, `DataTable`, and `DataTablePagination` directly.
     # ──────────────────────────────────────────────────────────────────
-    _USAGE_PERIOD_MAP = {
-        "30m": timedelta(minutes=30),
-        "6h": timedelta(hours=6),
-        "1d": timedelta(days=1),
-        "7d": timedelta(days=7),
-        "30d": timedelta(days=30),
-        "90d": timedelta(days=90),
-        "180d": timedelta(days=180),
-        "365d": timedelta(days=365),
-    }
-
-    @action(detail=False, methods=["get"])
+    @validated_request(
+        query_serializer=EvalTaskUsageQuerySerializer,
+        responses={
+            200: EvalTaskUsageResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        },
+    )
+    @action(detail=False, methods=["get"], pagination_class=None)
     def get_usage(self, request, *args, **kwargs):
         try:
-            eval_task_id = self.request.query_params.get("eval_task_id")
-            if not eval_task_id:
-                return self._gm.bad_request("eval_task_id is required")
-
-            if (
-                not self._scope_eval_task_queryset(EvalTask.objects)
-                .filter(id=eval_task_id)
-                .exists()
-            ):
+            query_data = request.validated_query_data
+            eval_task_id = str(query_data["eval_task_id"])
+            is_aggregation = (
+                query_data["eval_aggregation"] or query_data["span_aggregation"]
+            )
+            eval_task_qs = self._scope_eval_task_queryset(EvalTask.objects).only(
+                "id", "project_id"
+            )
+            if query_data["include_summary"] and not is_aggregation:
+                configured_evals_qs = CustomEvalConfig.objects.select_related(
+                    "eval_template"
+                ).only(
+                    "id",
+                    "name",
+                    "model",
+                    "eval_template_id",
+                    "eval_template__id",
+                    "eval_template__output_type_normalized",
+                )
+                eval_task_qs = eval_task_qs.prefetch_related(
+                    Prefetch("evals", queryset=configured_evals_qs)
+                )
+            eval_task = eval_task_qs.filter(id=eval_task_id).first()
+            if eval_task is None:
                 return self._gm.bad_request(
                     f"EvalTask with id {eval_task_id} not found."
                 )
 
             # ── Query params ──
-            qp = PaginationQuerySerializer(data=self.request.query_params)
-            qp.is_valid(raise_exception=True)
-            page_size = qp.validated_data["page_size"]
-            period = self.request.query_params.get("period", "30d")
+            page_size = query_data["page_size"]
+            period = query_data["period"]
             # Optional eval filter — tasks may run multiple evals; the UI
             # passes this when the user picks one from the dropdown.
-            eval_id_filter = self.request.query_params.get("eval_id")
+            eval_id = query_data.get("eval_id")
+            eval_id_filter = str(eval_id) if eval_id else None
+            requested_start = query_data.get("start_date")
+            requested_end = query_data.get("end_date")
+            if requested_start is not None and requested_end is not None:
+                start_date = requested_start
+                end_date = requested_end
+                period_requested = "custom"
+                period_used = "custom"
+            else:
+                end_date = timezone.now()
+                start_date = end_date - _USAGE_PERIOD_DELTAS[period]
+                period_requested = period
+                period_used = period
 
             # ── Aggregation short-circuit ──
             # When either flag is set, return ONLY the aggregated payload.
             # Soft-deleted rows are excluded (intentional departure from the
             # legacy path) so rollups reflect the user's current view of
-            # the data. ``period`` is not applied — these are task-wide.
+            # the data. For compatibility, optional explicit bounds apply
+            # inclusively to the linked span's created_at. With no explicit
+            # bounds this stays task-wide and avoids a span join entirely.
             #
             # Spans-only semantics: session-target rows (``observation_span_id
             # IS NULL``) are excluded from both aggregations so the row set
             # is consistent whether or not a date range is supplied.
             #
-            # Optional ``start_date`` / ``end_date`` (ISO-8601) scope the
-            # rollup to spans whose ``observation_span.created_at`` falls
-            # in the range.
-            eval_aggregation = _truthy(
-                self.request.query_params.get("eval_aggregation")
-            )
-            span_aggregation = _truthy(
-                self.request.query_params.get("span_aggregation")
-            )
-            if eval_aggregation or span_aggregation:
+            # The finite newest-first aggregation page publishes explicit
+            # completeness metadata instead of silently scanning all history.
+            eval_aggregation = query_data["eval_aggregation"]
+            span_aggregation = query_data["span_aggregation"]
+            if is_aggregation:
                 agg_base_qs = EvalLogger.objects.filter(
                     eval_task_id=str(eval_task_id),
-                    deleted=False,
-                    observation_span_id__isnull=False,
                 )
                 if eval_id_filter:
                     agg_base_qs = agg_base_qs.filter(
                         custom_eval_config_id=eval_id_filter
                     )
-
-                start_date_str = self.request.query_params.get("start_date")
-                end_date_str = self.request.query_params.get("end_date")
-                if start_date_str:
-                    agg_base_qs = agg_base_qs.filter(
-                        observation_span__created_at__gte=datetime.fromisoformat(
-                            start_date_str
-                        )
+                aggregation_candidate_ids, aggregation_sampled = (
+                    _bounded_usage_aggregation_rows(agg_base_qs)
+                )
+                aggregation_rows = _hydrate_usage_aggregation_rows(
+                    aggregation_candidate_ids,
+                    span_start=requested_start,
+                    span_end=requested_end,
+                )
+                aggregation_metadata = _usage_aggregation_metadata(
+                    candidate_count=len(aggregation_candidate_ids),
+                    sampled=aggregation_sampled,
+                    matched_count=len(aggregation_rows),
+                )
+                agg_response = {
+                    "eval_task_id": str(eval_task_id),
+                    "aggregation_metadata": aggregation_metadata,
+                }
+                if requested_start is not None or requested_end is not None:
+                    agg_response.update(
+                        period_requested="custom",
+                        period_used="custom",
                     )
-                if end_date_str:
-                    agg_base_qs = agg_base_qs.filter(
-                        observation_span__created_at__lte=datetime.fromisoformat(
-                            end_date_str
-                        )
-                    )
-
-                agg_response = {"eval_task_id": str(eval_task_id)}
                 if eval_aggregation:
                     agg_response["eval_aggregation"] = _compute_eval_aggregation(
-                        agg_base_qs
+                        aggregation_rows
                     )
                 if span_aggregation:
                     agg_response["span_aggregation"] = _compute_span_aggregation(
-                        agg_base_qs
+                        aggregation_rows
                     )
                 return self._gm.success_response(agg_response)
 
-            period_delta = self._USAGE_PERIOD_MAP.get(period, timedelta(days=30))
-            end_date = timezone.now()
-            start_date = end_date - period_delta
-
             # ── Configured evals on this task (drives the filter dropdown) ──
-            # Each EvalLogger row links to a CustomEvalConfig, which links
-            # to an EvalTemplate that carries `output_type_normalized`
-            # ("pass_fail" | "percentage" | "deterministic"). We follow
-            # the FK chain in a single query via .values() join syntax.
-            configured_eval_configs = list(
-                CustomEvalConfig.objects.filter(eval_loggers__eval_task_id=eval_task_id)
-                .distinct()
-                .values(
-                    "id",
-                    "name",
-                    "model",
-                    "eval_template_id",
-                    "eval_template__output_type_normalized",
-                )
-            )
-            evals_meta = [
-                {
-                    "id": str(c["id"]),
-                    "name": c.get("name") or "Evaluation",
-                    "output_type": c.get("eval_template__output_type_normalized")
-                    or "pass_fail",
-                    "template_id": (
-                        str(c["eval_template_id"])
-                        if c.get("eval_template_id")
-                        else None
-                    ),
-                    "model": c.get("model"),
-                }
-                for c in configured_eval_configs
-            ]
+            # Read the task's finite configured-eval relation. Deriving this
+            # dropdown through all historical EvalLogger rows made an empty
+            # selected period scan the task's entire history before paging.
+            include_summary = query_data["include_summary"]
+            evals_meta = []
+            if include_summary:
+                configured_eval_configs = list(eval_task.evals.all())
+                evals_meta = [
+                    {
+                        "id": str(config.id),
+                        "name": config.name or "Evaluation",
+                        "output_type": (
+                            config.eval_template.output_type_normalized
+                            if config.eval_template
+                            else "pass_fail"
+                        ),
+                        "template_id": (
+                            str(config.eval_template_id)
+                            if config.eval_template_id
+                            else None
+                        ),
+                        "model": config.model,
+                    }
+                    for config in configured_eval_configs
+                ]
 
             # ── Base queryset ──
             # Match the existing get_eval_task_logs filter exactly so any
-            # task that shows logs also shows usage. We do NOT filter by
-            # `deleted` here because get_eval_task_logs doesn't either —
-            # the two endpoints must agree on what counts as a "run".
-            base_qs = EvalLogger.objects.filter(eval_task_id=str(eval_task_id))
+            # task that shows logs also shows usage. Soft-deleted predecessor
+            # work items are excluded so re-evaluation never double-counts a
+            # superseded result and the partial time index stays applicable.
+            base_qs = EvalLogger.objects.filter(
+                eval_task_id=str(eval_task_id),
+                deleted=False,
+            )
             if eval_id_filter:
                 base_qs = base_qs.filter(custom_eval_config_id=eval_id_filter)
 
-            total_runs = base_qs.count()
-            period_qs = base_qs.filter(created_at__gte=start_date)
-            runs_period = period_qs.count()
-
-            # Fallback: if the user picked a period that excludes every
-            # run but the task DOES have runs, widen the window to "all
-            # time" so they aren't staring at an empty chart. The
-            # `period_used` field tells the frontend which period was
-            # actually applied so it can surface a hint.
-            period_used = period
-            if runs_period == 0 and total_runs > 0:
-                period_qs = base_qs
-                runs_period = total_runs
-                period_used = "all"
-                # Recompute start_date to the earliest run so the
-                # zero-fill chart loop covers the right range.
-                earliest = (
-                    base_qs.order_by("created_at")
-                    .values_list("created_at", flat=True)
-                    .first()
-                )
-                if earliest:
-                    start_date = earliest
-
-            success_count = period_qs.filter(error=False).count()
-            error_count = period_qs.filter(error=True).count()
+            period_qs = base_qs.filter(
+                created_at__gte=start_date,
+                created_at__lt=end_date,
+            )
+            total_runs = 0
+            total_runs_is_lower_bound = False
+            period_rows = []
+            period_sampled = False
+            if include_summary:
+                total_runs, total_runs_is_lower_bound = _bounded_usage_count(base_qs)
+                period_rows, period_sampled = _bounded_period_usage_rows(period_qs)
+            runs_period = len(period_rows)
+            success_count = sum(not row["error"] for row in period_rows)
+            error_count = sum(row["error"] for row in period_rows)
             pass_rate = (
                 round((success_count / runs_period * 100), 2) if runs_period > 0 else 0
             )
 
             # ── Chart data — bucket by period and aggregate ──
             chart_data = []
-            if runs_period > 0:
-                # Bucket size: minutes for short periods, days for long.
-                if period == "30m":
-                    bucket_minutes = 5
-                elif period == "6h":
-                    bucket_minutes = 30
-                elif period == "1d":
-                    bucket_minutes = 60
-                elif period == "7d":
-                    bucket_minutes = 360  # 6h
-                else:
-                    bucket_minutes = 1440  # 1 day
-
-                buckets_calls = defaultdict(int)
-                buckets_pass = defaultdict(int)
-                buckets_fail = defaultdict(int)
-                buckets_scores = defaultdict(list)
-
-                for log in period_qs.values(
-                    "created_at", "error", "output_bool", "output_float"
-                ):
-                    ts = log["created_at"]
-                    # Round down to bucket boundary
-                    if bucket_minutes >= 1440:
-                        bucket_ts = ts.replace(
-                            hour=0, minute=0, second=0, microsecond=0
-                        )
-                    elif bucket_minutes >= 60:
-                        hours_per_bucket = bucket_minutes // 60
-                        bucket_ts = ts.replace(
-                            hour=(ts.hour // hours_per_bucket) * hours_per_bucket,
-                            minute=0,
-                            second=0,
-                            microsecond=0,
-                        )
-                    else:
-                        bucket_ts = ts.replace(
-                            minute=(ts.minute // bucket_minutes) * bucket_minutes,
-                            second=0,
-                            microsecond=0,
-                        )
-                    bucket_key = bucket_ts.isoformat()
-                    buckets_calls[bucket_key] += 1
-
-                    if log["error"]:
-                        buckets_fail[bucket_key] += 1
-                    else:
-                        bool_val = log["output_bool"]
-                        float_val = log["output_float"]
-                        if bool_val is True:
-                            buckets_pass[bucket_key] += 1
-                            buckets_scores[bucket_key].append(1.0)
-                        elif bool_val is False:
-                            buckets_fail[bucket_key] += 1
-                            buckets_scores[bucket_key].append(0.0)
-                        if float_val is not None:
-                            buckets_scores[bucket_key].append(float(float_val))
-
-                # Zero-fill all buckets in the range so the chart line is
-                # continuous instead of skipping empty days.
-                if bucket_minutes >= 1440:
-                    current_bucket = start_date.replace(
-                        hour=0, minute=0, second=0, microsecond=0
-                    )
-                else:
-                    current_bucket = start_date.replace(
-                        minute=(start_date.minute // bucket_minutes) * bucket_minutes,
-                        second=0,
-                        microsecond=0,
-                    )
-                while current_bucket <= end_date:
-                    key = current_bucket.isoformat()
-                    scores = buckets_scores.get(key, [])
-                    avg_score = sum(scores) / len(scores) if scores else None
-                    chart_data.append(
-                        {
-                            "timestamp": key,
-                            "calls": buckets_calls.get(key, 0),
-                            "pass_count": buckets_pass.get(key, 0),
-                            "fail_count": buckets_fail.get(key, 0),
-                            "avg_score": (
-                                round(avg_score, 3) if avg_score is not None else None
-                            ),
-                            "avg_latency_ms": 0,  # not tracked at logger level
-                        }
-                    )
-                    current_bucket += timedelta(minutes=bucket_minutes)
+            if include_summary and runs_period > 0:
+                bucket_delta = _usage_bucket_delta(
+                    period,
+                    start_date,
+                    end_date,
+                    custom=period_used == "custom",
+                )
+                aggregate_rows = _aggregate_usage_chart_rows(period_rows, bucket_delta)
+                chart_data = _build_usage_chart(
+                    aggregate_rows,
+                    start_date,
+                    end_date,
+                    bucket_delta,
+                )
 
             # ── Paginated logs ──
-            # Eager-load the related ObservationSpan + CustomEvalConfig
-            # (and through that, the EvalTemplate for output_type) in a
-            # single query — without this we'd hit N+1 inside the loop.
-            # PR3: also eager-load trace_session so session-target rows can
-            # surface session_id / session_name without an extra query.
-            logs_qs = period_qs.select_related(
-                "observation_span",
-                "custom_eval_config",
-                "custom_eval_config__eval_template",
-                "trace_session",
-            ).order_by("-created_at")
+            # Load scalar log/config/session fields in one bounded page. Span
+            # JSON is deliberately projected in one separate PK-IN query below,
+            # so a page never transfers each span's unrestricted attribute map.
+            logs_qs = _bounded_usage_logs_queryset(period_qs)
 
-            paginator = ExtendedPageNumberPagination()
-            paginator.page_size = page_size
-            logs_page = paginator.paginate_queryset(logs_qs, self.request, view=self)
+            page_number = query_data["page"]
+            offset = (page_number - 1) * page_size
+            logs_page = list(logs_qs[offset : offset + page_size + 1])
+            more_rows_exist = len(logs_page) > page_size
+            if more_rows_exist:
+                logs_page = logs_page[:page_size]
+            page_limit_reached = (
+                more_rows_exist and page_number == EVAL_TASK_USAGE_MAX_PAGE
+            )
+            has_more = more_rows_exist and not page_limit_reached
 
+            if not include_summary and page_number > 1 and not logs_page:
+                return self._gm.bad_request("Evaluation usage page is out of range.")
+
+            span_context_by_log = _bounded_usage_span_context(
+                logs_page, project_id=eval_task.project_id
+            )
             log_items = []
             for log in logs_page:
                 # Derive a Pass/Fail label and a normalized 0-1 score from
@@ -1035,8 +1751,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     score = float(log.output_float)
                     result_label = "Passed" if score >= 0.5 else "Failed"
                     status = "success"
-                elif log.output_str:
-                    result_label = log.output_str[:50]
+                elif log.usage_output_str_length:
+                    result_label = log.usage_output_str[:50]
                     score = None
                     status = "success"
                 else:
@@ -1044,7 +1760,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     score = None
                     status = "success"
 
-                obs_span = log.observation_span
+                span_context = span_context_by_log.get(str(log.id))
                 trace_session = log.trace_session
                 config = log.custom_eval_config
                 target_type = log.target_type
@@ -1053,32 +1769,58 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 # rows both have an observation_span (trace target = root
                 # span); session-target rows fall back to the session name.
                 input_str = ""
-                if obs_span:
-                    span_attrs = obs_span.span_attributes or {}
-                    input_val = (
-                        span_attrs.get("input")
-                        or span_attrs.get("input.value")
-                        or obs_span.name
-                        or ""
-                    )
-                    if isinstance(input_val, dict):
-                        input_str = json.dumps(input_val)[:200]
+                if span_context:
+                    input_value = span_context.get("input")
+                    if isinstance(input_value, (dict, list)):
+                        input_str = json.dumps(input_value, default=str)[:200]
+                    elif input_value not in (None, ""):
+                        input_str = str(input_value)[:200]
                     else:
-                        input_str = str(input_val)[:200]
+                        input_str = (span_context.get("name") or "")[:200]
                 elif trace_session:
                     input_str = (trace_session.name or "")[:200]
 
-                reason = log.eval_explanation or log.error_message or ""
-
-                # Partial-input warnings stored on output_metadata by the
-                # tracer eval path. Surface at the row level so the FE
-                # can render a yellow indicator alongside other status.
-                _output_meta = log.output_metadata or {}
-                warnings = (
-                    _output_meta.get("warnings")
-                    if isinstance(_output_meta, dict)
-                    else None
+                reason = _bounded_usage_preview(
+                    log.usage_reason,
+                    log.usage_reason_length,
                 )
+
+                warnings = _parse_usage_json_preview(
+                    log.usage_warnings,
+                    log.usage_warnings_length,
+                )
+                if isinstance(warnings, dict):
+                    warnings = [warnings]
+                elif not isinstance(warnings, list):
+                    warnings = []
+                results_explanation = _parse_usage_json_preview(
+                    log.usage_results_explanation,
+                    log.usage_results_explanation_length,
+                )
+                omitted_fields = list((span_context or {}).get("omitted_fields") or [])
+                if log.observation_span_id and not span_context:
+                    omitted_fields.append("span_context")
+                for field_name, value, original_length in (
+                    ("reason_tail", log.usage_reason, log.usage_reason_length),
+                    (
+                        "output_str_tail",
+                        log.usage_output_str,
+                        log.usage_output_str_length,
+                    ),
+                    (
+                        "error_message_tail",
+                        log.usage_error_message,
+                        log.usage_error_message_length,
+                    ),
+                    ("warnings_tail", log.usage_warnings, log.usage_warnings_length),
+                    (
+                        "results_explanation_tail",
+                        log.usage_results_explanation,
+                        log.usage_results_explanation_length,
+                    ),
+                ):
+                    if _usage_preview_was_truncated(value, original_length):
+                        omitted_fields.append(field_name)
 
                 log_items.append(
                     {
@@ -1098,10 +1840,16 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                         # observe page. Span and trace rows expose span/trace
                         # IDs (trace target = root span); session rows expose
                         # session_id with both other IDs NULL.
-                        "span_id": str(obs_span.id) if obs_span else None,
+                        "span_id": (
+                            str(log.observation_span_id)
+                            if log.observation_span_id
+                            else None
+                        ),
                         "trace_id": (
-                            str(obs_span.trace_id)
-                            if obs_span and obs_span.trace_id
+                            str(span_context.get("trace_id"))
+                            if span_context and span_context.get("trace_id")
+                            else str(log.trace_id)
+                            if log.trace_id
                             else None
                         ),
                         "session_id": (
@@ -1111,6 +1859,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                         "eval_name": config.name if config else None,
                         "model": config.model if config else None,
                         "detail": {
+                            "detail_complete": not omitted_fields,
+                            "omitted_fields": omitted_fields,
                             "eval_name": config.name if config else None,
                             "model": config.model if config else None,
                             "warnings": warnings or [],
@@ -1123,11 +1873,19 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                             # labels per row (Span ID vs Session ID etc.)
                             # without having to look up the parent EvalTask.
                             "target_type": target_type,
-                            "span_name": obs_span.name if obs_span else None,
-                            "span_id": str(obs_span.id) if obs_span else None,
+                            "span_name": (
+                                span_context.get("name") if span_context else None
+                            ),
+                            "span_id": (
+                                str(log.observation_span_id)
+                                if log.observation_span_id
+                                else None
+                            ),
                             "trace_id": (
-                                str(obs_span.trace_id)
-                                if obs_span and obs_span.trace_id
+                                str(span_context.get("trace_id"))
+                                if span_context and span_context.get("trace_id")
+                                else str(log.trace_id)
+                                if log.trace_id
                                 else None
                             ),
                             "session_id": (
@@ -1138,53 +1896,109 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                             ),
                             "output_bool": log.output_bool,
                             "output_float": log.output_float,
-                            "output_str": log.output_str,
-                            "results_explanation": log.results_explanation,
-                            "error_message": log.error_message,
-                            # Eval mapping resolved against the span — the
-                            # side panel renders these as {var: value}
-                            # rows with JsonValueTree for object values.
-                            "input_variables": _resolve_input_variables(
-                                config, obs_span
+                            "output_str": _bounded_usage_preview(
+                                log.usage_output_str,
+                                log.usage_output_str_length,
+                            ),
+                            "results_explanation": results_explanation,
+                            "error_message": _bounded_usage_preview(
+                                log.usage_error_message,
+                                log.usage_error_message_length,
+                            ),
+                            "input_variables": (
+                                span_context.get("input_variables", {})
+                                if span_context
+                                else {}
                             ),
                         },
                     }
                 )
 
+            next_url = (
+                replace_query_param(
+                    request.build_absolute_uri(), "page", page_number + 1
+                )
+                if has_more
+                else None
+            )
+            previous_url = (
+                replace_query_param(
+                    request.build_absolute_uri(), "page", page_number - 1
+                )
+                if page_number > 1
+                else None
+            )
+            logs_count, logs_total_pages, logs_count_is_lower_bound = (
+                _usage_logs_page_metadata(
+                    include_summary=include_summary,
+                    runs_period=runs_period,
+                    period_sampled=period_sampled,
+                    page_number=page_number,
+                    page_size=page_size,
+                    page_row_count=len(log_items),
+                    more_rows_exist=more_rows_exist,
+                    page_limit_reached=page_limit_reached,
+                )
+            )
+            logs_result = {
+                "count": logs_count,
+                "next": next_url,
+                "previous": previous_url,
+                "results": log_items,
+                "total_pages": logs_total_pages,
+                "current_page": page_number,
+                "has_more": has_more,
+                "count_is_lower_bound": logs_count_is_lower_bound,
+                "page_limit_reached": page_limit_reached,
+            }
             response = {
                 "eval_task_id": str(eval_task_id),
-                "stats": {
-                    "total_runs": total_runs,
-                    "runs_period": runs_period,
-                    "success_count": success_count,
-                    "error_count": error_count,
-                    "pass_rate": pass_rate,
-                },
-                "evals": evals_meta,
-                "chart": chart_data,
-                # Paginator native shape (matches eval_logs):
-                # {count, next, previous, results, total_pages, current_page}
-                "logs": paginator.get_paginated_response(log_items).data,
-                # Echo back the period actually used. If the user picked
-                # "30D" but the task only has older runs, this will be
-                # "all" — the frontend can show a hint explaining why.
-                "period_requested": period,
+                "logs": logs_result,
+                # The selected window is never silently widened to all task
+                # history. Empty periods remain bounded, honest empty charts.
+                "period_requested": period_requested,
                 "period_used": period_used,
             }
+            if include_summary:
+                summary_sampled = period_sampled or total_runs_is_lower_bound
+                response.update(
+                    stats={
+                        "total_runs": total_runs,
+                        "runs_period": runs_period,
+                        "success_count": success_count,
+                        "error_count": error_count,
+                        "pass_rate": pass_rate,
+                        "total_runs_is_lower_bound": total_runs_is_lower_bound,
+                        "runs_period_is_lower_bound": period_sampled,
+                    },
+                    evals=evals_meta,
+                    chart=chart_data,
+                    query_complete=not summary_sampled,
+                    query_status="sampled" if summary_sampled else "complete",
+                    query_sampled=summary_sampled,
+                    provenance="newest_eval_task_rows",
+                )
+                if summary_sampled:
+                    response["error"] = "sample_limit"
             return self._gm.success_response(response)
 
-        except Exception as e:
-            traceback.print_exc()
-            logger.error(
-                "eval_task.get_usage failed",
-                error=str(e),
+        except ValidationError as exc:
+            return self._gm.bad_request(exc.detail)
+        except Exception as exc:
+            logger.exception(
+                "eval_task.get_usage_failed",
+                error_type=type(exc).__name__,
                 eval_task_id=request.query_params.get("eval_task_id"),
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request("Evaluation task usage could not be loaded")
 
     @validated_request(
         request_serializer=EvalTaskDeleteRequestSerializer,
-        responses={200: EvalTaskMessageResponseSerializer},
+        responses={
+            200: EvalTaskMessageResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        },
     )
     @action(detail=False, methods=["post"])
     def mark_eval_tasks_deleted(self, request, *args, **kwargs):
@@ -1229,14 +2043,21 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 {"message": "Eval tasks marked as deleted successfully"}
             )
 
-        except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(str(e))
+        except Exception as exc:
+            logger.exception(
+                "eval_task.delete_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation tasks could not be deleted")
 
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         query_serializer=EvalTaskIdQuerySerializer,
-        responses={200: EvalTaskMessageResponseSerializer},
+        responses={
+            200: EvalTaskMessageResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        },
     )
     @action(detail=False, methods=["post"])
     def pause_eval_task(self, request, *args, **kwargs):
@@ -1270,14 +2091,21 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 {"message": "Eval task paused successfully"}
             )
 
-        except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(str(e))
+        except Exception as exc:
+            logger.exception(
+                "eval_task.pause_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation task could not be paused")
 
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         query_serializer=EvalTaskIdQuerySerializer,
-        responses={200: EvalTaskMessageResponseSerializer},
+        responses={
+            200: EvalTaskMessageResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        },
     )
     @action(detail=False, methods=["post"])
     def unpause_eval_task(self, request, *args, **kwargs):
@@ -1304,18 +2132,27 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
             # Pause exits the workflow; resuming starts a fresh run that picks up
             # the remaining pending/running entries.
-            start_eval_task_workflow_sync(eval_task)
+            start_eval_task_workflow_sync(eval_task, replace_existing=True)
 
             return self._gm.success_response(
                 {"message": "Eval task unpaused successfully"}
             )
 
-        except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(str(e))
+        except Exception as exc:
+            logger.exception(
+                "eval_task.unpause_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation task could not be resumed")
 
     @action(detail=False, methods=["get"], pagination_class=None)
-    @validated_request(query_serializer=EvalTaskListWithProjectNameQuerySerializer)
+    @validated_request(
+        query_serializer=EvalTaskListWithProjectNameQuerySerializer,
+        responses={
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        },
+    )
     def list_eval_tasks_with_project_name(self, request, *args, **kwargs):
         """
         List Eval Tasks filtered
@@ -1324,55 +2161,58 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             query_data = request.validated_query_data
 
             queryset = self.get_queryset()
+            orm_page = self._eval_task_orm_page(
+                queryset, query_data, include_project_name=True
+            )
+            if orm_page is not None:
+                result, total_rows = orm_page
+            else:
+                # Preserve FilterEngine's arbitrary result-dict semantics when
+                # a requested field/type/operator cannot be compiled to ORM.
+                result = []
+                for eval_task in queryset:
+                    # ``evals`` is prefetched in ``get_queryset`` — calling
+                    # ``.exists()`` would bypass that cache.
+                    if not eval_task.evals.all():
+                        continue
+                    result.append(
+                        {
+                            "id": str(eval_task.id),
+                            "name": eval_task.name,
+                            "project_name": eval_task.project.name,
+                            "status": eval_task.status,
+                            "run_type": eval_task.run_type,
+                            "filters_applied": eval_task.filters,
+                            "created_at": eval_task.created_at,
+                            "evals_applied": [
+                                eval.name for eval in eval_task.evals.all()
+                            ],
+                            "sampling_rate": eval_task.sampling_rate,
+                            "last_run": eval_task.last_run,
+                        }
+                    )
 
-            result = []
-            for eval_task in queryset:
-                # ``evals`` is prefetched in ``get_queryset`` — calling
-                # ``.exists()`` would fire a fresh COUNT(*) query per row
-                # and bypass the cache. Check the prefetched list directly.
-                if not eval_task.evals.all():
-                    continue
+                filters = query_data.get("filters", [])
+                if filters:
+                    result = FilterEngine(result).apply_filters(filters)
 
-                parsed_data = {
-                    "id": str(eval_task.id),
-                    "name": eval_task.name,
-                    "project_name": eval_task.project.name,
-                    "status": eval_task.status,
-                    "run_type": eval_task.run_type,
-                    "filters_applied": eval_task.filters,
-                    "created_at": eval_task.created_at,
-                    "evals_applied": [eval.name for eval in eval_task.evals.all()],
-                    "sampling_rate": eval_task.sampling_rate,
-                    "last_run": eval_task.last_run,
-                }
-                result.append(parsed_data)
+                sort_params = query_data.get("sort_params", [])
+                if sort_params:
+                    for sort_param in reversed(sort_params):
+                        sort_key = sort_param.get("column_id")
+                        reverse = sort_param.get("direction", "asc") == "desc"
 
-            filters = query_data.get("filters", [])
-            if filters:
-                filter_engine = FilterEngine(result)
-                result = filter_engine.apply_filters(filters)
+                        def sort_key_func(x):
+                            value = x.get(sort_key)  # noqa: B023
+                            return (value is None, value)
 
-            sort_params = query_data.get("sort_params", [])
-            if sort_params:
-                for sort_param in reversed(sort_params):
-                    sort_key = sort_param.get("column_id")
-                    sort_direction = sort_param.get("direction", "asc")
-                    reverse = sort_direction == "desc"
+                        result.sort(key=sort_key_func, reverse=reverse)
 
-                    def sort_key_func(x):
-                        value = x.get(sort_key)  # noqa: B023
-                        # Return a tuple where the first element indicates if the value is None
-                        # This ensures None values are consistently sorted to the end
-                        return (value is None, value)
-
-                    result.sort(key=sort_key_func, reverse=reverse)
-
-            total_rows = len(result)
-            page_number = query_data.get("page_number", 0)
-            page_size = query_data.get("page_size", 10)
-            start = int(page_number) * int(page_size)
-            end = start + int(page_size)
-            result = result[start:end]
+                total_rows = len(result)
+                page_number = query_data.get("page_number", 0)
+                page_size = query_data.get("page_size", 10)
+                start = int(page_number) * int(page_size)
+                result = result[start : start + int(page_size)]
 
             # Update config to include project name
             config = get_default_eval_task_config(is_project_name_visible=True)
@@ -1387,13 +2227,20 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
             return self._gm.success_response(response)
 
-        except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(f"error fetching the traces list {str(e)}")
+        except Exception as exc:
+            logger.exception(
+                "eval_task.list_with_project_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation tasks could not be loaded")
 
     @validated_request(
         request_serializer=EvalTaskUpdateRequestSerializer,
-        responses={200: EvalTaskUpdateResponseSerializer},
+        responses={
+            200: EvalTaskUpdateResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        },
     )
     @action(detail=False, methods=["patch"])
     def update_eval_task(self, request, *args, **kwargs):
@@ -1417,6 +2264,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 return self._gm.bad_request(serializer.errors)
 
             validated_data = serializer.validated_data
+            if "filters" in validated_data:
+                validated_data["filters"] = bind_request_my_annotations_principal(
+                    request,
+                    validated_data["filters"],
+                )
             edit_type = validated_data["edit_type"]
 
             # Get eval task with row-level locking to prevent concurrent modifications
@@ -1511,12 +2363,39 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 task_serializer.is_valid(raise_exception=True)
                 eval_task = task_serializer.save()
 
+                effective_run_type = update_fields.get("run_type", original_run_type)
+                if effective_run_type == RunType.CONTINUOUS and (
+                    rows_changed
+                    or evals_changed
+                    or original_run_type != effective_run_type
+                    or edit_type == "fresh_run"
+                ):
+                    # A selection/eval-set edit invalidates an arrival delta:
+                    # rows older than the overlap may newly match (or stop
+                    # matching). Reset inside this locked transaction so the
+                    # next reconcile performs a complete start-time proof.
+                    EvalTask.objects.filter(id=eval_task.id).update(
+                        continuous_cursor=None
+                    )
+                    eval_task.continuous_cursor = None
+
                 # Delete & rerun wipes live entries first; the workflow then
                 # reconciles (materialize/diff) and drains for both cases, so the
                 # request returns without doing that work synchronously.
                 if edit_type == "fresh_run":
                     soft_delete_live(eval_task)
-                start_eval_task_workflow_sync(eval_task)
+                # Temporal must not see the rerun until the PENDING state and
+                # all config/result changes are committed.  A fast worker can
+                # otherwise attempt its guarded PENDING -> RUNNING transition
+                # against the old row and leave an active workflow stranded
+                # behind a PENDING task.  Keep callback failures non-robust so
+                # the existing API error contract still surfaces dispatch
+                # failures; the committed PENDING row is safe to retry.
+                transaction.on_commit(
+                    lambda: start_eval_task_workflow_sync(
+                        eval_task, replace_existing=True
+                    )
+                )
 
                 return self._gm.success_response(
                     {
@@ -1529,11 +2408,17 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     }
                 )
 
-        except Exception as e:
-            logger.error(
-                f"Error updating eval task {eval_task_id}: {str(e)}", exc_info=True
+        except ValidationError as exc:
+            return self._gm.bad_request(exc.detail)
+        except FilterPrincipalContextError as exc:
+            return self._gm.bad_request(str(exc))
+        except Exception as exc:
+            logger.exception(
+                "eval_task.update_failed",
+                eval_task_id=eval_task_id,
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(f"Error updating evaluation task: {str(e)}")
+            return self._gm.bad_request("Evaluation task could not be updated")
 
     def _extract_update_fields(self, validated_data):
         """Extract valid update fields from validated data.
@@ -1560,6 +2445,13 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
         return update_fields
 
+    @validated_request(
+        responses={
+            400: ApiErrorResponseSerializer,
+            404: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        }
+    )
     @action(detail=False, methods=["get"])
     def get_eval_details(self, request, *args, **kwargs):
         try:
@@ -1616,6 +2508,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
         except EvalTask.DoesNotExist:
             return self._gm.not_found("Eval task not found")
-        except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(f"Error fetching eval task details {str(e)}")
+        except Exception as exc:
+            logger.exception(
+                "eval_task.details_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation task details could not be loaded")

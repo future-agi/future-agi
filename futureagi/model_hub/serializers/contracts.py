@@ -1633,6 +1633,18 @@ class EvalTemplateListChartsItemSerializer(serializers.Serializer):
 
 class EvalTemplateListChartsResponseResultSerializer(serializers.Serializer):
     charts = serializers.DictField(child=EvalTemplateListChartsItemSerializer())
+    query_complete = serializers.BooleanField()
+    query_status = serializers.ChoiceField(choices=["complete", "stale", "degraded"])
+    query_sampled = serializers.BooleanField()
+    query_error_code = serializers.ChoiceField(
+        choices=[
+            "read_budget_exceeded",
+            "template_limit_exceeded",
+            "query_failed",
+        ],
+        required=False,
+    )
+    data_stale = serializers.BooleanField()
 
 
 class EvalTemplateListChartsResponseSerializer(serializers.Serializer):
@@ -1769,8 +1781,11 @@ class EvalUsageQuerySerializer(serializers.Serializer):
     # Optional explicit date range — when provided, overrides the period
     # string. Sent by the frontend for Today, Yesterday, and Custom date
     # picker selections.
-    start_date = serializers.DateTimeField(required=False, allow_null=True, default=None)
+    start_date = serializers.DateTimeField(
+        required=False, allow_null=True, default=None
+    )
     end_date = serializers.DateTimeField(required=False, allow_null=True, default=None)
+    refresh = serializers.BooleanField(required=False, default=False)
 
     def validate(self, attrs):
         # Both or neither. Half a range silently falling back to `period`
@@ -1924,10 +1939,25 @@ class EvalUsageTableRowSerializer(_ExtraFieldsMixin, serializers.Serializer):
 class EvalUsageStatsResponseResultSerializer(serializers.Serializer):
     template_id = serializers.UUIDField()
     is_composite = serializers.BooleanField()
+    completeness = serializers.ChoiceField(
+        choices=["complete", "degraded", "pending"], required=False
+    )
+    unavailable_fields = serializers.ListField(
+        child=serializers.CharField(), required=False
+    )
     stats = EvalUsageStatsSerializer()
     chart = EvalUsageChartPointSerializer(many=True)
     table = serializers.ListField(child=EvalUsageTableRowSerializer())
     logs = EvalUsagePaginationSerializer()
+    query_complete = serializers.BooleanField(required=False)
+    query_status = serializers.ChoiceField(
+        choices=["complete", "degraded", "pending"], required=False
+    )
+    query_sampled = serializers.BooleanField(required=False)
+    query_completed_at = serializers.DateTimeField(required=False)
+    query_cached = serializers.BooleanField(required=False)
+    query_refresh_failed = serializers.BooleanField(required=False)
+    query_refreshing = serializers.BooleanField(required=False)
 
 
 class EvalUsageStatsResponseSerializer(serializers.Serializer):

@@ -1,27 +1,13 @@
-from typing import Optional
-
 import structlog
 from django.db import connection
 from django.db.models import (
-    Avg,
-    Case,
-    Count,
-    Exists,
     F,
-    FloatField,
-    IntegerField,
-    JSONField,
-    Max,
-    Min,
     OuterRef,
     Q,
     Subquery,
-    Value,
-    When,
 )
-from django.db.models.functions import Coalesce, JSONObject, Round
+from django.db.models.functions import Round
 
-logger = structlog.get_logger(__name__)
 from model_hub.models.run_prompt import PromptTemplate
 from model_hub.utils.SQL_queries import (
     create_boolean_eval_cte,
@@ -33,13 +19,15 @@ from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.utils.filters import FilterEngine
 
+logger = structlog.get_logger(__name__)
+
 
 def fetch_prompt_metrics_query_sql_cte(
     prompt_template: PromptTemplate,
     eval_configs: list[CustomEvalConfig],
     filters: dict,
-    page_number: Optional[int] = 0,
-    page_size: Optional[int] = 10,
+    page_number: int | None = 0,
+    page_size: int | None = 10,
 ):
     """
     Fetch prompt metrics using raw SQL with CTE (Common Table Expression) approach.
@@ -135,7 +123,11 @@ def fetch_prompt_metrics_query_sql_cte(
         )
 
         # Build final SELECT with joins
-        final_select = "\nSELECT base.*"
+        # Publish the filtered population count from the same statement that
+        # returns the page.  The prior service used ``len(page)``, which made
+        # every full page look like the final page to AG Grid and prevented
+        # frontend read-more from requesting the next block.
+        final_select = "\nSELECT base.*, count(*) OVER () AS __total_rows"
         if cte_selects and len(cte_selects) > 0:
             final_select += ", " + ", ".join(cte_selects)
         final_select += "\nFROM base\n"
@@ -173,8 +165,10 @@ def fetch_prompt_metrics_query_sql_cte(
 
             # Convert results to list of dictionaries
             results = []
+            total_count = 0
             for row in cursor.fetchall():
-                row_dict = dict(zip(columns, row))
+                row_dict = dict(zip(columns, row, strict=True))
+                total_count = int(row_dict.pop("__total_rows", total_count) or 0)
 
                 # Convert any datetime objects to strings for JSON serialization
                 for key, value in row_dict.items():
@@ -183,13 +177,13 @@ def fetch_prompt_metrics_query_sql_cte(
 
                 results.append(row_dict)
 
-        return results
+        return results, total_count
 
     except (ValueError, TypeError) as e:
-        logger.exception(f"Invalid parameters for prompt metrics query")
+        logger.exception("Invalid parameters for prompt metrics query")
         raise ValueError(f"Invalid filter or configuration parameters: {str(e)}") from e
-    except Exception as e:
-        logger.exception(f"Database error while fetching prompt metrics with CTE SQL")
+    except Exception:
+        logger.exception("Database error while fetching prompt metrics with CTE SQL")
         raise
 
 
@@ -261,7 +255,6 @@ def fetch_prompt_metrics_span_query(
 
     # Add annotations for each eval config dynamically
     for config in eval_configs:
-
         annotation_value: Round | F | None = None
 
         if config.eval_template.config.get("output") == "score":

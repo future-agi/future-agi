@@ -41,6 +41,7 @@ const DateTimeRangePicker = ({
 }) => {
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const dateDisplayRef = useRef(null);
+  const lastPropagatedDateFilterRef = useRef(null);
   const [startDate, setStartDate] = useState(null);
   const [endDate, setEndDate] = useState(null);
   const [dateFilter, setDateFilter] = useState(() => {
@@ -201,6 +202,11 @@ const DateTimeRangePicker = ({
 
     if (filter) {
       setDateFilter(filter);
+      // Keep the parent option and range atomic. Waiting for the effect below
+      // briefly pairs the new option with the previous range and can trigger
+      // duplicate API reads against an incorrect window.
+      lastPropagatedDateFilterRef.current = filter;
+      setParentDateFilter?.(filter);
     }
 
     setDateOption(newOption);
@@ -234,7 +240,10 @@ const DateTimeRangePicker = ({
 
   useEffect(() => {
     if (zoomRange && zoomRange.length === 2 && zoomRange[0] && zoomRange[1]) {
-      setDateFilter([zoomRange[0], zoomRange[1]]);
+      const filter = [zoomRange[0], zoomRange[1]];
+      setDateFilter(filter);
+      lastPropagatedDateFilterRef.current = filter;
+      setParentDateFilter?.(filter);
       setDateOption("Custom");
     }
   }, [zoomRange]);
@@ -251,7 +260,11 @@ const DateTimeRangePicker = ({
   }, [dateFilter, isEdit]);
 
   useEffect(() => {
-    if (setParentDateFilter) {
+    if (
+      setParentDateFilter &&
+      lastPropagatedDateFilterRef.current !== dateFilter
+    ) {
+      lastPropagatedDateFilterRef.current = dateFilter;
       setParentDateFilter(dateFilter);
     }
     setStartDate(format(new Date(dateFilter[0]), "dd/MM/yyyy"));
@@ -340,7 +353,11 @@ const DateTimeRangePicker = ({
           open={isDatePickerOpen}
           onClose={() => setIsDatePickerOpen(false)}
           anchorEl={dateDisplayRef?.current}
-          setDateFilter={setDateFilter}
+          setDateFilter={(filter) => {
+            setDateFilter(filter);
+            lastPropagatedDateFilterRef.current = filter;
+            setParentDateFilter?.(filter);
+          }}
           setDateOption={setDateOption}
         />
       </Box>

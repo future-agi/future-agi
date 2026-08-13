@@ -9,22 +9,12 @@ the new method goes through one of the already-overridden ones.
 Cheap to run: pure-Python (no DB), exercises each v2 builder's public
 build* methods with minimal valid input.
 """
+
 from __future__ import annotations
 
 import re
 
-import pytest
-
 # v2 builders under test
-from tracer.services.clickhouse.v2.query_builders.dashboard import (
-    DashboardQueryBuilderV2,
-)
-from tracer.services.clickhouse.v2.query_builders.eval_metrics import (
-    EvalMetricsQueryBuilderV2,
-)
-from tracer.services.clickhouse.v2.query_builders.monitor_metrics import (
-    MonitorMetricsQueryBuilderV2,
-)
 from tracer.services.clickhouse.v2.query_builders.session_list import (
     SessionListQueryBuilderV2,
 )
@@ -37,7 +27,6 @@ from tracer.services.clickhouse.v2.query_builders.trace_list import (
 from tracer.services.clickhouse.v2.query_builders.voice_call_list import (
     VoiceCallListQueryBuilderV2,
 )
-
 
 PROJECT_ID = "11111111-1111-1111-1111-111111111111"
 
@@ -57,8 +46,8 @@ LEGACY_TOKENS = (
 # for downstream Python callers; the legacy name in alias position is
 # intentional and SHOULD NOT fail the sweep.
 LEGACY_REF_RE = re.compile(
-    r"(?<!\bAS\s)"                       # not preceded by `AS ` (alias position)
-    r"(?<!\b[Aa][Ss]\s)"                  # case-insensitive AS
+    r"(?<!\bAS\s)"  # not preceded by `AS ` (alias position)
+    r"(?<!\b[Aa][Ss]\s)"  # case-insensitive AS
     r"\b(" + "|".join(LEGACY_TOKENS) + r")\b"
     r"(?![A-Za-z0-9_])"
 )
@@ -69,11 +58,11 @@ def _assert_no_legacy(sql: str, label: str) -> None:
     for match in LEGACY_REF_RE.finditer(sql):
         # The regex's lookbehind only checks the IMMEDIATELY preceding 3 chars;
         # also reject any token preceded by `AS <whitespace>+` (any indent).
-        tail = sql[max(0, match.start() - 8):match.start()]
+        tail = sql[max(0, match.start() - 8) : match.start()]
         if tail.rstrip().lower().endswith(" as"):
-            continue                       # alias position, ignore
+            continue  # alias position, ignore
         start = max(0, match.start() - 50)
-        end   = min(len(sql), match.end() + 50)
+        end = min(len(sql), match.end() + 50)
         raise AssertionError(
             f"{label}: legacy column '{match.group(0)}' referenced in v2 SQL\n"
             f"  context: …{sql[start:end]}…"
@@ -83,9 +72,13 @@ def _assert_no_legacy(sql: str, label: str) -> None:
 # ─── SpanList ────────────────────────────────────────────────────────────────
 def _span_list_builder():
     return SpanListQueryBuilderV2(
-        project_id=PROJECT_ID, page_number=0, page_size=10,
-        filters=[], sort_params=[],
-        eval_config_ids=[], annotation_label_ids=[],
+        project_id=PROJECT_ID,
+        page_number=0,
+        page_size=10,
+        filters=[],
+        sort_params=[],
+        eval_config_ids=[],
+        annotation_label_ids=[],
     )
 
 
@@ -107,9 +100,13 @@ def test_span_list_v2_content_no_legacy():
 # ─── TraceList ───────────────────────────────────────────────────────────────
 def _trace_list_builder():
     return TraceListQueryBuilderV2(
-        project_id=PROJECT_ID, page_number=0, page_size=10,
-        filters=[], sort_params=[],
-        eval_config_ids=[], annotation_label_ids=[],
+        project_id=PROJECT_ID,
+        page_number=0,
+        page_size=10,
+        filters=[],
+        sort_params=[],
+        eval_config_ids=[],
+        annotation_label_ids=[],
     )
 
 
@@ -129,7 +126,9 @@ def test_trace_list_v2_content_no_legacy():
 
 
 def test_trace_list_v2_span_attributes_no_legacy():
-    sql, _ = _trace_list_builder().build_span_attributes_query(trace_ids=["t1"])
+    sql, _ = _trace_list_builder().build_span_attributes_query(
+        trace_ids=["t1"], attribute_keys=["final_status"]
+    )
     _assert_no_legacy(sql, "TraceList.build_span_attributes_query")
 
 
@@ -141,9 +140,13 @@ def test_trace_list_v2_span_count_no_legacy():
 # ─── SessionList ─────────────────────────────────────────────────────────────
 def _session_list_builder():
     return SessionListQueryBuilderV2(
-        project_id=PROJECT_ID, page_number=0, page_size=10,
-        filters=[], sort_params=[],
-        eval_config_ids=[], annotation_label_ids=[],
+        project_id=PROJECT_ID,
+        page_number=0,
+        page_size=10,
+        filters=[],
+        sort_params=[],
+        eval_config_ids=[],
+        annotation_label_ids=[],
     )
 
 
@@ -160,9 +163,13 @@ def test_session_list_v2_count_no_legacy():
 # ─── VoiceCallList ───────────────────────────────────────────────────────────
 def _voice_call_builder():
     return VoiceCallListQueryBuilderV2(
-        project_id=PROJECT_ID, page_number=0, page_size=10,
-        filters=[], sort_params=[],
-        eval_config_ids=[], annotation_label_ids=[],
+        project_id=PROJECT_ID,
+        page_number=0,
+        page_size=10,
+        filters=[],
+        sort_params=[],
+        eval_config_ids=[],
+        annotation_label_ids=[],
     )
 
 

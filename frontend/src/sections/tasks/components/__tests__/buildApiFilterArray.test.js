@@ -17,9 +17,9 @@ describe("buildApiFilterArray — task live-preview wire builder", () => {
     ]);
 
     expect(out).toHaveLength(2);
-    expect(
-      out.every((f) => f.filter_config.filter_op === "not_contains"),
-    ).toBe(true);
+    expect(out.every((f) => f.filter_config.filter_op === "not_contains")).toBe(
+      true,
+    );
     expect(out.map((f) => f.filter_config.filter_value)).toEqual([
       "enterprise",
       "startup",

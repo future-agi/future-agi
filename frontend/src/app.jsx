@@ -41,6 +41,7 @@ import logger from "./utils/logger";
 import { useGoogleReCaptcha } from "react-google-recaptcha-v3";
 import { setRecaptchaExecutor } from "./utils/recaptchaService";
 import { AudioPlaybackProvider } from "./components/custom-audio/context-provider/AudioPlaybackContext";
+import { getSafeActionErrorMessage } from "./utils/errorUtils";
 
 // ----------------------------------------------------------------------
 const _extractParts = (result) => {
@@ -60,7 +61,8 @@ const _extractParts = (result) => {
   return String(result);
 };
 
-const extractErrorMessage = (result) => _extractParts(result) || "Something went wrong";
+const extractErrorMessage = (result) =>
+  _extractParts(result) || "Something went wrong";
 
 const handleError = (error, variable, context, mutation) => {
   if (error?.statusCode == RESPONSE_CODES.LIMIT_REACHED) return;
@@ -70,7 +72,14 @@ const handleError = (error, variable, context, mutation) => {
   )
     return;
   if (error?.result) {
-    enqueueSnackbar(extractErrorMessage(error.result), {
+    const message = getSafeActionErrorMessage(
+      {
+        statusCode: error?.statusCode,
+        result: extractErrorMessage(error.result),
+      },
+      "Something went wrong",
+    );
+    enqueueSnackbar(message, {
       variant: "error",
     });
   }

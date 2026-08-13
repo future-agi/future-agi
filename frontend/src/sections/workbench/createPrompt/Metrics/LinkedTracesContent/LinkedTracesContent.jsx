@@ -20,6 +20,7 @@ import {
 } from "src/sections/projects/LLMTracing/common";
 import { getRandomId } from "src/utils/utils";
 import MetricEmptyState from "../MetricEmptyState";
+import { getZeroBasedGridPage } from "src/utils/agGridPagination";
 
 const LoadingHeader = () => {
   return <Skeleton variant="text" width={100} height={20} />;
@@ -170,6 +171,10 @@ const LinkedTracesContent = () => {
       getRows: async (params) => {
         try {
           setIsLoading(true);
+          const { pageNumber, pageSize } = getZeroBasedGridPage(
+            params.request,
+            10,
+          );
 
           // The span-name column's id is "name" but the backend filter map keys it "span_name".
           const validFilters = filters?.reduce((acc, f) => {
@@ -187,6 +192,8 @@ const LinkedTracesContent = () => {
               params: {
                 prompt_template_id: id,
                 search_term: debouncedSearchQuery,
+                page_number: pageNumber,
+                page_size: pageSize,
                 ...(validFilters?.length
                   ? { filters: JSON.stringify(normalizeFilters(validFilters)) }
                   : {}),

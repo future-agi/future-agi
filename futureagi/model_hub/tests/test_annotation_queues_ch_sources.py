@@ -27,6 +27,7 @@ Remaining cells to extend (same pattern, documented for the next pass):
 """
 
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest import mock
@@ -176,7 +177,59 @@ class _ReaderCM:
         ids = {str(s) for s in span_ids}
         if self._span is None or str(self._span.id) not in ids:
             return {}
-        return {str(self._span.id): SimpleNamespace(project_id=str(self._span.project_id))}
+        return {
+            str(self._span.id): SimpleNamespace(project_id=str(self._span.project_id))
+        }
+
+
+class _MultiSpanReaderCM(_ReaderCM):
+    def __init__(self, spans):
+        self._spans = spans
+        super().__init__(spans[0] if spans else None)
+
+    def list_by_ids(
+        self,
+        span_ids,
+        *,
+        project_id=None,
+        include_heavy=True,
+        org_id=None,
+        dedup_via_limit_by=False,
+    ):
+        ids = {str(span_id) for span_id in span_ids}
+        return [
+            span
+            for span in self._spans
+            if str(span.id) in ids
+            and (project_id is None or str(span.project_id) == str(project_id))
+        ]
+
+
+def test_enumerated_queue_resolution_rejects_reused_bare_span_id():
+    from model_hub.utils.annotation_queue_helpers import _batch_ch_spans
+
+    project_id = str(uuid.uuid4())
+    first = _make_chspan(
+        project_id=project_id,
+        span_id="reused-span",
+        trace_id="trace-a",
+    )
+    second = replace(
+        first,
+        trace_id="trace-b",
+        start_time=datetime(2025, 5, 1, 10, 1, 0, tzinfo=UTC),
+    )
+
+    with mock.patch(CH_READER_PATH, return_value=_MultiSpanReaderCM([first, second])):
+        resolved = _batch_ch_spans(
+            ["reused-span"],
+            project_id=project_id,
+            include_heavy=False,
+            caller="add_items",
+            reject_ambiguous_ids=True,
+        )
+
+    assert resolved == {}
 
 
 def _project(organization, workspace):
@@ -342,7 +395,6 @@ class TestExportToDatasetCollectorSpan:
         assert result["rows_created"] == 1
         assert result["columns"] == ["input", "model", "span_id"]
 
-
         row = Row.objects.get(dataset_id=result["dataset_id"], deleted=False)
         assert row.metadata["queue_item_id"] == str(item.id)
         cells = {
@@ -388,9 +440,9 @@ class TestExportCollectorSessionContent:
             )
 
         assert resp.status_code == status.HTTP_200_OK, resp.data
-        source = next(
-            r for r in _result(resp) if r["item_id"] == str(item.id)
-        )["source"]
+        source = next(r for r in _result(resp) if r["item_id"] == str(item.id))[
+            "source"
+        ]
         assert source["type"] == QueueItemSourceType.TRACE_SESSION.value
         assert "deleted" not in source
         assert source["session_id"] == session_id

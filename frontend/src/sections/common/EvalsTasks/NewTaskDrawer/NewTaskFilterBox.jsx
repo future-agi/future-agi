@@ -10,7 +10,13 @@ import {
   FilterDefaultValues,
 } from "src/utils/constants";
 
-const NewTaskFilterBox = ({ control, attributes, getValues, setValue }) => {
+const NewTaskFilterBox = ({
+  control,
+  attributes,
+  getValues,
+  setValue,
+  onAttributeSearchChange,
+}) => {
   const { fields, append, update } = useFieldArray({
     control,
     name: "filters",
@@ -53,6 +59,7 @@ const NewTaskFilterBox = ({ control, attributes, getValues, setValue }) => {
           attributes={attributes}
           update={update}
           getValues={getValues}
+          onAttributeSearchChange={onAttributeSearchChange}
         />
       ))}
       <Box>
@@ -86,6 +93,7 @@ NewTaskFilterBox.propTypes = {
   attributes: PropTypes.arrayOf(PropTypes.object),
   getValues: PropTypes.func,
   setValue: PropTypes.func,
+  onAttributeSearchChange: PropTypes.func,
 };
 
 export default NewTaskFilterBox;

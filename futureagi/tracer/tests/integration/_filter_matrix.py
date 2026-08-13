@@ -52,10 +52,9 @@ class FilterCase:
     late_bound: Callable[[list[SeededRow]], tuple[Any, Callable]] | None = None
     # Extra filter items ANDed with the primary one (multi-filter combos).
     extra_filters: tuple[dict, ...] = ()
-    # has_eval / has_annotation cases are trace/session-scoped in the backend
-    # (a trace matches if ANY child span qualifies). When set to "has_eval" or
-    # "has_annotation", _expected_count rolls the per-span flag up to the target
-    # grain instead of counting spans directly.
+    # has_eval / has_annotation cases use exact span identity on span/voice
+    # grids and any-child rollup on trace/session grids.  _expected_count uses
+    # this marker to apply the target-specific grain.
     meta_kind: str | None = None
     # Session/trace aggregate cases: predicate over a target group's root spans
     # (list[SeededRow]) — used by _expected_count's aggregate branch.
@@ -81,7 +80,7 @@ class FilterCase:
 
 # ---------- SYSTEM_METRIC leaves (per filter_type × filter_op) ---------------
 
-_DATETIME_GAP = "parse_time_range supports gt/lt/between only"
+_DATETIME_GAP = "finite default window excludes the fixed historical corpus"
 _AGG_GAP = "session/trace aggregate HAVING supports comparison ops only"
 
 
@@ -164,8 +163,9 @@ def _sm_datetime_leaves():
     # upper-bound differences between the span and trace list don't matter.
     mid = _NOW + timedelta(hours=12)
     gap = {"contract_gap": _DATETIME_GAP}
-    # parse_time_range applies start_time >= start (inclusive), and only honours
-    # gt / lt / between.
+    # parse_time_range converts direct DateTime64(6) comparisons to an exact
+    # half-open request window.  In particular, greater_than is strict: its
+    # lower bound is value + 1 microsecond.
     leaves = [
         (
             "between",
@@ -173,20 +173,18 @@ def _sm_datetime_leaves():
             lambda r: _NOW <= r.created_at <= mid,
             {},
         ),
-        # greater_than → start bound (inclusive). Pick day1 to discriminate.
-        ("greater_than", day1.isoformat(), lambda r: r.created_at >= day1, {}),
+        ("greater_than", day1.isoformat(), lambda r: r.created_at > day1, {}),
         # less_than defaults the (missing) start to utcnow-30d, which is AFTER
         # the fixed corpus window → the endpoint returns 0. Real backend gap.
         ("less_than", end.isoformat(), lambda r: r.created_at < end, gap),
-        # All other datetime ops are silently dropped by parse_time_range → the
-        # corpus falls outside the default window and the endpoint returns 0.
-        ("equals", _NOW.isoformat(), lambda r: r.created_at == _NOW, gap),
+        # Equality and inclusive lower bounds are represented exactly.
+        ("equals", _NOW.isoformat(), lambda r: r.created_at == _NOW, {}),
         ("not_equals", _NOW.isoformat(), lambda r: r.created_at != _NOW, gap),
         (
             "greater_than_or_equal",
-            _NOW.isoformat(),
-            lambda r: r.created_at >= _NOW,
-            gap,
+            day1.isoformat(),
+            lambda r: r.created_at >= day1,
+            {},
         ),
         ("less_than_or_equal", end.isoformat(), lambda r: r.created_at <= end, gap),
         (
@@ -892,8 +890,7 @@ def _trace_aggregate_leaves():
 def _meta_leaves():
     # has_eval / has_annotation are trace/session-scoped in the backend (a
     # trace matches if ANY child span qualifies). meta_kind tells the harness
-    # to roll the per-span flag up to the target grain. The `=False` variant of
-    # has_eval is a known no-op (filters.py:1818 returns None), so it's a gap.
+    # to roll the per-span flag up to the target grain.
     return [
         (
             "has_eval",
@@ -911,10 +908,7 @@ def _meta_leaves():
             "has_eval",
             False,
             lambda r: not r.has_eval,
-            {
-                "meta_kind": "has_eval",
-                "contract_gap": "has_eval=False is a no-op (filters.py:1818)",
-            },
+            {"meta_kind": "has_eval"},
         ),
         (
             "has_annotation",
@@ -1041,13 +1035,26 @@ def _combo_leaves(eval_config_id, label_id, choice_eval_config_id):
 # wired to the right stored key and discriminates; a failing case means the
 # filter is wrong and the code must be fixed (no xfail).
 _V_NUM_OPS = [
-    "equals", "not_equals", "greater_than", "less_than",
-    "greater_than_or_equal", "less_than_or_equal",
-    "between", "not_between", "is_null", "is_not_null",
+    "equals",
+    "not_equals",
+    "greater_than",
+    "less_than",
+    "greater_than_or_equal",
+    "less_than_or_equal",
+    "between",
+    "not_between",
+    "is_null",
+    "is_not_null",
 ]
 _V_STR_OPS = [
-    "in", "not_in", "contains", "not_contains",
-    "starts_with", "ends_with", "is_null", "is_not_null",
+    "in",
+    "not_in",
+    "contains",
+    "not_contains",
+    "starts_with",
+    "ends_with",
+    "is_null",
+    "is_not_null",
 ]
 
 
@@ -1088,7 +1095,12 @@ def _v_num_values(op, disp):
     n = len(disp)
     lo, hi, mid = disp[0], disp[-1], disp[n // 2]
     q1, q3 = disp[n // 4], disp[min(n - 1, (3 * n) // 4)]
-    if op in ("greater_than", "less_than", "greater_than_or_equal", "less_than_or_equal"):
+    if op in (
+        "greater_than",
+        "less_than",
+        "greater_than_or_equal",
+        "less_than_or_equal",
+    ):
         return [(mid, "mid"), (lo, "lo")]
     if op in ("equals", "not_equals"):
         return [(mid, "hit"), (hi + 1, "miss")]
@@ -1115,15 +1127,67 @@ def _voice_number_leaves():
                 if suf:
                     ex["val_suffix"] = f"-{suf}"
                 leaves.append(
-                    ("SYSTEM_METRIC", "number", op, col_id, val,
-                     _v_num_pred(seed_key, precision, op, val), ex)
+                    (
+                        "SYSTEM_METRIC",
+                        "number",
+                        op,
+                        col_id,
+                        val,
+                        _v_num_pred(seed_key, precision, op, val),
+                        ex,
+                    )
                 )
     return leaves
 
 
-def _v_str_pred(seed_key, op, val):
+def _v_str_decode(col_id, raw_value):
+    """Decode stored voice strings to the value exposed by list filters."""
+    if col_id != "call_status":
+        return raw_value
+    if raw_value is None:
+        # A call without provider raw_log/status is treated as completed by
+        # the normalized voice-list contract.
+        return "completed"
+    token = str(raw_value).strip().lower()
+    if token in {
+        "ended",
+        "done",
+        "complete",
+        "completed",
+        "success",
+        "succeeded",
+        "ok",
+    }:
+        return "completed"
+    if token in {
+        "in-progress",
+        "in_progress",
+        "ongoing",
+        "started",
+        "ringing",
+        "queued",
+        "pending",
+    }:
+        return "in-progress"
+    if token in {"failed", "failure", "error", "errored"}:
+        return "failed"
+    if token in {"dropped", "cancelled", "canceled", "aborted", "hung-up", "hung_up"}:
+        return "dropped"
+    if token in {
+        "not-connected",
+        "not_connected",
+        "no-answer",
+        "no_answer",
+        "unanswered",
+        "busy",
+    }:
+        return "not-connected"
+    return token
+
+
+def _v_str_pred(col_id, seed_key, op, val):
     def s(r):
-        return r.span_attr_str.get(seed_key)
+        return _v_str_decode(col_id, r.span_attr_str.get(seed_key))
 
     return {
         "in": lambda r: s(r) in val,
@@ -1152,17 +1216,22 @@ def _v_str_values(op, sample):
 def _voice_text_leaves():
     leaves = []
     for col_id, seed_key, formula in VOICE_STR_SPEC:
-        if col_id == "call_type":
-            continue  # filter reads raw_log.type, not this key (known bug)
-        sample = formula(0)
+        sample = _v_str_decode(col_id, formula(0))
         for op in _V_STR_OPS:
             for val, suf in _v_str_values(op, sample):
                 ex = {"only_targets": ("voiceCalls",)}
                 if suf:
                     ex["val_suffix"] = f"-{suf}"
                 leaves.append(
-                    ("SYSTEM_METRIC", "text", op, col_id, val,
-                     _v_str_pred(seed_key, op, val), ex)
+                    (
+                        "SYSTEM_METRIC",
+                        "text",
+                        op,
+                        col_id,
+                        val,
+                        _v_str_pred(col_id, seed_key, op, val),
+                        ex,
+                    )
                 )
     return leaves
 

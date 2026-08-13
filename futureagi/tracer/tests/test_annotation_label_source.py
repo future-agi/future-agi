@@ -4,11 +4,14 @@ helper.get_annotation_labels_for_project swapped an inline PG query for a
 registry-routed PG-or-CH source. These pin the backend behavior contract that
 swap changes:
 
-  * the v2 (CH) source scopes ``model_hub_score`` by ``spans`` and gates the
-    same delete predicates as the annotation render (``build_annotation_query``),
-  * the CH source returns the same label set the PG source did,
+  * the legacy CH source still documents its old score/span behavior for
+    rollback parity, while every direct-write public helper is pinned to the
+    authoritative PG ``Score.tracer_project_id`` source,
+  * the PG project source returns the same label set the legacy CH source did,
   * a CDC-tombstoned score (``_peerdb_is_deleted = 1``) is excluded by BOTH
-    discovery and the render — the divergence that produced ghost labels.
+    legacy discovery and render — the divergence that produced ghost labels,
+  * filter values and graph candidate decoration remain finite and project
+    isolated without querying ``model_hub_score`` on the CH25 cluster.
 
 The behavior tests seed CH directly (no CDC in the test path) via ``_ch_seed``.
 """
@@ -16,6 +19,8 @@ The behavior tests seed CH directly (no CDC in the test path) via ``_ch_seed``.
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
+from unittest import mock
 
 import pytest
 from django.utils import timezone
@@ -51,10 +56,18 @@ class TestDiscoveryQueryContract:
         assert "model_hub_score" in q
         assert "FROM spans" in q
 
-    @pytest.mark.parametrize("predicate", ["deleted = false", "_peerdb_is_deleted = 0"])
-    def test_delete_predicates_match_render(self, predicate):
-        assert predicate in self._discovery_query()
-        assert predicate in self._render_query()
+    @pytest.mark.parametrize(
+        ("source_predicate", "latest_render_predicate"),
+        [
+            ("deleted = false", "latest_soft_deleted = false"),
+            ("_peerdb_is_deleted = 0", "latest_cdc_deleted = 0"),
+        ],
+    )
+    def test_delete_predicates_match_render(
+        self, source_predicate, latest_render_predicate
+    ):
+        assert source_predicate in self._discovery_query()
+        assert latest_render_predicate in self._render_query()
 
     def test_registry_routes_annotation_labels(self):
         from tracer.services.annotation_label_source import (
@@ -67,6 +80,85 @@ class TestDiscoveryQueryContract:
         # (the CH spans-scan class is kept only for the dashboard filter reads).
         assert get_v1_class("ANNOTATION_LABELS") is AnnotationLabelScoresPG
         assert get_v2_class("ANNOTATION_LABELS") is AnnotationLabelScoresProjectPG
+
+    @pytest.mark.parametrize(
+        "routing",
+        [
+            {},
+            {"QUERY_TYPES_DISABLED": "annotation_labels"},
+        ],
+        ids=["routing-unset", "legacy-disabled"],
+    )
+    def test_list_helper_pins_direct_write_safe_project_source(self, settings, routing):
+        from tracer.utils.helper import get_annotation_labels_for_project
+
+        settings.CLICKHOUSE_V2 = routing
+        source = mock.MagicMock()
+        source.label_ids_for_project.side_effect = (["label-a"], ["label-b"])
+        sentinel = object()
+        filtered = mock.MagicMock()
+        filtered.distinct.return_value = sentinel
+        with (
+            mock.patch(
+                "tracer.services.annotation_label_source.AnnotationLabelScoresProjectPG",
+                return_value=source,
+            ) as source_class,
+            mock.patch(
+                "tracer.utils.helper.AnnotationsLabels.objects.filter",
+                return_value=filtered,
+            ),
+        ):
+            result = get_annotation_labels_for_project(
+                None,
+                project_ids=["project-a", "project-b"],
+            )
+
+        assert result is sentinel
+        source_class.assert_called_once_with()
+        assert source.label_ids_for_project.call_args_list == [
+            mock.call("project-a"),
+            mock.call("project-b"),
+        ]
+
+    def test_org_label_helper_preserves_disjoint_project_sets(self):
+        from tracer.utils.helper import get_annotation_labels_by_project
+
+        project_a = "00000000-0000-4000-8000-000000000001"
+        project_b = "00000000-0000-4000-8000-000000000002"
+        label_a = mock.Mock(id="label-a", project_id=project_a)
+        label_b = mock.Mock(id="label-b", project_id=project_b)
+        shared_a = mock.Mock(id="shared-a", project_id=None)
+        source = mock.MagicMock()
+        source.label_ids_by_project.return_value = {
+            project_a: ["shared-a"],
+            project_b: [],
+        }
+        label_query = mock.MagicMock()
+        label_query.filter.return_value = label_query
+        label_query.distinct.return_value = [label_a, label_b, shared_a]
+        organization = object()
+
+        with (
+            mock.patch(
+                "tracer.services.annotation_label_source.AnnotationLabelScoresProjectPG",
+                return_value=source,
+            ),
+            mock.patch(
+                "tracer.utils.helper.AnnotationsLabels.objects.filter",
+                return_value=label_query,
+            ),
+        ):
+            result = get_annotation_labels_by_project(
+                [project_a, project_b], organization=organization
+            )
+
+        assert [str(label.id) for label in result[project_a]] == [
+            "label-a",
+            "shared-a",
+        ]
+        assert [str(label.id) for label in result[project_b]] == ["label-b"]
+        source.label_ids_by_project.assert_called_once_with([project_a, project_b])
+        label_query.filter.assert_called_once_with(organization=organization)
 
 
 # --------------------------------------------------------------------------- #
@@ -125,7 +217,9 @@ def _seed_tombstoned_ch_score(score):
     row[_SCORE_INSERT_COLUMNS.index("_peerdb_is_deleted")] = 1
     client = _get_ch_client()
     try:
-        client.insert("model_hub_score", [tuple(row)], column_names=_SCORE_INSERT_COLUMNS)
+        client.insert(
+            "model_hub_score", [tuple(row)], column_names=_SCORE_INSERT_COLUMNS
+        )
     finally:
         client.close()
 
@@ -146,6 +240,7 @@ def _labels_with_rendered_annotations(project_id, span_ids, label_ids):
 
 @pytest.mark.django_db
 class TestAnnotationLabelSourceBehavior:
+    @pytest.mark.integration
     def test_pg_and_ch_sources_return_same_labels(
         self, organization, workspace, project, trace, user
     ):
@@ -178,6 +273,7 @@ class TestAnnotationLabelSourceBehavior:
         assert pg == set(labels)
         assert ch == pg
 
+    @pytest.mark.integration
     def test_cdc_tombstoned_label_excluded_by_discovery_and_render(
         self, organization, workspace, project, trace, user
     ):
@@ -283,9 +379,8 @@ class TestTracerProjectIdForSource:
 # --------------------------------------------------------------------------- #
 @pytest.mark.django_db
 class TestProjectPGDiscovery:
-    def test_parity_with_ch_scope(
-        self, organization, workspace, project, trace, user
-    ):
+    @pytest.mark.integration
+    def test_parity_with_ch_scope(self, organization, workspace, project, trace, user):
         from tracer.services.annotation_label_source import (
             AnnotationLabelScoresCH,
             AnnotationLabelScoresProjectPG,
@@ -313,9 +408,7 @@ class TestProjectPGDiscovery:
         assert pg == set(labels)
         assert pg == ch  # PG source matches the CH spans-scope it replaces
 
-    def test_session_only_score_excluded(
-        self, organization, workspace, project, user
-    ):
+    def test_session_only_score_excluded(self, organization, workspace, project, user):
         from tracer.models.trace_session import TraceSession
         from tracer.services.annotation_label_source import (
             AnnotationLabelScoresProjectPG,
@@ -364,6 +457,98 @@ class TestProjectPGDiscovery:
         result = AnnotationLabelScoresProjectPG().label_ids_for_project(project.id)
         assert result == [str(label.id)]
 
+    def test_filter_values_are_project_isolated(
+        self, organization, workspace, project, trace, user
+    ):
+        from tracer.services.annotation_label_source import (
+            AnnotationLabelScoresProjectPG,
+        )
+
+        label = _make_label(organization, workspace, project)
+        included = _make_span_score(
+            label=label,
+            span=_make_span(project, trace),
+            organization=organization,
+            workspace=workspace,
+            user=user,
+            project=project,
+        )
+        included.value = {"selected": ["included"]}
+        included.save(update_fields=["value"])
+
+        excluded = _make_span_score(
+            label=label,
+            span=_make_span(project, trace),
+            organization=organization,
+            workspace=workspace,
+            user=user,
+            project=project,
+        )
+        excluded.value = {"selected": ["other-project"]}
+        excluded.tracer_project_id = uuid.uuid4()
+        excluded.save(update_fields=["value", "tracer_project_id"])
+
+        source = AnnotationLabelScoresProjectPG()
+        assert source.annotator_ids_for_projects([str(project.id)]) == [str(user.id)]
+        assert source.categorical_values_for_label(label.id, [str(project.id)]) == [
+            {"selected": ["included"]}
+        ]
+
+    def test_candidate_rows_require_exact_project_and_trace_span_pair(
+        self, organization, workspace, project, user
+    ):
+        from tracer.services.annotation_label_source import (
+            AnnotationLabelScoresProjectPG,
+        )
+
+        label = _make_label(organization, workspace, project)
+        trace_a = uuid.uuid4()
+        trace_b = uuid.uuid4()
+        now = timezone.now()
+        rows = []
+        for trace_id, value in ((trace_a, "included"), (trace_b, "collision")):
+            rows.append(
+                Score.no_workspace_objects.create(
+                    source_type=QueueItemSourceType.OBSERVATION_SPAN.value,
+                    trace_id=trace_id,
+                    observation_span_id="shared-span-id",
+                    label=label,
+                    value={"text": value},
+                    score_source="HUMAN",
+                    annotator=user,
+                    organization=organization,
+                    workspace=workspace,
+                    tracer_project_id=project.id,
+                    deleted=False,
+                )
+            )
+        Score.no_workspace_objects.filter(id__in=[row.id for row in rows]).update(
+            created_at=now
+        )
+        Score.no_workspace_objects.create(
+            source_type=QueueItemSourceType.OBSERVATION_SPAN.value,
+            trace_id=trace_a,
+            observation_span_id="shared-span-id",
+            label=label,
+            value={"text": "other-project"},
+            score_source="HUMAN",
+            annotator=user,
+            organization=organization,
+            workspace=workspace,
+            tracer_project_id=uuid.uuid4(),
+            deleted=False,
+        )
+
+        result = AnnotationLabelScoresProjectPG().annotation_rows_for_candidates(
+            project_id=str(project.id),
+            label_id=str(label.id),
+            start_date=now - timedelta(seconds=1),
+            end_date=now + timedelta(seconds=1),
+            span_entities=((str(trace_a), "shared-span-id"),),
+        )
+
+        assert result == [{"created_at": now, "value": {"text": "included"}}]
+
 
 # --------------------------------------------------------------------------- #
 # Backfill: idempotency + never overwriting an existing value.
@@ -403,8 +588,11 @@ class TestBackfillTracerProject:
         assert s2.tracer_project_id == other  # not overwritten
 
         # Re-run: nothing left to stamp.
-        assert _tag(project.id, "observation_span_id", [str(span1.id), str(span2.id)]) == 0
+        assert (
+            _tag(project.id, "observation_span_id", [str(span1.id), str(span2.id)]) == 0
+        )
 
+    @pytest.mark.integration
     def test_backfill_from_ch_spans_then_noop(
         self, organization, workspace, project, trace, user
     ):

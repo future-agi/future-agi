@@ -28,6 +28,11 @@ const DATE_OPTIONS = [
 const ObserveToolbar = ({
   // Mode: "traces" (default) | "sessions" | "users"
   mode = "traces",
+  // Explicit project scope for mounts whose route has no `observeId` (for
+  // example a cross-project Users detail page after its Project filter is
+  // selected). TraceFilterPanel otherwise cannot load either its property
+  // catalog or retained attribute-key catalog on those mounts.
+  projectId,
   // When true, always render inline (skip the #observe-toolbar-slot portal).
   // Used by pages that mount their own toolbar outside the main ObserveTabBar,
   // e.g., the User Detail Page.
@@ -89,6 +94,7 @@ const ObserveToolbar = ({
   bulkActions,
   isSimulator,
   allMatching,
+  selectedCountIsLowerBound,
   // Add Evals button
   excludeSimulationCalls,
   onToggleSimulationCalls,
@@ -113,6 +119,10 @@ const ObserveToolbar = ({
   const [dateAnchor, setDateAnchor] = useState(null);
   const [customDateOpen, setCustomDateOpen] = useState(false);
   const dateButtonRef = useRef(null);
+  // Simulator projects render CallLogsGrid in the trace slot. The URL/tab
+  // remains `trace`, but the visible rows and list endpoint use the canonical
+  // voice-call field contract.
+  const effectiveFilterTab = isSimulator ? "voiceCalls" : tab;
   const setFilterButtonNode = useCallback((node) => {
     filterButtonRef.current = node;
     setFilterButtonEl(node);
@@ -184,11 +194,19 @@ const ObserveToolbar = ({
     const newPanelFilters = graphFilters.map((gf) => {
       const rawOp = gf.filter_config?.filter_op || "equals";
       const rawType = gf.filter_config?.filter_type;
+      const rawVal = gf.filter_config?.filter_value;
       // Trust explicit `filter_type` only; ops are shared across types.
       const isNumberType = rawType === "number";
       const isBooleanType = rawType === "boolean";
+      const isArrayType = rawType === "array" || rawType === "list";
+      const isMapType =
+        rawType === "map" ||
+        rawType === "object" ||
+        (rawType === "json" &&
+          rawVal !== null &&
+          typeof rawVal === "object" &&
+          !Array.isArray(rawVal));
       const isRange = RANGE_OPS.has(rawOp);
-      const rawVal = gf.filter_config?.filter_value;
       let value;
       if (isRange) {
         // Normalize to a 2-element string array for the TextField pair.
@@ -206,6 +224,14 @@ const ObserveToolbar = ({
         value = rawVal === true || rawVal === "true" ? "true" : "false";
       } else if (isNumberType) {
         value = rawVal != null ? String(rawVal) : "";
+      } else if (isMapType) {
+        value = rawVal && typeof rawVal === "object" ? rawVal : "";
+      } else if (isArrayType || rawType === "json") {
+        value = Array.isArray(rawVal)
+          ? rawVal
+          : rawVal !== undefined && rawVal !== null && rawVal !== ""
+            ? [rawVal]
+            : [];
       } else {
         value = rawVal
           ? String(rawVal)
@@ -255,15 +281,20 @@ const ObserveToolbar = ({
             ? "boolean"
             : isNumberType
               ? "number"
-              : rawFilterType === "number"
-                ? "number"
-                : rawFilterType === "thumbs" || looksLikeThumbsValues
-                  ? "thumbs"
-                  : rawFilterType === "categorical"
-                    ? "categorical"
-                    : rawFilterType === "text" && rawColType === "ANNOTATION"
-                      ? "text"
-                      : "string",
+              : isMapType
+                ? "map"
+                : isArrayType || rawFilterType === "json"
+                  ? "array"
+                  : rawFilterType === "number"
+                    ? "number"
+                    : rawFilterType === "thumbs" || looksLikeThumbsValues
+                      ? "thumbs"
+                      : rawFilterType === "categorical"
+                        ? "categorical"
+                        : rawFilterType === "text" &&
+                            rawColType === "ANNOTATION"
+                          ? "text"
+                          : "string",
         apiColType: isDirectIdFilter
           ? undefined
           : isGlobalAnnotatorFilter
@@ -271,6 +302,7 @@ const ObserveToolbar = ({
             : rawColType,
         operator: rawOp,
         value,
+        valueTypes: gf.filter_config?.attribute_value_types,
       };
     });
     setPanelFilters(newPanelFilters);
@@ -356,6 +388,7 @@ const ObserveToolbar = ({
           isSimulator={isSimulator}
           actions={bulkActions}
           allMatching={allMatching}
+          selectedCountIsLowerBound={selectedCountIsLowerBound}
         />
       ) : (
         <>
@@ -393,16 +426,11 @@ const ObserveToolbar = ({
             onClose={onFilterToggle}
             currentFilters={panelFilters}
             filterFields={filterFields}
-            tab={tab}
+            tab={effectiveFilterTab}
             isSimulator={isSimulator}
             isSpansView={isSpansView}
-            source={
-              mode === "sessions"
-                ? "sessions"
-                : mode === "users"
-                  ? "users"
-                  : "traces"
-            }
+            source={mode === "sessions" ? "sessions" : "traces"}
+            projectId={projectId}
             onApply={(newFilters) => {
               setPanelFilters(newFilters);
               if (!newFilters || newFilters.length === 0) {
@@ -538,6 +566,7 @@ const ObserveToolbar = ({
 
 ObserveToolbar.propTypes = {
   mode: PropTypes.oneOf(["traces", "sessions", "users"]),
+  projectId: PropTypes.string,
   inline: PropTypes.bool,
   dateLabel: PropTypes.string,
   dateFilter: PropTypes.object,
@@ -575,6 +604,7 @@ ObserveToolbar.propTypes = {
   onCompareToggle: PropTypes.func,
   isCompareActive: PropTypes.bool,
   selectedCount: PropTypes.number,
+  selectedCountIsLowerBound: PropTypes.bool,
   allMatching: PropTypes.bool,
   onClearSelection: PropTypes.func,
   onBulkAction: PropTypes.func,
@@ -587,7 +617,7 @@ ObserveToolbar.propTypes = {
   onClearExtraFilters: PropTypes.func,
   onClearCompareExtraFilters: PropTypes.func,
   filterFields: PropTypes.array,
-  tab: PropTypes.oneOf(["trace", "spans"]),
+  tab: PropTypes.oneOf(["trace", "spans", "voiceCalls"]),
   graphFilters: PropTypes.array,
   onResetView: PropTypes.func,
   onSetDefaultView: PropTypes.func,

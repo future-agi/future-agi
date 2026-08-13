@@ -32,7 +32,9 @@ _CONTENT_FACTORY_DEFAULTS: dict[str, Any] = {
 }
 
 
-def flatten_span_attributes_into_entry(entry: dict[str, Any], row: dict[str, Any]) -> None:
+def flatten_span_attributes_into_entry(
+    entry: dict[str, Any], row: dict[str, Any]
+) -> None:
     """Surface a span's merged attributes as top-level keys on `entry` for custom columns.
 
     Standard columns already on `entry` are not clobbered; internal/oversized
@@ -59,18 +61,26 @@ def merge_content_rows(
     rows: list[dict[str, Any]],
     content_rows: list[dict[str, Any]],
     *,
-    id_key: str,
+    id_key: str | Sequence[str],
     keys: Sequence[str],
-) -> dict[str, dict[str, Any]]:
+) -> dict[Any, dict[str, Any]]:
     """Merge heavy content columns into `rows` in place; return the content index by `id_key`.
 
     Each key in `keys` is copied from the matching content row using a null-safe
     default (fresh instance for mutable maps/lists). Callers reuse the returned
     index for per-path extras (e.g. metadata JSON-parsing).
     """
-    content_map = {str(c.get(id_key, "")): c for c in content_rows}
+    id_keys = (id_key,) if isinstance(id_key, str) else tuple(id_key)
+    if not id_keys:
+        raise ValueError("id_key must contain at least one field")
+
+    def identity(row: dict[str, Any]) -> Any:
+        values = tuple(str(row.get(key, "")) for key in id_keys)
+        return values[0] if len(values) == 1 else values
+
+    content_map = {identity(content): content for content in content_rows}
     for row in rows:
-        content = content_map.get(str(row.get(id_key, "")), {})
+        content = content_map.get(identity(row), {})
         for key in keys:
             if key in _CONTENT_FACTORY_DEFAULTS:
                 row[key] = content.get(key) or _CONTENT_FACTORY_DEFAULTS[key]()

@@ -10,7 +10,10 @@ Guards the two failure modes this contract has already been through:
 import json
 from pathlib import Path
 
-from tracer.serializers.trace import TraceObserveListResponseSerializer
+from tracer.serializers.trace import (
+    TraceObserveListResponseSerializer,
+    TraceSessionListResponseSerializer,
+)
 from tracer.utils.helper import get_default_trace_config
 
 
@@ -71,6 +74,40 @@ class TestTraceObserveListResponseContract:
         serializer = TraceObserveListResponseSerializer(data=self._payload([]))
         assert serializer.is_valid(), serializer.errors
 
+    def test_accepts_additive_bounded_page_metadata(self):
+        payload = self._payload([])
+        payload["result"]["metadata"].update(
+            {
+                "total_rows_is_lower_bound": True,
+                "has_more": False,
+                "query_complete": False,
+                "query_status": "degraded",
+                "query_error_code": "read_budget_exceeded",
+                "query_elapsed_ms": 749.25,
+                "query_count": 2,
+                "query_rows_returned": 125,
+                "query_result_payload_bytes": 8192,
+            }
+        )
+
+        serializer = TraceObserveListResponseSerializer(data=payload)
+
+        assert serializer.is_valid(), serializer.errors
+
+    def test_session_list_accepts_candidate_order_provenance(self):
+        payload = self._payload([])
+        payload["result"]["metadata"].update(
+            {
+                "query_exact": False,
+                "query_provenance": "spans_per_session_candidate",
+                "ordering_exact": False,
+            }
+        )
+
+        serializer = TraceSessionListResponseSerializer(data=payload)
+
+        assert serializer.is_valid(), serializer.errors
+
     def test_rejects_missing_metadata(self):
         payload = {
             "status": True,
@@ -90,6 +127,26 @@ class TestTraceObserveListResponseContract:
         operation = _swagger()["paths"]["/tracer/trace/list_traces_of_session/"]["get"]
         ref = operation["responses"]["200"]["schema"]["$ref"]
         assert ref.rsplit("/", 1)[-1] == "TraceObserveListResponse"
+
+    def test_swagger_scopes_candidate_order_provenance_to_session_list(self):
+        swagger = _swagger()
+        operation = swagger["paths"]["/tracer/trace-session/list_sessions/"]["get"]
+        ref = operation["responses"]["200"]["schema"]["$ref"]
+        assert ref.rsplit("/", 1)[-1] == "TraceSessionListResponse"
+
+        definitions = swagger["definitions"]
+        session_metadata = definitions["TraceSessionListMetadata"]["properties"]
+        trace_metadata = definitions["TraceObserveListMetadata"]["properties"]
+        assert {
+            "query_exact",
+            "query_provenance",
+            "ordering_exact",
+        } <= session_metadata.keys()
+        assert session_metadata["query_provenance"]["enum"] == [
+            "spans_per_session_candidate"
+        ]
+        assert "query_provenance" not in trace_metadata
+        assert "ordering_exact" not in trace_metadata
 
     def test_swagger_table_cells_are_json_values(self):
         """The cell schema must carry x-json-value (and nullability). drf-yasg
@@ -114,3 +171,25 @@ class TestTraceObserveListResponseContract:
         ].rsplit("/", 1)[-1]
         config_items = definitions[result_ref]["properties"]["config"]["items"]
         assert config_items == {"$ref": "#/definitions/TraceObserveColumnConfig"}
+
+    def test_swagger_exposes_additive_bounded_page_metadata(self):
+        definitions = _swagger()["definitions"]
+        result_ref = definitions["TraceObserveListResponse"]["properties"]["result"][
+            "$ref"
+        ].rsplit("/", 1)[-1]
+        metadata_ref = definitions[result_ref]["properties"]["metadata"]["$ref"].rsplit(
+            "/", 1
+        )[-1]
+        metadata = definitions[metadata_ref]["properties"]
+
+        assert {
+            "total_rows_is_lower_bound",
+            "has_more",
+            "query_complete",
+            "query_status",
+            "query_error_code",
+            "query_elapsed_ms",
+            "query_count",
+            "query_rows_returned",
+            "query_result_payload_bytes",
+        } <= metadata.keys()

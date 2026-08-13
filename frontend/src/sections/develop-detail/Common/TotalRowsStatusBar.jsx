@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useState, useRef } from "react";
 
 const TotalRowsStatusBar = ({ api }) => {
   const [totalCount, setTotalCount] = useState(0);
+  const [totalCountIsLowerBound, setTotalCountIsLowerBound] = useState(false);
   const [visibleRange, setVisibleRange] = useState({ start: 0, end: 0 });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -77,8 +78,14 @@ const TotalRowsStatusBar = ({ api }) => {
     if (!api || !isMountedRef.current) return;
 
     // Get total row count
-    const total = api.totalRowCount ?? api.getDisplayedRowCount();
-    if (api?.totalRowCount !== undefined) {
+    const isLowerBound = api.totalRowCountIsLowerBound === true;
+    const total = isLowerBound
+      ? api.totalRowCountLowerBound ?? api.getDisplayedRowCount()
+      : api.totalRowCount ?? api.getDisplayedRowCount();
+    if (
+      api?.totalRowCount !== undefined ||
+      api?.totalRowCountLowerBound !== undefined
+    ) {
       setIsLoading(false);
     }
 
@@ -86,6 +93,7 @@ const TotalRowsStatusBar = ({ api }) => {
     const range = getVisibleRowRange();
 
     setTotalCount(total);
+    setTotalCountIsLowerBound(isLowerBound);
     setVisibleRange(range);
   }, [api, getVisibleRowRange]);
 
@@ -128,11 +136,11 @@ const TotalRowsStatusBar = ({ api }) => {
 
     // All rows visible (small dataset or no virtualization)
     if (visibleRange.start === 1 && end === totalCount) {
-      return `Viewing: ${totalCount}/${totalCount} ${totalCount === 1 ? "row" : "rows"}`;
+      return `Viewing: ${totalCount}/${totalCountIsLowerBound ? "≥" : ""}${totalCount} ${totalCount === 1 ? "row" : "rows"}`;
     }
 
     // Viewing a range of rows (typical case with scrolling)
-    return `Viewing: ${end}/${totalCount.toLocaleString()} rows`;
+    return `Viewing: ${end}/${totalCountIsLowerBound ? "≥" : ""}${totalCount.toLocaleString()} rows`;
   };
   if (isLoading) {
     return;

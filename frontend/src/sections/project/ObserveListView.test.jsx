@@ -72,6 +72,28 @@ describe("ObserveListView", () => {
   });
 
   describe("Last Active cell", () => {
+    it("distinguishes an unavailable activity read from genuine zero activity", async () => {
+      respondWith([
+        project({
+          name: "Unavailable Activity Project",
+          last_30_days_vol: null,
+          daily_volume: null,
+          last_active: null,
+          activity_query_complete: false,
+          activity_error_code: "project_activity_unavailable",
+        }),
+      ]);
+
+      renderList();
+
+      await waitFor(() =>
+        expect(
+          screen.getByText("Unavailable Activity Project"),
+        ).toBeInTheDocument(),
+      );
+      expect(screen.getAllByText("Unavailable")).toHaveLength(2);
+    });
+
     it("still renders the row when last_active is an unusable zero date", async () => {
       respondWith([
         project({

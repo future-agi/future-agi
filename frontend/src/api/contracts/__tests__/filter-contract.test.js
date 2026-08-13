@@ -14,6 +14,7 @@ import {
   FILTER_CONTRACT_VERSION,
   FILTER_TYPE_ALLOWED_OPS,
   SPAN_ATTRIBUTE_ALLOWED_OPS,
+  STRUCTURED_SPAN_ATTRIBUTE_ALLOWED_OPS,
 } from "../filter-contract.generated";
 
 const valueFor = (filterType, operator) => {
@@ -105,6 +106,41 @@ describe("filter contract", () => {
     expect(apiFilter).not.toHaveProperty("columnId");
     expect(apiFilter).not.toHaveProperty("filterConfig");
     expect(apiFilter.filter_config).not.toHaveProperty("filterOp");
+  });
+
+  it("preserves typed custom-attribute option provenance", () => {
+    const apiFilter = buildApiFilterFromPanelRow({
+      field: "attempt",
+      fieldCategory: "attribute",
+      fieldType: "string",
+      operator: "in",
+      value: ["1", 1, true],
+      valueTypes: ["string", "number", "boolean"],
+    });
+
+    expect(apiFilter.filter_config).toEqual({
+      filter_type: "text",
+      filter_op: "in",
+      filter_value: ["1", 1, true],
+      col_type: "SPAN_ATTRIBUTE",
+      attribute_value_types: ["string", "number", "boolean"],
+    });
+    expect(serializeFilterForApi(apiFilter)).toEqual(apiFilter);
+  });
+
+  it("rejects misaligned typed custom-attribute provenance", () => {
+    expect(() =>
+      serializeFilterForApi({
+        column_id: "attempt",
+        filter_config: {
+          filter_type: "text",
+          filter_op: "in",
+          filter_value: ["1", 1],
+          col_type: "SPAN_ATTRIBUTE",
+          attribute_value_types: ["string"],
+        },
+      }),
+    ).toThrow(/align/);
   });
 
   it("keeps direct id filters out of metric col_type routing", () => {
@@ -285,6 +321,44 @@ describe("filter contract", () => {
     expect(normalizeFilterType("string")).toBe("text");
     expect(isAllowedFilterOperator("number", "contains")).toBe(false);
     expect(isAllowedFilterOperator("number", "not_between")).toBe(true);
+    expect(STRUCTURED_SPAN_ATTRIBUTE_ALLOWED_OPS.map).toEqual([
+      "equals",
+      "not_equals",
+      "contains",
+      "not_contains",
+      "is_null",
+      "is_not_null",
+    ]);
+    expect(isAllowedFilterOperator("map", "contains")).toBe(true);
+    expect(isAllowedFilterOperator("map", "between")).toBe(false);
+  });
+
+  it("keeps json lists as arrays and canonicalizes json objects to maps", () => {
+    expect(normalizeFilterType("json", ["vip"])).toBe("array");
+    expect(normalizeFilterType("list", ["vip"])).toBe("array");
+    expect(normalizeFilterType("json", { tier: "vip" })).toBe("map");
+    expect(normalizeFilterType("map", { tier: "vip" })).toBe("map");
+    expect(normalizeFilterType("object", { tier: "vip" })).toBe("map");
+
+    expect(
+      serializeFilterForApi({
+        column_id: "customer.context",
+        filter_config: {
+          col_type: "SPAN_ATTRIBUTE",
+          filter_type: "json",
+          filter_op: "contains",
+          filter_value: { tier: "vip", attempt: 2 },
+        },
+      }),
+    ).toEqual({
+      column_id: "customer.context",
+      filter_config: {
+        col_type: "SPAN_ATTRIBUTE",
+        filter_type: "map",
+        filter_op: "contains",
+        filter_value: { tier: "vip", attempt: 2 },
+      },
+    });
   });
 
   it("fails before sending a non-canonical operator to the API", () => {

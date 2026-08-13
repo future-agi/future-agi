@@ -19,6 +19,7 @@ import {
 import { getRandomId } from "src/utils/utils";
 import CustomTraceGroupHeaderRenderer from "src/sections/projects/LLMTracing/Renderers/CustomTraceGroupHeaderRenderer";
 import MetricEmptyState from "../MetricEmptyState";
+import { getZeroBasedGridPage } from "src/utils/agGridPagination";
 
 const LoadingHeader = () => {
   return <Skeleton variant="text" width={100} height={20} />;
@@ -161,6 +162,10 @@ const MetricsContent = () => {
       getRows: async (params) => {
         try {
           setIsLoading(true);
+          const { pageNumber, pageSize } = getZeroBasedGridPage(
+            params.request,
+            10,
+          );
           const validFilters = filters?.filter((f) => f.column_id);
           // --- API Request ---
           const response = await axios.get(
@@ -168,6 +173,8 @@ const MetricsContent = () => {
             {
               params: {
                 prompt_template_id: id,
+                page_number: pageNumber,
+                page_size: pageSize,
                 ...(validFilters?.length
                   ? { filters: JSON.stringify(normalizeFilters(filters)) }
                   : {}),

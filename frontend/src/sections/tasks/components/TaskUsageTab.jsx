@@ -764,6 +764,16 @@ const DetailPanelContent = ({ row, isDark }) => {
                 }
               />
               <PartialInputWarningDetails warnings={warnings} />
+              {detail.detail_complete === false && (
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: "block", py: 0.75, fontSize: "11px" }}
+                >
+                  Large span JSON and mapped input details are omitted from this
+                  bounded list response.
+                </Typography>
+              )}
               {detail.eval_name && (
                 <DetailRow label="Eval" value={detail.eval_name} />
               )}
@@ -908,29 +918,50 @@ const TaskUsageTab = ({ taskId }) => {
 
   const period = DATE_OPTION_TO_PERIOD[dateOption] || "30d";
   const apiEvalId = evalIdFilter === "all" ? undefined : evalIdFilter;
+  const explicitDateRange = ["Custom", "Today", "Yesterday"].includes(
+    dateOption,
+  )
+    ? dateFilter
+    : undefined;
+  const customEndInclusive = dateOption === "Custom";
 
   const { data: chartData, isLoading: chartLoading } = useTaskUsageChart(
     taskId,
-    { period, evalId: apiEvalId },
+    {
+      period,
+      evalId: apiEvalId,
+      dateRange: explicitDateRange,
+      endInclusive: customEndInclusive,
+    },
   );
   const {
     data: logsData,
     isLoading: logsLoading,
     isFetching: logsFetching,
-  } = useTaskUsageLogs(taskId, { page, pageSize, period, evalId: apiEvalId });
+  } = useTaskUsageLogs(taskId, {
+    page,
+    pageSize,
+    period,
+    evalId: apiEvalId,
+    dateRange: explicitDateRange,
+    endInclusive: customEndInclusive,
+  });
 
   const stats = chartData?.stats || {};
   const chart = chartData?.chart || [];
   const evalsList = chartData?.evals || [];
   const logItems = logsData?.results || [];
   const totalLogs = logsData?.count || 0;
-  // Backend may have widened the window to "all time" if the requested
-  // period excluded every run. Surface that to the user as a hint so
-  // they don't think the date filter is broken.
-  const periodFallback =
-    chartData?.periodUsed === "all" &&
-    chartData?.periodRequested &&
-    chartData?.periodRequested !== "all";
+  const logsCountIsLowerBound = !!logsData?.count_is_lower_bound;
+  const summaryIsSampled = !!stats.runs_period_is_lower_bound;
+  const lowerBoundSuffix = summaryIsSampled ? "+" : "";
+  const hasMoreLogs = !!logsData?.has_more;
+  const pageLimitReached = !!logsData?.page_limit_reached;
+  const paginationTotal = pageLimitReached
+    ? (page + 1) * pageSize
+    : hasMoreLogs
+      ? Math.max(totalLogs, (page + 1) * pageSize + 1)
+      : totalLogs;
 
   // Pick the chart's output type. With the "all evals" filter we default
   // to pass_fail. With a specific eval selected, we use that eval's
@@ -1078,13 +1109,16 @@ const TaskUsageTab = ({ taskId }) => {
                 py: 0.5,
               }}
             >
-              <StatPill label="Runs" value={stats.runs_period ?? 0} />
+              <StatPill
+                label="Runs"
+                value={`${stats.runs_period ?? 0}${lowerBoundSuffix}`}
+              />
               <Box
                 sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
               />
               <StatPill
                 label="Success"
-                value={stats.success_count ?? 0}
+                value={`${stats.success_count ?? 0}${lowerBoundSuffix}`}
                 color="success.main"
               />
               <Box
@@ -1092,54 +1126,24 @@ const TaskUsageTab = ({ taskId }) => {
               />
               <StatPill
                 label="Errors"
-                value={stats.error_count ?? 0}
+                value={`${stats.error_count ?? 0}${lowerBoundSuffix}`}
                 color="error.main"
               />
               <Box
                 sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
               />
               <StatPill
-                label="Task Completion Rate"
+                label={
+                  summaryIsSampled
+                    ? "Sample completion rate"
+                    : "Task Completion Rate"
+                }
                 value={`${stats.pass_rate ?? 0}%`}
                 color="info.main"
               />
             </Box>
           )}
         </Box>
-
-        {/* Period fallback hint — backend widened to "all time" because
-            the user-selected window had no runs */}
-        {periodFallback && (
-          <Box
-            sx={(t) => ({
-              display: "flex",
-              alignItems: "center",
-              gap: 0.75,
-              px: 1.25,
-              py: 0.75,
-              mb: 1,
-              borderRadius: "6px",
-              border: "1px solid",
-              borderColor: "divider",
-              bgcolor:
-                t.palette.mode === "dark"
-                  ? "rgba(255,255,255,0.03)"
-                  : "background.neutral",
-            })}
-          >
-            <Iconify
-              icon="solar:info-circle-linear"
-              width={14}
-              sx={{ color: "info.main", flexShrink: 0 }}
-            />
-            <Typography
-              variant="caption"
-              sx={{ fontSize: "11px", color: "text.secondary" }}
-            >
-              No runs in the selected window — showing all-time data instead.
-            </Typography>
-          </Box>
-        )}
 
         {/* Chart */}
         <Box
@@ -1208,16 +1212,29 @@ const TaskUsageTab = ({ taskId }) => {
                 </Typography>
               )}
             </Typography>
-            {totalLogs > 0 && (
-              <Typography
-                variant="caption"
-                color="text.disabled"
-                sx={{ fontSize: "11px" }}
-              >
-                {totalLogs.toLocaleString()} total run
-                {totalLogs !== 1 ? "s" : ""}
-              </Typography>
-            )}
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              {pageLimitReached && (
+                <Typography
+                  variant="caption"
+                  color="warning.main"
+                  sx={{ fontSize: "11px" }}
+                >
+                  Bounded {(100 * pageSize).toLocaleString()}-run browsing
+                  window
+                </Typography>
+              )}
+              {totalLogs > 0 && (
+                <Typography
+                  variant="caption"
+                  color="text.disabled"
+                  sx={{ fontSize: "11px" }}
+                >
+                  {totalLogs.toLocaleString()}
+                  {logsCountIsLowerBound ? "+" : ""} total run
+                  {totalLogs !== 1 ? "s" : ""}
+                </Typography>
+              )}
+            </Box>
           </Box>
           {/* `display: flex` is required here so the inner DataTable Box
               (which itself uses `flex: 1`) actually inherits a bounded
@@ -1238,7 +1255,7 @@ const TaskUsageTab = ({ taskId }) => {
             <DataTablePagination
               page={page}
               pageSize={pageSize}
-              total={totalLogs}
+              total={paginationTotal}
               onPageChange={setPage}
               onPageSizeChange={(s) => {
                 setPageSize(s);

@@ -1,8 +1,4 @@
-"""run_entry scopes its ClickHouse target load by the eval TASK's project, not
-by the attached config's. A task may borrow configs authored in a sibling
-project (the M2M has no same-project constraint) while its spans / traces /
-sessions live in the task's own project: scoping the CH-direct read by the
-config's project finds nothing and errors the entry with "not in ClickHouse"."""
+"""The eval target belongs to the task project, not the config author project."""
 
 import uuid
 from datetime import timedelta
@@ -28,8 +24,7 @@ from tracer.tests._ch_seed import seed_ch_span, seed_ch_trace, seed_ch_trace_ses
 
 @pytest.fixture
 def config_project(db, organization, workspace):
-    """The sibling project the borrowed configs are authored in — it never
-    holds any of the evaluated targets."""
+    """A sibling project that owns the borrowed eval config, but no targets."""
     return Project.objects.create(
         name="Config Author Project",
         organization=organization,
@@ -65,15 +60,13 @@ def _task_with(project, config):
 
 
 def _make_entry(**kwargs):
-    """Create the entry the way the materializer does — bulk_create bypasses
-    full_clean, so a CH-only target id (no PG row) is allowed."""
+    """Match materialization: CH-only targets bypass FK validation."""
     entry = EvalLogger(status=EvalEntryStatus.RUNNING, **kwargs)
     EvalLogger.objects.bulk_create([entry])
     return entry
 
 
 def _ch_only_span(project, trace):
-    """A span that lives ONLY in CH, under the task's project."""
     span = ObservationSpan(
         id=f"xproj-{uuid.uuid4().hex[:16]}",
         project=project,
@@ -101,7 +94,7 @@ def _assert_completed(status, entry):
 @pytest.mark.integration
 @pytest.mark.django_db
 class TestRunEntryCrossProjectScoping:
-    def test_span_target_completes_when_config_lives_in_sibling_project(
+    def test_span_target_uses_task_project(
         self, project, config_project, eval_template, stub_run_eval, stub_cost_log
     ):
         config = _borrowed_config(
@@ -119,7 +112,7 @@ class TestRunEntryCrossProjectScoping:
         )
         _assert_completed(run_entry(entry), entry)
 
-    def test_trace_target_completes_when_config_lives_in_sibling_project(
+    def test_trace_target_uses_task_project(
         self, project, config_project, eval_template, stub_run_eval, stub_cost_log
     ):
         config = _borrowed_config(
@@ -144,7 +137,7 @@ class TestRunEntryCrossProjectScoping:
         )
         _assert_completed(run_entry(entry), entry)
 
-    def test_session_target_completes_when_config_lives_in_sibling_project(
+    def test_session_target_uses_task_project(
         self,
         observe_project,
         config_project,
@@ -152,7 +145,6 @@ class TestRunEntryCrossProjectScoping:
         stub_run_eval,
         stub_cost_log,
     ):
-        # "name" is a session field; "input" is not.
         config = _borrowed_config(config_project, eval_template, {"input": "name"})
         task = _task_with(observe_project, config)
         session = TraceSession.objects.create(project=observe_project, name="sess")

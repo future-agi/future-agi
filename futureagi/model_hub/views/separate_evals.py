@@ -1,7 +1,6 @@
 import copy
 import json
 import math
-import traceback
 import uuid
 from collections import defaultdict
 from collections.abc import Callable
@@ -32,15 +31,19 @@ from model_hub.constants import (
 from model_hub.models.choices import EvalOutputType, EvalTemplateType
 from model_hub.models.develop_dataset import SourceChoices
 from model_hub.models.evals_metric import (
-    EvalGroundTruth,
     EvalSettings,
     EvalTemplate,
     Feedback,
     OwnerChoices,
     UserEvalMetric,
 )
-
 from model_hub.models.run_prompt import PromptEvalConfig
+from model_hub.selectors.eval_list_charts import read_eval_list_charts
+from model_hub.selectors.eval_usage import (
+    EvalUsageReadCompleteness,
+    EvalUsageReadError,
+    read_eval_usage,
+)
 from model_hub.selectors.feedback import resolve_feedback_edit_contexts
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
@@ -131,6 +134,13 @@ from tfc.utils.general_methods import GeneralMethods
 from tracer.models.custom_eval_config import CustomEvalConfig, InlineEval, ModelChoices
 from tracer.models.external_eval_config import ExternalEvalConfig
 from tracer.models.observation_span import EvalLogger
+from tracer.services.clickhouse.client import is_clickhouse_enabled
+from tracer.services.exact_aggregation_cache import (
+    mark_refresh_failed,
+    publish_exact_snapshot,
+    read_exact_snapshot,
+    read_or_schedule_exact_snapshot,
+)
 from tracer.utils.filters import apply_created_at_filters
 from tracer.utils.graphs import GraphEngine
 
@@ -209,8 +219,11 @@ def apply_filters(row_data, filters):
                 }
 
                 if filter_op not in text_ops:
-                    message = "Invalid filter operation. \
-                        Allowed operations are: " + ", ".join(text_ops.keys())
+                    message = (
+                        "Invalid filter operation. \
+                        Allowed operations are: "
+                        + ", ".join(text_ops.keys())
+                    )
                     raise ValueError(message)
 
                 result = []
@@ -548,9 +561,11 @@ class GetAPICallLogDetailsView(APIView):
 
             return self._gm.success_response(table_data)
 
-        except Exception as e:
-            logger.exception(f"Error in GetAPICallLogs: {str(e)}")
-            return self._gm.internal_server_error_response(str(e))
+        except Exception as exc:
+            logger.exception("eval_logs.details_failed", error=str(exc))
+            return self._gm.internal_server_error_response(
+                "Unable to load evaluation logs. Please try again later."
+            )
 
 
 class GetAPICallLogView(APIView):
@@ -958,9 +973,12 @@ class CellErrorLocalizerView(APIView):
                     "error_message": task.error_message,
                 }
             )
-        except Exception as e:
-            logger.exception(f"Error in CellErrorLocalizerView: {str(e)}")
-            return self._gm.bad_request(f"Failed to start error localization: {str(e)}")
+        except Exception as exc:
+            logger.exception(
+                "cell_error_localizer_start_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Error localization could not be started")
 
     @swagger_auto_schema(
         responses={
@@ -1059,11 +1077,12 @@ class CellErrorLocalizerView(APIView):
                     "error_message": task.error_message,
                 }
             )
-        except Exception as e:
-            logger.exception(f"Error in CellErrorLocalizerView GET: {str(e)}")
-            return self._gm.bad_request(
-                f"Failed to fetch error localization status: {str(e)}"
+        except Exception as exc:
+            logger.exception(
+                "cell_error_localizer_status_failed",
+                error_type=type(exc).__name__,
             )
+            return self._gm.bad_request("Error localization status could not be loaded")
 
 
 class EvalMetricView(APIView):
@@ -1091,12 +1110,17 @@ class EvalMetricView(APIView):
             eval_template = EvalTemplate.no_workspace_objects.filter(
                 id=eval_template_id
             ).first()
+            if eval_template is None:
+                return self._gm.bad_request("EvalTemplate not found")
             response_data = get_eval_metric_data(eval_template, filters, logs)
 
             return self._gm.success_response(response_data)
-        except Exception as e:
-            logger.exception(f"Error in EvalMetricView.get: {str(e)}")
-            return self._gm.bad_request(str(e))
+        except Exception as exc:
+            logger.exception(
+                "eval_metric_get_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation metrics could not be loaded")
 
     @validated_request(
         request_serializer=EvalMetricRequestSerializer,
@@ -1119,12 +1143,17 @@ class EvalMetricView(APIView):
             eval_template = EvalTemplate.no_workspace_objects.filter(
                 id=eval_template_id
             ).first()
+            if eval_template is None:
+                return self._gm.bad_request("EvalTemplate not found")
             response_data = get_eval_metric_data(eval_template, filters, logs)
 
             return self._gm.success_response(response_data)
-        except Exception as e:
-            logger.exception(f"Error in EvalMetricView.post: {str(e)}")
-            return self._gm.bad_request(str(e))
+        except Exception as exc:
+            logger.exception(
+                "eval_metric_post_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation metrics could not be loaded")
 
 
 @workspace_read_only
@@ -1175,7 +1204,10 @@ class GetEvalTemplateNameView(APIView):
             )
             if search_text:
                 from model_hub.utils.eval_list import normalize_search_for_name
-                eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
+
+                eval_templates = eval_templates.filter(
+                    normalize_search_for_name(search_text)
+                )
             eval_template_names = [
                 {
                     "id": str(eval_template.id),
@@ -1185,9 +1217,12 @@ class GetEvalTemplateNameView(APIView):
                 for eval_template in eval_templates
             ]
             return self._gm.success_response(eval_template_names)
-        except Exception as e:
-            logger.exception(f"Error getting eval template names: {str(e)}")
-            return self._gm.bad_request(str(e))
+        except Exception as exc:
+            logger.exception(
+                "eval_template_names_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation template names could not be loaded")
 
 
 @workspace_read_only
@@ -1198,9 +1233,9 @@ class GetEvalTemplates(APIView):
     def process_graph_data_and_send_ws(
         self, dates, template_logs_map, data, template_map, start_date
     ):
+        eval_template_id = data.get("id")
         try:
             # Use pre-fetched logs instead of querying database again
-            eval_template_id = data.get("id")
             eval_template = template_map.get(str(eval_template_id), None)
 
             template_logs = template_logs_map.get(str(eval_template_id), [])
@@ -1257,10 +1292,13 @@ class GetEvalTemplates(APIView):
             )
             return data
 
-        except Exception as e:
+        except Exception as exc:
             logger.exception(
-                f"Error pushing graph data for template {str(eval_template_id)}: {e}"
+                "legacy_eval_template_graph_data_failed",
+                eval_template_id=str(eval_template_id),
+                error_type=type(exc).__name__,
             )
+            raise
 
     def generate_date_range_data(self, start_date, template_data):
         """Generate time series data for the last 30 days"""
@@ -1465,11 +1503,12 @@ class GetEvalTemplates(APIView):
                 }
             )
 
-        except Exception as e:
-            logger.error(
-                f"Error in GetEvalTemplates: {str(e)}\n{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "legacy_eval_template_list_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request("Evaluation templates could not be loaded")
 
 
 @workspace_read_only
@@ -1642,11 +1681,12 @@ class EvalTemplateListView(APIView):
             )
             return self._gm.success_response(response.model_dump())
 
-        except Exception as e:
-            logger.error(
-                f"Error in EvalTemplateListView: {str(e)}\n{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "eval_template_list_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request("Evaluations could not be loaded")
 
 
 @workspace_read_only
@@ -1672,110 +1712,22 @@ class EvalTemplateListChartsView(APIView):
     def post(self, request, *args, **kwargs):
         try:
             template_ids = request.validated_data.get("template_ids", [])
-            if not template_ids:
-                return self._gm.success_response({"charts": {}})
-
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
-
-            charts = self._fetch_charts_from_postgres(organization, template_ids)
-
-            return self._gm.success_response({"charts": charts})
-
-        except Exception as e:
-            logger.error(
-                f"Error in EvalTemplateListChartsView: {str(e)}\n{traceback.format_exc()}"
+            workspace = getattr(request, "workspace", None) or get_current_workspace()
+            result = read_eval_list_charts(
+                organization,
+                workspace,
+                template_ids,
             )
-            return self._gm.bad_request(str(e))
-
-    def _fetch_charts_from_postgres(self, organization, template_ids):
-        """
-        Query PostgreSQL for 30-day daily run counts and failure rates per template.
-        Failure = API error OR eval result is "Failed"/"Fail"/score 0.
-        Uses the same data source as the detail page so results are always fresh.
-        Returns: { template_id: { chart: [...], errorRate: [...], runCount: N } }
-        """
-        import json as _json
-        from collections import defaultdict
-        from datetime import date, timedelta
-
-        from django.utils import timezone
-
-        start_date = timezone.now() - timedelta(days=30)
-
-        # Fetch individual logs to inspect config.output for pass/fail
-        if APICallLog is None:
-            return []
-        logs = (
-            APICallLog.objects.filter(
-                organization=organization,
-                source_id__in=[str(tid) for tid in template_ids],
-                created_at__gte=start_date,
-                deleted=False,
+            return self._gm.success_response(result)
+        except Exception as exc:
+            logger.exception(
+                "eval_list_charts_request_failed",
+                error_type=type(exc).__name__,
             )
-            .values("source_id", "created_at", "status", "config")
-            .order_by("source_id", "created_at")
-        )
-
-        # Build per-template daily data
-        daily_data = defaultdict(
-            lambda: defaultdict(lambda: {"total": 0, "failures": 0})
-        )
-        for log in logs:
-            day = log["created_at"].date()
-            sid = log["source_id"]
-            daily_data[sid][day]["total"] += 1
-
-            # Count as failure if API error or eval result is Failed/Fail/0
-            if log["status"] == APICallStatusChoices.ERROR.value:
-                daily_data[sid][day]["failures"] += 1
-            else:
-                config = log.get("config") or {}
-                if isinstance(config, str):
-                    try:
-                        config = _json.loads(config)
-                    except (ValueError, TypeError):
-                        config = {}
-                output = config.get("output", {})
-                if isinstance(output, dict):
-                    result = output.get("output")
-                    if result in ("Failed", "Fail"):
-                        daily_data[sid][day]["failures"] += 1
-                    elif result == 0 or result == 0.0:
-                        daily_data[sid][day]["failures"] += 1
-
-        # Generate 31-day time series for each template
-        today = date.today()
-        start = today - timedelta(days=30)
-        result = {}
-
-        for tid in template_ids:
-            chart = []
-            error_rate = []
-            run_count = 0
-            tid_str = str(tid)
-
-            for i in range(31):
-                day = start + timedelta(days=i)
-                ts = day.strftime("%Y-%m-%dT00:00:00")
-                day_data = daily_data.get(tid_str, {}).get(
-                    day, {"total": 0, "failures": 0}
-                )
-                total = day_data["total"]
-                failures = day_data["failures"]
-                chart.append({"timestamp": ts, "value": total})
-                rate = round((failures / total) * 100, 1) if total > 0 else 0
-                error_rate.append({"timestamp": ts, "value": rate})
-                run_count += total
-
-            result[tid_str] = {
-                "chart": chart,
-                "error_rate": error_rate,
-                "run_count": run_count,
-            }
-
-        return result
+            return self._gm.bad_request("Evaluation charts could not be loaded")
 
 
 class EvalTemplateBulkDeleteView(APIView):
@@ -1926,11 +1878,12 @@ class EvalTemplateBulkDeleteView(APIView):
             response = BulkDeleteResponse(deleted_count=deleted_count)
             return self._gm.success_response(response.model_dump())
 
-        except Exception as e:
-            logger.error(
-                f"Error in EvalTemplateBulkDeleteView: {str(e)}\n{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "eval_template_bulk_delete_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request("Evaluation templates could not be deleted")
 
 
 class EvalTemplateCreateV2View(APIView):
@@ -2297,11 +2250,12 @@ class EvalTemplateCreateV2View(APIView):
             )
             return self._gm.success_response(response.model_dump())
 
-        except Exception as e:
-            logger.error(
-                f"Error in EvalTemplateCreateV2View: {str(e)}\n{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "eval_template_create_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request("Evaluation template could not be created")
 
 
 class EvalTemplateDetailView(APIView):
@@ -2445,11 +2399,12 @@ class EvalTemplateDetailView(APIView):
             )
             return self._gm.success_response(response.model_dump())
 
-        except Exception as e:
-            logger.error(
-                f"Error in EvalTemplateDetailView: {str(e)}\n{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "eval_template_detail_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request("Evaluation template could not be loaded")
 
 
 class EvalTemplateUpdateView(APIView):
@@ -2804,11 +2759,12 @@ class EvalTemplateUpdateView(APIView):
             )
             return self._gm.success_response(response.model_dump())
 
-        except Exception as e:
-            logger.error(
-                f"Error in EvalTemplateUpdateView: {str(e)}\n{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "eval_template_update_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request("Evaluation template could not be updated")
 
 
 class EvalTemplateVersionListView(APIView):
@@ -2897,11 +2853,14 @@ class EvalTemplateVersionListView(APIView):
             )
             return self._gm.success_response(response.model_dump())
 
-        except Exception as e:
-            logger.error(
-                f"Error in EvalTemplateVersionListView: {str(e)}\n{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "eval_template_version_list_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request(
+                "Evaluation template versions could not be loaded"
+            )
 
 
 class EvalTemplateVersionCreateView(APIView):
@@ -2980,11 +2939,14 @@ class EvalTemplateVersionCreateView(APIView):
             )
             return self._gm.success_response(response.model_dump())
 
-        except Exception as e:
-            logger.error(
-                f"Error in EvalTemplateVersionCreateView: {str(e)}\n{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "eval_template_version_create_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request(
+                "Evaluation template version could not be created"
+            )
 
 
 @dataclass(frozen=True)
@@ -3116,11 +3078,14 @@ class SetDefaultVersionView(APIView):
                 }
             )
 
-        except Exception as e:
-            logger.error(
-                f"Error in SetDefaultVersionView: {str(e)}\n{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "eval_template_version_activation_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request(
+                "Evaluation template version could not be activated"
+            )
 
 
 class RestoreVersionView(APIView):
@@ -3210,11 +3175,14 @@ class RestoreVersionView(APIView):
                 }
             )
 
-        except Exception as e:
-            logger.error(
-                f"Error in RestoreVersionView: {str(e)}\n{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "eval_template_version_restore_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request(
+                "Evaluation template version could not be restored"
+            )
 
 
 def _validate_child_matches_axis(child_template, axis: str) -> None:
@@ -3633,11 +3601,12 @@ class CompositeEvalCreateView(APIView):
             )
             return self._gm.success_response(response.model_dump())
 
-        except Exception as e:
-            logger.error(
-                f"Error in CompositeEvalCreateView: {str(e)}\n{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "composite_eval_create_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request("Composite evaluation could not be created")
 
 
 class CompositeEvalDetailView(APIView):
@@ -3717,11 +3686,12 @@ class CompositeEvalDetailView(APIView):
             )
             return self._gm.success_response(response.model_dump())
 
-        except Exception as e:
-            logger.error(
-                f"Error in CompositeEvalDetailView: {str(e)}\n{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "composite_eval_detail_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request("Composite evaluation could not be loaded")
 
     @validated_request(
         request_serializer=CompositeEvalUpdateRequestSerializer,
@@ -4045,12 +4015,12 @@ class CompositeEvalDetailView(APIView):
             )
             return self._gm.success_response(response.model_dump())
 
-        except Exception as e:
-            logger.error(
-                f"Error in CompositeEvalDetailView.patch: "
-                f"{str(e)}\n{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "composite_eval_update_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request("Composite evaluation could not be updated")
 
 
 def _persist_composite_evaluation(
@@ -4260,11 +4230,12 @@ class CompositeEvalExecuteView(APIView):
             )
             return self._gm.success_response(response.model_dump())
 
-        except Exception as e:
-            logger.error(
-                f"Error in CompositeEvalExecuteView: {str(e)}\n{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "composite_eval_execute_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request("Composite evaluation could not be executed")
 
 
 class CompositeEvalAdhocExecuteView(APIView):
@@ -4422,12 +4393,14 @@ class CompositeEvalAdhocExecuteView(APIView):
             )
             return self._gm.success_response(response.model_dump())
 
-        except Exception as e:
-            logger.error(
-                f"Error in CompositeEvalAdhocExecuteView: {str(e)}\n"
-                f"{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "composite_eval_adhoc_execute_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request(
+                "Composite evaluation test could not be executed"
+            )
 
 
 class GroundTruthListView(APIView):
@@ -4501,11 +4474,12 @@ class GroundTruthListView(APIView):
             )
             return self._gm.success_response(response.model_dump())
 
-        except Exception as e:
-            logger.error(
-                f"Error in GroundTruthListView: {str(e)}\n{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "ground_truth_list_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request("Ground truth entries could not be loaded")
 
 
 class GroundTruthUploadView(APIView):
@@ -4536,9 +4510,7 @@ class GroundTruthUploadView(APIView):
         )
 
         try:
-            template = _get_accessible_eval_template_for_request(
-                template_id, request
-            )
+            template = _get_accessible_eval_template_for_request(template_id, request)
         except EvalTemplate.DoesNotExist:
             return self._gm.not_found("Eval template not found.")
 
@@ -4559,9 +4531,7 @@ class GroundTruthUploadView(APIView):
                 )
             except ValueError as exc:
                 return self._gm.bad_request(str(exc))
-            name = (
-                request_data.get("name") or uploaded_file.name.rsplit(".", 1)[0]
-            )
+            name = request_data.get("name") or uploaded_file.name.rsplit(".", 1)[0]
             description = request_data.get("description", "")
             file_name = uploaded_file.name
             variable_mapping = request_data.get("variable_mapping")
@@ -4644,9 +4614,7 @@ class GroundTruthSetupView(APIView):
         )
         if isinstance(result, ServiceError):
             return self._gm.bad_request(result.message)
-        return self._gm.success_response(
-            GroundTruthSetupResult(**result).model_dump()
-        )
+        return self._gm.success_response(GroundTruthSetupResult(**result).model_dump())
 
 
 class GroundTruthDataView(APIView):
@@ -4688,11 +4656,12 @@ class GroundTruthDataView(APIView):
             )
             return self._gm.success_response(response.model_dump())
 
-        except Exception as e:
-            logger.error(
-                f"Error in GroundTruthDataView: {str(e)}\n{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "ground_truth_data_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request("Ground truth data could not be loaded")
 
 
 class GroundTruthStatusView(APIView):
@@ -4739,11 +4708,12 @@ class GroundTruthStatusView(APIView):
             )
             return self._gm.success_response(response.model_dump())
 
-        except Exception as e:
-            logger.error(
-                f"Error in GroundTruthStatusView: {str(e)}\n{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "ground_truth_status_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request("Ground truth status could not be loaded")
 
 
 class GroundTruthDeleteView(APIView):
@@ -4773,15 +4743,18 @@ class GroundTruthDeleteView(APIView):
                 gt.deleted = True
                 gt.deleted_at = timezone.now()
                 gt.is_active = False
-                gt.save(update_fields=["deleted", "deleted_at", "is_active", "updated_at"])
+                gt.save(
+                    update_fields=["deleted", "deleted_at", "is_active", "updated_at"]
+                )
 
             return self._gm.success_response({"deleted": True, "id": str(gt.id)})
 
-        except Exception as e:
-            logger.error(
-                f"Error in GroundTruthDeleteView: {str(e)}\n{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "ground_truth_delete_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request("Ground truth entry could not be deleted")
 
 
 class GroundTruthTriggerEmbeddingView(APIView):
@@ -4854,11 +4827,12 @@ class GroundTruthTriggerEmbeddingView(APIView):
                 }
             )
 
-        except Exception as e:
-            logger.error(
-                f"Error in GroundTruthTriggerEmbeddingView: {str(e)}\n{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "ground_truth_embedding_trigger_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request("Ground truth embedding could not be started")
 
 
 def _round_to_usage_bucket(ts, bucket_minutes):
@@ -4877,6 +4851,43 @@ def _round_to_usage_bucket(ts, bucket_minutes):
         return ts.replace(hour=rounded_hour, minute=0, second=0, microsecond=0)
     rounded_minute = (ts.minute // bucket_minutes) * bucket_minutes
     return ts.replace(minute=rounded_minute, second=0, microsecond=0)
+
+
+def _finite_usage_metric(value):
+    """Return a finite float, or ``None`` for empty CH aggregate sentinels."""
+
+    if value is None:
+        return None
+    try:
+        normalized = float(value)
+    except (TypeError, ValueError):
+        return None
+    return normalized if math.isfinite(normalized) else None
+
+
+def _pending_eval_usage_payload(template_id, page, page_size):
+    """Return the normal usage shape without publishing false zero totals."""
+
+    return {
+        "template_id": str(template_id),
+        "is_composite": False,
+        "completeness": "pending",
+        "unavailable_fields": [],
+        "stats": {
+            "total_runs": 0,
+            "runs_period": 0,
+            "success_count": 0,
+            "error_count": 0,
+            "pass_rate": 0.0,
+        },
+        "chart": [],
+        "table": [],
+        "logs": {"total": 0, "page": page, "page_size": page_size},
+        "query_complete": False,
+        "query_status": "pending",
+        "query_sampled": False,
+        "query_refreshing": True,
+    }
 
 
 class EvalUsageStatsView(APIView):
@@ -4912,6 +4923,7 @@ class EvalUsageStatsView(APIView):
         responses={200: EvalUsageStatsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def get(self, request, template_id, *args, **kwargs):
+        previous_exact = None
         try:
             query = request.validated_query_data
             page = query["page"]
@@ -4924,6 +4936,8 @@ class EvalUsageStatsView(APIView):
                 empty = {
                     "template_id": str(template_id),
                     "is_composite": False,
+                    "completeness": EvalUsageReadCompleteness.COMPLETE.value,
+                    "unavailable_fields": [],
                     "stats": {
                         "total_runs": 0,
                         "runs_period": 0,
@@ -4934,6 +4948,11 @@ class EvalUsageStatsView(APIView):
                     "chart": [],
                     "table": [],
                     "logs": {"total": 0, "page": page, "page_size": page_size},
+                    "query_complete": True,
+                    "query_status": "complete",
+                    "query_sampled": False,
+                    "query_completed_at": timezone.now().isoformat(),
+                    "query_cached": False,
                 }
                 return self._gm.success_response(
                     EvalUsageStatsResponseResultSerializer(instance=empty).data
@@ -4975,43 +4994,138 @@ class EvalUsageStatsView(APIView):
                 end_date = timezone.now()
                 start_date = end_date - period_delta
 
-            # Base queryset — workspace-scoped so usage numbers don't leak
-            # across workspaces of the same org.
-            base_qs = APICallLog.objects.filter(
-                organization=organization,
-                source_id=str(template_id),
-                deleted=False,
-            )
-            if workspace:
-                base_qs = base_qs.filter(workspace=workspace)
-            total_runs = base_qs.count()
+            cache_identity = {
+                "organization_id": str(organization.id),
+                "workspace_id": str(workspace.id) if workspace else None,
+                "template_id": str(template_id),
+                "page": page,
+                "page_size": page_size,
+                "period": period,
+                "start_date": query.get("start_date"),
+                "end_date": query.get("end_date"),
+            }
+            previous_exact = read_exact_snapshot("eval-usage", cache_identity)
+            if not getattr(request, "_exact_aggregation_worker", False):
+                return self._gm.success_response(
+                    read_or_schedule_exact_snapshot(
+                        "eval-usage",
+                        cache_identity,
+                        refresh=bool(query["refresh"]),
+                        pending_payload=_pending_eval_usage_payload(
+                            template_id,
+                            page,
+                            page_size,
+                        ),
+                    )
+                )
 
-            # Period-filtered queryset
-            period_qs = base_qs.filter(
-                created_at__gte=start_date, created_at__lte=end_date
-            )
-            runs_period = period_qs.count()
+            if period in ("30m", "6h", "1d"):
+                bucket_minutes = (
+                    10 if period == "30m" else (60 if period == "6h" else 360)
+                )
+            else:
+                bucket_minutes = 1440
 
-            success_count = period_qs.filter(
-                status=APICallStatusChoices.SUCCESS.value
-            ).count()
-            error_count = period_qs.filter(
-                status=APICallStatusChoices.ERROR.value
-            ).count()
+            usage_read = None
+            period_qs = None
+            read_completeness = EvalUsageReadCompleteness.COMPLETE.value
+            unavailable_fields: list[str] = []
+            if is_clickhouse_enabled():
+                project_configs = CustomEvalConfig.objects.filter(
+                    eval_template_id=template_id,
+                    deleted=False,
+                    project__organization=organization,
+                )
+                if workspace:
+                    project_configs = project_configs.filter(
+                        project__workspace=workspace
+                    )
+                project_ids = [
+                    str(value)
+                    for value in project_configs.values_list(
+                        "project_id", flat=True
+                    ).distinct()
+                ]
+                usage_read = read_eval_usage(
+                    organization_id=str(organization.id),
+                    workspace_id=str(workspace.id) if workspace else None,
+                    project_ids=project_ids,
+                    template_id=str(template_id),
+                    start_date=start_date,
+                    end_date=end_date,
+                    bucket_minutes=bucket_minutes,
+                    page=page,
+                    page_size=page_size,
+                )
+                total_runs = usage_read.total_runs
+                runs_period = usage_read.runs_period
+                success_count = usage_read.success_count
+                error_count = usage_read.error_count
+                read_completeness = usage_read.completeness.value
+                unavailable_fields = list(usage_read.unavailable_fields)
+            else:
+                # Local/OSS fallback. Production has CH enabled and uses the
+                # bounded selector above; keeping this path preserves the
+                # standalone development contract without a second live-data
+                # source in production.
+                base_qs = APICallLog.objects.filter(
+                    organization=organization,
+                    source_id=str(template_id),
+                    deleted=False,
+                )
+                if workspace:
+                    base_qs = base_qs.filter(workspace=workspace)
+                total_runs = base_qs.count()
+                period_qs = base_qs.filter(
+                    created_at__gte=start_date, created_at__lte=end_date
+                )
+                runs_period = period_qs.count()
+                success_count = period_qs.filter(
+                    status=APICallStatusChoices.SUCCESS.value
+                ).count()
+                error_count = period_qs.filter(
+                    status=APICallStatusChoices.ERROR.value
+                ).count()
 
             # Chart data — aggregate by time bucket
             from collections import defaultdict
 
             chart_data = []
-            if runs_period > 0:
-                # Pick bucket size based on period
-                if period in ("30m", "6h", "1d"):
-                    bucket_minutes = (
-                        10 if period == "30m" else (60 if period == "6h" else 360)
+            if usage_read is not None:
+                chart_by_bucket = {
+                    bucket.bucket.isoformat(): bucket for bucket in usage_read.chart
+                }
+                current_bucket = _round_to_usage_bucket(start_date, bucket_minutes)
+                while current_bucket <= end_date:
+                    ts_key = current_bucket.isoformat()
+                    bucket = chart_by_bucket.get(ts_key)
+                    avg_duration = _finite_usage_metric(
+                        bucket.avg_duration if bucket else None
                     )
-                else:
-                    bucket_minutes = 1440  # 1 day
-
+                    avg_score = _finite_usage_metric(
+                        bucket.avg_score if bucket else None
+                    )
+                    chart_data.append(
+                        {
+                            "timestamp": ts_key,
+                            "calls": bucket.calls if bucket else 0,
+                            "avg_latency_ms": (
+                                round(avg_duration * 1000)
+                                if avg_duration is not None and avg_duration < 100
+                                else round(avg_duration or 0)
+                            ),
+                            "avg_score": (
+                                round(avg_score, 3) if avg_score is not None else None
+                            ),
+                            "pass_count": bucket.pass_count if bucket else 0,
+                            "fail_count": bucket.fail_count if bucket else 0,
+                        }
+                    )
+                    if bucket_minutes >= 1440:
+                        current_bucket += timedelta(days=1)
+                    else:
+                        current_bucket += timedelta(minutes=bucket_minutes)
+            elif runs_period > 0:
                 buckets_calls = defaultdict(int)
                 buckets_latency = defaultdict(list)
                 buckets_scores = defaultdict(list)
@@ -5105,10 +5219,15 @@ class EvalUsageStatsView(APIView):
                         }
                     )
 
-            # Paginated logs
-            logs_qs = period_qs.order_by("-created_at")
-            total_logs = logs_qs.count()
-            logs_page = logs_qs[page * page_size : (page + 1) * page_size]
+            # Paginated logs. The CH path already selected only this page; the
+            # local fallback keeps the historical ORM behavior.
+            if usage_read is not None:
+                total_logs = runs_period
+                logs_page = usage_read.logs
+            else:
+                logs_qs = period_qs.order_by("-created_at")
+                total_logs = logs_qs.count()
+                logs_page = logs_qs[page * page_size : (page + 1) * page_size]
 
             # Batch-fetch feedbacks for this page's log IDs
             log_ids = [str(log.log_id) for log in logs_page]
@@ -5351,18 +5470,21 @@ class EvalUsageStatsView(APIView):
 
                 table_rows.append(row)
 
+            stats_response = {
+                "total_runs": total_runs,
+                "runs_period": runs_period,
+                "success_count": success_count,
+                "error_count": error_count,
+                "pass_rate": round(
+                    (success_count / runs_period * 100) if runs_period > 0 else 0, 2
+                ),
+            }
             response = {
                 "template_id": str(template_id),
                 "is_composite": template.template_type == "composite",
-                "stats": {
-                    "total_runs": total_runs,
-                    "runs_period": runs_period,
-                    "success_count": success_count,
-                    "error_count": error_count,
-                    "pass_rate": round(
-                        (success_count / runs_period * 100) if runs_period > 0 else 0, 2
-                    ),
-                },
+                "completeness": read_completeness,
+                "unavailable_fields": unavailable_fields,
+                "stats": stats_response,
                 "chart": chart_data,
                 "table": table_rows,
                 "logs": {
@@ -5370,19 +5492,55 @@ class EvalUsageStatsView(APIView):
                     "page": page,
                     "page_size": page_size,
                 },
+                "query_complete": True,
+                "query_status": "complete",
+                "query_sampled": False,
             }
+            if read_completeness != EvalUsageReadCompleteness.COMPLETE.value:
+                if previous_exact is not None and not getattr(
+                    request, "_exact_aggregation_worker", False
+                ):
+                    return self._gm.success_response(
+                        mark_refresh_failed(previous_exact)
+                    )
+                return self._gm.custom_error_response(
+                    503,
+                    "Evaluation usage could not be loaded exactly. Please retry.",
+                    code="eval_usage_query_failed",
+                )
             # Contract boundary: the serializer builds the wire format. A
             # missing/mistyped field raises here (caught below → 400 + log)
             # instead of shipping a drifted shape to the FE.
+            serialized = EvalUsageStatsResponseResultSerializer(instance=response).data
+            if getattr(request, "_exact_aggregation_worker", False):
+                return self._gm.success_response(serialized)
             return self._gm.success_response(
-                EvalUsageStatsResponseResultSerializer(instance=response).data
+                publish_exact_snapshot("eval-usage", cache_identity, serialized)
             )
 
-        except Exception as e:
-            logger.error(
-                f"Error in EvalUsageStatsView: {str(e)}\n{traceback.format_exc()}"
+        except EvalUsageReadError as exc:
+            logger.warning(
+                "eval_usage_stats_bounded_read_failed",
+                error_code=exc.code.value,
+                operations=exc.operations,
             )
-            return self._gm.bad_request(str(e))
+            if getattr(request, "_exact_aggregation_worker", False):
+                raise
+            if previous_exact is not None:
+                return self._gm.success_response(mark_refresh_failed(previous_exact))
+            return self._gm.custom_error_response(
+                503,
+                "Evaluation usage could not be loaded. Please try again later.",
+                code=f"eval_usage_{exc.code.value}",
+            )
+        except Exception:
+            logger.exception(
+                "eval_usage_stats_failed",
+            )
+            # Unexpected application defects must retain their original type and
+            # traceback.  The global API exception handler owns 500 sanitization;
+            # this boundary only maps the selector's typed CH failures to 503.
+            raise
 
 
 class EvalFeedbackListView(APIView):
@@ -5480,11 +5638,12 @@ class EvalFeedbackListView(APIView):
                 }
             )
 
-        except Exception as e:
-            logger.error(
-                f"Error in EvalFeedbackListView: {str(e)}\n{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "eval_feedback_list_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request("Evaluation feedback could not be loaded")
 
 
 class TraceEvalView(APIView):
@@ -5588,18 +5747,25 @@ class TraceEvalView(APIView):
                 )
 
             except Exception as eval_error:
+                logger.exception(
+                    "trace_evaluation_execution_failed",
+                    error_type=type(eval_error).__name__,
+                )
                 response = TraceEvalResponse(
                     template_id=str(template_id),
                     trace_id=req.trace_id,
                     status="failed",
-                    reason=str(eval_error),
+                    reason="Evaluation could not be completed. Please retry.",
                 )
 
             return self._gm.success_response(response.model_dump())
 
-        except Exception as e:
-            logger.error(f"Error in TraceEvalView: {str(e)}\n{traceback.format_exc()}")
-            return self._gm.bad_request(str(e))
+        except Exception as exc:
+            logger.exception(
+                "trace_evaluation_request_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Trace evaluation could not be completed")
 
 
 class VersionCompareView(APIView):
@@ -5669,11 +5835,12 @@ class VersionCompareView(APIView):
             )
             return self._gm.success_response(response.model_dump())
 
-        except Exception as e:
-            logger.error(
-                f"Error in VersionCompareView: {str(e)}\n{traceback.format_exc()}"
+        except Exception as exc:
+            logger.exception(
+                "evaluation_version_compare_failed",
+                error_type=type(exc).__name__,
             )
-            return self._gm.bad_request(str(e))
+            return self._gm.bad_request("Evaluation versions could not be compared")
 
 
 def _build_span_context(span) -> dict:
@@ -5795,7 +5962,10 @@ def _build_span_context(span) -> dict:
     base["recording_url"] = (
         sa.get("recording_url")
         or sa.get("recordingUrl")
-        or (raw_log.get("artifact") or {}).get("recording", {}).get("mono", {}).get("combinedUrl")
+        or (raw_log.get("artifact") or {})
+        .get("recording", {})
+        .get("mono", {})
+        .get("combinedUrl")
         or raw_log.get("recordingUrl")
         or raw_log.get("recording_url")
     )
@@ -6313,13 +6483,10 @@ class EvalPlayGroundAPIView(APIView):
                         _conversational_roles = (
                             SpeakerRoleResolver.get_conversational_roles()
                         )
-                        _transcript_rows = (
-                            CallTranscript.objects.filter(
-                                call_execution_id=_ce.id,
-                                speaker_role__in=_conversational_roles,
-                            )
-                            .order_by("start_time_ms")[:200]
-                        )
+                        _transcript_rows = CallTranscript.objects.filter(
+                            call_execution_id=_ce.id,
+                            speaker_role__in=_conversational_roles,
+                        ).order_by("start_time_ms")[:200]
                         call_context = {
                             "id": str(_ce.id),
                             "status": _ce.status,
@@ -6409,18 +6576,31 @@ class EvalPlayGroundAPIView(APIView):
                 return self._gm.success_response(
                     response if response else "Evaluation has been updated."
                 )
-            except Exception as e:
-                if UsageLimitExceeded is not None and isinstance(e, UsageLimitExceeded):
-                    logger.warning(f"Eval playground usage limit: {str(e)}")
-                    return self._gm.usage_limit_response(e.check_result)
-                logger.error(f"Error in run_eval_func: {str(e)}")
+            except Exception as exc:
+                if UsageLimitExceeded is not None and isinstance(
+                    exc, UsageLimitExceeded
+                ):
+                    logger.warning(
+                        "eval_playground_usage_limit",
+                        error_type=type(exc).__name__,
+                    )
+                    return self._gm.usage_limit_response(exc.check_result)
+                logger.exception(
+                    "eval_playground_execution_failed",
+                    error_type=type(exc).__name__,
+                )
                 return self._gm.bad_request(
-                    f"Failed to run Eval due to the reason: {str(e)}"
+                    "Evaluation could not be completed. Please retry."
                 )
 
-        except Exception as e:
-            logger.exception(f"Error in EvalPlayGroundAPIView: {str(e)}")
-            return self._gm.bad_request(f"Error in EvalPlayGroundAPIView: {str(e)}")
+        except Exception as exc:
+            logger.exception(
+                "eval_playground_request_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request(
+                "Evaluation playground request could not be completed"
+            )
 
 
 class EvalCodeSnippetAPIView(APIView):
@@ -6485,10 +6665,13 @@ class EvalCodeSnippetAPIView(APIView):
                 {"python": code, "curl": curl_code, "javascript": js_code}
             )
 
-        except Exception as e:
-            logger.exception(f"Error in getting code snippet for eval: {str(e)}")
+        except Exception as exc:
+            logger.exception(
+                "eval_code_snippet_failed",
+                error_type=type(exc).__name__,
+            )
             return self._gm.bad_request(
-                f"Error in getting code snippet for eval: {str(e)}"
+                "Evaluation code snippet could not be generated"
             )
 
 
@@ -6640,11 +6823,12 @@ class EvalPlayGroundFeedbackAPIView(APIView):
                 {"message": message, "feedback_id": str(feedback.id)}
             )
 
-        except Exception as e:
-            logger.exception(f"Error in Feedback eval playground API: {str(e)}")
-            return self._gm.bad_request(
-                f"Error in Feedback eval playground API: {str(e)}"
+        except Exception as exc:
+            logger.exception(
+                "eval_playground_feedback_failed",
+                error_type=type(exc).__name__,
             )
+            return self._gm.bad_request("Evaluation feedback could not be saved")
 
 
 class UpdateEvalTemplateView(APIView):
@@ -6713,7 +6897,9 @@ class UpdateEvalTemplateView(APIView):
                     .exclude(id=eval_template.id)
                     .exists()
                 ):
-                    raise Exception(get_error_message("EVAL_TEMPLATE_ALREADY_EXISTS"))
+                    return self._gm.bad_request(
+                        get_error_message("EVAL_TEMPLATE_ALREADY_EXISTS")
+                    )
                 else:
                     eval_template.name = name
 
@@ -6763,9 +6949,12 @@ class UpdateEvalTemplateView(APIView):
 
             return self._gm.success_response("Evaluation template updated successfully")
 
-        except Exception as e:
-            logger.exception(f"Error updating the eval template: {str(e)}")
-            return self._gm.bad_request(f"error updating the eval template {str(e)}")
+        except Exception as exc:
+            logger.exception(
+                "legacy_eval_template_update_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation template could not be updated")
 
 
 class DeleteEvalTemplateView(APIView):
@@ -6794,8 +6983,8 @@ class DeleteEvalTemplateView(APIView):
                     owner=OwnerChoices.USER.value,
                     deleted=False,
                 )
-            except EvalTemplate.DoesNotExist as e:
-                raise Exception(get_error_message("MISSING_EVAL_TEMPLATE")) from e
+            except EvalTemplate.DoesNotExist:
+                return self._gm.not_found(get_error_message("MISSING_EVAL_TEMPLATE"))
 
             # Use transaction to ensure all operations are atomic
             with transaction.atomic():
@@ -6835,9 +7024,12 @@ class DeleteEvalTemplateView(APIView):
 
             return self._gm.success_response("Evaluation template Deleted successfully")
 
-        except Exception as e:
-            logger.exception(f"Error updating the eval template: {str(e)}")
-            return self._gm.bad_request(f"error updating the eval template {str(e)}")
+        except Exception as exc:
+            logger.exception(
+                "legacy_eval_template_delete_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation template could not be deleted")
 
 
 class DuplicateEvalTemplateView(APIView):
@@ -6867,8 +7059,8 @@ class DuplicateEvalTemplateView(APIView):
                     owner=OwnerChoices.USER.value,
                     deleted=False,
                 )
-            except EvalTemplate.DoesNotExist as e:
-                raise Exception(get_error_message("MISSING_EVAL_TEMPLATE")) from e
+            except EvalTemplate.DoesNotExist:
+                return self._gm.not_found(get_error_message("MISSING_EVAL_TEMPLATE"))
 
             if EvalTemplate.objects.filter(
                 name=name,
@@ -6876,7 +7068,9 @@ class DuplicateEvalTemplateView(APIView):
                 owner=OwnerChoices.USER.value,
                 deleted=False,
             ).exists():
-                raise Exception(get_error_message("EVAL_TEMPLATE_ALREADY_EXISTS"))
+                return self._gm.bad_request(
+                    get_error_message("EVAL_TEMPLATE_ALREADY_EXISTS")
+                )
 
             fields_to_copy = {
                 field.name: getattr(eval_template, field.name)
@@ -6898,9 +7092,12 @@ class DuplicateEvalTemplateView(APIView):
                 }
             )
 
-        except Exception as e:
-            logger.exception(f"Error duplicating the eval template: {str(e)}")
-            return self._gm.bad_request(f"error duplicating the eval template {str(e)}")
+        except Exception as exc:
+            logger.exception(
+                "legacy_eval_template_duplicate_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request("Evaluation template could not be duplicated")
 
 
 class TestEvaluationTemplateAPIView(APIView):
@@ -7056,9 +7253,14 @@ class TestEvaluationTemplateAPIView(APIView):
 
             return self._gm.success_response(response)
 
-        except Exception as e:
-            logger.exception(f"Error in TestEvaluationTemplateAPIView: {str(e)}")
-            return self._gm.bad_request(str(e))
+        except Exception as exc:
+            logger.exception(
+                "evaluation_template_test_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.bad_request(
+                "Evaluation template test could not be completed"
+            )
 
 
 def get_display_value(value):
