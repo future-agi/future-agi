@@ -161,6 +161,27 @@ describe("DashboardsListView list metadata", () => {
     expect(screen.queryByText("owner@example.com")).not.toBeInTheDocument();
   });
 
+  it("renders whitespace-only creator names as Unknown creator", () => {
+    h.dashboards = [
+      {
+        ...DASHBOARDS[1],
+        id: "dash-whitespace-creator",
+        name: "Whitespace Creator Dashboard",
+        created_by: {
+          name: "   ",
+          email: "whitespace@example.com",
+        },
+      },
+    ];
+
+    render(<DashboardsListView />);
+
+    expect(screen.getAllByText("Unknown creator").length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("link", { name: "Whitespace Creator Dashboard" }),
+    ).toHaveAccessibleDescription(/Created by Unknown creator\./);
+  });
+
   it("normalizes API-shaped widget counts and missing metadata", () => {
     render(<DashboardsListView />);
 
@@ -270,7 +291,7 @@ describe("DashboardsListView list metadata", () => {
     expect(
       await screen.findByText("Created by Unknown creator"),
     ).toBeInTheDocument();
-    expect(screen.getByText("Unknown user")).toBeInTheDocument();
+    expect(screen.getAllByText("Unknown creator").length).toBeGreaterThan(0);
     expect(screen.queryByText("owner@example.com")).not.toBeInTheDocument();
   });
 
@@ -281,17 +302,37 @@ describe("DashboardsListView list metadata", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: /Unknown creator/ }));
     fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
 
-    expect(
-      screen.getByRole("button", { name: "Unknown creator" }),
-    ).toBeInTheDocument();
+    const selectedLabel = screen.getByRole("button", {
+      name: /^Unknown creator [A-Z0-9]+$/,
+    }).textContent;
 
     h.dashboards = [DASHBOARDS[0]];
     rerender(<DashboardsListView />);
 
     expect(
-      screen.getByRole("button", { name: "Unknown creator" }),
+      screen.getByRole("button", { name: selectedLabel }),
     ).toBeInTheDocument();
     expect(screen.queryByText("owner@example.com")).not.toBeInTheDocument();
+  });
+
+  it("keeps the last known named creator label after a refetch removes them", () => {
+    const { rerender } = render(<DashboardsListView />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Created by anyone/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Alice Creator/ }));
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+
+    expect(
+      screen.getByRole("button", { name: "Alice Creator" }),
+    ).toBeInTheDocument();
+
+    h.dashboards = [];
+    rerender(<DashboardsListView />);
+
+    expect(
+      screen.getByRole("button", { name: "Alice Creator" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Unknown creator")).not.toBeInTheDocument();
   });
 
   it("disambiguates multiple unnamed creator filters without exposing emails", () => {
@@ -311,24 +352,26 @@ describe("DashboardsListView list metadata", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Created by anyone/i }));
 
-    expect(
-      screen.getByRole("menuitem", { name: /Unknown creator 1/ }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("menuitem", { name: /Unknown creator 2/ }),
-    ).toBeInTheDocument();
+    const anonymousCreatorItems = screen.getAllByRole("menuitem", {
+      name: /Unknown creator [A-Z0-9]+/,
+    });
+    expect(anonymousCreatorItems).toHaveLength(2);
+    expect(anonymousCreatorItems[0].textContent.trim()).not.toBe(
+      anonymousCreatorItems[1].textContent.trim(),
+    );
     expect(screen.queryByText("owner@example.com")).not.toBeInTheDocument();
     expect(
       screen.queryByText("second-owner@example.com"),
     ).not.toBeInTheDocument();
 
-    fireEvent.click(
-      screen.getByRole("menuitem", { name: /Unknown creator 2/ }),
-    );
+    const selectedLabel = within(anonymousCreatorItems[1]).getByText(
+      /^Unknown creator [A-Z0-9]+$/,
+    ).textContent;
+    fireEvent.click(anonymousCreatorItems[1]);
     fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
 
     expect(
-      screen.getByRole("button", { name: "Unknown creator 2" }),
+      screen.getByRole("button", { name: selectedLabel }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Second Fallback Owner Dashboard" }),

@@ -51,7 +51,7 @@ import {
   getDashboardPeopleSummary,
   getDashboardViewers,
   getInitials,
-  labelCreatorsWithStableUnknownIndex,
+  labelCreatorsWithStableUnknownIdentifier,
   timeAgo,
 } from "./utils";
 
@@ -60,6 +60,9 @@ function ViewerAvatars({ db, dashboardName }) {
   const isDark = theme.palette.mode === "dark";
   const viewers = getDashboardViewers(db);
   const creatorLabel = getDashboardCreatorLabel(db);
+  const updatedByLabel =
+    viewers.find((viewer) => viewer.email === db.updated_by?.email)
+      ?.displayName || "Unknown user";
   if (!viewers.length) {
     return (
       <Typography variant="caption" color="text.secondary">
@@ -165,15 +168,20 @@ function ViewerAvatars({ db, dashboardName }) {
             Recently Viewed By:
           </Typography>
           <Stack gap={1.5}>
-            {viewers.map((v, i) => (
-              <Stack key={i} direction="row" alignItems="center" gap={1.5}>
+            {viewers.map((v) => (
+              <Stack
+                key={v.email}
+                direction="row"
+                alignItems="center"
+                gap={1.5}
+              >
                 <Avatar
                   sx={{
                     width: 28,
                     height: 28,
                     fontSize: "11px",
                     fontWeight: 700,
-                    bgcolor: getAvatarColor(v.displayName),
+                    bgcolor: getAvatarColor(v.avatarKey),
                   }}
                 >
                   {getInitials(v.displayName)}
@@ -218,7 +226,7 @@ function ViewerAvatars({ db, dashboardName }) {
                   display: "block",
                 }}
               >
-                Last edited by {db.updated_by.name || "Unknown user"}
+                Last edited by {updatedByLabel}
               </Typography>
               <Typography
                 variant="caption"
@@ -248,6 +256,8 @@ function ViewerAvatars({ db, dashboardName }) {
           cursor: "default",
           borderRadius: 1,
           minWidth: 0,
+          position: "relative",
+          zIndex: 1,
           "&:focus-visible": {
             outline: (t) => `2px solid ${t.palette.primary.main}`,
             outlineOffset: 2,
@@ -266,8 +276,8 @@ function ViewerAvatars({ db, dashboardName }) {
             },
           }}
         >
-          {shown.map((v, i) => (
-            <Avatar key={i} sx={{ bgcolor: getAvatarColor(v.displayName) }}>
+          {shown.map((v) => (
+            <Avatar key={v.email} sx={{ bgcolor: getAvatarColor(v.avatarKey) }}>
               {getInitials(v.displayName)}
             </Avatar>
           ))}
@@ -313,7 +323,7 @@ export default function DashboardsListView() {
   const [newName, setNewName] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  const [creatorFilter, setCreatorFilter] = useState([]);
+  const [selectedCreators, setSelectedCreators] = useState([]);
   const [creatorMenuAnchor, setCreatorMenuAnchor] = useState(null);
 
   const creators = useMemo(() => {
@@ -328,7 +338,7 @@ export default function DashboardsListView() {
 
     const entries = Array.from(map, ([email, name]) => ({ email, name }));
 
-    return labelCreatorsWithStableUnknownIndex(entries);
+    return labelCreatorsWithStableUnknownIdentifier(entries);
   }, [dashboards]);
 
   const filteredDashboards = useMemo(() => {
@@ -337,11 +347,15 @@ export default function DashboardsListView() {
       const q = searchQuery.toLowerCase();
       list = list.filter((d) => d.name?.toLowerCase().includes(q));
     }
-    if (creatorFilter.length > 0) {
-      list = list.filter((d) => creatorFilter.includes(d.created_by?.email));
+    if (selectedCreators.length > 0) {
+      list = list.filter((d) =>
+        selectedCreators.some(
+          (creator) => creator.email === d.created_by?.email,
+        ),
+      );
     }
     return list;
-  }, [dashboards, searchQuery, creatorFilter]);
+  }, [dashboards, searchQuery, selectedCreators]);
 
   const handleCreate = async () => {
     const name = newName.trim() || "Untitled";
@@ -470,14 +484,14 @@ export default function DashboardsListView() {
           />
           <Button
             size="small"
-            variant={creatorFilter.length > 0 ? "contained" : "outlined"}
+            variant={selectedCreators.length > 0 ? "contained" : "outlined"}
             onClick={(e) => setCreatorMenuAnchor(e.currentTarget)}
             startIcon={<Iconify icon="mdi:account-outline" width={18} />}
             endIcon={<Iconify icon="mdi:chevron-down" width={16} />}
             sx={{
               height: 38,
               borderColor: "divider",
-              color: creatorFilter.length > 0 ? undefined : "text.secondary",
+              color: selectedCreators.length > 0 ? undefined : "text.secondary",
               textTransform: "none",
               fontSize: "13px",
               whiteSpace: "nowrap",
@@ -485,12 +499,13 @@ export default function DashboardsListView() {
               justifyContent: { xs: "space-between", sm: "center" },
             }}
           >
-            {creatorFilter.length === 0
+            {selectedCreators.length === 0
               ? "Created by anyone"
-              : creatorFilter.length === 1
-                ? creators.find((c) => c.email === creatorFilter[0])?.name ||
-                  "Unknown creator"
-                : `${creatorFilter.length} creators`}
+              : selectedCreators.length === 1
+                ? creators.find(
+                    (creator) => creator.email === selectedCreators[0].email,
+                  )?.name || selectedCreators[0].name
+                : `${selectedCreators.length} creators`}
           </Button>
           <Menu
             anchorEl={creatorMenuAnchor}
@@ -502,10 +517,10 @@ export default function DashboardsListView() {
               },
             }}
           >
-            <MenuItem onClick={() => setCreatorFilter([])} sx={{ py: 0.5 }}>
+            <MenuItem onClick={() => setSelectedCreators([])} sx={{ py: 0.5 }}>
               <Checkbox
                 size="small"
-                checked={creatorFilter.length === 0}
+                checked={selectedCreators.length === 0}
                 sx={{ mr: 0.5 }}
               />
               <Stack direction="row" alignItems="center" gap={1}>
@@ -515,15 +530,17 @@ export default function DashboardsListView() {
             </MenuItem>
             <Divider />
             {creators.map((c) => {
-              const checked = creatorFilter.includes(c.email);
+              const checked = selectedCreators.some(
+                (creator) => creator.email === c.email,
+              );
               return (
                 <MenuItem
                   key={c.email}
                   onClick={() => {
-                    setCreatorFilter((prev) =>
+                    setSelectedCreators((prev) =>
                       checked
-                        ? prev.filter((e) => e !== c.email)
-                        : [...prev, c.email],
+                        ? prev.filter((creator) => creator.email !== c.email)
+                        : [...prev, { email: c.email, name: c.name }],
                     );
                   }}
                   sx={{ py: 0.5 }}
@@ -700,6 +717,9 @@ export default function DashboardsListView() {
                           : "rgba(0,0,0,0.08)"
                       }`,
                     transition: "all 0.15s",
+                    position: "relative",
+                    isolation: "isolate",
+                    cursor: "pointer",
                     "&:hover": {
                       bgcolor: (t) =>
                         t.palette.mode === "dark"
@@ -739,8 +759,18 @@ export default function DashboardsListView() {
                       width: "100%",
                       textAlign: "left",
                       textDecoration: "none",
-                      borderRadius: 1,
-                      "&:focus-visible": {
+                      borderRadius: "inherit",
+                      // Extend the real anchor across row padding, column gaps,
+                      // People, and the empty action track. The People and
+                      // Delete controls are raised above this overlay below.
+                      "&::after": {
+                        content: '""',
+                        position: "absolute",
+                        inset: 0,
+                        borderRadius: "inherit",
+                        zIndex: 0,
+                      },
+                      "&:focus-visible::after": {
                         outline: (t) => `2px solid ${t.palette.primary.main}`,
                         outlineOffset: 2,
                       },
@@ -798,7 +828,11 @@ export default function DashboardsListView() {
                       <Typography
                         variant="caption"
                         color="text.secondary"
-                        sx={{ whiteSpace: "nowrap" }}
+                        sx={{
+                          whiteSpace: "nowrap",
+                          position: "relative",
+                          zIndex: 1,
+                        }}
                       >
                         <Box
                           component="span"
@@ -856,6 +890,8 @@ export default function DashboardsListView() {
                           overflowWrap: "anywhere",
                           textOverflow: { xs: "clip", md: "ellipsis" },
                           whiteSpace: { xs: "normal", md: "nowrap" },
+                          position: "relative",
+                          zIndex: 1,
                         }}
                       >
                         {creatorLabel}
@@ -907,6 +943,8 @@ export default function DashboardsListView() {
                       sx={{
                         opacity: { xs: 1, md: 0 },
                         transition: "opacity 0.15s",
+                        position: "relative",
+                        zIndex: 1,
                         flexShrink: 0,
                         width: 32,
                         height: 32,

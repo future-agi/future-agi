@@ -10,7 +10,7 @@ import {
   getDashboardPeopleSummary,
   getDashboardViewers,
   getInitials,
-  labelCreatorsWithStableUnknownIndex,
+  labelCreatorsWithStableUnknownIdentifier,
   timeAgo,
 } from "../utils";
 import { AVATAR_COLORS } from "../constants";
@@ -75,6 +75,16 @@ describe("creator naming", () => {
     );
   });
 
+  it("trims creator names and treats whitespace-only names as missing", () => {
+    expect(
+      getDashboardCreatorName({ created_by: { name: "  Alice Creator  " } }),
+    ).toBe("Alice Creator");
+    expect(getDashboardCreatorName({ created_by: { name: "   " } })).toBe("");
+    expect(getDashboardCreatorLabel({ created_by: { name: "   " } })).toBe(
+      "Unknown creator",
+    );
+  });
+
   it("never falls back to an email address", () => {
     const db = { created_by: { email: "owner@example.com" } };
 
@@ -92,50 +102,65 @@ describe("creator naming", () => {
   });
 });
 
-describe("labelCreatorsWithStableUnknownIndex", () => {
+describe("labelCreatorsWithStableUnknownIdentifier", () => {
   it("leaves named creators untouched", () => {
     const entries = [{ email: "a@example.com", name: "Alice" }];
 
-    expect(labelCreatorsWithStableUnknownIndex(entries)).toEqual(entries);
+    expect(labelCreatorsWithStableUnknownIdentifier(entries)).toEqual(entries);
   });
 
-  it("does not number a lone unnamed creator", () => {
-    const result = labelCreatorsWithStableUnknownIndex([
+  it("gives a lone unnamed creator a private stable identifier", () => {
+    const result = labelCreatorsWithStableUnknownIdentifier([
       { email: "a@example.com", name: "Alice" },
       { email: "z@example.com", name: "" },
     ]);
 
-    expect(result[1].name).toBe("Unknown creator");
+    expect(result[1].name).toMatch(/^Unknown creator [A-Z0-9]+$/);
+    expect(result[1].name).not.toContain("z@example.com");
   });
 
-  it("gives each unnamed creator a suffix that survives reordering", () => {
+  it("keeps anonymous labels stable across reordering, additions and removals", () => {
     const entries = [
       { email: "zoe@example.com", name: "" },
       { email: "amy@example.com", name: "" },
       { email: "named@example.com", name: "Named" },
     ];
 
-    const first = labelCreatorsWithStableUnknownIndex(entries);
+    const first = labelCreatorsWithStableUnknownIdentifier(entries);
     // Same people, different list order — as happens on any refetch or re-sort.
-    const reordered = labelCreatorsWithStableUnknownIndex([
+    const reordered = labelCreatorsWithStableUnknownIdentifier([
       entries[2],
       entries[1],
       entries[0],
     ]);
+    const added = labelCreatorsWithStableUnknownIdentifier([
+      { email: "aaron@example.com", name: "" },
+      ...entries,
+    ]);
+    const removed = labelCreatorsWithStableUnknownIdentifier([entries[0]]);
 
     const labelFor = (result, email) =>
       result.find((creator) => creator.email === email).name;
 
-    expect(labelFor(first, "amy@example.com")).toBe("Unknown creator 1");
-    expect(labelFor(first, "zoe@example.com")).toBe("Unknown creator 2");
-
-    // The label a given person gets must not depend on iteration order.
-    expect(labelFor(reordered, "amy@example.com")).toBe("Unknown creator 1");
-    expect(labelFor(reordered, "zoe@example.com")).toBe("Unknown creator 2");
+    expect(labelFor(first, "amy@example.com")).toBe(
+      labelFor(reordered, "amy@example.com"),
+    );
+    expect(labelFor(first, "zoe@example.com")).toBe(
+      labelFor(reordered, "zoe@example.com"),
+    );
+    expect(labelFor(first, "zoe@example.com")).toBe(
+      labelFor(added, "zoe@example.com"),
+    );
+    expect(labelFor(first, "zoe@example.com")).toBe(
+      labelFor(removed, "zoe@example.com"),
+    );
+    expect(labelFor(first, "amy@example.com")).not.toBe(
+      labelFor(first, "zoe@example.com"),
+    );
   });
 
   it("never leaks an email into an unnamed creator label", () => {
-    const result = labelCreatorsWithStableUnknownIndex([
+    const result = labelCreatorsWithStableUnknownIdentifier([
       { email: "a@example.com", name: "" },
       { email: "b@example.com", name: "" },
     ]);
@@ -156,14 +181,34 @@ describe("getDashboardViewers", () => {
     expect(viewers).toHaveLength(1);
   });
 
-  it("skips people with no email and labels missing names", () => {
+  it("skips people with no email and labels an anonymous creator consistently", () => {
     const viewers = getDashboardViewers({
       created_by: { email: "owner@example.com" },
       updated_by: { name: "No Email" },
     });
 
     expect(viewers).toHaveLength(1);
-    expect(viewers[0].displayName).toBe("Unknown user");
+    expect(viewers[0].displayName).toBe("Unknown creator");
+    expect(viewers[0].avatarKey).toBe("owner@example.com");
+  });
+
+  it("keeps distinct anonymous people visually distinct without exposing emails", () => {
+    const viewers = getDashboardViewers({
+      created_by: { email: "owner@example.com" },
+      updated_by: { email: "editor@example.com" },
+    });
+
+    expect(viewers.map((viewer) => viewer.displayName)).toEqual([
+      "Unknown user",
+      "Unknown creator",
+    ]);
+    expect(viewers[0].avatarKey).not.toBe(viewers[1].avatarKey);
+    expect(getAvatarColor(viewers[0].avatarKey)).not.toBe(
+      getAvatarColor(viewers[1].avatarKey),
+    );
+    viewers.forEach((viewer) => {
+      expect(viewer.displayName).not.toContain("@");
+    });
   });
 
   it("returns an empty list when nobody is attached", () => {
