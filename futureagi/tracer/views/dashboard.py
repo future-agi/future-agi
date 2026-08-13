@@ -189,6 +189,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         return [f.result() for f in futures]
 
     def _format_merged_metric_results(self, query_config, all_metric_results):
+        if query_config.get("query_mode") == "distribution":
+            return DashboardQueryBuilder(query_config).format_distribution_results(
+                all_metric_results
+            )
+
         formatter = DatasetQueryBuilder(
             {**query_config, "metrics": query_config["metrics"]}
         )
@@ -1942,11 +1947,11 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                 self._run_simulation_clickhouse_queries(ch_client, sim_config)
             )
 
-        # Format using DatasetQueryBuilder (compatible format_results)
-        formatter_config = {**query_config, "workspace_id": str(workspace.id)}
-        formatter = DatasetQueryBuilder(formatter_config)
-
-        if trace_metrics and not dataset_metrics and not simulation_metrics:
+        if query_config.get("query_mode") == "distribution":
+            formatted = DashboardQueryBuilder(query_config).format_distribution_results(
+                metric_results
+            )
+        elif trace_metrics and not dataset_metrics and not simulation_metrics:
             project_ids = query_config.get("project_ids", [])
             project_name_map = dict(
                 Project.objects.filter(
@@ -1958,6 +1963,8 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                 metric_results, project_name_map=project_name_map
             )
         else:
+            formatter_config = {**query_config, "workspace_id": str(workspace.id)}
+            formatter = DatasetQueryBuilder(formatter_config)
             formatted = formatter.format_results(metric_results)
 
         return self._gm.success_response(formatted)

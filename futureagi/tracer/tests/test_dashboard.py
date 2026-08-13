@@ -1559,6 +1559,52 @@ class TestDashboardQueryBuilder:
         assert "usage_apicalllog" in sql
         assert "eval_score" in sql
 
+    def test_eval_metric_distribution_query(self):
+        config = {
+            "project_ids": ["proj1"],
+            "organization_id": str(uuid.uuid4()),
+            "workspace_id": str(uuid.uuid4()),
+            "query_mode": "distribution",
+            "time_range": {
+                "custom_start": "2025-01-01T00:00:00Z",
+                "custom_end": "2025-01-02T00:00:00Z",
+            },
+            "metrics": [
+                {
+                    "id": "e1",
+                    "name": "accuracy",
+                    "type": "eval_metric",
+                    "config_id": str(uuid.uuid4()),
+                    "output_type": "SCORE",
+                    "aggregation": "count",
+                }
+            ],
+            "filters": [
+                {
+                    "metric_type": "system_metric",
+                    "metric_name": "model",
+                    "operator": "equal_to",
+                    "value": "gpt-4o-mini",
+                }
+            ],
+        }
+
+        sql, params, metric_info = DashboardQueryBuilder(config).build_all_queries()[0]
+
+        assert "filtered_scores AS" in sql
+        assert "min(score) OVER () AS min_score" in sql
+        assert "count() AS value" in sql
+        assert "GROUP BY min_score, max_score, bucket_index" in sql
+        assert "histogram(" not in sql
+        assert "time_bucket" not in sql
+        assert "e.created_at >= %(start_date)s" in sql
+        assert "e.created_at < %(end_date)s" in sql
+        assert "s.model = %(_evf_0_val)s" in sql
+        assert "LEFT JOIN spans AS s" in sql
+        assert params["start_date"] == datetime(2025, 1, 1, tzinfo=UTC)
+        assert params["end_date"] == datetime(2025, 1, 2, tzinfo=UTC)
+        assert metric_info["aggregation"] == "count"
+
     def test_eval_metric_pass_fail(self):
         config = {
             "project_ids": ["proj1"],
@@ -2604,6 +2650,45 @@ class TestDashboardQueryBuilderFormatResults:
         )
         assert result["metrics"][0]["unit"] == "$"
 
+    def test_format_distribution_results_keeps_bucket_bounds(self):
+        config = {
+            "query_mode": "distribution",
+            "time_range": {
+                "custom_start": "2025-01-01T00:00:00Z",
+                "custom_end": "2025-01-02T00:00:00Z",
+            },
+            "metrics": [{"id": "accuracy", "type": "eval_metric"}],
+        }
+        rows = [
+            {"bucket_start": 0.5, "bucket_end": 1.0, "value": 2},
+            {"bucket_start": 0.0, "bucket_end": 0.5, "value": 3},
+        ]
+
+        result = DashboardQueryBuilder(config).format_distribution_results(
+            [({"id": "accuracy", "name": "Accuracy"}, rows)]
+        )
+
+        metric = result["metrics"][0]
+        assert metric["aggregation"] == "count"
+        assert metric["series"] == [
+            {
+                "name": "total",
+                "data": [
+                    {"bucket_start": 0.0, "bucket_end": 0.5, "value": 3},
+                    {"bucket_start": 0.5, "bucket_end": 1.0, "value": 2},
+                ],
+            }
+        ]
+
+        merged = DashboardViewSet()._format_merged_metric_results(
+            config, [({"id": "accuracy", "name": "Accuracy"}, rows[:1])]
+        )
+        assert merged["metrics"][0]["series"][0]["data"][0] == {
+            "bucket_start": 0.5,
+            "bucket_end": 1.0,
+            "value": 2,
+        }
+
 
 # ===========================================================================
 # Serializer Validation
@@ -2659,6 +2744,30 @@ class TestSerializerValidation:
             "query_config": {"metrics": []},
             "chart_config": {"chart_type": "line"},
         }
+        serializer = DashboardWidgetSerializer(data=data)
+        assert serializer.is_valid(), serializer.errors
+
+    def test_widget_serializer_accepts_distribution_chart(self):
+        data = {
+            "name": "Score distribution",
+            "position": 0,
+            "width": 6,
+            "height": 4,
+            "query_config": {
+                "query_mode": "distribution",
+                "time_range": {"preset": "7D"},
+                "metrics": [
+                    {
+                        "name": "accuracy",
+                        "type": "eval_metric",
+                        "output_type": "SCORE",
+                        "aggregation": "count",
+                    }
+                ],
+            },
+            "chart_config": {"chart_type": "distribution"},
+        }
+
         serializer = DashboardWidgetSerializer(data=data)
         assert serializer.is_valid(), serializer.errors
 
@@ -2915,6 +3024,36 @@ class TestDashboardQueryExecution:
         assert len(metrics) == 1
         # Query parsed + executed cleanly; no per-widget error attached.
         assert "error" not in metrics[0]
+
+    @pytest.mark.django_db
+    def test_query_action_distribution_runs_against_real_ch(
+        self, auth_client, observe_project
+    ):
+        response = auth_client.post(
+            "/tracer/dashboard/query/",
+            {
+                "project_ids": [str(observe_project.id)],
+                "query_mode": "distribution",
+                "time_range": {"preset": "6M"},
+                "metrics": [
+                    {
+                        "id": str(uuid.uuid4()),
+                        "name": "conversation_hallucination",
+                        "type": "eval_metric",
+                        "source": "all",
+                        "config_id": str(uuid.uuid4()),
+                        "output_type": "SCORE",
+                        "aggregation": "count",
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        assert response.status_code == 200
+        metric = response.json()["result"]["metrics"][0]
+        assert metric["aggregation"] == "count"
+        assert "error" not in metric
 
     @pytest.mark.django_db
     def test_query_action_invalid_combo_isolated_from_valid_metric(
@@ -4442,6 +4581,36 @@ class TestDashboardQuerySerializer:
         }
         serializer = DashboardQuerySerializer(data=data)
         assert serializer.is_valid(), serializer.errors
+
+    def test_distribution_query_contract(self):
+        metric = {
+            "name": "accuracy",
+            "type": "eval_metric",
+            "source": "traces",
+            "output_type": "SCORE",
+            "aggregation": "count",
+        }
+        valid = {
+            "query_mode": "distribution",
+            "time_range": {"preset": "7D"},
+            "metrics": [metric],
+        }
+
+        serializer = DashboardQuerySerializer(data=valid)
+        assert serializer.is_valid(), serializer.errors
+
+        invalid_configs = [
+            {**valid, "metrics": [metric, {**metric, "name": "relevance"}]},
+            {**valid, "metrics": [{**metric, "output_type": "CHOICE"}]},
+            {**valid, "metrics": [{**metric, "aggregation": "avg"}]},
+            {
+                **valid,
+                "breakdowns": [{"name": "model", "type": "system_metric"}],
+            },
+        ]
+        for invalid in invalid_configs:
+            serializer = DashboardQuerySerializer(data=invalid)
+            assert not serializer.is_valid()
 
     def test_canonical_filters_with_source_metadata_pass(self):
         data = {
