@@ -243,6 +243,12 @@ providers:
   #     - openai/gpt-4o
   #     - anthropic/claude-3.5-sonnet
 
+  # orcarouter:
+  #   api_key: "${ORCAROUTER_API_KEY}"
+  #   type: "orcarouter"
+  #   models:
+  #     - orcarouter/auto
+
 # Explicit model-to-provider mapping (overrides provider-level models).
 # model_map:
 #   gpt-4o: openai
