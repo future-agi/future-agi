@@ -3,7 +3,6 @@
 import { isAdditiveAggregation } from "./widgetUtils";
 
 const MIN_SLICE_ANGLE_DEG = 3;
-const SLICE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const DONUT_HOLE_RATIO = 0.58;
 const CENTER_FONT_MIN = 11;
 const CENTER_FONT_MAX = 24;
@@ -87,7 +86,7 @@ export const buildConnectors = ({ geometry, slices, formatSlice }) => {
   const { cx, cy, radius: outerR, width, height } = geometry;
   const items = [];
   let cumAngle = -90;
-  slices.forEach((slice, i) => {
+  slices.forEach((slice) => {
     const sliceAngle = (slice.value / total) * 360;
     const midRad = ((cumAngle + sliceAngle / 2) * Math.PI) / 180;
     cumAngle += sliceAngle;
@@ -119,10 +118,10 @@ export const buildConnectors = ({ geometry, slices, formatSlice }) => {
     // cannot fit, drop the callout entirely.
     const line2 = formatSlice(slice.value);
     if (line2.length * CONNECTOR_CHAR_WIDTH > available) return;
-    const line1 = truncateToWidth(
-      `${SLICE_LETTERS[i] || ""}. ${slice.name}`,
-      available,
-    );
+    // The name alone. Callouts used to carry a letter counted within this
+    // donut, which collided with the editor's summary strip lettering each
+    // metric — "A" meant a metric there and a slice here, on one screen.
+    const line1 = truncateToWidth(slice.name, available);
     if (!line1) return;
 
     items.push({
