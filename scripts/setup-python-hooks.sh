@@ -9,8 +9,13 @@
 #
 # What it does:
 #   1. Installs pre-commit if missing
-#   2. Installs the hooks defined in .pre-commit-config.yaml
-#   3. Verifies the installation
+#   2. Verifies the hooks defined in .pre-commit-config.yaml run correctly
+#
+# Note: we intentionally do NOT run `pre-commit install`. The repo uses husky
+# v9 (package.json "prepare": "husky"), which sets core.hooksPath=.husky/.
+# With that set, `pre-commit install` refuses to install ("Cowardly refusing
+# to install hooks with core.hooksPath set"). The .husky/pre-commit hook is
+# the thing that invokes `pre-commit run`, so no separate install is needed.
 
 set -euo pipefail
 
@@ -22,9 +27,6 @@ if ! command -v pre-commit &> /dev/null; then
     echo "    pre-commit not found. Installing with pip..."
     pip install pre-commit
 fi
-
-echo "==> Installing pre-commit hooks..."
-pre-commit install
 
 echo "==> Running hooks on all files (dry-run to verify)..."
 pre-commit run --all-files || true
