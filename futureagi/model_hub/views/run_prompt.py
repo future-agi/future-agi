@@ -118,9 +118,8 @@ def _request_organization(request):
     return getattr(request, "organization", None) or request.user.organization
 
 
-def _request_workspace_filter(request, field_name="workspace"):
-    workspace = getattr(request, "workspace", None)
-    if not workspace:
+def _workspace_filter(workspace, field_name="workspace"):
+    if workspace is None:
         return Q()
 
     if getattr(workspace, "is_default", False):
@@ -136,6 +135,10 @@ def _request_workspace_filter(request, field_name="workspace"):
         )
 
     return Q(**{field_name: workspace})
+
+
+def _request_workspace_filter(request, field_name="workspace"):
+    return _workspace_filter(getattr(request, "workspace", None), field_name=field_name)
 
 
 def _request_dataset_queryset(request):
@@ -173,6 +176,30 @@ def _extract_tool_ids(tools):
         if tool_id:
             tool_ids.append(tool_id)
     return tool_ids
+
+
+def _resolve_tools_for_scope(tools, *, organization, workspace=None):
+    """Resolve Tools scoped to the caller's organization/workspace.
+
+    Excludes soft-deleted tools and fails closed: if the resolved set does
+    not match the requested tool IDs, raises ValueError instead of silently
+    attaching whatever subset happened to resolve (which would let a caller
+    mix one valid tool with several out-of-scope IDs).
+    """
+    tool_ids = _extract_tool_ids(tools)
+    if not tool_ids:
+        return []
+    tools_queryset = list(
+        Tools.objects.filter(
+            _workspace_filter(workspace),
+            id__in=tool_ids,
+            organization=organization,
+            deleted=False,
+        )
+    )
+    if {str(t.id) for t in tools_queryset} != {str(i) for i in tool_ids}:
+        raise ValueError("One or more tools are unavailable for this workspace.")
+    return tools_queryset
 
 
 PROVIDERS_WITH_JSON = ["vertex_ai", "azure", "bedrock", "sagemaker"]
@@ -1076,14 +1103,16 @@ class LitellmAPIView(CreateAPIView):
         )
         if not dataset:
             return self._gm.not_found("Dataset not found")
-        # Retrieve tools based on the IDs from the validated data
-        tool_ids = _extract_tool_ids(validated_data.get("tools"))
-        tools = Tools.objects.filter(
-            _request_workspace_filter(request),
-            id__in=tool_ids,
-            organization=organization,
-            deleted=False,
-        )
+        # Retrieve tools scoped to the caller's org/workspace, excluding
+        # soft-deleted tools; fail closed when any requested tool is missing.
+        try:
+            tools = _resolve_tools_for_scope(
+                validated_data.get("tools"),
+                organization=organization,
+                workspace=getattr(request, "workspace", None),
+            )
+        except ValueError as exc:
+            return self._gm.bad_request(str(exc))
 
         # Use transaction to ensure atomicity
         with transaction.atomic():
@@ -1755,6 +1784,23 @@ class AddRunPromptColumnView(APIView):
             if output_format != "audio":
                 messages = remove_empty_text_from_messages(messages)
 
+            # Resolve tools BEFORE any DB mutation — scoped to the caller's
+            # org/workspace, fail closed when any requested tool is missing.
+            # (Running this inside the transaction below and returning on
+            # error would NOT roll back the already-created run prompt/column,
+            # because a plain return inside transaction.atomic() commits.)
+            tools = config.get("tools", [])
+            tools_queryset = []
+            if tools:
+                try:
+                    tools_queryset = _resolve_tools_for_scope(
+                        tools,
+                        organization=organization,
+                        workspace=dataset.workspace,
+                    )
+                except ValueError as exc:
+                    return self._gm.bad_request(str(exc))
+
             # Use transaction to ensure atomicity of all DB operations
             # Create with NOT_STARTED first, then set RUNNING only after workflow starts
             with transaction.atomic():
@@ -1795,13 +1841,9 @@ class AddRunPromptColumnView(APIView):
                     dataset.column_order = column_order
                     dataset.save()
 
-                # Handle tools if provided in config
-                tools = config.get("tools", [])
-                if tools:
-                    tool_ids = [tool.get("id") for tool in tools if "id" in tool]
-                    if tool_ids:
-                        tools_queryset = Tools.objects.filter(id__in=tool_ids)
-                        run_prompter.tools.set(tools_queryset)
+                # Attach the already-resolved (org/workspace-scoped) tools.
+                if tools_queryset:
+                    run_prompter.tools.set(tools_queryset)
 
                 run_prompter_id = str(run_prompter.id)
 
@@ -1898,13 +1940,19 @@ class PreviewRunPromptColumnView(APIView):
             if not rows:
                 return self._gm.bad_request(get_error_message("ROW_INDICES_NOT_EXIST"))
 
-            # Process tools if provided in config
+            # Process tools if provided in config — scoped to the caller's
+            # org/workspace; fail closed when any requested tool is missing.
             tools_config = []
             if config.get("tools"):
-                tool_ids = [tool.get("id") for tool in config["tools"] if "id" in tool]
-                if tool_ids:
-                    tools = Tools.objects.filter(id__in=tool_ids)
-                    tools_config = [tool.config for tool in tools]
+                try:
+                    scoped_tools = _resolve_tools_for_scope(
+                        config["tools"],
+                        organization=dataset.organization,
+                        workspace=dataset.workspace,
+                    )
+                except ValueError as exc:
+                    return self._gm.bad_request(str(exc))
+                tools_config = [tool.config for tool in scoped_tools]
 
             rf = config.get("response_format")
             if rf and not isinstance(rf, dict):
@@ -2031,6 +2079,20 @@ class EditRunPromptColumnView(APIView):
             if column.source != SourceChoices.RUN_PROMPT.value:
                 return self._gm.bad_request(get_error_message("COLUMN_IS_IN_VALID"))
 
+            # Resolve tools scoped to the caller's org/workspace before any
+            # mutation; fail closed when any requested tool is missing.
+            tools_queryset = []
+            tools = config.get("tools") if config else None
+            if tools:
+                try:
+                    tools_queryset = _resolve_tools_for_scope(
+                        tools,
+                        organization=dataset.organization,
+                        workspace=dataset.workspace,
+                    )
+                except ValueError as exc:
+                    return self._gm.bad_request(str(exc))
+
             # Lock the RunPrompter row to prevent race conditions
             # Use of=('self',) to avoid issues with nullable foreign keys causing outer joins
             with transaction.atomic():
@@ -2106,13 +2168,9 @@ class EditRunPromptColumnView(APIView):
                 # Handle tools update - first clear existing tools
                 run_prompter.tools.clear()
 
-                # Handle tools update if provided
-                tools = config.get("tools")
-                if tools:
-                    tool_ids = [tool.get("id") for tool in tools if "id" in tool]
-                    if tool_ids:
-                        tools_queryset = Tools.objects.filter(id__in=tool_ids)
-                        run_prompter.tools.set(tools_queryset)
+                # Handle tools update if provided (already resolved & scoped)
+                if tools_queryset:
+                    run_prompter.tools.set(tools_queryset)
 
                 run_prompter.save()
 

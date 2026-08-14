@@ -33,6 +33,7 @@ from model_hub.models.choices import (
     StatusType,
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.models.openai_tools import Tools
 from model_hub.models.run_prompt import RunPrompter
 from tfc.middleware.workspace_context import set_workspace_context
 
@@ -3653,3 +3654,323 @@ class TestColumnValuesAPIViewOrgIsolation:
             format="json",
         )
         assert response.status_code == status.HTTP_200_OK
+
+
+def _make_tool(organization, workspace, *, name="Test Tool", deleted=False):
+    """Create a Tools row bypassing workspace-scoped managers (for fixtures)."""
+    tool = Tools.no_workspace_objects.create(
+        name=name,
+        description="tool used by run prompt tests",
+        config={
+            "type": "function",
+            "function": {"name": "test_tool", "parameters": {}},
+        },
+        config_type="json",
+        organization=organization,
+        workspace=workspace,
+    )
+    if deleted:
+        tool.delete()  # soft delete
+    return tool
+
+
+@pytest.mark.django_db
+class TestRunPromptToolOrgScoping:
+    """Regression tests for #2078: run_prompt tool attachment must be scoped
+    to the caller's organization/workspace and exclude soft-deleted tools."""
+
+    def _tool_ids(self, *tools):
+        return [{"id": str(t.id)} for t in tools]
+
+    def _make_other_org_context(self):
+        other_org = Organization.objects.create(name="Other Org For Tools")
+        other_user = User.objects.create_user(
+            email="other-tools@example.com",
+            password="testpassword123",
+            name="Other Tools User",
+            organization=other_org,
+        )
+        other_workspace = Workspace.objects.create(
+            name="Other Tools Workspace",
+            organization=other_org,
+            is_default=True,
+            created_by=other_user,
+        )
+        return other_org, other_workspace
+
+    # --- AddRunPromptColumnView ----------------------------------------
+
+    def test_add_rejects_tool_from_other_org(
+        self, auth_client, dataset, input_column, valid_run_prompt_config
+    ):
+        other_org, other_ws = self._make_other_org_context()
+        other_tool = _make_tool(other_org, other_ws, name="Other Org Tool")
+
+        config = {**valid_run_prompt_config, "tools": self._tool_ids(other_tool)}
+        payload = {
+            "dataset_id": str(dataset.id),
+            "name": "Scoped Add",
+            "config": config,
+        }
+        with patch(
+            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
+        ):
+            response = auth_client.post(
+                "/model-hub/develops/add_run_prompt_column/",
+                payload,
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        # No column created, nothing attached
+        assert not Column.objects.filter(
+            name="Scoped Add", dataset=dataset, deleted=False
+        ).exists()
+
+    def test_add_rejects_soft_deleted_tool(
+        self, auth_client, dataset, input_column, valid_run_prompt_config,
+        organization, workspace,
+    ):
+        deleted_tool = _make_tool(
+            organization, workspace, name="Deleted Tool", deleted=True
+        )
+
+        config = {**valid_run_prompt_config, "tools": self._tool_ids(deleted_tool)}
+        payload = {
+            "dataset_id": str(dataset.id),
+            "name": "Scoped Add Deleted",
+            "config": config,
+        }
+        with patch(
+            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
+        ):
+            response = auth_client.post(
+                "/model-hub/develops/add_run_prompt_column/",
+                payload,
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_add_attaches_same_org_tool(
+        self, auth_client, dataset, input_column, valid_run_prompt_config,
+        organization, workspace,
+    ):
+        tool = _make_tool(organization, workspace, name="Same Org Tool")
+
+        config = {**valid_run_prompt_config, "tools": self._tool_ids(tool)}
+        payload = {
+            "dataset_id": str(dataset.id),
+            "name": "Scoped Add OK",
+            "config": config,
+        }
+        with patch(
+            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
+        ):
+            response = auth_client.post(
+                "/model-hub/develops/add_run_prompt_column/",
+                payload,
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        run_prompter = RunPrompter.no_workspace_objects.get(
+            dataset=dataset, name="Scoped Add OK", deleted=False
+        )
+        assert list(run_prompter.tools.all()) == [tool]
+
+    # --- PreviewRunPromptColumnView ------------------------------------
+
+    def test_preview_rejects_tool_from_other_org(
+        self, auth_client, dataset, input_column, row, cell,
+        valid_run_prompt_config,
+    ):
+        other_org, other_ws = self._make_other_org_context()
+        other_tool = _make_tool(other_org, other_ws, name="Other Org Tool")
+
+        config = {**valid_run_prompt_config, "tools": self._tool_ids(other_tool)}
+        payload = {
+            "dataset_id": str(dataset.id),
+            "row_id": str(row.id),
+            "config": config,
+        }
+        with patch("model_hub.views.run_prompt.litellm.completion"):
+            response = auth_client.post(
+                "/model-hub/develops/preview_run_prompt_column/",
+                payload,
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_preview_rejects_soft_deleted_tool(
+        self, auth_client, dataset, input_column, row, cell,
+        valid_run_prompt_config, organization, workspace,
+    ):
+        deleted_tool = _make_tool(
+            organization, workspace, name="Deleted Tool", deleted=True
+        )
+
+        config = {**valid_run_prompt_config, "tools": self._tool_ids(deleted_tool)}
+        payload = {
+            "dataset_id": str(dataset.id),
+            "row_id": str(row.id),
+            "config": config,
+        }
+        with patch("model_hub.views.run_prompt.litellm.completion"):
+            response = auth_client.post(
+                "/model-hub/develops/preview_run_prompt_column/",
+                payload,
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    # --- EditRunPromptColumnView ----------------------------------------
+
+    def test_edit_rejects_tool_from_other_org_and_keeps_existing(
+        self, auth_client, dataset, run_prompt_column, run_prompter,
+        valid_run_prompt_config, organization, workspace,
+    ):
+        run_prompt_column.source_id = run_prompter.id
+        run_prompt_column.save()
+
+        own_tool = _make_tool(organization, workspace, name="Own Tool")
+        run_prompter.tools.set([own_tool])
+
+        other_org, other_ws = self._make_other_org_context()
+        other_tool = _make_tool(other_org, other_ws, name="Other Org Tool")
+
+        config = {**valid_run_prompt_config, "tools": self._tool_ids(other_tool)}
+        payload = {
+            "dataset_id": str(dataset.id),
+            "column_id": str(run_prompt_column.id),
+            "name": "Scoped Edit",
+            "config": config,
+        }
+        with patch(
+            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
+        ):
+            response = auth_client.post(
+                "/model-hub/develops/edit_run_prompt_column/",
+                payload,
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        # Existing tool attachment is untouched
+        run_prompter.refresh_from_db()
+        assert list(run_prompter.tools.all()) == [own_tool]
+
+    def test_edit_attaches_same_org_tool(
+        self, auth_client, dataset, run_prompt_column, run_prompter,
+        valid_run_prompt_config, organization, workspace,
+    ):
+        run_prompt_column.source_id = run_prompter.id
+        run_prompt_column.save()
+
+        tool = _make_tool(organization, workspace, name="Same Org Tool")
+        config = {**valid_run_prompt_config, "tools": self._tool_ids(tool)}
+        payload = {
+            "dataset_id": str(dataset.id),
+            "column_id": str(run_prompt_column.id),
+            "name": "Scoped Edit OK",
+            "config": config,
+        }
+        with patch(
+            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
+        ):
+            response = auth_client.post(
+                "/model-hub/develops/edit_run_prompt_column/",
+                payload,
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        run_prompter.refresh_from_db()
+        assert list(run_prompter.tools.all()) == [tool]
+
+    # --- LitellmAPIView ------------------------------------------------
+
+    def test_litellm_rejects_tool_from_other_org(
+        self, auth_client, dataset, organization, user,
+    ):
+        from conftest import WorkspaceAwareAPIClient
+
+        client = WorkspaceAwareAPIClient()
+        client.force_authenticate(user=user)
+        client.set_workspace(dataset.workspace)
+
+        other_org, other_ws = self._make_other_org_context()
+        other_tool = _make_tool(other_org, other_ws, name="Other Org Tool")
+
+        payload = {
+            "dataset_id": str(dataset.id),
+            "name": "Direct Scoped",
+            "model": "gpt-4",
+            "concurrency": 1,
+            "messages": [{"role": "user", "content": "Return OK"}],
+            "output_format": "string",
+            "max_tokens": 20,
+            "tools": self._tool_ids(other_tool),
+        }
+        try:
+            with patch(
+                "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
+            ):
+                response = client.post(
+                    "/model-hub/run-prompt/",
+                    payload,
+                    format="json",
+                )
+        finally:
+            client.stop_workspace_injection()
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not RunPrompter.no_workspace_objects.filter(
+            name="Direct Scoped", organization=organization, deleted=False
+        ).exists()
+
+    def test_litellm_attaches_same_org_tool(
+        self, auth_client, dataset, organization, user,
+    ):
+        from conftest import WorkspaceAwareAPIClient
+
+        client = WorkspaceAwareAPIClient()
+        client.force_authenticate(user=user)
+        client.set_workspace(dataset.workspace)
+
+        tool = _make_tool(
+            organization, dataset.workspace, name="Same Org Tool"
+        )
+        payload = {
+            "dataset_id": str(dataset.id),
+            "name": "Direct Scoped OK",
+            "model": "gpt-4",
+            "concurrency": 1,
+            "messages": [{"role": "user", "content": "Return OK"}],
+            "output_format": "string",
+            "max_tokens": 20,
+            "tools": self._tool_ids(tool),
+        }
+        try:
+            with patch(
+                "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
+            ) as mock_apply_async:
+                mock_apply_async.return_value = MagicMock(id="direct-workflow")
+                response = client.post(
+                    "/model-hub/run-prompt/",
+                    payload,
+                    format="json",
+                )
+        finally:
+            client.stop_workspace_injection()
+
+        assert response.status_code == status.HTTP_200_OK
+        run_prompter = RunPrompter.no_workspace_objects.get(
+            dataset=dataset,
+            name=payload["name"],
+            organization=organization,
+            deleted=False,
+        )
+        assert list(run_prompter.tools.all()) == [tool]
