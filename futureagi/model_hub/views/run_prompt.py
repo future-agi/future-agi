@@ -425,6 +425,43 @@ TEMPLATE_FORMAT_MUSTACHE = "mustache"
 TEMPLATE_FORMAT_JINJA2 = "jinja2"
 DEFAULT_TEMPLATE_FORMAT = TEMPLATE_FORMAT_JINJA2
 
+# Public spelling used by current clients; the backend internally uses "jinja2".
+TEMPLATE_FORMAT_JINJA_PUBLIC = "jinja"
+
+
+def normalize_template_format(template_format):
+    """Map the jinja/jinja2 alias pair to the public spelling ("jinja")."""
+    if template_format == TEMPLATE_FORMAT_JINJA2:
+        return TEMPLATE_FORMAT_JINJA_PUBLIC
+    return template_format
+
+
+def resolve_template_format(config):
+    """Canonical template_format accessor used by every read/write path.
+
+    Current clients send ``config.run_prompt_config.template_format``; older
+    clients send ``config.configuration.template_format``. Prefer the current
+    key, fall back to the legacy key, normalize the jinja/jinja2 alias to the
+    public spelling, and default to the canonical default when absent.
+
+    Accepts the full payload OR a bare run_prompt_config dict (as persisted on
+    the RunPrompter model).
+    """
+    if not isinstance(config, dict):
+        return normalize_template_format(DEFAULT_TEMPLATE_FORMAT)
+    if "run_prompt_config" in config or "configuration" in config:
+        run_prompt_config = config.get("run_prompt_config") or {}
+        template_format = run_prompt_config.get("template_format")
+        if template_format is None:
+            template_format = (config.get("configuration") or {}).get(
+                "template_format"
+            )
+    else:
+        template_format = config.get("template_format")
+    if template_format is None:
+        template_format = DEFAULT_TEMPLATE_FORMAT
+    return normalize_template_format(template_format)
+
 # Jinja2 environment (reusable, sandboxed for security)
 _jinja2_env = SandboxedEnvironment()
 
@@ -449,6 +486,10 @@ def render_template(
 
     if template_format is None:
         template_format = DEFAULT_TEMPLATE_FORMAT
+
+    # Accept the public "jinja" spelling used by current clients.
+    if template_format == TEMPLATE_FORMAT_JINJA_PUBLIC:
+        template_format = TEMPLATE_FORMAT_JINJA2
 
     if template_format == TEMPLATE_FORMAT_FSTRING:
         return template_str.format(**context)
@@ -995,6 +1036,7 @@ class LitellmAPIView(CreateAPIView):
                 row_id=row.id,
                 col_id=column.id,
                 model_name=validated_data.get("model"),
+                template_format=resolve_template_format(validated_data),
             )
             messages = remove_empty_text_from_messages(messages)
 
@@ -1432,8 +1474,8 @@ class RunPrompts:
                     row_id=row.id,
                     col_id=column.id,
                     model_name=self.run_prompt_model.model,
-                    template_format=(self.run_prompt_model.run_prompt_config or {}).get(
-                        "template_format"
+                    template_format=resolve_template_format(
+                        self.run_prompt_model.run_prompt_config
                     ),
                 )
                 messages = remove_empty_text_from_messages(messages)
@@ -1724,7 +1766,10 @@ class AddRunPromptColumnView(APIView):
             config = validated_data[
                 "config"
             ]  # This is now a validated dict from PromptConfigSerializer
-            run_prompt_config = config.get("run_prompt_config", {})
+            run_prompt_config = dict(config.get("run_prompt_config") or {})
+            # Normalize the template format at the boundary so preview and
+            # persisted execution always agree on the same engine.
+            run_prompt_config["template_format"] = resolve_template_format(config)
 
             # Get dataset and enforce organization isolation
             organization = (
@@ -1925,6 +1970,7 @@ class PreviewRunPromptColumnView(APIView):
                         row_id=row.id,
                         col_id=None,
                         model_name=config.get("model", ""),
+                        template_format=resolve_template_format(config),
                     )
                     if output_format != "audio":
                         messages = remove_empty_text_from_messages(messages)
@@ -2099,9 +2145,19 @@ class EditRunPromptColumnView(APIView):
                     StatusType.RUNNING.value
                 )  # Set to RUNNING immediately
 
-                run_prompter.run_prompt_config = config.get(
-                    "run_prompt_config", run_prompter.run_prompt_config
+                # Merge the incoming config into the stored one so keys omitted
+                # from the payload keep their stored values, then normalize the
+                # template format at the boundary.
+                stored_run_prompt_config = run_prompter.run_prompt_config or {}
+                incoming_run_prompt_config = config.get("run_prompt_config") or {}
+                run_prompt_config = {
+                    **stored_run_prompt_config,
+                    **incoming_run_prompt_config,
+                }
+                run_prompt_config["template_format"] = resolve_template_format(
+                    {**config, "run_prompt_config": run_prompt_config}
                 )
+                run_prompter.run_prompt_config = run_prompt_config
 
                 # Handle tools update - first clear existing tools
                 run_prompter.tools.clear()
@@ -2204,7 +2260,7 @@ class RetrieveRunPromptColumnConfigView(APIView):
                 tools.append(
                     {"id": str(tool.id), "name": tool.name, "config": tool.config}
                 )
-            base_run_prompt_config = run_prompter.run_prompt_config or {}
+            base_run_prompt_config = dict(run_prompter.run_prompt_config or {})
 
             if not base_run_prompt_config.get("model_type"):
                 # Determine model_type based on output_format
@@ -2220,6 +2276,11 @@ class RetrieveRunPromptColumnConfigView(APIView):
                 "top_p": run_prompter.top_p,
                 "model_type": model_type,
             }
+            # Always return the public spelling to the editor so legacy
+            # "jinja2" values come back as "jinja".
+            run_prompt_config["template_format"] = normalize_template_format(
+                run_prompt_config.get("template_format") or DEFAULT_TEMPLATE_FORMAT
+            )
 
             # Convert any column UUIDs in messages back to column names for display in editor
             converted_messages = convert_uuids_to_column_names(
