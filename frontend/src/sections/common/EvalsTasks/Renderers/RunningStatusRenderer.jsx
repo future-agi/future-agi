@@ -45,7 +45,8 @@ const CustomIconButton = styled(OutlinedButton)(() => ({
 
 const RunningStatusRenderer = ({ value, data, api }) => {
   const { mutate: pauseEvalTask } = useMutation({
-    mutationFn: () => axios.post(endpoints.project.pauseEvalTask(data.id)),
+    // {} body required — the request-contract interceptor drops a bodyless POST.
+    mutationFn: () => axios.post(endpoints.project.pauseEvalTask(data.id), {}),
     onSuccess: (_) => {
       api.applyServerSideTransaction({
         update: [{ ...data, status: "paused" }],
@@ -54,7 +55,7 @@ const RunningStatusRenderer = ({ value, data, api }) => {
   });
 
   const { mutate: resumeEvalTask } = useMutation({
-    mutationFn: () => axios.post(endpoints.project.resumeEvalTask(data.id)),
+    mutationFn: () => axios.post(endpoints.project.resumeEvalTask(data.id), {}),
     meta: { errorHandled: true },
     onSuccess: (_) => {
       api.applyServerSideTransaction({

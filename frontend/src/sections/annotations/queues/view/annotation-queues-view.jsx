@@ -5,6 +5,8 @@ import {
   MenuItem,
   Stack,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
@@ -43,6 +45,7 @@ export default function AnnotationQueuesView() {
     page: 0,
     limit: 10,
     include_counts: true,
+    archived: false,
   });
 
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -88,6 +91,15 @@ export default function AnnotationQueuesView() {
     setFilters((prev) => ({ ...prev, limit: newRowsPerPage, page: 0 }));
   }, []);
 
+  const handleArchiveViewChange = useCallback((_, value) => {
+    if (value === null) return;
+    setFilters((prev) => ({
+      ...prev,
+      archived: value === "archived",
+      page: 0,
+    }));
+  }, []);
+
   const handleEdit = useCallback((queue) => {
     setEditQueue(queue);
     setDrawerOpen(true);
@@ -107,6 +119,17 @@ export default function AnnotationQueuesView() {
   const handleArchive = useCallback((queue) => {
     setArchiveQueue(queue);
   }, []);
+
+  const handleRestore = useCallback(
+    (queue) => {
+      restoreQueue(queue.id, {
+        onSuccess: () => {
+          enqueueSnackbar("Queue restored.", { variant: "success" });
+        },
+      });
+    },
+    [restoreQueue],
+  );
 
   const handleConfirmDelete = useCallback(() => {
     if (!archiveQueue) return;
@@ -172,7 +195,11 @@ export default function AnnotationQueuesView() {
   }, []);
 
   const isEmpty =
-    !isLoading && results.length === 0 && !filters.search && !filters.status;
+    !filters.archived &&
+    !isLoading &&
+    results.length === 0 &&
+    !filters.search &&
+    !filters.status;
 
   return (
     <Box
@@ -250,6 +277,71 @@ export default function AnnotationQueuesView() {
       <Box sx={{ flexShrink: 0, px: 3 }}>
         <AnnotationsTabs />
       </Box>
+      <Stack
+        direction="row"
+        spacing={2}
+        mb={2}
+        alignItems="center"
+        flexShrink={0}
+      >
+        <FormSearchField
+          size="small"
+          placeholder="Search"
+          searchQuery={searchInput}
+          onChange={handleSearch}
+          sx={{
+            minWidth: "250px",
+            "& .MuiOutlinedInput-root": { height: "30px" },
+          }}
+        />
+        <ToggleButtonGroup
+          exclusive
+          size="small"
+          value={filters.archived ? "archived" : "active"}
+          onChange={handleArchiveViewChange}
+          sx={{
+            height: 30,
+            "& .MuiToggleButton-root": {
+              px: 1.25,
+              borderRadius: "4px",
+              typography: "s2",
+              fontWeight: "fontWeightMedium",
+            },
+          }}
+        >
+          <ToggleButton value="active">Active</ToggleButton>
+          <ToggleButton value="archived">Archived</ToggleButton>
+        </ToggleButtonGroup>
+        <TextField
+          size="small"
+          select
+          value={filters.status}
+          onChange={handleStatusFilter}
+          sx={{ minWidth: 160 }}
+          SelectProps={{
+            displayEmpty: true,
+            renderValue: (v) =>
+              STATUS_OPTIONS.find((o) => o.value === v)?.label ||
+              "All Statuses",
+          }}
+        >
+          {STATUS_OPTIONS.map((opt) => (
+            <MenuItem key={opt.value} value={opt.value}>
+              {opt.label}
+            </MenuItem>
+          ))}
+        </TextField>
+        <Box sx={{ flex: 1 }} />
+        <Button
+          variant="contained"
+          color="primary"
+          startIcon={<Iconify icon="mingcute:add-line" />}
+          onClick={handleCreateNew}
+          disabled={!canWrite}
+        >
+          Create Queue
+        </Button>
+      </Stack>
 
       {isEmpty ? (
         <AnnotationQueueEmpty onCreateClick={handleCreateNew} />
@@ -263,54 +355,6 @@ export default function AnnotationQueuesView() {
             px: 3,
           }}
         >
-          <Stack
-            direction="row"
-            spacing={2}
-            mb={2}
-            alignItems="center"
-            flexShrink={0}
-          >
-            <FormSearchField
-              size="small"
-              placeholder="Search"
-              searchQuery={searchInput}
-              onChange={handleSearch}
-              sx={{
-                minWidth: "250px",
-                "& .MuiOutlinedInput-root": { height: "30px" },
-              }}
-            />
-            <TextField
-              size="small"
-              select
-              value={filters.status}
-              onChange={handleStatusFilter}
-              sx={{ minWidth: 160 }}
-              SelectProps={{
-                displayEmpty: true,
-                renderValue: (v) =>
-                  STATUS_OPTIONS.find((o) => o.value === v)?.label ||
-                  "All Statuses",
-              }}
-            >
-              {STATUS_OPTIONS.map((opt) => (
-                <MenuItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </MenuItem>
-              ))}
-            </TextField>
-            <Box sx={{ flex: 1 }} />
-            <Button
-              variant="contained"
-              color="primary"
-              startIcon={<Iconify icon="mingcute:add-line" />}
-              onClick={handleCreateNew}
-              disabled={!canWrite}
-            >
-              Create Queue
-            </Button>
-          </Stack>
-
           <AnnotationQueueTable
             data={results}
             loading={isLoading}
@@ -322,7 +366,9 @@ export default function AnnotationQueuesView() {
             onEdit={handleEdit}
             onDuplicate={handleDuplicate}
             onArchive={handleArchive}
+            onRestore={handleRestore}
             onStatusChange={handleStatusChange}
+            archivedView={filters.archived}
           />
         </Box>
       )}

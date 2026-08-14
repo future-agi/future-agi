@@ -177,7 +177,7 @@ const IndividualDevelopExperimentSelect = () => {
     const fetchData = async () => {
       try {
         const response = await axios.get(
-          `${endpoints.develop.getDerivedDatasets()}${id}/`,
+          endpoints.develop.getDerivedDatasets(id),
         );
         setExperimentList(response?.data?.result);
       } catch (err) {

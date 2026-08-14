@@ -34,7 +34,7 @@ const DatasetDetailView = () => {
 
   const { isPending: isLoadingModelDetails } = useQuery({
     queryKey: ["model", id],
-    queryFn: () => axios.get(`${endpoints.model.details}${id}/`),
+    queryFn: () => axios.get(endpoints.model.details(id)),
     select: (d) => d.data,
     staleTime: 1 * 60 * 1000, // 1 min stale time
   });

@@ -8,9 +8,11 @@ import {
   Menu,
   MenuItem,
   Stack,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { pillFilledSx } from "./toolbarStyles";
 
 const DEFAULT_ACTIONS = [
   {
@@ -70,17 +72,9 @@ const BulkActionsBar = ({
         ref={anchorRef}
         variant="outlined"
         size="small"
-        endIcon={<Iconify icon="mdi:chevron-down" width={16} />}
+        endIcon={<Iconify icon="mdi:chevron-down" width={14} />}
         onClick={() => setMenuOpen(true)}
-        sx={{
-          textTransform: "none",
-          fontWeight: 500,
-          fontSize: 13,
-          borderColor: "divider",
-          color: "text.primary",
-          height: 32,
-          "&:hover": { borderColor: "text.secondary" },
-        }}
+        sx={pillFilledSx}
       >
         Actions
       </Button>
@@ -95,25 +89,42 @@ const BulkActionsBar = ({
           paper: { sx: { minWidth: 220, mt: 0.5 } },
         }}
       >
-        {visibleActions.map((action) => (
-          <MenuItem
-            key={action.id}
-            onClick={() => {
-              setMenuOpen(false);
-              onAction(action.id, { currentTarget: anchorRef.current });
-            }}
-            dense
-          >
-            <ListItemIcon>
-              <Iconify icon={action.icon} width={18} />
-            </ListItemIcon>
-            <ListItemText
-              primaryTypographyProps={{ variant: "body2", fontSize: 13 }}
+        {visibleActions.map((action) => {
+          const disabled = Boolean(action.disabled);
+          const item = (
+            <MenuItem
+              key={action.id}
+              disabled={disabled}
+              onClick={() => {
+                if (disabled) return;
+                setMenuOpen(false);
+                onAction(action.id, { currentTarget: anchorRef.current });
+              }}
+              dense
             >
-              {action.label}
-            </ListItemText>
-          </MenuItem>
-        ))}
+              <ListItemIcon>
+                <Iconify icon={action.icon} width={18} />
+              </ListItemIcon>
+              <ListItemText
+                primaryTypographyProps={{ variant: "body2", fontSize: 13 }}
+              >
+                {action.label}
+              </ListItemText>
+            </MenuItem>
+          );
+
+          if (!disabled || !action.disabledReason) return item;
+
+          return (
+            <Tooltip
+              key={action.id}
+              title={action.disabledReason}
+              placement="left"
+            >
+              <span>{item}</span>
+            </Tooltip>
+          );
+        })}
       </Menu>
 
       <IconButton

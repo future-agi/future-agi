@@ -1,7 +1,17 @@
 import React, { useMemo, useCallback, useEffect, useRef } from "react";
 import PropTypes from "prop-types";
-import { Box, Paper, useTheme, CircularProgress, Alert } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
+import {
+  Box,
+  Paper,
+  useTheme,
+  Alert,
+  Button,
+} from "@mui/material";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
+import { ErrorBoundary } from "react-error-boundary";
+import { logger } from "src/utils/logger";
+import { isChunkError } from "src/utils/lazyWithRetry";
 
 import { useObserveHeader } from "../project/context/ObserveHeaderContext";
 import { useUrlState } from "src/routes/hooks/use-url-state";
@@ -26,28 +36,61 @@ import { resetTabStore } from "./LLMTracing/tabStore";
 
 // Loading component for tab content
 const TabContentLoader = () => (
-  <Box
-    sx={{
-      display: "flex",
-      justifyContent: "center",
-      alignItems: "center",
-      height: "200px",
-      backgroundColor: "background.paper",
-    }}
-  >
-    <CircularProgress />
-  </Box>
+  <LoadingScreen
+    variant="orbit"
+    sx={{ minHeight: "60vh", backgroundColor: "background.paper" }}
+  />
 );
 
-// Error boundary component
-const TabErrorBoundary = ({ children }) => {
+const TAB_ERROR_MESSAGE = "Could not load this tab";
+
+const TabContentError = ({ error, resetErrorBoundary }) => {
+  // Chunk load errors bubble to the app-level boundary's silent reload.
+  if (isChunkError(error)) throw error;
+
+  // A full reload actually changes state, unlike resetErrorBoundary() alone.
+  const handleRetry = () => {
+    resetErrorBoundary();
+    window.location.reload();
+  };
+
   return (
-    <React.Suspense fallback={<TabContentLoader />}>{children}</React.Suspense>
+    <Box sx={{ p: 2, backgroundColor: "background.paper" }}>
+      <Alert
+        severity="error"
+        action={
+          <Button color="inherit" size="small" onClick={handleRetry}>
+            Retry
+          </Button>
+        }
+      >
+        {TAB_ERROR_MESSAGE}
+      </Alert>
+    </Box>
+  );
+};
+
+TabContentError.propTypes = {
+  error: PropTypes.instanceOf(Error),
+  resetErrorBoundary: PropTypes.func.isRequired,
+};
+
+// Contains a tab's render errors to the tab, so one bad cell cannot blank the page.
+const TabErrorBoundary = ({ children, resetKey }) => {
+  return (
+    <ErrorBoundary
+      FallbackComponent={TabContentError}
+      resetKeys={[resetKey]}
+      onError={(error) => logger.error("Observe tab render failed", error)}
+    >
+      <React.Suspense fallback={<TabContentLoader />}>{children}</React.Suspense>
+    </ErrorBoundary>
   );
 };
 
 TabErrorBoundary.propTypes = {
   children: PropTypes.node.isRequired,
+  resetKey: PropTypes.string,
 };
 
 // Map observe tab keys to route + URL params
@@ -133,8 +176,7 @@ const ObservePage = React.memo(() => {
       return;
     }
     if (lastHydratedTabRef.current === tab) return;
-    const customViews =
-      savedViewsData?.customViews ?? savedViewsData?.custom_views ?? [];
+    const customViews = savedViewsData?.custom_views ?? [];
     if (!customViews.length) return;
     const view = customViews.find((v) => `view-${v.id}` === tab);
     if (!view?.config) return;
@@ -158,12 +200,10 @@ const ObservePage = React.memo(() => {
       if (tabKey.startsWith("view-")) {
         const viewId = tabKey.replace("view-", "");
         const cached = queryClient.getQueryData([SAVED_VIEWS_KEY, observeId]);
-        const cachedResult = cached?.data?.result;
-        const customViews =
-          cachedResult?.customViews ?? cachedResult?.custom_views ?? [];
+        const customViews = cached?.custom_views ?? [];
         const view = customViews.find((v) => v.id === viewId);
         activeConfig = view?.config || null;
-        viewTabType = view?.tab_type ?? view?.tabType ?? "traces";
+        viewTabType = view?.tab_type ?? "traces";
       }
 
       let navTo = null;
@@ -227,16 +267,16 @@ const ObservePage = React.memo(() => {
               JSON.stringify(activeConfig.display.dateFilter),
             );
           }
-          if (activeConfig?.compareFilters) {
+          if (activeConfig?.compare_filters) {
             params.set(
               compareFilterKey,
-              JSON.stringify(activeConfig.compareFilters),
+              JSON.stringify(activeConfig.compare_filters),
             );
           }
-          if (activeConfig?.compareDateFilter) {
+          if (activeConfig?.compare_date_filter) {
             params.set(
               compareDateKey,
-              JSON.stringify(activeConfig.compareDateFilter),
+              JSON.stringify(activeConfig.compare_date_filter),
             );
           }
         }
@@ -336,6 +376,9 @@ const ObservePage = React.memo(() => {
           filterSpan={headerConfig.filterSpan}
           selectedTab={headerConfig.selectedTab}
           filterSession={headerConfig.filterSession}
+          filterUsers={headerConfig.filterUsers}
+          searchUsers={headerConfig.searchUsers}
+          sortUsers={headerConfig.sortUsers}
           refreshData={headerConfig.refreshData}
           resetFilters={headerConfig.resetFilters}
         />
@@ -359,7 +402,7 @@ const ObservePage = React.memo(() => {
 
       {/* Content Section */}
       <Box sx={contentStyles}>
-        <TabErrorBoundary>
+        <TabErrorBoundary resetKey={currentRouteSegment}>
           <Outlet />
         </TabErrorBoundary>
       </Box>
@@ -388,7 +431,7 @@ const ObservePage = React.memo(() => {
         <TabContextMenu
           anchorPosition={contextMenuAnchor}
           view={
-            (savedViewsData?.customViews ?? savedViewsData?.custom_views)?.find(
+            savedViewsData?.custom_views?.find(
               (v) => v.id === contextMenuAnchor.viewId,
             ) ?? null
           }

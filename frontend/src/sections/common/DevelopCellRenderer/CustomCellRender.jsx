@@ -22,6 +22,7 @@ import {
   OriginTypes,
   StatusTypes,
   OutputTypes,
+  RefreshStatus,
 } from "./CellRenderers/cellRendererHelper";
 import { useRowHover } from "src/hooks/use-row-hover";
 import { useQueryClient } from "@tanstack/react-query";
@@ -215,6 +216,7 @@ const CustomCellRender = (props) => {
                       column.feedBackClick({
                         ...cellData,
                         ...column,
+                        value,
                         rowData: props?.data,
                       });
                     }}
@@ -278,7 +280,12 @@ const CustomCellRender = (props) => {
     );
   }
 
-  if (status === StatusTypes.RUNNING || value === undefined) {
+  // run_prompt/node-type cells skip a per-cell "running" status, so fall back to
+  // the column status — but only for cells with no data yet, so finished cells render.
+  if (
+    status === StatusTypes.RUNNING ||
+    (!cellData && RefreshStatus.includes(column?.status))
+  ) {
     return (
       <RunningSkeletonRenderer
         originType={props.colDef.col.originType}

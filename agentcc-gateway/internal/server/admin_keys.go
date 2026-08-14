@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/futureagi/agentcc-gateway/internal/auth"
+	gatewayadmin "github.com/futureagi/agentcc-gateway/internal/contracts/generated"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
@@ -75,15 +76,10 @@ func (h *KeyHandlers) CreateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		Name      string            `json:"name"`
-		Owner     string            `json:"owner"`
-		Models    []string          `json:"models"`
-		Providers []string          `json:"providers"`
-		Metadata  map[string]string `json:"metadata"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var req gatewayadmin.CreateKeyRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON: "+err.Error()))
 		return
 	}
@@ -93,7 +89,11 @@ func (h *KeyHandlers) CreateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	key, rawKey := h.keyStore.Create(req.Name, req.Owner, req.Models, req.Providers, req.Metadata)
+	owner := ""
+	if req.Owner != nil {
+		owner = *req.Owner
+	}
+	key, rawKey := h.keyStore.Create(req.Name, owner, req.Models, req.Providers, req.Metadata)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -197,15 +197,10 @@ func (h *KeyHandlers) UpdateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		Name      *string           `json:"name"`
-		Owner     *string           `json:"owner"`
-		Models    []string          `json:"models"`
-		Providers []string          `json:"providers"`
-		Metadata  map[string]string `json:"metadata"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var req gatewayadmin.UpdateKeyRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON: "+err.Error()))
 		return
 	}

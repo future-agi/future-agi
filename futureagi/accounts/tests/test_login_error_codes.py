@@ -15,7 +15,7 @@ Covers:
 
 import json
 import time
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import pytest
 from django.core.cache import cache
@@ -178,7 +178,7 @@ class TestRecaptchaFailedErrorCode:
                 {
                     "email": external_user.email,
                     "password": "testpassword123",
-                    "recaptcha-response": "bad-token",
+                    "recaptcha_response": "bad-token",
                 },
                 format="json",
                 SERVER_NAME="example.com",
@@ -205,7 +205,7 @@ class TestRecaptchaFailedErrorCode:
                 {
                     "email": external_user.email,
                     "password": "testpassword123",
-                    "recaptcha-response": "bad-token",
+                    "recaptcha_response": "bad-token",
                 },
                 format="json",
                 SERVER_NAME="example.com",
@@ -435,11 +435,27 @@ class TestMiddlewareJsonForbidden:
         assert body["result"]["blocked"] is True
 
 
+@pytest.fixture
+def non_oss_mode():
+    """Pin non-OSS deployment so IP blocking paths are exercised.
+
+    The middleware short-circuits entirely when is_oss() is True (the
+    default in this repo's test environment), so blocking tests must
+    force non-OSS mode.
+    """
+    with patch("accounts.authentication.is_oss", return_value=False):
+        yield
+
+
 @pytest.mark.unit
 class TestMiddlewareIpBlockedRouting:
     """Middleware blocks /login/, /token/, /signup/ paths when IP is cached."""
 
     TEST_IP = "10.10.10.99"
+
+    @pytest.fixture(autouse=True)
+    def _non_oss(self, non_oss_mode):
+        yield
 
     def _middleware(self):
         from accounts.authentication import AuthMonitoringMiddleware
@@ -480,6 +496,7 @@ class TestMiddlewareIpBlockedRouting:
     def test_ip_rate_limited_error_code(self):
         """When IP requests hit the threshold, middleware returns LOGIN_IP_RATE_LIMITED."""
         from django.conf import settings
+        from accounts.authentication import RATE_LIMIT_WINDOW_SECONDS
 
         max_attempts = getattr(settings, "MAX_LOGIN_ATTEMPTS_PER_HOUR", 10)
         now = time.time()
@@ -488,7 +505,7 @@ class TestMiddlewareIpBlockedRouting:
         cache.set(
             f"ip_requests_{self.TEST_IP}",
             [now - i for i in range(max_attempts)],
-            1200,
+            RATE_LIMIT_WINDOW_SECONDS,
         )
         middleware = self._middleware()
         resp = middleware(self._request("/api/accounts/token/"))
@@ -496,6 +513,38 @@ class TestMiddlewareIpBlockedRouting:
         body = json.loads(resp.content)
         assert body["result"]["error_code"] == "LOGIN_IP_RATE_LIMITED"
         assert body["result"]["blocked"] is True
+
+    def test_ip_rate_limit_keeps_requests_for_full_hour(self):
+        """Requests older than 1000s but inside the 1h window still count."""
+        from django.conf import settings
+        from accounts.authentication import RATE_LIMIT_WINDOW_SECONDS
+
+        max_attempts = getattr(settings, "MAX_LOGIN_ATTEMPTS_PER_HOUR", 10)
+        now = time.time()
+        cache.set(
+            f"ip_requests_{self.TEST_IP}",
+            [now - (RATE_LIMIT_WINDOW_SECONDS - 1) + i for i in range(max_attempts)],
+            RATE_LIMIT_WINDOW_SECONDS,
+        )
+        middleware = self._middleware()
+        resp = middleware(self._request("/api/accounts/token/"))
+        assert resp.status_code == 403
+        body = json.loads(resp.content)
+        assert body["result"]["error_code"] == "LOGIN_IP_RATE_LIMITED"
+
+    def test_ip_request_cache_ttl_matches_full_window(self):
+        from accounts.authentication import RATE_LIMIT_WINDOW_SECONDS
+
+        middleware = self._middleware()
+        with patch("accounts.authentication.cache.set", wraps=cache.set) as cache_set:
+            resp = middleware(self._request("/api/accounts/token/"))
+
+        assert resp.status_code == 200
+        cache_set.assert_any_call(
+            f"ip_requests_{self.TEST_IP}",
+            ANY,
+            RATE_LIMIT_WINDOW_SECONDS,
+        )
 
     def test_non_blocked_ip_passes_through(self):
         """Unblocked IP is not intercepted — passes through to next handler."""
@@ -510,6 +559,10 @@ class TestMiddlewarePasswordResetRouting:
     """Middleware rate-limits /password-reset-initiate/ correctly."""
 
     TEST_IP = "10.10.20.50"
+
+    @pytest.fixture(autouse=True)
+    def _non_oss(self, non_oss_mode):
+        yield
 
     def _middleware(self):
         from accounts.authentication import AuthMonitoringMiddleware
@@ -535,6 +588,7 @@ class TestMiddlewarePasswordResetRouting:
 
     def test_rate_limit_trigger_on_password_reset(self):
         from django.conf import settings
+        from accounts.authentication import RATE_LIMIT_WINDOW_SECONDS
 
         max_attempts = getattr(settings, "MAX_LOGIN_ATTEMPTS_PER_HOUR", 10)
         now = time.time()
@@ -543,13 +597,45 @@ class TestMiddlewarePasswordResetRouting:
         cache.set(
             f"rate_limit_requests_{self.TEST_IP}",
             [now - i for i in range(max_attempts)],
-            1200,
+            RATE_LIMIT_WINDOW_SECONDS,
         )
         middleware = self._middleware()
         resp = middleware(self._request())
         assert resp.status_code == 403
         body = json.loads(resp.content)
         assert body["result"]["error_code"] == "LOGIN_PASSWORD_RESET_RATE_LIMITED"
+
+    def test_password_reset_rate_limit_keeps_requests_for_full_hour(self):
+        """Requests older than 1000s but inside the 1h window still count."""
+        from django.conf import settings
+        from accounts.authentication import RATE_LIMIT_WINDOW_SECONDS
+
+        max_attempts = getattr(settings, "MAX_LOGIN_ATTEMPTS_PER_HOUR", 10)
+        now = time.time()
+        cache.set(
+            f"rate_limit_requests_{self.TEST_IP}",
+            [now - (RATE_LIMIT_WINDOW_SECONDS - 1) + i for i in range(max_attempts)],
+            RATE_LIMIT_WINDOW_SECONDS,
+        )
+        middleware = self._middleware()
+        resp = middleware(self._request())
+        assert resp.status_code == 403
+        body = json.loads(resp.content)
+        assert body["result"]["error_code"] == "LOGIN_PASSWORD_RESET_RATE_LIMITED"
+
+    def test_password_reset_request_cache_ttl_matches_full_window(self):
+        from accounts.authentication import RATE_LIMIT_WINDOW_SECONDS
+
+        middleware = self._middleware()
+        with patch("accounts.authentication.cache.set", wraps=cache.set) as cache_set:
+            resp = middleware(self._request())
+
+        assert resp.status_code == 200
+        cache_set.assert_any_call(
+            f"rate_limit_requests_{self.TEST_IP}",
+            ANY,
+            RATE_LIMIT_WINDOW_SECONDS,
+        )
 
     def test_password_reset_response_shape(self):
         cache.set(f"rate_limit_{self.TEST_IP}", True, 3600)
@@ -560,6 +646,56 @@ class TestMiddlewarePasswordResetRouting:
         assert "result" in body
         assert "error" in body["result"]
         assert "error_code" in body["result"]
+
+
+@pytest.mark.unit
+class TestMiddlewareOssSkip:
+    """In OSS mode the middleware skips ALL IP-based blocking (TH-7179).
+
+    OSS/local deployments funnel every request through one IP (localhost or
+    the Docker gateway), so IP rate limiting blocks legitimate users.
+    """
+
+    TEST_IP = "10.10.30.77"
+
+    @pytest.fixture(autouse=True)
+    def _oss(self):
+        with patch("accounts.authentication.is_oss", return_value=True):
+            yield
+
+    def _middleware(self):
+        from accounts.authentication import AuthMonitoringMiddleware
+
+        return AuthMonitoringMiddleware(lambda r: HttpResponse("OK", status=200))
+
+    def _request(self, path: str):
+        factory = RequestFactory()
+        req = factory.post(path, content_type="application/json")
+        req.META["REMOTE_ADDR"] = self.TEST_IP
+        return req
+
+    def test_blocked_ip_passes_through_on_login_paths(self):
+        cache.set(f"blocked_ip_{self.TEST_IP}", True, 3600)
+        middleware = self._middleware()
+        for path in (
+            "/api/accounts/token/",
+            "/api/accounts/login/",
+            "/api/accounts/signup/",
+        ):
+            resp = middleware(self._request(path))
+            assert resp.status_code == 200
+
+    def test_rate_limited_ip_passes_through_on_password_reset(self):
+        cache.set(f"rate_limit_{self.TEST_IP}", True, 3600)
+        middleware = self._middleware()
+        resp = middleware(self._request("/api/accounts/password-reset-initiate/"))
+        assert resp.status_code == 200
+
+    def test_no_ip_request_tracking_in_oss(self):
+        """OSS mode must not even record request timestamps per IP."""
+        middleware = self._middleware()
+        middleware(self._request("/api/accounts/token/"))
+        assert cache.get(f"ip_requests_{self.TEST_IP}") is None
 
 
 # ---------------------------------------------------------------------------

@@ -18,6 +18,7 @@ import CompositeResultView from "src/sections/evals/components/CompositeResultVi
 import {
   getLabel,
   getStatusColor,
+  normalizeEvalResult,
 } from "src/sections/develop-detail/DataTab/common";
 
 const ViewDetailsModal = ({
@@ -32,18 +33,10 @@ const ViewDetailsModal = ({
   const theme = useTheme();
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Get the actual evaluation data from the row data
-  const evalData = data
-    ? {
-        ...data,
-        cellValue: data.cellValue,
-        dataType: data.dataType,
-        metadata: data.metadata,
-      }
-    : null;
+  const evalData = data;
   // Detect composite eval results from value_infos
   const compositeResult = useMemo(() => {
-    const vi = data?.value_infos ?? data?.valueInfos;
+    const vi = data?.value_infos;
     const parsed =
       typeof vi === "string"
         ? (() => {
@@ -78,7 +71,10 @@ const ViewDetailsModal = ({
     };
   }, [data]);
 
-  const errorAnalysis = evalData?.metadata?.cellMetadata?.errorAnalysis;
+  const cellValue = evalData?.cell_value;
+  const cellMetadata = evalData?.metadata?.cell_metadata;
+  const errorAnalysis = cellMetadata?.error_analysis;
+  const normalizedResult = normalizeEvalResult(cellValue);
   const input1 = Array.isArray(errorAnalysis?.input1)
     ? errorAnalysis.input1
     : errorAnalysis?.input1
@@ -176,37 +172,34 @@ const ViewDetailsModal = ({
               <Typography sx={{ color: "red.700", margin: "8px" }}>
                 error
               </Typography>
-            ) : evalData?.cellValue?.startsWith("['") &&
-              evalData?.cellValue?.endsWith("']") ? (
-              JSON.parse(evalData.cellValue.replace(/'/g, '"')).map(
-                (item, idx) => (
-                  <Chip
-                    key={idx}
-                    variant="soft"
-                    label={item}
-                    size="small"
-                    sx={{
-                      margin: "5px",
-                      backgroundColor: "action.hover",
+            ) : normalizedResult.kind === "choices" ? (
+              normalizedResult.items.map((item, idx) => (
+                <Chip
+                  key={idx}
+                  variant="soft"
+                  label={item}
+                  size="small"
+                  sx={{
+                    margin: "5px",
+                    backgroundColor: "action.hover",
+                    color: "primary.main",
+                    fontWeight: "400",
+                    pointerEvents: "none",
+                    "&:hover": {
                       color: "primary.main",
-                      fontWeight: "400",
-                      pointerEvents: "none",
-                      "&:hover": {
-                        color: "primary.main",
-                        backgroundColor: "action.hover",
-                      },
-                    }}
-                  />
-                ),
-              )
+                      backgroundColor: "action.hover",
+                    },
+                  }}
+                />
+              ))
             ) : (
               <Chip
                 variant="soft"
-                label={getLabel(evalData?.cellValue)}
+                label={getLabel(cellValue)}
                 size="small"
                 sx={{
                   pointerEvents: "none",
-                  ...getStatusColor(evalData?.cellValue, theme),
+                  ...getStatusColor(cellValue, theme),
                 }}
               />
             )}
@@ -227,9 +220,9 @@ const ViewDetailsModal = ({
                 borderRadius: theme.spacing(1),
               }}
             >
-              {evalData?.metadata?.cellMetadata?.explanation ? (
+              {cellMetadata?.explanation ? (
                 <ul>
-                  <li>{evalData?.metadata?.cellMetadata?.explanation}</li>
+                  <li>{cellMetadata?.explanation}</li>
                 </ul>
               ) : (
                 <Box
@@ -281,7 +274,7 @@ const ViewDetailsModal = ({
               Possible Error
             </Typography>
 
-            {evalData?.cellValue === "error" ? (
+            {cellValue === "error" ? (
               <Box
                 sx={{
                   display: "flex",
@@ -371,7 +364,7 @@ const ViewDetailsModal = ({
                       key={key}
                       value={valueArray}
                       column={
-                        evalData?.metadata?.cellMetadata?.selectedInputKey
+                        cellMetadata?.selected_input_key
                       }
                       datapoint={evalData}
                     />

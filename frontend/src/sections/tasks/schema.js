@@ -8,6 +8,7 @@ export {
   NewTaskValidationSchema,
   getNewTaskFilters,
   extractAttributeFilters,
+  getTaskFilterApiKey,
 } from "src/sections/common/EvalsTasks/NewTaskDrawer/validation";
 
 export {

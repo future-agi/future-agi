@@ -23,18 +23,45 @@ import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterCo
 import { getFilterExtraProperties } from "../../../utils/prototypeObserveUtils";
 import TotalRowsStatusBar from "src/sections/develop-detail/Common/TotalRowsStatusBar";
 import { useQuery } from "@tanstack/react-query";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import { generateAnnotationColumnsForTracing } from "src/sections/projects/LLMTracing/common";
 import { useShallowToggleAnnotationsStore } from "src/sections/agents/store";
 
 const defaultFilter = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
   },
+};
+
+const normalizeColumnConfig = (column = {}) => ({
+  ...column,
+  isVisible: column.isVisible ?? column.is_visible,
+  groupBy: column.groupBy ?? column.group_by,
+  outputType: column.outputType ?? column.output_type,
+  reverseOutput: column.reverseOutput ?? column.reverse_output,
+  annotationLabelType:
+    column.annotationLabelType ?? column.annotation_label_type,
+  choicesMap: column.choicesMap ?? column.choices_map,
+  evalTemplateId: column.evalTemplateId ?? column.eval_template_id,
+  sourceField: column.sourceField ?? column.source_field,
+  parentEvalId: column.parentEvalId ?? column.parent_eval_id,
+});
+
+const normalizeSpanListPayload = (payload = {}) => {
+  const metadata = payload.metadata || {};
+
+  return {
+    columnConfig: (
+      payload.columnConfig ||
+      payload.column_config ||
+      payload.config ||
+      []
+    ).map(normalizeColumnConfig),
+    table: payload.table || [],
+    totalRows: metadata.totalRows ?? metadata.total_rows ?? 0,
+  };
 };
 
 const SpanTab = React.forwardRef(
@@ -44,7 +71,6 @@ const SpanTab = React.forwardRef(
       setColumns,
       setTraceDetailDrawerOpen,
       filterOpen,
-      selectedTraceIds,
       setFilterOpen,
       setIsFilterApplied,
     },
@@ -135,9 +161,10 @@ const SpanTab = React.forwardRef(
 
     useEffect(() => {
       const hasActiveFilter = debouncedValidatedFilters?.some((f) =>
-        f.filterConfig?.filterValue && Array.isArray(f.filterConfig.filterValue)
-          ? f.filterConfig.filterValue.length > 0
-          : f.filterConfig.filterValue !== "",
+        f.filter_config?.filter_value &&
+        Array.isArray(f.filter_config.filter_value)
+          ? f.filter_config.filter_value.length > 0
+          : f.filter_config.filter_value !== "",
       );
       setIsFilterApplied(hasActiveFilter);
       trackEvent(Events.filterApplied);
@@ -234,7 +261,13 @@ const SpanTab = React.forwardRef(
         }
       });
       if (annotationColumns.length > 0) {
-        columnDefsResult.push(annotationColumns[0]);
+        for (const group of annotationColumns) {
+          if (group.children) {
+            columnDefsResult.push(...group.children);
+          } else {
+            columnDefsResult.push(group);
+          }
+        }
       }
       return {
         columnDefs: columnDefsResult,
@@ -260,30 +293,24 @@ const SpanTab = React.forwardRef(
 
               {
                 params: {
-                  filters: JSON.stringify(
-                    canonicalizeApiFilterColumnIds(
-                      objectCamelToSnake(debouncedValidatedFilters),
-                    ),
-                  ),
-                  project: projectId,
+                  filters: JSON.stringify(debouncedValidatedFilters),
                   project_version_id: runId,
                   page_number: pageNumber,
                   page_size: 10,
-                  trace_ids: selectedTraceIds.join(","),
                 },
               },
             );
-            const res = results?.data?.result;
-            const columns = res?.columnConfig?.map((o) => ({
+            const res = normalizeSpanListPayload(results?.data?.result);
+            const columns = res.columnConfig.map((o) => ({
               ...o,
               id: o.id,
             }));
             setColumns(columns);
 
-            params.api.totalRowCount = res?.metadata?.totalRows;
+            params.api.totalRowCount = res.totalRows;
             params.success({
-              rowData: res?.table,
-              totalRows: res?.metadata?.totalRows,
+              rowData: res.table,
+              totalRows: res.totalRows,
             });
           } catch (error) {
             params.fail();
@@ -293,12 +320,12 @@ const SpanTab = React.forwardRef(
           return data.rowId;
         },
       }),
-      [debouncedValidatedFilters, selectedTraceIds],
+      [debouncedValidatedFilters, runId, setColumns],
     );
 
     useEffect(() => {
       return () => resetMetricIds();
-    }, []);
+    }, [resetMetricIds]);
 
     return (
       <>
@@ -380,7 +407,6 @@ SpanTab.propTypes = {
   setColumns: PropTypes.func,
   setTraceDetailDrawerOpen: PropTypes.func,
   filterOpen: PropTypes.bool,
-  selectedTraceIds: PropTypes.array,
   setFilterOpen: PropTypes.func,
   setIsFilterApplied: PropTypes.func,
 };

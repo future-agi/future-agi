@@ -21,7 +21,17 @@ function resolveApiHost() {
   return API_HOST_MAP[window.location.hostname] || "http://localhost:8000";
 }
 
+function resolveHelpLink() {
+  // Runtime > build-time. Empty in OSS images unless the operator sets
+  // VITE_HELP_LINK, which is why OSS callers need their own fallback.
+  const runtime =
+    (typeof window !== "undefined" && window.__FUTURE_AGI_CONFIG__) || {};
+  const link = runtime.VITE_HELP_LINK || import.meta.env.VITE_HELP_LINK || "";
+  return link.trim();
+}
+
 export const HOST_API = resolveApiHost();
+export const HELP_LINK = resolveHelpLink();
 export const GENERATE_LINK = import.meta.env.VITE_GENERATE_LINK;
 export const ASSETS_API = import.meta.env.VITE_ASSETS_API;
 export const CURRENT_ENVIRONMENT = import.meta.env.VITE_ENVIRONMENT;
@@ -32,7 +42,8 @@ export const POSTHOG_KEY = import.meta.env.VITE_POSTHOG_KEY;
 export const POSTHOG_HOST = import.meta.env.VITE_POSTHOG_HOST;
 
 export const GOOGLE_ADS_ID = import.meta.env.VITE_GOOGLE_ADS_ID;
-export const GOOGLE_ADS_SIGNUP_LABEL = import.meta.env.VITE_GOOGLE_ADS_SIGNUP_LABEL;
+export const GOOGLE_ADS_SIGNUP_LABEL = import.meta.env
+  .VITE_GOOGLE_ADS_SIGNUP_LABEL;
 export const GOOGLE_ADS_ENABLED = import.meta.env.VITE_GOOGLE_ADS_ENABLED;
 export const GA_ID = import.meta.env.VITE_GA_ID;
 
@@ -42,12 +53,12 @@ export const REDDIT_ADS_ENABLED = import.meta.env.VITE_REDDIT_ADS_ENABLED;
 export const TWITTER_PIXEL_ID = import.meta.env.VITE_TWITTER_PIXEL_ID;
 export const TWITTER_ADS_ENABLED = import.meta.env.VITE_TWITTER_ADS_ENABLED;
 
-
 export const AD_CONVERSION_VALUE = (() => {
   const n = Number(import.meta.env.VITE_AD_CONVERSION_VALUE);
   return Number.isFinite(n) ? n : undefined;
 })();
-export const AD_CONVERSION_CURRENCY = import.meta.env.VITE_AD_CONVERSION_CURRENCY;
+export const AD_CONVERSION_CURRENCY = import.meta.env
+  .VITE_AD_CONVERSION_CURRENCY;
 
 export const FIREBASE_API = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,

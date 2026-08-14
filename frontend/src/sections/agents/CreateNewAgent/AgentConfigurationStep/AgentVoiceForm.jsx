@@ -13,6 +13,7 @@ import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectFie
 import {
   AGENT_TYPES,
   AUTH_METHODS_BY_PROVIDER,
+  defaultAuthMethodForProvider,
   INBOUND_OUTBOUND_COPY,
   VOICE_CHAT_PROVIDERS,
   isLiveKitProvider,
@@ -176,6 +177,7 @@ export default function AgentVoiceForm() {
     mutationFn: (data) =>
       axios.post(endpoints.agentDefinitions.fetchAssistantFromProvider, data),
     onSuccess: (data) => {
+      clearErrors("assistantId");
       const providerData = data?.data?.result;
       if (!agentName?.includes(providerData?.name)) {
         setValue("agentName", `${agentName} (${providerData?.name})`, {
@@ -189,7 +191,6 @@ export default function AgentVoiceForm() {
         shouldDirty: true,
       });
       setValue("description", providerData?.prompt, { shouldDirty: true });
-      setValue("apiKey", providerData?.api_key, { shouldDirty: true });
       setShowSuccess(true);
     },
     meta: {
@@ -323,26 +324,19 @@ export default function AgentVoiceForm() {
           options={VOICE_CHAT_PROVIDERS}
           onChange={(e) => {
             const value = e.target.value;
-            const mainProviders = [
-              "vapi",
-              "retell",
-              "elevenlabs",
-              "livekit",
-              "livekit_bridge",
-            ];
-
-            // Clear authenticationMethod only if switching to or from "others"
-            const isPrevMain = mainProviders.includes(selectedProvider);
-            const isNextMain = mainProviders.includes(value);
 
             if (value !== selectedProvider) {
-              if (isPrevMain && isNextMain) {
-                // between vapi/retell/elevenlabs → keep authenticationMethod
-              } else {
-                setValue("authenticationMethod", "");
-                setValue("apiKey", "");
-                clearErrors("apiKey");
-              }
+              // Providers with only one selectable method get it preselected,
+              // so the required field is never left empty after a switch.
+              setValue(
+                "authenticationMethod",
+                defaultAuthMethodForProvider(value),
+              );
+
+              setValue("apiKey", "");
+              setValue("assistantId", "");
+              clearErrors(["apiKey", "assistantId"]);
+              setShowSuccess(false);
               // Clear LiveKit fields when switching away from livekit
               if (isLiveKitProvider(selectedProvider)) {
                 setValue("livekitUrl", "");

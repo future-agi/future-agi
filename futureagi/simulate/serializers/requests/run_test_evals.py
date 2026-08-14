@@ -2,8 +2,14 @@ import json
 
 from rest_framework import serializers
 
+from tracer.serializers.filters import (
+    StrictInputSerializer,
+    filter_list_field,
+    json_object_field,
+)
 
-class EvalConfigDefinitionSerializer(serializers.Serializer):
+
+class EvalConfigDefinitionSerializer(StrictInputSerializer):
     """Defines a single evaluation configuration item within AddEvalConfigsRequestSerializer."""
 
     template_id = serializers.UUIDField(
@@ -15,20 +21,20 @@ class EvalConfigDefinitionSerializer(serializers.Serializer):
         allow_blank=True,
         help_text="Name for this evaluation configuration. Defaults to 'Eval-<template_id>' if omitted.",
     )
-    config = serializers.DictField(
+    config = json_object_field(
         required=False,
         default=dict,
         help_text="Template-specific configuration parameters.",
     )
-    mapping = serializers.DictField(
+    mapping = json_object_field(
         required=False,
         default=dict,
         help_text="Maps test execution data fields to the evaluation template's expected inputs.",
     )
-    filters = serializers.DictField(
+    filters = filter_list_field(
         required=False,
-        default=dict,
-        help_text="Filter criteria to restrict which test results are evaluated.",
+        default=list,
+        help_text="Canonical filter list to restrict which test results are evaluated.",
     )
     error_localizer = serializers.BooleanField(
         required=False,
@@ -41,9 +47,21 @@ class EvalConfigDefinitionSerializer(serializers.Serializer):
         default=None,
         help_text="Model to use for running this evaluation.",
     )
+    kb_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text="Knowledge base file to use for this evaluation.",
+    )
+    eval_group = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text="Eval group that created this evaluation config.",
+    )
 
 
-class AddEvalConfigsRequestSerializer(serializers.Serializer):
+class AddEvalConfigsRequestSerializer(StrictInputSerializer):
     """Request serializer for POST /simulate/run-tests/{run_test_id}/eval-configs/"""
 
     evaluations_config = serializers.ListField(
@@ -70,15 +88,15 @@ class AddEvalConfigsRequestSerializer(serializers.Serializer):
         return value
 
 
-class EvalConfigUpdateRequestSerializer(serializers.Serializer):
+class EvalConfigUpdateRequestSerializer(StrictInputSerializer):
     """Request serializer for POST /simulate/run-tests/{run_test_id}/eval-configs/{eval_config_id}/update/"""
 
-    config = serializers.DictField(
+    config = json_object_field(
         required=False,
         allow_null=True,
         help_text="Updated evaluation configuration parameters.",
     )
-    mapping = serializers.DictField(
+    mapping = json_object_field(
         required=False,
         allow_null=True,
         help_text="Updated field mapping between test data and evaluation inputs.",
@@ -95,7 +113,17 @@ class EvalConfigUpdateRequestSerializer(serializers.Serializer):
     kb_id = serializers.UUIDField(
         required=False,
         allow_null=True,
-        help_text="UUID of a knowledge base to use for grounding. Pass null to clear.",
+        help_text="UUID of a knowledge base to use for grounding. Pass null to clear. "
+        "Switching template_id without providing an explicit kb_id will clear the KB association.",
+    )
+    template_id = serializers.UUIDField(
+        required=False,
+        help_text="UUID of the evaluation template to switch to.",
+    )
+    filters = filter_list_field(
+        required=False,
+        allow_null=True,
+        help_text="Updated canonical filter list to restrict which test results are evaluated.",
     )
     name = serializers.CharField(
         required=False,
@@ -122,7 +150,7 @@ class EvalConfigUpdateRequestSerializer(serializers.Serializer):
         return data
 
 
-class EvalSummaryFilterSerializer(serializers.Serializer):
+class EvalSummaryFilterSerializer(StrictInputSerializer):
     """Query parameter serializer for GET /simulate/run-tests/{run_test_id}/eval-summary/"""
 
     execution_id = serializers.UUIDField(
@@ -133,7 +161,7 @@ class EvalSummaryFilterSerializer(serializers.Serializer):
     )
 
 
-class EvalSummaryComparisonFilterSerializer(serializers.Serializer):
+class EvalSummaryComparisonFilterSerializer(StrictInputSerializer):
     """Query parameter serializer for GET /simulate/run-tests/{run_test_id}/eval-summary-comparison/"""
 
     execution_ids = serializers.CharField(
@@ -146,8 +174,10 @@ class EvalSummaryComparisonFilterSerializer(serializers.Serializer):
         """Parse JSON string and validate the resulting list is non-empty."""
         try:
             parsed = json.loads(value)
-        except (json.JSONDecodeError, TypeError):
-            raise serializers.ValidationError("execution_ids must be valid JSON")
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise serializers.ValidationError(
+                "execution_ids must be valid JSON"
+            ) from exc
         if not isinstance(parsed, list):
             raise serializers.ValidationError("execution_ids must be a JSON array")
         if not parsed:

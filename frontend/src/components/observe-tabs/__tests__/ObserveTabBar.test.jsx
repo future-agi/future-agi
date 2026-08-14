@@ -7,7 +7,7 @@ import { ObserveHeaderContext } from "src/sections/project/context/ObserveHeader
 const mockCreateSavedView = vi.fn();
 let mockSavedViewsList = [];
 vi.mock("src/api/project/saved-views", () => ({
-  useGetSavedViews: () => ({ data: { customViews: mockSavedViewsList } }),
+  useGetSavedViews: () => ({ data: { custom_views: mockSavedViewsList } }),
   useCreateSavedView: () => ({ mutate: mockCreateSavedView }),
   useUpdateSavedView: () => ({ mutate: vi.fn() }),
   useDeleteSavedView: () => ({ mutate: vi.fn() }),
@@ -16,7 +16,6 @@ vi.mock("src/api/project/saved-views", () => ({
 
 const renderWithCtx = ({
   getViewConfig = () => ({}),
-  getTabType = () => "traces",
   activeTab = "traces",
   selectedTab,
 } = {}) => {
@@ -35,8 +34,6 @@ const renderWithCtx = ({
         setActiveViewConfig: () => {},
         registerGetViewConfig: () => {},
         getViewConfig,
-        registerGetTabType: () => {},
-        getTabType,
       }}
     >
       <ObserveTabBar
@@ -69,7 +66,16 @@ describe("ObserveTabBar — Save View snapshots current filters", () => {
 
   it("passes ctx.getViewConfig() output as config in createSavedView", async () => {
     const snapshot = {
-      filters: [{ columnId: "status" }],
+      filters: [
+        {
+          column_id: "status",
+          filter_config: {
+            filter_type: "text",
+            filter_op: "equals",
+            filter_value: "ERROR",
+          },
+        },
+      ],
       display: { viewMode: "grid" },
     };
     renderWithCtx({ getViewConfig: () => snapshot });
@@ -119,7 +125,7 @@ describe("ObserveTabBar — resolveTabType", () => {
   });
 
   it("forces tab_type to 'users' when activeTab is 'users'", async () => {
-    renderWithCtx({ getTabType: () => "traces", activeTab: "users" });
+    renderWithCtx({ activeTab: "users" });
     clickCreateViewButton();
     await typeAndSubmit("u");
     await waitFor(() => expect(mockCreateSavedView).toHaveBeenCalled());
@@ -127,7 +133,7 @@ describe("ObserveTabBar — resolveTabType", () => {
   });
 
   it("forces tab_type to 'sessions' when activeTab is 'sessions'", async () => {
-    renderWithCtx({ getTabType: () => "traces", activeTab: "sessions" });
+    renderWithCtx({ activeTab: "sessions" });
     clickCreateViewButton();
     await typeAndSubmit("ss");
     await waitFor(() => expect(mockCreateSavedView).toHaveBeenCalled());
@@ -138,7 +144,7 @@ describe("ObserveTabBar — resolveTabType", () => {
     mockSavedViewsList = [
       { id: "abc", name: "my-spans-view", tab_type: "spans" },
     ];
-    renderWithCtx({ getTabType: () => "traces", activeTab: "view-abc" });
+    renderWithCtx({ activeTab: "view-abc" });
     clickCreateViewButton();
     await typeAndSubmit("copy");
     await waitFor(() => expect(mockCreateSavedView).toHaveBeenCalled());

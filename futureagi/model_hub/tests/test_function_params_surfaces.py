@@ -7,11 +7,20 @@ from model_hub.models.choices import (
     ModelTypes,
     OwnerChoices,
     SourceChoices,
+    StatusType,
 )
+from model_hub.models.ai_model import AIModel
 from model_hub.models.develop_dataset import Column, Dataset
 from model_hub.models.eval_groups import EvalGroup
 from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
+from model_hub.models.experiments import ExperimentsTable
 from model_hub.models.run_prompt import PromptEvalConfig, PromptTemplate
+from simulate.models.eval_config import SimulateEvalConfig
+from simulate.models.run_test import RunTest
+from accounts.models import Organization, User
+from accounts.models.workspace import Workspace
+from tracer.models.custom_eval_config import CustomEvalConfig
+from tracer.models.project import Project
 
 
 @pytest.fixture
@@ -80,6 +89,38 @@ def prompt_template(user, workspace):
         organization=user.organization,
         workspace=workspace,
         created_by=user,
+    )
+
+
+@pytest.fixture
+def simulate_run_test(user, workspace):
+    return RunTest.objects.create(
+        name="Simulate Params",
+        organization=user.organization,
+        workspace=workspace,
+    )
+
+
+@pytest.fixture
+def observe_project_for_eval(user, workspace):
+    return Project.objects.create(
+        name="Eval Task Params",
+        organization=user.organization,
+        workspace=workspace,
+        user=user,
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM.value,
+        trace_type="observe",
+    )
+
+
+@pytest.fixture
+def experiment_for_eval(dataset_for_eval):
+    dataset, hypothesis_col, _reference_col = dataset_for_eval
+    return ExperimentsTable.objects.create(
+        name="Experiment Params",
+        dataset=dataset,
+        column=hypothesis_col,
+        status=StatusType.COMPLETED.value,
     )
 
 
@@ -197,6 +238,276 @@ def test_apply_eval_group_prompt_propagates_shared_params(
         deleted=False,
     )
     assert prompt_eval.config.get("params", {}).get("k") == 11
+
+
+@pytest.mark.django_db
+def test_apply_eval_group_simulate_propagates_shared_params(
+    auth_client, user, workspace, rag_function_template, simulate_run_test
+):
+    eval_group = EvalGroup.objects.create(
+        name="simulate_param_group",
+        organization=user.organization,
+        workspace=workspace,
+        created_by=user,
+    )
+    eval_group.eval_templates.add(rag_function_template)
+
+    payload = {
+        "eval_group_id": str(eval_group.id),
+        "page_id": "SIMULATE",
+        "filters": {
+            "simulate_id": str(simulate_run_test.id),
+            "model": "turing_small",
+            "error_localizer": False,
+        },
+        "mapping": {
+            "hypothesis": "retrieved_contexts",
+            "reference": "ground_truth_contexts",
+        },
+        "params": {"k": 13},
+    }
+
+    response = auth_client.post(
+        "/model-hub/eval-groups/apply-eval-group/", payload, format="json"
+    )
+    assert response.status_code == status.HTTP_200_OK
+
+    simulate_eval = SimulateEvalConfig.objects.get(
+        eval_group=eval_group,
+        run_test=simulate_run_test,
+        eval_template=rag_function_template,
+        deleted=False,
+    )
+    assert simulate_eval.config.get("params", {}).get("k") == 13
+    assert simulate_eval.mapping == {
+        "hypothesis": "retrieved_contexts",
+        "reference": "ground_truth_contexts",
+    }
+    assert simulate_eval.model == "turing_small"
+
+
+@pytest.mark.django_db
+def test_apply_eval_group_eval_task_propagates_shared_params(
+    auth_client, user, workspace, rag_function_template, observe_project_for_eval
+):
+    eval_group = EvalGroup.objects.create(
+        name="eval_task_param_group",
+        organization=user.organization,
+        workspace=workspace,
+        created_by=user,
+    )
+    eval_group.eval_templates.add(rag_function_template)
+
+    payload = {
+        "eval_group_id": str(eval_group.id),
+        "page_id": "EVAL_TASK",
+        "filters": {
+            "project_id": str(observe_project_for_eval.id),
+            "model": "turing_small",
+            "error_localizer": False,
+        },
+        "mapping": {
+            "hypothesis": "retrieved_contexts",
+            "reference": "ground_truth_contexts",
+        },
+        "params": {"k": 23},
+    }
+
+    response = auth_client.post(
+        "/model-hub/eval-groups/apply-eval-group/", payload, format="json"
+    )
+    assert response.status_code == status.HTTP_200_OK
+
+    custom_eval = CustomEvalConfig.objects.get(
+        eval_group=eval_group,
+        project=observe_project_for_eval,
+        eval_template=rag_function_template,
+        deleted=False,
+    )
+    assert custom_eval.config.get("params", {}).get("k") == 23
+    assert custom_eval.mapping == {
+        "hypothesis": "retrieved_contexts",
+        "reference": "ground_truth_contexts",
+    }
+    assert custom_eval.model == "turing_small"
+    assert custom_eval.error_localizer is False
+
+
+@pytest.mark.django_db
+def test_apply_eval_group_eval_task_rejects_other_org_project(
+    auth_client, user, workspace, rag_function_template
+):
+    other_org = Organization.objects.create(name="Other Eval Task Org")
+    other_user = User.objects.create_user(
+        email="other-eval-task-org@example.com",
+        password="testpassword123",
+        name="Other Eval Task User",
+        organization=other_org,
+    )
+    other_workspace = Workspace.objects.create(
+        name="Other Eval Task Workspace",
+        organization=other_org,
+        is_default=True,
+        created_by=other_user,
+    )
+    other_project = Project.objects.create(
+        name="Other Eval Task Project",
+        organization=other_org,
+        workspace=other_workspace,
+        user=other_user,
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM.value,
+        trace_type="observe",
+    )
+    eval_group = EvalGroup.objects.create(
+        name="eval_task_cross_org_group",
+        organization=user.organization,
+        workspace=workspace,
+        created_by=user,
+    )
+    eval_group.eval_templates.add(rag_function_template)
+
+    response = auth_client.post(
+        "/model-hub/eval-groups/apply-eval-group/",
+        {
+            "eval_group_id": str(eval_group.id),
+            "page_id": "EVAL_TASK",
+            "filters": {"project_id": str(other_project.id)},
+            "mapping": {
+                "hypothesis": "retrieved_contexts",
+                "reference": "ground_truth_contexts",
+            },
+            "params": {"k": 29},
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert not CustomEvalConfig.no_workspace_objects.filter(
+        eval_group=eval_group,
+        project=other_project,
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_apply_eval_group_experiment_propagates_shared_params(
+    auth_client,
+    user,
+    workspace,
+    rag_function_template,
+    dataset_for_eval,
+    experiment_for_eval,
+):
+    dataset, hypothesis_col, reference_col = dataset_for_eval
+    eval_group = EvalGroup.objects.create(
+        name="experiment_param_group",
+        organization=user.organization,
+        workspace=workspace,
+        created_by=user,
+    )
+    eval_group.eval_templates.add(rag_function_template)
+
+    payload = {
+        "eval_group_id": str(eval_group.id),
+        "page_id": "EXPERIMENT",
+        "filters": {
+            "experiment_id": str(experiment_for_eval.id),
+            "model": "turing_small",
+            "error_localizer": False,
+        },
+        "mapping": {
+            "hypothesis": str(hypothesis_col.id),
+            "reference": str(reference_col.id),
+        },
+        "params": {"k": 17},
+    }
+
+    response = auth_client.post(
+        "/model-hub/eval-groups/apply-eval-group/", payload, format="json"
+    )
+    assert response.status_code == status.HTTP_200_OK
+
+    experiment_eval = UserEvalMetric.objects.get(
+        eval_group=eval_group,
+        dataset=dataset,
+        template=rag_function_template,
+        source_id=str(experiment_for_eval.id),
+        deleted=False,
+    )
+    assert experiment_eval.config.get("params", {}).get("k") == 17
+    assert experiment_eval.status == StatusType.EXPERIMENT_EVALUATION.value
+    assert experiment_eval.config.get("mapping") == {
+        "hypothesis": str(hypothesis_col.id),
+        "reference": str(reference_col.id),
+    }
+    assert experiment_for_eval.user_eval_template_ids.filter(
+        id=experiment_eval.id
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_apply_eval_group_experiment_rejects_other_org_experiment(
+    auth_client, user, workspace, rag_function_template
+):
+    other_org = Organization.objects.create(name="Other Eval Group Org")
+    other_user = User.objects.create_user(
+        email="other-eval-group-org@example.com",
+        password="testpassword123",
+        name="Other Eval Group User",
+        organization=other_org,
+    )
+    other_workspace = Workspace.objects.create(
+        name="Other Eval Group Workspace",
+        organization=other_org,
+        is_default=True,
+        created_by=other_user,
+    )
+    other_dataset = Dataset.objects.create(
+        name="Other Eval Group Dataset",
+        organization=other_org,
+        workspace=other_workspace,
+        user=other_user,
+        source=DatasetSourceChoices.BUILD.value,
+        model_type=ModelTypes.GENERATIVE_LLM.value,
+        column_order=[],
+    )
+    other_column = Column.objects.create(
+        dataset=other_dataset,
+        name="other_output",
+        data_type=DataTypeChoices.TEXT.value,
+        source=SourceChoices.OTHERS.value,
+    )
+    other_experiment = ExperimentsTable.objects.create(
+        name="Other Eval Group Experiment",
+        dataset=other_dataset,
+        column=other_column,
+        status=StatusType.COMPLETED.value,
+    )
+    eval_group = EvalGroup.objects.create(
+        name="experiment_cross_org_group",
+        organization=user.organization,
+        workspace=workspace,
+        created_by=user,
+    )
+    eval_group.eval_templates.add(rag_function_template)
+
+    response = auth_client.post(
+        "/model-hub/eval-groups/apply-eval-group/",
+        {
+            "eval_group_id": str(eval_group.id),
+            "page_id": "EXPERIMENT",
+            "filters": {"experiment_id": str(other_experiment.id)},
+            "mapping": {"hypothesis": "other_output", "reference": "other_output"},
+            "params": {"k": 19},
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert not UserEvalMetric.no_workspace_objects.filter(
+        eval_group=eval_group,
+        dataset=other_dataset,
+        source_id=str(other_experiment.id),
+    ).exists()
 
 
 @pytest.mark.django_db

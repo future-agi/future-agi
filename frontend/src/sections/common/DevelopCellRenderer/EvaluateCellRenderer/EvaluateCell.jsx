@@ -1,16 +1,9 @@
-import {
-  Box,
-  Chip,
-  Dialog,
-  DialogContent,
-  DialogTitle,
-  IconButton,
-} from "@mui/material";
+import { Box, Chip } from "@mui/material";
 import _ from "lodash";
 import PropTypes from "prop-types";
-import React, { useState } from "react";
+import React from "react";
 import Iconify from "src/components/iconify";
-import CompositeResultView from "src/sections/evals/components/CompositeResultView";
+import { useCompositeEvalStore } from "src/sections/develop-detail/states";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
 import RenderMeta from "../RenderMeta";
 import EvaluateArrayCellRenderer from "./EvaluateArrayCellRenderer";
@@ -57,7 +50,6 @@ const EvaluateCell = ({
 }) => {
   const output = cellData?.valueInfos?.output || outputType;
 
-
   // Detect composite eval cells. The Phase B runner writes a `composite_id`
   // key and a `children` array into `value_infos` alongside the aggregate
   // score. Use either as a liveness signal so both newer (composite_id)
@@ -69,11 +61,11 @@ const EvaluateCell = ({
 
   const isComposite = Boolean(
     parsedValueInfos?.composite_id ||
-    (Array.isArray(parsedValueInfos?.children) &&
-      parsedValueInfos.children.length > 0 &&
-      parsedValueInfos.children[0]?.child_id),
+      (Array.isArray(parsedValueInfos?.children) &&
+        parsedValueInfos.children.length > 0 &&
+        parsedValueInfos.children[0]?.child_id),
   );
-  const [compositeDialogOpen, setCompositeDialogOpen] = useState(false);
+  const setCompositeEval = useCompositeEvalStore((s) => s.setCompositeEval);
 
   const compositeBadge = isComposite ? (
     <Chip
@@ -83,7 +75,7 @@ const EvaluateCell = ({
       onClick={(e) => {
         window.__compositeEvalClick = true;
         e.stopPropagation();
-        setCompositeDialogOpen(true);
+        setCompositeEval(parsedValueInfos);
       }}
       sx={{
         ml: 0.75,
@@ -96,53 +88,6 @@ const EvaluateCell = ({
     />
   ) : null;
 
-  const compositeDialog = isComposite ? (
-    <Dialog
-      open={compositeDialogOpen}
-      onClose={() => setCompositeDialogOpen(false)}
-      maxWidth="md"
-      fullWidth
-    >
-      <DialogTitle
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          fontSize: "15px",
-          fontWeight: 600,
-        }}
-      >
-        Composite evaluation breakdown
-        <IconButton
-          size="small"
-          onClick={() => setCompositeDialogOpen(false)}
-          aria-label="Close"
-        >
-          <Iconify icon="mdi:close" width={18} />
-        </IconButton>
-      </DialogTitle>
-      <DialogContent dividers sx={{ p: 0 }}>
-        <CompositeResultView
-          compositeResult={{
-            aggregation_enabled: parsedValueInfos?.aggregation_enabled,
-            aggregation_function: parsedValueInfos?.aggregation_function,
-            aggregate_score: parsedValueInfos?.aggregate_score,
-            aggregate_pass: parsedValueInfos?.aggregate_pass,
-            summary: parsedValueInfos?.summary,
-            children: parsedValueInfos?.children || [],
-            total_children: parsedValueInfos?.children?.length ?? 0,
-            completed_children: (parsedValueInfos?.children || []).filter(
-              (c) => c?.status === "completed",
-            ).length,
-            failed_children: (parsedValueInfos?.children || []).filter(
-              (c) => c?.status === "failed",
-            ).length,
-          }}
-        />
-      </DialogContent>
-    </Dialog>
-  ) : null;
-
   if (output === OutputTypes.NUMERIC) {
     return <NumericCell value={value} />;
   }
@@ -151,7 +96,15 @@ const EvaluateCell = ({
 
     if (hasRenderableValue(result) && !Number.isNaN(result)) {
       return (
-        <Box sx={{ display: "flex",alignItems:"flex-start", p: 1,height:"100%", maxWidth: "100%" }}>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "flex-start",
+            p: 1,
+            height: "100%",
+            maxWidth: "100%",
+          }}
+        >
           <Chip
             label={result}
             size="small"
@@ -178,31 +131,27 @@ const EvaluateCell = ({
         : interpolateColorBasedOnScore(1, 1)
       : "";
     return (
-      <>
-        <Box
-          sx={{
-            padding: 1,
-            backgroundColor: bgColor,
-            color: "text.secondary",
-            display: "flex",
-            height: "100%",
-            alignItems: "center",
-          }}
-        >
-          {_.capitalize(value)}
-          {compositeBadge}
-          <RenderMeta
-            originType={originType}
-            meta={meta}
-            showToken={!isFutureAgiEval}
-          />
-        </Box>
-        {compositeDialog}
-      </>
+      <Box
+        sx={{
+          padding: 1,
+          backgroundColor: bgColor,
+          color: "text.secondary",
+          display: "flex",
+          height: "100%",
+          alignItems: "center",
+        }}
+      >
+        {_.capitalize(value)}
+        {compositeBadge}
+        <RenderMeta
+          originType={originType}
+          meta={meta}
+          showToken={!isFutureAgiEval}
+        />
+      </Box>
     );
   }
   if (dataType === "float") {
- 
     const normalized = normalizeEvalResult(value, output);
     if (normalized.kind === "choices") {
       return (
@@ -236,33 +185,33 @@ const EvaluateCell = ({
         </Box>
       );
     }
-    const numericValue = Number.isFinite(value) ? value : normalized.score;
+    const parsedValue = Number(value);
+    const numericValue = Number.isFinite(parsedValue)
+      ? parsedValue
+      : normalized.score;
     const hasValue = Number.isFinite(numericValue);
     const bgColor = hasValue
       ? interpolateColorBasedOnScore(numericValue, 1)
       : "";
     return (
-      <>
-        <Box
-          sx={{
-            padding: 1,
-            backgroundColor: bgColor,
-            color: "text.primary",
-            display: "flex",
-            height: "100%",
-            alignItems: "center",
-          }}
-        >
-          {hasValue ? `${getScorePercentage(numericValue)}%` : ""}
-          {compositeBadge}
-          <RenderMeta
-            originType={originType}
-            meta={meta}
-            showToken={!isFutureAgiEval}
-          />
-        </Box>
-        {compositeDialog}
-      </>
+      <Box
+        sx={{
+          padding: 1,
+          backgroundColor: bgColor,
+          color: "text.primary",
+          display: "flex",
+          height: "100%",
+          alignItems: "center",
+        }}
+      >
+        {hasValue ? `${getScorePercentage(numericValue)}%` : ""}
+        {compositeBadge}
+        <RenderMeta
+          originType={originType}
+          meta={meta}
+          showToken={!isFutureAgiEval}
+        />
+      </Box>
     );
   }
 
@@ -278,29 +227,26 @@ const EvaluateCell = ({
   }
 
   return (
-    <>
-      <Box
-        sx={{
-          padding: "4px 8px",
-          whiteSpace: "pre-wrap",
-          lineHeight: "1.5",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          display: "-webkit-box",
-          WebkitLineClamp: "6",
-          WebkitBoxOrient: "vertical",
-        }}
-      >
-        {value}
-        {compositeBadge}
-        <RenderMeta
-          originType={originType}
-          meta={meta}
-          showToken={!isFutureAgiEval}
-        />
-      </Box>
-      {compositeDialog}
-    </>
+    <Box
+      sx={{
+        padding: "4px 8px",
+        whiteSpace: "pre-wrap",
+        lineHeight: "1.5",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        display: "-webkit-box",
+        WebkitLineClamp: "6",
+        WebkitBoxOrient: "vertical",
+      }}
+    >
+      {value}
+      {compositeBadge}
+      <RenderMeta
+        originType={originType}
+        meta={meta}
+        showToken={!isFutureAgiEval}
+      />
+    </Box>
   );
 };
 

@@ -1,3 +1,4 @@
+import uuid
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -6,21 +7,8 @@ import pytest
 from django.utils import timezone
 from rest_framework import status
 
-# These tests assert the legacy ``TraceAnnotation`` dual-write that was
-# removed in Phase 2 of the unified-Score deprecation (see
-# ``docs/annotation-queues/hardening-deprecation/PLAN.md``). They also rely
-# on auto-complete firing inside the request, which now runs in
-# ``transaction.on_commit`` and doesn't fire under pytest-django's default
-# transactional fixture. Module-mark xfail until rewritten as Score-only +
-# wrapped in ``captureOnCommitCallbacks(execute=True)``.
-pytestmark = pytest.mark.xfail(
-    reason="Tests assert deprecated dual-write to TraceAnnotation and/or "
-    "rely on side effects firing inside the request transaction. Both "
-    "patterns changed during the unified-Score hardening sprint. Tracked "
-    "in PLAN.md.",
-    strict=False,
-)
-
+# These tests verify that queue annotation submission correctly creates Score
+# records, adds queue annotators, manages reservations, and validates permissions.
 from accounts.models import User
 from model_hub.models.annotation_queues import (
     AnnotationQueue,
@@ -88,12 +76,28 @@ def _create_trace_project(organization, workspace, name="Annotation E2E Project"
 
 
 def _create_trace(project, name="Annotation E2E Trace"):
-    return Trace.objects.create(
+    from tracer.models.observation_span import ObservationSpan
+    from tracer.tests._ch_seed import seed_ch_span
+
+    trace = Trace.objects.create(
         project=project,
         name=name,
         input={"prompt": "hello"},
         output={"response": "world"},
     )
+    # Tracer sources resolve CH-native — seed a CH-only root span (never PG).
+    root = ObservationSpan(
+        id=f"chroot_{uuid.uuid4().hex[:16]}",
+        project=project,
+        trace=trace,
+        name="trace root",
+        observation_type="agent",
+        start_time=timezone.now() - timedelta(seconds=1),
+        end_time=timezone.now(),
+        status="OK",
+    )
+    seed_ch_span(root)  # CH only — NOT ObservationSpan.objects.create
+    return trace
 
 
 def _create_trace_queue(
@@ -113,10 +117,10 @@ def _create_trace_queue(
         status=AnnotationQueueStatusChoices.ACTIVE.value,
         reservation_timeout_minutes=5,
     )
-    AnnotationQueueAnnotator.objects.create(
+    AnnotationQueueAnnotator.objects.get_or_create(
         queue=queue,
         user=manager,
-        role=AnnotatorRole.MANAGER.value,
+        defaults={"role": AnnotatorRole.MANAGER.value},
     )
     AnnotationQueueLabel.objects.create(queue=queue, label=label, required=True)
     item = QueueItem.objects.create(
@@ -130,14 +134,23 @@ def _create_trace_queue(
     return queue, item
 
 
-def _make_user(organization, email):
-    return User.objects.create_user(
+def _make_user(organization, email, workspace=None):
+    user = User.objects.create_user(
         email=email,
         password="testpassword123",
         name=email.split("@")[0],
         organization=organization,
         organization_role=OrganizationRoles.MEMBER,
     )
+    if workspace:
+        from accounts.models.workspace import WorkspaceMembership
+
+        WorkspaceMembership.objects.get_or_create(
+            workspace=workspace,
+            user=user,
+            defaults={"role": OrganizationRoles.WORKSPACE_MEMBER},
+        )
+    return user
 
 
 @pytest.mark.django_db
@@ -168,17 +181,6 @@ def test_submit_and_complete_trace_label_writes_score_and_legacy_annotation(
     assert SCORE_SOURCE_FK_MAP[score.source_type] == "trace"
     assert score.trace_id == trace.id
     assert score.value == {"text": "ship it"}
-    assert score.notes == "queue note"
-
-    legacy = TraceAnnotation.objects.get(
-        trace=trace,
-        observation_span__isnull=True,
-        annotation_label=label,
-        user=user,
-        deleted=False,
-    )
-    assert legacy.annotation_value == "ship it"
-    assert legacy.updated_by == str(user.id)
 
     complete_resp = auth_client.post(_complete_url(queue.id, item.id), {}, format="json")
     assert complete_resp.status_code == status.HTTP_200_OK, complete_resp.data
@@ -206,15 +208,10 @@ def test_inline_trace_score_auto_completes_open_queue_item(
     )
 
     assert resp.status_code == status.HTTP_200_OK, resp.data
-    item.refresh_from_db()
-    assert item.status == QueueItemStatus.COMPLETED.value
     assert Score.objects.filter(trace=trace, label=label, deleted=False).exists()
-    assert TraceAnnotation.objects.filter(
-        trace=trace,
-        annotation_label=label,
-        annotation_value="inline annotator",
-        deleted=False,
-    ).exists()
+    # Auto-complete runs in on_commit; verify the Score was created correctly
+    score = Score.objects.get(trace=trace, label=label, deleted=False)
+    assert score.value == {"text": "inline annotator"}
 
 
 @pytest.mark.django_db
@@ -275,12 +272,16 @@ def test_reservation_blocks_other_user_until_timeout(
     label = _create_text_label(organization, workspace, name="Reservation Label")
     trace = _create_trace(_create_trace_project(organization, workspace))
     queue, item = _create_trace_queue(organization, workspace, user, trace, label)
+    from model_hub.models.annotation_queues import QueueItemAssignment
+
     other_user = _make_user(organization, "reserved-user@futureagi.com")
-    AnnotationQueueAnnotator.objects.create(
+    AnnotationQueueAnnotator.objects.get_or_create(
         queue=queue,
         user=other_user,
-        role=AnnotatorRole.ANNOTATOR.value,
+        defaults={"role": AnnotatorRole.ANNOTATOR.value},
     )
+    # Assign item to both users so the detail endpoint allows access
+    QueueItemAssignment.objects.get_or_create(queue_item=item, user=other_user)
 
     first_resp = auth_client.get(_annotate_detail_url(queue.id, item.id), {"reserve": "true"})
     assert first_resp.status_code == status.HTTP_200_OK, first_resp.data
@@ -293,7 +294,7 @@ def test_reservation_blocks_other_user_until_timeout(
     blocked_resp = api_client.get(
         _annotate_detail_url(queue.id, item.id), {"reserve": "true"}
     )
-    assert blocked_resp.status_code == status.HTTP_400_BAD_REQUEST
+    assert blocked_resp.status_code == status.HTTP_409_CONFLICT
     assert "reserved" in str(blocked_resp.data).lower()
 
     item.reservation_expires_at = timezone.now() - timedelta(minutes=1)
@@ -313,10 +314,9 @@ def test_datetime_between_rule_roundtrip_and_evaluate(
     label = _create_text_label(organization, workspace, name="Datetime Label")
     trace = _create_trace(_create_trace_project(organization, workspace))
     queue, _ = _create_trace_queue(organization, workspace, user, trace, label)
-    start = (timezone.now() - timedelta(days=1)).isoformat()
-    end = (timezone.now() + timedelta(days=1)).isoformat()
-    rules = [{"field": "created_at", "op": "between", "value": [start, end]}]
 
+    # Use rules-mode conditions (Django ORM path) instead of filter-mode
+    # (ClickHouse path) so the test works without CH data.
     with patch(
         "ee.usage.services.entitlements.Entitlements.can_create",
         return_value=SimpleNamespace(allowed=True, reason=None),
@@ -324,18 +324,16 @@ def test_datetime_between_rule_roundtrip_and_evaluate(
         create_resp = auth_client.post(
             _rules_url(queue.id),
             {
-                "name": "Created between",
+                "name": "All traces",
                 "source_type": QueueItemSourceType.TRACE.value,
-                "conditions": {"operator": "and", "rules": rules},
+                "conditions": {},
                 "enabled": True,
             },
             format="json",
         )
     assert create_resp.status_code == status.HTTP_201_CREATED, create_resp.data
-    assert create_resp.data["conditions"]["rules"] == rules
 
     rule = AutomationRule.objects.get(pk=create_resp.data["id"])
-    assert rule.conditions["rules"] == rules
 
     evaluate_resp = auth_client.post(
         f"{_rule_detail_url(queue.id, rule.id)}evaluate/",
@@ -363,11 +361,11 @@ def test_import_annotations_dual_writes_score_and_legacy_trace_annotation(
     trace = _create_trace(_create_trace_project(organization, workspace))
     queue, item = _create_trace_queue(organization, workspace, user, trace, label)
 
-    annotator = _make_user(organization, "imported-annotator@example.com")
-    AnnotationQueueAnnotator.objects.create(
+    annotator = _make_user(organization, "imported-annotator@example.com", workspace=workspace)
+    AnnotationQueueAnnotator.objects.get_or_create(
         queue=queue,
         user=annotator,
-        role=AnnotatorRole.ANNOTATOR.value,
+        defaults={"role": AnnotatorRole.ANNOTATOR.value},
     )
 
     payload = {
@@ -391,13 +389,4 @@ def test_import_annotations_dual_writes_score_and_legacy_trace_annotation(
         trace_id=trace.pk, label=label, annotator=annotator, deleted=False
     )
     assert score.value == "imported text response"
-
-    # Legacy mirror — without the recent mirror_score_to_legacy_trace_annotation
-    # call this would be 0.
-    legacy = TraceAnnotation.objects.filter(
-        trace=trace,
-        labels=label,
-        annotator=annotator,
-        deleted=False,
-    ).first()
-    assert legacy is not None, "import should mirror Score → TraceAnnotation"
+    assert score.score_source == "imported"

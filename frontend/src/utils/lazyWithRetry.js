@@ -19,9 +19,38 @@ export default function lazyWithRetry(importFn, maxRetries = 3) {
   return lazy(() => retryImport(importFn, maxRetries));
 }
 
-async function retryImport(importFn, retriesLeft) {
+// Exported for unit testing the post-deploy recovery logic directly.
+export async function retryImport(importFn, retriesLeft) {
   try {
     const module = await importFn();
+
+    // A dynamic import can RESOLVE (not reject) to a module that is undefined
+    // or missing its `default` export. This happens with stale module graphs
+    // after a deploy: the browser's module map / SPA index.html fallback can
+    // hand back a default-less namespace instead of throwing. React.lazy then
+    // reads `.default` on it and throws "Cannot read properties of undefined
+    // (reading 'default')" deep in the reconciler — outside this try/catch and
+    // outside isChunkError(). Treat it like a chunk error and recover.
+    //
+    // Re-calling importFn() would just return the same cached bad module, so
+    // skip the retry loop and go straight to a one-time silent reload (a fresh
+    // document gets a fresh module map and a fresh index.html).
+    if (!module || typeof module.default === "undefined") {
+      if (!sessionStorage.getItem(RELOAD_KEY)) {
+        sessionStorage.setItem(RELOAD_KEY, "1");
+        window.location.reload();
+        // Never-resolving promise so React keeps the Suspense fallback while
+        // the page reloads, instead of surfacing the bad module to lazy().
+        return new Promise(() => {});
+      }
+      // Reload already attempted this session — surface a recognized chunk
+      // error (matched by isChunkError/ignoreErrors) rather than letting React
+      // throw the opaque "reading 'default'" TypeError, and avoid a reload loop.
+      throw new Error(
+        "Failed to fetch dynamically imported module (resolved without a default export)",
+      );
+    }
+
     // Success — clear any previous reload flag
     sessionStorage.removeItem(RELOAD_KEY);
     return module;

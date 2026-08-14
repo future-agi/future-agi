@@ -13,10 +13,10 @@ const OPERATORS = {
 };
 
 export default function GenericOperator({ definition, filter, updateFilter }) {
-  const values = filter?.filterConfig;
+  const values = filter?.filter_config;
 
   const operators =
-    definition?.overrideOperators || OPERATORS[values?.filterType] || [];
+    definition?.overrideOperators || OPERATORS[values?.filter_type] || [];
 
   return (
     <FormSearchSelectFieldState
@@ -24,14 +24,16 @@ export default function GenericOperator({ definition, filter, updateFilter }) {
       showClear={false}
       label={"Operator"}
       options={operators}
-      value={values?.filterOp || ""}
+      value={values?.filter_op || ""}
       onChange={(e) => {
         updateFilter(filter.id, (existingFilter) => ({
           ...existingFilter,
-          filterConfig: {
-            ...existingFilter.filterConfig,
-            filterOp: e.target.value,
-            ...(NULL_OPERATORS.includes(e.target.value) && { filterValue: "" }),
+          filter_config: {
+            ...existingFilter.filter_config,
+            filter_op: e.target.value,
+            ...(NULL_OPERATORS.includes(e.target.value) && {
+              filter_value: "",
+            }),
           },
         }));
       }}

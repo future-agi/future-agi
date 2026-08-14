@@ -24,18 +24,46 @@ import useReverseEvalFilters from "src/hooks/use-reverse-eval-filters";
 import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
 import { getFilterExtraProperties } from "../../../utils/prototypeObserveUtils";
 import { useQuery } from "@tanstack/react-query";
-const defaultFilter = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
-  },
-};
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import { generateAnnotationColumnsForTracing } from "src/sections/projects/LLMTracing/common";
 import { useShallowToggleAnnotationsStore } from "src/sections/agents/store";
+
+const defaultFilter = {
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
+  },
+};
+
+const normalizeColumnConfig = (column = {}) => ({
+  ...column,
+  isVisible: column.isVisible ?? column.is_visible,
+  groupBy: column.groupBy ?? column.group_by,
+  outputType: column.outputType ?? column.output_type,
+  reverseOutput: column.reverseOutput ?? column.reverse_output,
+  annotationLabelType:
+    column.annotationLabelType ?? column.annotation_label_type,
+  choicesMap: column.choicesMap ?? column.choices_map,
+  evalTemplateId: column.evalTemplateId ?? column.eval_template_id,
+  sourceField: column.sourceField ?? column.source_field,
+  parentEvalId: column.parentEvalId ?? column.parent_eval_id,
+});
+
+const normalizeTraceListPayload = (payload = {}) => {
+  const metadata = payload.metadata || {};
+
+  return {
+    columnConfig: (
+      payload.columnConfig ||
+      payload.column_config ||
+      payload.config ||
+      []
+    ).map(normalizeColumnConfig),
+    table: payload.table || [],
+    totalRows: metadata.totalRows ?? metadata.total_rows ?? 0,
+  };
+};
 
 const TraceTab = React.forwardRef(
   (
@@ -140,9 +168,10 @@ const TraceTab = React.forwardRef(
 
     useEffect(() => {
       const hasActiveFilter = debouncedValidatedFilters?.some((f) =>
-        f.filterConfig?.filterValue && Array.isArray(f.filterConfig.filterValue)
-          ? f.filterConfig.filterValue.length > 0
-          : f.filterConfig.filterValue !== "",
+        f.filter_config?.filter_value &&
+        Array.isArray(f.filter_config.filter_value)
+          ? f.filter_config.filter_value.length > 0
+          : f.filter_config.filter_value !== "",
       );
       setIsFilterApplied(hasActiveFilter);
       trackEvent(Events.filterApplied);
@@ -241,7 +270,13 @@ const TraceTab = React.forwardRef(
         }
       });
       if (annotationColumns.length > 0) {
-        columnDefsResult.push(annotationColumns[0]);
+        for (const group of annotationColumns) {
+          if (group.children) {
+            columnDefsResult.push(...group.children);
+          } else {
+            columnDefsResult.push(group);
+          }
+        }
       }
       return {
         columnDefs: columnDefsResult,
@@ -267,29 +302,24 @@ const TraceTab = React.forwardRef(
 
             const results = await axios.get(endpoints.project.getTraceList(), {
               params: {
-                project: projectId,
                 project_version_id: runId,
                 page_number: pageNumber,
                 trace_ids: selectedTraceIds.join(","),
                 page_size: 10,
-                filters: JSON.stringify(
-                  canonicalizeApiFilterColumnIds(
-                    objectCamelToSnake(debouncedValidatedFilters),
-                  ),
-                ),
+                filters: JSON.stringify(debouncedValidatedFilters),
               },
             });
-            const res = results?.data?.result;
-            const columns = res?.columnConfig?.map((o) => ({
+            const res = normalizeTraceListPayload(results?.data?.result);
+            const columns = res.columnConfig.map((o) => ({
               ...o,
               id: o.id,
             }));
             setColumns(columns);
 
-            params.api.totalRowCount = res?.metadata?.totalRows;
+            params.api.totalRowCount = res.totalRows;
             params.success({
-              rowData: res?.table,
-              totalRows: res?.metadata?.totalRows,
+              rowData: res.table,
+              totalRows: res.totalRows,
             });
           } catch (error) {
             params.fail();
@@ -299,13 +329,7 @@ const TraceTab = React.forwardRef(
           return data.rowId;
         },
       }),
-      [
-        debouncedValidatedFilters,
-        projectId,
-        runId,
-        selectedTraceIds,
-        setColumns,
-      ],
+      [debouncedValidatedFilters, runId, selectedTraceIds, setColumns],
     );
 
     return (
