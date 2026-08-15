@@ -270,19 +270,34 @@ export const createScenarioFileDropHandler =
       const hasTypeError = fileRejections.some((rejection) =>
         rejection.errors?.some((err) => err.code === "file-invalid-type"),
       );
+
       enqueueSnackbar(
         hasTypeError
           ? "Unsupported file type. Please upload a TXT or PDF file."
           : "File could not be uploaded",
         { variant: "error" },
       );
+
       return;
     }
 
     const files = Array.from(acceptedFiles);
     const maxSize = 5 * 1024 * 1024; // 5MB
 
-    const filesLargerThanMaxSize = files.filter((file) => file?.size > maxSize);
+    // Reject empty files.
+    const filesWithNoContent = files.filter((file) => file?.size === 0);
+
+    if (filesWithNoContent.length > 0) {
+      enqueueSnackbar("File is empty", {
+        variant: "error",
+      });
+      return;
+    }
+
+    // Reject files larger than 5MB.
+    const filesLargerThanMaxSize = files.filter(
+      (file) => file?.size > maxSize,
+    );
 
     if (filesLargerThanMaxSize.length > 0) {
       enqueueSnackbar("File size is too large", {
@@ -291,10 +306,10 @@ export const createScenarioFileDropHandler =
       return;
     }
 
-    const validFiles = files.filter((file) => file.size <= maxSize);
+    const validFiles = files.filter((file) => file?.size <= maxSize);
 
     const processedFiles = validFiles.map((file) => ({
-      file: file,
+      file,
       name: file.name,
       size: file.size,
     }));
