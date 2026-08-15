@@ -15,8 +15,8 @@ type mockPlugin struct {
 	onResp   func(ctx context.Context, rc *models.RequestContext) PluginResult
 }
 
-func (m *mockPlugin) Name() string    { return m.name }
-func (m *mockPlugin) Priority() int   { return m.priority }
+func (m *mockPlugin) Name() string  { return m.name }
+func (m *mockPlugin) Priority() int { return m.priority }
 func (m *mockPlugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) PluginResult {
 	if m.onReq != nil {
 		return m.onReq(ctx, rc)
@@ -168,6 +168,48 @@ func TestEngineProviderError(t *testing.T) {
 	}
 	if !postPluginRan {
 		t.Error("post-plugins should run even when provider errors")
+	}
+}
+
+func TestEnginePostPluginGuardrailBlock(t *testing.T) {
+	observerRan := false
+	guardrail := &mockPlugin{
+		name:     "guardrail",
+		priority: 2,
+		onResp: func(ctx context.Context, rc *models.RequestContext) PluginResult {
+			rc.Response = nil
+			return ResultError(&models.APIError{
+				Status:  403,
+				Code:    "content_blocked",
+				Message: "blocked by policy",
+			})
+		},
+	}
+	observer := &mockPlugin{
+		name:     "observer",
+		priority: 3,
+		onResp: func(ctx context.Context, rc *models.RequestContext) PluginResult {
+			observerRan = true
+			return ResultContinue()
+		},
+	}
+
+	engine := NewEngine(guardrail, observer)
+
+	rc := models.AcquireRequestContext()
+	defer rc.Release()
+
+	err := engine.Process(context.Background(), rc, func(ctx context.Context, rc *models.RequestContext) error {
+		rc.Response = &models.ChatCompletionResponse{ID: "test"}
+		return nil
+	})
+
+	apiErr, ok := err.(*models.APIError)
+	if !ok || apiErr.Code != "content_blocked" {
+		t.Fatalf("expected content_blocked APIError from Process, got %v", err)
+	}
+	if !observerRan {
+		t.Error("observer plugins must still run after a blocking guardrail")
 	}
 }
 

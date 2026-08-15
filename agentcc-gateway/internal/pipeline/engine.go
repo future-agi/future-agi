@@ -87,7 +87,7 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 			)
 			rc.Flags.ShortCircuited = true
 			rc.AddError(result.Error)
-			e.RunPostPlugins(ctx, rc)
+			_ = e.RunPostPlugins(ctx, rc)
 			return result.Error
 		}
 		if result.Action == ShortCircuit {
@@ -100,7 +100,9 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 			if result.Response != nil {
 				rc.Response = result.Response
 			}
-			e.RunPostPlugins(ctx, rc)
+			if err := e.RunPostPlugins(ctx, rc); err != nil {
+				return err
+			}
 			return nil
 		}
 	}
@@ -108,7 +110,7 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 	// Provider call
 	if err := ctx.Err(); err != nil {
 		rc.Flags.Timeout = true
-		e.RunPostPlugins(ctx, rc)
+		_ = e.RunPostPlugins(ctx, rc)
 		return models.ErrRequestTimeout("request timed out before provider call")
 	}
 
@@ -124,7 +126,7 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 			"error", err,
 			"elapsed", providerElapsed,
 		)
-		e.RunPostPlugins(ctx, rc)
+		_ = e.RunPostPlugins(ctx, rc)
 		return err
 	}
 	rc.RecordTiming("provider", time.Since(start))
@@ -132,7 +134,9 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 	// Post-plugins — skip for streaming requests; the stream handler
 	// will call RunPostPlugins after the stream completes with final usage.
 	if !rc.IsStream {
-		e.RunPostPlugins(ctx, rc)
+		if err := e.RunPostPlugins(ctx, rc); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -144,10 +148,11 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 //
 // Exported so that streaming handlers can call it after the stream completes,
 // when rc.Response and usage data are populated.
-func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) {
+func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) error {
 	isCacheHit := rc.Flags.ShortCircuited && rc.Metadata["cache_status"] == "hit_exact"
 
 	// Phase 1: Sequential post-plugins (e.g., cost → credits dependency chain).
+	var firstSeqErr error
 	for _, p := range e.postSequential {
 		if isCacheHit {
 			if skipper, ok := p.(SkipOnCacheHit); ok && skipper.ShouldSkipOnCacheHit() {
@@ -160,6 +165,10 @@ func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) 
 		rc.RecordTiming("post_"+p.Name(), time.Since(start))
 
 		if result.Error != nil {
+			if firstSeqErr == nil {
+				firstSeqErr = result.Error
+				rc.AddError(result.Error)
+			}
 			slog.Warn("post-plugin error",
 				"plugin", p.Name(),
 				"error", result.Error.Message,
@@ -170,7 +179,7 @@ func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) 
 
 	// Phase 2: Parallel post-plugins (logging, audit, metrics, alerting, otel).
 	if len(e.postParallel) == 0 {
-		return
+		return firstSeqErr
 	}
 
 	var wg sync.WaitGroup
@@ -199,6 +208,7 @@ func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) 
 		}(p)
 	}
 	wg.Wait()
+	return firstSeqErr
 }
 
 // PluginCount returns the number of registered plugins.

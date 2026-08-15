@@ -375,7 +375,7 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 		if detach {
 			pluginCtx = context.Background()
 		}
-		h.engine.RunPostPlugins(pluginCtx, rc)
+		_ = h.engine.RunPostPlugins(pluginCtx, rc)
 	}
 
 	for {
