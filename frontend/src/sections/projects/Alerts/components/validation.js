@@ -62,7 +62,7 @@ export const AlertConfigValidationSchema = z
     ),
     notification: z
       .object({
-        method: z.enum(["email", "slack"], {
+        method: z.enum(["email", "slack", "webhook"], { // Added "webhook"
           required_error: "Select notification method",
         }),
         emails: z
@@ -73,6 +73,12 @@ export const AlertConfigValidationSchema = z
           .object({
             webhookUrl: z.string().optional(),
             notes: z.string().optional(),
+          })
+          .optional(),
+        // Added webhook schema definition
+        webhook: z
+          .object({
+            webhookUrl: z.string().url("Must be a valid URL").optional().or(z.literal("")),
           })
           .optional(),
       })
@@ -86,14 +92,24 @@ export const AlertConfigValidationSchema = z
             });
           }
         }
-
         if (notif.method === "slack") {
-          if (!notif.slack || !notif.slack.webhookUrl) {
+          if (!notif.slack?.webhookUrl) {
             ctx.addIssue({
               path: ["slack", "webhookUrl"],
               code: "custom",
+              message: "Slack webhook URL is required",
+            });
+          }
+        }
+        // Added webhook validation rule
+        if (notif.method === "webhook") {
+          if (!notif.webhook?.webhookUrl) {
+            ctx.addIssue({
+              path: ["webhook", "webhookUrl"],
+              code: "custom",
               message: "Webhook URL is required",
             });
+          }
           } else {
             const urlPattern = /^(https?:\/\/)[^\s/$.?#].[^\s]*$/i;
             if (!urlPattern.test(notif.slack.webhookUrl)) {
