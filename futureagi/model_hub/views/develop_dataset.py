@@ -7966,6 +7966,33 @@ class EditAndRunUserEvalView(APIView):
                         f"{get_error_message('COLUMN_DELETED')} {eval_metric.name}"
                     )
 
+                # Validate renames before any writes in this transaction. Returning
+                # a 400 from transaction.atomic() does not trigger a rollback.
+                new_name = None
+                requested_name = request_data.get("name")
+                if not save_as_template and requested_name:
+                    from model_hub.utils.eval_validators import validate_eval_name
+
+                    try:
+                        new_name = validate_eval_name(requested_name)
+                    except ValueError as e:
+                        return self._gm.bad_request(str(e))
+
+                    if (
+                        new_name != eval_metric.name
+                        and UserEvalMetric.objects.filter(
+                            name=new_name,
+                            organization=eval_metric.organization,
+                            dataset_id=eval_metric.dataset_id,
+                            deleted=False,
+                        )
+                        .exclude(id=eval_metric.id)
+                        .exists()
+                    ):
+                        return self._gm.bad_request(
+                            get_error_message("EVAL_NAME_EXISTS")
+                        )
+
                 if save_as_template:
                     template = eval_metric.template
 
@@ -8106,34 +8133,11 @@ class EditAndRunUserEvalView(APIView):
                 # Applied before the reason-column reconciliation below so the
                 # get_or_create there matches the renamed column instead of
                 # creating a duplicate under the new name.
-                requested_name = request_data.get("name")
-                if not save_as_template and requested_name:
-                    from model_hub.utils.eval_validators import validate_eval_name
-
-                    try:
-                        new_name = validate_eval_name(requested_name)
-                    except ValueError as e:
-                        return self._gm.bad_request(str(e))
-
-                    if new_name != eval_metric.name:
-                        if (
-                            UserEvalMetric.objects.filter(
-                                name=new_name,
-                                organization=eval_metric.organization,
-                                dataset_id=eval_metric.dataset_id,
-                                deleted=False,
-                            )
-                            .exclude(id=eval_metric.id)
-                            .exists()
-                        ):
-                            return self._gm.bad_request(
-                                get_error_message("EVAL_NAME_EXISTS")
-                            )
-
-                        self._rename_eval_columns(
-                            eval_metric, eval_metric.name, new_name, experiment_id
-                        )
-                        eval_metric.name = new_name
+                if new_name and new_name != eval_metric.name:
+                    self._rename_eval_columns(
+                        eval_metric, eval_metric.name, new_name, experiment_id
+                    )
+                    eval_metric.name = new_name
 
                 # Update the config (already validated above)
                 if new_config:

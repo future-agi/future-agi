@@ -35,6 +35,7 @@ from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.evals_metric import (
     CompositeEvalChild,
     EvalTemplate,
+    EvalTemplateVersion,
     UserEvalMetric,
 )
 from tfc.middleware.workspace_context import set_workspace_context
@@ -1792,6 +1793,8 @@ class TestEditAndRunUserEvalView:
         output_column,
     ):
         """A rename cannot collide with another eval on the same dataset."""
+        eval_template.owner = OwnerChoices.USER.value
+        eval_template.save(update_fields=["owner"])
         UserEvalMetric.objects.create(
             name="already-taken",
             dataset=dataset,
@@ -1802,6 +1805,10 @@ class TestEditAndRunUserEvalView:
             config={},
         )
         original_name = user_eval_metric.name
+        original_pinned_version_id = user_eval_metric.pinned_version_id
+        version_count = EvalTemplateVersion.objects.filter(
+            eval_template=eval_template
+        ).count()
 
         response = auth_client.post(
             f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{user_eval_metric.id}/",
@@ -1816,6 +1823,11 @@ class TestEditAndRunUserEvalView:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         user_eval_metric.refresh_from_db()
         assert user_eval_metric.name == original_name
+        assert user_eval_metric.pinned_version_id == original_pinned_version_id
+        assert (
+            EvalTemplateVersion.objects.filter(eval_template=eval_template).count()
+            == version_count
+        )
 
     def test_edit_rejects_invalid_name_format(
         self, auth_client, dataset, user_eval_metric, output_column
