@@ -22,8 +22,13 @@ vi.mock("src/utils/axios", () => ({
         `/tracer/eval-task/pause_eval_task/?eval_task_id=${id}`,
       resumeEvalTask: (id) =>
         `/tracer/eval-task/unpause_eval_task/?eval_task_id=${id}`,
+      createEvalTask: () => "/tracer/eval-task/",
     },
   },
+}));
+
+vi.mock("src/auth/hooks", () => ({
+  useAuthContext: () => ({ role: "Admin" }),
 }));
 
 vi.mock("src/sections/common/EvalsTasks/common", async () => {
@@ -192,5 +197,62 @@ describe("TaskDetailPage", () => {
     expect(
       screen.getByRole("button", { name: /open source/i }),
     ).toBeInTheDocument();
+  });
+
+  it("duplicates a task with converted wire-format filters, date_range, and evals_details", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({
+        name: "Filter Task",
+        run_type: "historical",
+        evals_applied: [{ id: "eval-1", mapping: { input: "prompt" } }],
+        filters_applied: {
+          project_id: "project-1",
+          start_date: "2026-01-01T00:00:00.000Z",
+          end_date: "2026-01-02T00:00:00.000Z",
+          filters: [
+            {
+              column_id: "llm.model_name",
+              filter_config: {
+                filter_type: "text",
+                filter_op: "equals",
+                filter_value: "gpt-4",
+                col_type: "SPAN_ATTRIBUTE",
+              },
+            },
+          ],
+        },
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderTaskDetail("task-1");
+
+    fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+    const duplicateItem = await screen.findByRole("menuitem", {
+      name: /duplicate/i,
+    });
+    fireEvent.click(duplicateItem);
+
+    await waitFor(() => {
+      expect(axiosPostMock).toHaveBeenCalledWith(
+        "/tracer/eval-task/",
+        expect.objectContaining({
+          name: "Filter Task-duplicate",
+          project: "project-1",
+          run_type: "historical",
+          evals_details: [{ id: "eval-1", mapping: { input: "prompt" } }],
+          filters: expect.objectContaining({
+            project_id: "project-1",
+            date_range: expect.any(Array),
+            filters: expect.arrayContaining([
+              expect.objectContaining({
+                column_id: "llm.model_name",
+              }),
+            ]),
+          }),
+        }),
+      );
+    });
   });
 });
