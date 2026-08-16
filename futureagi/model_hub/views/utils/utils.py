@@ -50,6 +50,33 @@ def sanitize_uuid_for_jinja(uuid_str: str) -> str:
     return sanitized
 
 
+def normalize_var_name(var_name: str) -> str:
+    """
+    Normalize a variable name to be a valid Jinja2/Python identifier.
+
+    Replaces spaces with underscores and handles other invalid characters.
+    This allows placeholders like {{Input Column}} to work by mapping them
+    to context keys like "Input_Column".
+
+    Args:
+        var_name: Variable name that may contain spaces or other invalid chars
+
+    Returns:
+        Normalized variable name safe for Jinja2 (e.g., "Input Column" -> "Input_Column")
+    """
+    if not var_name:
+        return var_name
+    # Replace spaces with underscores
+    normalized = var_name.replace(" ", "_")
+    # Replace other invalid characters (non-alphanumeric, non-underscore)
+    # but preserve dots for nested access
+    normalized = re.sub(r"[^\w.]", "_", normalized)
+    # Python/Jinja2 identifiers cannot start with digits
+    if normalized and normalized[0].isdigit():
+        normalized = "_" + normalized
+    return normalized
+
+
 def sanitize_uuids_in_template(text: str) -> str:
     """
     Replace UUID placeholders in template text with sanitized versions.
