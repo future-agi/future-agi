@@ -680,7 +680,7 @@ class GraphEngine:
 
     def _process_string_output(self, eval_log, current_data, valid_scores):
         """Helper method for processing string outputs"""
-        output_lower = eval_log.output_str.lower()
+        output_lower = eval_log.output_str.strip().lower()
         if output_lower == "passed":
             valid_scores.append(100)
             current_data["passed_count"] += 1
@@ -690,9 +690,8 @@ class GraphEngine:
             if eval_log.trace.id not in current_data["failed_traces_ids"]:
                 current_data["failed_traces_count"] += 1
                 current_data["failed_traces_ids"].add(eval_log.trace.id)
-        else:
-            valid_scores.append(100)
-            current_data["passed_count"] += 1
+        # Unknown verdicts contribute no score: an eval that did not emit a
+        # Pass/Fail verdict must not inflate the pass rate.
 
     def _calculate_final_score(
         self, valid_scores, total_count, empty_count, eval_response_data
@@ -709,7 +708,7 @@ class GraphEngine:
                 "percentile_empty": lambda: (
                     (empty_count / total_count * 100) if total_count > 0 else 0
                 ),
-                "average": lambda: round(sum(valid_scores) / total_count, 2),
+                "average": lambda: round(sum(valid_scores) / len(valid_scores), 2),
                 "standard_deviation": lambda: np.std(valid_scores),
                 "p50": lambda: np.median(valid_scores),
                 "p75": lambda: np.quantile(valid_scores, q=0.75),
