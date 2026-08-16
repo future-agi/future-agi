@@ -412,6 +412,7 @@ class WorkspaceManagementView(APIView):
                                     "token": token,
                                 },
                                 [email],
+                                fail_silently=True,
                             )
 
                             created_users.append(email)
@@ -790,6 +791,7 @@ class WorkspaceMembershipView(APIView):
                                         "ssl": ssl_context,
                                     },
                                     [user_email],
+                                    fail_silently=True,
                                 )
                             except Exception as e:
                                 errors.append(
@@ -860,6 +862,7 @@ class WorkspaceMembershipView(APIView):
                                         "token": token,
                                     },
                                     [user_email],
+                                    fail_silently=True,
                                 )
 
                             except Exception as e:

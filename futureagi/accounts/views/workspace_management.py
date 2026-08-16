@@ -639,6 +639,7 @@ class WorkspaceInviteAPIView(APIView):
                                     "token": token,
                                 },
                                 [email],
+                                fail_silently=True,
                             )
 
                             results.append(
@@ -2279,6 +2280,7 @@ class ManageTeamView(APIView):
                                 "ssl": ssl,
                             },
                             [member_data["email"]],
+                            fail_silently=True,
                         )
                         created_members.append(UserSerializer(new_member).data)
 

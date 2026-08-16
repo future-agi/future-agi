@@ -366,6 +366,35 @@ class TestWorkspaceInviteAPIView:
         preview = api_client.get(f"/accounts/accept-invitation/{uidb64}/{token}/")
         assert preview.status_code == status.HTTP_200_OK
 
+    def test_invite_user_succeeds_when_email_sending_fails(
+        self, auth_client, workspace, monkeypatch
+    ):
+        """User invitation succeeds in DB even if email delivery raises an exception."""
+        import accounts.views.workspace_management as wm
+
+        def _failing_email(*args, **kwargs):
+            raise Exception("SMTP/ESP connection refused")
+
+        monkeypatch.setattr(wm, "email_helper", _failing_email)
+
+        email = "fail_email_invite@futureagi.com"
+        response = auth_client.post(
+            "/accounts/workspace/invite/",
+            {
+                "emails": [email],
+                "role": OrganizationRoles.WORKSPACE_MEMBER,
+                "workspace_ids": [str(workspace.id)],
+                "select_all": False,
+            },
+            format="json",
+        )
+        assert response.status_code in [
+            status.HTTP_200_OK,
+            status.HTTP_201_CREATED,
+        ]
+        assert User.objects.filter(email=email).exists()
+
+
 
 # =============================================================================
 # UserListAPIView Tests - GET /accounts/user/list/
@@ -1153,6 +1182,43 @@ class TestManageTeamViewPost:
         token = default_token_generator.make_token(new_member)
         preview = api_client.get(f"/accounts/accept-invitation/{uidb64}/{token}/")
         assert preview.status_code == status.HTTP_200_OK
+
+    def test_add_team_member_succeeds_when_email_sending_fails(
+        self, auth_client, monkeypatch
+    ):
+        """Adding a team member succeeds and commits to DB even if email sending raises."""
+        import accounts.views.workspace_management as wm
+
+        def _failing_email(*args, **kwargs):
+            raise Exception("Mailgun API down")
+
+        monkeypatch.setattr(wm, "email_helper", _failing_email)
+        monkeypatch.setattr(
+            wm, "log_and_deduct_cost_for_resource_request", None, raising=False
+        )
+
+        email = "fail_email_team@futureagi.com"
+        response = auth_client.post(
+            "/accounts/team/users/",
+            {
+                "members": [
+                    {
+                        "email": email,
+                        "name": "Team Member Email Fail",
+                        "organization_role": OrganizationRoles.MEMBER,
+                    }
+                ]
+            },
+            format="json",
+        )
+        assert response.status_code in [
+            status.HTTP_200_OK,
+            status.HTTP_201_CREATED,
+        ]
+        data = response.json()
+        assert any(m.get("email") == email for m in data.get("created_members", []))
+        assert User.objects.filter(email=email).exists()
+
 
     def test_update_org_name(self, auth_client, organization):
         """Owner can update organization display name."""

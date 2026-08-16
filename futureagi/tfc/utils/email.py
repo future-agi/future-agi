@@ -1,9 +1,12 @@
 import html as _html
+import logging
 import re
 
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.utils.html import strip_tags
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_FROM_EMAIL = "Future AGI <noreply@mail.futureagi.com>"
 DEFAULT_REPLY_TO = "support@futureagi.com"
@@ -34,6 +37,7 @@ def _html_to_text(html_body):
     return text.strip() + "\n"
 
 
+
 def email_helper(
     mail_subject,
     template_name,
@@ -42,6 +46,7 @@ def email_helper(
     *,
     reply_to=None,
     from_email=None,
+    fail_silently=False,
 ):
     """Render a Django template and send as a multipart HTML + text email.
 
@@ -55,23 +60,40 @@ def email_helper(
             monitored inbox. Pass an explicit address to override, or
             reply_to=False/[] to disable.
         from_email: Optional sender override. Defaults to Future AGI noreply.
+        fail_silently: When True, exceptions during email rendering or delivery
+            are caught and logged as warnings rather than raised.
     """
-    html_body = render_to_string(template_name, template_data)
-    text_body = _html_to_text(html_body)
+    try:
+        html_body = render_to_string(template_name, template_data)
+        text_body = _html_to_text(html_body)
 
-    if reply_to is None:
-        reply_to_list = [DEFAULT_REPLY_TO]
-    elif reply_to is False or (isinstance(reply_to, (list, tuple)) and not reply_to):
-        reply_to_list = None
-    else:
-        reply_to_list = [reply_to] if isinstance(reply_to, str) else list(reply_to)
+        if reply_to is None:
+            reply_to_list = [DEFAULT_REPLY_TO]
+        elif reply_to is False or (
+            isinstance(reply_to, (list, tuple)) and not reply_to
+        ):
+            reply_to_list = None
+        else:
+            reply_to_list = [reply_to] if isinstance(reply_to, str) else list(reply_to)
 
-    msg = EmailMultiAlternatives(
-        subject=mail_subject,
-        body=text_body,
-        from_email=from_email or DEFAULT_FROM_EMAIL,
-        to=to_email_list,
-        reply_to=reply_to_list,
-    )
-    msg.attach_alternative(html_body, "text/html")
-    msg.send()
+        msg = EmailMultiAlternatives(
+            subject=mail_subject,
+            body=text_body,
+            from_email=from_email or DEFAULT_FROM_EMAIL,
+            to=to_email_list,
+            reply_to=reply_to_list,
+        )
+        msg.attach_alternative(html_body, "text/html")
+        msg.send(fail_silently=fail_silently)
+        return True
+    except Exception as e:
+        if not fail_silently:
+            raise
+        logger.warning(
+            "Failed to send email to %s (subject='%s'): %s",
+            to_email_list,
+            mail_subject,
+            str(e),
+            exc_info=True,
+        )
+        return False

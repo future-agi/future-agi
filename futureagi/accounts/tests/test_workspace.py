@@ -753,6 +753,35 @@ class TestWorkspaceMembersAddAPI:
             == before_count
         )
 
+    def test_add_member_succeeds_when_email_sending_fails(
+        self, auth_client, second_workspace, monkeypatch
+    ):
+        """Adding a new member to a workspace succeeds even if email delivery fails."""
+        import accounts.views.workspace as ws_view
+
+        def _failing_email(*args, **kwargs):
+            raise Exception("SMTP network unreachable")
+
+        monkeypatch.setattr(ws_view, "email_helper", _failing_email)
+
+        email = "workspace_email_fail@futureagi.com"
+        response = auth_client.post(
+            f"/accounts/workspaces/{second_workspace.id}/members/",
+            {
+                "users": [
+                    {
+                        "email": email,
+                        "role": OrganizationRoles.WORKSPACE_MEMBER,
+                    }
+                ]
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_201_CREATED
+        result = response.json()["result"]
+        assert email in result.get("added_users", [])
+        assert User.objects.filter(email=email).exists()
+
     def test_add_existing_member_updates_role(
         self, auth_client, workspace, member_user
     ):
