@@ -35959,9 +35959,24 @@ export const TracerEvalTaskGetEvalTaskLogsResponse = zod.object({
 })
 
 
+export const tracerEvalTaskGetUsageQueryPeriodDefault = `30d`;
+export const tracerEvalTaskGetUsageQueryEvalAggregationDefault = false;
+export const tracerEvalTaskGetUsageQuerySpanAggregationDefault = false;
+export const tracerEvalTaskGetUsageQueryPageSizeDefault = 25;
+
+
+
 export const TracerEvalTaskGetUsageQueryParams = zod.object({
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
-  "limit": zod.number().optional().describe('Number of results to return per page.')
+  "limit": zod.number().optional().describe('Number of results to return per page.'),
+  "eval_task_id": zod.string().uuid(),
+  "period": zod.enum(['30m', '6h', '1d', '7d', '30d', '90d', '180d', '365d']).default(tracerEvalTaskGetUsageQueryPeriodDefault),
+  "eval_id": zod.string().uuid().optional(),
+  "start_date": zod.string().datetime({"offset":true}).optional(),
+  "end_date": zod.string().datetime({"offset":true}).optional(),
+  "eval_aggregation": zod.boolean().default(tracerEvalTaskGetUsageQueryEvalAggregationDefault),
+  "span_aggregation": zod.boolean().default(tracerEvalTaskGetUsageQuerySpanAggregationDefault),
+  "page_size": zod.number().min(1).default(tracerEvalTaskGetUsageQueryPageSizeDefault)
 })
 
 export const tracerEvalTaskGetUsageResponseResultsItemNameMax = 255;

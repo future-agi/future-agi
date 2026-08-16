@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from tracer.constants.eval_task_usage import DEFAULT_USAGE_PERIOD, UsagePeriod
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import (
     EvalTask,
@@ -25,6 +26,39 @@ class PaginationQuerySerializer(serializers.Serializer):
 
     def validate_page_size(self, value):
         return min(value, 100)
+
+
+class EvalTaskUsageQuerySerializer(StrictInputSerializer):
+    """Query contract for ``EvalTaskView.get_usage``."""
+
+    eval_task_id = serializers.UUIDField(required=True)
+    period = serializers.ChoiceField(
+        choices=[(p.value, p.value) for p in UsagePeriod.selectable()],
+        required=False,
+        default=DEFAULT_USAGE_PERIOD.value,
+    )
+    eval_id = serializers.UUIDField(required=False)
+    start_date = serializers.DateTimeField(required=False)
+    end_date = serializers.DateTimeField(required=False)
+    eval_aggregation = serializers.BooleanField(required=False, default=False)
+    span_aggregation = serializers.BooleanField(required=False, default=False)
+    # `page` is owned by ExtendedPageNumberPagination, not this contract.
+    page_size = serializers.IntegerField(required=False, default=25, min_value=1)
+
+    def validate_page_size(self, value):
+        return min(value, 100)
+
+    def validate(self, attrs):
+        # Either bound may be supplied on its own — the aggregation modes
+        # filter open-ended. The chart/logs path only treats the pair as a
+        # custom range.
+        start_date = attrs.get("start_date")
+        end_date = attrs.get("end_date")
+        if start_date and end_date and start_date > end_date:
+            raise serializers.ValidationError(
+                "start_date must not be after end_date."
+            )
+        return attrs
 
 
 class EvalTaskListQuerySerializer(StrictInputSerializer):

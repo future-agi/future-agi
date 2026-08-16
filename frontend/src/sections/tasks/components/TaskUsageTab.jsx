@@ -22,6 +22,12 @@ import { useSettingsContext } from "src/components/settings/context";
 import DateTimeRangePicker from "src/sections/projects/DateTimeRangePicker";
 
 import { useTaskUsageChart, useTaskUsageLogs } from "../hooks/useTaskUsage";
+import {
+  DATE_OPTION,
+  DATE_OPTION_TO_PERIOD,
+  DEFAULT_USAGE_PERIOD,
+  USAGE_PERIOD,
+} from "../constants";
 import UsageChart from "src/sections/evals/components/UsageChart";
 import { JsonValueTree } from "src/sections/evals/components/DatasetTestMode";
 import { classifyTaskError } from "src/sections/common/EvalsTasks/classifyTaskError";
@@ -51,24 +57,6 @@ const StatPill = ({ label, value, color }) => (
     </Typography>
   </Box>
 );
-
-// ── Map date picker option to API period param ──
-// Tasks may run over months, so we extend the eval-usage map with the
-// "6M" and "12M" picker options (added to DateTimeRangePicker for the
-// task flow). Without these entries the lookup falls through to 30d
-// and the picker silently does nothing on those clicks.
-const DATE_OPTION_TO_PERIOD = {
-  "30 mins": "30m",
-  "6 hrs": "6h",
-  Today: "1d",
-  Yesterday: "1d",
-  "7D": "7d",
-  "30D": "30d",
-  "3M": "90d",
-  "6M": "180d",
-  "12M": "365d",
-  Custom: "30d",
-};
 
 // ── Score chip ──
 const ScoreCell = ({ value }) => {
@@ -897,7 +885,7 @@ const TaskUsageTab = ({ taskId }) => {
   const settings = useSettingsContext();
   const isDark = settings.themeMode === "dark";
 
-  const [dateOption, setDateOption] = useState("30D");
+  const [dateOption, setDateOption] = useState(DATE_OPTION.THIRTY_DAYS);
   const [dateFilter, setDateFilter] = useState(null);
   const [page, setPage] = useState(0);
   // Default to 50 per page — tasks typically have many runs and 25 felt
@@ -906,18 +894,39 @@ const TaskUsageTab = ({ taskId }) => {
   const [detailIndex, setDetailIndex] = useState(null);
   const [evalIdFilter, setEvalIdFilter] = useState("all");
 
-  const period = DATE_OPTION_TO_PERIOD[dateOption] || "30d";
+  const period = DATE_OPTION_TO_PERIOD[dateOption] || DEFAULT_USAGE_PERIOD;
   const apiEvalId = evalIdFilter === "all" ? undefined : evalIdFilter;
+
+  // Only the Custom option carries an explicit range; every other option is
+  // expressed by `period` alone.
+  const customDateParams = useMemo(() => {
+    if (
+      dateOption !== DATE_OPTION.CUSTOM ||
+      !dateFilter?.[0] ||
+      !dateFilter?.[1]
+    )
+      return {};
+    return {
+      startDate: new Date(dateFilter[0]).toISOString(),
+      endDate: new Date(dateFilter[1]).toISOString(),
+    };
+  }, [dateOption, dateFilter]);
 
   const { data: chartData, isLoading: chartLoading } = useTaskUsageChart(
     taskId,
-    { period, evalId: apiEvalId },
+    { period, evalId: apiEvalId, ...customDateParams },
   );
   const {
     data: logsData,
     isLoading: logsLoading,
     isFetching: logsFetching,
-  } = useTaskUsageLogs(taskId, { page, pageSize, period, evalId: apiEvalId });
+  } = useTaskUsageLogs(taskId, {
+    page,
+    pageSize,
+    period,
+    evalId: apiEvalId,
+    ...customDateParams,
+  });
 
   const stats = chartData?.stats || {};
   const chart = chartData?.chart || [];
@@ -928,9 +937,9 @@ const TaskUsageTab = ({ taskId }) => {
   // period excluded every run. Surface that to the user as a hint so
   // they don't think the date filter is broken.
   const periodFallback =
-    chartData?.periodUsed === "all" &&
-    chartData?.periodRequested &&
-    chartData?.periodRequested !== "all";
+    Boolean(chartData?.periodRequested) &&
+    chartData?.periodUsed === USAGE_PERIOD.ALL &&
+    chartData?.periodRequested !== USAGE_PERIOD.ALL;
 
   // Pick the chart's output type. With the "all evals" filter we default
   // to pass_fail. With a specific eval selected, we use that eval's
@@ -1114,30 +1123,61 @@ const TaskUsageTab = ({ taskId }) => {
             sx={(t) => ({
               display: "flex",
               alignItems: "center",
-              gap: 0.75,
-              px: 1.25,
-              py: 0.75,
-              mb: 1,
-              borderRadius: "6px",
+              gap: 1.5,
+              px: 2,
+              py: 1.5,
+              mb: 1.5,
+              borderRadius: "10px",
               border: "1px solid",
-              borderColor: "divider",
-              bgcolor:
-                t.palette.mode === "dark"
-                  ? "rgba(255,255,255,0.03)"
-                  : "background.neutral",
+              borderColor: alpha(t.palette.info.main, 0.32),
+              borderLeft: `4px solid ${t.palette.info.main}`,
+              bgcolor: alpha(
+                t.palette.info.main,
+                t.palette.mode === "dark" ? 0.16 : 0.1,
+              ),
             })}
           >
-            <Iconify
-              icon="solar:info-circle-linear"
-              width={14}
-              sx={{ color: "info.main", flexShrink: 0 }}
-            />
-            <Typography
-              variant="caption"
-              sx={{ fontSize: "11px", color: "text.secondary" }}
+            <Box
+              sx={(t) => ({
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 36,
+                height: 36,
+                borderRadius: "50%",
+                flexShrink: 0,
+                bgcolor: alpha(t.palette.info.main, 0.2),
+              })}
             >
-              No runs in the selected window — showing all-time data instead.
-            </Typography>
+              <Iconify
+                icon="solar:info-circle-bold"
+                width={22}
+                sx={{ color: "info.main" }}
+              />
+            </Box>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography
+                sx={{
+                  display: "block",
+                  fontSize: "14px",
+                  fontWeight: 700,
+                  color: "info.main",
+                  lineHeight: 1.4,
+                }}
+              >
+                No runs in the selected window
+              </Typography>
+              <Typography
+                sx={{
+                  display: "block",
+                  fontSize: "12.5px",
+                  color: "text.secondary",
+                  lineHeight: 1.4,
+                }}
+              >
+                Showing all-time data instead.
+              </Typography>
+            </Box>
           </Box>
         )}
 
