@@ -235,7 +235,7 @@ def first_signup(data, mode=None):
     # Only managed cloud requires a work address. A self-hosted install — EE
     # licensed or not — is run by people signing up on whatever address they
     # have, and the operator already controls who can reach the instance.
-    is_cloud = os.getenv("CLOUD_DEPLOYMENT", "") in ("US", "EU", "DEV")
+    is_cloud = settings.CLOUD_DEPLOYMENT in ("US", "EU", "DEV")
     allow_any_email = (
         os.getenv("ALLOW_ANY_EMAIL", "false" if is_cloud else "true").lower() == "true"
     )

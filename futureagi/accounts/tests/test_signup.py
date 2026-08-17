@@ -7,6 +7,7 @@ Tests for user registration, logout, password reset, and account management.
 import os
 
 import pytest
+from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -2013,20 +2014,15 @@ def _first_signup_payload(email):
 
 
 def _deployment(monkeypatch, *, cloud=False, ee=False):
-    """Set the env the signup gate actually reads.
+    """Set the deployment identity the signup gate actually reads.
 
     The gate keys on CLOUD_DEPLOYMENT, not on is_oss(), so an EE licence must
     be able to sit on a self-hosted install without turning the gate on.
+    Both are read off `settings`, which parses the env once at import — setting
+    the env var here would not reach the gate.
     """
-    if cloud:
-        monkeypatch.setenv("CLOUD_DEPLOYMENT", "US")
-    else:
-        monkeypatch.delenv("CLOUD_DEPLOYMENT", raising=False)
-
-    if ee:
-        monkeypatch.setenv("EE_LICENSE_KEY", "test-licence")
-    else:
-        monkeypatch.delenv("EE_LICENSE_KEY", raising=False)
+    monkeypatch.setattr(settings, "CLOUD_DEPLOYMENT", "US" if cloud else "")
+    monkeypatch.setattr(settings, "EE_LICENSE_KEY", "test-licence" if ee else "")
 
 
 @pytest.mark.integration
