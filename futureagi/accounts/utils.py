@@ -175,6 +175,16 @@ def is_work_email(email):
         "live.com",
         "msn.com",
         "yahoo.com",
+        "aol.com",
+        "icloud.com",
+        "me.com",
+        "protonmail.com",
+        "proton.me",
+        "zoho.com",
+        "yandex.com",
+        "mail.com",
+        "gmx.com",
+        "rediffmail.com",
         "noreply.github.com",  # GitHub's no-reply emails
         "github.com",  # In case GitHub emails are used
     }
