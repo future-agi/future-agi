@@ -2012,10 +2012,28 @@ def _first_signup_payload(email):
     }
 
 
+def _deployment(monkeypatch, *, cloud=False, ee=False):
+    """Set the env the signup gate actually reads.
+
+    The gate keys on CLOUD_DEPLOYMENT, not on is_oss(), so an EE licence must
+    be able to sit on a self-hosted install without turning the gate on.
+    """
+    if cloud:
+        monkeypatch.setenv("CLOUD_DEPLOYMENT", "US")
+    else:
+        monkeypatch.delenv("CLOUD_DEPLOYMENT", raising=False)
+
+    if ee:
+        monkeypatch.setenv("EE_LICENSE_KEY", "test-licence")
+    else:
+        monkeypatch.delenv("EE_LICENSE_KEY", raising=False)
+
+
 @pytest.mark.integration
 class TestWorkEmailGate:
-    """Self-hosters run on personal addresses, so OSS accepts any domain.
-    Cloud still requires a work email unless an operator opts out."""
+    """Self-hosters run on personal addresses, so every self-hosted install —
+    licensed or not — accepts any domain. Only managed cloud requires a work
+    email, and an operator can opt out of that."""
 
     def test_oss_accepts_a_free_provider_address(
         self, db, no_outbound_email, monkeypatch
@@ -2023,9 +2041,23 @@ class TestWorkEmailGate:
         from accounts.utils import first_signup
 
         monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
+        _deployment(monkeypatch)
 
-        with _oss_gate(True):
-            user = first_signup(_first_signup_payload("solo.dev@gmail.com"))
+        user = first_signup(_first_signup_payload("solo.dev@gmail.com"))
+
+        assert user.email == "solo.dev@gmail.com"
+
+    def test_ee_accepts_a_free_provider_address(
+        self, db, no_outbound_email, monkeypatch
+    ):
+        """An EE licence buys features, not a different signup policy — the
+        install is still self-hosted."""
+        from accounts.utils import first_signup
+
+        monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
+        _deployment(monkeypatch, ee=True)
+
+        user = first_signup(_first_signup_payload("solo.dev@gmail.com"))
 
         assert user.email == "solo.dev@gmail.com"
 
@@ -2035,22 +2067,36 @@ class TestWorkEmailGate:
         from accounts.utils import first_signup
 
         monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
+        _deployment(monkeypatch, cloud=True)
 
-        with _oss_gate(False):
+        with pytest.raises(Exception, match="not work email"):
+            first_signup(_first_signup_payload("solo.dev@gmail.com"))
+
+    def test_cloud_rejects_every_domain_on_the_list(
+        self, db, no_outbound_email, monkeypatch
+    ):
+        """The list is mirrored in frontend/src/utils/workEmail.js — a domain
+        added to one and not the other puts the form and the server at odds."""
+        from accounts.utils import first_signup
+
+        monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
+        _deployment(monkeypatch, cloud=True)
+
+        for domain in ("zoho.com", "icloud.com", "proton.me", "rediffmail.com"):
             with pytest.raises(Exception, match="not work email"):
-                first_signup(_first_signup_payload("solo.dev@gmail.com"))
+                first_signup(_first_signup_payload(f"solo.dev@{domain}"))
 
-    def test_explicit_false_still_overrides_the_oss_default(
+    def test_explicit_false_still_overrides_the_self_hosted_default(
         self, db, no_outbound_email, monkeypatch
     ):
         """An operator who sets it explicitly outranks the deployment default."""
         from accounts.utils import first_signup
 
         monkeypatch.setenv("ALLOW_ANY_EMAIL", "false")
+        _deployment(monkeypatch)
 
-        with _oss_gate(True):
-            with pytest.raises(Exception, match="not work email"):
-                first_signup(_first_signup_payload("solo.dev@gmail.com"))
+        with pytest.raises(Exception, match="not work email"):
+            first_signup(_first_signup_payload("solo.dev@gmail.com"))
 
     def test_explicit_true_still_opens_cloud_up(
         self, db, no_outbound_email, monkeypatch
@@ -2058,21 +2104,21 @@ class TestWorkEmailGate:
         from accounts.utils import first_signup
 
         monkeypatch.setenv("ALLOW_ANY_EMAIL", "true")
+        _deployment(monkeypatch, cloud=True)
 
-        with _oss_gate(False):
-            user = first_signup(_first_signup_payload("solo.dev@gmail.com"))
+        user = first_signup(_first_signup_payload("solo.dev@gmail.com"))
 
         assert user.email == "solo.dev@gmail.com"
 
-    def test_work_email_is_accepted_on_either_deployment(
+    def test_work_email_is_accepted_on_every_deployment(
         self, db, no_outbound_email, monkeypatch
     ):
         from accounts.utils import first_signup
 
         monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
+        _deployment(monkeypatch, cloud=True)
 
-        with _oss_gate(False):
-            user = first_signup(_first_signup_payload("owner@acmecorp.dev"))
+        user = first_signup(_first_signup_payload("owner@acmecorp.dev"))
 
         assert user.email == "owner@acmecorp.dev"
 

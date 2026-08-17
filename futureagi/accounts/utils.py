@@ -232,10 +232,12 @@ def first_signup(data, mode=None):
         # For work emails, use domain as before
         data["company_name"] = domain.split(".")[0]
 
-    from tfc.ee_gating import is_oss
-
+    # Only managed cloud requires a work address. A self-hosted install — EE
+    # licensed or not — is run by people signing up on whatever address they
+    # have, and the operator already controls who can reach the instance.
+    is_cloud = os.getenv("CLOUD_DEPLOYMENT", "") in ("US", "EU", "DEV")
     allow_any_email = (
-        os.getenv("ALLOW_ANY_EMAIL", "true" if is_oss() else "false").lower() == "true"
+        os.getenv("ALLOW_ANY_EMAIL", "false" if is_cloud else "true").lower() == "true"
     )
     if not allow_any_email and not is_work_email(data.get("email")):
         raise Exception("Provided Email is not work email")

@@ -44,9 +44,13 @@ export default function JwtRegisterView() {
   const [registerSuccess, setRegisterSuccess] = useState(false);
   // Confirmed read only: the hook falls back to "oss" when deployment-info
   // errors, and a cloud user must never be shown the password fields.
-  const { isOSS: ossMode, isSuccess: modeConfirmed } = useDeploymentMode();
+  const {
+    isOSS: ossMode,
+    isCloud: cloudMode,
+    isSuccess: modeConfirmed,
+  } = useDeploymentMode();
   const isOSS = modeConfirmed && ossMode;
-  const requireWorkEmail = modeConfirmed && !ossMode;
+  const requireWorkEmail = modeConfirmed && cloudMode;
   const postLoginPath = usePostLoginPath();
   const password = useBoolean();
   const confirmPassword = useBoolean();
@@ -429,7 +433,7 @@ export default function JwtRegisterView() {
         placeholder="Enter Email address"
         size="small"
         name="email"
-        label={isOSS ? "Email ID" : "Business Email ID"}
+        label={requireWorkEmail ? "Business Email ID" : "Email ID"}
       />
       {isOSS && (
         <>
