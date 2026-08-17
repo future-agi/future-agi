@@ -321,12 +321,15 @@ export default function AlertSettingsForm({
       convertFiltersToPayload(data?.filters);
 
     const isSlack = data?.notification?.method === "slack";
+    const isWebhook = data?.notification?.method === "webhook";
     const notificationPayload = {
-      notification_emails: isSlack ? [] : data?.notification?.emails ?? [],
+      notification_emails:
+        !isSlack && !isWebhook ? data?.notification?.emails ?? [] : [],
       slack_webhook_url: isSlack
         ? data?.notification?.slack?.webhookUrl ?? ""
         : "",
       slack_notes: isSlack ? data?.notification?.slack?.notes ?? "" : "",
+      webhook_url: isWebhook ? data?.notification?.webhook?.url ?? "" : "",
     };
     if (
       selectedMetricOptions?.length > 0 &&
@@ -1025,6 +1028,24 @@ export default function AlertSettingsForm({
                     fullWidth
                     multiline
                     rows={4}
+                  />
+                </Stack>
+              </ShowComponent>
+              <ShowComponent condition={selectedNotificationMethod === "webhook"}>
+                <Stack
+                  sx={{
+                    padding: 3,
+                    gap: 3,
+                  }}
+                >
+                  <FormTextFieldV2
+                    control={control}
+                    required
+                    placeholder="Enter webhook URL (e.g. https://example.com/webhook)"
+                    fieldName="notification.webhook.url"
+                    label="Webhook URL"
+                    size="small"
+                    fullWidth
                   />
                 </Stack>
               </ShowComponent>

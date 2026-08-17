@@ -62,7 +62,7 @@ export const AlertConfigValidationSchema = z
     ),
     notification: z
       .object({
-        method: z.enum(["email", "slack"], {
+        method: z.enum(["email", "slack", "webhook"], {
           required_error: "Select notification method",
         }),
         emails: z
@@ -73,6 +73,11 @@ export const AlertConfigValidationSchema = z
           .object({
             webhookUrl: z.string().optional(),
             notes: z.string().optional(),
+          })
+          .optional(),
+        webhook: z
+          .object({
+            url: z.string().optional(),
           })
           .optional(),
       })
@@ -101,6 +106,25 @@ export const AlertConfigValidationSchema = z
                 path: ["slack", "webhookUrl"],
                 code: "custom",
                 message: "Invalid Slack webhook URL",
+              });
+            }
+          }
+        }
+
+        if (notif.method === "webhook") {
+          if (!notif.webhook || !notif.webhook.url) {
+            ctx.addIssue({
+              path: ["webhook", "url"],
+              code: "custom",
+              message: "Webhook URL is required",
+            });
+          } else {
+            const urlPattern = /^(https?:\/\/)[^\s/$.?#].[^\s]*$/i;
+            if (!urlPattern.test(notif.webhook.url)) {
+              ctx.addIssue({
+                path: ["webhook", "url"],
+                code: "custom",
+                message: "Invalid webhook URL",
               });
             }
           }
@@ -262,6 +286,11 @@ const numberOr = (value, fallback) => {
 };
 
 export function getDefaultAlertConfigValues(existingConfig = {}) {
+  const webhookUrl = readAlertField(
+    existingConfig,
+    "webhookUrl",
+    "webhook_url",
+  );
   const slackWebhookUrl = readAlertField(
     existingConfig,
     "slackWebhookUrl",
@@ -323,12 +352,19 @@ export function getDefaultAlertConfigValues(existingConfig = {}) {
       ALERT_CONFIG_DEFAULTS.warning_threshold_value,
     ),
     notification: {
-      method: slackWebhookUrl ? "slack" : "email",
+      method: webhookUrl
+        ? "webhook"
+        : slackWebhookUrl
+          ? "slack"
+          : "email",
       emails: notificationEmails || [],
       slack: {
         webhookUrl: slackWebhookUrl || "",
         notes:
           readAlertField(existingConfig, "slackNotes", "slack_notes") || "",
+      },
+      webhook: {
+        url: webhookUrl || "",
       },
     },
   };

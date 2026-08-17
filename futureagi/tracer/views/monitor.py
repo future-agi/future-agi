@@ -13,7 +13,6 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
-
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import (
@@ -509,9 +508,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         except Exception as e:
             # Server-side failure: log the detail, return a generic 5xx (a 400
             # with raw str(e) both misclassifies it and leaks internals).
-            logger.error(
-                "monitor_list_failed", error=str(e), exc_info=True
-            )
+            logger.error("monitor_list_failed", error=str(e), exc_info=True)
             return self._gm.internal_server_error_response(
                 "Failed to fetch monitors list"
             )
@@ -633,6 +630,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             notification_emails=monitor.notification_emails,
             slack_webhook_url=monitor.slack_webhook_url,
             slack_notes=monitor.slack_notes,
+            webhook_url=monitor.webhook_url,
             is_mute=False,
             filters=monitor.filters,
             logs=[
