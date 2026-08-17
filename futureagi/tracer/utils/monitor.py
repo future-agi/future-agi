@@ -2,7 +2,9 @@ import statistics
 from datetime import timedelta
 
 import pandas as pd
+import requests
 import structlog
+from django.conf import settings
 from django.db.models import (
     Avg,
     Case,
@@ -164,8 +166,62 @@ def _send_slack_notification(monitor, message, alert_type):
         )
 
 
+def _send_webhook_notification(
+    monitor, message, alert_type, current_value=None, threshold_value=None
+):
+    """Sends a webhook notification for an alert."""
+    if not monitor.webhook_url:
+        return
+
+    app_url = (getattr(settings, "APP_URL", "") or "").rstrip("/")
+    dashboard_link = f"{app_url}/dashboard/alerts" if app_url else ""
+
+    payload = {
+        "event": "alert.triggered",
+        "alert_type": alert_type,
+        "monitor": {
+            "id": str(monitor.id),
+            "name": monitor.name,
+        },
+        "project": {
+            "id": str(monitor.project_id),
+            "name": monitor.project.name if monitor.project else None,
+        },
+        "metric": monitor.metric_type,
+        "current_value": current_value,
+        "threshold_value": threshold_value,
+        "message": message,
+        "timestamp": timezone.now().isoformat(),
+        "dashboard_url": dashboard_link,
+    }
+
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "FutureAGI-Alerts/1.0",
+    }
+
+    try:
+        resp = requests.post(
+            monitor.webhook_url, json=payload, headers=headers, timeout=10
+        )
+        resp.raise_for_status()
+        logger.info(
+            f"Sent {alert_type} webhook notification for monitor {monitor.id}"
+        )
+    except Exception as e:
+        logger.error(
+            f"Failed to send {alert_type} webhook notification for monitor {monitor.id}: {e}"
+        )
+
+
 def _handle_alert_trigger(
-    monitor, message, alert_type, time_window_start=None, now=None
+    monitor,
+    message,
+    alert_type,
+    time_window_start=None,
+    now=None,
+    current_value=None,
+    threshold_value=None,
 ):
     """Handles the actions when an alert is triggered."""
     UserAlertMonitorLog.objects.create(
@@ -177,6 +233,9 @@ def _handle_alert_trigger(
     )
     _send_alert_email(monitor, message, alert_type)
     _send_slack_notification(monitor, message, alert_type)
+    _send_webhook_notification(
+        monitor, message, alert_type, current_value, threshold_value
+    )
 
 
 @temporal_activity(
@@ -714,7 +773,15 @@ def _check_static_threshold(monitor, current_value, time_window_start, now):
             f"({current_value:.2f}) breached the {alert_type} threshold "
             f"({monitor.threshold_operator} {threshold_val})."
         )
-        _handle_alert_trigger(monitor, message, alert_type, time_window_start, now)
+        _handle_alert_trigger(
+            monitor,
+            message,
+            alert_type,
+            time_window_start,
+            now,
+            current_value=current_value,
+            threshold_value=threshold_val,
+        )
 
 
 def _get_time_series_df_for_aggregated_metrics(monitor, now):
@@ -986,7 +1053,15 @@ def _check_percentage_change_threshold(monitor, current_value, time_window_start
             f"({monitor.threshold_operator} {threshold_val:.2f}) based on historical data "
             f"(mean: {historical_mean:.2f}, stddev: {historical_stddev:.2f})."
         )
-        _handle_alert_trigger(monitor, message, alert_type, time_window_start, now)
+        _handle_alert_trigger(
+            monitor,
+            message,
+            alert_type,
+            time_window_start,
+            now,
+            current_value=current_value,
+            threshold_value=threshold_val,
+        )
 
 
 def _compare(value1, operator, value2):
