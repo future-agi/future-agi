@@ -133,12 +133,21 @@ def mark_traces_failed(trace_ids: list[str], project_id: str, reason: str) -> in
 # Map our observation_type to the span role the scanner understands.
 # Kept vendor-neutral — the scanner reads span kind by suffix, not by
 # a specific SDK prefix, so we just emit plain "span.kind".
+#
+# Keys MUST be the lowercase `ObservationType` canon (tracer.models
+# .observation_span.ObservationType); both ingest paths lowercase and validate
+# against it before writing CH. Values are the scanner's own vocabulary — it
+# matches {"Tool","TOOL"}, {"LLM","llm"}, {"Retriever","RETRIEVER"} — so these
+# spellings are load-bearing, not cosmetic.
 _OBS_TYPE_TO_KIND = {
-    "GENERATION": "LLM",
-    "SPAN": "CHAIN",
-    "TOOL": "Tool",
-    "RETRIEVER": "Retriever",
-    "AGENT": "AGENT",
+    "llm": "LLM",
+    "tool": "Tool",
+    "retriever": "Retriever",
+    "agent": "AGENT",
+    "chain": "CHAIN",
+    # Langfuse-style spellings that predate the lowercase canon.
+    "generation": "LLM",
+    "span": "CHAIN",
 }
 
 _TOKEN_KEYS = [
@@ -244,9 +253,11 @@ def _ch_span_to_span(span) -> SpanData:
     if span.model:
         attrs["llm.model_name"] = span.model
 
-    obs_type = span.observation_type or ""
-    # Default unrecognized / missing types (commonly "unknown" from older SDKs)
-    # to CHAIN so the scanner still sees structural role info instead of a blank span.
+    # Case-fold before lookup: CH stores the lowercase canon, but legacy rows and
+    # non-canonical producers have shipped other casings. Default unrecognized /
+    # missing types (commonly "unknown" from older SDKs) to CHAIN so the scanner
+    # still sees structural role info instead of a blank span.
+    obs_type = (span.observation_type or "").lower()
     attrs["span.kind"] = _OBS_TYPE_TO_KIND.get(obs_type, "CHAIN")
 
     # Surface function-calling tool definitions so the scanner can derive the
@@ -285,9 +296,19 @@ def _ch_span_to_span(span) -> SpanData:
         if key in metadata:
             attrs[key] = metadata[key]
 
-    status = "Unset"
-    if span.status_message:
+    # `status` is the authoritative CH column ("OK" / "ERROR"); `status_message`
+    # is free text and only a fallback for rows carrying a message but no status.
+    # Reading the message alone mis-reports a failed span as Ok whenever the text
+    # doesn't happen to contain "error" (e.g. "tool call failed").
+    raw_status = (span.status or "").upper()
+    if raw_status == "ERROR":
+        status = "Error"
+    elif raw_status == "OK":
+        status = "Ok"
+    elif span.status_message:
         status = "Error" if "error" in str(span.status_message).lower() else "Ok"
+    else:
+        status = "Unset"
 
     return SpanData(
         span_id=str(span.id),
