@@ -19,9 +19,8 @@ from structlog.testing import capture_logs
 from model_hub.models.ai_model import AIModel
 from model_hub.models.annotation_queues import AnnotationQueue, QueueItem
 from tracer.models.observation_span import ObservationSpan
-from tracer.models.project import Project, ProjectSourceChoices
+from tracer.models.project import Project
 from tracer.models.trace import Trace
-from tracer.models.trace_session import TraceSession
 from tracer.tests._ch_seed import seed_ch_span
 
 # --------------------------------------------------------------------------
@@ -79,6 +78,16 @@ def _api_filter(column_id, filter_type, filter_op, filter_value):
             "filter_type": filter_type,
             "filter_op": filter_op,
             "filter_value": filter_value,
+        },
+    }
+
+
+def _api_number_null_filter(column_id, filter_op):
+    return {
+        "column_id": column_id,
+        "filter_config": {
+            "filter_type": "number",
+            "filter_op": filter_op,
         },
     }
 
@@ -159,7 +168,8 @@ class TestAddItemsEnumeratedRegression:
     ):
         """A repeated (source_type, id) in ONE payload creates a single row — the batch
         resolve-then-create path dedupes within the payload (the old per-item .exists()
-        only caught ids already committed, so two copies in one request slipped through)."""
+        only caught ids already committed, so two copies in one request slipped through).
+        """
         t = Trace.objects.create(project=observe_project, name="t-dedupe")
         _seed_ch_trace_root(t)
         resp = auth_client.post(
@@ -371,9 +381,7 @@ class TestAddItemsFilterMode:
     ):
         """Filter-mode add stamps project_id from the selection too, so every path
         that fills a queue leaves items scope-able by the render read."""
-        _seed_ch_trace_root(
-            Trace.objects.create(project=observe_project, name="t-fp")
-        )
+        _seed_ch_trace_root(Trace.objects.create(project=observe_project, name="t-fp"))
         resp = auth_client.post(
             _add_items_url(active_queue.id),
             {
@@ -874,6 +882,8 @@ def seeded_mixed_call_executions(db, organization, workspace):
         status="completed",
         duration_seconds=10,
         cost_cents=12,
+        avg_agent_latency_ms=250,
+        response_time_ms=1250,
         row_id=high_priority_row.id,
         call_metadata={
             "row_data": {
@@ -915,7 +925,8 @@ def seeded_mixed_call_executions(db, organization, workspace):
         scenario=scen,
         status="failed",
         duration_seconds=30,
-        cost_cents=56,
+        avg_agent_latency_ms=500,
+        response_time_ms=2750,
         row_id=failed_row.id,
         call_metadata={
             "row_data": {
@@ -944,6 +955,42 @@ def seeded_mixed_call_executions(db, organization, workspace):
 
 @pytest.mark.django_db
 class TestAddItemsFilterModeCallExecutionRichFilters:
+    _NUMBER_NULL_FILTER_CASES = [
+        (
+            "overall_score_is_null_matches_all_rows",
+            "overall_score",
+            "is_null",
+            (0, 1, 2),
+        ),
+        (
+            "overall_score_is_not_null_matches_no_rows",
+            "overall_score",
+            "is_not_null",
+            (),
+        ),
+        ("agent_latency_is_null", "avg_agent_latency_ms", "is_null", (1,)),
+        (
+            "agent_latency_is_not_null",
+            "avg_agent_latency_ms",
+            "is_not_null",
+            (0, 2),
+        ),
+        ("cost_is_null_when_both_fields_are_null", "cost_cents", "is_null", (2,)),
+        (
+            "cost_is_not_null_when_either_field_is_set",
+            "cost_cents",
+            "is_not_null",
+            (0, 1),
+        ),
+        ("response_time_is_null", "responseTime", "is_null", (1,)),
+        (
+            "response_time_is_not_null",
+            "responseTime",
+            "is_not_null",
+            (0, 2),
+        ),
+    ]
+
     def test_simulation_add_items_grid_endpoint_applies_rules_style_filters(
         self, auth_client, seeded_mixed_call_executions
     ):
@@ -1072,6 +1119,38 @@ class TestAddItemsFilterModeCallExecutionRichFilters:
         assert resp.status_code == 200, resp.data
         assert resp.data["count"] == 1
         assert [row["id"] for row in resp.data["results"]] == [str(completed_short.id)]
+
+    @pytest.mark.parametrize(
+        "column_id,filter_op,expected_call_indices",
+        [case[1:] for case in _NUMBER_NULL_FILTER_CASES],
+        ids=[case[0] for case in _NUMBER_NULL_FILTER_CASES],
+    )
+    def test_simulation_add_items_grid_endpoint_filters_number_null_values(
+        self,
+        auth_client,
+        seeded_mixed_call_executions,
+        column_id,
+        filter_op,
+        expected_call_indices,
+    ):
+        _, test_execution, *call_executions, _, _ = seeded_mixed_call_executions
+        expected_ids = {
+            str(call_executions[index].id) for index in expected_call_indices
+        }
+
+        resp = auth_client.get(
+            f"/simulate/test-executions/{test_execution.id}/",
+            {
+                "filters": json.dumps([_api_number_null_filter(column_id, filter_op)]),
+                "page": 1,
+                "limit": 20,
+            },
+        )
+
+        assert resp.status_code == 200, resp.data
+        assert resp.data["count"] == len(expected_ids)
+        assert {row["id"] for row in resp.data["results"]} == expected_ids
+        assert resp.data["error_messages"] == []
 
     def test_simulation_add_items_grid_endpoint_filters_persona_fields(
         self, auth_client, seeded_mixed_call_executions
