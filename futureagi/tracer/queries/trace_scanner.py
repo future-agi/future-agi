@@ -17,11 +17,21 @@ from tracer.types.scan_types import ScanConfig, SpanData, TraceData
 logger = structlog.get_logger(__name__)
 
 # Per-message attributes emitted by every ingest adapter, in either the OTel
-# GenAI (gen_ai.*) or OpenInference (llm.*) namespace.
+# GenAI (gen_ai.*) or OpenInference (llm.*) namespace. Everything under a
+# message is kept — role/content, structured multi-part content
+# (contents.N.message_content.text/type — the actual text on multimodal
+# messages), per-message tool_calls and function_call attrs. Measured on the
+# 2026-08-18 prod corpus: filtering to `.role|.content` alone silently dropped
+# structured content + tool_calls from the judge on 13.3% of spans.
 _MESSAGE_ATTR_RE = re.compile(
     r"^(?:gen_ai\.(?:input|output)\.messages\.\d+\.message"
-    r"|llm\.(?:input|output)_messages\.\d+\.message)\.(?:role|content)$"
+    r"|llm\.(?:input|output)_messages\.\d+\.message)"
 )
+
+# Standard OTel exception-event attributes. On a genuine exception these carry
+# the reason a span errored, and nothing in the scanner read them — the judge
+# saw only status_code=Error, never why.
+_EXCEPTION_ATTR_RE = re.compile(r"^exception\.(?:type|message|stacktrace)$")
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +300,13 @@ def _ch_span_to_span(span) -> SpanData:
     # answer from another and reports failures that never happened.
     for key, val in (span.attrs_string or {}).items():
         if _MESSAGE_ATTR_RE.match(key):
+            attrs[key] = val
+
+    # Exception-event attributes, so the judge can see WHY a span errored rather
+    # than only that it did. Present on 2.27% of prod spans; the reason was
+    # previously invisible to the scanner pipeline.
+    for key, val in (span.attrs_string or {}).items():
+        if _EXCEPTION_ATTR_RE.match(key):
             attrs[key] = val
 
     for key in _TOKEN_KEYS:
