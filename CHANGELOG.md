@@ -1,5 +1,112 @@
 # Changelog
 
+## [1.27.3](https://github.com/future-agi/future-agi/compare/v1.27.2...v1.27.3) (2026-08-12)
+
+
+### Bug Fixes
+
+* **temporal:** repoint usage/billing lookups to ee.cloud.temporal ([4f7aaf5](https://github.com/future-agi/future-agi/commit/4f7aaf5817c345c6f9db0de86c66952c7993ddfe))
+* **temporal:** repoint usage/billing lookups to ee.cloud.temporal ([#2094](https://github.com/future-agi/future-agi/issues/2094)) ([34d97ac](https://github.com/future-agi/future-agi/commit/34d97ac304ee268a6e1fe62ba3dd7503c2f8aa75))
+
+## [1.27.2](https://github.com/future-agi/future-agi/compare/v1.27.1...v1.27.2) (2026-08-12)
+
+
+### Bug Fixes
+
+* **eval-tasks:** scope runtime target loads by the task's project (hotfix) ([564181e](https://github.com/future-agi/future-agi/commit/564181e0f3c612e0b433fc622710bcc17a675c0a))
+
+## [1.27.1](https://github.com/future-agi/future-agi/compare/v1.27.0...v1.27.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* **agents:** clear API key and assistant ID when switching provider [TH-5841] ([#2066](https://github.com/future-agi/future-agi/issues/2066)) ([f777461](https://github.com/future-agi/future-agi/commit/f7774619dbf7d00345b6b12b26282df66d6e591b))
+* **collector:** invalidate auth cache on project delete ([2fb25bf](https://github.com/future-agi/future-agi/commit/2fb25bf72ae6c04cd7801944711f8b4658c9dd7c))
+* **dashboards:** persist widget series selection across save/reopen ([#1672](https://github.com/future-agi/future-agi/issues/1672)) ([364e6b7](https://github.com/future-agi/future-agi/commit/364e6b74b04641eef230e125d5a2d05c2ca538ac))
+* **error-feed:** let the voice trace drawer resize [TH-7491] ([#2067](https://github.com/future-agi/future-agi/issues/2067)) ([42e3499](https://github.com/future-agi/future-agi/commit/42e3499ceaf0c118f54b4d6127aff478384b0e0a))
+* **evals:** unblock composite eval model selection in OSS ([#2043](https://github.com/future-agi/future-agi/issues/2043)) ([e175ece](https://github.com/future-agi/future-agi/commit/e175ece17c39131d2150c698476d35cd7812db22))
+* **evals:** use snake_case eval_template_id in duplicate eval dialog ([db10cb9](https://github.com/future-agi/future-agi/commit/db10cb9dda19ef3b5bff562a7111429ff5c6d14c))
+* **frontend:** darken the yellow eval-score cell for dark theme [TH-7330] ([#2085](https://github.com/future-agi/future-agi/issues/2085)) ([cb14c16](https://github.com/future-agi/future-agi/commit/cb14c16b7d2772937079dcd2ea1f31a0b23226d0))
+* **frontend:** move axis assignment above the axis config [TH-6575] ([#2087](https://github.com/future-agi/future-agi/issues/2087)) ([7fad869](https://github.com/future-agi/future-agi/commit/7fad8699502ca3d3c6dd6e6f23a59dfffb37507a))
+* **frontend:** only invert black provider logos in dark mode [TH-7274] ([#2011](https://github.com/future-agi/future-agi/issues/2011)) ([4890927](https://github.com/future-agi/future-agi/commit/4890927bbba7a9421c293e777ca1e4738b994758))
+* **licensing:** route managed AI through internal gateway on cloud ([5eeb22d](https://github.com/future-agi/future-agi/commit/5eeb22d658288fbbab2b904f4447c4d7c0889871))
+* **licensing:** route managed AI through internal gateway on cloud ([8ff49d9](https://github.com/future-agi/future-agi/commit/8ff49d9f74ccd46a6de13857c1e6b2a254f76955))
+* **licensing:** route managed AI through internal gateway on cloud ([da1a76b](https://github.com/future-agi/future-agi/commit/da1a76b250f5d5eb09ad48b8e9039c466fa4aad0))
+* **licensing:** route managed AI through internal gateway on cloud ([107dedc](https://github.com/future-agi/future-agi/commit/107dedc7bf354631e5b1ec79908942ee17532f9e))
+* **oss:** point the sidebar help link at the community Discord in OSS mode [TH-7171] ([#1921](https://github.com/future-agi/future-agi/issues/1921)) ([4bca7c4](https://github.com/future-agi/future-agi/commit/4bca7c4c682ba2f503f81b85deb3a8434f344ee3))
+* **oss:** restore preview gate and reason-aware CTA for capability denials ([#2010](https://github.com/future-agi/future-agi/issues/2010)) ([74212fc](https://github.com/future-agi/future-agi/commit/74212fc4787d8019025f40a28f39a8877e2b61c6))
+* raise fi-collector gRPC recv cap to 16MiB and log size rejections ([a8778bf](https://github.com/future-agi/future-agi/commit/a8778bf598f27d62ef1ce943a229e885f32f10ba))
+* **workbench:** open prompts whose message content is a string [TH-7260] ([#2063](https://github.com/future-agi/future-agi/issues/2063)) ([2bf0d79](https://github.com/future-agi/future-agi/commit/2bf0d79b772486b4246f192c5a1ea81093d2563d))
+
+## [1.27.0](https://github.com/future-agi/future-agi/compare/v1.26.0...v1.27.0) (2026-08-10)
+
+
+### Features
+
+* **error-feed:** port the ee scanner and cluster-RCA PRs, and make the RCA read path deterministic ([f9d312a](https://github.com/future-agi/future-agi/commit/f9d312ae8b5355bbed9877fcf3bca4f97934c4e2))
+* guard experiment CSV downloads ([#1883](https://github.com/future-agi/future-agi/issues/1883)) ([d39098c](https://github.com/future-agi/future-agi/commit/d39098c5338f5b5d443bc34576d95d470dac2d82))
+
+
+### Bug Fixes
+
+* **evals:** use snake_case eval_template_id in duplicate eval dialog ([#1775](https://github.com/future-agi/future-agi/issues/1775)) ([3491a3e](https://github.com/future-agi/future-agi/commit/3491a3ef0fc73ab0589e950a24d3e0ecaff439ca))
+* **feed:** address review — accurate merge docstring, unlocked migration, honest title tests ([59b733c](https://github.com/future-agi/future-agi/commit/59b733c46a9d290d7c7fb87609527da233f40301))
+* **feed:** honest cluster status, and never retire a trace whose scan did not run ([8e619f9](https://github.com/future-agi/future-agi/commit/8e619f9d20b5b0b42138bf45f388f653c6577736))
+* **feed:** make failed cluster-RCA runs visible, survive socket death, and stop the Fix tab bouncing ([0876873](https://github.com/future-agi/future-agi/commit/087687342ac1492d14c1a389f054d8f64e1458bb))
+* **frontend:** fall back to native audio on CORS-blocked playback ([#2022](https://github.com/future-agi/future-agi/issues/2022)) ([12981a2](https://github.com/future-agi/future-agi/commit/12981a2faabd9dfcbcd2071190afd2c5e0759dab))
+* **frontend:** omit time for date-only dataset values ([#1772](https://github.com/future-agi/future-agi/issues/1772)) ([c69b4fc](https://github.com/future-agi/future-agi/commit/c69b4fc90cd863c9aa2e3077e1bd8d199c842454))
+* **licensing:** restore cloud guard in EEFeatureMiddleware ([9623809](https://github.com/future-agi/future-agi/commit/9623809f42d7de742e8bffc75a03b4610aceb2cf))
+* **licensing:** restore cloud guard in EEFeatureMiddleware ([92fb9bb](https://github.com/future-agi/future-agi/commit/92fb9bb05859030f244e676efa523819d0f6531b))
+* **model-hub:** address review — create guard key, tooltip show prop, runtime catalog check, boolean swagger contract ([97a50fc](https://github.com/future-agi/future-agi/commit/97a50fc21cb538fe6303850722cb81b03bf8a1bf))
+* **model-hub:** cap dataset-optimization list page size at 100 ([ac905c1](https://github.com/future-agi/future-agi/commit/ac905c1a86ff51aec53dabe949326d74743a11a3))
+* **model-hub:** handle unavailable models — deprecated flag + block re-runs (TH-7425) ([bbb9898](https://github.com/future-agi/future-agi/commit/bbb9898f327552e6c53a9ebbfb12e8649509ff23))
+* **model-hub:** seed default prompt labels on migrate (TH-7261) ([06f003d](https://github.com/future-agi/future-agi/commit/06f003d8504b15f73d2909b5292fd704810315d0))
+* **oss-setup:** gate Continue on pre-flight results and apply the new setup copy [TH-7467] ([#2023](https://github.com/future-agi/future-agi/issues/2023)) ([8742885](https://github.com/future-agi/future-agi/commit/874288577ed4a847c17450e459a0ff82bcce9c21))
+
+## [1.26.0](https://github.com/future-agi/future-agi/compare/v1.25.0...v1.26.0) (2026-08-07)
+
+
+### Features
+
+* **ee:** ship EE code in-repo behind license gating (TH-7256) ([c62c6be](https://github.com/future-agi/future-agi/commit/c62c6be305c461bc1d77d469854760d519e49bf8))
+
+
+### Bug Fixes
+
+* **accounts:** skip activate_account IP rate limit in OSS mode and add OSS-skip test coverage ([ac12a50](https://github.com/future-agi/future-agi/commit/ac12a50b4a9b1a4f51ae1d423b4e44933d6103e2))
+* **accounts:** skip IP rate limiting in OSS mode ([872487e](https://github.com/future-agi/future-agi/commit/872487e6492b9081e928aed20e2b8a424c579a7f))
+* **accounts:** skip IP rate limiting in OSS mode ([2e5cf01](https://github.com/future-agi/future-agi/commit/2e5cf016534e21bc242ed7e81e575366e133aeb1))
+* **frontend:** sync row highlight with drawer arrow navigation ([253d5df](https://github.com/future-agi/future-agi/commit/253d5df9e2815ddb30f8d38c41cb7307cbd390a0))
+* **frontend:** use snake_case dataset_id in HuggingFace import redirect ([09b4f8a](https://github.com/future-agi/future-agi/commit/09b4f8a9ecbed234d57154911ca270887357966d))
+* **frontend:** use snake_case dataset_id in HuggingFace import redirect ([82ba8a3](https://github.com/future-agi/future-agi/commit/82ba8a3477b859ae46d19b064d43f3b105d155e8))
+* **gateway:** point org config provider links at the real dashboard route [TH-7271] ([#1998](https://github.com/future-agi/future-agi/issues/1998)) ([fa85eec](https://github.com/future-agi/future-agi/commit/fa85eec711a2c421954b95934c880ff5e7260d60))
+* **gating:** KB patch stays oss_baseline; reconcile agent-eval block test ([76c7c9c](https://github.com/future-agi/future-agi/commit/76c7c9c834bfe1b7d296151f1cecb05bb32141d3))
+* **gating:** restore lost view gates and reconcile tests with two-tier design ([3ed7ea9](https://github.com/future-agi/future-agi/commit/3ed7ea9208ba4be50528d241c0358953fd1fb596))
+* **usage:** restore deployment_telemetry_schema wire contract (ee parity) ([ea2c95c](https://github.com/future-agi/future-agi/commit/ea2c95cc8329926f2f7fe0312763aa66041d9f10))
+
+## [1.25.0](https://github.com/future-agi/future-agi/compare/v1.24.3...v1.25.0) (2026-08-07)
+
+
+### Features
+
+* **annotations:** add View session action for trace/span queue items ([5b7d1a0](https://github.com/future-agi/future-agi/commit/5b7d1a09a06a2778696bc98bf6d80c494de68fd1))
+* **frontend:** branded loading screens + click-to-map variable mapping ([#1847](https://github.com/future-agi/future-agi/issues/1847)) ([158acc5](https://github.com/future-agi/future-agi/commit/158acc5665cb6454fab89f32b46da21eacd66136))
+* optimized eval-usage backfill script + seed NodeTemplates on migrate (TH-7012, TH-6727) ([7e79aa1](https://github.com/future-agi/future-agi/commit/7e79aa142d460ba3ca1ad009009e7f5d9bd131c0))
+* **oss:** self-hosted first-run setup, browser signup and invite links [TH-7217] ([#1919](https://github.com/future-agi/future-agi/issues/1919)) ([772575e](https://github.com/future-agi/future-agi/commit/772575e15b71d9794aea0b77e5877c41ffc92ab2))
+
+
+### Bug Fixes
+
+* **evals:** show entitlement errors in-cell for OSS agent eval denials ([f843300](https://github.com/future-agi/future-agi/commit/f843300e4b39d3847db82284ed31d985c0c76262))
+* **gateway:** use guardrail label for the configure modal title [TH-3989] ([#1885](https://github.com/future-agi/future-agi/issues/1885)) ([0711d79](https://github.com/future-agi/future-agi/commit/0711d79bb171aa988c69c699e573e4ca66aee992))
+* **oss:** add dark-theme assets for agent scenario help modal [TH-7273] ([#1927](https://github.com/future-agi/future-agi/issues/1927)) ([66228d2](https://github.com/future-agi/future-agi/commit/66228d274dccf547dac9867403d8239a4994fe6f))
+* **oss:** disable Imagine button in detail drawers on OSS ([#1907](https://github.com/future-agi/future-agi/issues/1907)) ([d37b4fe](https://github.com/future-agi/future-agi/commit/d37b4fe5e20d92f40c409554e7700afbcd818c5a))
+* **oss:** make trace selection Actions button a filled toolbar pill [TH-7265] ([#1928](https://github.com/future-agi/future-agi/issues/1928)) ([391db7d](https://github.com/future-agi/future-agi/commit/391db7d564bf750693fd3b5a7ea54b440cf7511e))
+* **oss:** require a model on every eval save, test and add [TH-7258] ([#1941](https://github.com/future-agi/future-agi/issues/1941)) ([0789638](https://github.com/future-agi/future-agi/commit/07896386ba7e747b3845cf54255b33762d1d7ca3))
+* **oss:** size gateway key dialog inputs and stop browser autofill highlight [TH-7272] ([#1925](https://github.com/future-agi/future-agi/issues/1925)) ([b381a13](https://github.com/future-agi/future-agi/commit/b381a132c17130c39f22853be5dcdd28df555b04))
+* **oss:** tint annotation label-type chips for dark theme [TH-7263] ([#1942](https://github.com/future-agi/future-agi/issues/1942)) ([ce59eac](https://github.com/future-agi/future-agi/commit/ce59eac769f71c00c09e8497d0a9717ebf4bf62c))
+* **oss:** upgrade-gate cropping, upload button label, numeric label zero [TH-7282, TH-7253, TH-7268] ([#1937](https://github.com/future-agi/future-agi/issues/1937)) ([2b6420a](https://github.com/future-agi/future-agi/commit/2b6420a611850f41e0dadd23b1157008f2e851d4))
+
 ## [1.24.3](https://github.com/future-agi/future-agi/compare/v1.24.2...v1.24.3) (2026-08-05)
 
 
