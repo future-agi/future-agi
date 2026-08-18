@@ -1024,32 +1024,47 @@ const QueryInput = forwardRef(function QueryInput(
   // Shared chip/prefix render — used by both the Autocomplete renderInput
   // startAdornment and the range-phase Box below.
   const tokenChips = tokens.map((token, idx) => (
-    <Chip
-      key={idx}
-      label={`${fieldMap[token.field]?.label || token.field} ${opDefFor(token.field, token.operator)?.label || token.operator} ${Array.isArray(token.value) ? token.value.join(" – ") : token.value}`}
-      size="small"
-      onClick={() => editToken(idx)}
-      onDelete={() => handleDeleteToken(idx)}
-      deleteIcon={<Iconify icon="mdi:close" width={10} />}
-      sx={{
-        height: 22,
-        fontSize: 11,
-        mr: 0.25,
-        bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
-        color: "primary.main",
-        border: "1px solid",
-        borderColor: (theme) => alpha(theme.palette.primary.main, 0.2),
-        cursor: "pointer",
-        "&:hover": {
-          bgcolor: (theme) => alpha(theme.palette.primary.main, 0.16),
-          borderColor: (theme) => alpha(theme.palette.primary.main, 0.4),
-        },
-        "& .MuiChip-deleteIcon": {
+    <React.Fragment key={idx}>
+      {idx > 0 && (
+        <Box
+          component="span"
+          sx={{
+            fontSize: 10,
+            fontWeight: 700,
+            color: "text.secondary",
+            mx: 0.25,
+            whiteSpace: "nowrap",
+          }}
+        >
+          AND
+        </Box>
+      )}
+      <Chip
+        label={`${fieldMap[token.field]?.label || token.field} ${opDefFor(token.field, token.operator)?.label || token.operator} ${Array.isArray(token.value) ? token.value.join(" – ") : token.value}`}
+        size="small"
+        onClick={() => editToken(idx)}
+        onDelete={() => handleDeleteToken(idx)}
+        deleteIcon={<Iconify icon="mdi:close" width={10} />}
+        sx={{
+          height: 22,
+          fontSize: 11,
+          mr: 0.25,
+          bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
           color: "primary.main",
-          "&:hover": { color: "primary.dark" },
-        },
-      }}
-    />
+          border: "1px solid",
+          borderColor: (theme) => alpha(theme.palette.primary.main, 0.2),
+          cursor: "pointer",
+          "&:hover": {
+            bgcolor: (theme) => alpha(theme.palette.primary.main, 0.16),
+            borderColor: (theme) => alpha(theme.palette.primary.main, 0.4),
+          },
+          "& .MuiChip-deleteIcon": {
+            color: "primary.main",
+            "&:hover": { color: "primary.dark" },
+          },
+        }}
+      />
+    </React.Fragment>
   ));
 
   const prefixChips = inlinePrefix.map((p, i) => (

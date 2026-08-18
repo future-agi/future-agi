@@ -472,30 +472,46 @@ function QueryInput({ onApply, initialTokens = [] }) {
               <>
                 {/* Completed filter chips */}
                 {tokens.map((t, i) => (
-                  <Chip
-                    key={i}
-                    size="small"
-                    onClick={() => editToken(i)}
-                    onDelete={() => handleDeleteToken(i)}
-                    label={
-                      <span
-                        style={{ fontFamily: "monospace", fontSize: "12px" }}
+                  <React.Fragment key={i}>
+                    {i > 0 && (
+                      <Box
+                        component="span"
+                        sx={{
+                          fontFamily: "monospace",
+                          fontSize: "12px",
+                          fontWeight: 600,
+                          color: "text.secondary",
+                          mx: 0.25,
+                          whiteSpace: "nowrap",
+                        }}
                       >
-                        <span style={{ fontWeight: 600 }}>
-                          {FIELD_MAP[t.field]?.label || t.field}
-                        </span>{" "}
-                        <span style={{ opacity: 0.6 }}>{t.operator}</span>{" "}
-                        <span style={{ fontWeight: 500 }}>{t.value}</span>
-                      </span>
-                    }
-                    sx={{
-                      height: 22,
-                      mr: 0.5,
-                      borderRadius: "4px",
-                      cursor: "pointer",
-                      "&:hover": { borderColor: "primary.main" },
-                    }}
-                  />
+                        AND
+                      </Box>
+                    )}
+                    <Chip
+                      size="small"
+                      onClick={() => editToken(i)}
+                      onDelete={() => handleDeleteToken(i)}
+                      label={
+                        <span
+                          style={{ fontFamily: "monospace", fontSize: "12px" }}
+                        >
+                          <span style={{ fontWeight: 600 }}>
+                            {FIELD_MAP[t.field]?.label || t.field}
+                          </span>{" "}
+                          <span style={{ opacity: 0.6 }}>{t.operator}</span>{" "}
+                          <span style={{ fontWeight: 500 }}>{t.value}</span>
+                        </span>
+                      }
+                      sx={{
+                        height: 22,
+                        mr: 0.5,
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        "&:hover": { borderColor: "primary.main" },
+                      }}
+                    />
+                  </React.Fragment>
                 ))}
                 {/* Partial clause tokens (field, operator typed but value pending) */}
                 {inlinePrefix.map((p, i) => (

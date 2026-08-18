@@ -8,7 +8,7 @@ import {
   within,
 } from "src/utils/test-utils";
 
-import FilterPanel from "../FilterPanel";
+import FilterPanel, { QueryInput } from "../FilterPanel";
 
 const popoverSpy = vi.fn();
 vi.mock("@mui/material", async (importOriginal) => {
@@ -365,5 +365,316 @@ describe("hydrating multi-value filters", () => {
     // The guard compares by value, so an unchanged set stays quiet.
     await new Promise((r) => setTimeout(r, 800));
     expect(onApply).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Mock transitive dependencies pulled in by FilterPanel.jsx
+// ---------------------------------------------------------------------------
+vi.mock("src/utils/axios", () => ({
+  default: { get: vi.fn(), post: vi.fn() },
+  endpoints: {},
+}));
+
+vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
+
+vi.mock("src/components/iconify", () => ({
+  default: (props) => <span data-testid="iconify" {...props} />,
+}));
+
+vi.mock("src/hooks/use-ai-filter", () => ({
+  useAIFilter: () => ({
+    loading: false,
+    error: null,
+    generateFilters: vi.fn(),
+  }),
+}));
+
+// ---------------------------------------------------------------------------
+// Shared test fixtures
+// ---------------------------------------------------------------------------
+const FIELD_MAP = {
+  status: { label: "Status", type: "enum", choices: ["OK", "ERROR"] },
+  model: { label: "Model", type: "string" },
+  latency: { label: "Latency", type: "number" },
+  userId: { label: "User ID", type: "string" },
+};
+
+const FILTER_FIELDS = Object.entries(FIELD_MAP).map(([value, def]) => ({
+  value,
+  label: def.label,
+  type: def.type,
+  ...(def.choices ? { choices: def.choices } : {}),
+}));
+
+const TOKEN_STATUS_OK = { field: "status", operator: "equals", value: "OK" };
+const TOKEN_MODEL_GPT = {
+  field: "model",
+  operator: "contains",
+  value: "gpt",
+};
+const TOKEN_LATENCY_HIGH = {
+  field: "latency",
+  operator: "gt",
+  value: "1000",
+};
+const TOKEN_USER_ID = {
+  field: "userId",
+  operator: "equals",
+  value: "user-42",
+};
+const TOKEN_STATUS_ARRAY = {
+  field: "status",
+  operator: "equals",
+  value: ["ERROR", "WARN"],
+};
+const TOKEN_LONG_VALUE = {
+  field: "model",
+  operator: "contains",
+  value:
+    "gpt-4o-2024-05-13-with-a-really-long-model-identifier-that-exceeds-fifty-characters",
+};
+
+const makeProps = (overrides = {}) => ({
+  filterFields: FILTER_FIELDS,
+  fieldMap: FIELD_MAP,
+  onApply: vi.fn(),
+  ...overrides,
+});
+
+const renderQueryInput = (props = {}) => {
+  const user = userEvent.setup();
+  const result = render(<QueryInput {...makeProps(props)} />);
+  return { user, ...result };
+};
+
+// ---------------------------------------------------------------------------
+// Category A: Operator label visibility (token count)
+// ---------------------------------------------------------------------------
+describe("QueryInput — operator label visibility", () => {
+  it("shows no AND label with zero tokens", () => {
+    renderQueryInput({ initialTokens: [] });
+    expect(screen.queryByText("AND")).not.toBeInTheDocument();
+  });
+
+  it("shows no AND label with a single token", () => {
+    renderQueryInput({ initialTokens: [TOKEN_STATUS_OK] });
+    expect(screen.queryByText("AND")).not.toBeInTheDocument();
+  });
+
+  it("shows one AND label between two tokens", () => {
+    renderQueryInput({
+      initialTokens: [TOKEN_STATUS_OK, TOKEN_MODEL_GPT],
+    });
+    expect(screen.getAllByText("AND")).toHaveLength(1);
+  });
+
+  it("shows N−1 labels with four tokens", () => {
+    renderQueryInput({
+      initialTokens: [
+        TOKEN_STATUS_OK,
+        TOKEN_MODEL_GPT,
+        TOKEN_LATENCY_HIGH,
+        TOKEN_USER_ID,
+      ],
+    });
+    expect(screen.getAllByText("AND")).toHaveLength(3);
+  });
+
+  it("never renders an OR label (operator is fixed at AND)", () => {
+    renderQueryInput({
+      initialTokens: [TOKEN_STATUS_OK, TOKEN_MODEL_GPT],
+    });
+    expect(screen.queryByText("OR")).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Category B: Static, non-interactive label
+// ---------------------------------------------------------------------------
+describe("QueryInput — static AND label", () => {
+  it("renders the label as a non-interactive span", () => {
+    renderQueryInput({
+      initialTokens: [TOKEN_STATUS_OK, TOKEN_MODEL_GPT],
+    });
+    const label = screen.getByText("AND");
+    expect(label.tagName).toBe("SPAN");
+  });
+
+  it("has no button semantics", () => {
+    renderQueryInput({
+      initialTokens: [TOKEN_STATUS_OK, TOKEN_MODEL_GPT],
+    });
+    const label = screen.getByText("AND");
+    expect(label.getAttribute("role")).not.toBe("button");
+    expect(label.getAttribute("aria-pressed")).toBeNull();
+  });
+
+  it("does not change when clicked (stays AND, no OR)", async () => {
+    const { user } = renderQueryInput({
+      initialTokens: [TOKEN_STATUS_OK, TOKEN_MODEL_GPT],
+    });
+    await user.click(screen.getByText("AND"));
+    expect(screen.getByText("AND")).toBeInTheDocument();
+    expect(screen.queryByText("OR")).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Category C: Token lifecycle (label follows token count)
+// ---------------------------------------------------------------------------
+describe("QueryInput — token lifecycle", () => {
+  it("label disappears when deleting the last token (2→1)", async () => {
+    const { user } = renderQueryInput({
+      initialTokens: [TOKEN_STATUS_OK, TOKEN_MODEL_GPT],
+    });
+    expect(screen.getByText("AND")).toBeInTheDocument();
+    const chips = document.querySelectorAll(".MuiChip-root");
+    const secondChipDelete = chips[1]?.querySelector(".MuiChip-deleteIcon");
+    if (secondChipDelete) await user.click(secondChipDelete);
+
+    await waitFor(() => {
+      expect(screen.queryByText("AND")).not.toBeInTheDocument();
+    });
+  });
+
+  it("label disappears when deleting the first token (2→1)", async () => {
+    const { user } = renderQueryInput({
+      initialTokens: [TOKEN_STATUS_OK, TOKEN_MODEL_GPT],
+    });
+    expect(screen.getByText("AND")).toBeInTheDocument();
+    const chips = document.querySelectorAll(".MuiChip-root");
+    const firstChipDelete = chips[0]?.querySelector(".MuiChip-deleteIcon");
+    if (firstChipDelete) await user.click(firstChipDelete);
+
+    await waitFor(() => {
+      expect(screen.queryByText("AND")).not.toBeInTheDocument();
+    });
+  });
+
+  it("reduces label count when deleting the middle token (3→2)", async () => {
+    const { user } = renderQueryInput({
+      initialTokens: [TOKEN_STATUS_OK, TOKEN_MODEL_GPT, TOKEN_LATENCY_HIGH],
+    });
+    expect(screen.getAllByText("AND")).toHaveLength(2);
+    const chips = document.querySelectorAll(".MuiChip-root");
+    const middleDelete = chips[1]?.querySelector(".MuiChip-deleteIcon");
+    if (middleDelete) await user.click(middleDelete);
+
+    await waitFor(() => {
+      expect(screen.getAllByText("AND")).toHaveLength(1);
+    });
+  });
+
+  it("label hides when clicking a chip to edit (2→1)", async () => {
+    const { user } = renderQueryInput({
+      initialTokens: [TOKEN_STATUS_OK, TOKEN_MODEL_GPT],
+    });
+    expect(screen.getByText("AND")).toBeInTheDocument();
+    const chips = document.querySelectorAll(".MuiChip-root");
+    await user.click(chips[0]);
+
+    await waitFor(() => {
+      expect(screen.queryByText("AND")).not.toBeInTheDocument();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Category D: External sync via initialTokens
+// ---------------------------------------------------------------------------
+describe("QueryInput — external sync via initialTokens", () => {
+  it("keeps the label when initialTokens refreshes with the same data", () => {
+    const onApply = vi.fn();
+    const props = makeProps({
+      initialTokens: [TOKEN_STATUS_OK, TOKEN_MODEL_GPT],
+      onApply,
+    });
+    const { rerender } = render(<QueryInput {...props} />);
+    expect(screen.getByText("AND")).toBeInTheDocument();
+
+    rerender(<QueryInput {...props} />);
+    expect(screen.getByText("AND")).toBeInTheDocument();
+  });
+
+  it("hides the label when initialTokens changes to a single token", async () => {
+    const onApply = vi.fn();
+    const { rerender } = render(
+      <QueryInput
+        {...makeProps({
+          initialTokens: [TOKEN_STATUS_OK, TOKEN_MODEL_GPT],
+          onApply,
+        })}
+      />,
+    );
+    expect(screen.getByText("AND")).toBeInTheDocument();
+
+    rerender(
+      <QueryInput
+        {...makeProps({ initialTokens: [TOKEN_STATUS_OK], onApply })}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.queryByText("AND")).not.toBeInTheDocument();
+    });
+  });
+
+  it("hides the label when initialTokens clears to empty", async () => {
+    const onApply = vi.fn();
+    const { rerender } = render(
+      <QueryInput
+        {...makeProps({
+          initialTokens: [TOKEN_STATUS_OK, TOKEN_MODEL_GPT],
+          onApply,
+        })}
+      />,
+    );
+    expect(screen.getByText("AND")).toBeInTheDocument();
+
+    rerender(<QueryInput {...makeProps({ initialTokens: [], onApply })} />);
+    await waitFor(() => {
+      expect(screen.queryByText("AND")).not.toBeInTheDocument();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Category E: Token data shapes
+// ---------------------------------------------------------------------------
+describe("QueryInput — token data shapes", () => {
+  it("renders the label with array-value tokens", () => {
+    renderQueryInput({
+      initialTokens: [TOKEN_STATUS_OK, TOKEN_STATUS_ARRAY],
+    });
+    expect(screen.getByText("AND")).toBeInTheDocument();
+  });
+
+  it("renders the label with long-value tokens", () => {
+    renderQueryInput({
+      initialTokens: [TOKEN_MODEL_GPT, TOKEN_LONG_VALUE],
+    });
+    expect(screen.getByText("AND")).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Category F: Existing chip behaviour unchanged
+// ---------------------------------------------------------------------------
+describe("QueryInput — existing chip behaviour unchanged", () => {
+  it("renders a chip per token alongside the label", () => {
+    renderQueryInput({
+      initialTokens: [TOKEN_STATUS_OK, TOKEN_MODEL_GPT],
+    });
+    const chips = document.querySelectorAll(".MuiChip-root");
+    expect(chips.length).toBe(2);
+    expect(screen.getByText("AND")).toBeInTheDocument();
+  });
+
+  it("keeps a delete icon on each token", () => {
+    renderQueryInput({
+      initialTokens: [TOKEN_STATUS_OK, TOKEN_MODEL_GPT],
+    });
+    const deleteIcons = document.querySelectorAll(".MuiChip-deleteIcon");
+    expect(deleteIcons.length).toBe(2);
   });
 });
