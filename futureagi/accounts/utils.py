@@ -196,7 +196,13 @@ def is_work_email(email):
         "gmx.com",
         "rediffmail.com",
         "qq.com",
+        "foxmail.com",
+        "rocketmail.com",
+        "yandex.ru",
+        "mailinator.com",
+        "yopmail.com",
         "web-library.net",
+        "example.com",
         "noreply.github.com",  # GitHub's no-reply emails
         "github.com",  # In case GitHub emails are used
     }
