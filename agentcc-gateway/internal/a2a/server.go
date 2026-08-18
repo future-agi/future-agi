@@ -207,8 +207,8 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, msg *
 		return
 	}
 
-	// If pipeline is wired, route through the full plugin pipeline.
-	if s.engine != nil && s.providerRegistry != nil {
+	// Route through the configured execution backend when one is available.
+	if s.chatExecutor != nil || (s.engine != nil && s.providerRegistry != nil) {
 		if params.Configuration != nil && params.Configuration.ReturnImmediately {
 			s.tasks.Store(task)
 			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -286,6 +286,12 @@ func (s *Server) runMessageSendWithPipeline(ctx context.Context, authHeader stri
 			s.tasks.Store(task)
 			return
 		}
+		if ctx.Err() != nil {
+			task.Status.State = TaskStatusCanceled
+			task.Status.Message = []MessagePart{{Type: "text", Text: "Task canceled"}}
+			s.tasks.Store(task)
+			return
+		}
 		s.finishTaskFromResponse(task, resp)
 		s.tasks.Store(task)
 		return
@@ -340,6 +346,12 @@ func (s *Server) runMessageSendWithPipeline(ctx context.Context, authHeader stri
 		task.Status.Message = []MessagePart{{Type: "text", Text: fmt.Sprintf("Pipeline error: %s", err.Error())}}
 		s.tasks.Store(task)
 		slog.Warn("a2a: pipeline error", "task_id", task.ID, "error", err)
+		return
+	}
+	if ctx.Err() != nil {
+		task.Status.State = TaskStatusCanceled
+		task.Status.Message = []MessagePart{{Type: "text", Text: "Task canceled"}}
+		s.tasks.Store(task)
 		return
 	}
 
