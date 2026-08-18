@@ -602,6 +602,7 @@ class SecretKeyListItemSerializer(serializers.Serializer):
     secret_key = serializers.CharField()
     created_by = serializers.CharField(allow_null=True)
     created_at = serializers.DateTimeField()
+    expires_at = serializers.DateTimeField(required=False, allow_null=True)
     enabled = serializers.BooleanField()
     type = serializers.CharField()
 

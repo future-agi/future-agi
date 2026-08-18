@@ -610,6 +610,7 @@ class TestGetSecretKeysRowContent:
             "secret_key",
             "created_by",
             "created_at",
+            "expires_at",
             "enabled",
             "type",
         }
@@ -870,3 +871,65 @@ class TestGetKeysViewResponse:
         # Should have created a system key
         data = response.json()
         assert data.get("data") is not None
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestApiKeyExpiry:
+    """Optional expires_at on create and list. Null means the key never expires."""
+
+    def test_generate_without_expiry_stores_null(self, auth_client):
+        response = auth_client.post(
+            "/accounts/key/generate_secret_key/",
+            {"key_name": "Never Expires Key"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        key_id = response.json()["result"]["key_id"]
+
+        from accounts.models.user import OrgApiKey
+
+        key = OrgApiKey.all_objects.get(id=key_id)
+        assert key.expires_at is None
+
+        listed = auth_client.get(f"{SECRET_KEYS_URL}?search=Never Expires")
+        assert listed.status_code == status.HTTP_200_OK
+        row = _rows(listed)[0]
+        assert row["expires_at"] is None
+
+    def test_generate_with_expiry_persists_and_lists_it(self, auth_client):
+        expires_at = timezone.now() + timedelta(days=7)
+        response = auth_client.post(
+            "/accounts/key/generate_secret_key/",
+            {
+                "key_name": "Temporary Key",
+                "expires_at": expires_at.isoformat(),
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        key_id = response.json()["result"]["key_id"]
+
+        from accounts.models.user import OrgApiKey
+
+        key = OrgApiKey.all_objects.get(id=key_id)
+        assert key.expires_at is not None
+        assert abs((key.expires_at - expires_at).total_seconds()) < 1
+
+        listed = auth_client.get(f"{SECRET_KEYS_URL}?search=Temporary Key")
+        assert listed.status_code == status.HTTP_200_OK
+        row = _rows(listed)[0]
+        assert row["expires_at"] is not None
+
+    def test_generate_with_null_expiry_is_the_same_as_omitting_it(self, auth_client):
+        response = auth_client.post(
+            "/accounts/key/generate_secret_key/",
+            {"key_name": "Explicit Null Expiry", "expires_at": None},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        from accounts.models.user import OrgApiKey
+
+        key = OrgApiKey.all_objects.get(id=response.json()["result"]["key_id"])
+        assert key.expires_at is None

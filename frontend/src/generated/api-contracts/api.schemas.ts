@@ -452,6 +452,7 @@ export interface CreateSecretKeyApi {
      * @maxLength 100
      */
   key_name: string;
+  expires_at?: string | null;
 }
 
 export interface SecretKeyCreateResultApi {
@@ -490,6 +491,7 @@ export interface SecretKeyListItemApi {
   /** @minLength 1 */
   created_by: string;
   created_at: string;
+  expires_at?: string | null;
   enabled: boolean;
   /** @minLength 1 */
   type: string;

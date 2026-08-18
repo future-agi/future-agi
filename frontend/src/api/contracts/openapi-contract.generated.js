@@ -50440,6 +50440,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "maxLength": 100,
           "minLength": 1
+        },
+        "expires_at": {
+          "title": "Expires at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
         }
       }
     },
@@ -98716,6 +98722,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Created at",
           "type": "string",
           "format": "date-time"
+        },
+        "expires_at": {
+          "title": "Expires at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
         },
         "enabled": {
           "title": "Enabled",

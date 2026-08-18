@@ -647,7 +647,8 @@ export const accountsKeyGenerateSecretKeyBodyKeyNameMax = 100;
 
 
 export const AccountsKeyGenerateSecretKeyBody = zod.object({
-  "key_name": zod.string().min(1).max(accountsKeyGenerateSecretKeyBodyKeyNameMax)
+  "key_name": zod.string().min(1).max(accountsKeyGenerateSecretKeyBodyKeyNameMax),
+  "expires_at": zod.string().datetime({"offset":true}).nullish()
 })
 
 
@@ -692,6 +693,7 @@ export const AccountsKeyGetSecretKeysResponse = zod.object({
   "secret_key": zod.string().min(1),
   "created_by": zod.string().min(1),
   "created_at": zod.string().datetime({"offset":true}),
+  "expires_at": zod.string().datetime({"offset":true}).nullish(),
   "enabled": zod.boolean(),
   "type": zod.string().min(1)
 }))
