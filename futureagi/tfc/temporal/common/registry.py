@@ -77,7 +77,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     # Self-hosted deployment registration and usage heartbeat
     "tfc.temporal.schedules.deployment_telemetry",
     # Deployment telemetry receiver-side integrations (PostHog, HubSpot, Slack)
-    "ee.usage.services.deployment_telemetry_integrations",
+    "ee.cloud.telemetry.deployment_telemetry_integrations",
 ]
 
 
@@ -355,7 +355,7 @@ def _ensure_workflows_registered() -> None:
     # UsageConsumerWorkflow (long-running singleton) + MonthlyResetWorkflow
     try:
         try:
-            from ee.usage.temporal import get_workflows as get_billing_workflows
+            from ee.cloud.temporal import get_workflows as get_billing_workflows
         except ImportError:
             get_billing_workflows = None
 
@@ -763,7 +763,7 @@ def _ensure_activities_registered() -> None:
     # Register usage metering activities (consumer, sync, monthly reset)
     try:
         try:
-            from ee.usage.temporal import get_activities as get_usage_activities
+            from ee.cloud.temporal import get_activities as get_usage_activities
         except ImportError:
             get_usage_activities = None
 
