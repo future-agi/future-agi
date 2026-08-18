@@ -18,6 +18,8 @@ export const NON_WORK_EMAIL_DOMAINS = [
   "mail.com",
   "gmx.com",
   "rediffmail.com",
+  "qq.com",
+  "web-library.net",
   "noreply.github.com",
   "github.com",
 ];

@@ -154,6 +154,16 @@ def generate_password(
     return "".join(password)
 
 
+WORK_EMAIL_REQUIRED_MESSAGE = "Please sign up with your work email address."
+
+
+class WorkEmailRequired(Exception):
+    """Raised when a managed-cloud signup uses a free email provider."""
+
+    def __init__(self, message=WORK_EMAIL_REQUIRED_MESSAGE):
+        super().__init__(message)
+
+
 def is_work_email(email):
     """
     Returns True if the email appears to be a work email,
@@ -185,6 +195,8 @@ def is_work_email(email):
         "mail.com",
         "gmx.com",
         "rediffmail.com",
+        "qq.com",
+        "web-library.net",
         "noreply.github.com",  # GitHub's no-reply emails
         "github.com",  # In case GitHub emails are used
     }
@@ -240,7 +252,7 @@ def first_signup(data, mode=None):
         os.getenv("ALLOW_ANY_EMAIL", "false" if is_cloud else "true").lower() == "true"
     )
     if not allow_any_email and not is_work_email(data.get("email")):
-        raise Exception("Provided Email is not work email")
+        raise WorkEmailRequired()
 
     serializer = UserSignupSerializer(data=data)
     if serializer.is_valid():

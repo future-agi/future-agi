@@ -2065,7 +2065,7 @@ class TestWorkEmailGate:
         monkeypatch.delenv("ALLOW_ANY_EMAIL", raising=False)
         _deployment(monkeypatch, cloud=True)
 
-        with pytest.raises(Exception, match="not work email"):
+        with pytest.raises(Exception, match="work email address"):
             first_signup(_first_signup_payload("solo.dev@gmail.com"))
 
     def test_cloud_rejects_every_domain_on_the_list(
@@ -2079,7 +2079,7 @@ class TestWorkEmailGate:
         _deployment(monkeypatch, cloud=True)
 
         for domain in ("zoho.com", "icloud.com", "proton.me", "rediffmail.com"):
-            with pytest.raises(Exception, match="not work email"):
+            with pytest.raises(Exception, match="work email address"):
                 first_signup(_first_signup_payload(f"solo.dev@{domain}"))
 
     def test_explicit_false_still_overrides_the_self_hosted_default(
@@ -2091,7 +2091,7 @@ class TestWorkEmailGate:
         monkeypatch.setenv("ALLOW_ANY_EMAIL", "false")
         _deployment(monkeypatch)
 
-        with pytest.raises(Exception, match="not work email"):
+        with pytest.raises(Exception, match="work email address"):
             first_signup(_first_signup_payload("solo.dev@gmail.com"))
 
     def test_explicit_true_still_opens_cloud_up(
