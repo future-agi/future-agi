@@ -84,12 +84,19 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	orgRedactor := p.getOrgRedactor(rc)
 
 	// Apply redaction: org redactor (with org patterns) takes priority over global.
+	redacted := false
 	if orgRedactor != nil && orgRedactor.ShouldRedact() && record.RequestBody != nil {
 		record = redactRecord(record, orgRedactor, mode)
-		rc.SetMetadata("privacy_redacted", "true")
+		redacted = true
 	} else if p.redactor != nil && p.redactor.ShouldRedact() && record.RequestBody != nil {
 		record = redactRecord(record, p.redactor, mode)
-		rc.SetMetadata("privacy_redacted", "true")
+		redacted = true
+	}
+	if redacted {
+		if record.Metadata == nil {
+			record.Metadata = make(map[string]string, 1)
+		}
+		record.Metadata["privacy_redacted"] = "true"
 	}
 
 	p.emitter.Emit(record)
