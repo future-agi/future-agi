@@ -68,7 +68,7 @@ spec:
             requests:
               cpu: 100m
               memory: 64Mi
-           limits:
+            limits:
               cpu: 1
               memory: 512Mi
           # The dead-letter file must survive pod restarts. The bounded
