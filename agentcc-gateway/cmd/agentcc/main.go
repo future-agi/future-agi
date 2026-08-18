@@ -442,6 +442,7 @@ func main() {
 	}
 
 	// Create cache plugin with pluggable backend.
+	var semBackend cache.SemanticBackend
 	if cfg.Cache.Enabled {
 		cacheBackend, err := cache.NewBackend(cfg.Cache)
 		if err != nil {
@@ -451,7 +452,8 @@ func main() {
 		cachePlugin := cacheplugin.New(cacheBackend, cfg.Cache.DefaultTTL)
 
 		if cfg.Cache.Semantic.Enabled {
-			semBackend, err := cache.NewSemanticBackend(cfg.Cache.Semantic)
+			var err error
+			semBackend, err = cache.NewSemanticBackend(cfg.Cache.Semantic)
 			if err != nil {
 				slog.Error("failed to create semantic cache backend", "error", err)
 				os.Exit(1)
@@ -690,6 +692,10 @@ func main() {
 		}
 		if redisClient != nil {
 			redisClient.Close()
+		}
+		// Backends holding persistent connections (e.g. Valkey) implement Close.
+		if closer, ok := semBackend.(interface{ Close() }); ok {
+			closer.Close()
 		}
 	}()
 
