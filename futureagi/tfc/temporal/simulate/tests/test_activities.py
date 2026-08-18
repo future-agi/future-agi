@@ -4,11 +4,17 @@ Tests for Temporal simulate activities.
 Run with: pytest tfc/temporal/simulate/tests/test_activities.py -v
 """
 
+import ast
 import asyncio
+import builtins
+import pathlib
+import symtable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pandas as pd
 import pytest
+
+SIMULATE_PKG = pathlib.Path(__file__).resolve().parents[1]
 
 
 def run_async(coro):
@@ -318,3 +324,125 @@ class TestResolveScenarioAgent:
         )
         result = _resolve_scenario_agent(scenario, "prompt")
         assert result.description == "Template-level description"
+
+
+class TestGraphScenarioNameBinding:
+    """Regression tests for two `NameError`s in the graph-scenario path.
+
+    Both bugs are of the same shape: a name is read but never bound, so the
+    code path dies with `NameError` the first time it runs. Neither is
+    reachable from a new workflow — `CreateGraphScenarioWorkflow.run` sends
+    new executions down the v3 branch — but both are live for in-flight and
+    replaying workflows that were started on the older branches.
+
+    These checks are static because the alternative is a Temporal worker.
+    This module's own docstring already records why that is avoided:
+    "running actual Temporal activities requires a Temporal worker
+    environment". A missing local and a missing import are fully decidable
+    from the source, so a static check loses nothing here.
+    """
+
+    GRAPH_ROUTING_KEYS = {
+        "source_type",
+        "agent_definition_id",
+        "generate_graph",
+        "graph_data",
+    }
+
+    @staticmethod
+    def _function_table(module_table, name):
+        """Depth-first lookup of a function's symbol table by name."""
+        for child in module_table.get_children():
+            if child.get_name() == name and child.get_type() == "function":
+                return child
+            found = TestGraphScenarioNameBinding._function_table(child, name)
+            if found is not None:
+                return found
+        return None
+
+    @staticmethod
+    def _unbound_names(source, filename, func_name):
+        """Names a function reads that resolve to neither a local, a module
+        global, nor a builtin — i.e. guaranteed `NameError` at runtime."""
+        module_table = symtable.symtable(source, filename, "exec")
+        module_names = {s.get_name() for s in module_table.get_symbols()}
+        func_table = TestGraphScenarioNameBinding._function_table(
+            module_table, func_name
+        )
+        assert func_table is not None, f"{func_name} not found in {filename}"
+        return sorted(
+            s.get_name()
+            for s in func_table.get_symbols()
+            if s.is_global()
+            and s.get_name() not in module_names
+            and not hasattr(builtins, s.get_name())
+        )
+
+    def test_create_graph_scenario_sync_binds_graph_routing_keys(self):
+        """`_create_graph_scenario_sync` must read its four routing keys.
+
+        A refactor extracted the v3 setup activity and took these four
+        `validated_data.get(...)` assignments with it, leaving the v1 body
+        reading names that no longer existed. The very next statement,
+        `if source_type == "prompt"`, raised `NameError` on every call.
+        """
+        source = (SIMULATE_PKG / "activities.py").read_text()
+        tree = ast.parse(source)
+        func = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_create_graph_scenario_sync"
+        )
+        assigned = {
+            target.id
+            for node in ast.walk(func)
+            if isinstance(node, ast.Assign)
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        }
+        missing = sorted(self.GRAPH_ROUTING_KEYS - assigned)
+        msg = f"_create_graph_scenario_sync reads {missing} without binding them"
+        assert not missing, msg
+
+    @pytest.mark.parametrize(
+        "func_name",
+        ["_create_graph_scenario_sync", "_setup_graph_scenario_sync"],
+    )
+    def test_graph_scenario_helpers_have_no_unbound_names(self, func_name):
+        """Neither the v1 nor the v3 graph-scenario helper may read a name
+        that is not a local, a module global, or a builtin."""
+        source = (SIMULATE_PKG / "activities.py").read_text()
+        unbound = self._unbound_names(source, "activities.py", func_name)
+        assert not unbound, f"{func_name} reads unbound names: {unbound}"
+
+    def test_workflows_import_every_activity_input_type(self):
+        """Every `*Input` / `*Output` dataclass the workflows construct must
+        be imported.
+
+        `ExtractIntentsInput` was used in `_run_v2_multi_activity` but was
+        missing from the otherwise-alphabetical import block, so the v2
+        branch raised `NameError` at step 2 — after setup had already run
+        and written a graph.
+        """
+        tree = ast.parse((SIMULATE_PKG / "workflows.py").read_text())
+        available = {
+            alias.asname or alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+            for alias in node.names
+        }
+        available |= {
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef))
+        }
+        constructed = {
+            node.func.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id.endswith(("Input", "Output"))
+        }
+        missing = sorted(constructed - available)
+        assert not missing, f"workflows.py constructs but never imports: {missing}"
