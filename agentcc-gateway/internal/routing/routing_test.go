@@ -3394,6 +3394,56 @@ func TestMirror_DisabledConfig(t *testing.T) {
 	}
 }
 
+// With MaxConcurrent in-flight mirrors, an additional mirror must be dropped
+// rather than spawning an unbounded goroutine — otherwise high-rate shadow
+// traffic exhausts goroutines/connections.
+func TestMirror_ExecuteAsync_ConcurrencyLimit(t *testing.T) {
+	started := make(chan struct{}, 4)
+	release := make(chan struct{})
+	mockProvider := &mockMirrorProvider{
+		fn: func(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+			started <- struct{}{}
+			<-release // hold the only slot until the test releases it
+			return &models.ChatCompletionResponse{ID: "resp"}, nil
+		},
+	}
+	cfg := config.MirrorConfig{
+		Enabled:       true,
+		MaxConcurrent: 1,
+		Rules: []config.MirrorRule{
+			{SourceModel: "gpt-4o", TargetProvider: "target", TargetModel: "tm", SampleRate: 1.0},
+		},
+	}
+	lookup := func(id string) (MirrorProvider, bool) {
+		if id == "target" {
+			return mockProvider, true
+		}
+		return nil, false
+	}
+	m := NewMirror(cfg, lookup)
+	req := &models.ChatCompletionRequest{Model: "gpt-4o"}
+
+	// First mirror acquires the single slot and blocks inside the provider.
+	m.ExecuteAsync(req, "openai", "gpt-4o", nil)
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first mirror call never started")
+	}
+
+	// Second mirror must be dropped while the slot is held — not queued.
+	m.ExecuteAsync(req, "openai", "gpt-4o", nil)
+
+	close(release) // let the first finish and free the slot
+
+	select {
+	case <-started:
+		t.Fatal("second mirror should have been dropped, but the provider was called")
+	case <-time.After(200 * time.Millisecond):
+		// No second invocation — correctly dropped.
+	}
+}
+
 // mockMirrorProvider implements MirrorProvider for testing.
 type mockMirrorProvider struct {
 	fn func(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error)
