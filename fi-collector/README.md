@@ -138,18 +138,19 @@ the litellm table nor custom pricing applies, the span's cost is 0.
 
 ```
 SDK   ──HTTP/gRPC──►   fi-collector
-                        ├─ OTLP receiver       (default queue: 1K requests)
-                        ├─ memory_limiter      (hard ceiling — drops if exceeded)
-                        ├─ batch processor     (10K spans / 5s, whichever first)
-                        ├─ retry-on-failure    (exponential, max 5 min)
-                        └─ persistent queue    (disk-backed, survives restart)
+                        ├─ OTLP receiver       (atomic admission control)
+                        ├─ queue_limiter       (bounded requests, rows, & bytes capacity)
+                        ├─ batch flusher       (5K spans / 5s, whichever first)
+                        ├─ canonical writer    (ClickHouse insert + dead-letter fsync fallback)
+                        └─ durable ack         (HTTP 200 / gRPC OK returned only after CH or dead-letter)
                                 ▼
-                        ClickHouse 25.3 (async_insert=1 server-side batching)
+                        ClickHouse 25.3
 ```
 
-If ClickHouse is briefly unavailable, the persistent queue absorbs the
-backlog. If memory crosses the limit, the receiver returns 429 and SDKs
-back off — no silent drops, no OOM crashes. Same pattern SigNoz uses.
+- **Bounded capacity**: Queued plus in-flight requests, rows, and bytes are strictly bounded by `queue_max_requests`, `queue_max_rows`, and `queue_max_bytes` (`FI_QUEUE_MAX_*`).
+- **Overload backpressure**: When capacity is temporarily full, OTLP requests are rejected with retryable overload errors (HTTP 503 + `Retry-After: 1`, gRPC `Unavailable` + `RetryInfo`).
+- **Oversized rejection**: Requests that exceed maximum queue limits are rejected atomically with non-retryable errors (HTTP 413, gRPC `ResourceExhausted`).
+- **Durable acknowledgement**: OTLP responses are acknowledged only after ClickHouse accepts the batch or the batch is durably written to `dead_letter.jsonl`. Failure of both returns a retryable error.
 
 ## Migration relationship
 

@@ -30,6 +30,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -241,6 +242,15 @@ func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any) 
 	atomic.AddUint64(&w.stats.BatchesFailed, 1)
 	atomic.AddUint64(&w.stats.RowsDeadLettered, uint64(len(rows)))
 	return fmt.Errorf("chwriter: batch dead-lettered after %d attempts: %w", w.cfg.MaxRetries+1, lastErr)
+}
+
+// IsDeadLettered returns true if err indicates that the batch failed ClickHouse insert
+// but was successfully persisted to the dead-letter file.
+func IsDeadLettered(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "batch dead-lettered after")
 }
 
 // insertURL builds an INSERT URL for an arbitrary table, mirroring the

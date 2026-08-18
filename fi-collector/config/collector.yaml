@@ -38,6 +38,10 @@ server:
   # Max gRPC receive message size in MiB (FI_GRPC_MAX_RECV_MIB); 16 matches
   # the OTLP/HTTP body cap.
   grpc_max_recv_mib: 16
+  # Bounded queue and in-flight capacity limits (FI_QUEUE_MAX_REQUESTS, FI_QUEUE_MAX_ROWS, FI_QUEUE_MAX_BYTES).
+  queue_max_requests: 1000
+  queue_max_rows: 50000
+  queue_max_bytes: 134217728 # 128 MiB
 
 auth:
   # Auth is active when pg_write is set. Without it, spans land with
