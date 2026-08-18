@@ -286,10 +286,7 @@ func (s *Server) runMessageSendWithPipeline(ctx context.Context, authHeader stri
 			s.tasks.Store(task)
 			return
 		}
-		if ctx.Err() != nil {
-			task.Status.State = TaskStatusCanceled
-			task.Status.Message = []MessagePart{{Type: "text", Text: "Task canceled"}}
-			s.tasks.Store(task)
+		if s.storeTaskContextError(ctx, task) {
 			return
 		}
 		s.finishTaskFromResponse(task, resp)
@@ -348,10 +345,7 @@ func (s *Server) runMessageSendWithPipeline(ctx context.Context, authHeader stri
 		slog.Warn("a2a: pipeline error", "task_id", task.ID, "error", err)
 		return
 	}
-	if ctx.Err() != nil {
-		task.Status.State = TaskStatusCanceled
-		task.Status.Message = []MessagePart{{Type: "text", Text: "Task canceled"}}
-		s.tasks.Store(task)
+	if s.storeTaskContextError(ctx, task) {
 		return
 	}
 
@@ -359,6 +353,23 @@ func (s *Server) runMessageSendWithPipeline(ctx context.Context, authHeader stri
 
 	s.tasks.Store(task)
 	slog.Info("a2a task completed (pipeline)", "task_id", task.ID, "model", model, "provider", rc.Provider)
+}
+
+func (s *Server) storeTaskContextError(ctx context.Context, task *Task) bool {
+	err := ctx.Err()
+	if err == nil {
+		return false
+	}
+
+	if errors.Is(err, context.Canceled) {
+		task.Status.State = TaskStatusCanceled
+		task.Status.Message = []MessagePart{{Type: "text", Text: "Task canceled"}}
+	} else {
+		task.Status.State = TaskStatusFailed
+		task.Status.Message = []MessagePart{{Type: "text", Text: fmt.Sprintf("Pipeline error: %s", err.Error())}}
+	}
+	s.tasks.Store(task)
+	return true
 }
 
 func (s *Server) finishTaskFromResponse(task *Task, resp *models.ChatCompletionResponse) {
