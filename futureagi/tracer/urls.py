@@ -6,6 +6,7 @@ from tracer.views.annotation import (
     GetAnnotationLabelsView,
     TraceAnnotationView,
 )
+from tracer.views.cekura_webhook import CekuraRunWebhookView
 from tracer.views.charts import ChartsView
 from tracer.views.custom_eval_config import CustomEvalConfigView
 from tracer.views.dashboard import DashboardViewSet, DashboardWidgetViewSet
@@ -208,6 +209,11 @@ urlpatterns = [
         "dashboard/<uuid:dashboard_pk>/widgets/<uuid:pk>/duplicate/",
         DashboardWidgetViewSet.as_view({"post": "duplicate_widget"}),
         name="dashboard-widget-duplicate",
+    ),
+    path(
+        "cekura/webhook/<uuid:project_id>/",
+        CekuraRunWebhookView.as_view(),
+        name="cekura-run-webhook",
     ),
     *router.urls,
 ]
