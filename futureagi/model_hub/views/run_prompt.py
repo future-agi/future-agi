@@ -95,6 +95,7 @@ from tfc.utils.error_codes import (
     get_error_for_api_status,
     get_error_message,
     get_specific_error_message,
+    sanitize_run_prompt_error,
 )
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.functions import get_prompt_stats
@@ -425,6 +426,44 @@ TEMPLATE_FORMAT_MUSTACHE = "mustache"
 TEMPLATE_FORMAT_JINJA2 = "jinja2"
 DEFAULT_TEMPLATE_FORMAT = TEMPLATE_FORMAT_JINJA2
 
+# Public spelling used by clients for the Jinja2 engine.
+TEMPLATE_FORMAT_JINJA_PUBLIC = "jinja"
+
+
+def normalize_template_format(template_format):
+    """Map the jinja/jinja2 alias pair to the public spelling ("jinja")."""
+    if template_format == TEMPLATE_FORMAT_JINJA2:
+        return TEMPLATE_FORMAT_JINJA_PUBLIC
+    return template_format
+
+
+def resolve_template_format(config):
+    """Resolve the effective template format from a run prompt config.
+
+    Canonical accessor: reads the current key
+    (run_prompt_config.template_format) first and falls back to the legacy
+    key (configuration.template_format). The jinja/jinja2 alias is
+    normalized to the public spelling, and a missing value resolves to the
+    default so preview and persisted execution always agree.
+
+    Accepts either the full config payload (with run_prompt_config /
+    configuration keys) or a bare run_prompt_config dict.
+    """
+    if not isinstance(config, dict):
+        return DEFAULT_TEMPLATE_FORMAT
+    if "run_prompt_config" in config or "configuration" in config:
+        run_prompt_config = config.get("run_prompt_config") or {}
+        template_format = run_prompt_config.get("template_format")
+        if template_format is None:
+            template_format = (config.get("configuration") or {}).get(
+                "template_format"
+            )
+    else:
+        template_format = config.get("template_format")
+    if template_format is None:
+        template_format = DEFAULT_TEMPLATE_FORMAT
+    return normalize_template_format(template_format)
+
 # Jinja2 environment (reusable, sandboxed for security)
 _jinja2_env = SandboxedEnvironment()
 
@@ -449,6 +488,8 @@ def render_template(
 
     if template_format is None:
         template_format = DEFAULT_TEMPLATE_FORMAT
+    if template_format == TEMPLATE_FORMAT_JINJA_PUBLIC:
+        template_format = TEMPLATE_FORMAT_JINJA2
 
     if template_format == TEMPLATE_FORMAT_FSTRING:
         return template_str.format(**context)
@@ -988,6 +1029,7 @@ class LitellmAPIView(CreateAPIView):
     def process_row(self, row, validated_data, dataset, column, request):
         # Call litellm with the validated data
         status = CellStatus.PASS.value
+        is_llm_error = False
         try:
             messages = populate_placeholders(
                 validated_data.get("messages"),
@@ -1016,12 +1058,14 @@ class LitellmAPIView(CreateAPIView):
                 workspace_id=dataset.workspace.id if dataset.workspace else None,
             )
 
+            is_llm_error = True
             response, value_info = run_prompt.litellm_response()
             value_info["reason"] = value_info.get("data", {}).get("response")
 
         except Exception as e:
             logger.exception(f"Error in processing the row: {str(e)}")
-            error_message = get_specific_error_message(e)
+            # Never return raw exception text to callers - sanitize it.
+            error_message = sanitize_run_prompt_error(e, is_llm_error=is_llm_error)
             response = error_message
             value_info = {"reason": error_message}
             status = CellStatus.ERROR.value
@@ -1396,30 +1440,10 @@ class RunPrompts:
                             row_id=row_id,
                         )
 
-                # Dual-write: emit usage event for new billing system
-                try:
-                    try:
-                        from ee.usage.schemas.events import UsageEvent
-                    except ImportError:
-                        UsageEvent = None
-                    try:
-                        from ee.usage.services.emitter import emit
-                    except ImportError:
-                        emit = None
-
-                    if emit is not None and UsageEvent is not None:
-                        emit(
-                            UsageEvent(
-                                org_id=str(self.run_prompt_model.organization.id),
-                                event_type=APICallTypeChoices.DATASET_RUN_PROMPT.value,
-                                properties={
-                                    "source": "dataset_run_prompt",
-                                    "source_id": str(self.run_prompt_id),
-                                },
-                            )
-                        )
-                except Exception:
-                    pass  # Metering failure must not break the action
+                # NOTE: the usage/billing event is deliberately NOT emitted here.
+                # It is emitted only after the cell result has been persisted and
+                # the call reached a success state (see below), so a failed persist
+                # never bills work whose result was not saved (issue #2080).
 
                 logger.info(
                     "RunPrompts_process_row_populating_placeholders",
@@ -1432,8 +1456,8 @@ class RunPrompts:
                     row_id=row.id,
                     col_id=column.id,
                     model_name=self.run_prompt_model.model,
-                    template_format=(self.run_prompt_model.run_prompt_config or {}).get(
-                        "template_format"
+                    template_format=resolve_template_format(
+                        self.run_prompt_model.run_prompt_config
                     ),
                 )
                 messages = remove_empty_text_from_messages(messages)
@@ -1495,14 +1519,17 @@ class RunPrompts:
                     error=str(e),
                     is_llm_error=is_llm_error,
                 )
-                error_message = get_specific_error_message(e, is_llm_error)
+                # Never return raw exception text to callers - sanitize it.
+                error_message = sanitize_run_prompt_error(
+                    e, is_llm_error=is_llm_error
+                )
                 logger.error(
                     "RunPrompts_process_row_error_message",
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                     error_message=error_message,
                 )
-                response = str(e)
+                response = error_message
                 value_info = {"reason": error_message}
                 status = CellStatus.ERROR.value
 
@@ -1724,7 +1751,11 @@ class AddRunPromptColumnView(APIView):
             config = validated_data[
                 "config"
             ]  # This is now a validated dict from PromptConfigSerializer
-            run_prompt_config = config.get("run_prompt_config", {})
+            # Normalize template_format at the boundary: current key wins,
+            # legacy configuration key falls back, alias pair collapses to
+            # the public spelling so preview and execution agree.
+            run_prompt_config = dict(config.get("run_prompt_config", {}))
+            run_prompt_config["template_format"] = resolve_template_format(config)
 
             # Get dataset and enforce organization isolation
             organization = (
@@ -1917,6 +1948,7 @@ class PreviewRunPromptColumnView(APIView):
 
             responses = []
             for row in rows:
+                is_llm_error = False
                 try:
                     output_format = config.get("output_format", "string")
                     messages = populate_placeholders(
@@ -1925,6 +1957,7 @@ class PreviewRunPromptColumnView(APIView):
                         row_id=row.id,
                         col_id=None,
                         model_name=config.get("model", ""),
+                        template_format=resolve_template_format(config),
                     )
                     if output_format != "audio":
                         messages = remove_empty_text_from_messages(messages)
@@ -1950,6 +1983,7 @@ class PreviewRunPromptColumnView(APIView):
                             else None
                         ),
                     )
+                    is_llm_error = True
                     response, value_infos = run_prompt.litellm_response()
 
                     # Check if showReasoningProcess is enabled to include thinking content
@@ -1969,7 +2003,11 @@ class PreviewRunPromptColumnView(APIView):
                         responses.append(response)
 
                 except Exception as e:
-                    responses.append(str(e))
+                    logger.exception(f"Error processing row in preview: {str(e)}")
+                    # Never return raw exception text to callers - sanitize it.
+                    responses.append(
+                        sanitize_run_prompt_error(e, is_llm_error=is_llm_error)
+                    )
                     value_infos = {"metadata": {"usage": {}, "cost": {}}}
             return self._gm.success_response(
                 {
@@ -2099,9 +2137,20 @@ class EditRunPromptColumnView(APIView):
                     StatusType.RUNNING.value
                 )  # Set to RUNNING immediately
 
-                run_prompter.run_prompt_config = config.get(
-                    "run_prompt_config", run_prompter.run_prompt_config
+                # Merge the incoming config into the stored one instead of
+                # replacing it, so keys omitted from the payload (e.g.
+                # template_format) keep their stored values. Normalize
+                # template_format so preview and execution agree.
+                stored_run_prompt_config = run_prompter.run_prompt_config or {}
+                incoming_run_prompt_config = config.get("run_prompt_config") or {}
+                merged_run_prompt_config = {
+                    **stored_run_prompt_config,
+                    **incoming_run_prompt_config,
+                }
+                merged_run_prompt_config["template_format"] = (
+                    resolve_template_format(config)
                 )
+                run_prompter.run_prompt_config = merged_run_prompt_config
 
                 # Handle tools update - first clear existing tools
                 run_prompter.tools.clear()
@@ -2220,6 +2269,12 @@ class RetrieveRunPromptColumnConfigView(APIView):
                 "top_p": run_prompter.top_p,
                 "model_type": model_type,
             }
+            # Normalize legacy jinja2 spelling back to the public "jinja"
+            # so the editor always sees the same value preview/execution use.
+            if "template_format" in run_prompt_config:
+                run_prompt_config["template_format"] = normalize_template_format(
+                    run_prompt_config["template_format"]
+                )
 
             # Convert any column UUIDs in messages back to column names for display in editor
             converted_messages = convert_uuids_to_column_names(
@@ -2818,7 +2873,8 @@ class RunPromptForRowsView(APIView):
                 {"success": "Run prompts queued for processing."}
             )
         except Exception as e:
-            error_message = get_specific_error_message(e)
+            # Never return raw exception text to callers - sanitize it.
+            error_message = sanitize_run_prompt_error(e)
             logger.exception(f"Error in running prompt on rows: {error_message}")
             return self._gm.internal_server_error_response(error_message)
 

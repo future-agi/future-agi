@@ -1201,6 +1201,109 @@ def get_specific_error_message(error, is_llm_error=None):
     return get_error_message("FAILED_TO_PROCESS_EVALUATION")
 
 
+# ── Run-prompt error sanitization (issue #2081) ──────────────────────────────
+# run-prompt execution failures must never reach API callers with raw
+# exception text (provider error bodies, file paths, tracebacks). Only
+# explicitly allowlisted local validation failures and recognized provider
+# failures are surfaced; everything else maps to a generic message. Callers
+# are responsible for rich server-side logging (logger.exception) so the
+# sanitized response loses no diagnostic detail.
+
+GENERIC_RUN_PROMPT_ERROR = (
+    "Failed to run prompt. Please try again or contact support."
+)
+
+# Known provider exception classes -> clean user-facing messages. Keyed by
+# exception class name; only exceptions raised from these modules qualify, so
+# unrelated app exceptions with the same name are never matched.
+_PROVIDER_ERROR_MESSAGES = {
+    "AuthenticationError": (
+        "Provider authentication failed. Please check your API key and try again."
+    ),
+    "APITimeoutError": "The provider request timed out. Please try again.",
+    "Timeout": "The provider request timed out. Please try again.",
+    "RateLimitError": "Provider rate limit reached. Please wait and retry.",
+    "InsufficientCreditsError": (
+        "Insufficient credits to run the prompt. Please add credits and try again."
+    ),
+    "ContentPolicyViolationError": (
+        "The provider refused the request because it violated its content policy."
+    ),
+    "BadRequestError": (
+        "The provider rejected the request. Please review the prompt configuration."
+    ),
+    "ServiceUnavailableError": (
+        "The provider is temporarily unavailable. Please try again later."
+    ),
+    "InternalServerError": (
+        "The provider is temporarily unavailable. Please try again later."
+    ),
+    "NotFoundError": "The provider could not find the requested resource.",
+}
+
+_PROVIDER_MODULE_PREFIXES = ("litellm", "openai")
+
+_TIMEOUT_ERROR_NAMES = frozenset(
+    {"TimeoutError", "Timeout", "ReadTimeout", "ConnectTimeout"}
+)
+_TIMEOUT_MODULE_PREFIXES = ("builtins", "requests", "urllib3", "httpx", "aiohttp")
+
+# Jinja2 exceptions are template validation failures on the user's own input.
+_TEMPLATE_ERROR_MODULE_PREFIXES = ("jinja2",)
+
+
+def _known_provider_error_message(error):
+    """Return a clean message for a recognized provider failure, else None."""
+    error_type = type(error)
+    name = error_type.__name__
+    module = error_type.__module__
+
+    if name in _PROVIDER_ERROR_MESSAGES and module.startswith(
+        _PROVIDER_MODULE_PREFIXES
+    ):
+        return _PROVIDER_ERROR_MESSAGES[name]
+
+    if name in _TIMEOUT_ERROR_NAMES and module.startswith(_TIMEOUT_MODULE_PREFIXES):
+        return _PROVIDER_ERROR_MESSAGES["APITimeoutError"]
+
+    return None
+
+
+def sanitize_run_prompt_error(error, *, is_llm_error=False):
+    """Map a run-prompt execution error to a safe, user-facing message.
+
+    Fail-closed: raw exception text (provider bodies, file paths, tracebacks)
+    is never returned. Only the following are surfaced:
+      * plain ``ValueError`` raised before the provider call — local validation
+        of the user's own input (unresolved placeholders, unsupported media);
+      * Jinja2 template errors (template syntax, undefined variables);
+      * recognized provider failures (auth, timeout, rate limit, credits, ...).
+    Everything else — including plain ``ValueError`` raised during the
+    provider call, which may carry provider detail — maps to
+    ``GENERIC_RUN_PROMPT_ERROR``.
+
+    Callers must log the full exception server-side (``logger.exception``);
+    this function never includes internal details in its return value.
+
+    Args:
+        error: The caught exception.
+        is_llm_error: True when the exception was raised while calling the
+            provider (``litellm_response``). Local-validation ValueErrors are
+            only allowed through when this is False.
+    """
+    provider_message = _known_provider_error_message(error)
+    if provider_message is not None:
+        return provider_message
+
+    if isinstance(error, ValueError) and not is_llm_error:
+        return str(error)
+
+    if type(error).__module__.startswith(_TEMPLATE_ERROR_MODULE_PREFIXES):
+        return str(error)
+
+    return GENERIC_RUN_PROMPT_ERROR
+
+
 def get_usage_error_code(error):
     """Return a billing/usage error_code for rate-limit or credit-exhaustion
     errors, else None.
