@@ -291,4 +291,5 @@ dev = [
     "pytest-mock>=3.14.1",
     "pytest-split>=0.11.0",
     "pytest-xdist>=3.8.0",
+    "ruff",
 ]
