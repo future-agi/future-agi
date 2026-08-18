@@ -2635,13 +2635,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             attrs_number,
             attrs_bool,
             toJSONString(metadata) AS metadata_json
-        FROM spans
+        FROM spans FINAL
         WHERE project_id = toUUID(%(project_id)s)
           AND trace_id = %(trace_id)s
-          AND is_deleted = 0
           AND (parent_span_id IS NULL OR parent_span_id = '')
           AND observation_type = 'conversation'
         LIMIT 1
+        SETTINGS use_skip_indexes_if_final = 1
         """
         root_result = analytics.execute_ch_query(
             root_query,
@@ -2741,13 +2741,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             toJSONString(metadata) AS metadata_json,
             status_message,
             tags
-        FROM spans
+        FROM spans FINAL
         WHERE project_id = toUUID(%(project_id)s)
           AND trace_id = %(trace_id)s
-          AND is_deleted = 0
           AND parent_span_id IS NOT NULL
         ORDER BY start_time ASC
         LIMIT 1 BY id
+        SETTINGS use_skip_indexes_if_final = 1
         """
         child_result = analytics.execute_ch_query(
             child_query,

@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.28.0](https://github.com/future-agi/future-agi/compare/v1.27.4...v1.28.0) (2026-08-18)
+
+
+### Features
+
+* **gateway:** attach prompts and completions to exported spans ([9109beb](https://github.com/future-agi/future-agi/commit/9109beb905b360251d967e460b03dcd29031f3f3))
+* **gateway:** authenticate OTLP export with configured headers ([c5f0663](https://github.com/future-agi/future-agi/commit/c5f0663d72ad7b19a14fbf26d27c55d0cf620f32))
+* **gateway:** cover image, audio, embedding and retrieval endpoints ([be25beb](https://github.com/future-agi/future-agi/commit/be25beb2e2982422f405f5a0eb9e7a3cb313c9b5))
+* **gateway:** emit flattened message attributes so traces render ([7ce1bbd](https://github.com/future-agi/future-agi/commit/7ce1bbd0bba83a587879b8ae86193a937775921b))
+* **gateway:** export traces over OTLP/HTTP ([0bd97d9](https://github.com/future-agi/future-agi/commit/0bd97d99e251916a4c32f424c4a3059366c68b31))
+* **gateway:** export traces over OTLP/HTTP with prompts and completions ([7cbf13c](https://github.com/future-agi/future-agi/commit/7cbf13ce75cfd7fafdbb3d04f333dd4d6fa5f5de))
+* **tasks:** add a re-run button to the task detail header [TH-7298] ([#2119](https://github.com/future-agi/future-agi/issues/2119)) ([e780ceb](https://github.com/future-agi/future-agi/commit/e780cebac97c525f27a46e16765d1813fd2e94c7))
+
+
+### Bug Fixes
+
+* add INTEGRATION_ENCRYPTION_KEY to root .env.example and fix invalid docker-compose default ([#1059](https://github.com/future-agi/future-agi/issues/1059)) ([4247aff](https://github.com/future-agi/future-agi/commit/4247aff0b79ed0f4effd2cf0c0b58d22755ec0db))
+* **annotations:** align annotation API response contracts with the serializers ([#2110](https://github.com/future-agi/future-agi/issues/2110)) ([724e3d2](https://github.com/future-agi/future-agi/commit/724e3d2505f8f567629980812446a19472103a1a))
+* **annotations:** archive action visibility and settings-tab archive ([#2112](https://github.com/future-agi/future-agi/issues/2112)) ([727b284](https://github.com/future-agi/future-agi/commit/727b284e93b2683227eee47957caa87052abcef9))
+* **annotations:** scope annotation label restore by the resolved organization ([#2115](https://github.com/future-agi/future-agi/issues/2115)) ([46dfd95](https://github.com/future-agi/future-agi/commit/46dfd95db96fad24c93428da089f71641366df17))
+* dedup voice_call_detail spans with FINAL ([6876938](https://github.com/future-agi/future-agi/commit/6876938125b6902b45f5e92029efd82883ed6dd2))
+* **frontend:** render one pie per metric and gate pie on breakdown [TH-6530] ([#2074](https://github.com/future-agi/future-agi/issues/2074)) ([f8af5f2](https://github.com/future-agi/future-agi/commit/f8af5f2ba7df3e58b2a90cd85295ab9bf08cd4c8))
+* **gateway:** enforce MCP tool schema validation on empty arguments ([035e07d](https://github.com/future-agi/future-agi/commit/035e07dd568f80f746b50b7096b91f7da0ad5fed))
+* **gateway:** retry rate-limited OTLP exports and count unencodable batches ([80cf9c2](https://github.com/future-agi/future-agi/commit/80cf9c27fd20137d7e86e53db3c785215488cc36))
+* **gateway:** serialize the redactor cache with the config it caches ([e9fd390](https://github.com/future-agi/future-agi/commit/e9fd390c63156bf8b691171ac3a88a6da3d54997))
+* **gateway:** stop post-parallel plugins racing on the request context ([96d0c16](https://github.com/future-agi/future-agi/commit/96d0c167e517f0567ef895f627ae9c4674e424db))
+* **gateway:** support large MCP stdio messages ([ebe469c](https://github.com/future-agi/future-agi/commit/ebe469c4cba68de290e6a367f6f82fb97bba60f3))
+* **gateway:** truncate span bodies on a rune boundary ([a21bef4](https://github.com/future-agi/future-agi/commit/a21bef40302a24bb08c676ad9e1cac37ad6c5b81))
+* make dataset filter chips editable ([#1555](https://github.com/future-agi/future-agi/issues/1555)) ([d594858](https://github.com/future-agi/future-agi/commit/d5948586b69ef31dd9f9d58bee2cd773669e1f3d))
+* **signup:** validate work email on the form and widen the domain list [TH-7579] ([#2178](https://github.com/future-agi/future-agi/issues/2178)) ([3bd83b6](https://github.com/future-agi/future-agi/commit/3bd83b6a7009aac2f9384b44311bb2f16f35832b))
+* **theme:** make dark-mode checkboxes visible in every state ([#2129](https://github.com/future-agi/future-agi/issues/2129)) ([d46c1d7](https://github.com/future-agi/future-agi/commit/d46c1d7bbed62e8b1d378f4f8afcd7ea169469f9))
+* **tracer:** materialize eval_score from structured eval outputs (TH-7492) ([b626ff0](https://github.com/future-agi/future-agi/commit/b626ff0f2c56988466b695806ca4e28c69ed6c0b))
+
 ## [1.27.4](https://github.com/future-agi/future-agi/compare/v1.27.3...v1.27.4) (2026-08-13)
 
 

@@ -871,12 +871,12 @@ export default function AnnotationQueueTable({
 
               <MenuItem
                 onClick={() => handleAction("archive")}
-                sx={{ color: "warning.main" }}
+                sx={{ color: "error.main" }}
               >
                 <Iconify
                   icon="solar:archive-down-bold"
                   width={18}
-                  sx={{ mr: 1 }}
+                  sx={{ mr: 1, color: "error.main" }}
                 />
                 Archive
               </MenuItem>

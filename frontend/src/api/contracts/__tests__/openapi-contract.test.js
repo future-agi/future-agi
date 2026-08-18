@@ -595,4 +595,87 @@ describe("OpenAPI runtime contract", () => {
       ),
     ).toMatchObject({ ok: false });
   });
+
+  it("accepts queue items with null names, listed assignees, and a null source preview", () => {
+    // Regression: method fields and nullable name fields carried no declared
+    // type, so drf-yasg typed them all as required strings — an unassigned,
+    // unreserved, unreviewed item raised 175 warnings on a single items/ page.
+    const queueItemsResponse = (item) => ({
+      status: 200,
+      config: {
+        url: "/model-hub/annotation-queues/7d1f0c4e-0000-4000-8000-000000000001/items/?page=1",
+        method: "get",
+      },
+      data: {
+        count: 1,
+        next: null,
+        previous: null,
+        results: [item],
+      },
+    });
+
+    const unassignedItem = {
+      id: "1f2e3d4c-0000-4000-8000-000000000002",
+      queue: "7d1f0c4e-0000-4000-8000-000000000001",
+      source_type: "trace",
+      source_id: "trace-1",
+      status: "pending",
+      workflow_status: "pending",
+      workflow_status_label: "Pending Annotation",
+      priority: 0,
+      order: 1,
+      metadata: {},
+      assigned_to: null,
+      assigned_to_name: null,
+      assigned_users: [
+        {
+          id: "9a8b7c6d-0000-4000-8000-000000000003",
+          name: null,
+          email: null,
+        },
+      ],
+      reserved_by: null,
+      reserved_by_name: null,
+      reservation_expires_at: null,
+      review_status: null,
+      reviewed_by: null,
+      reviewed_by_name: null,
+      reviewed_at: null,
+      review_notes: null,
+      source_preview: null,
+      comment_count: 0,
+      open_feedback_count: 0,
+      created_at: "2026-01-01T00:00:00Z",
+    };
+
+    expect(
+      validateContractedResponse(queueItemsResponse(unassignedItem)),
+    ).toMatchObject({ ok: true });
+
+    // source_preview is x-json-value, so any valid JSON shape passes.
+    expect(
+      validateContractedResponse(
+        queueItemsResponse({
+          ...unassignedItem,
+          assigned_to_name: "Ada Lovelace",
+          assigned_users: [
+            {
+              id: "9a8b7c6d-0000-4000-8000-000000000003",
+              name: "Ada Lovelace",
+              email: "ada@example.com",
+            },
+          ],
+          source_preview: { input: "hello", tags: ["a", null] },
+        }),
+      ),
+    ).toMatchObject({ ok: true });
+
+    // The endpoint really is validated here — a count sent as a string fails,
+    // so the null-tolerance above is not just an unmatched-route skip.
+    expect(
+      validateContractedResponse(
+        queueItemsResponse({ ...unassignedItem, comment_count: "0" }),
+      ),
+    ).toMatchObject({ ok: false });
+  });
 });

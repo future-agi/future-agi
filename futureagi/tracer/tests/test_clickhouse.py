@@ -58,6 +58,26 @@ class TestNonTerminalEvalMarker:
 # ============================================================================
 
 
+def _fake_backfill_client(affected=0, in_flight=0, partitions=("202601", "202602")):
+    """A CH client stub that answers backfill_eval_score's three read queries."""
+    client = mock.MagicMock()
+    client.executed = []
+
+    def execute(query, *args, **kwargs):
+        client.executed.append(query)
+        collapsed = " ".join(query.split())
+        if collapsed.startswith("SELECT count() FROM system.mutations"):
+            return [(in_flight,)]
+        if collapsed.startswith("SELECT count() FROM usage_apicalllog"):
+            return [(affected,)]
+        if collapsed.startswith("SELECT DISTINCT partition"):
+            return [(p,) for p in partitions]
+        return []
+
+    client.execute = execute
+    return client
+
+
 @pytest.mark.unit
 class TestClickHouseSchema:
     """Test schema DDL generation."""
@@ -220,6 +240,148 @@ class TestClickHouseSchema:
             "POST_DDL_ALTERS must order DROP INDEX → MODIFY COLUMN → ADD INDEX "
             "for idx_trace_id; ClickHouse refuses to alter an indexed column."
         )
+
+    def test_eval_score_expression_reads_structured_and_scalar_outputs(self):
+        """Dropping either branch blanks one family of eval widgets."""
+        from tracer.services.clickhouse.schema import (
+            CDC_USAGE_APICALLLOG,
+            CH_EVAL_SCORE_EXPR,
+        )
+
+        assert (
+            "JSONType(JSONExtractString(config), 'output', 'output', 'score') "
+            "IN ('Double', 'Int64', 'UInt64')" in CH_EVAL_SCORE_EXPR
+        ), (
+            "the nested-score branch must gate on the value's type: JSONHas is "
+            "true for a null or string score that JSONExtractFloat reads as 0."
+        )
+        assert (
+            "JSONExtractFloat(JSONExtractString(config), 'output', 'output'))"
+            in CH_EVAL_SCORE_EXPR
+        ), "eval_score must keep the bare-scalar fallback for score evals."
+        assert (
+            f"eval_score Float64 MATERIALIZED {CH_EVAL_SCORE_EXPR}"
+            in CDC_USAGE_APICALLLOG
+        )
+
+    def test_post_ddl_alters_modifies_eval_score_on_existing_tables(self):
+        """ALTER statements bring an already-created usage_apicalllog forward."""
+        from tracer.services.clickhouse.schema import (
+            CH_EVAL_OUTPUT_STR_EXPR,
+            CH_EVAL_SCORE_EXPR,
+            POST_DDL_ALTERS,
+        )
+
+        joined = "\n".join(POST_DDL_ALTERS)
+        assert (
+            "usage_apicalllog MODIFY COLUMN eval_score Float64 "
+            f"MATERIALIZED {CH_EVAL_SCORE_EXPR}" in joined
+        ), "ADD COLUMN IF NOT EXISTS no-ops on a deployed table; MODIFY does not."
+        assert (
+            "usage_apicalllog ADD COLUMN IF NOT EXISTS eval_score Float64 "
+            f"MATERIALIZED {CH_EVAL_SCORE_EXPR}" in joined
+        )
+        assert (
+            "usage_apicalllog ADD COLUMN IF NOT EXISTS eval_output_str String "
+            f"MATERIALIZED {CH_EVAL_OUTPUT_STR_EXPR}" in joined
+        )
+        assert (
+            "usage_apicalllog ADD INDEX IF NOT EXISTS idx_eval_score "
+            "eval_score TYPE minmax GRANULARITY 1" in joined
+        ), "a backfill dying between its DROP and ADD otherwise loses the index."
+
+    def test_backfill_queries_survive_driver_parameter_substitution(self):
+        """A literal ``%`` in a template raises before it reaches CH."""
+        from tracer.management.commands import backfill_eval_score as cmd
+        from tracer.services.clickhouse.eval_expressions import (
+            eval_has_structured_score,
+        )
+        from tracer.services.clickhouse.schema import (
+            CH_EVAL_SCORE_EXPR,
+            EVAL_OUTPUT_JSON_ARGS,
+        )
+
+        templates = {
+            "_PARTITIONS": cmd._PARTITIONS.format(table=cmd.TABLE),
+            "_IN_FLIGHT": cmd._IN_FLIGHT.format(table=cmd.TABLE, column=cmd.COLUMN),
+            "_AFFECTED_COUNT": cmd._AFFECTED_COUNT.format(
+                table=cmd.TABLE,
+                column=cmd.COLUMN,
+                expr=CH_EVAL_SCORE_EXPR,
+                predicate=eval_has_structured_score(EVAL_OUTPUT_JSON_ARGS),
+            ),
+            # Travels through ch.execute() from rebuild_statements/POST_DDL_ALTERS.
+            "CH_EVAL_SCORE_EXPR": CH_EVAL_SCORE_EXPR,
+        }
+        for name, sql in templates.items():
+            try:
+                sql % {}
+            except (TypeError, ValueError) as exc:
+                pytest.fail(f"{name} is not substitution-safe: {exc}")
+
+    def test_backfill_partition_scan_is_scoped_to_this_database(self):
+        """An unscoped system.parts scan materializes another database's parts."""
+        from tracer.management.commands import backfill_eval_score as cmd
+
+        assert "database = currentDatabase()" in cmd._PARTITIONS
+
+    def test_backfill_dry_run_counts_without_mutating(self):
+        """--dry-run reports the stale rows and stops before any ALTER."""
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        from tracer.services.clickhouse import client as ch_client
+
+        ch = _fake_backfill_client(affected=7)
+        out = StringIO()
+        with mock.patch.object(ch_client, "get_clickhouse_client", lambda: ch):
+            call_command("backfill_eval_score", "--dry-run", stdout=out)
+
+        assert "rows with a stale eval_score: 7" in out.getvalue()
+        assert "--dry-run: no mutation submitted." in out.getvalue()
+        assert not any("ALTER TABLE" in q for q in ch.executed)
+
+    def test_backfill_refuses_to_stack_on_an_in_flight_mutation(self):
+        """Overlapping deploys must not queue a second eval_score mutation."""
+        from io import StringIO
+
+        from django.core.management import CommandError, call_command
+
+        from tracer.services.clickhouse import client as ch_client
+
+        ch = _fake_backfill_client(affected=7, in_flight=1)
+        with mock.patch.object(ch_client, "get_clickhouse_client", lambda: ch):
+            with pytest.raises(CommandError, match="already running"):
+                call_command("backfill_eval_score", "--no-confirm", stdout=StringIO())
+
+        assert not any("ALTER TABLE" in q for q in ch.executed)
+
+    def test_backfill_force_rebuilds_when_no_row_is_stale(self):
+        """--force runs the rebuild the "nothing to do" early return skips."""
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        from tracer.services.clickhouse import client as ch_client
+
+        ch = _fake_backfill_client(affected=0)
+        out = StringIO()
+        with mock.patch.object(ch_client, "get_clickhouse_client", lambda: ch):
+            call_command("backfill_eval_score", "--force", "--no-confirm", stdout=out)
+
+        altered = [q for q in ch.executed if q.startswith("ALTER TABLE")]
+        assert any("DROP INDEX IF EXISTS idx_eval_score" in q for q in altered)
+        assert any("ADD INDEX IF NOT EXISTS idx_eval_score" in q for q in altered)
+        # One MATERIALIZE COLUMN + one MATERIALIZE INDEX per partition.
+        assert sum("MATERIALIZE COLUMN" in q for q in altered) == 2
+        assert sum("MATERIALIZE INDEX" in q for q in altered) == 2
+        assert "materializing across 2 partition(s)" in out.getvalue()
+
+        unforced = _fake_backfill_client(affected=0)
+        with mock.patch.object(ch_client, "get_clickhouse_client", lambda: unforced):
+            call_command("backfill_eval_score", "--no-confirm", stdout=StringIO())
+        assert not any("ALTER TABLE" in q for q in unforced.executed)
 
     def test_mv_recreate_manifest_consistency(self):
         """Every MV_RECREATE_MANIFEST entry must resolve to a real DDL constant."""

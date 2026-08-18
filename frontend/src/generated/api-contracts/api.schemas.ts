@@ -5599,7 +5599,7 @@ export interface QueueAnnotatorNestedApi {
   readonly email?: string;
   /** @minLength 1 */
   role?: string;
-  readonly roles?: string;
+  readonly roles?: readonly string[];
 }
 
 export interface AnnotationQueueApi {
@@ -5644,8 +5644,9 @@ export interface AnnotationQueueApi {
   readonly created_by?: string;
   /** @minLength 1 */
   readonly created_by_name?: string;
+  /** @minLength 1 */
   readonly viewer_role?: string;
-  readonly viewer_roles?: string;
+  readonly viewer_roles?: readonly string[];
   readonly deleted?: boolean;
   readonly created_at?: string;
 }
@@ -6132,6 +6133,19 @@ export const QueueItemApiStatus = {
 
 export type QueueItemApiMetadata = { [key: string]: unknown };
 
+/**
+ * Any valid JSON value.
+ */
+export type QueueItemApiSourcePreview = { [key: string]: unknown };
+
+export interface QueueItemAssignedUserApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  email: string;
+}
+
 export interface QueueItemApi {
   readonly id?: string;
   readonly queue?: string;
@@ -6155,7 +6169,7 @@ export interface QueueItemApi {
   assigned_to?: string;
   /** @minLength 1 */
   readonly assigned_to_name?: string;
-  readonly assigned_users?: string;
+  readonly assigned_users?: readonly QueueItemAssignedUserApi[];
   reserved_by?: string;
   /** @minLength 1 */
   readonly reserved_by_name?: string;
@@ -6167,9 +6181,10 @@ export interface QueueItemApi {
   readonly reviewed_by_name?: string;
   reviewed_at?: string;
   review_notes?: string;
-  readonly source_preview?: string;
-  readonly comment_count?: string;
-  readonly open_feedback_count?: string;
+  /** Any valid JSON value. */
+  readonly source_preview?: QueueItemApiSourcePreview;
+  readonly comment_count?: number;
+  readonly open_feedback_count?: number;
   readonly created_at?: string;
 }
 
