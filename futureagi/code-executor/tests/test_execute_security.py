@@ -30,9 +30,7 @@ VALID_EVAL_CODE = "def evaluate(input):\n    return {'result': 1.0}\n"
 def test_health_endpoint_returns_status():
     response = _client().simulate_get("/health")
     assert response.status == falcon.HTTP_200
-    body = response.json
-    assert body["status"] == "ok"
-    assert "nsjail" in body
+    assert response.json == {"status": "ok"}
 
 
 def test_execute_rejected_without_auth():

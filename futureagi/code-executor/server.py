@@ -379,12 +379,10 @@ class ExecuteResource:
 
 class HealthResource:
     def on_get(self, req, resp):
-        resp.media = {
-            "status": "ok",
-            "nsjail": NSJAIL_AVAILABLE,
-            "python": PYTHON_PATH,
-            "node": NODE_PATH,
-        }
+        # Minimal payload on purpose: this endpoint is unauthenticated, so it
+        # must not leak interpreter paths or nsjail availability (recon value
+        # for an attacker).
+        resp.media = {"status": "ok"}
 
 
 app = falcon.App()
