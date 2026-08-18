@@ -116,7 +116,7 @@ def _signal_stop(_signum, _frame) -> None:
 
 
 def stop() -> None:
-    """Send SIGTERM to the collector, wait up to 10 s, then SIGKILL.
+    """Send SIGTERM to the collector, wait up to 600 s, then SIGKILL.
     Safe to call multiple times.
     """
     _stop.set()
@@ -128,7 +128,7 @@ def stop() -> None:
         except ProcessLookupError:
             return
         try:
-            proc.wait(timeout=10)
+            proc.wait(timeout=600)
         except subprocess.TimeoutExpired:
             log.warning("fi-collector did not exit on SIGTERM; SIGKILL")
             try:

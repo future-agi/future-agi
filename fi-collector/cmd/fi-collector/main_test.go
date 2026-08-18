@@ -4,10 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
+	"github.com/future-agi/future-agi/fi-collector/pkg/server"
 )
 
 // logLines parses newline-delimited slog JSON output into a slice of
@@ -106,5 +111,67 @@ func TestLoadPriceTable_SkippedEntriesWarns(t *testing.T) {
 	}
 	if !sawSkippedWarn {
 		t.Error("want a WARN log reporting the skipped-entry count")
+	}
+}
+
+func TestApplyEnvOverridesPendingLimitsAndAdminAddr(t *testing.T) {
+	t.Setenv("FI_MAX_PENDING_REQUESTS", "17")
+	t.Setenv("FI_MAX_PENDING_ROWS", "23")
+	t.Setenv("FI_MAX_PENDING_MIB", "31")
+	t.Setenv("FI_MAX_CONCURRENT_REQUESTS", "13")
+	t.Setenv("FI_ADMIN_ADDR", "127.0.0.1:9999")
+	cfg := rootConfig{}
+	applyEnvOverrides(slog.Default(), &cfg)
+	if cfg.Server.MaxPendingRequests != 17 || cfg.Server.MaxPendingRows != 23 || cfg.Server.MaxPendingMiB != 31 || cfg.Server.MaxConcurrentRequests != 13 {
+		t.Fatalf("pending overrides not applied: %+v", cfg.Server)
+	}
+	if cfg.Admin.Addr != "127.0.0.1:9999" {
+		t.Fatalf("admin addr=%q", cfg.Admin.Addr)
+	}
+}
+
+func TestApplyEnvOverridesRejectsInvalidPendingLimits(t *testing.T) {
+	t.Setenv("FI_MAX_PENDING_ROWS", "not-a-number")
+	var buf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&buf, nil))
+	cfg := rootConfig{Server: server.Config{MaxPendingRows: 99}}
+	applyEnvOverrides(log, &cfg)
+	if cfg.Server.MaxPendingRows != 99 {
+		t.Fatalf("invalid override changed value to %d", cfg.Server.MaxPendingRows)
+	}
+	if !strings.Contains(buf.String(), "FI_MAX_PENDING_ROWS") {
+		t.Fatalf("missing warning log: %s", buf.String())
+	}
+}
+
+func TestAdminHealthIncludesQueueSnapshot(t *testing.T) {
+	ch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ch.Close()
+	w, err := chwriter.New(chwriter.Config{URL: ch.URL, DeadLetterFile: filepath.Join(t.TempDir(), "dl.jsonl")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collector := server.New(server.Config{
+		MaxPendingRequests: 7,
+		MaxPendingRows:     11,
+		MaxPendingMiB:      13,
+	}, w, nil, nil, nil)
+
+	handler := adminHandler(w, collector)
+	rw := httptest.NewRecorder()
+	handler.ServeHTTP(rw, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rw.Code, rw.Body.String())
+	}
+	var body struct {
+		Queue server.QueueStats `json:"queue"`
+	}
+	if err := json.Unmarshal(rw.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Queue.MaxPendingRequests != 7 || body.Queue.MaxPendingRows != 11 || body.Queue.MaxPendingBytes != 13<<20 {
+		t.Fatalf("queue snapshot=%+v", body.Queue)
 	}
 }

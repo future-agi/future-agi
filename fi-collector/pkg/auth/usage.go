@@ -38,14 +38,14 @@ func NewUsageEmitter(rdb *redis.Client, pg *pgxpool.Pool, log *slog.Logger) *Usa
 // Namespace for deterministic billing event_ids (re-poll → same id → consumer dedups).
 var billingDedupNS = uuid.MustParse("a7c3e1f0-5d29-4b6a-8c14-9f2b0e6d3a71")
 
-// billingEventID is deterministic per dedupKey so re-polls dedup to a single
+// billingEventID is deterministic per org+dedupKey so re-polls dedup to a single
 // event even if the org's billing mode flips between polls; empty dedupKey →
 // random id (SDK batches don't re-poll).
-func billingEventID(dedupKey string) string {
+func billingEventID(orgID, dedupKey string) string {
 	if dedupKey == "" {
 		return uuid.New().String()
 	}
-	return uuid.NewSHA1(billingDedupNS, []byte(dedupKey)).String()
+	return uuid.NewSHA1(billingDedupNS, []byte(orgID+":"+dedupKey)).String()
 }
 
 // EmitIngestion records usage for the ONE dimension the org is billed on,
@@ -65,7 +65,7 @@ func (u *UsageEmitter) EmitIngestion(orgID string, numTraces, numSpans int, payl
 	if u.tracingBillingMode(ctx, orgID) == "storage" {
 		if payloadBytes > 0 {
 			u.xadd(ctx, map[string]any{
-				"event_id":   billingEventID(dedupKey),
+				"event_id":   billingEventID(orgID, dedupKey),
 				"org_id":     orgID,
 				"event_type": "observe_add",
 				"timestamp":  now,
@@ -80,7 +80,7 @@ func (u *UsageEmitter) EmitIngestion(orgID string, numTraces, numSpans int, payl
 	tracingUnits := numTraces + numSpans
 	if tracingUnits > 0 {
 		u.xadd(ctx, map[string]any{
-			"event_id":   billingEventID(dedupKey),
+			"event_id":   billingEventID(orgID, dedupKey),
 			"org_id":     orgID,
 			"event_type": "tracing_event",
 			"timestamp":  now,

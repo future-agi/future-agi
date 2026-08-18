@@ -21,8 +21,8 @@ writer:
   # Local path inside the container; bind-mount to /var/lib/fi-collector
   # on the host in compose so a container restart preserves the queue.
   dead_letter_file: /var/lib/fi-collector/dead_letter.jsonl
-  # We default async_insert OFF — our own batching is the primary
-  # backpressure mechanism. Flip on under acute write spikes only.
+  # Must remain false: OTLP success is delayed until the canonical writer
+  # reaches a durable boundary, which wait_for_async_insert=0 cannot prove.
   async_insert: false
 
 server:
@@ -35,6 +35,13 @@ server:
   http_addr: ":4318"
   batch_max_rows: 5000
   batch_max_age: 5s
+  # Hard admission limits across queued plus canonical-writer in-flight work.
+  # Requests are accepted atomically; overload returns retryable OTLP errors.
+  max_pending_requests: 1000
+  max_pending_rows: 20000
+  max_pending_mib: 64
+  # Bounds decoded/converting handler concurrency across HTTP and gRPC.
+  max_concurrent_requests: 32
   # Max gRPC receive message size in MiB (FI_GRPC_MAX_RECV_MIB); 16 matches
   # the OTLP/HTTP body cap.
   grpc_max_recv_mib: 16

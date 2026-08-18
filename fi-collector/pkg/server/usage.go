@@ -2,25 +2,60 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
-func (s *Server) emitUsage(ctx context.Context, traces ptrace.Traces, payloadBytes int64) {
+type usageRecord struct {
+	orgID        string
+	numTraces    int
+	numSpans     int
+	payloadBytes int64
+	dedupKey     string
+}
+
+func usageFromContext(ctx context.Context, traces ptrace.Traces, payload []byte) *usageRecord {
 	result := auth.FromContext(ctx)
 	if result == nil {
+		return nil
+	}
+	// Single-trace exports use the trace id. Multi-trace batches use the wire
+	// payload hash so a timeout/retry after durable acceptance is billed once.
+	ids := distinctTraceIDs(traces)
+	dedupKey := usageDedupKey(ids, payload)
+	return &usageRecord{
+		orgID:        result.OrgID,
+		numTraces:    len(ids),
+		numSpans:     traces.SpanCount(),
+		payloadBytes: int64(len(payload)),
+		dedupKey:     dedupKey,
+	}
+}
+
+func usageDedupKey(ids [][16]byte, payload []byte) string {
+	if len(ids) == 1 {
+		return hex.EncodeToString(ids[0][:])
+	} else if len(payload) > 0 {
+		sum := sha256.Sum256(payload)
+		return hex.EncodeToString(sum[:])
+	}
+	return ""
+}
+
+func (s *Server) emitUsage(record *usageRecord) {
+	if record == nil {
 		return
 	}
-	// Single-trace export = a provider-pull call (deterministic trace id, re-polled):
-	// key billing on it so re-polls bill once. Multi-trace SDK batch → random id.
-	ids := distinctTraceIDs(traces)
-	dedupKey := ""
-	if len(ids) == 1 {
-		dedupKey = hex.EncodeToString(ids[0][:])
-	}
-	s.usage.EmitIngestion(result.OrgID, len(ids), traces.SpanCount(), payloadBytes, dedupKey)
+	s.usage.EmitIngestion(
+		record.orgID,
+		record.numTraces,
+		record.numSpans,
+		record.payloadBytes,
+		record.dedupKey,
+	)
 }
 
 func (s *Server) checkUsage(ctx context.Context) (auth.CheckResult, bool) {

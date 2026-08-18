@@ -99,13 +99,13 @@ func TestCheckUsageNoAuthContext(t *testing.T) {
 func TestEmitUsageNilUsage(t *testing.T) {
 	s := &Server{usage: nil}
 	// Must not panic
-	s.emitUsage(context.Background(), ptrace.NewTraces(), 1024)
+	s.emitUsage(nil)
 }
 
 func TestEmitUsageNoAuthContext(t *testing.T) {
 	s := &Server{usage: &auth.UsageEmitter{}}
 	// Must not panic — no auth result in context
-	s.emitUsage(context.Background(), ptrace.NewTraces(), 1024)
+	s.emitUsage(usageFromContext(context.Background(), ptrace.NewTraces(), make([]byte, 1024)))
 }
 
 func TestCountDistinctTracesMultipleScopeSpans(t *testing.T) {
@@ -144,6 +144,21 @@ func TestDistinctTraceIDsReturnsSingleID(t *testing.T) {
 	}
 	if ids[0] != tid {
 		t.Errorf("distinct id = %x, want %x", ids[0], tid)
+	}
+}
+
+func TestUsageMultiTraceDedupKeyUsesPayloadHash(t *testing.T) {
+	traces := ptrace.NewTraces()
+	rs := traces.ResourceSpans().AppendEmpty()
+	spans := rs.ScopeSpans().AppendEmpty().Spans()
+	spans.AppendEmpty().SetTraceID(pcommon.TraceID([16]byte{1}))
+	spans.AppendEmpty().SetTraceID(pcommon.TraceID([16]byte{2}))
+	payload := []byte("stable OTLP payload")
+	ids := distinctTraceIDs(traces)
+	first := usageDedupKey(ids, payload)
+	second := usageDedupKey(ids, payload)
+	if first == "" || first != second {
+		t.Fatalf("unstable multi-trace dedup keys: %q %q", first, second)
 	}
 }
 

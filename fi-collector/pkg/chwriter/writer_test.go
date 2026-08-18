@@ -132,6 +132,69 @@ func TestInsert4xxDeadLettersWithoutRetry(t *testing.T) {
 	}
 }
 
+func TestInsertWithOutcomeReportsClickHouseDurability(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	w, _ := New(mkConfig(t, srv.URL))
+	defer w.Close()
+
+	outcome := w.InsertWithOutcome(context.Background(), []map[string]any{{"id": "s1"}})
+	if !outcome.Durable || outcome.DeadLettered || outcome.Err != nil {
+		t.Fatalf("outcome=%+v, want durable ClickHouse success", outcome)
+	}
+}
+
+func TestInsertWithOutcomeReportsDurableDeadLetter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "bad schema", http.StatusBadRequest)
+	}))
+	defer srv.Close()
+	w, _ := New(mkConfig(t, srv.URL))
+	defer w.Close()
+
+	outcome := w.InsertWithOutcome(context.Background(), []map[string]any{{"id": "s1"}})
+	if !outcome.Durable || !outcome.DeadLettered || outcome.Err == nil {
+		t.Fatalf("outcome=%+v, want durable dead-letter failure", outcome)
+	}
+}
+
+func TestInsertWithOutcomeReportsDeadLetterFailureAsNotDurable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "bad schema", http.StatusBadRequest)
+	}))
+	defer srv.Close()
+	cfg := mkConfig(t, srv.URL)
+	cfg.DeadLetterFile = t.TempDir() // opening a directory as a file must fail
+	w, _ := New(cfg)
+	defer w.Close()
+
+	outcome := w.InsertWithOutcome(context.Background(), []map[string]any{{"id": "s1"}})
+	if outcome.Durable || outcome.DeadLettered || outcome.Err == nil {
+		t.Fatalf("outcome=%+v, want non-durable dead-letter failure", outcome)
+	}
+	if w.Snapshot().BatchesNotDurable != 1 {
+		t.Fatalf("BatchesNotDurable=%d, want 1", w.Snapshot().BatchesNotDurable)
+	}
+}
+
+func TestInsertWithOutcomeRejectsAsyncInsert(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("durable writer must not send wait_for_async_insert=0 requests")
+	}))
+	defer srv.Close()
+	cfg := mkConfig(t, srv.URL)
+	cfg.AsyncInsert = true
+	w, _ := New(cfg)
+	defer w.Close()
+
+	outcome := w.InsertWithOutcome(context.Background(), []map[string]any{{"id": "s1"}})
+	if outcome.Durable || outcome.Err == nil {
+		t.Fatalf("outcome=%+v, want async insert rejection", outcome)
+	}
+}
+
 func TestInsertEmptyBatchNoop(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("server should not be called on empty batch")
