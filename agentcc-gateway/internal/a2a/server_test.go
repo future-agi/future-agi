@@ -376,3 +376,39 @@ func TestAsyncCancelCannotBeOverwrittenByLateSuccess(t *testing.T) {
 	}
 	t.Fatal("async task did not finish")
 }
+
+func TestDeadlineCannotBeOverwrittenByLateSuccess(t *testing.T) {
+	executor := func(ctx context.Context, _ string, _ *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+		<-ctx.Done()
+		return &models.ChatCompletionResponse{
+			Model: "test-model",
+			Choices: []models.Choice{{
+				Message: models.Message{Content: json.RawMessage(`"late success"`)},
+			}},
+		}, nil
+	}
+	s := NewServer(
+		CardConfig{Name: "test-agentcc"},
+		NewRegistry(nil),
+		WithChatCompletionExecutor(executor),
+	)
+	defer s.Close()
+
+	task := &Task{ID: "deadline-task", Status: TaskStatus{State: TaskStatusWorking}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	s.runMessageSendWithPipeline(ctx, "", task, "slow request", MessageSendParams{
+		Metadata: json.RawMessage(`{"model":"test-model"}`),
+	})
+
+	stored, ok := s.tasks.Get(task.ID)
+	if !ok {
+		t.Fatal("expected timed-out task to remain stored")
+	}
+	if stored.Status.State != TaskStatusFailed {
+		t.Fatalf("late success overwrote deadline failure: %s", stored.Status.State)
+	}
+	if len(stored.Status.Message) != 1 || stored.Status.Message[0].Text != "Pipeline error: context deadline exceeded" {
+		t.Fatalf("unexpected deadline error: %#v", stored.Status.Message)
+	}
+}
