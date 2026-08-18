@@ -108,11 +108,24 @@ async def run_hosted_sdk_job(input: RunHostedJobInput) -> RunHostedJobOutput:
     # _needs_phone gate). Lease before spawning, inject the slot into the job,
     # release in finally. Web/chat never lease.
     did_slot = None
+    telephony_provider = (
+        str((job.get("metadata") or {}).get("telephony_provider") or "twilio")
+        .strip()
+        .lower()
+    )
     try:
         if input.mode == "voice_sip":
-            did_slot = await _acquire_did_slot(input.job_id)
+            did_slot = await _acquire_did_slot(input.job_id, telephony_provider)
             if did_slot:
                 _inject_did_slot(job, did_slot)
+            elif telephony_provider != "twilio":
+                # Twilio may degrade to SDK self-provisioning on the default
+                # inbound trunk, but a non-Twilio carrier would then silently run
+                # on the Twilio trunk/DID. Fail closed instead.
+                raise RuntimeError(
+                    f"did_lease_required: no slot leased for carrier "
+                    f"'{telephony_provider}' (voice_sip)"
+                )
 
         with open(job_path, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(job))
@@ -168,7 +181,7 @@ async def run_hosted_sdk_job(input: RunHostedJobInput) -> RunHostedJobOutput:
                 )
     finally:
         if did_slot is not None:
-            await _release_did_slot(did_slot)
+            await _release_did_slot(did_slot, telephony_provider)
         _child_semaphore.release()
 
     return RunHostedJobOutput(
@@ -368,12 +381,25 @@ def _resolve_provider_credential(
     return credentials.get_api_key()
 
 
-async def _acquire_did_slot(job_id: str) -> dict[str, Any] | None:
+def _lease_provider_args(provider: str) -> list[str]:
+    """The lease CLI takes ``--provider`` before the subcommand. Twilio is the
+    default and omits the flag so its invocation is byte-identical to before."""
+    if provider and provider != "twilio":
+        return ["--provider", provider]
+    return []
+
+
+async def _acquire_did_slot(
+    job_id: str, provider: str = "twilio"
+) -> dict[str, Any] | None:
     """Lease one DID slot from the livekit-infra inbound-simulator pool
     (tasks #115-119). Returns a normalized slot dict (``did``,
     ``dispatch_rule_name``, ``slot_id``) or None when no lease script is
     configured — the SDK then
     provisions a per-run dispatch rule itself (sip_inbound default).
+
+    ``provider`` selects the carrier pool (``twilio`` default / ``telnyx``); the
+    lease store is partitioned per carrier so slot ids never collide.
 
     The lease helper is a separate repo/script; we shell out to it so the
     backend keeps no LiveKit-infra import. Failures degrade to None rather than
@@ -387,6 +413,7 @@ async def _acquire_did_slot(job_id: str) -> dict[str, Any] | None:
         proc = await asyncio.create_subprocess_exec(
             python,
             script,
+            *_lease_provider_args(provider),
             "acquire",
             "--run-id",
             job_id,
@@ -414,7 +441,7 @@ async def _acquire_did_slot(job_id: str) -> dict[str, Any] | None:
         return None
 
 
-async def _release_did_slot(slot: dict[str, Any]) -> None:
+async def _release_did_slot(slot: dict[str, Any], provider: str = "twilio") -> None:
     script = os.getenv("ALK_SIM_SLOT_LEASE_SCRIPT")
     slot_id = slot.get("slot_id") or slot.get("slot") or slot.get("did")
     if not script or not slot_id:
@@ -424,6 +451,7 @@ async def _release_did_slot(slot: dict[str, Any]) -> None:
         proc = await asyncio.create_subprocess_exec(
             python,
             script,
+            *_lease_provider_args(provider),
             "release",
             "--slot",
             str(slot_id),
@@ -450,6 +478,11 @@ def _inject_did_slot(job: dict[str, Any], slot: dict[str, Any]) -> None:
     rule = slot.get("dispatch_rule_name")
     if rule:
         transport["dispatch_rule_name"] = rule
+    # Pin the leased carrier pool trunk so the SDK validates the rule binds it
+    # and never falls back to the worker's default (Twilio) LIVEKIT_INBOUND_TRUNK_ID.
+    pool_trunk_id = slot.get("pool_trunk_id")
+    if pool_trunk_id:
+        transport["sip_inbound_trunk_id"] = str(pool_trunk_id)
     did = slot.get("did")
     if did:
         job.setdefault("voice", {}).setdefault("params", {})["inbound_did"] = did

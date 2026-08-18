@@ -52,6 +52,7 @@ class ConversationDirection(StrEnum):
     SIMULATOR_FIRST = "simulator_first"
     AGENT_FIRST = "agent_first"
 
+
 _MODE_TO_ENVIRONMENT = {
     "chat": ("chat", "conversation"),
 }
@@ -518,6 +519,7 @@ def _build_voice_job(
             "run_id": run_id,
             "provider": provider,
             "transport": transport_kind,
+            "telephony_provider": _telephony_provider(),
             "secret_env": secret_env,
         },
     }
@@ -653,13 +655,15 @@ def _voice_agent_definition(
                 }
             secret_env.append(_credential_or_env(env_var, credentials, "api_key"))
     elif transport_kind == "sip_outbound":
+        carrier = _telephony_provider()
         agent_def["transport"] = {
             "kind": "sip_outbound",
             "sip_trunk_id": _require(
-                _voice_setting("LIVEKIT_OUTBOUND_TRUNK_ID"), "LIVEKIT_OUTBOUND_TRUNK_ID"
+                _carrier_setting("LIVEKIT_OUTBOUND_TRUNK_ID", carrier),
+                "LIVEKIT_OUTBOUND_TRUNK_ID",
             ),
             "sip_number": _require(
-                _voice_setting("PSTN_CALLER_NUMBER"), "PSTN_CALLER_NUMBER"
+                _carrier_setting("PSTN_CALLER_NUMBER", carrier), "PSTN_CALLER_NUMBER"
             ),
             "sip_call_to": _require(
                 agent_definition.contact_number, "agent contact_number"
@@ -749,7 +753,10 @@ def _voice_simulator_config(
     if _is_english_language(language):
         default_tts_provider, default_tts_model = "deepgram", "aura-2-andromeda-en"
     else:
-        default_tts_provider, default_tts_model = "gemini", "gemini-3.1-flash-tts-preview"
+        default_tts_provider, default_tts_model = (
+            "gemini",
+            "gemini-3.1-flash-tts-preview",
+        )
     tts = {
         "provider": _voice_setting("SIMULATOR_TTS_PROVIDER") or default_tts_provider,
         "model": _voice_setting("SIMULATOR_TTS_MODEL") or default_tts_model,
@@ -925,6 +932,33 @@ def _credential_or_env(env_var: str, credentials, field: str) -> dict[str, Any]:
 
 def _voice_setting(name: str) -> str | None:
     return getattr(settings, name, None) or os.getenv(name)
+
+
+_TELEPHONY_PROVIDERS = {"twilio", "telnyx"}
+
+
+def _telephony_provider() -> str:
+    """PSTN carrier for the SIP path. Global switch, default ``twilio`` (no
+    change to existing runs). Set ``TELEPHONY_PROVIDER=telnyx`` to route
+    hosted SIP runs onto the Telnyx pool / trunk."""
+    configured = _voice_setting("TELEPHONY_PROVIDER")
+    value = (
+        configured.strip().lower() if configured and configured.strip() else "twilio"
+    )
+    if value not in _TELEPHONY_PROVIDERS:
+        raise HostedRunnerBuildError(f"unsupported telephony provider: {value}")
+    return value
+
+
+def _carrier_setting(name: str, carrier: str) -> str | None:
+    """Carrier-scoped voice setting. Twilio uses the shared ``<NAME>`` (unchanged).
+    A non-Twilio carrier reads ONLY its scoped ``<NAME>_<CARRIER>`` with **no
+    fallback** to the shared value — otherwise a partially-configured Telnyx run
+    would silently pick up the Twilio trunk/caller. Missing ⇒ ``_require`` fails
+    the build with a clear error."""
+    if carrier == "twilio":
+        return _voice_setting(name)
+    return _voice_setting(f"{name}_{carrier.upper()}")
 
 
 def _require(value, label: str):

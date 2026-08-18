@@ -1107,6 +1107,27 @@ class TestBuildVoiceRunnerJob:
         assert resolve_runner_mode(web) == "voice_webrtc"
         assert resolve_runner_mode(phoned) == "voice_sip"
 
+    def test_unknown_telephony_provider_fails_closed(
+        self, organization, workspace, simulator_agent
+    ):
+        from django.test import override_settings
+
+        from simulate.services.hosted_runner import HostedRunnerBuildError
+
+        agent = self._voice_agent(
+            organization,
+            workspace,
+            provider="livekit",
+            phone="+15551230000",
+            inbound=True,
+        )
+        with override_settings(TELEPHONY_PROVIDER="carrier_x"):
+            with pytest.raises(
+                HostedRunnerBuildError,
+                match="unsupported telephony provider: carrier_x",
+            ):
+                self._build(organization, workspace, simulator_agent, agent)
+
     def test_builds_vapi_websocket_job(self, organization, workspace, simulator_agent):
         agent = self._voice_agent(
             organization, workspace, provider="vapi", phone="", assistant_id="asst_123"
@@ -1481,6 +1502,73 @@ class TestHostedRunnerActivityHelpers:
         assert _resolve_agent_inbound(None, agent_def_outbound) is False
         assert _resolve_agent_inbound(None, SimpleNamespace()) is True
 
+    def test_target_speaks_first_toggle_overrides_direction(self):
+        """The explicit target_speaks_first toggle wins over the inbound/outbound
+        heuristic; None falls back to it; Retell stays pinned regardless."""
+        from simulate.services.hosted_runner import _voice_params
+
+        # True → wait for the target (agent_first) even for an inbound target
+        # that the heuristic would have opened simulator_first.
+        assert (
+            _voice_params("webrtc", inbound=True, target_speaks_first=True)[
+                "conversation_direction"
+            ]
+            == "agent_first"
+        )
+        # False → the simulator opens even for an outbound target.
+        assert (
+            _voice_params("webrtc", inbound=False, target_speaks_first=False)[
+                "conversation_direction"
+            ]
+            == "simulator_first"
+        )
+        # None → unchanged heuristic (inbound → simulator_first).
+        assert (
+            _voice_params("webrtc", inbound=True, target_speaks_first=None)[
+                "conversation_direction"
+            ]
+            == "simulator_first"
+        )
+        # Retell cannot greet first in the SDK → clamped even when the toggle
+        # asks for agent_first.
+        assert (
+            _voice_params("retell_webcall", inbound=False, target_speaks_first=True)[
+                "conversation_direction"
+            ]
+            == "simulator_first"
+        )
+
+    def test_resolve_target_speaks_first_precedence(self):
+        """Snapshot wins over the column; strings coerce; absent → None (auto)."""
+        from types import SimpleNamespace
+
+        from simulate.services.hosted_runner import _resolve_target_speaks_first
+
+        agent_true = SimpleNamespace(target_speaks_first=True)
+        agent_none = SimpleNamespace(target_speaks_first=None)
+
+        # Snapshot overrides the column.
+        version = SimpleNamespace(configuration_snapshot={"target_speaks_first": False})
+        assert _resolve_target_speaks_first(version, agent_true) is False
+
+        # String "false" must not be truthy.
+        version = SimpleNamespace(
+            configuration_snapshot={"target_speaks_first": "false"}
+        )
+        assert _resolve_target_speaks_first(version, agent_true) is False
+        version = SimpleNamespace(
+            configuration_snapshot={"target_speaks_first": "true"}
+        )
+        assert _resolve_target_speaks_first(version, agent_none) is True
+
+        # Missing in snapshot → column fallback.
+        version = SimpleNamespace(configuration_snapshot={})
+        assert _resolve_target_speaks_first(version, agent_true) is True
+
+        # Absent everywhere → None (auto: derive from inbound/outbound).
+        assert _resolve_target_speaks_first(None, agent_none) is None
+        assert _resolve_target_speaks_first(None, SimpleNamespace()) is None
+
     """The DID pool is touched only for sip_inbound (mirrors _needs_phone)."""
 
     def test_inject_did_slot_only_for_sip_inbound(self):
@@ -1692,15 +1780,18 @@ class TestRunHostedSdkJob:
 
     def test_voice_sip_leases_injects_and_releases(self, monkeypatch):
         released_slots = []
+        seen = {}
 
-        async def _acquire(job_id):
+        async def _acquire(job_id, provider="twilio"):
+            seen["acquire_provider"] = provider
             return {
                 "did": "+15557654321",
                 "dispatch_rule_name": "rule-9",
                 "slot_id": "s9",
             }
 
-        async def _release(slot):
+        async def _release(slot, provider="twilio"):
+            seen["release_provider"] = provider
             released_slots.append(slot["slot_id"])
 
         job = {
@@ -1710,7 +1801,13 @@ class TestRunHostedSdkJob:
                 "params": {},
             },
             "sink": {"api_url": "http://localhost:8000"},
-            "metadata": {"run_id": "run-x", "secret_env": []},
+            # telephony_provider on the job metadata must thread through to the
+            # lease so a Telnyx run leases from the Telnyx pool.
+            "metadata": {
+                "run_id": "run-x",
+                "secret_env": [],
+                "telephony_provider": "telnyx",
+            },
         }
         lines = [
             '{"phase": "completed", "job_id": "job-x", "submission_status": "submitted"}'
@@ -1726,9 +1823,14 @@ class TestRunHostedSdkJob:
         assert out.phase == "completed"
         # The leased slot was released in finally.
         assert released_slots == ["s9"]
+        # The carrier selection reached both acquire and release.
+        assert seen["acquire_provider"] == "telnyx"
+        assert seen["release_provider"] == "telnyx"
 
     def test_web_voice_never_leases(self, monkeypatch):
-        async def _acquire(job_id):  # pragma: no cover - must not be called
+        async def _acquire(
+            job_id, provider="twilio"
+        ):  # pragma: no cover - must not be called
             raise AssertionError("web voice must not lease a DID")
 
         job = {
@@ -1751,6 +1853,65 @@ class TestRunHostedSdkJob:
             acquire=_acquire,
         )
         assert out.phase == "completed"
+
+    def test_inject_did_slot_pins_pool_trunk(self):
+        from simulate.temporal.activities.hosted_runner import _inject_did_slot
+
+        job = {
+            "voice": {
+                "agent_definition": {"transport": {"kind": "sip_inbound"}},
+                "params": {},
+                "scenario": {"dataset": [{}]},
+            }
+        }
+        _inject_did_slot(
+            job,
+            {
+                "did": "+15557654321",
+                "dispatch_rule_name": "telnyx-sim-slot-03",
+                "slot_id": "03",
+                "room_name": "telnyx-sim-slot-03",
+                "pool_trunk_id": "ST_telnyxpool",
+            },
+        )
+        transport = job["voice"]["agent_definition"]["transport"]
+        assert transport["dispatch_rule_name"] == "telnyx-sim-slot-03"
+        # The leased carrier pool trunk is pinned so the SDK can't fall back to
+        # the worker's default (Twilio) inbound trunk.
+        assert transport["sip_inbound_trunk_id"] == "ST_telnyxpool"
+        assert job["voice"]["params"]["inbound_did"] == "+15557654321"
+
+    def test_voice_sip_non_twilio_fails_closed_without_lease(self, monkeypatch):
+        async def _acquire(job_id, provider="twilio"):
+            return None  # lease unavailable
+
+        async def _release(slot, provider="twilio"):  # pragma: no cover
+            raise AssertionError("nothing leased, nothing to release")
+
+        job = {
+            "mode": "voice_sip",
+            "voice": {
+                "agent_definition": {"transport": {"kind": "sip_inbound"}},
+                "params": {},
+            },
+            "sink": {"api_url": "http://localhost:8000"},
+            "metadata": {
+                "run_id": "run-x",
+                "secret_env": [],
+                "telephony_provider": "telnyx",
+            },
+        }
+        lines = ['{"phase": "completed", "job_id": "job-x"}']
+        # A Telnyx run that can't lease must fail, not degrade onto the Twilio trunk.
+        with pytest.raises(RuntimeError, match="did_lease_required"):
+            self._run(
+                monkeypatch,
+                mode="voice_sip",
+                job=job,
+                status_lines=lines,
+                acquire=_acquire,
+                released=_release,
+            )
 
 
 @pytest.mark.integration
@@ -1971,72 +2132,3 @@ def test_dataset_language_none_single_multi():
     labels = list(AgentDefinition.LanguageChoices.labels)[:2]
     mixed = [{"persona": {"language": labels[0]}}, {"persona": {"language": labels[1]}}]
     assert _dataset_language(mixed) == "multi"
-    def test_target_speaks_first_toggle_overrides_direction(self):
-        """The explicit target_speaks_first toggle wins over the inbound/outbound
-        heuristic; None falls back to it; Retell stays pinned regardless."""
-        from simulate.services.hosted_runner import _voice_params
-
-        # True → wait for the target (agent_first) even for an inbound target
-        # that the heuristic would have opened simulator_first.
-        assert (
-            _voice_params("webrtc", inbound=True, target_speaks_first=True)[
-                "conversation_direction"
-            ]
-            == "agent_first"
-        )
-        # False → the simulator opens even for an outbound target.
-        assert (
-            _voice_params("webrtc", inbound=False, target_speaks_first=False)[
-                "conversation_direction"
-            ]
-            == "simulator_first"
-        )
-        # None → unchanged heuristic (inbound → simulator_first).
-        assert (
-            _voice_params("webrtc", inbound=True, target_speaks_first=None)[
-                "conversation_direction"
-            ]
-            == "simulator_first"
-        )
-        # Retell cannot greet first in the SDK → clamped even when the toggle
-        # asks for agent_first.
-        assert (
-            _voice_params(
-                "retell_webcall", inbound=False, target_speaks_first=True
-            )["conversation_direction"]
-            == "simulator_first"
-        )
-
-    def test_resolve_target_speaks_first_precedence(self):
-        """Snapshot wins over the column; strings coerce; absent → None (auto)."""
-        from types import SimpleNamespace
-
-        from simulate.services.hosted_runner import _resolve_target_speaks_first
-
-        agent_true = SimpleNamespace(target_speaks_first=True)
-        agent_none = SimpleNamespace(target_speaks_first=None)
-
-        # Snapshot overrides the column.
-        version = SimpleNamespace(
-            configuration_snapshot={"target_speaks_first": False}
-        )
-        assert _resolve_target_speaks_first(version, agent_true) is False
-
-        # String "false" must not be truthy.
-        version = SimpleNamespace(
-            configuration_snapshot={"target_speaks_first": "false"}
-        )
-        assert _resolve_target_speaks_first(version, agent_true) is False
-        version = SimpleNamespace(
-            configuration_snapshot={"target_speaks_first": "true"}
-        )
-        assert _resolve_target_speaks_first(version, agent_none) is True
-
-        # Missing in snapshot → column fallback.
-        version = SimpleNamespace(configuration_snapshot={})
-        assert _resolve_target_speaks_first(version, agent_true) is True
-
-        # Absent everywhere → None (auto: derive from inbound/outbound).
-        assert _resolve_target_speaks_first(None, agent_none) is None
-        assert _resolve_target_speaks_first(None, SimpleNamespace()) is None
-
