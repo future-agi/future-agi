@@ -26,7 +26,9 @@ const STEP_TITLES = {
   create: "Create New Evaluation",
 };
 
-const EvalPickerContent = ({ onStepChange }) => {
+const EvalPickerContent = ({
+  onStepChange, headerAction, progress, primaryLabel, showClose,
+}) => {
   const theme = useTheme();
   const {
     step,
@@ -129,8 +131,10 @@ const EvalPickerContent = ({ onStepChange }) => {
       try {
         await onEvalAdded?.(evalConfig);
         if (isEditMode) {
-          // Edit mode: just close, no list to return to
-          onClose?.();
+          // Edit mode: just close, no list to return to — unless the host is
+          // stepping through several evals, in which case it decides when the
+          // run of config screens is over.
+          if (!keepOpenAfterSave) onClose?.();
         } else {
           setSelectedEval(null);
           setStep("list");
@@ -180,6 +184,7 @@ const EvalPickerContent = ({ onStepChange }) => {
             {STEP_TITLES[step]}
           </Typography>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            {headerAction}
             <Button
               variant="outlined"
               size="small"
@@ -252,6 +257,9 @@ const EvalPickerContent = ({ onStepChange }) => {
               onBack={handleBackToList}
               onSave={handleSaveEval}
               isSaving={isSaving}
+              progress={progress}
+              primaryLabel={primaryLabel}
+              showClose={showClose}
             />
           )}
           {step === "create" && (
@@ -320,6 +328,17 @@ const EvalPickerDrawer = ({
   // an explicit created_at filter the backend defaults to a 30-day lookback,
   // so previews for older data come back empty.
   sourceTimeWindow = null,
+  // Opt-in multi-select: checkboxes in the list, and a caller-supplied
+  // action in the header (e.g. "Add evaluations (2)").
+  multiSelect = false,
+  selectedIds = null,
+  onToggleSelect = null,
+  headerAction = null,
+  // Rendered inside the config step's header / primary button when a caller
+  // is stepping through several evals.
+  progress = null,
+  primaryLabel = null,
+  showClose = false,
 }) => {
   const [currentStep, setCurrentStep] = useState("list");
 
@@ -375,14 +394,30 @@ const EvalPickerDrawer = ({
         sourceFilters={sourceFilters}
         onFiltersChange={onFiltersChange}
         sourceTimeWindow={sourceTimeWindow}
+        multiSelect={multiSelect}
+        selectedIds={selectedIds}
+        onToggleSelect={onToggleSelect}
       >
-        <EvalPickerContent onStepChange={setCurrentStep} />
+        <EvalPickerContent
+          onStepChange={setCurrentStep}
+          headerAction={headerAction}
+          progress={progress}
+          primaryLabel={primaryLabel}
+          showClose={showClose}
+        />
       </EvalPickerProvider>
     </Drawer>
   );
 };
 
 EvalPickerDrawer.propTypes = {
+  multiSelect: PropTypes.bool,
+  selectedIds: PropTypes.object,
+  onToggleSelect: PropTypes.func,
+  headerAction: PropTypes.node,
+  progress: PropTypes.node,
+  primaryLabel: PropTypes.string,
+  showClose: PropTypes.bool,
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   source: PropTypes.string,

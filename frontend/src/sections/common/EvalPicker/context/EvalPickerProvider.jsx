@@ -42,6 +42,11 @@ const EvalPickerProvider = ({
   sourceFilters = null,
   onFiltersChange = null,
   sourceTimeWindow = null,
+  // Opt-in multi-select. Off everywhere by default: the list keeps its
+  // single-eval "Add" behaviour unless a caller asks for checkboxes.
+  multiSelect = false,
+  selectedIds = null,
+  onToggleSelect = null,
 }) => {
   const [step, setStep] = useState(initialEval ? "config" : "list");
   const [selectedEval, setSelectedEvalState] = useState(
@@ -102,6 +107,9 @@ const EvalPickerProvider = ({
         isEditMode,
         requiredColumnId,
         keepOpenAfterSave,
+        multiSelect,
+        selectedIds,
+        onToggleSelect,
         sourceFilters,
         onFiltersChange,
         sourceTimeWindow,
@@ -114,6 +122,9 @@ const EvalPickerProvider = ({
 };
 
 EvalPickerProvider.propTypes = {
+  multiSelect: PropTypes.bool,
+  selectedIds: PropTypes.object,
+  onToggleSelect: PropTypes.func,
   children: PropTypes.node.isRequired,
   source: PropTypes.string,
   sourceId: PropTypes.string,

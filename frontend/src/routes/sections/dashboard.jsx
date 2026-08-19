@@ -11,6 +11,7 @@ import { Events, getPageViewEvent, trackEvent } from "src/utils/Mixpanel";
 import RoleProtection from "../components/role-protection";
 import WorkspaceRoleProtection from "../components/workspace-role-protection";
 import { GatewayProvider } from "src/sections/gateway/context/GatewayContext";
+import { SimStoreProvider } from "src/sections/simulate-v2/store";
 import GatewayGuard from "src/sections/gateway/components/GatewayGuard";
 import lazyWithRetry from "src/utils/lazyWithRetry";
 import CapabilityGate from "src/components/capability-gate";
@@ -304,6 +305,19 @@ const CreateScenario = lazyWithRetry(
 );
 const ScenarioDatasetView = lazyWithRetry(
   () => import("src/sections/scenarios/scenario-detail/ScenarioDatasetView"),
+);
+// ── Revamped simulation flow (prototype) ──
+const SimEnvironments = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate-v2/Environments"),
+);
+const SimEnvironmentWorkspace = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate-v2/EnvironmentWorkspacePage"),
+);
+const SimRunView = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate-v2/RunViewPage"),
+);
+const SimCreateEnvironment = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate-v2/CreateEnvironmentPage"),
 );
 const AgentDefinitions = lazyWithRetry(
   () => import("src/pages/dashboard/agent-definitions/AgentDefinitions"),
@@ -1326,6 +1340,38 @@ export const dashboardRoutes = (
     {
       path: "simulate",
       children: [
+        // ── Revamped simulation flow (prototype) ──
+        // Pathless layout so the whole flow shares one store. The legacy
+        // routes below stay mounted and reachable by URL for comparison.
+        {
+          element: (
+            <SimStoreProvider>
+              <Outlet />
+            </SimStoreProvider>
+          ),
+          children: [
+            {
+              path: "environments",
+              element: <SimEnvironments />,
+            },
+            {
+              path: "environments/new",
+              element: <SimCreateEnvironment />,
+            },
+            {
+              path: "environments/:envId",
+              element: <SimEnvironmentWorkspace />,
+            },
+            {
+              path: "environments/:envId/:step",
+              element: <SimEnvironmentWorkspace />,
+            },
+            {
+              path: "environments/:envId/runs/:runId",
+              element: <SimRunView />,
+            },
+          ],
+        },
         {
           path: "agent-definitions",
           element: <AgentDefinitions />,

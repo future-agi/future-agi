@@ -5,6 +5,7 @@ import {
   CircularProgress,
   IconButton,
   InputAdornment,
+  Checkbox,
   Table,
   TableBody,
   TableCell,
@@ -482,8 +483,10 @@ const SkeletonRows = (
 // ── Main Component ──
 
 const EvalPickerList = ({ onSelectEval }) => {
-  const { existingEvals, source, sourceId, lockedFilters } =
-    useEvalPickerContext();
+  const {
+    existingEvals, source, sourceId, lockedFilters,
+    multiSelect, selectedIds, onToggleSelect,
+  } = useEvalPickerContext();
   const useScopedEvals = source === "dataset" || source === "experiment";
   const {
     items,
@@ -709,6 +712,9 @@ const EvalPickerList = ({ onSelectEval }) => {
         <Table size="small" stickyHeader sx={{ tableLayout: "fixed" }}>
           <TableHead>
             <TableRow>
+              {multiSelect && (
+                <TableCell sx={{ ...headerCellSx, width: 44 }} />
+              )}
               <TableCell sx={{ ...headerCellSx, width: 36 }} />
               <TableCell sx={{ ...headerCellSx, width: 72 }} />
               <TableCell sx={{ ...headerCellSx }}>
@@ -746,7 +752,7 @@ const EvalPickerList = ({ onSelectEval }) => {
             ) : items.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={7}
+                  colSpan={multiSelect ? 8 : 7}
                   align="center"
                   sx={{ py: 6, color: "text.disabled" }}
                 >
@@ -772,6 +778,21 @@ const EvalPickerList = ({ onSelectEval }) => {
                       "&:hover": { bgcolor: "action.hover" },
                     }}
                   >
+                    {/* Multi-select tick — the row still expands on click,
+                        so the checkbox stops propagation. */}
+                    {multiSelect && (
+                      <TableCell sx={{ ...bodyCellSx, width: 44, px: 0.5 }}>
+                        <Checkbox
+                          size="small"
+                          disabled={added}
+                          checked={added || !!selectedIds?.has(evalItem.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={() => onToggleSelect?.(evalItem)}
+                          sx={{ p: 0.5 }}
+                        />
+                      </TableCell>
+                    )}
+
                     {/* Expand chevron */}
                     <TableCell sx={{ ...bodyCellSx, width: 36, px: 0.5 }}>
                       <IconButton size="small" sx={{ p: 0.25 }}>
@@ -908,7 +929,7 @@ const EvalPickerList = ({ onSelectEval }) => {
                   isExpanded && (
                     <TableRow key={`${evalItem.id}-detail`}>
                       <TableCell
-                        colSpan={7}
+                        colSpan={multiSelect ? 8 : 7}
                         sx={{
                           p: 0,
                           borderBottom: "1px solid",

@@ -87,6 +87,17 @@ export const paths = {
       personas: `${ROOTS.DASHBOARD}/simulate/personas`,
       simulatorAgent: `${ROOTS.DASHBOARD}/simulate/simulator-agent`,
       test: `${ROOTS.DASHBOARD}/simulate/test`,
+
+      // ── Revamped simulation flow (prototype) ──
+      // Environment-first: pick a world, connect an agent, add scenarios and
+      // evals, then run. The legacy routes above stay mounted so the old
+      // screens remain reachable for comparison.
+      environments: `${ROOTS.DASHBOARD}/simulate/environments`,
+      environmentNew: `${ROOTS.DASHBOARD}/simulate/environments/new`,
+      environmentDetail: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}`,
+      environmentStep: (envId, step) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}/${step}`,
+      simulationRun: (envId, runId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${runId}`,
+      simulationRuns: `${ROOTS.DASHBOARD}/simulate/runs`,
     },
     feed: `${ROOTS.DASHBOARD}/error-feed`,
     errorFeed: {

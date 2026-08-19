@@ -208,36 +208,46 @@ export function useNavData() {
       {
         subheader: "Simulate",
         items: [
+          // ── Revamped simulation flow (prototype) ──
+          // Environment-first entry point. The legacy Agent Definition /
+          // Scenarios / Personas items are commented out rather than deleted:
+          // their routes still work by URL so the old screens can be compared
+          // against the new flow during review.
           {
-            title: "Agent Definition",
-            path: paths.dashboard.simulate.agentDefinition,
+            title: "Environments",
+            path: paths.dashboard.simulate.environments,
             icon: ICONS.agentDefinition,
-            eventTrigger: () => {
-              trackEvent(Events.navigationAlertDefinitionClicked, {
-                [PropertyName.click]: true,
-              });
-            },
           },
-          {
-            title: "Scenarios",
-            path: paths.dashboard.simulate.scenarios,
-            icon: ICONS.scenarios,
-            eventTrigger: () => {
-              trackEvent(Events.navigationScenariosClicked, {
-                [PropertyName.click]: true,
-              });
-            },
-          },
-          {
-            title: "Personas",
-            path: paths.dashboard.simulate.personas,
-            icon: ICONS.persona,
-            eventTrigger: () => {
-              trackEvent(Events.navigationPersonasClicked, {
-                [PropertyName.click]: true,
-              });
-            },
-          },
+          // {
+          //   title: "Agent Definition",
+          //   path: paths.dashboard.simulate.agentDefinition,
+          //   icon: ICONS.agentDefinition,
+          //   eventTrigger: () => {
+          //     trackEvent(Events.navigationAlertDefinitionClicked, {
+          //       [PropertyName.click]: true,
+          //     });
+          //   },
+          // },
+          // {
+          //   title: "Scenarios",
+          //   path: paths.dashboard.simulate.scenarios,
+          //   icon: ICONS.scenarios,
+          //   eventTrigger: () => {
+          //     trackEvent(Events.navigationScenariosClicked, {
+          //       [PropertyName.click]: true,
+          //     });
+          //   },
+          // },
+          // {
+          //   title: "Personas",
+          //   path: paths.dashboard.simulate.personas,
+          //   icon: ICONS.persona,
+          //   eventTrigger: () => {
+          //     trackEvent(Events.navigationPersonasClicked, {
+          //       [PropertyName.click]: true,
+          //     });
+          //   },
+          // },
           // {
           //   title: "Simulation Agent",
           //   path: paths.dashboard.simulate.simulatorAgent,
