@@ -211,6 +211,59 @@ jobs:
           docker compose -f docker-compose.test.yml -p futureagi-test ps
           docker compose -f docker-compose.test.yml -p futureagi-test logs --tail 200
 
+  lint:
+    # Code-quality gate (ruff, black, baseline mypy). No docker services
+    # needed, so this is intentionally a small standalone job: its own
+    # status check keeps a lint failure distinguishable from test failures.
+    # NOTE: ruff/black run on the PR's changed files only (diff-based).
+    # The repo carries a large pre-existing lint debt (ruff hook is
+    # commented out in .pre-commit-config.yaml), so a full-tree check
+    # would be red before any change — the diff-based gate keeps the
+    # CI green while enforcing lint on new code.
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: futureagi
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: futureagi/uv.lock
+
+      # mypy lives in [project.optional-dependencies].dev, so the plain
+      # `uv sync --frozen` used by the test job would not install it.
+      # ruff and black are not lock members, so they run via uvx at the
+      # versions pinned in .pre-commit-config.yaml.
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev
+
+      - name: Changed Python files
+        id: changed
+        run: |
+          git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD -- '*.py' > /tmp/changed_py.txt || true
+          echo "count=$(wc -l < /tmp/changed_py.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          cat /tmp/changed_py.txt
+
+      - name: Ruff check (changed files)
+        if: steps.changed.outputs.count != '0'
+        run: |
+          xargs -r uvx ruff@0.14.2 check --line-length=88 < /tmp/changed_py.txt
+
+      - name: Black check (changed files)
+        if: steps.changed.outputs.count != '0'
+        run: |
+          xargs -r uvx black@25.11.0 --check --line-length=88 < /tmp/changed_py.txt
+
+      - name: Mypy (baseline)
+        run: uv run ./bin/check_mypy.sh
+
   backend-tests:
     name: Backend Tests Pass # the ONLY required status check
     needs: [changes, plan, test]
