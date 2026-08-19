@@ -3,6 +3,8 @@ package guardrails
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1361,5 +1363,72 @@ func TestPlugin_InvalidRequestPolicy(t *testing.T) {
 	result := plug.ProcessRequest(context.Background(), rc)
 	if result.Error == nil {
 		t.Fatal("expected error for invalid policy value")
+	}
+}
+
+// TestGuardrailPostBlockPropagatesThroughPipeline is the end-to-end regression
+// test for issue #2028: a blocking post-stage guardrail must propagate its
+// models.ErrGuardrailBlocked out of pipeline.Engine.Process so handlers return
+// 403 content_blocked instead of a generic 500 "no response from provider".
+func TestGuardrailPostBlockPropagatesThroughPipeline(t *testing.T) {
+	registry := map[string]Guardrail{
+		"toxicity": &mockGuardrail{
+			name:  "toxicity",
+			stage: StagePost,
+			result: &CheckResult{
+				Pass:    false,
+				Score:   0.92,
+				Action:  ActionBlock,
+				Message: "toxic response",
+			},
+		},
+	}
+	cfg := config.GuardrailsConfig{
+		Enabled:        true,
+		FailOpen:       true,
+		DefaultTimeout: 5 * time.Second,
+		Rules: []config.GuardrailRuleConfig{
+			{Name: "toxicity", Stage: "post", Mode: "sync", Action: "block", Threshold: 0.7},
+		},
+	}
+	guardrailEngine := NewEngine(cfg, registry)
+	plugin := NewPlugin(guardrailEngine, nil, nil, nil, nil)
+
+	pipelineEngine := pipeline.NewEngine(plugin)
+
+	rc := models.AcquireRequestContext()
+	defer rc.Release()
+	rc.Request = &models.ChatCompletionRequest{Model: "gpt-4o"}
+	rc.Model = "gpt-4o"
+
+	err := pipelineEngine.Process(context.Background(), rc, func(ctx context.Context, rc *models.RequestContext) error {
+		rc.Response = &models.ChatCompletionResponse{ID: "provider-resp"}
+		return nil
+	})
+
+	if err == nil {
+		t.Fatal("pipeline.Process should return the guardrail block error")
+	}
+	var apiErr *models.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *APIError, got %T", err)
+	}
+	if apiErr.Status != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", apiErr.Status)
+	}
+	if apiErr.Code != "content_blocked" {
+		t.Errorf("code = %q, want content_blocked", apiErr.Code)
+	}
+	if apiErr.Type != models.ErrTypeGuardrail {
+		t.Errorf("type = %q, want %q", apiErr.Type, models.ErrTypeGuardrail)
+	}
+	if rc.Response != nil {
+		t.Error("blocked provider response must not escape the pipeline")
+	}
+	if !rc.Flags.GuardrailTriggered {
+		t.Error("GuardrailTriggered flag should be set")
+	}
+	if rc.Metadata["guardrail_action"] != "blocked" {
+		t.Errorf("guardrail_action = %q, want 'blocked'", rc.Metadata["guardrail_action"])
 	}
 }

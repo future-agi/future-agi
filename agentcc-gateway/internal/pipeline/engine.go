@@ -100,8 +100,7 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 			if result.Response != nil {
 				rc.Response = result.Response
 			}
-			e.RunPostPlugins(ctx, rc)
-			return nil
+			return e.RunPostPlugins(ctx, rc)
 		}
 	}
 
@@ -132,7 +131,7 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 	// Post-plugins — skip for streaming requests; the stream handler
 	// will call RunPostPlugins after the stream completes with final usage.
 	if !rc.IsStream {
-		e.RunPostPlugins(ctx, rc)
+		return e.RunPostPlugins(ctx, rc)
 	}
 	return nil
 }
@@ -142,10 +141,20 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 //  2. Parallel-safe plugins run concurrently after sequential ones complete.
 //  3. Plugins implementing SkipOnCacheHit are skipped on cache hits.
 //
+// All post-plugins always run: a sequential plugin error does not stop the
+// remaining sequential or parallel (observer) plugins, so logging, audit, and
+// metrics are preserved. The first sequential post-plugin error is recorded on
+// the request context (rc.Errors) and returned once the whole post pipeline has
+// completed, so callers can propagate intentional short-circuits such as
+// guardrail blocks (models.ErrGuardrailBlocked -> 403 content_blocked).
+// Parallel observer-plugin failures remain non-fatal and are only logged.
+//
 // Exported so that streaming handlers can call it after the stream completes,
 // when rc.Response and usage data are populated.
-func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) {
+func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) error {
 	isCacheHit := rc.Flags.ShortCircuited && rc.Metadata["cache_status"] == "hit_exact"
+
+	var firstPostErr error
 
 	// Phase 1: Sequential post-plugins (e.g., cost → credits dependency chain).
 	for _, p := range e.postSequential {
@@ -165,6 +174,12 @@ func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) 
 				"error", result.Error.Message,
 				"request_id", rc.RequestID,
 			)
+			// Record the error before observer plugins run and retain the first
+			// one so Engine.Process can propagate it to the handler.
+			rc.AddError(result.Error)
+			if firstPostErr == nil {
+				firstPostErr = result.Error
+			}
 		}
 	}
 
@@ -179,7 +194,7 @@ func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) 
 	// mutex. So each goroutine times itself into its own slot, and the timings
 	// are recorded once the window has closed and execution is serial again.
 	if len(e.postParallel) == 0 {
-		return
+		return firstPostErr
 	}
 
 	toRun := e.postParallel
@@ -218,6 +233,8 @@ func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) 
 	for i, p := range toRun {
 		rc.RecordTiming("post_"+p.Name(), durations[i])
 	}
+
+	return firstPostErr
 }
 
 // PluginCount returns the number of registered plugins.

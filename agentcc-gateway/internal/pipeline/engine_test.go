@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -10,14 +12,16 @@ import (
 
 // mockPlugin is a test plugin.
 type mockPlugin struct {
-	name     string
-	priority int
-	onReq    func(ctx context.Context, rc *models.RequestContext) PluginResult
-	onResp   func(ctx context.Context, rc *models.RequestContext) PluginResult
+	name           string
+	priority       int
+	onReq          func(ctx context.Context, rc *models.RequestContext) PluginResult
+	onResp         func(ctx context.Context, rc *models.RequestContext) PluginResult
+	isPostParallel bool
 }
 
-func (m *mockPlugin) Name() string  { return m.name }
-func (m *mockPlugin) Priority() int { return m.priority }
+func (m *mockPlugin) Name() string         { return m.name }
+func (m *mockPlugin) Priority() int        { return m.priority }
+func (m *mockPlugin) IsPostParallel() bool { return m.isPostParallel }
 func (m *mockPlugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) PluginResult {
 	if m.onReq != nil {
 		return m.onReq(ctx, rc)
@@ -328,3 +332,161 @@ func TestRunPostPluginsSkipOnCacheHitTimings(t *testing.T) {
 type skipOnCacheHitPostPlugin struct{ readOnlyPostPlugin }
 
 func (skipOnCacheHitPostPlugin) ShouldSkipOnCacheHit() bool { return true }
+
+// TestEnginePostPluginErrorPropagates pins the core contract of issue #2028:
+// a blocking post-response plugin (e.g. a guardrail) must propagate its error
+// out of Engine.Process so the handler can return 403 content_blocked instead
+// of falling through to the nil-response check and emitting a generic 500.
+// The remaining sequential and parallel post-plugins must still run so
+// logging, audit, and metrics are preserved.
+func TestEnginePostPluginErrorPropagates(t *testing.T) {
+	blockingErr := models.ErrGuardrailBlocked("content_blocked", "blocked by guardrail")
+
+	var postOrder []string
+	guardrailPlugin := &mockPlugin{
+		name:     "guardrails",
+		priority: 50,
+		onResp: func(ctx context.Context, rc *models.RequestContext) PluginResult {
+			postOrder = append(postOrder, "guardrails")
+			// Guardrail clears the provider response and returns the block error.
+			rc.Response = nil
+			rc.Flags.GuardrailTriggered = true
+			return ResultError(blockingErr)
+		},
+	}
+	costPlugin := &mockPlugin{
+		name:     "cost",
+		priority: 60,
+		onResp: func(ctx context.Context, rc *models.RequestContext) PluginResult {
+			postOrder = append(postOrder, "cost")
+			return ResultContinue()
+		},
+	}
+	observerPlugin := &mockPlugin{
+		name:           "observer",
+		priority:       900,
+		isPostParallel: true,
+		onResp: func(ctx context.Context, rc *models.RequestContext) PluginResult {
+			postOrder = append(postOrder, "observer")
+			return ResultContinue()
+		},
+	}
+
+	engine := NewEngine(guardrailPlugin, costPlugin, observerPlugin)
+
+	rc := models.AcquireRequestContext()
+	defer rc.Release()
+
+	err := engine.Process(context.Background(), rc, func(ctx context.Context, rc *models.RequestContext) error {
+		rc.Response = &models.ChatCompletionResponse{ID: "provider-resp"}
+		return nil
+	})
+
+	if err == nil {
+		t.Fatal("Process should return the post-plugin error")
+	}
+	var apiErr *models.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error should be *APIError, got %T", err)
+	}
+	if apiErr.Status != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", apiErr.Status)
+	}
+	if apiErr.Code != "content_blocked" {
+		t.Errorf("code = %q, want content_blocked", apiErr.Code)
+	}
+	if apiErr.Type != models.ErrTypeGuardrail {
+		t.Errorf("type = %q, want %q", apiErr.Type, models.ErrTypeGuardrail)
+	}
+	if rc.Response != nil {
+		t.Error("blocked provider response must not escape the pipeline")
+	}
+	wantOrder := []string{"guardrails", "cost", "observer"}
+	if len(postOrder) != len(wantOrder) {
+		t.Fatalf("post plugins run = %v, want %v (all must run after an error)", postOrder, wantOrder)
+	}
+	for i, v := range wantOrder {
+		if postOrder[i] != v {
+			t.Errorf("post order[%d] = %q, want %q", i, postOrder[i], v)
+		}
+	}
+	if len(rc.Errors) == 0 {
+		t.Error("post-plugin error should be recorded on the request context")
+	}
+}
+
+// TestEngineShortCircuitPropagatesPostError covers the cache-short-circuit
+// path: a pre-plugin short-circuits with a cached response, then a blocking
+// post-plugin errors. Engine.Process must still propagate that error.
+func TestEngineShortCircuitPropagatesPostError(t *testing.T) {
+	cachePlugin := &mockPlugin{
+		name:     "cache",
+		priority: 1,
+		onReq: func(ctx context.Context, rc *models.RequestContext) PluginResult {
+			return ResultShortCircuit(&models.ChatCompletionResponse{ID: "cached"})
+		},
+	}
+	guardrailPlugin := &mockPlugin{
+		name:     "guardrails",
+		priority: 50,
+		onResp: func(ctx context.Context, rc *models.RequestContext) PluginResult {
+			rc.Response = nil
+			return ResultError(models.ErrGuardrailBlocked("content_blocked", "cached response blocked"))
+		},
+	}
+
+	engine := NewEngine(cachePlugin, guardrailPlugin)
+
+	rc := models.AcquireRequestContext()
+	defer rc.Release()
+
+	providerCalled := false
+	err := engine.Process(context.Background(), rc, func(ctx context.Context, rc *models.RequestContext) error {
+		providerCalled = true
+		return nil
+	})
+
+	if providerCalled {
+		t.Error("provider should NOT have been called (short-circuited)")
+	}
+	if err == nil {
+		t.Fatal("Process should return the post-plugin error on the short-circuit path")
+	}
+	var apiErr *models.APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error should be *APIError, got %T", err)
+	}
+	if apiErr.Status != http.StatusForbidden || apiErr.Code != "content_blocked" {
+		t.Errorf("expected 403 content_blocked, got status=%d code=%q", apiErr.Status, apiErr.Code)
+	}
+}
+
+// TestEngineParallelObserverErrorNotFatal pins the other half of the contract:
+// a failing parallel observer plugin is logged but does not fail the request.
+func TestEngineParallelObserverErrorNotFatal(t *testing.T) {
+	observerPlugin := &mockPlugin{
+		name:           "observer",
+		priority:       900,
+		isPostParallel: true,
+		onResp: func(ctx context.Context, rc *models.RequestContext) PluginResult {
+			return ResultError(models.ErrInternal("observer failed"))
+		},
+	}
+
+	engine := NewEngine(observerPlugin)
+
+	rc := models.AcquireRequestContext()
+	defer rc.Release()
+
+	err := engine.Process(context.Background(), rc, func(ctx context.Context, rc *models.RequestContext) error {
+		rc.Response = &models.ChatCompletionResponse{ID: "ok"}
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("Process should not fail on a parallel observer error, got %v", err)
+	}
+	if rc.Response == nil {
+		t.Error("response should survive an observer failure")
+	}
+}
