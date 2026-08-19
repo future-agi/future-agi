@@ -327,7 +327,7 @@ streamLoop:
 
 	// Run post-plugins (cost, logging, etc.) after stream completes.
 	rc.Response = &models.ChatCompletionResponse{Model: rc.ResolvedModel}
-	h.engine.RunPostPlugins(ctx, rc)
+	_ = h.engine.RunPostPlugins(ctx, rc)
 }
 
 // GetResponse handles GET /v1/responses/{id}.

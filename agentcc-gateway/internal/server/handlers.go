@@ -1587,7 +1587,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		if detach {
 			pluginCtx = context.Background()
 		}
-		h.engine.RunPostPlugins(pluginCtx, rc)
+		_ = h.engine.RunPostPlugins(pluginCtx, rc)
 		if detach {
 			return nil
 		}
