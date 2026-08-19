@@ -33,6 +33,6 @@ export function computeGranularity(start, end) {
   const diffHours = diffMs / (1000 * 60 * 60);
   if (diffHours <= 6) return "minute";
   if (diffHours <= 168) return "hour"; // up to 7 days
-  if (diffHours <= 720) return "day"; // up to 30 days
+  if (diffHours <= 2160) return "day"; // up to 90 days
   return "week";
 }

@@ -24,7 +24,8 @@ describe("computeGranularity", () => {
     expect(computeGranularity(...Object.values(range(24)))).toBe("hour");
     expect(computeGranularity(...Object.values(range(168)))).toBe("hour");
     expect(computeGranularity(...Object.values(range(720)))).toBe("day");
-    expect(computeGranularity(...Object.values(range(2160)))).toBe("week");
+    expect(computeGranularity(...Object.values(range(2160)))).toBe("day");
+    expect(computeGranularity(...Object.values(range(9000)))).toBe("week");
   });
 
   it("only emits tokens the analytics backend accepts", () => {
