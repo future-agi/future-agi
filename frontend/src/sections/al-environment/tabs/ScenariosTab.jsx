@@ -38,7 +38,7 @@ const GATES = [
 const GateLamp = ({ held, label }) => {
   const on = held === true;
   const off = held === false;
-  const tone = on ? "success.main" : "error.main";
+  const tone = on ? "accent.pass" : "accent.fail";
   return (
     <Stack
       direction="row"
@@ -177,7 +177,7 @@ const ScenarioCard = ({ scenario, ran, onSeeRun }) => {
             borderRadius: "3px",
             fontFamily: ALK_MONO,
             fontSize: 11.7,
-            color: "error.main",
+            color: "accent.fail",
             bgcolor: (theme) => alpha(theme.palette.error.main, 0.1),
           }}
         >
@@ -264,7 +264,7 @@ const ScenarioCard = ({ scenario, ran, onSeeRun }) => {
           {checks.map((check) => (
             <Tag
               key={check.name}
-              kind={check.settled_by === "code" ? "code" : "judge"}
+              kind={check.settled_by === "code" ? "code" : "evalHarness"}
               title={check.what || ""}
               keepCase
             >

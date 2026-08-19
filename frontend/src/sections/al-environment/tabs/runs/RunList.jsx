@@ -50,7 +50,7 @@ const RunList = ({ runs, selectedRunId, onSelectRun }) => (
               },
               "&:focus-visible": {
                 outline: "2px solid",
-                outlineColor: "success.main",
+                outlineColor: "accent.pass",
                 outlineOffset: "2px",
               },
             }}
@@ -62,7 +62,17 @@ const RunList = ({ runs, selectedRunId, onSelectRun }) => (
               flexWrap="wrap"
               useFlexGap
             >
-              <Tag kind={run.passed === total ? "pass" : "fail"}>
+              {/* Red is for failure, not for progress: a run where some scenarios passed has not
+                  failed, so only a run that passed nothing wears it. */}
+              <Tag
+                kind={
+                  run.passed === total
+                    ? "pass"
+                    : (run.passed ?? 0) === 0
+                      ? "fail"
+                      : "soft"
+                }
+              >
                 {`${run.passed ?? 0}/${total} passed`}
               </Tag>
               <Typography

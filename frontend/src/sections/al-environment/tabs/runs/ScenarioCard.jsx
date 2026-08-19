@@ -46,7 +46,7 @@ const GoalGroup = ({ label, checks }) => (
           sx={{
             flex: "0 0 auto",
             width: "1em",
-            color: check.passed ? "success.main" : "error.main",
+            color: check.passed ? "accent.pass" : "accent.fail",
           }}
         >
           {check.passed ? "✓" : "✗"}
@@ -66,7 +66,7 @@ const GoalGroup = ({ label, checks }) => (
               sx={{
                 fontSize: 12.5,
                 mt: 0.3,
-                color: check.passed ? "text.secondary" : "error.main",
+                color: check.passed ? "text.secondary" : "accent.fail",
               }}
             >
               {check.detail}
@@ -150,7 +150,7 @@ const ScenarioCard = ({ runId, result }) => {
         border: "1px solid",
         borderColor: "divider",
         borderLeft: "3px solid",
-        borderLeftColor: result.passed ? "success.main" : "error.main",
+        borderLeftColor: result.passed ? "accent.pass" : "accent.fail",
       }}
     >
       <Stack
@@ -206,10 +206,10 @@ const ScenarioCard = ({ runId, result }) => {
           sx={{
             fontFamily: ALK_MONO,
             fontSize: 11.8,
-            color: "error.main",
+            color: "accent.fail",
             bgcolor: "action.hover",
             border: "1px solid",
-            borderColor: "error.main",
+            borderColor: "accent.fail",
             borderRadius: "3px",
             px: 2.2,
             py: 1.4,
@@ -278,7 +278,7 @@ const ScenarioCard = ({ runId, result }) => {
               sx={{
                 fontFamily: ALK_MONO,
                 fontSize: 11.8,
-                color: source.available ? "text.secondary" : "error.main",
+                color: source.available ? "text.secondary" : "accent.fail",
                 my: 0.2,
                 ml: 1,
               }}

@@ -198,7 +198,7 @@ const EnvironmentTab = ({ world, subgoals }) => {
                 key={goal.name}
                 title={goal.name}
                 tags={
-                  <Tag kind={byCode ? "code" : "judge"}>
+                  <Tag kind={byCode ? "code" : "evalHarness"}>
                     {byCode ? "code" : "eval harness"}
                   </Tag>
                 }

@@ -7,16 +7,28 @@ import { ALK_MONO } from "../alkTokens";
  * Not a MUI Chip — those are pill-shaped, sans and sentence case, which reads as a filter
  * control rather than a verdict.
  */
-const WASH = {
-  pass: { color: "success.main", bg: "success.main" },
-  fail: { color: "error.main", bg: "error.main" },
-  code: { color: "success.main", bg: "success.main" },
-  judge: { color: "warning.main", bg: "warning.main" },
-  soft: { color: "text.secondary", bg: "text.secondary" },
+/**
+ * `accent` rather than the `.main` ramp: those are tuned for dark backgrounds and for use as
+ * fills, so warning.main as text measured 1.19:1 on a light surface — the codebase already
+ * says so twice, in CallLogsCellRenderer and ValidationStep. accent carries a value per mode.
+ *
+ * Blue for a check settled by running code, violet for one the eval harness judged. Not
+ * accent.info, which in dark is #7DA9FB against violet's #C4B5FD — both pale and cool, and
+ * they read as the same chip; syntax.number is the product's bluest per-mode pair (#1750EB
+ * light, #6ba8e6 dark) and stays plainly blue in both.
+ *
+ * Green and red are left to verdicts, so "settled by code" no longer borrows "passed".
+ */
+const TONE = {
+  pass: (p) => p.accent.pass,
+  fail: (p) => p.accent.fail,
+  code: (p) => p.syntax.number,
+  evalHarness: (p) => p.accent.violet,
+  soft: (p) => p.accent.neutral,
 };
 
 const Tag = ({ kind = "soft", children, title, dim, keepCase }) => {
-  const tone = WASH[kind] || WASH.soft;
+  const tone = TONE[kind] || TONE.soft;
   return (
     <Box
       component="span"
@@ -33,7 +45,7 @@ const Tag = ({ kind = "soft", children, title, dim, keepCase }) => {
         // look like two different things in two places.
         textTransform: keepCase ? "none" : "uppercase",
         whiteSpace: "nowrap",
-        color: tone.color,
+        color: (theme) => tone(theme.palette),
         bgcolor: (theme) => theme.palette.action.hover,
         opacity: dim ? 0.45 : 1,
         border: "1px solid",
@@ -46,7 +58,7 @@ const Tag = ({ kind = "soft", children, title, dim, keepCase }) => {
 };
 
 Tag.propTypes = {
-  kind: PropTypes.oneOf(["pass", "fail", "code", "judge", "soft"]),
+  kind: PropTypes.oneOf(["pass", "fail", "code", "evalHarness", "soft"]),
   children: PropTypes.node,
   title: PropTypes.string,
   dim: PropTypes.bool,

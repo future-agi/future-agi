@@ -2,8 +2,8 @@ import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 import { ALK_MONO } from "../../alkTokens";
 
-const TONE = { ok: "divider", refused: "warning.main", crashed: "error.main" };
-const MARK_TONE = { ok: "text.secondary", refused: "warning.main", crashed: "error.main" };
+const TONE = { ok: "divider", refused: "accent.tool", crashed: "accent.fail" };
+const MARK_TONE = { ok: "text.secondary", refused: "accent.tool", crashed: "accent.fail" };
 const MARK = { ok: "ok", refused: "refused", crashed: "crash" };
 
 /**

@@ -107,8 +107,10 @@ describe("EnvironmentsListView", () => {
   it("colours the runs chip by outcome", () => {
     render(<EnvironmentsListView environments={rows} />);
 
-    expect(chipTone("14/14")).toBe("success");
-    expect(chipTone("21/26")).toBe("error");
+    expect(chipTone("14/14")).toBe("pass");
+    // Some passed, some did not — progress, not failure, so it must not wear the failure
+    // colour. Only an environment where nothing passed has actually failed.
+    expect(chipTone("21/26")).toBe("partial");
     expect(chipTone("No runs")).toBe("neutral");
   });
 

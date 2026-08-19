@@ -15,16 +15,16 @@ const TONE = { all: "soft", passed: "pass", failed: "fail" };
 
 /** The older per-scenario record kept its calls as flat strings with the outcome in the text. */
 const callTone = (call) => {
-  if (/-> refused/.test(call)) return { color: "warning.main", mark: "⃠ " };
-  if (/-> crashed/.test(call)) return { color: "error.main", mark: "✗ " };
+  if (/-> refused/.test(call)) return { color: "accent.tool", mark: "⃠ " };
+  if (/-> crashed/.test(call)) return { color: "accent.fail", mark: "✗ " };
   return { color: "text.primary", mark: "✓ " };
 };
 
 const boxOf = (check) => {
-  if (check.broken) return { mark: "!", color: "warning.main" };
+  if (check.broken) return { mark: "!", color: "accent.tool" };
   return check.passed
-    ? { mark: "✓", color: "success.main" }
-    : { mark: "✗", color: "error.main" };
+    ? { mark: "✓", color: "accent.pass" }
+    : { mark: "✗", color: "accent.fail" };
 };
 
 /**
@@ -163,7 +163,7 @@ const LegacyRuns = ({ runs }) => {
                           <Typography
                             sx={{
                               fontSize: 12.4,
-                              color: failed ? "error.main" : "text.secondary",
+                              color: failed ? "accent.fail" : "text.secondary",
                               pt: 0.2,
                             }}
                           >
@@ -198,7 +198,7 @@ const LegacyRuns = ({ runs }) => {
                       sx={{
                         flex: "0 0 auto",
                         width: "1em",
-                        color: "warning.main",
+                        color: "accent.tool",
                       }}
                     >
                       ?
@@ -232,10 +232,10 @@ const LegacyRuns = ({ runs }) => {
                 sx={{
                   fontFamily: ALK_MONO,
                   fontSize: 11.8,
-                  color: "error.main",
+                  color: "accent.fail",
                   bgcolor: "action.hover",
                   border: "1px solid",
-                  borderColor: "error.main",
+                  borderColor: "accent.fail",
                   borderRadius: "3px",
                   px: 2.2,
                   py: 1.4,

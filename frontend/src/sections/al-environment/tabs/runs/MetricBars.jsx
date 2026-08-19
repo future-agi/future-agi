@@ -6,9 +6,9 @@ import { metricLabel, splitMetrics } from "./metrics";
 
 /** Everything ALK measures is 0..1, so one shape reads for all of them. */
 const toneOf = (value) => {
-  if (value >= 0.8) return "success.main";
-  if (value >= 0.5) return "warning.main";
-  return "error.main";
+  if (value >= 0.8) return "accent.pass";
+  if (value >= 0.5) return "accent.tool";
+  return "accent.fail";
 };
 
 const MetricBar = ({ metric }) => {

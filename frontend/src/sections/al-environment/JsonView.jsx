@@ -3,13 +3,19 @@ import PropTypes from "prop-types";
 import { Box, Typography } from "@mui/material";
 import { ALK_MONO } from "./alkTokens";
 
-/** Their --key / --str / --num / --bool, as theme colours. */
+/**
+ * The product already ships a JSON palette — `palette.syntax`, bridged to the --syntax-*
+ * variables and used by the span viewer — with a per-mode dark ramp. Building a second one
+ * out of success/warning/error also said the wrong thing: green strings and red booleans
+ * read as pass and fail on data that carries no verdict. warning.main measured 1.28:1 on a
+ * light surface, which is why numbers were all but invisible there.
+ */
 const TONE = {
-  key: "info.main",
-  string: "success.main",
-  number: "warning.main",
-  boolean: "error.main",
-  null: "text.secondary",
+  key: "accent.info",
+  string: "syntax.string",
+  number: "syntax.number",
+  boolean: "syntax.boolean",
+  null: "text.disabled",
 };
 
 const INDENT = "1.05rem";

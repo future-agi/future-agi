@@ -319,9 +319,9 @@ const AlEnvironmentView = () => {
             pl: 1.25,
             fontFamily: ALK_MONO,
             fontSize: 12.5,
-            color: "error.main",
+            color: "accent.fail",
             borderLeft: "2px solid",
-            borderColor: "error.main",
+            borderColor: "accent.fail",
           }}
         >
           {refusalMessage}

@@ -162,7 +162,7 @@ const ContractTab = ({ contract }) => {
                 borderRadius: "3px",
                 fontFamily: ALK_MONO,
                 fontSize: 11.8,
-                color: "warning.main",
+                color: "accent.tool",
                 bgcolor: (theme) => alpha(theme.palette.warning.main, 0.12),
               }}
             >

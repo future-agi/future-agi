@@ -57,9 +57,9 @@ const TranscriptPane = ({ messages, hasSession, thinking, spentUsd }) => {
               sx={{
                 fontFamily: ALK_MONO,
                 fontSize: 12.5,
-                color: "error.main",
+                color: "accent.fail",
                 borderLeft: "2px solid",
-                borderColor: "error.main",
+                borderColor: "accent.fail",
                 pl: 1.25,
               }}
             >
@@ -90,7 +90,7 @@ const TranscriptPane = ({ messages, hasSession, thinking, spentUsd }) => {
               }}
             >
               <Stack direction="row" spacing={0.75} alignItems="baseline">
-                <Box component="span" sx={{ color: message.ok === false ? "error.main" : "success.main" }}>
+                <Box component="span" sx={{ color: message.ok === false ? "accent.fail" : "accent.pass" }}>
                   {message.ok === false ? "✗" : "✓"}
                 </Box>
                 <Typography variant="caption" sx={{ fontFamily: ALK_MONO, color: "text.primary" }}>

@@ -62,12 +62,20 @@ function CountCell({ getValue }) {
 
 function RunsCell({ row }) {
   const { runs = 0, runs_passed: runsPassed = 0 } = row.original ?? {};
-  // Neutral until the environment has been run at least once; green only when
-  // every run passed, red as soon as one did not.
+  // Neutral until it has been run; green when everything passed; red only when nothing did.
+  // A partially-passing environment has not failed, so it does not wear the failure colour.
   const tone =
-    runs === 0 ? "neutral" : runsPassed >= runs ? "success" : "error";
-  const color = tone === "neutral" ? "text.secondary" : `${tone}.main`;
-  const borderColor = tone === "neutral" ? "divider" : `${tone}.main`;
+    runs === 0
+      ? "neutral"
+      : runsPassed >= runs
+        ? "pass"
+        : runsPassed === 0
+          ? "fail"
+          : "partial";
+  // accent carries a value per theme; the .main ramp is dark-tuned and meant for fills.
+  const TONES = { pass: "accent.pass", fail: "accent.fail", partial: "accent.tool" };
+  const color = TONES[tone] || "text.secondary";
+  const borderColor = TONES[tone] || "divider";
 
   return (
     <Box

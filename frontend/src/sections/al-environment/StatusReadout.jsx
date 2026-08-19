@@ -7,7 +7,7 @@ const StatusReadout = ({ model, spentUsd, busy }) => (
     {busy && (
       <Box
         aria-label="working"
-        sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: "warning.main" }}
+        sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: "accent.tool" }}
       />
     )}
     <Typography variant="caption" sx={{ fontFamily: ALK_MONO, color: "text.secondary" }}>
