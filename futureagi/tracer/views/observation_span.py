@@ -842,13 +842,19 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             eval_tags = observation_span_obj.project_version.eval_tags
 
             eval_config_mapping = {
-                str(eval_tag["custom_eval_config_id"]): eval_tag["value"]
+                str(eval_tag.get("custom_eval_config_id")): str(
+                    eval_tag.get("value") or ""
+                )
                 for eval_tag in eval_tags
-                if eval_tag["type"] == "OBSERVATION_SPAN_TYPE"
+                if eval_tag.get("type") == "OBSERVATION_SPAN_TYPE"
+                and eval_tag.get("custom_eval_config_id") is not None
             }
 
             custom_eval_config_ids = {
-                eval_tag["custom_eval_config_id"] for eval_tag in eval_tags
+                eval_tag.get("custom_eval_config_id")
+                for eval_tag in eval_tags
+                if eval_tag.get("type") == "OBSERVATION_SPAN_TYPE"
+                and eval_tag.get("custom_eval_config_id") is not None
             }
             custom_eval_configs = CustomEvalConfig.objects.filter(
                 id__in=custom_eval_config_ids, deleted=False
@@ -859,7 +865,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 for span in observation_spans:
                     if (
                         span.observation_type
-                        != eval_config_mapping.get(str(custom_eval_config.id)).lower()
+                        != (
+                            eval_config_mapping.get(str(custom_eval_config.id)) or ""
+                        ).lower()
                     ):
                         continue
 

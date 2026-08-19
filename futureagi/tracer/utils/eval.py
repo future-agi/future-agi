@@ -2195,7 +2195,9 @@ def eval_observation_span_runner(observation_span_id, eval_tags):
 
             if (
                 type == "OBSERVATION_SPAN_TYPE"
-                and eval_tag.get("value").lower() == observation_span.observation_type
+                and custom_eval_config_id
+                and str(eval_tag.get("value") or "").lower()
+                == observation_span.observation_type
             ):
                 try:
                     evaluate_observation_span(
