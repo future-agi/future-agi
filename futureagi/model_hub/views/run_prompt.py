@@ -451,28 +451,66 @@ def render_template(
         template_format = DEFAULT_TEMPLATE_FORMAT
 
     if template_format == TEMPLATE_FORMAT_FSTRING:
-        return template_str.format(**context)
-
-    elif template_format == TEMPLATE_FORMAT_MUSTACHE:
-        return chevron.render(template_str, context)
-
-    elif template_format == TEMPLATE_FORMAT_JINJA2:
-        # Pre-process: handle variable names with spaces (Jinja2 doesn't allow them)
+        # Normalize variable names in template to match normalized context keys
+        # Python's str.format() requires valid identifiers (no spaces)
+        from model_hub.views.utils.utils import normalize_var_name
         import re
 
-        processed = template_str
-        safe_ctx = dict(context)
-        raw_vars = re.findall(r"\{\{\s*([^{}]+?)\s*\}\}", processed)
-        for var_name in raw_vars:
-            stripped = var_name.strip()
-            if " " in stripped and stripped in safe_ctx:
-                processed = processed.replace(
-                    "{{" + var_name + "}}", str(safe_ctx.pop(stripped))
-                )
-                processed = processed.replace(
-                    "{{ " + stripped + " }}", str(context.get(stripped, ""))
-                )
-        return _jinja2_env.from_string(processed).render(**safe_ctx)
+        def normalize_placeholder(match):
+            var_name = match.group(1).strip()
+            parts = var_name.split(".")
+            normalized_parts = [normalize_var_name(p) for p in parts]
+            return "{" + ".".join(normalized_parts) + "}"
+
+        processed = re.sub(
+            r"\{\{\s*([^{}]+?)\s*\}\}",
+            normalize_placeholder,
+            template_str
+        )
+        # Also convert {{var}} to {var} for f-string format
+        processed = processed.replace("{{", "{").replace("}}", "}")
+        return processed.format(**context)
+
+    elif template_format == TEMPLATE_FORMAT_MUSTACHE:
+        # Normalize variable names in template to match normalized context keys
+        # Mustache/chevron allows spaces in keys but we normalize for consistency
+        # with Jinja2 and to handle nested paths with spaces
+        from model_hub.views.utils.utils import normalize_var_name
+        import re
+
+        def normalize_placeholder(match):
+            var_name = match.group(1).strip()
+            parts = var_name.split(".")
+            normalized_parts = [normalize_var_name(p) for p in parts]
+            return "{{" + ".".join(normalized_parts) + "}}"
+
+        processed = re.sub(
+            r"\{\{\s*([^{}]+?)\s*\}\}",
+            normalize_placeholder,
+            template_str
+        )
+        return chevron.render(processed, context)
+
+    elif template_format == TEMPLATE_FORMAT_JINJA2:
+        # Normalize variable names in template to match normalized context keys
+        # This handles spaces and other invalid chars in variable names
+        # e.g., {{Input Column}} -> {{Input_Column}}, {{Input Column.subfield}} -> {{Input_Column.subfield}}
+        from model_hub.views.utils.utils import normalize_var_name
+        import re
+
+        def normalize_placeholder(match):
+            var_name = match.group(1).strip()
+            # Split by dot to handle nested paths, normalize each part
+            parts = var_name.split(".")
+            normalized_parts = [normalize_var_name(p) for p in parts]
+            return "{{" + ".".join(normalized_parts) + "}}"
+
+        processed = re.sub(
+            r"\{\{\s*([^{}]+?)\s*\}\}",
+            normalize_placeholder,
+            template_str
+        )
+        return _jinja2_env.from_string(processed).render(**context)
 
     else:
         raise ValueError(
@@ -534,7 +572,9 @@ def populate_placeholders(
                     }
 
                     # Build nested structure based on column name (e.g., account.name)
-                    parts = column.name.split(".")
+                    # Normalize each part to be a valid Jinja2 identifier (spaces -> underscores)
+                    from model_hub.views.utils.utils import normalize_var_name
+                    parts = [normalize_var_name(p) for p in column.name.split(".")]
                     current = context
 
                     # Determine the value to store - parse JSON for dot notation access.

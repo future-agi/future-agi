@@ -28,6 +28,7 @@ from typing import Any
 from agent_playground.services.engine.node_runner import BaseNodeRunner, register_runner
 from agent_playground.services.engine.utils.json_path import resolve_variable
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
+from model_hub.views.utils.utils import normalize_var_name
 
 # Regex pattern to match {{variable}} placeholders (with optional whitespace)
 _PLACEHOLDER_PATTERN = re.compile(r"\{\{\s*(?P<placeholder>.*?)\s*\}\}")
@@ -229,7 +230,8 @@ class LLMPromptRunner(BaseNodeRunner):
                     except (ValueError, TypeError):
                         pass
                 # Nest dot-notation keys: "Node1.response" -> context["Node1"]["response"]
-                parts = key.split(".")
+                # Normalize each part to be a valid Jinja2 identifier (spaces -> underscores)
+                parts = [normalize_var_name(p) for p in key.split(".")]
                 target = context
                 for part in parts[:-1]:
                     target = target.setdefault(part, {})
