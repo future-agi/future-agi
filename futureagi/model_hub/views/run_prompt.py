@@ -94,7 +94,6 @@ from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import (
     get_error_for_api_status,
     get_error_message,
-    get_specific_error_message,
 )
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.functions import get_prompt_stats
@@ -112,6 +111,36 @@ try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
     log_and_deduct_cost_for_api_request = None
+
+
+class RunPromptValidationError(Exception):
+    """Raised when run-prompt input fails local validation.
+
+    The message describes the user's own input problem (unresolved
+    placeholder, template syntax error, unsupported media) and is safe to
+    surface to API callers verbatim. Any other exception raised during
+    run-prompt execution is treated as internal and redacted.
+    """
+
+
+RUN_PROMPT_GENERIC_ERROR_MESSAGE = (
+    "Run prompt failed. Please check your configuration and try again."
+)
+
+
+def get_run_prompt_error_message(exc):
+    """Return a caller-safe error message for a run-prompt failure.
+
+    Local validation errors (RunPromptValidationError) are the user's own
+    input and are surfaced verbatim since they are actionable. Every other
+    failure (provider errors, unexpected exceptions) is logged in full
+    server-side and replaced with a generic message so traceback internals,
+    file paths and provider error bodies never reach API callers.
+    """
+    if isinstance(exc, RunPromptValidationError):
+        return str(exc)
+    logger.exception("run_prompt_error_redacted", error=str(exc))
+    return RUN_PROMPT_GENERIC_ERROR_MESSAGE
 
 
 def _request_organization(request):
@@ -633,7 +662,7 @@ def populate_placeholders(
 
         except ValueError as e:
             media_error = True
-            raise e
+            raise RunPromptValidationError(str(e)) from e
 
     except Exception as e:
         if media_error:
@@ -1021,7 +1050,7 @@ class LitellmAPIView(CreateAPIView):
 
         except Exception as e:
             logger.exception(f"Error in processing the row: {str(e)}")
-            error_message = get_specific_error_message(e)
+            error_message = get_run_prompt_error_message(e)
             response = error_message
             value_info = {"reason": error_message}
             status = CellStatus.ERROR.value
@@ -1495,14 +1524,14 @@ class RunPrompts:
                     error=str(e),
                     is_llm_error=is_llm_error,
                 )
-                error_message = get_specific_error_message(e, is_llm_error)
+                error_message = get_run_prompt_error_message(e)
                 logger.error(
                     "RunPrompts_process_row_error_message",
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                     error_message=error_message,
                 )
-                response = str(e)
+                response = error_message
                 value_info = {"reason": error_message}
                 status = CellStatus.ERROR.value
 
@@ -1840,7 +1869,7 @@ class AddRunPromptColumnView(APIView):
 
         except Exception as e:
             traceback.print_exc()
-            error_message = get_specific_error_message(e)
+            error_message = get_run_prompt_error_message(e)
             logger.exception(f"Error in adding run prompt column: {error_message}")
             return self._gm.internal_server_error_response(error_message)
 
@@ -1969,7 +1998,7 @@ class PreviewRunPromptColumnView(APIView):
                         responses.append(response)
 
                 except Exception as e:
-                    responses.append(str(e))
+                    responses.append(get_run_prompt_error_message(e))
                     value_infos = {"metadata": {"usage": {}, "cost": {}}}
             return self._gm.success_response(
                 {
@@ -1980,7 +2009,7 @@ class PreviewRunPromptColumnView(APIView):
             )
 
         except Exception as e:
-            error_message = get_specific_error_message(e)
+            error_message = get_run_prompt_error_message(e)
             logger.exception(f"Error in preview run prompt column: {error_message}")
             return self._gm.internal_server_error_response(error_message)
 
@@ -2159,7 +2188,7 @@ class EditRunPromptColumnView(APIView):
         except Http404:
             return self._gm.not_found("Column or dataset not found")
         except Exception as e:
-            error_message = get_specific_error_message(e)
+            error_message = get_run_prompt_error_message(e)
             logger.exception(f"Error in updating run prompt column: {error_message}")
             return self._gm.internal_server_error_response(error_message)
 
@@ -2249,7 +2278,7 @@ class RetrieveRunPromptColumnConfigView(APIView):
         except Http404:
             return self._gm.not_found("Column or run prompt configuration not found")
         except Exception as e:
-            error_message = get_specific_error_message(e)
+            error_message = get_run_prompt_error_message(e)
             logger.exception(f"Error in fetching run prompt column: {error_message}")
             return self._gm.internal_server_error_response(error_message)
 
@@ -2277,7 +2306,7 @@ class DefaultProviderView(APIView):
             return self._gm.not_found(get_error_message("PROVIDER_CONFIG_NOT_FOUND"))
 
         except Exception as e:
-            error_message = get_specific_error_message(e)
+            error_message = get_run_prompt_error_message(e)
             logger.exception(
                 f"Error in fetching provider's configurations: {error_message}"
             )
@@ -2315,7 +2344,7 @@ class DefaultProviderView(APIView):
             return self._gm.success_response("Default provider updated successfully")
 
         except Exception as e:
-            error_message = get_specific_error_message(e)
+            error_message = get_run_prompt_error_message(e)
             logger.exception(f"Error in setting provider as default: {error_message}")
             return self._gm.internal_server_error_response(error_message)
 
@@ -2408,7 +2437,7 @@ class RetrieveRunPromptOptionsView(APIView):
             return self._gm.success_response(data)
 
         except Exception as e:
-            error_message = get_specific_error_message(e)
+            error_message = get_run_prompt_error_message(e)
             logger.exception(f"Error in fetching run prompt options: {error_message}")
             return self._gm.internal_server_error_response(error_message)
 
@@ -2459,7 +2488,7 @@ class DatasetRunPromptStatsView(APIView):
             return self._gm.success_response(response)
 
         except Exception as e:
-            error_message = get_specific_error_message(e)
+            error_message = get_run_prompt_error_message(e)
             logger.exception(f"Error in fetching run prompt data: {error_message}")
             return self._gm.bad_request(error_message)
 
@@ -2700,7 +2729,7 @@ class LiteLLMModelVoicesView(APIView):
             return self._gm.success_response(response_data)
 
         except Exception as e:
-            error_message = get_specific_error_message(e)
+            error_message = get_run_prompt_error_message(e)
             logger.exception(f"Error fetching model voices: {error_message}")
             return self._gm.internal_server_error_response(error_message)
 
@@ -2727,7 +2756,7 @@ class ModelParametersView(APIView):
             return self._gm.success_response(parameters)
 
         except Exception as e:
-            error_message = get_specific_error_message(e)
+            error_message = get_run_prompt_error_message(e)
             logger.exception(f"Error fetching model parameters: {error_message}")
             return self._gm.internal_server_error_response(error_message)
 
@@ -2818,7 +2847,7 @@ class RunPromptForRowsView(APIView):
                 {"success": "Run prompts queued for processing."}
             )
         except Exception as e:
-            error_message = get_specific_error_message(e)
+            error_message = get_run_prompt_error_message(e)
             logger.exception(f"Error in running prompt on rows: {error_message}")
             return self._gm.internal_server_error_response(error_message)
 
@@ -2858,7 +2887,7 @@ def run_all_prompts_task(run_prompt_ids, row_ids):
 
     except Exception as e:
         # Handle exceptions and log errors
-        error_message = get_specific_error_message(e)
+        error_message = get_run_prompt_error_message(e)
         logger.exception(f"Error in run all prompts task: {error_message}")
         # Optionally update the run prompt status to FAILED
         try:
