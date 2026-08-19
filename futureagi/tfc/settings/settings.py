@@ -57,15 +57,26 @@ DEBUG = os.getenv("DEBUG", "True" if _IS_LOCAL else "False").lower() in (
 ALLOWED_HOSTS = _split_env("ALLOWED_HOSTS", "*")
 
 # ── CORS (django-cors-headers) ────────────────────────────────────────────
-# Default: permissive — any browser origin can hit the API. Production
-# self-hosters should set CORS_ALLOWED_ORIGINS (comma-separated) to flip
-# CORS_ALLOW_ALL_ORIGINS off when explicit origins are configured.
+# Fail closed outside local/test: never pair credentialed requests with a
+# wildcard origin. The allowlist is CORS_ALLOWED_ORIGINS plus the first-party
+# frontend hosts (APP_URL / FRONTEND_URL) that also back CSRF_TRUSTED_ORIGINS,
+# so a default self-hosted stack works without extra config.
+from tfc.settings.cors import resolve_cors_origins  # noqa: E402
+
 _cors_origins = _split_env("CORS_ALLOWED_ORIGINS")
-if _cors_origins:
-    CORS_ALLOW_ALL_ORIGINS = False
-    CORS_ALLOWED_ORIGINS = _cors_origins
-else:
-    CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS, CORS_ALLOWED_ORIGINS = resolve_cors_origins(
+    _IS_LOCAL,
+    _cors_origins,
+    (os.getenv("APP_URL", ""), os.getenv("FRONTEND_URL", "")),
+)
+if not _IS_LOCAL and not CORS_ALLOW_ALL_ORIGINS and not CORS_ALLOWED_ORIGINS:
+    import sys as _sys
+
+    _sys.stderr.write(
+        "[WARN] CORS is disabled: set CORS_ALLOWED_ORIGINS (or APP_URL / "
+        "FRONTEND_URL) to allow browser access to the API in a non-local "
+        "environment.\n"
+    )
 # Legacy alias (django-cors-headers pre-4.0)
 CORS_ORIGIN_ALLOW_ALL = CORS_ALLOW_ALL_ORIGINS
 
