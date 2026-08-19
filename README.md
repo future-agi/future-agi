@@ -521,10 +521,10 @@ Set `FUTURE_AGI_TELEMETRY_DISABLED=1` in `.env` (or `deploy/.env.production` for
 
 ## ⭐ Star history
 
-<a href="https://star-history.com/#future-agi/future-agi">
+<a href="https://star-history.dera.page/#future-agi/future-agi">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=future-agi/future-agi&type=Date&theme=dark">
-    <img alt="Star history" src="https://api.star-history.com/svg?repos=future-agi/future-agi&type=Date">
+    <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=future-agi/future-agi&type=Date&theme=dark">
+    <img alt="Star history" src="https://star-history.dera.page/svg?repos=future-agi/future-agi&type=Date">
   </picture>
 </a>
 
