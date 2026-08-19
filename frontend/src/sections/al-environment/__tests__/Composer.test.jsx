@@ -9,7 +9,7 @@ const props = {
   streaming: false,
   status: { session: { id: "s1" }, agent: "drive_thru", stage: "understand", have: {}, busy: false },
   sessionId: "session-0b718f",
-  artifactsPath: "/tmp/artifacts/sessions/session-0b718f",
+  artifactsPath: "/Users/someone/agent-learning-kit/artifacts/sessions/session-0b718f",
 };
 
 describe("Composer", () => {
@@ -79,7 +79,9 @@ describe("Composer", () => {
   it("names the session and where its artifacts live", () => {
     render(<Composer {...props} />);
     expect(screen.getByText(/session-0b718f/)).toBeInTheDocument();
-    expect(screen.getByText(/artifacts\/sessions/)).toBeInTheDocument();
+    // The machine-specific root is dropped; the part that names the folder stays.
+    expect(screen.getByText(/artifacts\/sessions\/session-0b718f/)).toBeInTheDocument();
+    expect(screen.queryByText(/\/Users\/someone/)).not.toBeInTheDocument();
   });
 
   it("says there is no session when there is none", () => {

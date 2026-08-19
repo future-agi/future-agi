@@ -15,7 +15,7 @@ const WASH = {
   soft: { color: "text.secondary", bg: "text.secondary" },
 };
 
-const Tag = ({ kind = "soft", children, title, dim }) => {
+const Tag = ({ kind = "soft", children, title, dim, keepCase }) => {
   const tone = WASH[kind] || WASH.soft;
   return (
     <Box
@@ -29,7 +29,9 @@ const Tag = ({ kind = "soft", children, title, dim }) => {
         fontFamily: ALK_MONO,
         fontSize: 10.7,
         letterSpacing: "0.08em",
-        textTransform: "uppercase",
+        // Names carry their own case: uppercasing an identifier makes the same thing
+        // look like two different things in two places.
+        textTransform: keepCase ? "none" : "uppercase",
         whiteSpace: "nowrap",
         color: tone.color,
         bgcolor: (theme) => theme.palette.action.hover,
@@ -48,6 +50,7 @@ Tag.propTypes = {
   children: PropTypes.node,
   title: PropTypes.string,
   dim: PropTypes.bool,
+  keepCase: PropTypes.bool,
 };
 
 export default Tag;

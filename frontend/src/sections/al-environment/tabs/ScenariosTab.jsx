@@ -10,6 +10,7 @@ import XCard from "../parts/XCard";
 import CodeBlock from "../parts/CodeBlock";
 import DataTable from "../parts/DataTable";
 import { ALK_MONO } from "../alkTokens";
+import { shortPath } from "../parts/shortPath";
 
 /**
  * Three states, not two. `null` means the gates could not be run at all because no world
@@ -17,7 +18,8 @@ import { ALK_MONO } from "../alkTokens";
  */
 const verdictOf = (validated) => {
   if (validated === true) return { kind: "pass", label: "validated" };
-  if (validated === null || validated === undefined) return { kind: "soft", label: "unchecked" };
+  if (validated === null || validated === undefined)
+    return { kind: "soft", label: "unchecked" };
   return { kind: "fail", label: "not ready" };
 };
 
@@ -63,7 +65,9 @@ const GateLamp = ({ held, label }) => {
           borderStyle: on || off ? "solid" : "dashed",
           borderColor: on || off ? tone : "divider",
           bgcolor: (theme) =>
-            on || off ? alpha(theme.palette[on ? "success" : "error"].main, 0.14) : "transparent",
+            on || off
+              ? alpha(theme.palette[on ? "success" : "error"].main, 0.14)
+              : "transparent",
         }}
       >
         {on ? "✓" : off ? "✗" : "?"}
@@ -73,7 +77,10 @@ const GateLamp = ({ held, label }) => {
   );
 };
 
-GateLamp.propTypes = { held: PropTypes.bool, label: PropTypes.string.isRequired };
+GateLamp.propTypes = {
+  held: PropTypes.bool,
+  label: PropTypes.string.isRequired,
+};
 
 /** The chip shape the harness uses for any "open this" affordance. */
 const Chip = ({ onClick, children }) => (
@@ -99,7 +106,10 @@ const Chip = ({ onClick, children }) => (
   </Box>
 );
 
-Chip.propTypes = { onClick: PropTypes.func.isRequired, children: PropTypes.node };
+Chip.propTypes = {
+  onClick: PropTypes.func.isRequired,
+  children: PropTypes.node,
+};
 
 const ScenarioCard = ({ scenario, ran, onSeeRun }) => {
   // Only one file is held open at a time, the way the reference replaces its file-view node —
@@ -128,12 +138,21 @@ const ScenarioCard = ({ scenario, ran, onSeeRun }) => {
         <>
           <Typography
             component="span"
-            sx={{ fontFamily: ALK_MONO, fontSize: 13, fontWeight: 600, color: "text.primary" }}
+            sx={{
+              fontFamily: ALK_MONO,
+              fontSize: 13,
+              fontWeight: 600,
+              color: "text.primary",
+            }}
           >
             {scenario.name}
           </Typography>
           {scenario.use_case && <Tag kind="soft">{scenario.use_case}</Tag>}
-          {ran && <Tag kind={ran.passed ? "pass" : "fail"}>{ran.passed ? "ran: pass" : "ran: fail"}</Tag>}
+          {ran && (
+            <Tag kind={ran.passed ? "pass" : "fail"}>
+              {ran.passed ? "ran: pass" : "ran: fail"}
+            </Tag>
+          )}
         </>
       }
       meta={`${solution.length}-step solution · ${checks.length} checks`}
@@ -141,7 +160,11 @@ const ScenarioCard = ({ scenario, ran, onSeeRun }) => {
       <Field label="validation">
         <Stack direction="row" flexWrap="wrap" useFlexGap spacing={1.5}>
           {GATES.map(([key, label]) => (
-            <GateLamp key={key} held={(scenario.gates || {})[key]} label={label} />
+            <GateLamp
+              key={key}
+              held={(scenario.gates || {})[key]}
+              label={label}
+            />
           ))}
         </Stack>
       </Field>
@@ -181,7 +204,9 @@ const ScenarioCard = ({ scenario, ran, onSeeRun }) => {
 
       {scenario.tests && (
         <Field label="what this tests">
-          <Typography sx={{ fontStyle: "italic", fontSize: 13, color: "text.secondary" }}>
+          <Typography
+            sx={{ fontStyle: "italic", fontSize: 13, color: "text.secondary" }}
+          >
             {scenario.tests}
           </Typography>
         </Field>
@@ -223,7 +248,10 @@ const ScenarioCard = ({ scenario, ran, onSeeRun }) => {
               <Box component="span" sx={{ color: "text.primary" }}>
                 {step.tool}
               </Box>{" "}
-              <Box component="span" sx={{ color: "text.secondary", overflowWrap: "anywhere" }}>
+              <Box
+                component="span"
+                sx={{ color: "text.secondary", overflowWrap: "anywhere" }}
+              >
                 {JSON.stringify(step.arguments || {})}
               </Box>
             </Box>
@@ -238,6 +266,7 @@ const ScenarioCard = ({ scenario, ran, onSeeRun }) => {
               key={check.name}
               kind={check.settled_by === "code" ? "code" : "judge"}
               title={check.what || ""}
+              keepCase
             >
               {check.name}
             </Tag>
@@ -246,7 +275,18 @@ const ScenarioCard = ({ scenario, ran, onSeeRun }) => {
       </Field>
 
       {files.length > 0 && (
-        <Field label={`its folder — ${scenario.folder || ""}`}>
+        <Field label="its folder">
+          <Box
+            sx={{
+              fontFamily: ALK_MONO,
+              fontSize: 11.5,
+              color: "text.secondary",
+              overflowWrap: "anywhere",
+              mb: 0.5,
+            }}
+          >
+            {shortPath(scenario.folder)}
+          </Box>
           <Stack direction="row" flexWrap="wrap" useFlexGap spacing={0.5}>
             {files.map((path) => (
               <Chip key={path} onClick={() => openFile(path)}>
@@ -285,8 +325,8 @@ const ScenariosTab = ({ scenarios, runs, onSay, hasWorld, onSeeRun }) => {
       <Box>
         <Pane title="Scenarios">
           <Typography sx={{ fontSize: 13.5, color: "text.secondary" }}>
-            None written yet. Each one owns a folder: what it changes, whether the world is ready
-            for it, and one runnable file per check.
+            None written yet. Each one owns a folder: what it changes, whether
+            the world is ready for it, and one runnable file per check.
           </Typography>
           {/* Asking for scenarios before a world exists only produces scenarios nothing can check. */}
           {hasWorld && onSay && (
