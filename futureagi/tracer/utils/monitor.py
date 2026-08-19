@@ -2,7 +2,9 @@ import statistics
 from datetime import timedelta
 
 import pandas as pd
+import requests
 import structlog
+from django.conf import settings
 from django.db.models import (
     Avg,
     Case,
@@ -27,7 +29,6 @@ from slack_sdk.errors import SlackApiError
 # from prophet import Prophet
 from slack_sdk.webhook import WebhookClient
 
-logger = structlog.get_logger(__name__)
 from tfc.temporal import temporal_activity
 from tfc.utils.email import email_helper
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
@@ -40,12 +41,10 @@ from tracer.models.monitor import (
     UserAlertMonitorLog,
 )
 from tracer.models.observation_span import EvalLogger, ObservationSpan
-from tracer.services.clickhouse.query_builders.monitor_metrics import (
-    MonitorMetricsQueryBuilder,
-)
-from tracer.services.clickhouse.query_service import AnalyticsQueryService, QueryType
+from tracer.services.clickhouse.query_service import AnalyticsQueryService
 from tracer.utils.eval_tasks import parsing_monitor_filters
 
+logger = structlog.get_logger(__name__)
 
 def _build_monitor_ch_builder(monitor):
     """Construct a MonitorMetricsQueryBuilder from a monitor instance."""
@@ -164,8 +163,36 @@ def _send_slack_notification(monitor, message, alert_type):
         )
 
 
+def _send_webhook_notification(
+    webhook_url, metric, current_value, threshold, severity, project_name
+):
+    if not webhook_url:
+        return
+
+    payload = {
+        "project": project_name,
+        "metric": metric,
+        "severity": severity,
+        "current_value": current_value,
+        "threshold": threshold,
+        "alert_link": f"{settings.APP_URL}/dashboard/alerts",
+    }
+
+    try:
+        requests.post(webhook_url, json=payload, timeout=5)
+    except Exception as e:
+        logger.error(f"Failed to send webhook notification: {e}")
+
+
 def _handle_alert_trigger(
-    monitor, message, alert_type, time_window_start=None, now=None
+    monitor,
+    message,
+    alert_type,
+    time_window_start=None,
+    now=None,
+    metric=None,
+    current_value=None,
+    threshold=None,
 ):
     """Handles the actions when an alert is triggered."""
     UserAlertMonitorLog.objects.create(
@@ -175,8 +202,22 @@ def _handle_alert_trigger(
         time_window_start=time_window_start,
         time_window_end=now,
     )
+
+    # Process existing notification channels
     _send_alert_email(monitor, message, alert_type)
     _send_slack_notification(monitor, message, alert_type)
+
+    # Process webhook notifications independently to prevent blocking
+    try:
+        _send_webhook_notification(
+            monitor=monitor,
+            metric=metric,
+            current_value=current_value,
+            threshold=threshold,
+            alert_type=alert_type,
+        )
+    except Exception as e:
+        logger.error(f"Webhook notification block failed: {e}")
 
 
 @temporal_activity(
@@ -226,7 +267,7 @@ def process_monitor_task(monitor_id, now_iso):
         _process_monitor(monitor, now)
     except Exception as e:
         # _mute_monitor(monitor)
-        raise Exception(f"Error processing monitor {monitor.id}: {e}")
+        raise Exception(f"Error processing monitor {monitor.id}: {e}") from e
 
 
 def _process_monitor(monitor, now):

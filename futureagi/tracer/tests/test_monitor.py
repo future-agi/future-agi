@@ -5,6 +5,7 @@ Tests for /tracer/user-alerts/ and /tracer/user-alert-logs/ endpoints.
 """
 
 import uuid
+from unittest.mock import MagicMock, patch
 
 import pytest
 from rest_framework import status
@@ -14,6 +15,7 @@ from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
 from tracer.models.monitor import UserAlertMonitor, UserAlertMonitorLog
 from tracer.models.project import Project
+from tracer.utils.monitor import _send_webhook_notification
 
 
 def get_result(response):
@@ -144,6 +146,28 @@ class TestUserAlertMonitorCreateAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_200_OK
+
+    @pytest.mark.requires_ee
+    def test_create_monitor_with_webhook_config(self, auth_client, observe_project):
+        """Create monitor with Webhook notification config."""
+        response = auth_client.post(
+            "/tracer/user-alerts/",
+            {
+                "project": str(observe_project.id),
+                "name": "Webhook Alert",
+                "metric_type": "span_response_time",
+                "threshold_operator": "greater_than",
+                "threshold_type": "static",
+                "critical_threshold_value": 5000,
+                "alert_frequency": 60,
+                "webhook_url": "https://hooks.pagerduty.com/trigger",
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        monitor = UserAlertMonitor.objects.get(name="Webhook Alert")
+        assert monitor.webhook_url == "https://hooks.pagerduty.com/trigger"
 
     @pytest.mark.requires_ee
     def test_create_monitor_accepts_canonical_span_attribute_filters(
@@ -1092,3 +1116,74 @@ class TestUserAlertMonitorLogResolveAPI:
         log2.refresh_from_db()
         assert log1.resolved is True
         assert log2.resolved is True
+
+
+def test_send_webhook_notification_success():
+    """Verify the webhook payload is constructed and sent correctly."""
+    mock_monitor = MagicMock()
+    mock_monitor.webhook_url = "https://hooks.example.com/trigger"
+    mock_monitor.project.name = "Test Project"
+
+    with patch("tracer.utils.monitor.requests.post") as mock_post:
+        _send_webhook_notification(
+            monitor=mock_monitor,
+            metric="latency_ms",
+            current_value=1200,
+            threshold=1000,
+            alert_type="critical",
+        )
+
+        mock_post.assert_called_once()
+        args, kwargs = mock_post.call_args
+
+        assert args[0] == "https://hooks.example.com/trigger"
+
+        payload = kwargs.get("json")
+        assert payload["project"] == "Test Project"
+        assert payload["metric"] == "latency_ms"
+        assert payload["severity"] == "critical"
+        assert payload["current_value"] == 1200
+        assert payload["threshold"] == 1000
+        assert "alert_link" in payload
+        assert kwargs.get("timeout") == 5
+
+
+def test_send_webhook_notification_failure_logs_error():
+    """Verify that a network failure logs an error but does not raise an exception."""
+    mock_monitor = MagicMock()
+    mock_monitor.id = 99
+    mock_monitor.webhook_url = "https://hooks.example.com/trigger"
+
+    with patch("tracer.utils.monitor.requests.post") as mock_post:
+        mock_post.side_effect = Exception("Connection timeout")
+        with patch("tracer.utils.monitor.logger") as mock_logger:
+            _send_webhook_notification(
+                monitor=mock_monitor,
+                metric="error_rate",
+                current_value=5,
+                threshold=1,
+                alert_type="warning",
+            )
+
+            mock_logger.error.assert_called_once()
+            assert (
+                "Failed to send webhook notification for monitor 99"
+                in mock_logger.error.call_args[0][0]
+            )
+
+
+def test_send_webhook_notification_skips_if_no_url():
+    """Verify the function exits early if no webhook URL is configured."""
+    mock_monitor = MagicMock()
+    mock_monitor.webhook_url = None
+
+    with patch("tracer.utils.monitor.requests.post") as mock_post:
+        _send_webhook_notification(
+            monitor=mock_monitor,
+            metric="cpu_usage",
+            current_value=90,
+            threshold=80,
+            alert_type="warning",
+        )
+
+        mock_post.assert_not_called()
