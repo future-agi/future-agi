@@ -40,6 +40,14 @@ def _standardize_url(url):
         return "http://" + url
 
 
+def _is_valid_link(url):
+    """Check a URL with bounded, redirect-aware HTTP requests."""
+    response = requests.head(url, timeout=5, allow_redirects=True)
+    if response.status_code in (403, 405):
+        response = requests.get(url, timeout=5, allow_redirects=True, stream=True)
+    return response.status_code < 400
+
+
 def _preprocess_strings(keywords, text, case_sensitive):
     """
     Preprocess the keywords based on the case_sensitive flag.
@@ -1333,8 +1341,7 @@ def contains_valid_link(text, **kwargs):
         if matched_url:
             standardized_url = _standardize_url(matched_url)
             try:
-                text = requests.head(standardized_url)
-                if text.status_code == 200:
+                if _is_valid_link(standardized_url):
                     return {
                         "result": True,
                         "reason": f"link {matched_url} found in output and is valid",
@@ -1344,7 +1351,7 @@ def contains_valid_link(text, **kwargs):
                         "result": False,
                         "reason": f"link {matched_url} found in output but is invalid",
                     }
-            except:
+            except requests.RequestException:
                 return {
                     "result": False,
                     "reason": f"link {matched_url} found in output but is invalid",
@@ -1369,8 +1376,7 @@ def no_invalid_links(text, **kwargs):
         if matched_url:
             standardized_url = _standardize_url(matched_url)
             try:
-                text = requests.head(standardized_url)
-                if text.status_code == 200:
+                if _is_valid_link(standardized_url):
                     return {
                         "result": True,
                         "reason": f"link {matched_url} found in output and is valid",
@@ -1380,7 +1386,7 @@ def no_invalid_links(text, **kwargs):
                         "result": False,
                         "reason": f"link {matched_url} found in output but is invalid",
                     }
-            except:
+            except requests.RequestException:
                 return {
                     "result": False,
                     "reason": f"link {matched_url} found in output but is invalid",
