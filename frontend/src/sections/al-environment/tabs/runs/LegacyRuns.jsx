@@ -22,7 +22,9 @@ const callTone = (call) => {
 
 const boxOf = (check) => {
   if (check.broken) return { mark: "!", color: "warning.main" };
-  return check.passed ? { mark: "✓", color: "success.main" } : { mark: "✗", color: "error.main" };
+  return check.passed
+    ? { mark: "✓", color: "success.main" }
+    : { mark: "✗", color: "error.main" };
 };
 
 /**
@@ -33,7 +35,9 @@ const boxOf = (check) => {
 const LegacyRuns = ({ runs }) => {
   const [filter, setFilter] = useState("all");
   const passed = runs.filter((run) => run.passed).length;
-  const shown = runs.filter((run) => filter === "all" || (filter === "passed") === Boolean(run.passed));
+  const shown = runs.filter(
+    (run) => filter === "all" || (filter === "passed") === Boolean(run.passed),
+  );
 
   return (
     <Box>
@@ -69,13 +73,17 @@ const LegacyRuns = ({ runs }) => {
         else if (run.turns) how = ` · ${run.turns} turns`;
         const meta =
           `${run.met}/${run.of} settled by code` +
-          (run.judged.length ? ` · ${run.judged.length} judged` : "") +
+          (run.judged.length ? ` · ${run.judged.length} by eval harness` : "") +
           how;
         return (
           <XCard
             key={run.scenario}
             title={run.scenario}
-            tags={<Tag kind={run.passed ? "pass" : "fail"}>{run.passed ? "pass" : "fail"}</Tag>}
+            tags={
+              <Tag kind={run.passed ? "pass" : "fail"}>
+                {run.passed ? "pass" : "fail"}
+              </Tag>
+            }
             meta={meta}
             // A failure is what somebody opened this page for, and a lone run has nothing to
             // scan past.
@@ -105,34 +113,70 @@ const LegacyRuns = ({ runs }) => {
                   const mark = boxOf(check);
                   const failed = !check.passed && !check.broken;
                   return (
-                    <Stack key={check.name} direction="row" spacing={1.6} alignItems="flex-start">
-                      <Box component="span" aria-hidden sx={{ flex: "0 0 auto", width: "1em", color: mark.color }}>
+                    <Stack
+                      key={check.name}
+                      direction="row"
+                      spacing={1.6}
+                      alignItems="flex-start"
+                    >
+                      <Box
+                        component="span"
+                        aria-hidden
+                        sx={{
+                          flex: "0 0 auto",
+                          width: "1em",
+                          color: mark.color,
+                        }}
+                      >
                         {mark.mark}
                       </Box>
                       {check.kind && (
                         <Box
                           component="span"
-                          sx={{ flex: "0 0 auto", width: "5.4em", fontFamily: ALK_MONO, fontSize: 11.6, color: "text.secondary" }}
+                          sx={{
+                            flex: "0 0 auto",
+                            width: "5.4em",
+                            fontFamily: ALK_MONO,
+                            fontSize: 11.6,
+                            color: "text.secondary",
+                          }}
                         >
                           {check.kind}
                         </Box>
                       )}
-                      <Box sx={{ flex: "1 1 auto", minWidth: 0, overflowWrap: "anywhere" }}>
-                        <Box component="span" sx={{ fontSize: 13, color: "text.primary" }}>
+                      <Box
+                        sx={{
+                          flex: "1 1 auto",
+                          minWidth: 0,
+                          overflowWrap: "anywhere",
+                        }}
+                      >
+                        <Box
+                          component="span"
+                          sx={{ fontSize: 13, color: "text.primary" }}
+                        >
                           {check.name}
                         </Box>
                         {/* A failure needs its reason. So does an eval that passed: the point of
                             routing a claim through a named eval is that it can be read back. */}
                         {check.why && (!check.passed || check.by) && (
                           <Typography
-                            sx={{ fontSize: 12.4, color: failed ? "error.main" : "text.secondary", pt: 0.2 }}
+                            sx={{
+                              fontSize: 12.4,
+                              color: failed ? "error.main" : "text.secondary",
+                              pt: 0.2,
+                            }}
                           >
                             {check.why}
                           </Typography>
                         )}
                         {check.by && (
                           <Typography
-                            sx={{ fontFamily: ALK_MONO, fontSize: 11.5, color: "text.secondary" }}
+                            sx={{
+                              fontFamily: ALK_MONO,
+                              fontSize: 11.5,
+                              color: "text.secondary",
+                            }}
                           >
                             {`decided by ${check.by}`}
                           </Typography>
@@ -142,18 +186,40 @@ const LegacyRuns = ({ runs }) => {
                   );
                 })}
                 {run.judged.map((name) => (
-                  <Stack key={name} direction="row" spacing={1.6} alignItems="flex-start">
-                    <Box component="span" aria-hidden sx={{ flex: "0 0 auto", width: "1em", color: "warning.main" }}>
+                  <Stack
+                    key={name}
+                    direction="row"
+                    spacing={1.6}
+                    alignItems="flex-start"
+                  >
+                    <Box
+                      component="span"
+                      aria-hidden
+                      sx={{
+                        flex: "0 0 auto",
+                        width: "1em",
+                        color: "warning.main",
+                      }}
+                    >
                       ?
                     </Box>
                     <Box
                       component="span"
-                      sx={{ flex: "0 0 auto", width: "5.4em", fontFamily: ALK_MONO, fontSize: 11.6, color: "text.secondary" }}
+                      sx={{
+                        flex: "0 0 auto",
+                        width: "5.4em",
+                        fontFamily: ALK_MONO,
+                        fontSize: 11.6,
+                        color: "text.secondary",
+                      }}
                     >
-                      judged
+                      eval
                     </Box>
-                    <Box component="span" sx={{ fontSize: 13, color: "text.primary" }}>
-                      {`${name} — not settled by code`}
+                    <Box
+                      component="span"
+                      sx={{ fontSize: 13, color: "text.primary" }}
+                    >
+                      {`${name} — decided by the eval harness`}
                     </Box>
                   </Stack>
                 ))}

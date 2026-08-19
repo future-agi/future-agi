@@ -107,7 +107,7 @@ describe("RunsTab — the list", () => {
     render(<RunsTab {...base} />);
     expect(screen.getAllByText("plain_order")).toHaveLength(2);
     expect(screen.getByText("unknown_item")).toBeInTheDocument();
-    expect(screen.getByText("agent sonnet · user haiku · judge opus")).toBeInTheDocument();
+    expect(screen.getByText("agent sonnet · user haiku · eval harness opus")).toBeInTheDocument();
   });
 
   it("opens a run from anywhere on its card, by click or by keyboard", async () => {
@@ -132,7 +132,7 @@ describe("RunsTab — one run", () => {
     open();
     expect(screen.getByText("1/1 passed in 41.2s")).toBeInTheDocument();
     expect(
-      screen.getByText("voice · concurrency 2 · $0.42 · agent sonnet · user haiku · judge opus")
+      screen.getByText("voice · concurrency 2 · $0.42 · agent sonnet · user haiku · eval harness opus")
     ).toBeInTheDocument();
   });
 
@@ -159,7 +159,7 @@ describe("RunsTab — one run", () => {
   it("splits the sub-goals by who decided them", () => {
     open();
     expect(screen.getByText("settled by code")).toBeInTheDocument();
-    expect(screen.getByText("decided by an eval")).toBeInTheDocument();
+    expect(screen.getByText("decided by the eval harness")).toBeInTheDocument();
     expect(screen.getByText("no_order_written")).toBeInTheDocument();
     expect(screen.getByText("conduct_eval")).toBeInTheDocument();
   });
@@ -257,10 +257,10 @@ describe("RunsTab — the legacy view", () => {
     expect(screen.getByText("live_refusal")).toBeInTheDocument();
     expect(screen.getByText("local_order")).toBeInTheDocument();
     // The live record counts its settled claims; the local one counts its checkpoints.
-    expect(screen.getByText("1/2 settled by code · 1 judged · live call")).toBeInTheDocument();
+    expect(screen.getByText("1/2 settled by code · 1 by eval harness · live call")).toBeInTheDocument();
     expect(screen.getByText("2/2 settled by code · 6 turns")).toBeInTheDocument();
     expect(screen.getByText("Ask for a refund you are not owed.")).toBeInTheDocument();
-    expect(screen.getByText("stayed_in_scope — not settled by code")).toBeInTheDocument();
+    expect(screen.getByText("stayed_in_scope — decided by the eval harness")).toBeInTheDocument();
     expect(screen.getByText("provider dropped the call")).toBeInTheDocument();
     expect(screen.getByText("decided by conduct_eval")).toBeInTheDocument();
     expect(screen.getByText("✓ place_order(...) -> ok")).toBeInTheDocument();

@@ -12,7 +12,7 @@ import ScenarioCard from "./ScenarioCard";
 const RunDetail = ({ run, onBack }) => {
   const cases = Array.isArray(run.scenarios) ? run.scenarios : [];
   const models = run.models
-    ? ` · agent ${run.models.agent} · user ${run.models.user} · judge ${run.models.judge}`
+    ? ` · agent ${run.models.agent} · user ${run.models.user} · eval harness ${run.models.judge}`
     : "";
 
   return (
@@ -25,13 +25,20 @@ const RunDetail = ({ run, onBack }) => {
           variant="outlined"
           color="inherit"
           onClick={onBack}
-          sx={{ borderRadius: 5, color: "text.secondary", borderColor: "divider" }}
+          sx={{
+            borderRadius: 5,
+            color: "text.secondary",
+            borderColor: "divider",
+          }}
         >
           ‹ all runs
         </Button>
       </Box>
 
-      <Pane title={run.run_id} meta={`${run.passed ?? 0}/${cases.length} passed in ${run.seconds}s`}>
+      <Pane
+        title={run.run_id}
+        meta={`${run.passed ?? 0}/${cases.length} passed in ${run.seconds}s`}
+      >
         <Box
           sx={{
             px: 3.6,
@@ -57,6 +64,9 @@ const RunDetail = ({ run, onBack }) => {
   );
 };
 
-RunDetail.propTypes = { run: PropTypes.object.isRequired, onBack: PropTypes.func.isRequired };
+RunDetail.propTypes = {
+  run: PropTypes.object.isRequired,
+  onBack: PropTypes.func.isRequired,
+};
 
 export default RunDetail;

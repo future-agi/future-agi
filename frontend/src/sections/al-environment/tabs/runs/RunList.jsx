@@ -10,7 +10,10 @@ import Tag from "../../parts/Tag";
  * result: the list is the first thing, and any entry opens into what actually happened.
  */
 const RunList = ({ runs, selectedRunId, onSelectRun }) => (
-  <Pane title="Simulations" meta={`${runs.length} run${runs.length === 1 ? "" : "s"} of this suite`}>
+  <Pane
+    title="Simulations"
+    meta={`${runs.length} run${runs.length === 1 ? "" : "s"} of this suite`}
+  >
     <Stack spacing={1.2}>
       {runs.map((run) => {
         // On the list payload `scenarios` is a count. read_run replaces it with the results
@@ -38,27 +41,54 @@ const RunList = ({ runs, selectedRunId, onSelectRun }) => (
               cursor: "pointer",
               bgcolor: "background.paper",
               border: "1px solid",
-              borderColor: selectedRunId === run.run_id ? "text.secondary" : "divider",
+              borderColor:
+                selectedRunId === run.run_id ? "text.secondary" : "divider",
               transition: "border-color 120ms, transform 120ms",
-              "&:hover": { borderColor: "text.secondary", transform: "translateY(-1px)" },
-              "&:focus-visible": { outline: "2px solid", outlineColor: "success.main", outlineOffset: "2px" },
+              "&:hover": {
+                borderColor: "text.secondary",
+                transform: "translateY(-1px)",
+              },
+              "&:focus-visible": {
+                outline: "2px solid",
+                outlineColor: "success.main",
+                outlineOffset: "2px",
+              },
             }}
           >
-            <Stack direction="row" alignItems="center" spacing={2} flexWrap="wrap" useFlexGap>
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={2}
+              flexWrap="wrap"
+              useFlexGap
+            >
               <Tag kind={run.passed === total ? "pass" : "fail"}>
                 {`${run.passed ?? 0}/${total} passed`}
               </Tag>
               <Typography
                 component="span"
-                sx={{ fontFamily: ALK_MONO, fontSize: 13.5, fontWeight: 600, color: "text.primary" }}
+                sx={{
+                  fontFamily: ALK_MONO,
+                  fontSize: 13.5,
+                  fontWeight: 600,
+                  color: "text.primary",
+                }}
               >
                 {run.run_id}
               </Typography>
               <Box sx={{ flex: "1 1 auto" }} />
-              <Typography component="span" variant="caption" color="text.secondary">
+              <Typography
+                component="span"
+                variant="caption"
+                color="text.secondary"
+              >
                 {`${run.seconds}s · ${run.modality || "chat"} · $${run.spent_usd || 0}`}
               </Typography>
-              <Box component="span" aria-hidden sx={{ color: "text.secondary", fontSize: 14 }}>
+              <Box
+                component="span"
+                aria-hidden
+                sx={{ color: "text.secondary", fontSize: 14 }}
+              >
                 ›
               </Box>
             </Stack>
@@ -66,7 +96,13 @@ const RunList = ({ runs, selectedRunId, onSelectRun }) => (
             {/* Which scenarios, at a glance, so the list answers "what changed between runs"
                 without opening each one. */}
             {(run.results || []).length > 0 && (
-              <Stack direction="row" spacing={1.4} flexWrap="wrap" useFlexGap sx={{ mt: 1.4 }}>
+              <Stack
+                direction="row"
+                spacing={1.4}
+                flexWrap="wrap"
+                useFlexGap
+                sx={{ mt: 1.4 }}
+              >
                 {run.results.map((one) => (
                   <Tag key={one.scenario} kind={one.passed ? "pass" : "fail"}>
                     {one.scenario}
@@ -76,8 +112,12 @@ const RunList = ({ runs, selectedRunId, onSelectRun }) => (
             )}
 
             {run.models && (
-              <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
-                {`agent ${run.models.agent} · user ${run.models.user} · judge ${run.models.judge}`}
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ display: "block", mt: 1 }}
+              >
+                {`agent ${run.models.agent} · user ${run.models.user} · eval harness ${run.models.judge}`}
               </Typography>
             )}
           </Box>

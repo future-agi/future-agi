@@ -11,7 +11,10 @@ import { ALK_MONO } from "../alkTokens";
 
 /** The reference's `.subline`: the prose voice inside a card — italic, quiet, one thought. */
 const Subline = ({ children }) => (
-  <Typography variant="body2" sx={{ fontStyle: "italic", color: "text.secondary" }}>
+  <Typography
+    variant="body2"
+    sx={{ fontStyle: "italic", color: "text.secondary" }}
+  >
     {children}
   </Typography>
 );
@@ -19,7 +22,8 @@ const Subline = ({ children }) => (
 Subline.propTypes = { children: PropTypes.node };
 
 /** A handler earns its keep by being able to refuse; count how many times it does. */
-const refusalCount = (source) => (String(source ?? "").match(/raise ToolError/g) || []).length;
+const refusalCount = (source) =>
+  (String(source ?? "").match(/raise ToolError/g) || []).length;
 
 const lineCount = (text) => String(text ?? "").split("\n").length;
 
@@ -37,16 +41,18 @@ const EnvironmentTab = ({ world, subgoals }) => {
       <Box>
         <Pane title="Environment">
           <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            Not built yet. This stage builds whatever the agent&apos;s tools act on — a database,
-            a service, whatever it depends on — so every call it makes gets a truthful answer,
-            including a truthful refusal.
+            Not built yet. This stage builds whatever the agent&apos;s tools act
+            on — a database, a service, whatever it depends on — so every call
+            it makes gets a truthful answer, including a truthful refusal.
           </Typography>
         </Pane>
       </Box>
     );
   }
 
-  const settledByCode = goals.filter((goal) => goal.settled_by === "code").length;
+  const settledByCode = goals.filter(
+    (goal) => goal.settled_by === "code",
+  ).length;
 
   return (
     <Box>
@@ -56,7 +62,10 @@ const EnvironmentTab = ({ world, subgoals }) => {
         </Pane>
       )}
 
-      <Pane title="The data" meta={`${tables.length} tables — click one to see its rows`}>
+      <Pane
+        title="The data"
+        meta={`${tables.length} tables — click one to see its rows`}
+      >
         {tables.map((table) => (
           <XCard
             key={table.name}
@@ -66,13 +75,20 @@ const EnvironmentTab = ({ world, subgoals }) => {
             // would push the rest of the stage off the screen.
             open={table.count > 0 && table.count <= 4}
           >
-            <DataTable columns={table.columns ?? []} rows={table.rows ?? []} count={table.count} />
+            <DataTable
+              columns={table.columns ?? []}
+              rows={table.rows ?? []}
+              count={table.count}
+            />
           </XCard>
         ))}
       </Pane>
 
       {handlers.length > 0 && (
-        <Pane title="The tools" meta="one handler per tool — the code that can say no">
+        <Pane
+          title="The tools"
+          meta="one handler per tool — the code that can say no"
+        >
           {handlers.map((handler) => {
             const refusals = refusalCount(handler.source);
             return (
@@ -91,12 +107,19 @@ const EnvironmentTab = ({ world, subgoals }) => {
       )}
 
       {sequences.length > 0 && (
-        <Pane title="Declared sequences" meta="flows where state must carry across calls">
+        <Pane
+          title="Declared sequences"
+          meta="flows where state must carry across calls"
+        >
           {sequences.map((sequence) => {
             const calls = sequence.calls ?? [];
             const expectState = sequence.expect_state ?? {};
             return (
-              <XCard key={sequence.name} title={sequence.name} meta={`${calls.length} calls`}>
+              <XCard
+                key={sequence.name}
+                title={sequence.name}
+                meta={`${calls.length} calls`}
+              >
                 <Field label="calls">
                   <Box
                     component="ol"
@@ -124,7 +147,10 @@ const EnvironmentTab = ({ world, subgoals }) => {
                         </Box>{" "}
                         <Box
                           component="span"
-                          sx={{ color: "text.secondary", overflowWrap: "anywhere" }}
+                          sx={{
+                            color: "text.secondary",
+                            overflowWrap: "anywhere",
+                          }}
                         >
                           {JSON.stringify(step.arguments ?? {})}
                         </Box>
@@ -147,8 +173,14 @@ const EnvironmentTab = ({ world, subgoals }) => {
       {/* The simulator prompt and the sub-goal catalogue are this stage's output too — they
           come from /api/subgoals, but they belong to the environment the scenarios run in. */}
       {simulatorPrompt && (
-        <Pane title="The simulated person" meta="written once; each scenario fills its slot">
-          <XCard title="simulator prompt" meta={`${lineCount(simulatorPrompt)} lines`}>
+        <Pane
+          title="The simulated person"
+          meta="written once; each scenario fills its slot"
+        >
+          <XCard
+            title="simulator prompt"
+            meta={`${lineCount(simulatorPrompt)} lines`}
+          >
             <CodeBlock wrap>{simulatorPrompt}</CodeBlock>
           </XCard>
         </Pane>
@@ -165,7 +197,11 @@ const EnvironmentTab = ({ world, subgoals }) => {
               <XCard
                 key={goal.name}
                 title={goal.name}
-                tags={<Tag kind={byCode ? "code" : "judge"}>{byCode ? "code" : "judged"}</Tag>}
+                tags={
+                  <Tag kind={byCode ? "code" : "judge"}>
+                    {byCode ? "code" : "eval harness"}
+                  </Tag>
+                }
                 meta={(goal.what || "").slice(0, 60)}
               >
                 <Field label="what it means">
@@ -177,7 +213,7 @@ const EnvironmentTab = ({ world, subgoals }) => {
                   </Field>
                 )}
                 {goal.judged && (
-                  <Field label="what a judge must decide">
+                  <Field label="what the eval harness must decide">
                     <Subline>{goal.judged}</Subline>
                   </Field>
                 )}

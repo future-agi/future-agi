@@ -43,12 +43,19 @@ const GoalGroup = ({ label, checks }) => (
         <Box
           component="span"
           aria-hidden
-          sx={{ flex: "0 0 auto", width: "1em", color: check.passed ? "success.main" : "error.main" }}
+          sx={{
+            flex: "0 0 auto",
+            width: "1em",
+            color: check.passed ? "success.main" : "error.main",
+          }}
         >
           {check.passed ? "✓" : "✗"}
         </Box>
         <Box sx={{ minWidth: 0, flex: "1 1 auto" }}>
-          <Box component="span" sx={{ fontFamily: ALK_MONO, fontSize: 12.8, color: "text.primary" }}>
+          <Box
+            component="span"
+            sx={{ fontFamily: ALK_MONO, fontSize: 12.8, color: "text.primary" }}
+          >
             {check.name}
           </Box>
           {/* An eval that passed still shows its reasoning: the whole point of routing a claim
@@ -56,14 +63,24 @@ const GoalGroup = ({ label, checks }) => (
               on a failure, or the reasoning reads as one. */}
           {check.detail && (
             <Typography
-              sx={{ fontSize: 12.5, mt: 0.3, color: check.passed ? "text.secondary" : "error.main" }}
+              sx={{
+                fontSize: 12.5,
+                mt: 0.3,
+                color: check.passed ? "text.secondary" : "error.main",
+              }}
             >
               {check.detail}
             </Typography>
           )}
           {check.by && (
             <Typography
-              sx={{ fontFamily: ALK_MONO, fontSize: 11.5, color: "text.secondary", opacity: 0.8, mt: 0.2 }}
+              sx={{
+                fontFamily: ALK_MONO,
+                fontSize: 11.5,
+                color: "text.secondary",
+                opacity: 0.8,
+                mt: 0.2,
+              }}
             >
               {check.by}
             </Typography>
@@ -74,7 +91,10 @@ const GoalGroup = ({ label, checks }) => (
   </Box>
 );
 
-GoalGroup.propTypes = { label: PropTypes.string.isRequired, checks: PropTypes.array.isRequired };
+GoalGroup.propTypes = {
+  label: PropTypes.string.isRequired,
+  checks: PropTypes.array.isRequired,
+};
 
 /**
  * One scenario, as something you read rather than scroll past.
@@ -94,20 +114,28 @@ const ScenarioCard = ({ runId, result }) => {
   if (result.turns) facts.push(`${result.turns} turns`);
   const refused = callsDetail.filter((call) => call.refused).length;
   if (result.calls != null) {
-    facts.push(`${result.calls} tool calls${refused ? `, ${refused} refused` : ""}`);
+    facts.push(
+      `${result.calls} tool calls${refused ? `, ${refused} refused` : ""}`,
+    );
   }
   if (result.seconds) facts.push(`${Math.round(result.seconds)}s`);
-  if (measures.stop_reason) facts.push(`ended: ${String(measures.stop_reason).replace(/_/g, " ")}`);
+  if (measures.stop_reason)
+    facts.push(`ended: ${String(measures.stop_reason).replace(/_/g, " ")}`);
   if (measures.score != null) {
     facts.push(
       `ALK score ${Number(measures.score).toFixed(2)}` +
-        (measures.threshold != null ? ` vs ${measures.threshold}` : "")
+        (measures.threshold != null ? ` vs ${measures.threshold}` : ""),
     );
   }
-  if (measures.simulator?.model) facts.push(`caller on ${measures.simulator.model}`);
+  if (measures.simulator?.model)
+    facts.push(`caller on ${measures.simulator.model}`);
 
-  const byCode = checks.filter((one) => one.kind !== "eval" && one.kind !== "judged");
-  const byEval = checks.filter((one) => one.kind === "eval" || one.kind === "judged");
+  const byCode = checks.filter(
+    (one) => one.kind !== "eval" && one.kind !== "judged",
+  );
+  const byEval = checks.filter(
+    (one) => one.kind === "eval" || one.kind === "judged",
+  );
   const { measured, clean, absent } = splitMetrics(measures.metrics);
   const evidence = measures.evidence || [];
 
@@ -125,11 +153,24 @@ const ScenarioCard = ({ runId, result }) => {
         borderLeftColor: result.passed ? "success.main" : "error.main",
       }}
     >
-      <Stack direction="row" alignItems="center" spacing={2} flexWrap="wrap" useFlexGap>
-        <Tag kind={result.passed ? "pass" : "fail"}>{result.passed ? "PASS" : "FAIL"}</Tag>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={2}
+        flexWrap="wrap"
+        useFlexGap
+      >
+        <Tag kind={result.passed ? "pass" : "fail"}>
+          {result.passed ? "PASS" : "FAIL"}
+        </Tag>
         <Typography
           component="span"
-          sx={{ fontFamily: ALK_MONO, fontSize: 14, fontWeight: 600, color: "text.primary" }}
+          sx={{
+            fontFamily: ALK_MONO,
+            fontSize: 14,
+            fontWeight: 600,
+            color: "text.primary",
+          }}
         >
           {result.scenario}
         </Typography>
@@ -140,7 +181,9 @@ const ScenarioCard = ({ runId, result }) => {
       </Stack>
 
       {result.tests && (
-        <Typography sx={{ fontSize: 13, color: "text.secondary", mt: 1.2 }}>{result.tests}</Typography>
+        <Typography sx={{ fontSize: 13, color: "text.secondary", mt: 1.2 }}>
+          {result.tests}
+        </Typography>
       )}
 
       {facts.length > 0 && (
@@ -190,8 +233,12 @@ const ScenarioCard = ({ runId, result }) => {
           >
             sub-goals
           </Typography>
-          {byCode.length > 0 && <GoalGroup label="settled by code" checks={byCode} />}
-          {byEval.length > 0 && <GoalGroup label="decided by an eval" checks={byEval} />}
+          {byCode.length > 0 && (
+            <GoalGroup label="settled by code" checks={byCode} />
+          )}
+          {byEval.length > 0 && (
+            <GoalGroup label="decided by the eval harness" checks={byEval} />
+          )}
         </Box>
       )}
 
@@ -200,7 +247,9 @@ const ScenarioCard = ({ runId, result }) => {
       )}
 
       {result.transcript && (
-        <Fold label={`the conversation${result.turns ? ` (${result.turns} turns)` : ""}`}>
+        <Fold
+          label={`the conversation${result.turns ? ` (${result.turns} turns)` : ""}`}
+        >
           <Transcript spoken={result.transcript} />
         </Fold>
       )}
@@ -245,6 +294,9 @@ const ScenarioCard = ({ runId, result }) => {
   );
 };
 
-ScenarioCard.propTypes = { runId: PropTypes.string.isRequired, result: PropTypes.object.isRequired };
+ScenarioCard.propTypes = {
+  runId: PropTypes.string.isRequired,
+  result: PropTypes.object.isRequired,
+};
 
 export default ScenarioCard;
