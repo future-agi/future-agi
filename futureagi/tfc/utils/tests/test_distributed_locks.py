@@ -521,7 +521,9 @@ class TestDistributedStateErrorHandling:
         # unavailable in the test environment.
         tracker._redis_available = True
         with patch.object(
-            tracker, "get_all_running", side_effect=Exception("Redis error")
+            tracker,
+            "get_all_running",
+            side_effect=Exception("Unexpected enumeration error"),
         ):
             # Should return 0 instead of raising
             result = tracker.cleanup_stale()

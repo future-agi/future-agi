@@ -547,8 +547,8 @@ class DistributedEvaluationTracker(DistributedStateManager):
         try:
             running = self.get_all_running()
         except Exception as e:
-            # Cleanup is a best-effort safety mechanism. A state-store failure
-            # must not abort the caller that triggered maintenance.
+            # get_all_running() already handles RedisError. Keep cleanup
+            # best-effort if an unexpected enumeration error escapes it.
             logger.exception(f"Failed to enumerate running evaluations: {e}")
             return 0
 
