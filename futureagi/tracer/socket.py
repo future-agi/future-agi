@@ -13,6 +13,16 @@ from tracer.utils.filters import FilterEngine
 
 # from tracer.models.observation_span import ObservationSpan
 
+def _parse_iso_datetime(s: str) -> datetime:
+    # Normalise trailing Z so fromisoformat accepts all ISO 8601 variants
+    # (with or without fractional seconds, with or without timezone offset).
+    normalized = s.rstrip() if not s.endswith("Z") else s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(normalized)
+        return dt.replace(tzinfo=None)
+    except (ValueError, AttributeError):
+        raise ValueError(f"unrecognised datetime string: {s!r}")
+
 
 class GraphDataConsumer(DataConsumer):
     async def receive_json(self, content):
@@ -67,12 +77,8 @@ class GraphDataConsumer(DataConsumer):
         if not start_time or not end_time:
             return data
 
-        start_time = datetime.strptime(start_time, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
-            minute=0, second=0
-        )
-        end_time = datetime.strptime(end_time, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
-            minute=0, second=0
-        )
+        start_time = _parse_iso_datetime(start_time).replace(minute=0, second=0)
+        end_time = _parse_iso_datetime(end_time).replace(minute=0, second=0)
 
         if self.interval == "week":
             start_time -= timedelta(days=start_time.weekday())
@@ -226,6 +232,32 @@ class GraphDataConsumer(DataConsumer):
             }
         )
 
+    def _get_time_window(self):
+        """Return (start_dt, end_dt) from filters, or a default window based on interval."""
+        for f in self.filters:
+            cfg = f.get("filterConfig", {})
+            if (
+                cfg.get("filterType") == "datetime"
+                and cfg.get("filterOp") == "between"
+                and isinstance(cfg.get("filterValue"), list)
+                and len(cfg["filterValue"]) == 2
+            ):
+                try:
+                    start = _parse_iso_datetime(cfg["filterValue"][0])
+                    end = _parse_iso_datetime(cfg["filterValue"][1])
+                    return start, end
+                except (ValueError, TypeError):
+                    pass
+        # No explicit time filter — default window prevents full-table scans.
+        now = datetime.utcnow()
+        lookback = {
+            "hour": timedelta(hours=24),
+            "day": timedelta(days=30),
+            "week": timedelta(weeks=12),
+            "month": timedelta(days=365),
+        }
+        return now - lookback.get(self.interval, timedelta(days=30)), now
+
     async def send_evaluation_data(self):
         trunc_map = {
             "hour": "DATE_TRUNC('hour', os.created_at)",
@@ -233,6 +265,11 @@ class GraphDataConsumer(DataConsumer):
             "week": "DATE_TRUNC('week', os.created_at)",
             "month": "DATE_TRUNC('month', os.created_at)",
         }
+
+        # Bound the CTE subqueries to the selected (or default) time window so
+        # full-project scans don't OOM or timeout on large installations (#307).
+        win_start, win_end = self._get_time_window()
+
         query = f"""
             WITH eval_configs AS (
             SELECT DISTINCT custom_eval_config_id
@@ -241,6 +278,7 @@ class GraphDataConsumer(DataConsumer):
                 SELECT id
                 FROM tracer_observation_span
                 WHERE project_id = %s
+                AND created_at BETWEEN %s AND %s
             )
         ),
         eval_metrics AS (
@@ -260,6 +298,7 @@ class GraphDataConsumer(DataConsumer):
                 SELECT id
                 FROM tracer_observation_span
                 WHERE project_id = %s
+                AND created_at BETWEEN %s AND %s
             )
             AND (output_str IS NULL OR output_str != 'ERROR')
             GROUP BY observation_span_id, custom_eval_config_id
@@ -271,6 +310,7 @@ class GraphDataConsumer(DataConsumer):
                 SELECT id
                 FROM tracer_observation_span
                 WHERE project_id = %s
+                AND created_at BETWEEN %s AND %s
             )
             AND output_str_list IS NOT NULL
         ),
@@ -289,6 +329,7 @@ class GraphDataConsumer(DataConsumer):
             JOIN tracer_observation_span os ON el.observation_span_id = os.id
             JOIN distinct_str_values dsv ON el.output_str_list @> jsonb_build_array(dsv.value)
             WHERE os.project_id = %s
+            AND os.created_at BETWEEN %s AND %s
             GROUP BY el.observation_span_id, el.custom_eval_config_id, dsv.value
         ),
         str_list_scores AS (
@@ -334,7 +375,13 @@ class GraphDataConsumer(DataConsumer):
         query += f"""
         GROUP BY timestamp, config_id, tcec.name{", id_trace" if self.graph == 'trace' else ''}{", id_span" if self.graph == 'span' else ""}{';' if not having else " "+having}"""
 
-        params = [self.project_id for _ in range(5)]
+        params = (
+            [self.project_id, win_start, win_end]  # eval_configs
+            + [self.project_id, win_start, win_end]  # eval_metrics
+            + [self.project_id, win_start, win_end]  # distinct_str_values
+            + [self.project_id, win_start, win_end]  # str_list_avg
+            + [self.project_id]  # main SELECT
+        )
         rows = await self.fetch_raw_data(query, params)
 
         if self.eval_id:
