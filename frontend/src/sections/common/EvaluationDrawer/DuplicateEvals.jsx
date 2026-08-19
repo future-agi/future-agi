@@ -41,6 +41,19 @@ const DuplicateEvals = ({ open, onClose, evalId, onSubmit }) => {
       handleClose();
       onSubmit(data?.data?.result);
     },
+    onError: (error) => {
+      const data = error?.response?.data;
+      let message = data?.error;
+      if (!message && typeof data?.result === "string") {
+        message = data.result;
+      }
+      if (!message && data?.result && typeof data.result === "object") {
+        message = Object.values(data.result).flat().join(", ");
+      }
+      enqueueSnackbar(message || "Failed to duplicate evaluation", {
+        variant: "error",
+      });
+    },
   });
 
   const handleNameTransformation = (event) => {
