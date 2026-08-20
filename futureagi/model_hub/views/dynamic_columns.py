@@ -1333,11 +1333,16 @@ class ExecutePythonCodeView(APIView):
             _global_namespace = {"__builtins__": safe_builtins}
             local_namespace = {}
 
-            # Execute the provided code with restricted globals
-            # WARNING: This still has security implications and should be properly sandboxed
-            # exec(
-            #     code, global_namespace, local_namespace
-            # )  # nosec B102 - sandboxed execution
+            # Execute the provided code using the sandbox
+            from agentic_eval.core_evals.fi_utils.sandbox import execute_sandboxed_python
+            sandbox_result = execute_sandboxed_python(
+                code=code,
+                input_data=kwargs,
+                timeout=30,
+            )
+            if sandbox_result.get("status") != "success":
+                return str(sandbox_result.get("data")), {"reason": sandbox_result.get("data")}
+            result = sandbox_result.get("data")
 
             # Validate presence of `main()` function
             if "main" not in local_namespace or not callable(local_namespace["main"]):
