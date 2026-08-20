@@ -56,7 +56,9 @@ class TestTuringManagedClient:
         assert result == response
         payload = mock_call.call_args.args[0]
         assert payload["model"] == "turing_flash"
-        assert payload["tools"] == [{"type": "function", "function": {"name": "lookup"}}]
+        assert payload["tools"] == [
+            {"type": "function", "function": {"name": "lookup"}}
+        ]
         assert client.token_usage["total_tokens"] == 2
 
 

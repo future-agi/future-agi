@@ -128577,12 +128577,14 @@
                 },
                 "deleted": {
                     "title": "Deleted",
-                    "type": "boolean"
+                    "type": "boolean",
+                    "readOnly": true
                 },
                 "deleted_at": {
                     "title": "Deleted at",
                     "type": "string",
                     "format": "date-time",
+                    "readOnly": true,
                     "x-nullable": true
                 },
                 "metric_type": {
@@ -128664,6 +128666,7 @@
                     "description": "The last time the monitor was checked for alerts.",
                     "type": "string",
                     "format": "date-time",
+                    "readOnly": true,
                     "x-nullable": true
                 },
                 "notification_emails": {
@@ -128703,6 +128706,7 @@
                         "title": "Logs",
                         "type": "object"
                     },
+                    "readOnly": true,
                     "x-nullable": true
                 },
                 "organization": {
@@ -128898,12 +128902,14 @@
                 },
                 "deleted": {
                     "title": "Deleted",
-                    "type": "boolean"
+                    "type": "boolean",
+                    "readOnly": true
                 },
                 "deleted_at": {
                     "title": "Deleted at",
                     "type": "string",
                     "format": "date-time",
+                    "readOnly": true,
                     "x-nullable": true
                 },
                 "metric_type": {
@@ -128985,6 +128991,7 @@
                     "description": "The last time the monitor was checked for alerts.",
                     "type": "string",
                     "format": "date-time",
+                    "readOnly": true,
                     "x-nullable": true
                 },
                 "notification_emails": {
@@ -129024,6 +129031,7 @@
                         "title": "Logs",
                         "type": "object"
                     },
+                    "readOnly": true,
                     "x-nullable": true
                 },
                 "organization": {

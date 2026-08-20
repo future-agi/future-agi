@@ -35,6 +35,30 @@ describe("serializeEvalConfig", () => {
     expect(payload).not.toHaveProperty("knowledge_bases");
   });
 
+  it("drops mapping entries the user cleared (empty-string paths)", () => {
+    // Auto-mapped fields the user removed come through as "" — sending them
+    // makes the eval runner treat the key as a required attribute with an
+    // empty path and fail every row ("Required attribute '' ... not found").
+    // No mapping at all must serialize as {} so context-only evals run.
+    const payload = serializeEvalConfig({
+      templateId: "template-1",
+      name: "context_only",
+      mapping: { agent_prompt: "", conversation: "   ", output: "answer" },
+    });
+
+    expect(payload.mapping).toEqual({ output: "answer" });
+  });
+
+  it("serializes an all-cleared mapping as an empty object", () => {
+    const payload = serializeEvalConfig({
+      templateId: "template-1",
+      name: "context_only",
+      mapping: { agent_prompt: "", conversation: "" },
+    });
+
+    expect(payload.mapping).toEqual({});
+  });
+
   it("keeps canonical filter lists unchanged", () => {
     const filters = [
       {

@@ -115,6 +115,7 @@ def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
                 eval_task_id=task_id,
                 run_params=run_params,
                 type=OBSERVE,
+                project_id=task_project.id,
             )
             # Single evals write inside _execute_evaluation; composites return the
             # logger kwargs for the caller to persist (mirrors the span wrapper).

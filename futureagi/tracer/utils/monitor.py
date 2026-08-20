@@ -1,30 +1,17 @@
-import statistics
-from datetime import timedelta
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, Optional, Tuple
 
-import pandas as pd
+if TYPE_CHECKING:
+    from tracer.services.clickhouse.query_builders.monitor_metrics import (
+        MonitorMetricsQueryBuilder,
+    )
+
 import structlog
-from django.db.models import (
-    Avg,
-    Case,
-    Count,
-    DateTimeField,
-    DurationField,
-    ExpressionWrapper,
-    F,
-    FloatField,
-    Max,
-    Q,
-    StdDev,
-    Sum,
-    Value,
-    When,
-)
-from django.db.models.functions import Now, Trunc
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db.models import DurationField, ExpressionWrapper, F, Q
+from django.db.models.functions import Now
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
-from slack_sdk.errors import SlackApiError
-
-# from prophet import Prophet
 from slack_sdk.webhook import WebhookClient
 
 logger = structlog.get_logger(__name__)
@@ -39,16 +26,28 @@ from tracer.models.monitor import (
     UserAlertMonitor,
     UserAlertMonitorLog,
 )
-from tracer.models.observation_span import EvalLogger, ObservationSpan
-from tracer.services.clickhouse.query_builders.monitor_metrics import (
-    MonitorMetricsQueryBuilder,
-)
-from tracer.services.clickhouse.query_service import AnalyticsQueryService, QueryType
-from tracer.utils.eval_tasks import parsing_monitor_filters
+from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+# Pruned monitor queries scale with the window, not table size; 30s covers the
+# historical window crossing the hot/cold TTL boundary.
+MONITOR_QUERY_TIMEOUT_MS = 30_000
+MONITOR_CH_SETTINGS = {"max_threads": 4, "max_bytes_in_set": 500_000_000}
+
+# The eval template stores the EvalOutputType value ("score"/"Pass/Fail"/
+# "choices"); the CH builder branches on these normalized keys.
+_EVAL_OUTPUT_TYPE_MAP = {
+    EvalOutputType.SCORE.value: "SCORE",
+    EvalOutputType.PASS_FAIL.value: "PASS_FAIL",
+    EvalOutputType.CHOICES.value: "CHOICES",
+}
 
 
-def _build_monitor_ch_builder(monitor):
-    """Construct a MonitorMetricsQueryBuilder from a monitor instance."""
+class MonitorConfigError(Exception):
+    """Monitor misconfiguration (e.g. deleted eval config); not retryable."""
+
+
+def build_monitor_ch_builder(monitor: UserAlertMonitor) -> "MonitorMetricsQueryBuilder":
+    """Construct the routed MONITOR_METRICS builder from a monitor instance."""
     eval_config_id = None
     eval_output_type = None
     if (
@@ -57,32 +56,36 @@ def _build_monitor_ch_builder(monitor):
     ):
         try:
             custom_eval_config = CustomEvalConfig.objects.get(id=monitor.metric)
-            eval_output_type = custom_eval_config.eval_template.config.get("output")
-            eval_config_id = str(monitor.metric)
-        except CustomEvalConfig.DoesNotExist:
-            pass
+        except (CustomEvalConfig.DoesNotExist, DjangoValidationError) as e:
+            # ValidationError = non-UUID junk in the free CharField ``metric``
+            # — a permanent misconfig, not a transient failure to retry.
+            raise MonitorConfigError(f"Eval config {monitor.metric} not found") from e
+        raw_output = custom_eval_config.eval_template.config.get("output")
+        # Normalize the stored EvalOutputType value to the builder's key.
+        eval_output_type = _EVAL_OUTPUT_TYPE_MAP.get(raw_output)
+        if eval_output_type is None:
+            raise MonitorConfigError(f"Eval config {monitor.metric} has no output type")
+        eval_config_id = str(monitor.metric)
 
     # v1↔v2 dispatch — flips with CH25_QUERY_TYPES_V2_PRIMARY=MONITOR_METRICS
     from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
 
     BuilderCls = get_query_builder_class("MONITOR_METRICS")
-    return BuilderCls(
-        project_id=str(monitor.project_id),
-        filters=monitor.filters,
-        eval_config_id=eval_config_id,
-        eval_output_type=eval_output_type,
-        threshold_metric_value=monitor.threshold_metric_value,
-    )
+    try:
+        return BuilderCls(
+            project_id=str(monitor.project_id),
+            filters=monitor.filters,
+            eval_config_id=eval_config_id,
+            eval_output_type=eval_output_type,
+            threshold_metric_value=monitor.threshold_metric_value,
+        )
+    except ValueError as e:
+        # Filter translation rejects the stored filters — permanent misconfig.
+        raise MonitorConfigError(f"Invalid monitor filters: {e}") from e
 
 
-def _mute_monitor(monitor):
-    """Mutes a monitor."""
-    monitor.is_mute = True
-    monitor.save(update_fields=["is_mute"])
-
-
-def _get_interval_kind(monitor):
-    """Gets the interval kind for the monitor."""
+def get_interval_kind(monitor: UserAlertMonitor) -> str:
+    """Calendar bucket kind for the monitor's frequency (Trunc parity)."""
     interval = timedelta(minutes=monitor.alert_frequency)
 
     if monitor.metric_type == MonitorMetricTypeChoices.DAILY_TOKENS_SPENT:
@@ -90,21 +93,16 @@ def _get_interval_kind(monitor):
     elif monitor.metric_type == MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT:
         interval = timedelta(days=30)
 
-    # Django's Trunc function requires a string literal. We convert the
-    # timedelta to the most appropriate 'kind' string.
     if interval.days >= 30:
-        interval_kind = "month"
-    elif interval.days >= 1:
-        interval_kind = "day"
-    elif interval.total_seconds() >= 3600:
-        interval_kind = "hour"
-    else:
-        interval_kind = "minute"
-
-    return interval_kind
+        return "month"
+    if interval.days >= 1:
+        return "day"
+    if interval.total_seconds() >= 3600:
+        return "hour"
+    return "minute"
 
 
-def _send_alert_email(monitor, message, alert_type):
+def _send_alert_email(monitor: UserAlertMonitor, message: str, alert_type: str) -> None:
     """Sends an email notification for an alert."""
     if not monitor.notification_emails:
         return
@@ -126,7 +124,9 @@ def _send_alert_email(monitor, message, alert_type):
         )
 
 
-def _send_slack_notification(monitor, message, alert_type):
+def _send_slack_notification(
+    monitor: UserAlertMonitor, message: str, alert_type: str
+) -> None:
     """Sends a Slack notification for an alert."""
     if not monitor.slack_webhook_url:
         return
@@ -158,15 +158,21 @@ def _send_slack_notification(monitor, message, alert_type):
     try:
         webhook.send(blocks=blocks)
         logger.info(f"Sent {alert_type} Slack notification for monitor {monitor.id}")
-    except SlackApiError as e:
+    except Exception as e:
+        # Broad on purpose: network errors are not SlackApiError, and an escape
+        # here would retry the whole task and double-fire the alert.
         logger.error(
             f"Failed to send {alert_type} Slack notification for monitor {monitor.id}: {e}"
         )
 
 
 def _handle_alert_trigger(
-    monitor, message, alert_type, time_window_start=None, now=None
-):
+    monitor: UserAlertMonitor,
+    message: str,
+    alert_type: str,
+    time_window_start: Optional[datetime] = None,
+    now: Optional[datetime] = None,
+) -> None:
     """Handles the actions when an alert is triggered."""
     UserAlertMonitorLog.objects.create(
         alert=monitor,
@@ -174,6 +180,12 @@ def _handle_alert_trigger(
         message=message,
         time_window_start=time_window_start,
         time_window_end=now,
+    )
+    logger.info(
+        "monitor_alert_fired",
+        monitor_id=str(monitor.id),
+        metric_type=monitor.metric_type,
+        alert_type=str(alert_type),
     )
     _send_alert_email(monitor, message, alert_type)
     _send_slack_notification(monitor, message, alert_type)
@@ -184,7 +196,7 @@ def _handle_alert_trigger(
     time_limit=3600,
     queue="tasks_l",
 )
-def check_alerts():
+def check_alerts() -> None:
     """
     Periodically checks all active monitors for alert conditions.
     """
@@ -203,481 +215,141 @@ def check_alerts():
     )
 
     monitor_ids = list(monitors_to_check.values_list("id", flat=True))
-    monitors_to_check.update(last_checked_at=now)
+    UserAlertMonitor.objects.filter(id__in=monitor_ids).update(last_checked_at=now)
 
     for monitor_id in monitor_ids:
-        process_monitor_task.delay(monitor_id, now.isoformat())
+        # Isolate dispatch failures so one bad delay() doesn't drop the rest of
+        # the batch (they're already stamped and won't re-dispatch this cycle).
+        try:
+            process_monitor_task.delay(monitor_id, now.isoformat())
+        except Exception as e:
+            logger.error(
+                "monitor_dispatch_failed", monitor_id=str(monitor_id), error=str(e)
+            )
 
     logger.info("Alert check job finished.")
 
 
 @temporal_activity(
-    max_retries=0,
+    max_retries=3,
     time_limit=3600,
     queue="tasks_l",
 )
-def process_monitor_task(monitor_id, now_iso):
-    """Processes a single monitor."""
+def process_monitor_task(monitor_id: str, now_iso: str) -> None:
+    """Processes a single monitor; logs failures and re-raises for Temporal retry."""
     now = parse_datetime(now_iso)
-    monitor = UserAlertMonitor.objects.get(id=monitor_id)
+    if now is None:
+        raise ValueError(f"Invalid now_iso timestamp: {now_iso!r}")
+    try:
+        monitor = UserAlertMonitor.objects.get(id=monitor_id)
+    except UserAlertMonitor.DoesNotExist:
+        logger.info("monitor_gone_before_check", monitor_id=str(monitor_id))
+        return
 
-    logger.info(f"Checking monitor: {monitor.name} ({monitor.id})")
+    logger.info(f"Checking monitor: {monitor.name} ({monitor.id}) at {now}")
     try:
         _process_monitor(monitor, now)
+    except MonitorConfigError as e:
+        # Permanent misconfiguration — log and don't retry.
+        logger.warning(
+            "monitor_misconfigured", monitor_id=str(monitor.id), error=str(e)
+        )
+        return
     except Exception as e:
-        # _mute_monitor(monitor)
-        raise Exception(f"Error processing monitor {monitor.id}: {e}")
+        logger.error(
+            "monitor_check_failed",
+            monitor_id=str(monitor.id),
+            metric_type=monitor.metric_type,
+            error=str(e),
+        )
+        raise
 
 
-def _process_monitor(monitor, now):
+def _process_monitor(monitor: UserAlertMonitor, now: datetime) -> None:
     """Processes a single monitor."""
     time_window_start = now - timedelta(minutes=monitor.alert_frequency)
 
-    metric_value = _get_metric_value(monitor, time_window_start, now)
+    # Build once: value + historical share the builder (avoids a second eval
+    # config read and filter translation per percentage-change cycle).
+    builder = build_monitor_ch_builder(monitor)
+
+    metric_value = _get_metric_value(monitor, time_window_start, now, builder)
     if metric_value is None:
+        logger.warning(
+            "monitor_no_data",
+            monitor_id=str(monitor.id),
+            metric_type=monitor.metric_type,
+        )
         return
 
-    _check_thresholds_and_alert(monitor, metric_value, time_window_start, now)
+    _check_thresholds_and_alert(monitor, metric_value, time_window_start, now, builder)
 
 
-def _get_metric_value(monitor, start_time, end_time):
-    """Calculates the value of the metric for the given time window."""
-
-    # --- ClickHouse dispatch ---
+def _get_metric_value(
+    monitor: UserAlertMonitor,
+    start_time: datetime,
+    end_time: datetime,
+    builder: Optional["MonitorMetricsQueryBuilder"] = None,
+) -> Optional[float]:
+    """Metric value for the time window, from ClickHouse. Raises on CH errors."""
     analytics = AnalyticsQueryService()
-    try:
-        builder = _build_monitor_ch_builder(monitor)
-        metric_type = monitor.metric_type
-
-        # For DAILY/MONTHLY tokens, override start_time
-        ch_start = start_time
-        if metric_type == MonitorMetricTypeChoices.DAILY_TOKENS_SPENT:
-            ch_start = end_time - timedelta(days=1)
-        elif metric_type == MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT:
-            ch_start = end_time - timedelta(days=30)
-
-        query, params = builder.build_metric_value_query(
-            metric_type, ch_start, end_time
-        )
-        result = analytics.execute_ch_query(query, params, timeout_ms=5000)
-        if result.data:
-            return result.data[0].get("value")
-        return None
-    except Exception as e:
-        logger.warning(
-            "CH monitor metric failed, falling back to PG",
-            error=str(e),
-            monitor_id=str(monitor.id),
-        )
-
-    # --- PostgreSQL fallback ---
-    filters = parsing_monitor_filters(monitor.filters)
-    base_queryset = ObservationSpan.objects.filter(
-        project=monitor.project, created_at__range=(start_time, end_time)
-    )
-
-    base_queryset = base_queryset.filter(filters)
-
+    builder = builder or build_monitor_ch_builder(monitor)
     metric_type = monitor.metric_type
-    value = None
 
-    match metric_type:
-        case MonitorMetricTypeChoices.COUNT_OF_ERRORS:
-            value = base_queryset.filter(status="ERROR").count()
+    # DAILY/MONTHLY are trailing windows regardless of alert_frequency.
+    ch_start = start_time
+    if metric_type == MonitorMetricTypeChoices.DAILY_TOKENS_SPENT:
+        ch_start = end_time - timedelta(days=1)
+    elif metric_type == MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT:
+        ch_start = end_time - timedelta(days=30)
 
-        case MonitorMetricTypeChoices.ERROR_RATES_FOR_FUNCTION_CALLING:
-            result = base_queryset.filter(observation_type="tool").aggregate(
-                total_calls=Count("id"),
-                error_calls=Count("id", filter=Q(status="ERROR")),
-            )
-            if result["total_calls"] == 0:
-                value = None
-            else:
-                value = result["error_calls"] / result["total_calls"]
-
-        case MonitorMetricTypeChoices.ERROR_FREE_SESSION_RATES:
-            result = (
-                base_queryset.exclude(trace__session__isnull=True)
-                .values("trace__session")
-                .annotate(error_count=Count("id", filter=Q(status="ERROR")))
-                .aggregate(
-                    total_sessions=Count("trace__session"),
-                    error_free_sessions=Count(
-                        "trace__session", filter=Q(error_count=0)
-                    ),
-                )
-            )
-            total_sessions = result["total_sessions"]
-            error_free_sessions = result["error_free_sessions"]
-
-            if not total_sessions:
-                value = None
-            else:
-                value = error_free_sessions / total_sessions
-
-        case (
-            MonitorMetricTypeChoices.SERVICE_PROVIDER_ERROR_RATES
-        ):  # here are we doing error free rate or error rate ?
-            result = (
-                base_queryset.exclude(provider__isnull=True)
-                .values("provider")
-                .annotate(error_count=Count("id", filter=Q(status="ERROR")))
-                .aggregate(
-                    total_providers=Count("provider"),
-                    error_free_providers=Count("provider", filter=Q(error_count=0)),
-                )
-            )
-            total_providers = result["total_providers"]
-            error_free_providers = result["error_free_providers"]
-
-            if not total_providers:
-                value = None
-            else:
-                value = error_free_providers / total_providers
-
-        case MonitorMetricTypeChoices.LLM_API_FAILURE_RATES:
-            result = base_queryset.filter(observation_type="llm").aggregate(
-                total_calls=Count("id"),
-                error_calls=Count("id", filter=Q(status="ERROR")),
-            )
-            if result["total_calls"] == 0:
-                value = None
-            else:
-                value = result["error_calls"] / result["total_calls"]
-
-        case MonitorMetricTypeChoices.SPAN_RESPONSE_TIME:
-            value = base_queryset.aggregate(avg_latency=Avg("latency_ms"))[
-                "avg_latency"
-            ]
-
-        case MonitorMetricTypeChoices.LLM_RESPONSE_TIME:
-            value = base_queryset.filter(observation_type="llm").aggregate(
-                avg_latency=Avg("latency_ms")
-            )["avg_latency"]
-
-        case MonitorMetricTypeChoices.TOKEN_USAGE:
-            value = base_queryset.aggregate(total=Sum("total_tokens"))["total"]
-
-        case MonitorMetricTypeChoices.DAILY_TOKENS_SPENT:
-            daily_start_time = end_time - timedelta(days=1)
-            value = (
-                ObservationSpan.objects.filter(
-                    project=monitor.project, created_at__gte=daily_start_time
-                )
-                .filter(filters)
-                .aggregate(total=Sum("total_tokens"))["total"]
-            )
-
-        case MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT:
-            monthly_start_time = end_time - timedelta(days=30)
-            value = (
-                ObservationSpan.objects.filter(
-                    project=monitor.project, created_at__gte=monthly_start_time
-                )
-                .filter(filters)
-                .aggregate(total=Sum("total_tokens"))["total"]
-            )
-
-        case MonitorMetricTypeChoices.EVALUATION_METRICS:
-            value, _ = _get_evaluation_metric_stats(monitor, start_time, end_time)
-
-        case _:
-            value = None
-
-    return value
-
-
-def _get_evaluation_metric_stats(monitor, start_time, end_time):
-    try:
-        custom_eval_config = CustomEvalConfig.objects.get(id=monitor.metric)
-        eval_output_type = custom_eval_config.eval_template.config.get("output")
-    except CustomEvalConfig.DoesNotExist:
-        logger.error(
-            f"CustomEvalConfig {monitor.metric} not found for monitor {monitor.id}"
-        )
-        _mute_monitor(monitor)
-        return None, None
-
-    filters = parsing_monitor_filters(monitor.filters)
-
-    eval_results = EvalLogger.objects.filter(
-        custom_eval_config=custom_eval_config,
-        target_type="span",
-        created_at__range=(start_time, end_time),
-        observation_span__in=ObservationSpan.objects.filter(filters),
+    query, params = builder.build_metric_value_query(metric_type, ch_start, end_time)
+    result = analytics.execute_ch_query(
+        query,
+        params,
+        timeout_ms=MONITOR_QUERY_TIMEOUT_MS,
+        settings=MONITOR_CH_SETTINGS,
     )
-    if not eval_results.exists():
-        return None, None
+    if result.data:
+        return result.data[0].get("value")
+    return None
 
-    stats = None
-    if eval_output_type == EvalOutputType.SCORE:
-        stats = eval_results.aggregate(
-            mean=Avg("output_float"), stddev=StdDev("output_float")
-        )
-    elif eval_output_type == EvalOutputType.PASS_FAIL:
-        output_bool = True if monitor.threshold_metric_value == "Passed" else False
-        annotated_results = eval_results.annotate(
-            pass_value=Case(
-                When(output_bool=output_bool, then=Value(1.0)),
-                default=Value(0.0),
-                output_field=FloatField(),
-            )
-        )
-        stats = annotated_results.aggregate(
-            mean=Avg("pass_value"), stddev=StdDev("pass_value")
-        )
-    elif eval_output_type == EvalOutputType.CHOICES:
-        choice = monitor.threshold_metric_value
-        if not choice:
-            logger.error(f"Choice is not set for monitor {monitor.id}")
-            return None, None
-        annotated_results = eval_results.annotate(
-            choice_value=Case(
-                When(output_str_list__contains=[choice], then=Value(1.0)),
-                default=Value(0.0),
-                output_field=FloatField(),
-            )
-        )
-        stats = annotated_results.aggregate(
-            mean=Avg("choice_value"), stddev=StdDev("choice_value")
-        )
 
-    if stats:
-        return stats.get("mean"), stats.get("stddev")
+def _get_historical_stats(
+    monitor: UserAlertMonitor,
+    start_time: datetime,
+    end_time: datetime,
+    builder: Optional["MonitorMetricsQueryBuilder"] = None,
+) -> Tuple[Optional[float], Optional[float]]:
+    """Historical (mean, stddev) for the window, from ClickHouse. Raises on CH errors."""
+    analytics = AnalyticsQueryService()
+    builder = builder or build_monitor_ch_builder(monitor)
 
+    query, params = builder.build_historical_stats_query(
+        monitor.metric_type,
+        start_time,
+        end_time,
+        interval_kind=get_interval_kind(monitor),
+    )
+    result = analytics.execute_ch_query(
+        query,
+        params,
+        timeout_ms=MONITOR_QUERY_TIMEOUT_MS,
+        settings=MONITOR_CH_SETTINGS,
+    )
+    if result.data:
+        row = result.data[0]
+        return row.get("mean"), row.get("stddev")
     return None, None
 
 
-def _get_stats_for_time_aggregated_metrics(monitor, start_time, end_time):
-    """
-    Orchestrates statistics calculation for time-aggregated metrics.
-    It determines the interval, fetches data, and calculates stats.
-    """
-    interval_kind = _get_interval_kind(monitor)
-
-    time_series_data = _get_time_series_data_for_time_aggregated_metrics(
-        monitor, interval_kind, start_time, end_time
-    )
-    return _calculate_stats_from_time_series(time_series_data)
-
-
-def _get_time_series_data_for_time_aggregated_metrics(
-    monitor, interval_kind, start_time=None, end_time=None
-):  # TODO: do we need to make the buckets dynamic (refer to the code in monitor_graphs.py)
-    """
-    Groups spans in certain intervals and returns a dictionary of {timestamp: value}.
-    `interval_kind` must be one of 'minute', 'hour', 'day', 'week', 'month', 'year'.
-
-    CH25-TODO(blocked-on-reader-extension): this helper is reached from both
-    the CH primary branch (via _get_stats_for_time_aggregated_metrics, when
-    metric_type is COUNT_OF_ERRORS / TOKEN_USAGE / DAILY_TOKENS_SPENT /
-    MONTHLY_TOKENS_SPENT) and the PG fallback branch. The new
-    time_bucket_aggregate(project_id, interval=, since=, until=,
-    observation_type=) reader covers TOKEN_USAGE but cannot serve
-    COUNT_OF_ERRORS (needs status-stratified count) and cannot consume the
-    full parsing_evaltask_filters Q-object (which can include
-    span_attributes_filters → FilterEngine territory). Migrating requires
-    a new reader signature roughly
-    `time_bucket_aggregate_with_filters(project_id, *, interval, since,
-    until, **parsing_evaltask_filters_for_ch_output)` that also emits a
-    status-stratified count column.
-    """
-
-    filters = parsing_monitor_filters(monitor.filters)
-    base_queryset = ObservationSpan.objects.filter(project=monitor.project).filter(
-        filters
-    )
-    if start_time:
-        base_queryset = base_queryset.filter(created_at__gte=start_time)
-    if end_time:
-        base_queryset = base_queryset.filter(created_at__lte=end_time)
-
-    metric_type = monitor.metric_type
-
-    queryset = base_queryset.annotate(
-        timestamp=Trunc("created_at", interval_kind, output_field=DateTimeField())
-    ).values("timestamp")
-
-    annotation = None
-    if metric_type in [
-        MonitorMetricTypeChoices.TOKEN_USAGE,
-        MonitorMetricTypeChoices.DAILY_TOKENS_SPENT,
-        MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT,
-    ]:
-        annotation = Sum("total_tokens")
-    elif metric_type == MonitorMetricTypeChoices.COUNT_OF_ERRORS:
-        annotation = Count("id", filter=Q(status="ERROR"))
-
-    if not annotation:
-        return {}
-
-    queryset = queryset.annotate(value=annotation).values("timestamp", "value")
-
-    result = {
-        item["timestamp"].strftime("%Y-%m-%d %H:%M:%S"): item["value"]
-        for item in queryset
-        if item["value"] is not None
-    }
-    return result
-
-
-def _calculate_stats_from_time_series(time_series_data: dict):
-    """Takes time series data as a dictionary and returns mean and standard deviation."""
-    if not time_series_data:
-        return 0, 0
-
-    values = list(time_series_data.values())
-
-    if len(values) < 2:
-        return statistics.mean(values) if values else 0, 0
-
-    mean = statistics.mean(values)
-    stddev = statistics.stdev(values)
-
-    return mean, stddev
-
-
-def _get_historical_stats(monitor, start_time, end_time):
-    """Calculates the historical stats for the given time window."""
-
-    # --- ClickHouse dispatch ---
-    analytics = AnalyticsQueryService()
-    try:
-        metric_type = monitor.metric_type
-
-        # For time-aggregated metrics, compute stats from time-series buckets
-        if metric_type in (
-            MonitorMetricTypeChoices.COUNT_OF_ERRORS,
-            MonitorMetricTypeChoices.TOKEN_USAGE,
-            MonitorMetricTypeChoices.DAILY_TOKENS_SPENT,
-            MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT,
-        ):
-            return _get_stats_for_time_aggregated_metrics(monitor, start_time, end_time)
-
-        builder = _build_monitor_ch_builder(monitor)
-        query, params = builder.build_historical_stats_query(
-            metric_type, start_time, end_time
-        )
-        result = analytics.execute_ch_query(query, params, timeout_ms=5000)
-        if result.data:
-            row = result.data[0]
-            return row.get("mean"), row.get("stddev")
-        return None, None
-    except Exception as e:
-        logger.warning(
-            "CH historical stats failed, falling back to PG",
-            error=str(e),
-            monitor_id=str(monitor.id),
-        )
-
-    # --- PostgreSQL fallback ---
-    filters = parsing_monitor_filters(monitor.filters)
-    base_queryset = ObservationSpan.objects.filter(
-        project=monitor.project, created_at__range=(start_time, end_time)
-    ).filter(filters)
-
-    metric_type = monitor.metric_type
-    historical_mean = None
-    historical_stddev = None
-
-    stats = None
-
-    match metric_type:
-        case (
-            MonitorMetricTypeChoices.COUNT_OF_ERRORS
-            | MonitorMetricTypeChoices.TOKEN_USAGE
-            | MonitorMetricTypeChoices.DAILY_TOKENS_SPENT
-            | MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT
-        ):
-            historical_mean, historical_stddev = _get_stats_for_time_aggregated_metrics(
-                monitor, start_time, end_time
-            )
-
-        case MonitorMetricTypeChoices.ERROR_RATES_FOR_FUNCTION_CALLING:
-            stats = (
-                base_queryset.filter(observation_type="tool")
-                .annotate(
-                    is_error=Case(
-                        When(status="ERROR", then=Value(1.0)),
-                        default=Value(0.0),
-                        output_field=FloatField(),
-                    )
-                )
-                .aggregate(mean=Avg("is_error"), stddev=StdDev("is_error"))
-            )
-
-        case MonitorMetricTypeChoices.ERROR_FREE_SESSION_RATES:
-            session_values = (
-                base_queryset.exclude(trace__session__isnull=True)
-                .values("trace__session")
-                .annotate(error_count=Count("id", filter=Q(status="ERROR")))
-                .annotate(
-                    is_error_free=Case(
-                        When(error_count__gt=0, then=Value(0.0)),
-                        default=Value(1.0),
-                        output_field=FloatField(),
-                    )
-                )
-            )
-            stats = session_values.aggregate(
-                mean=Avg("is_error_free"), stddev=StdDev("is_error_free")
-            )
-
-        case (
-            MonitorMetricTypeChoices.SERVICE_PROVIDER_ERROR_RATES
-        ):  # here are we doing error free rate or error rate ?
-            provider_values = (
-                base_queryset.exclude(provider__isnull=True)
-                .values("provider")
-                .annotate(error_count=Count("id", filter=Q(status="ERROR")))
-                .annotate(
-                    is_error_free=Case(
-                        When(error_count__gt=0, then=Value(0.0)),
-                        default=Value(1.0),
-                        output_field=FloatField(),
-                    )
-                )
-            )
-            stats = provider_values.aggregate(
-                mean=Avg("is_error_free"), stddev=StdDev("is_error_free")
-            )
-
-        case MonitorMetricTypeChoices.LLM_API_FAILURE_RATES:
-            stats = (
-                base_queryset.filter(observation_type="llm")
-                .annotate(
-                    is_error=Case(
-                        When(status="ERROR", then=Value(1.0)),
-                        default=Value(0.0),
-                        output_field=FloatField(),
-                    )
-                )
-                .aggregate(mean=Avg("is_error"), stddev=StdDev("is_error"))
-            )
-
-        case MonitorMetricTypeChoices.SPAN_RESPONSE_TIME:
-            stats = base_queryset.aggregate(
-                mean=Avg("latency_ms"), stddev=StdDev("latency_ms")
-            )
-
-        case MonitorMetricTypeChoices.LLM_RESPONSE_TIME:
-            stats = base_queryset.filter(observation_type="llm").aggregate(
-                mean=Avg("latency_ms"), stddev=StdDev("latency_ms")
-            )
-
-        case MonitorMetricTypeChoices.EVALUATION_METRICS:
-            historical_mean, historical_stddev = _get_evaluation_metric_stats(
-                monitor, start_time, end_time
-            )
-
-    if stats:
-        historical_mean = stats.get("mean")
-        historical_stddev = stats.get("stddev")
-
-    return historical_mean, historical_stddev
-
-
-def _check_thresholds_and_alert(monitor, current_value, time_window_start, now):
+def _check_thresholds_and_alert(
+    monitor: UserAlertMonitor,
+    current_value: float,
+    time_window_start: datetime,
+    now: datetime,
+    builder: Optional["MonitorMetricsQueryBuilder"] = None,
+) -> None:
     """Checks the metric value against the monitor's thresholds and alerts if needed."""
 
     if monitor.threshold_type == ThresholdCalculationMethodChoices.STATIC:
@@ -685,14 +357,16 @@ def _check_thresholds_and_alert(monitor, current_value, time_window_start, now):
 
     elif monitor.threshold_type == ThresholdCalculationMethodChoices.PERCENTAGE_CHANGE:
         _check_percentage_change_threshold(
-            monitor, current_value, time_window_start, now
+            monitor, current_value, time_window_start, now, builder
         )
 
-    # elif monitor.threshold_type == ThresholdCalculationMethodChoices.ANOMALY_DETECTION:
-    #     _check_anomaly_detection_threshold(monitor, current_value, now)
 
-
-def _check_static_threshold(monitor, current_value, time_window_start, now):
+def _check_static_threshold(
+    monitor: UserAlertMonitor,
+    current_value: float,
+    time_window_start: datetime,
+    now: datetime,
+) -> None:
     """Checks for alerts based on static thresholds."""
     op = monitor.threshold_operator
     critical_val = monitor.critical_threshold_value
@@ -717,226 +391,20 @@ def _check_static_threshold(monitor, current_value, time_window_start, now):
         _handle_alert_trigger(monitor, message, alert_type, time_window_start, now)
 
 
-def _get_time_series_df_for_aggregated_metrics(monitor, now):
-    """
-    For aggregated metrics, gets time series data and returns it as a Prophet-ready DataFrame.
-    """
-    interval_kind = _get_interval_kind(monitor)
-
-    time_series_dict = _get_time_series_data_for_time_aggregated_metrics(
-        monitor, interval_kind, None, now
-    )
-    if not time_series_dict:
-        return None
-
-    df = pd.DataFrame(list(time_series_dict.items()), columns=["ds", "y"])
-    df["ds"] = pd.to_datetime(df["ds"])
-    return df
-
-
-def _get_time_series_df_for_other_metrics(monitor, now):
-    """
-    For non-aggregated metrics, fetches individual data points and returns a
-    Prophet-ready DataFrame, averaging values for duplicate timestamps.
-
-    CH25-TODO(dead-code; revisit when Prophet anomaly detection re-enabled):
-    only consumed by _check_anomaly_detection_threshold (currently fully
-    commented out at line 898+ in this file). Returns raw (created_at, y)
-    row pairs rather than bucket aggregates — would need a new reader
-    signature closer to `iter_rows_with_filters(project_id, ..., **filters)`
-    than a bucket aggregate. Defer until anomaly detection is re-enabled.
-    """
-    filters = parsing_monitor_filters(monitor.filters)
-    base_queryset = ObservationSpan.objects.filter(
-        project=monitor.project, created_at__lte=now
-    ).filter(filters)
-    metric_type = monitor.metric_type
-    queryset = None
-
-    match metric_type:
-        case (
-            MonitorMetricTypeChoices.ERROR_RATES_FOR_FUNCTION_CALLING
-            | MonitorMetricTypeChoices.LLM_API_FAILURE_RATES
-        ):
-            observation_type = (
-                "tool"
-                if metric_type
-                == MonitorMetricTypeChoices.ERROR_RATES_FOR_FUNCTION_CALLING
-                else "llm"
-            )
-            queryset = (
-                base_queryset.filter(observation_type=observation_type)
-                .annotate(
-                    y=Case(
-                        When(status="ERROR", then=Value(1.0)),
-                        default=Value(0.0),
-                        output_field=FloatField(),
-                    )
-                )
-                .values("created_at", "y")
-            )
-
-        case (
-            MonitorMetricTypeChoices.SERVICE_PROVIDER_ERROR_RATES
-        ):  # here are we doing error free rate or error rate ? this query itself might be incorrect check this
-            queryset = (
-                base_queryset.exclude(provider__isnull=True)
-                .annotate(
-                    y=Case(
-                        When(status="ERROR", then=Value(1.0)),
-                        default=Value(0.0),
-                        output_field=FloatField(),
-                    )
-                )
-                .values("created_at", "y")
-            )
-
-        case MonitorMetricTypeChoices.ERROR_FREE_SESSION_RATES:
-            queryset = (
-                base_queryset.exclude(trace__session__isnull=True)
-                .values("trace__session")
-                .annotate(error_count=Count("id", filter=Q(status="ERROR")))
-                .annotate(
-                    y=Case(
-                        When(error_count__gt=0, then=Value(0.0)),
-                        default=Value(1.0),
-                        output_field=FloatField(),
-                    ),
-                    created_at=Max("created_at"),
-                )
-                .values("created_at", "y")
-            )
-
-        case (
-            MonitorMetricTypeChoices.SPAN_RESPONSE_TIME
-            | MonitorMetricTypeChoices.LLM_RESPONSE_TIME
-        ):
-            if metric_type == MonitorMetricTypeChoices.LLM_RESPONSE_TIME:
-                base_queryset = base_queryset.filter(observation_type="llm")
-            queryset = base_queryset.values("created_at").annotate(y=F("latency_ms"))
-
-        case MonitorMetricTypeChoices.EVALUATION_METRICS:
-            try:
-                custom_eval_config = CustomEvalConfig.objects.get(id=monitor.metric)
-                eval_output_type = custom_eval_config.eval_template.config.get("output")
-            except CustomEvalConfig.DoesNotExist:
-                return None
-
-            eval_results = EvalLogger.objects.filter(
-                custom_eval_config=custom_eval_config,
-                target_type="span",
-                created_at__lte=now,
-                observation_span__in=ObservationSpan.objects.filter(filters),
-            )
-
-            if eval_output_type == EvalOutputType.SCORE:
-                queryset = eval_results.values("created_at").annotate(
-                    y=F("output_float")
-                )
-            elif eval_output_type == EvalOutputType.PASS_FAIL:
-                output_bool = (
-                    True if monitor.threshold_metric_value == "Passed" else False
-                )
-                queryset = eval_results.annotate(
-                    y=Case(
-                        When(output_bool=output_bool, then=Value(1.0)),
-                        default=Value(0.0),
-                        output_field=FloatField(),
-                    )
-                ).values("created_at", "y")
-            elif eval_output_type == EvalOutputType.CHOICES:
-                choice = monitor.threshold_metric_value
-                if not choice:
-                    return None
-                queryset = eval_results.annotate(
-                    y=Case(
-                        When(output_str_list__contains=[choice], then=Value(1.0)),
-                        default=Value(0.0),
-                        output_field=FloatField(),
-                    )
-                ).values("created_at", "y")
-
-    if queryset is None:
-        return None
-
-    df = pd.DataFrame(list(queryset))
-    if df.empty:
-        return None
-
-    df = df.rename(columns={"created_at": "ds"})
-    df["ds"] = pd.to_datetime(df["ds"])
-
-    # Average values for duplicate timestamps
-    df = df.groupby("ds")["y"].mean().reset_index()
-
-    return df
-
-
-# def _check_anomaly_detection_threshold(monitor, current_value, now):
-#     """Checks for alerts based on anomaly detection using Prophet."""
-
-#     metric_type = monitor.metric_type
-#     df = None
-
-#     if metric_type in [
-#         MonitorMetricTypeChoices.COUNT_OF_ERRORS,
-#         MonitorMetricTypeChoices.TOKEN_USAGE,
-#         MonitorMetricTypeChoices.DAILY_TOKENS_SPENT,
-#         MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT,
-#     ]:
-#         df = _get_time_series_df_for_aggregated_metrics(
-#             monitor, now
-#         )
-#     else:
-#         df = _get_time_series_df_for_other_metrics(
-#             monitor, now
-#         )
-#     # df = pd.read_csv('https://raw.githubusercontent.com/facebook/prophet/main/examples/example_wp_log_peyton_manning.csv')
-
-#     if df is None or len(df) < 2:
-#         logger.warning(
-#             f"Not enough historical data to perform anomaly detection for monitor {monitor.id}."
-#         )
-#         return
-
-#     # Use a standard 95% confidence interval for anomaly detection.
-#     m = Prophet(interval_width=0.95)
-#     m.fit(df)
-#     future = m.make_future_dataframe(periods=1, freq="min")  # Predict for 'now'
-#     forecast = m.predict(future)
-
-#     yhat_lower = forecast["yhat_lower"].iloc[-1]
-#     yhat_upper = forecast["yhat_upper"].iloc[-1]
-
-#     op = monitor.threshold_operator
-#     alert_type = None
-#     threshold_bound = None
-
-#     if op == ComparisonOperatorChoices.GREATER_THAN and current_value > yhat_upper:
-#         alert_type = AlertTypeChoices.WARNING
-#         threshold_bound = yhat_upper
-#     elif op == ComparisonOperatorChoices.LESS_THAN and current_value < yhat_lower:
-#         alert_type = AlertTypeChoices.WARNING
-#         threshold_bound = yhat_lower
-
-#     if alert_type:
-#         message = (
-#             f"Metric '{monitor.name}' for project '{monitor.project.name}' "
-#             f"({current_value:.2f}) was detected as an anomaly. It breached the expected "
-#             f"bound of {threshold_bound:.2f} (operator: {op})."
-#         )
-#         _handle_alert_trigger(monitor, message, alert_type)
-
-
-def _check_percentage_change_threshold(monitor, current_value, time_window_start, now):
+def _check_percentage_change_threshold(
+    monitor: UserAlertMonitor,
+    current_value: float,
+    time_window_start: datetime,
+    now: datetime,
+    builder: Optional["MonitorMetricsQueryBuilder"] = None,
+) -> None:
     """Checks for alerts based on percentage change from historical mean."""
-    time_window_start = now - timedelta(minutes=monitor.alert_frequency)
     historical_start = time_window_start - timedelta(
         minutes=monitor.auto_threshold_time_window
     )
 
     historical_mean, historical_stddev = _get_historical_stats(
-        monitor, historical_start, time_window_start
+        monitor, historical_start, time_window_start, builder
     )
 
     if historical_mean is None or historical_stddev is None:
@@ -989,7 +457,7 @@ def _check_percentage_change_threshold(monitor, current_value, time_window_start
         _handle_alert_trigger(monitor, message, alert_type, time_window_start, now)
 
 
-def _compare(value1, operator, value2):
+def _compare(value1: float, operator: str, value2: float) -> bool:
     """Compares two values based on the operator."""
     if operator == ComparisonOperatorChoices.GREATER_THAN:
         return value1 > value2

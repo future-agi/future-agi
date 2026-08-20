@@ -73988,12 +73988,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "deleted": {
           "title": "Deleted",
-          "type": "boolean"
+          "type": "boolean",
+          "readOnly": true
         },
         "deleted_at": {
           "title": "Deleted at",
           "type": "string",
           "format": "date-time",
+          "readOnly": true,
           "x-nullable": true
         },
         "metric_type": {
@@ -74075,6 +74077,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "description": "The last time the monitor was checked for alerts.",
           "type": "string",
           "format": "date-time",
+          "readOnly": true,
           "x-nullable": true
         },
         "notification_emails": {
@@ -74114,6 +74117,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "title": "Logs",
             "type": "object"
           },
+          "readOnly": true,
           "x-nullable": true
         },
         "organization": {
@@ -74501,12 +74505,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "deleted": {
           "title": "Deleted",
-          "type": "boolean"
+          "type": "boolean",
+          "readOnly": true
         },
         "deleted_at": {
           "title": "Deleted at",
           "type": "string",
           "format": "date-time",
+          "readOnly": true,
           "x-nullable": true
         },
         "metric_type": {
@@ -74588,6 +74594,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "description": "The last time the monitor was checked for alerts.",
           "type": "string",
           "format": "date-time",
+          "readOnly": true,
           "x-nullable": true
         },
         "notification_emails": {
@@ -74627,6 +74634,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "title": "Logs",
             "type": "object"
           },
+          "readOnly": true,
           "x-nullable": true
         },
         "organization": {

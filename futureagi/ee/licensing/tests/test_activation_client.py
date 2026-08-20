@@ -22,6 +22,7 @@ from ee.licensing.activation_client import (
 @pytest.fixture(autouse=True)
 def reset_token_cache():
     import ee.licensing.activation_client as mod
+
     mod._cached_token = None
     yield
     mod._cached_token = None
@@ -274,9 +275,13 @@ class TestStreamManagedService:
 
 class TestCallManagedService:
     def test_raises_on_no_token(self):
-        with patch("ee.licensing.activation_client.get_service_token", return_value=None):
+        with patch(
+            "ee.licensing.activation_client.get_service_token", return_value=None
+        ):
             with pytest.raises(ManagedServiceError) as exc:
-                call_managed_service(json_body={"model": "turing_large", "messages": []})
+                call_managed_service(
+                    json_body={"model": "turing_large", "messages": []}
+                )
             assert exc.value.code == "ACTIVATION_FAILED"
 
     def test_raises_on_oss_scope_without_token(self):
@@ -288,9 +293,13 @@ class TestCallManagedService:
             allowed_models=[],
             scope="oss",
         )
-        with patch("ee.licensing.activation_client.get_service_token", return_value=oss_token):
+        with patch(
+            "ee.licensing.activation_client.get_service_token", return_value=oss_token
+        ):
             with pytest.raises(ManagedServiceError) as exc:
-                call_managed_service(json_body={"model": "turing_large", "messages": []})
+                call_managed_service(
+                    json_body={"model": "turing_large", "messages": []}
+                )
             assert exc.value.code == "NO_ENTERPRISE_LICENSE"
 
     @pytest.mark.parametrize(
