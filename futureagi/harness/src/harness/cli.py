@@ -24,14 +24,14 @@ from .config import (
     credentials_hint,
     permission_gate,
 )
+from .run.targets import supported as target_kinds
 from .scenarios import load as load_written
 from .scenarios import open_stage as scenario_stage
 from .scenarios import opening as scenario_opening
 from .session import TEXT, Event
-from .world.snapshot import saved as world_saved
-from .run.targets import supported as target_kinds
 from .sources import resolve, supported
 from .understand import load, open_stage, opening
+from .world.snapshot import saved as world_saved
 
 
 def _render(event: Event) -> None:

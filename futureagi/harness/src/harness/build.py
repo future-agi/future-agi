@@ -10,24 +10,25 @@ is the next thing said, and the tool is re-run on the spot.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from claude_agent_sdk import ClaudeAgentOptions
 
 from .config import (
-    artifact_dir,
     UNWANTED,
-    gate_hooks,
+    artifact_dir,
     chosen_model,
+    gate_hooks,
     load_skill,
     permission_gate,
     provider_env,
 )
 from .contract import AgentContract
-from .world.snapshot import saved as world_saved
 from .session import Stage
 from .tools import qualified
+from .world.snapshot import saved as world_saved
 from .world.tools import TOOL_NAMES, WORLD_SERVER, world_tools
 
 SKILL = "build-environment"

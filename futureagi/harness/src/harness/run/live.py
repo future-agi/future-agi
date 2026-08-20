@@ -22,12 +22,12 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..checks import Outcome, run_check
 from ..catalogue import load_catalogue
-from ..simulator import fill, load_simulator_prompt
-from ..scenario import Scenario
-from ..world.runtime import GeneratedWorld
+from ..checks import Outcome, run_check
 from ..folder import apply_setup, check_ready
+from ..scenario import Scenario
+from ..simulator import fill, load_simulator_prompt
+from ..world.runtime import GeneratedWorld
 from ..world.snapshot import restore
 from .voice import WorldWebhook, repoint_assistant
 

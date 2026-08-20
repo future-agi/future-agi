@@ -20,7 +20,8 @@ difference.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from ..probe import ProbeReport, ProbeResult
 from . import Store
@@ -167,7 +168,7 @@ def _difference(expected: dict[str, Any], found: dict[str, Any]) -> str:
             return f"{table} disappeared"
         if len(before) != len(after):
             return f"{table}: {len(before)} rows expected, {len(after)} found"
-        for index, (one, two) in enumerate(zip(before, after)):
+        for index, (one, two) in enumerate(zip(before, after, strict=True)):
             if one != two:
                 return f"{table} row {index}: expected {one}, found {two}"
     return "no difference found, which should not happen"

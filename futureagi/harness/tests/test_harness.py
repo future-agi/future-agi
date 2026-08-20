@@ -11,6 +11,11 @@ import json
 from pathlib import Path
 
 import pytest
+from harness.cli import build_parser
+from harness.scenario import Scenario
+from harness.session import ARTIFACT, DONE, TEXT, TOOL, Event
+from harness.tools import accept_contract, qualified
+from harness.understand import load, opening
 
 from harness import (
     AgentContract,
@@ -26,11 +31,56 @@ from harness import (
     supported,
     validate_contract,
 )
-from harness.cli import build_parser
-from harness.scenario import Scenario
-from harness.session import ARTIFACT, DONE, TEXT, TOOL, Event
-from harness.tools import accept_contract, qualified
-from harness.understand import load, opening
+
+
+async def _list_tools(instance) -> list:
+    """The server's tools, whichever mcp handler API this version exposes.
+
+    Classic mcp keys the handler table by request class and wraps results in ServerResult;
+    newer mcp keys it by method string with HandlerEntry(handler, params_type) values and
+    returns the result bare. The tests only care about the tool list either way.
+    """
+    table = getattr(instance, "request_handlers", None)
+    if table is not None:
+        from mcp.types import ListToolsRequest
+
+        for key, handler in table.items():
+            if getattr(key, "__name__", "") == "ListToolsRequest":
+                result = await handler(ListToolsRequest(method="tools/list"))
+                return list(result.root.tools)
+        return []
+    entry = instance._request_handlers["tools/list"]
+    result = await entry.handler(None, None)
+    return list(result.tools)
+
+
+async def _call_tool(instance, name: str, arguments: dict) -> str:
+    """Call one tool through the server and hand back the text it answered with."""
+    from mcp.types import CallToolRequestParams
+
+    table = getattr(instance, "request_handlers", None)
+    if table is not None:
+        from mcp.types import CallToolRequest
+
+        for key, handler in table.items():
+            if getattr(key, "__name__", "") == "CallToolRequest":
+                answer = await handler(
+                    CallToolRequest(
+                        method="tools/call",
+                        params=CallToolRequestParams(name=name, arguments=arguments),
+                    )
+                )
+                return answer.root.content[0].text
+        raise AssertionError("this server has no tool-call handler")
+    entry = instance._request_handlers["tools/call"]
+    answer = await entry.handler(None, CallToolRequestParams(name=name, arguments=arguments))
+    return answer.content[0].text
+
+
+def _schema_of(tool) -> dict:
+    """A tool's input schema under either mcp Tool field casing."""
+    schema = getattr(tool, "inputSchema", None)
+    return schema if schema is not None else tool.input_schema
 
 
 def _contract(**overrides) -> AgentContract:
@@ -672,16 +722,11 @@ def _published(server):
     """The tool names an in-process MCP server really exposes."""
     import asyncio
 
-    from mcp.types import ListToolsRequest
 
     instance = server.get("instance") if isinstance(server, dict) else server
 
     async def ask():
-        for key, handler in instance.request_handlers.items():
-            if getattr(key, "__name__", "") == "ListToolsRequest":
-                result = await handler(ListToolsRequest(method="tools/list"))
-                return sorted(tool.name for tool in result.root.tools)
-        return []
+        return sorted(tool.name for tool in await _list_tools(instance))
 
     return asyncio.run(ask())
 
@@ -689,9 +734,10 @@ def _published(server):
 def test_every_stage_publishes_exactly_the_tools_it_claims(tmp_path):
     """A tool listed in TOOL_NAMES but left out of the server is granted, named in error
     messages, and does not exist. The model then hunts for it and works around the gate."""
-    from harness import scenario_tools as scenarios
     from harness.run import tools as runs
     from harness.world import tools as world
+
+    from harness import scenario_tools as scenarios
 
     root, contract = _saved_world(tmp_path)
     server, _kept = scenarios.scenario_tools(contract, root, root, wanted=1)
@@ -736,7 +782,6 @@ def test_a_run_notices_when_it_was_billed_to_a_model_nobody_asked_for():
     """Asking for a model is not the same as getting one: the CLI has its own default, and a
     request that quietly does not take shows up only on the invoice."""
     from claude_agent_sdk import ClaudeAgentOptions
-
     from harness.session import Stage
 
     stage = Stage(ClaudeAgentOptions(model="claude-haiku-4-5"), name="s")
@@ -949,18 +994,8 @@ def test_a_row_put_in_wrong_can_be_taken_out_again(tmp_path):
     world.connection.commit()
 
     async def call(name, payload):
-        from mcp.types import CallToolRequest, CallToolRequestParams
-
         instance = server.get("instance") if isinstance(server, dict) else server
-        for key, handler in instance.request_handlers.items():
-            if getattr(key, "__name__", "") == "CallToolRequest":
-                result = await handler(
-                    CallToolRequest(
-                        method="tools/call",
-                        params=CallToolRequestParams(name=name, arguments=payload),
-                    )
-                )
-                return result.root.content[0].text
+        return await _call_tool(instance, name, payload)
 
     said = asyncio.run(
         call("change_data", {"sql": "DELETE FROM menu WHERE id='curry_sauce'"})
@@ -1525,7 +1560,6 @@ def test_every_contract_field_is_advertised_to_the_model(tmp_path):
     from pathlib import Path
 
     from harness.contract import AgentContract
-
     from pydantic import BaseModel
 
     advertised = (
@@ -1778,9 +1812,9 @@ def test_repointing_changes_only_where_the_agents_tools_are_answered():
 
 
 def test_a_scenario_fills_the_simulator_prompt_before_a_call_is_placed(tmp_path):
-    from harness.simulator import save_simulator_prompt
     from harness.run.live import prepare
     from harness.scenario import Scenario
+    from harness.simulator import save_simulator_prompt
 
     root, _contract, _catalogue = _built_environment(tmp_path)
     save_simulator_prompt(
@@ -1800,10 +1834,9 @@ def test_a_scenario_fills_the_simulator_prompt_before_a_call_is_placed(tmp_path)
 def test_a_scenario_that_leaves_a_slot_empty_never_reaches_a_call(tmp_path):
     """An unfilled slot would be read out to the caller verbatim."""
     import pytest as _pytest
-
-    from harness.simulator import save_simulator_prompt
     from harness.run.live import prepare
     from harness.scenario import Scenario
+    from harness.simulator import save_simulator_prompt
 
     root, _contract, _catalogue = _built_environment(tmp_path)
     save_simulator_prompt(
@@ -1912,8 +1945,9 @@ def test_every_stage_gates_with_the_hook_not_only_the_callback():
     """One stage left on the callback alone is one stage a host tool still reaches."""
     import inspect
 
-    from harness import build, reception, scenarios
     from harness.run import grade, stage, targets
+
+    from harness import build, reception, scenarios
 
     for module in (build, reception, scenarios, stage, targets, grade):
         source = inspect.getsource(module)
@@ -1944,8 +1978,6 @@ def test_submit_contract_schema_teaches_and_leaves_gating_to_the_gate(tmp_path):
     refuses to live without may be required; the rest are optional and gated with real messages."""
     import asyncio
 
-    from mcp.types import ListToolsRequest
-
     from harness.contract import MODALITIES
     from harness.tools import contract_tools
 
@@ -1953,11 +1985,8 @@ def test_submit_contract_schema_teaches_and_leaves_gating_to_the_gate(tmp_path):
     instance = server.get("instance") if isinstance(server, dict) else server
 
     async def schema_of():
-        for key, handler in instance.request_handlers.items():
-            if getattr(key, "__name__", "") == "ListToolsRequest":
-                result = await handler(ListToolsRequest(method="tools/list"))
-                return result.root.tools[0].inputSchema
-        return {}
+        tools = await _list_tools(instance)
+        return _schema_of(tools[0]) if tools else {}
 
     schema = asyncio.run(schema_of())
     # Nothing required at the schema layer: accept_contract is the only gate, and it reports
@@ -1987,16 +2016,7 @@ def test_a_bare_conversational_contract_is_nudged_once_then_accepted(tmp_path):
     instance = server.get("instance") if isinstance(server, dict) else server
 
     async def call(payload):
-        from mcp.types import CallToolRequest, CallToolRequestParams
-
-        for key, handler in instance.request_handlers.items():
-            if getattr(key, "__name__", "") == "CallToolRequest":
-                request = CallToolRequest(
-                    method="tools/call",
-                    params=CallToolRequestParams(name="submit_contract", arguments=payload),
-                )
-                answer = await handler(request)
-                return answer.root.content[0].text
+        return await _call_tool(instance, "submit_contract", payload)
 
     payload = {
         "agent": "quiet",
@@ -2020,7 +2040,6 @@ def test_granting_a_tool_rebuilds_the_gate_not_just_the_list(tmp_path):
     import asyncio
 
     from claude_agent_sdk import ClaudeAgentOptions
-
     from harness.config import gate_hooks
     from harness.session import Stage
 
@@ -2043,8 +2062,6 @@ def test_handoff_is_refused_until_the_stage_has_its_artifact(tmp_path):
     """Moving on is decided by code, from the artifacts, never by the model wanting to."""
     import asyncio
 
-    from mcp.types import CallToolRequest, CallToolRequestParams
-
     from harness.chat import Conversation
 
     conversation = Conversation(source=None, out=tmp_path, workspace=tmp_path)
@@ -2053,16 +2070,9 @@ def test_handoff_is_refused_until_the_stage_has_its_artifact(tmp_path):
     instance = server.get("instance") if isinstance(server, dict) else server
 
     async def call():
-        for key, handler in instance.request_handlers.items():
-            if getattr(key, "__name__", "") == "CallToolRequest":
-                request = CallToolRequest(
-                    method="tools/call",
-                    params=CallToolRequestParams(
-                        name="hand_to_next_stage", arguments={"request": "create the world"}
-                    ),
-                )
-                answer = await handler(request)
-                return answer.root.content[0].text
+        return await _call_tool(
+            instance, "hand_to_next_stage", {"request": "create the world"}
+        )
 
     said = asyncio.run(call())
     assert "not produced its artifact" in said
@@ -2169,11 +2179,12 @@ def test_a_skill_only_names_tools_its_stage_actually_has():
     catches that, because both halves are individually valid."""
     import re
 
-    from harness import scenario_tools
     from harness.config import SKILLS_ROOT
     from harness.run import tools as run_tools
     from harness.tools import CONTRACT_SERVER  # noqa: F401
     from harness.world import tools as world_tools
+
+    from harness import scenario_tools
 
     surface = {
         "understand-agent": {"submit_contract"},
@@ -2183,8 +2194,8 @@ def test_a_skill_only_names_tools_its_stage_actually_has():
     }
     # A skill also backticks the names of fields it is telling the model to fill in. Those are
     # not tools, and the list of them is derived rather than hand-kept so it cannot go stale.
-    from harness.contract import AgentContract, ToolSpec
     from harness.catalogue import SubGoal
+    from harness.contract import AgentContract, ToolSpec
     from harness.scenario import Persona, Scenario
 
     fields = set()
@@ -2223,19 +2234,7 @@ def test_a_contract_with_tools_but_no_data_is_nudged_once(tmp_path):
     instance = server.get("instance") if isinstance(server, dict) else server
 
     async def call(payload):
-        from mcp.types import CallToolRequest, CallToolRequestParams
-
-        for key, handler in instance.request_handlers.items():
-            if getattr(key, "__name__", "") == "CallToolRequest":
-                answer = await handler(
-                    CallToolRequest(
-                        method="tools/call",
-                        params=CallToolRequestParams(
-                            name="submit_contract", arguments=payload
-                        ),
-                    )
-                )
-                return answer.root.content[0].text
+        return await _call_tool(instance, "submit_contract", payload)
 
     payload = {
         "agent": "dataless",
@@ -2650,9 +2649,10 @@ def test_the_turn_that_finds_the_agent_also_opens_the_next_stage(tmp_path, monke
     at reception, which has no tools to do anything with it."""
     import asyncio
 
-    from harness import chat as chat_module
     from harness.chat import Conversation
     from harness.sources import RepoSource
+
+    from harness import chat as chat_module
 
     said: list[str] = []
 
@@ -2727,8 +2727,6 @@ def test_a_crashed_handler_is_told_what_a_handler_actually_has(tmp_path):
     Three identical attempts at one handler is what that cost on a real run."""
     import asyncio
 
-    from mcp.types import CallToolRequest, CallToolRequestParams
-
     from harness.world import tools as world_tools
 
     root, contract = _saved_world(tmp_path)
@@ -2736,18 +2734,9 @@ def test_a_crashed_handler_is_told_what_a_handler_actually_has(tmp_path):
     instance = server.get("instance") if isinstance(server, dict) else server
 
     async def define(source):
-        for key, handler in instance.request_handlers.items():
-            if getattr(key, "__name__", "") == "CallToolRequest":
-                answer = await handler(
-                    CallToolRequest(
-                        method="tools/call",
-                        params=CallToolRequestParams(
-                            name="define_handler",
-                            arguments={"tool_name": "add", "source": source},
-                        ),
-                    )
-                )
-                return answer.root.content[0].text
+        return await _call_tool(
+            instance, "define_handler", {"tool_name": "add", "source": source}
+        )
 
     # the mistake a model actually makes: sqlite's cursor API
     said = asyncio.run(define(
@@ -3107,8 +3096,8 @@ def test_a_refusal_scenario_is_not_vacuous_because_its_evidence_is_what_was_said
     Judged on that alone, the gate rejects exactly the scenarios that test a refusal. An agent that
     did nothing also said nothing, so a judged sub-goal cannot be passed by an empty run.
     """
-    from harness.checks import Outcome
     from harness.catalogue import Catalogue, SubGoal
+    from harness.checks import Outcome
     from harness.prove import Proof
 
     catalogue = Catalogue(
@@ -3167,7 +3156,6 @@ def test_an_optional_field_may_be_null():
     not of type 'string'" is the whole message, on a tool with twenty properties.
     """
     import jsonschema
-
     from harness.tools import schema
 
     shape = schema({"name": str, "note": str, "size": int}, ["name"])
@@ -3471,9 +3459,9 @@ def test_the_platform_is_used_only_when_it_is_configured():
 def test_voice_suite_evals_use_the_documented_platform_inputs(monkeypatch):
     from harness.catalogue import default_suite_evals
     from harness.contract import AgentContract
+    from harness.run import platform_evals
     from harness.run.conversation import Exchange, Transcript
     from harness.run.grade import judge_suite_evals
-    from harness.run import platform_evals
     from harness.scenario import Scenario
 
     calls = []
@@ -3521,9 +3509,9 @@ def test_voice_suite_evals_use_the_documented_platform_inputs(monkeypatch):
 def test_suite_evals_do_not_run_for_non_voice_agents(monkeypatch):
     from harness.catalogue import default_suite_evals
     from harness.contract import AgentContract
+    from harness.run import platform_evals
     from harness.run.conversation import Transcript
     from harness.run.grade import judge_suite_evals
-    from harness.run import platform_evals
     from harness.scenario import Scenario
 
     monkeypatch.setattr(platform_evals, "configured", lambda: True)

@@ -12,8 +12,9 @@ Neither is privileged, which is the point.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Callable
+from typing import Any
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -212,7 +213,7 @@ class Stage:
         self._options.hooks = gate_hooks(self._options.allowed_tools)
         self._options.can_use_tool = permission_gate(ask, self._options.allowed_tools)
 
-    async def __aenter__(self) -> "Stage":
+    async def __aenter__(self) -> Stage:
         self._client = ClaudeSDKClient(options=self._options)
         await self._client.connect()
         return self

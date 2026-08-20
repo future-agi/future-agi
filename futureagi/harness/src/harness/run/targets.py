@@ -15,7 +15,8 @@ does not change, the scenarios do not change, and the grading does not change.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Protocol, runtime_checkable
+from collections.abc import Callable
+from typing import Any, Protocol, runtime_checkable
 
 from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, tool
 
