@@ -22,7 +22,6 @@ import numpy as np
 import pandas as pd
 import requests
 import structlog
-import weaviate
 from accounts.models.user import User
 from agentic_eval.core.embeddings.embedding_manager import (
     EmbeddingManager,
@@ -257,10 +256,8 @@ from model_hub.views.utils.utils import (
     update_column_id,
     validate_file_url,
 )
-from pinecone import Pinecone
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
-from qdrant_client import QdrantClient
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.generics import CreateAPIView
@@ -300,7 +297,6 @@ from tfc.utils.storage import (
     upload_file_to_s3,
     upload_image_to_s3,
 )
-from weaviate import AuthApiKey
 
 try:
     from ee.usage.utils.usage_entries import (
@@ -10567,6 +10563,8 @@ class AddVectorDBColumnView(APIView):
         }
 
         """
+        from pinecone import Pinecone
+
         pc = Pinecone(api_key=SecretModel.objects.get(id=config["api_key"]).actual_key)
         index = pc.Index(config["index_name"])
         query_object = {}
@@ -10649,6 +10647,8 @@ class AddVectorDBColumnView(APIView):
                 )
 
             # Initialize Qdrant client
+            from qdrant_client import QdrantClient
+
             client = QdrantClient(
                 url=config["url"],
                 api_key=SecretModel.objects.get(id=config["api_key"]).actual_key,
@@ -10683,6 +10683,9 @@ class AddVectorDBColumnView(APIView):
             raise ValueError(f"Failed to query Qdrant: {str(e)}")  # noqa: B904
 
     def get_client(self, config, organization_id, workspace_id=None, use_hybrid=False):
+        import weaviate
+        from weaviate import AuthApiKey
+
         embedding_config = config.get("embedding_config", {})
         embedding_type = embedding_config.get("type", "")
         key = None

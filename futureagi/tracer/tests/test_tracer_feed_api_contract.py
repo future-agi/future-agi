@@ -219,9 +219,9 @@ def test_webhook_signature_uses_original_retell_payload():
         patch(
             "tracer.views.observability_provider.AgentDefinition.no_workspace_objects.select_related"
         ) as select_related,
-        patch(
-            "tracer.views.observability_provider.verify_retell_webhook"
-        ) as verify_retell_webhook,
+        # The view imports `verify` lazily (function scope) so the slim OSS
+        # image can boot without the `voice` extra — patch the source module.
+        patch("retell.lib.webhook_auth.verify") as verify_retell_webhook,
         patch(
             "tracer.views.observability_provider.normalize_and_store_logs"
         ) as normalize_and_store_logs,
@@ -263,9 +263,9 @@ def test_webhook_invalid_signature_does_not_dispatch_logs():
         patch(
             "tracer.views.observability_provider.AgentDefinition.no_workspace_objects.select_related"
         ) as select_related,
-        patch(
-            "tracer.views.observability_provider.verify_retell_webhook"
-        ) as verify_retell_webhook,
+        # The view imports `verify` lazily (function scope) so the slim OSS
+        # image can boot without the `voice` extra — patch the source module.
+        patch("retell.lib.webhook_auth.verify") as verify_retell_webhook,
         patch(
             "tracer.views.observability_provider.normalize_and_store_logs"
         ) as normalize_and_store_logs,
