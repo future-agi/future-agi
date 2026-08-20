@@ -133,6 +133,17 @@ class TestAgentDefinitionCreateRequestSerializer:
         assert not serializer.is_valid()
         assert "contact_number" in serializer.errors
 
+    def test_provider_identity_without_secret_accepts_missing_contact_number(self):
+        serializer = AgentDefinitionCreateRequestSerializer(
+            data=_voice_agent_payload(
+                contact_number=None,
+                assistant_id="assistant_123",
+                api_key=None,
+            )
+        )
+
+        assert serializer.is_valid(), serializer.errors
+
     def test_invalid_contact_number_format(self):
         serializer = AgentDefinitionCreateRequestSerializer(
             data=_voice_agent_payload(contact_number="+123abc456")
@@ -168,6 +179,23 @@ class TestAgentDefinitionCreateRequestSerializer:
         )
         assert not serializer.is_valid()
         assert "assistant_id" in serializer.errors
+
+    def test_outbound_livekit_does_not_require_api_key_or_assistant_id(self):
+        # Outbound WebRTC via LiveKit reaches the target by managed dispatch —
+        # no Bearer api_key/assistant_id and no phone number. The provider-blind
+        # outbound check must not reject it.
+        serializer = AgentDefinitionCreateRequestSerializer(
+            data=_voice_agent_payload(
+                provider="livekit_bridge",
+                inbound=False,
+                contact_number="",
+                livekit_url="wss://example.livekit.cloud",
+                livekit_api_key="APIexamplekey",
+                livekit_api_secret="example-secret",
+                livekit_agent_name="test-agent",
+            )
+        )
+        assert serializer.is_valid(), serializer.errors
 
     def test_observability_requires_api_key(self):
         serializer = AgentDefinitionCreateRequestSerializer(
@@ -413,6 +441,26 @@ class TestAgentVersionCreateRequestSerializer:
         assert serializer.is_valid(), serializer.errors
         assert serializer.validated_data["observability_enabled"] is True
 
+    def test_livekit_max_concurrency_capped(self):
+        # This path had no concurrency cap before it started carrying vapi/retell
+        # values; the field must reject anything above DEFAULT_ORG_LIMIT.
+        from simulate.temporal.constants import DEFAULT_ORG_LIMIT
+
+        serializer = AgentVersionCreateRequestSerializer(
+            data={"livekit_max_concurrency": DEFAULT_ORG_LIMIT + 1}
+        )
+        assert not serializer.is_valid()
+        assert "livekit_max_concurrency" in serializer.errors
+
+    def test_livekit_max_concurrency_at_cap_allowed(self):
+        from simulate.temporal.constants import DEFAULT_ORG_LIMIT
+
+        serializer = AgentVersionCreateRequestSerializer(
+            data={"livekit_max_concurrency": DEFAULT_ORG_LIMIT}
+        )
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["livekit_max_concurrency"] == DEFAULT_ORG_LIMIT
+
 
 # ============================================================================
 # TestAgentDefinitionResponseSerializer (needs DB)
@@ -448,6 +496,7 @@ class TestAgentDefinitionResponseSerializer:
             "agent_type",
             "contact_number",
             "inbound",
+            "target_speaks_first",
             "description",
             "assistant_id",
             "provider",
@@ -515,7 +564,7 @@ class TestAgentVersionResponseSerializer:
     """Tests for AgentVersionResponseSerializer output shape."""
 
     def test_serializes_all_fields(self, db, organization, workspace):
-        from simulate.models import AgentDefinition, AgentVersion
+        from simulate.models import AgentDefinition
         from simulate.serializers.response.agent_version import (
             AgentVersionResponseSerializer,
         )
@@ -584,9 +633,9 @@ class TestAgentVersionResponseSerializer:
         assert isinstance(snapshot, dict)
         # No raw UUID objects — all values should be JSON-serializable primitives
         for key, value in snapshot.items():
-            assert not hasattr(
-                value, "hex"
-            ), f"Snapshot key '{key}' contains a UUID object instead of a string"
+            assert not hasattr(value, "hex"), (
+                f"Snapshot key '{key}' contains a UUID object instead of a string"
+            )
 
     def test_version_name_display(self, db, organization, workspace):
         from simulate.models import AgentDefinition

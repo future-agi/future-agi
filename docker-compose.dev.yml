@@ -1,4 +1,3 @@
-
 x-dev-worker: &dev-worker
   image: futureagi/future-agi:dev
   working_dir: /app/backend
@@ -20,11 +19,11 @@ services:
     ports: !override
       - "${FRONTEND_PORT:-3000}:3000"
     environment:
-
       VITE_USE_POLLING: "true"
       VITE_HOST_API: ${VITE_HOST_API:-http://localhost:8000}
       VITE_ENVIRONMENT: ${VITE_ENVIRONMENT:-development}
       VITE_GOOGLE_SITE_KEY: ${VITE_GOOGLE_SITE_KEY:-}
+      VITE_HELP_LINK: ${VITE_HELP_LINK:-}
 
   backend:
     build:
@@ -45,8 +44,8 @@ services:
   # (futureagi/<svc>:${VERSION:-latest}). Only backend and frontend build
   # from source. This also avoids pulling serving's private ECR base image.
 
-
   worker:
+    <<: *dev-worker
     deploy:
       replicas: 0
 
@@ -67,6 +66,24 @@ services:
     profiles: !reset []
   worker-agent-compass:
     <<: *dev-worker
+    profiles: !reset []
+
+  # SDK-bearing image (can't reuse *dev-worker); built from the local wheel via
+  # Dockerfile.simulation-runner.dev FROM futureagi/future-agi:dev (backend first).
+  worker-simulation-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.simulation-runner.dev
+      args:
+        BACKEND_IMAGE: futureagi/future-agi:dev
+    image: futureagi/future-agi-simulation-runner:dev
+    pull_policy: never
+    working_dir: /app/backend
+    volumes:
+      - ./futureagi:/app/backend
+    environment:
+      FAST_STARTUP: "true"
+      PYTHONUNBUFFERED: "1"
     profiles: !reset []
 
   postgres:
@@ -96,13 +113,11 @@ services:
       - "${RABBITMQ_PORT:-5672}:5672"
       - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
 
-
   temporal-ui:
     profiles: !reset []
 
   temporal-admin-tools:
     profiles: !reset []
-
 
   peerdb-catalog:
     profiles: !reset []
@@ -136,7 +151,6 @@ services:
       - ./futureagi/config/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini
       - ./futureagi/config/userlist.txt:/etc/pgbouncer/userlist.txt
     restart: unless-stopped
-
 
   docker-proxy:
     image: alpine/socat

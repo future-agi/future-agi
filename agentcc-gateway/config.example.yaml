@@ -8,13 +8,13 @@ server:
   write_timeout: 300s
   idle_timeout: 120s
   shutdown_timeout: 30s
-  max_request_body_size: 10485760  # 10MB
+  max_request_body_size: 10485760 # 10MB
   default_request_timeout: 60s
 
 providers:
   openai:
     base_url: "https://api.openai.com"
-    api_key: "${OPENAI_API_KEY}"  # Set via env var
+    api_key: "${OPENAI_API_KEY}" # Set via env var
     api_format: "openai"
     default_timeout: 60s
     max_concurrent: 100
@@ -362,7 +362,6 @@ logging:
   #   include_bodies: false      # Include full request/response bodies (default: false)
   #   buffer_size: 4096          # Async buffer size (default: 4096)
   #   workers: 2                 # Number of log worker goroutines (default: 2)
-
 # guardrails:
 #   enabled: true
 #   fail_open: true                     # If a guardrail times out or errors, allow the request (default: true)
@@ -461,15 +460,42 @@ logging:
 #       headers:
 #         Authorization: "Bearer ${SIEM_TOKEN}"
 
-# OpenTelemetry tracing.
+# OpenTelemetry tracing. One span per request carrying model, provider,
+# latency, token counts, cost, cache status, and any caller dimensions sent in
+# the x-agentcc-metadata header. Attribute names follow the OTel GenAI semantic
+# conventions (gen_ai.*), with session.id / user.id / metadata for the rest, so
+# spans are consumable by any GenAI-aware backend without a translation layer.
 # otel:
 #   enabled: true
 #   service_name: "agentcc-gateway"
-#   exporter: "stdout"                 # currently: stdout
+#   exporter: "otlp"                   # stdout | otlp
+#   endpoint: "http://otel-collector:4318"   # required for otlp; /v1/traces is
+#                                            # appended when the URL has no path
+#   protocol: "http/protobuf"          # the only supported OTLP transport
+#   headers:                           # hosted collectors authenticate here;
+#     X-Api-Key: "${FI_API_KEY}"       # keep credentials in the environment,
+#     X-Secret-Key: "${FI_SECRET_KEY}" # not in this file
+#   include_bodies: false              # attach prompt + completion to each span
+#                                      # (input.value / output.value). Off by
+#                                      # default: it sends user content to the
+#                                      # collector. Redacted with the same
+#                                      # privacy config as the request log.
 #   sample_rate: 0.1                   # 10% of requests
-#   attributes:
+#   attributes:                        # emitted as OTLP resource attributes
 #     environment: "production"
 #     region: "us-east-1"
+#
+# Exporting to the FutureAGI platform: point endpoint at
+# https://api.futureagi.com/v1/traces, authenticate with X-Api-Key/X-Secret-Key,
+# and set project_name (plus project_type: "observe") under attributes — the
+# platform reads those resource attributes to decide which project the spans
+# land in, and creates it on first use.
+#
+# Spans are queued and flushed in the background, so an unreachable collector
+# never adds latency to a request. The gateway's own x-agentcc-trace-id travels
+# as the agentcc.trace_id span attribute, so a span can be matched to its
+# request-log row; agentcc.request_id and agentcc.is_stream are likewise
+# gateway facts with no conventional equivalent.
 
 # Prometheus metrics endpoint.
 # prometheus:

@@ -18,6 +18,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/files"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/policy"
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
@@ -42,6 +43,10 @@ type Handlers struct {
 	healthMonitor  *routing.HealthMonitor
 	maxBodySize    int64
 	defaultTimeout time.Duration
+
+	// captureStreamContent reassembles streamed completions so post-plugins
+	// see the text. Set when a sink is configured to record bodies.
+	captureStreamContent bool
 
 	// Streaming guardrail support.
 	guardrailEngine    *guardrails.Engine
@@ -200,6 +205,10 @@ func (h *Handlers) resolveProviderWithOrgFallback(ctx context.Context, rc *model
 	}
 	return provider, nil
 }
+
+// SetCaptureStreamContent enables reassembly of streamed completions. Off by
+// default: without a sink that records bodies, the assembly is wasted work.
+func (h *Handlers) SetCaptureStreamContent(v bool) { h.captureStreamContent = v }
 
 // NewHandlers creates a Handlers instance.
 func NewHandlers(registry *providers.Registry, engine *pipeline.Engine, maxBodySize int64, defaultTimeout time.Duration, failover *routing.Failover, modelFallbacks *routing.ModelFallbacks, conditionalRouter *routing.ConditionalRouter, healthMonitor *routing.HealthMonitor, modelTimeouts map[string]time.Duration, mirror *routing.Mirror, guardrailEngine *guardrails.Engine, policyStore *policy.Store, streamGuardrailCfg config.StreamingGuardrailConfig, mdbPtr *atomic.Pointer[modeldb.ModelDB], tenantStore *tenant.Store, orgProviderCache *providers.OrgProviderCache, keyStore *authpkg.KeyStore) *Handlers {
@@ -865,15 +874,7 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 
 	// Extract Agentcc metadata from headers (with security key blocklist).
 	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
-		var m map[string]string
-		if err := json.Unmarshal([]byte(meta), &m); err == nil {
-			for k, v := range m {
-				if isBlockedMetadataKey(k) {
-					continue
-				}
-				rc.Metadata[k] = v
-			}
-		}
+		parseMetadataHeader(meta, rc)
 	}
 	if sid := r.Header.Get("x-agentcc-session-id"); sid != "" {
 		if len(sid) > maxSessionIDLen {
@@ -946,6 +947,11 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	h.applyOrgModelMapOverrides(orgCfg, rc)
 
 	// --- Phase 12A: Advanced routing pipeline ---
+
+	if middleware.IsLicenseAuthorized(r.Context()) && rc.Metadata["key_access_groups"] == "" {
+		rc.Metadata["key_access_groups"] = "internal"
+		rc.Metadata["key_type"] = "internal"
+	}
 
 	// 1. Model access group alias resolution and access check.
 	keyGroups := splitCSV(rc.Metadata["key_access_groups"])
@@ -1152,7 +1158,7 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 	// Non-internal keys must not resolve to global (FutureAGI-credentialed) providers.
 	// This guard runs first so no code path (model map, conditional routes, registry)
 	// can bypass it for user keys.
-	if h.keyStore != nil && rc.Metadata["key_type"] != "internal" {
+	if h.keyStore != nil && rc.Metadata["key_type"] != "internal" && !middleware.IsLicenseAuthorized(ctx) {
 		return nil, models.ErrForbidden(
 			fmt.Sprintf("model %q is not available for this API key", model),
 		)
@@ -1193,7 +1199,7 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 	// Try primary model first.
 	// Non-internal keys must not resolve to global (FutureAGI-credentialed) providers —
 	// they should only use org-configured providers (resolved above) or be rejected.
-	if h.keyStore != nil && rc.Metadata["key_type"] != "internal" {
+	if h.keyStore != nil && rc.Metadata["key_type"] != "internal" && !middleware.IsLicenseAuthorized(ctx) {
 		return nil, fmt.Errorf("model %q is not available for this API key: configure provider access via the control plane", model)
 	}
 
@@ -1562,6 +1568,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	var lastUsage *models.Usage
 	var streamID string
 	var streamCreated int64
+	capture := newStreamCapture(h.captureStreamContent)
 
 	// finalizeStream populates rc.Response with accumulated usage and runs
 	// post-plugins (cost, credits, logging, otel, prometheus). Must be called
@@ -1569,9 +1576,13 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// a background context so post-plugins run even after client disconnect.
 	finalizeStream := func(detach bool) *models.StreamChunk {
 		rc.Response = &models.ChatCompletionResponse{
-			Model: rc.ResolvedModel,
-			Usage: lastUsage, // nil is OK — means provider didn't send usage
+			ID:      streamID,
+			Object:  "chat.completion",
+			Created: streamCreated,
+			Model:   rc.ResolvedModel,
+			Usage:   lastUsage, // nil is OK — means provider didn't send usage
 		}
+		capture.applyTo(rc.Response)
 		pluginCtx := ctx
 		if detach {
 			pluginCtx = context.Background()
@@ -1618,6 +1629,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			if chunk.Usage != nil {
 				lastUsage = chunk.Usage
 			}
+			capture.observe(chunk)
 
 			if streamChecker != nil {
 				if res := streamChecker.ProcessChunk(streamCtx, chunk); res.Blocked {
@@ -1680,6 +1692,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			if chunk.Usage != nil {
 				lastUsage = chunk.Usage
 			}
+			capture.observe(chunk)
 
 			// Run streaming guardrail check.
 			if streamChecker != nil {
@@ -1871,6 +1884,24 @@ func splitCSV(s string) []string {
 		}
 	}
 	return result
+}
+
+// parseMetadataHeader parses the x-agentcc-metadata JSON header into the request
+// context. Security-sensitive keys are blocked to prevent client-side injection.
+// Accepted keys are recorded on the context so telemetry can distinguish them
+// from the metadata plugins write themselves.
+func parseMetadataHeader(meta string, rc *models.RequestContext) {
+	var m map[string]string
+	if err := json.Unmarshal([]byte(meta), &m); err != nil {
+		return
+	}
+	for k, v := range m {
+		if isBlockedMetadataKey(k) {
+			continue
+		}
+		rc.Metadata[k] = v
+		rc.CustomMetadataKeys = append(rc.CustomMetadataKeys, k)
+	}
 }
 
 // isBlockedMetadataKey returns true for metadata keys that must not be

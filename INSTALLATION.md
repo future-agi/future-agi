@@ -63,7 +63,7 @@ When the backend logs `Application startup complete`, open:
 If you skipped the prompt at install time, create the admin account via the CLI:
 
 ```bash
-docker compose exec backend python manage.py create_user
+docker exec -it futureagi-backend-1 python manage.py create_user
 ```
 
 You will be prompted for your email, full name, and password. Then log in at <http://localhost:3000>.
@@ -71,13 +71,41 @@ You will be prompted for your email, full name, and password. Then log in at <ht
 To pass credentials non-interactively (useful for automated setups):
 
 ```bash
-docker compose exec backend python manage.py create_user \
+docker exec -it futureagi-backend-1 python manage.py create_user \
   --email you@example.com \
   --name "Your Name" \
   --password yourpassword
 ```
 
-> **Team invites and password resets require email (SMTP).** See the [Email configuration](#email-smtp) section below for setup. Mailgun offers a free tier (100 emails/day) that works well for small self-hosted deployments.
+### Reset a password
+
+Self-hosted installs without SMTP cannot deliver a reset email. Two ways round it.
+
+**From the host** — works on any deployment:
+
+```bash
+docker exec -it futureagi-backend-1 python manage.py reset_password --email you@example.com
+```
+
+You will be prompted for the new password, or pass `--password` to supply it
+non-interactively. Any sessions already signed in as that account are signed out.
+
+**In the browser** — set this in `.env` and restart the backend:
+
+```
+OSS_RETURN_PASSWORD_RESET_LINK=true
+```
+
+"Forgot password" then returns the reset link in its response and takes the user
+straight to the set-password screen, no mail required.
+
+> Only turn this on where reaching the instance already implies full trust — a
+> laptop install, or a host behind a VPN with no other tenants. The endpoint takes
+> no authentication, so anyone who can reach it can request a link for **any**
+> address and take over that account. Leave it off on anything internet-facing
+> and use the command above.
+
+> **Team invites require email (SMTP).** See the [Email configuration](#email-smtp) section below for setup. Mailgun offers a free tier (100 emails/day) that works well for small self-hosted deployments. Without it, the invite dialog returns a shareable link for each invitee instead of sending mail.
 
 To stop everything: `./bin/uninstall` (or `docker compose down`). Data persists in named volumes across restarts.
 
@@ -231,7 +259,7 @@ To run two stacks side-by-side, copy `.env` to `.env.stackB`, change every port,
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `postgres`   | Primary transactional store (users, traces, datasets, evals, prompts, annotations).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `clickhouse` | Analytics store for traces, spans, dashboards, and evaluation queries.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `redis`      | Cache, rate limits, Celery/Django cache, WebSocket pub/sub.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `redis`      | Cache, rate limits, Celery/Django cache, WebSocket pub/sub. Also the invalidation bus between backend and fi-collector: the backend (`REDIS_URL`) and fi-collector (`FI_AUTH_REDIS_ADDR`) must point at the **same** Redis. A mismatch is a silent failure — key revocation and project-delete cache invalidation stop working and the collector's auth cache only expires via TTL.                                                                                                                                                                                          |
 | `minio`      | S3-compatible object storage (uploaded files, eval artifacts). In production, swap for real S3 by setting `S3_ENDPOINT_URL` to an AWS endpoint. **Note:** the backend uses `S3_ENDPOINT_URL` (internal Docker hostname) to talk to MinIO, but URLs returned to the browser use `MINIO_URL` (defaults to `http://localhost:9005`). If you access the UI from anywhere other than the host machine — e.g. another machine on your LAN, a remote VM, or a domain name — set `MINIO_URL` in `.env` to a URL the browser can reach (e.g. `http://your-host.example.com:9005`). |
 
 ### Workflow engine
@@ -300,7 +328,7 @@ Restart the backend: `docker compose up -d --force-recreate backend worker`.
 If SMTP is not configured and a user needs a password reset, a shell admin can generate the reset link directly:
 
 ```bash
-docker compose exec backend python manage.py shell
+docker exec -it futureagi-backend-1 python manage.py shell
 ```
 
 ```python

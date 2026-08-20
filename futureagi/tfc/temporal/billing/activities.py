@@ -1,5 +1,7 @@
-"""Temporal activities for billing — dunning, invoice gen, monthly closing.
+"""Temporal activities for billing — invoice gen, monthly closing.
 
+Dunning (payment retries, reminder emails, final unpaid/cancel) is owned
+by Stripe Revenue Recovery; state lands here via webhooks only.
 Stripe meter events fire at invoice-close (see invoice_generation.py);
 no hourly catch-up. Errors re-raise so Temporal applies its retry policy.
 """
@@ -9,77 +11,12 @@ from datetime import datetime
 from asgiref.sync import sync_to_async
 from django.db import close_old_connections
 from temporalio import activity
-
 from tfc.temporal.billing.types import (
-    DunningCheckInput,
-    DunningCheckOutput,
     MonthlyClosingInput,
     MonthlyClosingOutput,
     MonthlyInvoiceInput,
     MonthlyInvoiceOutput,
 )
-
-# ── Dunning Checks (daily) ────────────────────────────────────────────────
-
-
-@activity.defn(name="run_dunning_checks_activity")
-async def run_dunning_checks_activity(
-    input: DunningCheckInput,
-) -> DunningCheckOutput:
-    """Process dunning steps for all past_due orgs.
-
-    Queries orgs with status=past_due, calculates days_overdue,
-    and runs the appropriate dunning step (Day 3: retry, Day 7: warn, Day 14: downgrade).
-    Re-raises on failure so Temporal applies retry policy.
-    """
-    close_old_connections()
-    try:
-        count = await sync_to_async(_run_dunning_checks_sync, thread_sensitive=False)()
-        activity.logger.info(f"Dunning checks processed: {count} orgs")
-        return DunningCheckOutput(orgs_processed=count, status="COMPLETED")
-    finally:
-        close_old_connections()
-
-
-def _run_dunning_checks_sync() -> int:
-    """Sync wrapper — processes all past_due orgs."""
-    close_old_connections()
-    try:
-        try:
-            from ee.usage.models.usage import OrganizationSubscription
-        except ImportError:
-            OrganizationSubscription = None
-        try:
-            from ee.usage.services.dunning import DunningService
-        except ImportError:
-            DunningService = None
-
-        past_due_subs = OrganizationSubscription.objects.filter(
-            status="past_due", deleted=False
-        )
-
-        count = 0
-        for sub in past_due_subs:
-            # Calculate days overdue from billing_period_end or status change
-            if sub.billing_period_end:
-                days_overdue = (datetime.utcnow().date() - sub.billing_period_end).days
-            else:
-                days_overdue = 0
-
-            try:
-                DunningService.process_dunning_step(
-                    str(sub.organization_id), days_overdue
-                )
-                count += 1
-            except Exception:
-                activity.logger.exception(
-                    f"Dunning failed for org {sub.organization_id}"
-                )
-                # Continue processing other orgs; don't fail the entire batch
-        return count
-    finally:
-        close_old_connections()
-
 
 # ── Monthly Invoice Generation ─────────────────────────────────────────────
 
@@ -120,9 +57,16 @@ def _generate_monthly_invoices_sync(
     and admin "Generate Invoice" page all share identical logic.
     """
     try:
-        from ee.usage.services.invoice_generation import InvoiceGenerationService
+        from ee.cloud.billing.invoice_generation import InvoiceGenerationService
     except ImportError:
         InvoiceGenerationService = None
+
+    if InvoiceGenerationService is None:
+        # billing lives in the private cloud overlay (ee/cloud/); it is
+        # absent from OSS and self-hosted EE images. Skip cleanly instead
+        # of calling None.run_for_period(...) and crash-looping Temporal.
+        activity.logger.info("invoice_generation_skipped_billing_is_cloud_only")
+        return 0, 0, 0
 
     close_old_connections()
     try:
@@ -152,10 +96,23 @@ def _generate_monthly_invoices_sync(
 
 
 def _run_monthly_reset_sync(period: str) -> None:
-    close_old_connections()
     try:
         from ee.usage.tasks.monthly_reset import run_monthly_reset
+    except ImportError:
+        run_monthly_reset = None
 
+    if run_monthly_reset is None:
+        # monthly_reset lives in the private cloud overlay (ee/cloud/); it is
+        # absent from OSS and self-hosted EE images (ee/usage/tasks/ ships only
+        # __init__.py + phone_home.py). Skip cleanly instead of raising
+        # ImportError, which would fail monthly_closing_activity on the 1st of
+        # every month on every self-hosted install — before the guarded invoice
+        # step below even runs.
+        activity.logger.info("monthly_reset_skipped_billing_is_cloud_only")
+        return
+
+    close_old_connections()
+    try:
         run_monthly_reset(period=period)
     finally:
         close_old_connections()

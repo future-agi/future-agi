@@ -56,14 +56,19 @@ from adapter import (                                     # noqa: E402
 
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
-structlog.configure(
-    processors=[
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.add_log_level,
-        structlog.processors.JSONRenderer(),
-    ],
-)
 log = structlog.get_logger("validate")
+
+
+def _configure_logging() -> None:
+    """Configure structlog for CLI runs. Called from main(), not at import, so
+    importing this module never mutates the process's global structlog config."""
+    structlog.configure(
+        processors=[
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.add_log_level,
+            structlog.processors.JSONRenderer(),
+        ],
+    )
 
 
 # ─── PG / CH client helpers ───────────────────────────────────────────────────
@@ -846,6 +851,7 @@ def _build_argparser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _configure_logging()
     args = _build_argparser().parse_args(argv)
     if not (args.all or args.counts or args.deep or args.queries):
         log.error("must pass one of --all / --counts / --deep / --queries")

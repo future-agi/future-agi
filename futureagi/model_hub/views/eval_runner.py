@@ -186,7 +186,12 @@ def _format_messages_to_prompt_chain(messages):
 
 @transaction.atomic
 def bulk_update_or_create_cells(
-    rows_list, column_id, dataset_id, new_values, user_eval_metric_id=None
+    rows_list,
+    column_id,
+    dataset_id,
+    new_values,
+    user_eval_metric_id=None,
+    skip_completed=False,
 ):
     """
     Bulk update or create cells matching the filter criteria
@@ -201,6 +206,11 @@ def bulk_update_or_create_cells(
             guard in EvaluationRunner._create_cell so that late Temporal
             workers can't overwrite the "User stopped evaluation" state
             set by StopUserEvalView.
+        skip_completed: When True, existing cells with status=PASS are left
+            untouched (missing cells are still created). Callers that reset
+            cells before a run or mark whole evals skipped/failed rely on
+            overwriting PASS cells, so this must stay opt-in — only error
+            paths that should never destroy a completed result set it.
     """
     # Stop guard: matches the _create_cell path in EvaluationRunner.
     if user_eval_metric_id:
@@ -236,8 +246,9 @@ def bulk_update_or_create_cells(
         key = (row_id, column_id, dataset_id)
 
         if key in existing_dict:
-            # Update existing cell
             cell = existing_dict[key]
+            if skip_completed and cell.status == CellStatus.PASS.value:
+                continue
             for field, value in new_values.items():
                 setattr(cell, field, value)
             cells_to_update.append(cell)

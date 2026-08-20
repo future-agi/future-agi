@@ -58,6 +58,21 @@ func (r *ResolveResult) MissingProjects(names []string) []string {
 	return missing
 }
 
+// DeleteProjectByID removes every name mapped to projectID, thread-safe.
+// Matching by id (not name) stays correct across orgs and same-name recreates.
+func (r *ResolveResult) DeleteProjectByID(projectID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	removed := false
+	for name, id := range r.Projects {
+		if id == projectID {
+			delete(r.Projects, name)
+			removed = true
+		}
+	}
+	return removed
+}
+
 // PGResolver validates API keys and resolves projects directly against PG.
 type PGResolver struct {
 	read  *pgxpool.Pool

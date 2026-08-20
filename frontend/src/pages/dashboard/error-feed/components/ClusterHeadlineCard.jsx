@@ -364,9 +364,13 @@ export default function ClusterHeadlineCard({
   // Priority: live thread > cached rca > not_analyzed. Re-runs append a fresh
   // synthesis message, so reading the LAST one keeps multiple syntheses
   // collapsed to the most recent result.
+  // Failures are carried as synthesis messages so they render in the thread,
+  // but they are not results: promoting one here would headline the cluster
+  // with "Couldn't start the analysis", stamped "Analyzed just now" and
+  // offering to file it as a Linear issue. Fall back to the last real result.
   const synthesisMsg = [...(thread?.messages ?? [])]
     .reverse()
-    .find((m) => m.type === MESSAGE_TYPE.SYNTHESIS);
+    .find((m) => m.type === MESSAGE_TYPE.SYNTHESIS && m.category !== "error");
 
   let state;
   let data = null;

@@ -41,6 +41,9 @@ dependencies = [
     "qdrant-client",
     "weaviate-client",
     "stripe",
+    # Community-maintained set of throwaway-inbox domains, used by
+    # accounts.utils.is_work_email to reject disposable signups.
+    "disposable-email-domains==0.0.239",
     # OpenTelemetry core
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
@@ -114,7 +117,6 @@ dependencies = [
     "pdfminer.six<=20240706",
     "python-docx",
     "striprtf",
-    "pdfminer",
     "openpyxl>=3.1.0",
     "pdfplumber>=0.10.0",
     "beautifulsoup4>=4.12.0",
@@ -249,6 +251,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # unused imports
 "accounts/services/sos_service.py" = ["TID251"]  # the one audited caller
+"conftest.py" = ["E402"]  # import order is load-bearing: env prep and EE stubs must precede app imports
 
 [tool.mypy]
 python_version = "3.11"
@@ -283,10 +286,12 @@ django_settings_module = "tfc.settings"
 
 [dependency-groups]
 dev = [
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
     "pytest>=8.4.1",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=6.2.1",
     "pytest-django>=4.11.1",
     "pytest-mock>=3.14.1",
+    "pytest-split>=0.11.0",
     "pytest-xdist>=3.8.0",
 ]

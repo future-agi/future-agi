@@ -20,14 +20,23 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import PropTypes from "prop-types";
-import React, { useCallback, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Iconify from "src/components/iconify";
 import KeysDrawer from "src/components/custom-model-dropdown/KeysDrawer";
 import { useDebounce } from "src/hooks/use-debounce";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import {
+  useFeatureAllowed,
+  useFeatureLocked,
+  CAPABILITY,
+} from "src/hooks/useCapabilities";
 import { useNavigate } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
-import { useSnackbar } from "notistack";
 import { getProviderLogoFilterSx } from "./modelLogo";
 
 // ---------------------------------------------------------------------------
@@ -150,6 +159,9 @@ const FAGI_MODELS = [
 ];
 
 export const FAGI_MODEL_VALUES = new Set(FAGI_MODELS.map((m) => m.value));
+
+const FAGI_MODEL_LOCKED_TOOLTIP =
+  "Turing models aren't enabled for this workspace. Select your own model.";
 
 const CHIP_STYLES = {
   backgroundColor: (theme) =>
@@ -594,6 +606,11 @@ const ModelSelector = ({
   activeContextOptions: activeContextOptionsProp,
   onActiveContextOptionsChange,
   hideDatasetContextToggle = false,
+  // Bump this counter to pop the model menu open from the parent — used when
+  // an action is blocked because no model is picked, so the snackbar and the
+  // menu arrive together. A counter rather than a boolean so repeat attempts
+  // re-open it without the parent having to reset the flag.
+  openModelMenuSignal = 0,
 }) => {
   // For each field, pick "controlled" (parent-driven) or "uncontrolled" (local state).
   const [modeLocal, setModeLocal] = useState("agent");
@@ -605,6 +622,12 @@ const ModelSelector = ({
 
   const [modeAnchor, setModeAnchor] = useState(null);
   const [modelAnchor, setModelAnchor] = useState(null);
+  const modelPillRef = useRef(null);
+
+  useEffect(() => {
+    if (!openModelMenuSignal || disabled) return;
+    setModelAnchor(modelPillRef.current);
+  }, [openModelMenuSignal, disabled]);
   const [modelSearch, setModelSearch] = useState("");
   const debouncedModelSearch = useDebounce(modelSearch.trim(), 400);
   const [plusAnchor, setPlusAnchor] = useState(null);
@@ -667,20 +690,27 @@ const ModelSelector = ({
   const debouncedKbSearch = useDebounce(kbSearch.trim(), 400);
   const [keysDrawerModel, setKeysDrawerModel] = useState(null);
   const navigate = useNavigate();
-  const { isOSS } = useDeploymentMode();
-  const { enqueueSnackbar } = useSnackbar();
+  // Fail closed while capabilities load: never flash Turing models as
+  // selectable during the fetch. `fagiModelsDenied` is the *confirmed* denial
+  // (loaded AND not allowed) used only to clear a seeded selection below — we
+  // must not wipe a legitimately-preselected Turing model mid-fetch.
+  const { locked: fagiModelsLocked, isLoading: capabilitiesLoading } =
+    useFeatureLocked(CAPABILITY.TURING_MODELS);
+  const fagiModelsDenied = fagiModelsLocked && !capabilitiesLoading;
+  const { allowed: falconAllowed } = useFeatureAllowed(CAPABILITY.FALCON_AI);
 
   const currentMode = MODES.find((m) => m.value === mode) || MODES[1];
 
-  // Fetch real MCP connectors from Falcon AI API. Falcon AI is EE-only;
-  // skip the call in OSS so the ee_stub 402 doesn't fire a snackbar.
+  // Fetch real MCP connectors from Falcon AI API. Falcon AI needs a
+  // license/plan; skip the call when locked so the 402 doesn't fire a
+  // snackbar.
   const { data: connectorsData } = useInfiniteQuery({
     queryKey: ["falcon-mcp-connectors"],
     queryFn: () => axios.get(endpoints.falconAI.connectors),
     getNextPageParam: () => null,
     initialPageParam: 1,
     staleTime: 60000,
-    enabled: !isOSS,
+    enabled: falconAllowed,
   });
 
   const connectors = useMemo(() => {
@@ -717,7 +747,6 @@ const ModelSelector = ({
     },
     initialPageParam: 0,
     staleTime: 60000,
-    enabled: !isOSS,
   });
 
   // API returns {status, result: {table_data: [...], total_rows}} per page.
@@ -783,12 +812,21 @@ const ModelSelector = ({
     );
   }, [connectors, connectorSearch]);
 
-  // Filter FAGI models by search — always shown in both OSS and EE
-  const filteredFagiModels = modelSearch
-    ? FAGI_MODELS.filter((m) =>
-        m.label.toLowerCase().includes(modelSearch.toLowerCase()),
-      )
-    : FAGI_MODELS;
+  const filteredFagiModels = useMemo(() => {
+    if (!modelSearch) return FAGI_MODELS;
+    return FAGI_MODELS.filter((m) =>
+      m.label.toLowerCase().includes(modelSearch.toLowerCase()),
+    );
+  }, [modelSearch]);
+
+  // When Turing models aren't enabled, callers still seed `model` with
+  // "turing_large". Drop it so the pill reads "Select model" instead of
+  // preselecting something the backend would 402 on save. Gate on the
+  // *confirmed* denial, not the loading-time lock, or we'd clear a legitimate
+  // selection before capabilities resolve.
+  useEffect(() => {
+    if (fagiModelsDenied && FAGI_MODEL_VALUES.has(model)) onModelChange("");
+  }, [fagiModelsDenied, model, onModelChange]);
 
   return (
     <Box
@@ -838,6 +876,7 @@ const ModelSelector = ({
 
       {/* ── Model selector (right) ── */}
       <Box
+        ref={modelPillRef}
         onClick={(e) => !disabled && setModelAnchor(e.currentTarget)}
         sx={{
           display: "inline-flex",
@@ -1155,48 +1194,73 @@ const ModelSelector = ({
                 FutureAGI Models
               </Typography>
               {filteredFagiModels.map((m) => (
-                <MenuItem
+                <Tooltip
                   key={m.value}
-                  selected={m.value === model}
-                  onClick={() => {
-                    onModelChange(m.value);
-                    setModelAnchor(null);
-                    setModelSearch("");
-                  }}
-                  sx={{ mx: 0.5, borderRadius: "6px", py: 0.75, gap: 1 }}
+                  title={fagiModelsLocked ? FAGI_MODEL_LOCKED_TOOLTIP : ""}
+                  placement="right"
+                  arrow
                 >
-                  <Iconify
-                    icon={m.icon}
-                    width={18}
-                    sx={{
-                      color:
-                        m.value === model ? "primary.main" : "text.secondary",
-                      flexShrink: 0,
-                    }}
-                  />
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Typography
-                      variant="body2"
-                      sx={{ fontSize: "13px", fontWeight: 500 }}
+                  <span>
+                    <MenuItem
+                      selected={m.value === model}
+                      disabled={fagiModelsLocked}
+                      onClick={() => {
+                        onModelChange(m.value);
+                        setModelAnchor(null);
+                        setModelSearch("");
+                      }}
+                      sx={{
+                        mx: 0.5,
+                        borderRadius: "6px",
+                        py: 0.75,
+                        gap: 1,
+                        width: "auto",
+                      }}
                     >
-                      {m.label}
-                    </Typography>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ fontSize: "11px" }}
-                    >
-                      {m.description}
-                    </Typography>
-                  </Box>
-                  {m.value === model && (
-                    <Iconify
-                      icon="mdi:check"
-                      width={16}
-                      sx={{ color: "primary.main", flexShrink: 0 }}
-                    />
-                  )}
-                </MenuItem>
+                      <Iconify
+                        icon={m.icon}
+                        width={18}
+                        sx={{
+                          color:
+                            m.value === model
+                              ? "primary.main"
+                              : "text.secondary",
+                          flexShrink: 0,
+                        }}
+                      />
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Typography
+                          variant="body2"
+                          sx={{ fontSize: "13px", fontWeight: 500 }}
+                        >
+                          {m.label}
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ fontSize: "11px" }}
+                        >
+                          {fagiModelsLocked ? "Not enabled" : m.description}
+                        </Typography>
+                      </Box>
+                      {fagiModelsLocked ? (
+                        <Iconify
+                          icon="mdi:lock-outline"
+                          width={16}
+                          sx={{ color: "text.disabled", flexShrink: 0 }}
+                        />
+                      ) : (
+                        m.value === model && (
+                          <Iconify
+                            icon="mdi:check"
+                            width={16}
+                            sx={{ color: "primary.main", flexShrink: 0 }}
+                          />
+                        )
+                      )}
+                    </MenuItem>
+                  </span>
+                </Tooltip>
               ))}
             </>
           )}
@@ -1407,7 +1471,9 @@ const ModelSelector = ({
                   width: 12,
                   height: 12,
                   borderRadius: "50%",
-                  backgroundColor: "#fff",
+                  backgroundColor: useInternet
+                    ? "primary.contrastText"
+                    : "common.white",
                   position: "absolute",
                   top: 2,
                   left: useInternet ? 18 : 2,
@@ -1444,52 +1510,42 @@ const ModelSelector = ({
               label: "Summary",
               desc: "Control how detailed or brief the evaluation output should be",
             },
-          ].map((item) => {
-            const kbLocked = isOSS && item.key === "knowledge";
-            return (
-              <MenuItem
-                key={item.key}
-                onClick={() => {
-                  if (kbLocked) {
-                    enqueueSnackbar(
-                      "Knowledge Base is not supported in self-hosted (OSS).",
-                      { variant: "info" },
-                    );
-                    return;
-                  }
-                  setPlusSubmenu(plusSubmenu === item.key ? null : item.key);
-                }}
-                selected={plusSubmenu === item.key}
-                sx={{ borderRadius: "6px", py: 1, opacity: kbLocked ? 0.5 : 1 }}
-              >
-                <Iconify
-                  icon={item.icon}
-                  width={18}
-                  sx={{ mr: 1.5, color: "text.secondary" }}
-                />
-                <Box sx={{ flex: 1 }}>
-                  <Typography
-                    variant="body2"
-                    sx={{ fontSize: "13px", fontWeight: 500 }}
-                  >
-                    {item.label}
-                  </Typography>
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    sx={{ fontSize: "11px" }}
-                  >
-                    {kbLocked ? "Not supported in self-host" : item.desc}
-                  </Typography>
-                </Box>
-                <Iconify
-                  icon={kbLocked ? "mdi:lock-outline" : "mdi:chevron-right"}
-                  width={16}
-                  sx={{ color: "text.disabled" }}
-                />
-              </MenuItem>
-            );
-          })}
+          ].map((item) => (
+            <MenuItem
+              key={item.key}
+              onClick={() =>
+                setPlusSubmenu(plusSubmenu === item.key ? null : item.key)
+              }
+              selected={plusSubmenu === item.key}
+              sx={{ borderRadius: "6px", py: 1 }}
+            >
+              <Iconify
+                icon={item.icon}
+                width={18}
+                sx={{ mr: 1.5, color: "text.secondary" }}
+              />
+              <Box sx={{ flex: 1 }}>
+                <Typography
+                  variant="body2"
+                  sx={{ fontSize: "13px", fontWeight: 500 }}
+                >
+                  {item.label}
+                </Typography>
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ fontSize: "11px" }}
+                >
+                  {item.desc}
+                </Typography>
+              </Box>
+              <Iconify
+                icon="mdi:chevron-right"
+                width={16}
+                sx={{ color: "text.disabled" }}
+              />
+            </MenuItem>
+          ))}
         </Box>
 
         {/* Submenu */}
@@ -1904,6 +1960,7 @@ ModelSelector.propTypes = {
   showMode: PropTypes.bool,
   showPlus: PropTypes.bool,
   hideDatasetContextToggle: PropTypes.bool,
+  openModelMenuSignal: PropTypes.number,
 };
 
 export default ModelSelector;

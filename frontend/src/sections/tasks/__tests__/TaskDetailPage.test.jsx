@@ -1,13 +1,15 @@
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import TaskDetailPage from "../TaskDetailPage";
 import { useGetTaskData } from "src/sections/common/EvalsTasks/common";
+import { enqueueSnackbar } from "src/components/snackbar";
 
 const axiosPatchMock = vi.hoisted(() => vi.fn());
 const axiosPostMock = vi.hoisted(() => vi.fn());
+const confirmDialogMock = vi.hoisted(() => vi.fn());
 
 vi.mock("src/utils/axios", () => ({
   default: {
@@ -80,7 +82,14 @@ vi.mock("../components/TaskUsageTab", () => ({
 }));
 
 vi.mock("src/sections/common/EvalsTasks/EditTaskDrawer/TaskConfirmBox", () => ({
-  default: () => null,
+  default: (props) => {
+    confirmDialogMock(props);
+    return props.open ? <div>{props.title}</div> : null;
+  },
+}));
+
+vi.mock("src/auth/hooks", () => ({
+  useAuthContext: () => ({ role: "Admin" }),
 }));
 
 const renderTaskDetail = (taskId = "missing-task") => {
@@ -121,6 +130,8 @@ describe("TaskDetailPage", () => {
     axiosPostMock.mockReset();
     axiosPostMock.mockResolvedValue({ data: { result: {} } });
     useGetTaskData.mockReset();
+    confirmDialogMock.mockReset();
+    enqueueSnackbar.mockReset();
   });
 
   it("shows a not-found state instead of an endless spinner when the task API fails", () => {
@@ -192,5 +203,160 @@ describe("TaskDetailPage", () => {
     expect(
       screen.getByRole("button", { name: /open source/i }),
     ).toBeInTheDocument();
+  });
+
+  it("labels the confirm dialog as an update when it comes from Save", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({ evals_applied: [{ id: "eval-1" }] }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderTaskDetail("task-1");
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(await screen.findByText("Update Task")).toBeInTheDocument();
+    expect(confirmDialogMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ confirmText: "Run task" }),
+    );
+  });
+
+  it("opens the confirm dialog as a re-run when it comes from the header", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({ evals_applied: [{ id: "eval-1" }] }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderTaskDetail("task-1");
+    fireEvent.click(screen.getByRole("button", { name: /re-run/i }));
+
+    expect(await screen.findByText("Re-run Task")).toBeInTheDocument();
+    expect(confirmDialogMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ confirmText: "Re-run" }),
+    );
+  });
+
+  it("submits the same mutation Save uses when Re-run is confirmed", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({ evals_applied: [{ id: "eval-1" }] }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderTaskDetail("task-1");
+    fireEvent.click(screen.getByRole("button", { name: /re-run/i }));
+
+    await screen.findByText("Re-run Task");
+
+    const { onConfirm } = confirmDialogMock.mock.calls.at(-1)[0];
+    await act(async () => {
+      onConfirm("fresh_run");
+    });
+
+    await waitFor(() => {
+      expect(axiosPatchMock).toHaveBeenCalledWith(
+        "/tracer/eval-task/update_eval_task/",
+        expect.objectContaining({
+          edit_type: "fresh_run",
+          evals: ["eval-1"],
+          eval_task_id: "task-1",
+        }),
+      );
+    });
+  });
+
+  it("blocks re-running a task that is still going, which would race the live run", () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({
+        status: "running",
+        evals_applied: [{ id: "eval-1" }],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderTaskDetail("task-1");
+
+    expect(screen.getByRole("button", { name: /re-run/i })).toBeDisabled();
+  });
+
+  it("sends the user back to Details when a re-run is attempted on an invalid form", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({ evals_applied: [] }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderTaskDetail("task-1");
+    fireEvent.click(screen.getByRole("tab", { name: /logs/i }));
+    expect(screen.getByText("logs")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /re-run/i }));
+
+    await waitFor(() => {
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Fix the highlighted fields before running this task.",
+        { variant: "error" },
+      );
+    });
+    expect(screen.getByText("panels")).toBeInTheDocument();
+  });
+
+  it("reports a re-run, not an update, when the Re-run confirm resolves", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({ evals_applied: [{ id: "eval-1" }] }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderTaskDetail("task-1");
+    fireEvent.click(screen.getByRole("button", { name: /re-run/i }));
+
+    await screen.findByText("Re-run Task");
+
+    const { onConfirm } = confirmDialogMock.mock.calls.at(-1)[0];
+    await act(async () => {
+      onConfirm("fresh_run");
+    });
+
+    await waitFor(() => {
+      expect(enqueueSnackbar).toHaveBeenCalledWith("Re-run started", {
+        variant: "success",
+      });
+    });
+    expect(enqueueSnackbar).not.toHaveBeenCalledWith(
+      "Task updated successfully",
+      expect.anything(),
+    );
+  });
+
+  it("still reports an update, not a re-run, when the Save confirm resolves", async () => {
+    useGetTaskData.mockReturnValue({
+      data: loadedTask({ evals_applied: [{ id: "eval-1" }] }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderTaskDetail("task-1");
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await screen.findByText("Update Task");
+
+    const { onConfirm } = confirmDialogMock.mock.calls.at(-1)[0];
+    await act(async () => {
+      onConfirm("edit");
+    });
+
+    await waitFor(() => {
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Task updated successfully",
+        { variant: "success" },
+      );
+    });
+    expect(enqueueSnackbar).not.toHaveBeenCalledWith(
+      "Re-run started",
+      expect.anything(),
+    );
   });
 });

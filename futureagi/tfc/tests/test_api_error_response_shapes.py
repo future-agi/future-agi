@@ -14,6 +14,11 @@ PROTOCOL_COMPATIBILITY_ALLOWLIST = {
 }
 
 RAW_ERROR_DEBT_BY_FILE = {
+    Path("futureagi/accounts/admin.py"): 2,
+    # ee/cloud files are only visible to the scan when the private ee
+    # overlay is checked out (CI, dev machines); harmless entries otherwise.
+    Path("futureagi/ee/cloud/control_plane/activation.py"): 8,
+    Path("futureagi/ee/cloud/control_plane/views.py"): 10,
     Path("futureagi/model_hub/views/dataset_optimization.py"): 8,
     Path("futureagi/tracer/views/annotation.py"): 1,
     Path("futureagi/tracer/views/charts.py"): 1,

@@ -29,6 +29,7 @@ from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from accounts.services.workspace_membership import create_workspace_membership
 from tfc.constants.roles import OrganizationRoles
+from tfc.ee_gating import is_oss
 from tfc.utils.api_errors import (
     build_error_envelope,
     error_details,
@@ -685,6 +686,9 @@ class AuthMonitoringMiddleware:
         return JsonResponse(body, status=403)
 
     def __call__(self, request):
+        if is_oss():
+            return self.get_response(request)
+
         client_ip, _ = get_client_ip(request)
 
         if request.path.endswith("password-reset-initiate/"):

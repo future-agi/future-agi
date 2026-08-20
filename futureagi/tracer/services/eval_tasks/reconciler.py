@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from itertools import chain
 
 from django.db.models import Case, CharField, Value, When
@@ -45,8 +45,9 @@ def reconcile(task: EvalTask) -> ReconcileResult:
     keeping out-of-scope *completed* results (paid data). For continuous tasks,
     advances the forward cursor so the next pass scans only the new tail.
     """
+    now = timezone.now()
     before = _live_count(task)
-    materialize_pending(task)
+    materialize_pending(task, ceiling=now)
     created = _live_count(task) - before
     if before == 0:
         # Pure create — nothing pre-existing to re-queue or drop.
@@ -54,24 +55,24 @@ def reconcile(task: EvalTask) -> ReconcileResult:
     else:
         requeued, dropped = _requeue_and_drop(task)
         result = ReconcileResult(created=created, requeued=requeued, dropped=dropped)
-    _advance_continuous_cursor(task)
+    _advance_continuous_cursor(task, now)
     return result
 
 
-def _advance_continuous_cursor(task: EvalTask) -> None:
-    """Park the continuous task's forward watermark just behind now().
+def _advance_continuous_cursor(task: EvalTask, now: datetime) -> None:
+    """Park the continuous task's forward watermark at ``now - overlap``.
 
-    Only ever moves forward, and never before the task's start floor — parking
-    at ``now() - overlap`` unclamped would, for a task younger than the overlap,
-    pull the floor back before its start and re-admit pre-start history. Advanced
-    after materialize/requeue so both read the same floor within a pass; the next
-    pass then floors its desired set here instead of re-scanning the whole
-    history.
+    ``now`` is frozen at the start of the reconcile pass (not read here) so the
+    watermark tracks what the scan actually covered, never jumping past rows that
+    arrived during a slow materialize. Only ever moves forward, and never before
+    the task's start floor — parking at ``now - overlap`` unclamped would, for a
+    task younger than the overlap, pull the floor before its start and re-admit
+    pre-start history.
     """
     if task.run_type != RunType.CONTINUOUS:
         return
     start_floor = task.start_time or task.created_at
-    parked = timezone.now() - _CONTINUOUS_CURSOR_OVERLAP
+    parked = now - _CONTINUOUS_CURSOR_OVERLAP
     if start_floor is not None and parked < start_floor:
         parked = start_floor
     if task.continuous_cursor is not None and parked <= task.continuous_cursor:

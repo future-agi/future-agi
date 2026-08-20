@@ -394,6 +394,77 @@ class TestProjectDeleteAPI:
         project.refresh_from_db()
         assert project.deleted is True
 
+    def test_delete_project_publishes_cache_invalidation(
+        self, auth_client, project, django_capture_on_commit_callbacks, mocker
+    ):
+        """Bulk delete publishes a collector cache-invalidation for the id."""
+        publish = mocker.patch(
+            "tracer.services.project_deletion.publish_project_invalidation"
+        )
+        with django_capture_on_commit_callbacks(execute=True):
+            response = auth_client.delete(
+                "/tracer/project/",
+                {"project_ids": [str(project.id)], "project_type": "experiment"},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_200_OK
+        publish.assert_called_once_with([str(project.id)])
+
+    def test_destroy_project_publishes_cache_invalidation(
+        self, auth_client, project, django_capture_on_commit_callbacks, mocker
+    ):
+        """Single destroy() path also publishes the invalidation for its id."""
+        publish = mocker.patch(
+            "tracer.services.project_deletion.publish_project_invalidation"
+        )
+        with django_capture_on_commit_callbacks(execute=True):
+            response = auth_client.delete(f"/tracer/project/{project.id}/")
+        assert response.status_code == status.HTTP_200_OK
+        publish.assert_called_once_with([str(project.id)])
+
+    def test_delete_project_publishes_on_wire_contract(
+        self, auth_client, project, django_capture_on_commit_callbacks, mocker
+    ):
+        """The publish uses the literal channel + id payload the collector reads.
+
+        Patches ``redis.Redis`` (not the helper) so a typo in the channel
+        constant on the Python side is caught.
+        """
+        pipe = mocker.MagicMock()
+        client = mocker.MagicMock()
+        client.pipeline.return_value = pipe
+        mocker.patch(
+            "tracer.services.project_deletion.redis.Redis.from_url",
+            return_value=client,
+        )
+        with django_capture_on_commit_callbacks(execute=True):
+            response = auth_client.delete(
+                "/tracer/project/",
+                {"project_ids": [str(project.id)], "project_type": "experiment"},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_200_OK
+        pipe.publish.assert_called_once_with("fi:project:invalidate", str(project.id))
+        pipe.execute.assert_called_once()
+
+    def test_delete_project_publish_failure_is_swallowed(
+        self, auth_client, project, django_capture_on_commit_callbacks, mocker
+    ):
+        """A Redis failure during publish never fails the delete."""
+        mocker.patch(
+            "tracer.services.project_deletion.redis.Redis.from_url",
+            side_effect=ConnectionError("redis down"),
+        )
+        with django_capture_on_commit_callbacks(execute=True):
+            response = auth_client.delete(
+                "/tracer/project/",
+                {"project_ids": [str(project.id)], "project_type": "experiment"},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_200_OK
+        project.refresh_from_db()
+        assert project.deleted is True
+
     def test_delete_project_cascades(
         self, auth_client, project, trace, observation_span
     ):

@@ -49,3 +49,8 @@ export const DATE_CHIP_SX = {
   height: 28,
   borderRadius: "6px",
 };
+
+// Shown when a query returns buckets but nothing drawable in them. Shared so
+// the editor preview and the saved widget cannot answer that case differently.
+export const NO_DATA_FOR_RANGE_MESSAGE =
+  "No data available for this time period. Try a broader range.";

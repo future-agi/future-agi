@@ -28,6 +28,7 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserAlertMonitor
         fields = "__all__"
+        read_only_fields = ("last_checked_at", "logs", "deleted", "deleted_at")
 
     def get_metric_name(self, obj):
         if obj.metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS.value:

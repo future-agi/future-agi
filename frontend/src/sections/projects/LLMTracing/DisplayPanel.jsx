@@ -515,7 +515,7 @@ const DisplayPanel = ({
           sx={{
             fontSize: 14,
             fontFamily: "'IBM Plex Sans', sans-serif",
-            color: "#1a1a1a",
+            color: "text.primary",
             py: 0.5,
           }}
         >
@@ -529,7 +529,8 @@ const DisplayPanel = ({
           sx={{
             fontSize: 14,
             fontFamily: "'IBM Plex Sans', sans-serif",
-            color: "#573FCC",
+            color: (t) =>
+              t.palette.mode === "dark" ? "text.primary" : "#573FCC",
             py: 0.5,
           }}
         >

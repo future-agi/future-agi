@@ -35,7 +35,7 @@ import {
 import EvalFilterPanel from "src/sections/evals/components/EvalFilterPanel";
 import { EVAL_TAGS } from "src/sections/evals/constant";
 import PropTypes from "prop-types";
-import axios, { endpoints } from "src/utils/axios";
+import { evalDetailQuery } from "src/sections/evals/hooks/useEvalDetail";
 import { useEvalPickerData } from "./hooks/useEvalPickerData";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
 import { useCompositeDetail } from "src/sections/evals/hooks/useCompositeEval";
@@ -178,13 +178,7 @@ const EvalDetailPanel = ({ evalData }) => {
     evalData?.templateId || evalData?.template_id || evalData?.id;
 
   const { data: configData, isLoading } = useQuery({
-    queryKey: ["evals", "detail", templateId],
-    queryFn: async () => {
-      const { data } = await axios.get(
-        endpoints.develop.eval.getEvalDetail(templateId),
-      );
-      return data?.result;
-    },
+    ...evalDetailQuery(templateId),
     enabled: !!templateId,
     staleTime: 30000,
   });

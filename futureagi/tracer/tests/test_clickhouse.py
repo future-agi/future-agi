@@ -58,6 +58,26 @@ class TestNonTerminalEvalMarker:
 # ============================================================================
 
 
+def _fake_backfill_client(affected=0, in_flight=0, partitions=("202601", "202602")):
+    """A CH client stub that answers backfill_eval_score's three read queries."""
+    client = mock.MagicMock()
+    client.executed = []
+
+    def execute(query, *args, **kwargs):
+        client.executed.append(query)
+        collapsed = " ".join(query.split())
+        if collapsed.startswith("SELECT count() FROM system.mutations"):
+            return [(in_flight,)]
+        if collapsed.startswith("SELECT count() FROM usage_apicalllog"):
+            return [(affected,)]
+        if collapsed.startswith("SELECT DISTINCT partition"):
+            return [(p,) for p in partitions]
+        return []
+
+    client.execute = execute
+    return client
+
+
 @pytest.mark.unit
 class TestClickHouseSchema:
     """Test schema DDL generation."""
@@ -220,6 +240,148 @@ class TestClickHouseSchema:
             "POST_DDL_ALTERS must order DROP INDEX → MODIFY COLUMN → ADD INDEX "
             "for idx_trace_id; ClickHouse refuses to alter an indexed column."
         )
+
+    def test_eval_score_expression_reads_structured_and_scalar_outputs(self):
+        """Dropping either branch blanks one family of eval widgets."""
+        from tracer.services.clickhouse.schema import (
+            CDC_USAGE_APICALLLOG,
+            CH_EVAL_SCORE_EXPR,
+        )
+
+        assert (
+            "JSONType(JSONExtractString(config), 'output', 'output', 'score') "
+            "IN ('Double', 'Int64', 'UInt64')" in CH_EVAL_SCORE_EXPR
+        ), (
+            "the nested-score branch must gate on the value's type: JSONHas is "
+            "true for a null or string score that JSONExtractFloat reads as 0."
+        )
+        assert (
+            "JSONExtractFloat(JSONExtractString(config), 'output', 'output'))"
+            in CH_EVAL_SCORE_EXPR
+        ), "eval_score must keep the bare-scalar fallback for score evals."
+        assert (
+            f"eval_score Float64 MATERIALIZED {CH_EVAL_SCORE_EXPR}"
+            in CDC_USAGE_APICALLLOG
+        )
+
+    def test_post_ddl_alters_modifies_eval_score_on_existing_tables(self):
+        """ALTER statements bring an already-created usage_apicalllog forward."""
+        from tracer.services.clickhouse.schema import (
+            CH_EVAL_OUTPUT_STR_EXPR,
+            CH_EVAL_SCORE_EXPR,
+            POST_DDL_ALTERS,
+        )
+
+        joined = "\n".join(POST_DDL_ALTERS)
+        assert (
+            "usage_apicalllog MODIFY COLUMN eval_score Float64 "
+            f"MATERIALIZED {CH_EVAL_SCORE_EXPR}" in joined
+        ), "ADD COLUMN IF NOT EXISTS no-ops on a deployed table; MODIFY does not."
+        assert (
+            "usage_apicalllog ADD COLUMN IF NOT EXISTS eval_score Float64 "
+            f"MATERIALIZED {CH_EVAL_SCORE_EXPR}" in joined
+        )
+        assert (
+            "usage_apicalllog ADD COLUMN IF NOT EXISTS eval_output_str String "
+            f"MATERIALIZED {CH_EVAL_OUTPUT_STR_EXPR}" in joined
+        )
+        assert (
+            "usage_apicalllog ADD INDEX IF NOT EXISTS idx_eval_score "
+            "eval_score TYPE minmax GRANULARITY 1" in joined
+        ), "a backfill dying between its DROP and ADD otherwise loses the index."
+
+    def test_backfill_queries_survive_driver_parameter_substitution(self):
+        """A literal ``%`` in a template raises before it reaches CH."""
+        from tracer.management.commands import backfill_eval_score as cmd
+        from tracer.services.clickhouse.eval_expressions import (
+            eval_has_structured_score,
+        )
+        from tracer.services.clickhouse.schema import (
+            CH_EVAL_SCORE_EXPR,
+            EVAL_OUTPUT_JSON_ARGS,
+        )
+
+        templates = {
+            "_PARTITIONS": cmd._PARTITIONS.format(table=cmd.TABLE),
+            "_IN_FLIGHT": cmd._IN_FLIGHT.format(table=cmd.TABLE, column=cmd.COLUMN),
+            "_AFFECTED_COUNT": cmd._AFFECTED_COUNT.format(
+                table=cmd.TABLE,
+                column=cmd.COLUMN,
+                expr=CH_EVAL_SCORE_EXPR,
+                predicate=eval_has_structured_score(EVAL_OUTPUT_JSON_ARGS),
+            ),
+            # Travels through ch.execute() from rebuild_statements/POST_DDL_ALTERS.
+            "CH_EVAL_SCORE_EXPR": CH_EVAL_SCORE_EXPR,
+        }
+        for name, sql in templates.items():
+            try:
+                sql % {}
+            except (TypeError, ValueError) as exc:
+                pytest.fail(f"{name} is not substitution-safe: {exc}")
+
+    def test_backfill_partition_scan_is_scoped_to_this_database(self):
+        """An unscoped system.parts scan materializes another database's parts."""
+        from tracer.management.commands import backfill_eval_score as cmd
+
+        assert "database = currentDatabase()" in cmd._PARTITIONS
+
+    def test_backfill_dry_run_counts_without_mutating(self):
+        """--dry-run reports the stale rows and stops before any ALTER."""
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        from tracer.services.clickhouse import client as ch_client
+
+        ch = _fake_backfill_client(affected=7)
+        out = StringIO()
+        with mock.patch.object(ch_client, "get_clickhouse_client", lambda: ch):
+            call_command("backfill_eval_score", "--dry-run", stdout=out)
+
+        assert "rows with a stale eval_score: 7" in out.getvalue()
+        assert "--dry-run: no mutation submitted." in out.getvalue()
+        assert not any("ALTER TABLE" in q for q in ch.executed)
+
+    def test_backfill_refuses_to_stack_on_an_in_flight_mutation(self):
+        """Overlapping deploys must not queue a second eval_score mutation."""
+        from io import StringIO
+
+        from django.core.management import CommandError, call_command
+
+        from tracer.services.clickhouse import client as ch_client
+
+        ch = _fake_backfill_client(affected=7, in_flight=1)
+        with mock.patch.object(ch_client, "get_clickhouse_client", lambda: ch):
+            with pytest.raises(CommandError, match="already running"):
+                call_command("backfill_eval_score", "--no-confirm", stdout=StringIO())
+
+        assert not any("ALTER TABLE" in q for q in ch.executed)
+
+    def test_backfill_force_rebuilds_when_no_row_is_stale(self):
+        """--force runs the rebuild the "nothing to do" early return skips."""
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        from tracer.services.clickhouse import client as ch_client
+
+        ch = _fake_backfill_client(affected=0)
+        out = StringIO()
+        with mock.patch.object(ch_client, "get_clickhouse_client", lambda: ch):
+            call_command("backfill_eval_score", "--force", "--no-confirm", stdout=out)
+
+        altered = [q for q in ch.executed if q.startswith("ALTER TABLE")]
+        assert any("DROP INDEX IF EXISTS idx_eval_score" in q for q in altered)
+        assert any("ADD INDEX IF NOT EXISTS idx_eval_score" in q for q in altered)
+        # One MATERIALIZE COLUMN + one MATERIALIZE INDEX per partition.
+        assert sum("MATERIALIZE COLUMN" in q for q in altered) == 2
+        assert sum("MATERIALIZE INDEX" in q for q in altered) == 2
+        assert "materializing across 2 partition(s)" in out.getvalue()
+
+        unforced = _fake_backfill_client(affected=0)
+        with mock.patch.object(ch_client, "get_clickhouse_client", lambda: unforced):
+            call_command("backfill_eval_score", "--no-confirm", stdout=StringIO())
+        assert not any("ALTER TABLE" in q for q in unforced.executed)
 
     def test_mv_recreate_manifest_consistency(self):
         """Every MV_RECREATE_MANIFEST entry must resolve to a real DDL constant."""
@@ -920,7 +1082,7 @@ class TestClickHouseFilterBuilder:
         assert "_peerdb_is_deleted" not in where
         assert "created_at >= %(start_date)s - INTERVAL 7 DAY" in where
 
-    def test_eval_metric_filter_keeps_legacy_predicate(self):
+    def test_eval_metric_filter_uses_deleted_marker(self):
         from django.test import override_settings
 
         with override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger"):
@@ -928,7 +1090,10 @@ class TestClickHouseFilterBuilder:
         assert "FROM tracer_eval_logger " in where
         assert "tracer_eval_logger_v2" not in where
         assert "FINAL" not in where
-        assert "_peerdb_is_deleted = 0" in where
+        # Migrated off the legacy CDC `_peerdb_is_deleted` guard to the
+        # rewrite-safe `deleted` marker.
+        assert "(deleted = 0 OR deleted IS NULL)" in where
+        assert "_peerdb_is_deleted" not in where
 
     def test_eval_metric_filter_omits_date_bound_without_scope(self):
         """Callers that don't bind %(start_date)s (score_date_scope=False)
@@ -2698,7 +2863,10 @@ class TestTraceListQueryBuilder:
 
         assert "SELECT" in query
         assert "trace_id" in query
-        assert "dictGetOrDefault('enduser_dict', 'user_id', end_user_id, '')" in query
+        assert (
+            "dictGetOrDefault('enduser_dict', 'user_id', any(end_user_id), '')"
+            in query
+        )
         assert "GROUP BY trace_id" in query
         assert "PREWHERE trace_id IN" in query
         assert params["user_trace_ids"] == ("trace-1", "trace-2", "trace-3")
@@ -3868,12 +4036,18 @@ class TestConsistencyChecker:
 
     def test_health_status_disabled(self):
         """When CH is not enabled, get_health_status should return disabled status."""
+        from unittest.mock import patch
+
         from tracer.services.clickhouse.consistency import ConsistencyChecker
 
         checker = ConsistencyChecker()
-        health = checker.get_health_status()
-        # When CH is not enabled (default in test), should return disabled
-        assert health.status in ("disabled", "unhealthy", "degraded")
+        # CH25 is enabled by default now, so force the disabled branch.
+        with patch(
+            "tracer.services.clickhouse.consistency.is_clickhouse_enabled",
+            return_value=False,
+        ):
+            health = checker.get_health_status()
+        assert health.status == "disabled"
 
     def test_consistency_result_dataclass(self):
         """ConsistencyResult dataclass should hold comparison data."""
@@ -6826,7 +7000,7 @@ class TestVoiceCallListQueryBuilder:
         query, _ = builder.build()
 
         assert "mapContains(span_attr_str, 'ended_reason')" in query
-        assert "span_attr_str['ended_reason'] LIKE" in query
+        assert "span_attr_str['ended_reason'] ILIKE" in query
 
 
 @pytest.mark.unit
@@ -8118,15 +8292,18 @@ class TestMonitorMetricsQueryBuilder:
         assert "countIf(status = 'ERROR')" in query
 
     def test_error_free_session_rates_query(self):
-        """ERROR_FREE_SESSION_RATES should group by session_id."""
+        """ERROR_FREE_SESSION_RATES groups by the remapped trace_session_id."""
         from datetime import datetime
 
         builder = self._make_builder()
         query, _ = builder.build_metric_value_query(
             "error_free_session_rates", datetime(2024, 1, 1), datetime(2024, 1, 31)
         )
-        assert "session_id" in query
-        assert "GROUP BY session_id" in query
+        assert "trace_session_id" in query
+        assert "uniqIf(trace_session_id, error_count = 0)" in query
+        # Remap-aware: groups by the survivor-resolved session id.
+        assert "trace_session_id_remap" in query
+        assert "id_remap.survivor_id" in query
 
     def test_service_provider_error_rates_query(self):
         """SERVICE_PROVIDER_ERROR_RATES should group by provider."""
@@ -8181,7 +8358,7 @@ class TestMonitorMetricsQueryBuilder:
         assert "sum(total_tokens)" in query
 
     def test_daily_tokens_spent_query(self):
-        """DAILY_TOKENS_SPENT should use >= start_time only."""
+        """DAILY_TOKENS_SPENT uses the unified half-open window + NULL-on-empty."""
         from datetime import datetime
 
         builder = self._make_builder()
@@ -8189,10 +8366,12 @@ class TestMonitorMetricsQueryBuilder:
             "daily_tokens_spent", datetime(2024, 1, 1), datetime(2024, 1, 31)
         )
         assert "sum(total_tokens)" in query
-        assert ">= %(start_time)s" in query
+        # Unified event-time window: half-open on start_time.
+        assert "start_time >= %(start_time)s AND start_time < %(end_time)s" in query
+        assert "THEN NULL" in query
 
     def test_monthly_tokens_spent_query(self):
-        """MONTHLY_TOKENS_SPENT should use >= start_time only."""
+        """MONTHLY_TOKENS_SPENT uses the shared token branch (trailing window is a param)."""
         from datetime import datetime
 
         builder = self._make_builder()
@@ -8244,8 +8423,12 @@ class TestMonitorMetricsQueryBuilder:
         query, params = builder.build_metric_value_query(
             "evaluation_metrics", datetime(2024, 1, 1), datetime(2024, 1, 31)
         )
-        assert "JSONExtract(output_str_list, 'Array(String)')" in query
-        assert "OR output_str =" in query
+        # List-containment only: choice evals write output_str_list exclusively.
+        assert (
+            "has(JSONExtract(output_str_list, 'Array(String)'), %(choice_val)s)"
+            in query
+        )
+        assert "OR output_str =" not in query
         assert params["choice_val"] == "Good"
 
     def test_evaluation_metrics_no_config_returns_null(self):
@@ -8292,11 +8475,13 @@ class TestMonitorMetricsQueryBuilder:
         query, _ = builder.build_historical_stats_query(
             "span_response_time", datetime(2024, 1, 1), datetime(2024, 1, 31)
         )
-        assert "avg(latency_ms) AS mean" in query
-        assert "stddevSamp(latency_ms) AS stddev" in query
+        # NaN -> NULL so empty windows suppress alerts instead of firing.
+        assert "ifNotFinite(avg(latency_ms), NULL) AS mean" in query
+        # Population stddev (PG StdDev default) with NaN -> NULL guard.
+        assert "ifNotFinite(stddevPop(latency_ms), NULL) AS stddev" in query
 
     def test_historical_stats_eval_score(self):
-        """Historical stats for EVALUATION_METRICS SCORE should use output_float."""
+        """Eval SCORE historical stats use output_float with population stddev (C-2)."""
         from datetime import datetime
 
         builder = self._make_builder(
@@ -8307,17 +8492,20 @@ class TestMonitorMetricsQueryBuilder:
             "evaluation_metrics", datetime(2024, 1, 1), datetime(2024, 1, 31)
         )
         assert "avg(output_float)" in query
-        assert "stddevSamp(output_float)" in query
+        assert "stddevPop(output_float)" in query
 
-    def test_historical_stats_aggregated_metrics_return_null(self):
-        """COUNT_OF_ERRORS etc. should return NULL for stats (handled in Python)."""
+    def test_historical_stats_aggregated_metrics_ch_native(self):
+        """COUNT_OF_ERRORS historical stats bucket in CH with sample stddev."""
         from datetime import datetime
 
         builder = self._make_builder()
         query, _ = builder.build_historical_stats_query(
             "count_of_errors", datetime(2024, 1, 1), datetime(2024, 1, 31)
         )
-        assert "NULL AS mean" in query
+        assert "countIf(status = 'ERROR') AS bucket_value" in query
+        assert "avg(bucket_value)" in query
+        assert "stddevSamp(bucket_value)" in query
+        assert "GROUP BY bucket_ts" in query
 
     # -- Time series queries --
 
@@ -8370,7 +8558,7 @@ class TestMonitorMetricsQueryBuilder:
         assert "observation_type" in query
 
     def test_time_series_error_free_session_rates(self):
-        """ERROR_FREE_SESSION_RATES time series should group by session_id."""
+        """ERROR_FREE_SESSION_RATES time series groups by remapped trace_session_id."""
         from datetime import datetime
 
         builder = self._make_builder()
@@ -8380,7 +8568,8 @@ class TestMonitorMetricsQueryBuilder:
             datetime(2024, 1, 31),
             3600,
         )
-        assert "session_id" in query
+        assert "uniqIf(trace_session_id, error_count = 0)" in query
+        assert "trace_session_id_remap" in query
 
     def test_time_series_eval_metrics_score(self):
         """EVALUATION_METRICS SCORE time series should use eval_logger."""
@@ -8439,31 +8628,20 @@ class TestMonitorMetricsQueryBuilder:
         """All metric types should produce valid SQL (not crash)."""
         from datetime import datetime
 
-        from tracer.services.clickhouse.query_builders.monitor_metrics import (
-            COUNT_OF_ERRORS,
-            DAILY_TOKENS_SPENT,
-            ERROR_FREE_SESSION_RATES,
-            ERROR_RATES_FOR_FUNCTION_CALLING,
-            LLM_API_FAILURE_RATES,
-            LLM_RESPONSE_TIME,
-            MONTHLY_TOKENS_SPENT,
-            SERVICE_PROVIDER_ERROR_RATES,
-            SPAN_RESPONSE_TIME,
-            TOKEN_USAGE,
-        )
+        from tracer.models.monitor import MonitorMetricTypeChoices
 
         builder = self._make_builder()
         metric_types = [
-            COUNT_OF_ERRORS,
-            ERROR_RATES_FOR_FUNCTION_CALLING,
-            ERROR_FREE_SESSION_RATES,
-            SERVICE_PROVIDER_ERROR_RATES,
-            LLM_API_FAILURE_RATES,
-            SPAN_RESPONSE_TIME,
-            LLM_RESPONSE_TIME,
-            TOKEN_USAGE,
-            DAILY_TOKENS_SPENT,
-            MONTHLY_TOKENS_SPENT,
+            MonitorMetricTypeChoices.COUNT_OF_ERRORS,
+            MonitorMetricTypeChoices.ERROR_RATES_FOR_FUNCTION_CALLING,
+            MonitorMetricTypeChoices.ERROR_FREE_SESSION_RATES,
+            MonitorMetricTypeChoices.SERVICE_PROVIDER_ERROR_RATES,
+            MonitorMetricTypeChoices.LLM_API_FAILURE_RATES,
+            MonitorMetricTypeChoices.SPAN_RESPONSE_TIME,
+            MonitorMetricTypeChoices.LLM_RESPONSE_TIME,
+            MonitorMetricTypeChoices.TOKEN_USAGE,
+            MonitorMetricTypeChoices.DAILY_TOKENS_SPENT,
+            MonitorMetricTypeChoices.MONTHLY_TOKENS_SPENT,
         ]
         for mt in metric_types:
             query, params = builder.build_metric_value_query(
@@ -8572,7 +8750,9 @@ class TestSessionAnalyticsQueryBuilder:
         builder = self._make_builder()
         query, params = builder.build_session_metrics_query(["sess-1", "sess-2"])
         assert "trace_session_id" in query
-        assert "GROUP BY trace_session_id" in query
+        # Remap-aware: groups by the survivor-resolved session id.
+        assert "id_remap.survivor_id" in query
+        assert "GROUP BY" in query
         assert "count(DISTINCT trace_id)" in query
         assert "sum(total_tokens)" in query
         assert "sum(cost)" in query

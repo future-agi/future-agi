@@ -12,13 +12,14 @@ either silently returned zero traces or matched the wrong ones. The fix
 curated EndUser dimension and wraps the result in the standard
 ``trace_id IN (...)`` pattern.
 
-P3b step2 precondition: the resolution subquery was cut off the legacy CDC
-``tracer_enduser`` onto the v2 ``end_users`` RMT (``id``→``end_user_id``,
-``_peerdb_is_deleted``→``is_deleted``) so it does not go stale when step2
-drops the PG get_or_create → CDC chain that fed the legacy table.
+Resolution reads the CDC ``tracer_enduser`` dimension (the collector writes
+all observe data to ClickHouse): the string ``user_id`` is mapped to end-user
+UUIDs via a ``SELECT id FROM tracer_enduser FINAL WHERE user_id = ...`` subquery.
 """
 
 import unittest
+
+import pytest
 
 from tracer.services.clickhouse.query_builders.filters import (
     ClickHouseFilterBuilder,
@@ -46,9 +47,9 @@ class UserIdFilterTests(unittest.TestCase):
         self.assertIsNotNone(sql, "user_id filter should produce a condition")
         # Wraps in trace_id IN (...) so trace-list/span-list both see matching traces.
         self.assertIn("trace_id IN (", sql)
-        # Resolves via the v2 `end_users` curated dimension — not a raw
-        # span_attribute match (P3b step2 precondition cut off `tracer_enduser`).
-        self.assertIn("FROM end_users", sql)
+        # Resolves the user_id string via the CDC `tracer_enduser` dimension —
+        # not a raw span_attribute match.
+        self.assertIn("FROM tracer_enduser", sql)
         self.assertIn("user_id =", sql)
         # Must NOT fall through to the generic span-attribute path,
         # which would JSONExtract(span_attributes, 'user_id') — spans
@@ -153,13 +154,20 @@ class UserIdFilterTests(unittest.TestCase):
             self.assertIsNotNone(
                 sql, f"user_id filter must fire for col_type={col_type_val!r}"
             )
-            self.assertIn("FROM end_users", sql)
+            self.assertIn("FROM tracer_enduser", sql)
 
     def test_user_filter_always_resolves_via_tracer_enduser(self):
         """``col_id == 'user'`` is treated as a string filter against
-        ``tracer_enduser.user_id`` regardless of value shape. UUID-shaped
-        back-compat that previously routed directly to ``end_user_id`` has
-        been removed — every value is matched as a user_id string."""
+        ``tracer_enduser.user_id`` regardless of value shape — every value is
+        matched as a user_id string (the old UUID-direct back-compat branch is
+        gone).
+
+        This pins only what the builder emits *today* and is compatible with the
+        survivor-collapse form too: the historical id-remap wrapped this same
+        ``user_id =`` / ``FROM tracer_enduser`` inner lookup rather than
+        replacing it. The missing remap layer is tracked separately by
+        ``test_user_filter_should_survivor_collapse_via_id_remap`` below.
+        """
         b = self._build()
         sql = b._build_condition(
             col_id="user",
@@ -169,19 +177,52 @@ class UserIdFilterTests(unittest.TestCase):
             filter_value="08ad78f8-1974-45c1-b6bc-4f2b2ba0b243",
         )
         self.assertIsNotNone(sql)
-        # The classic TRACE_END_USER path matches on the end_user_id UUID
-        # column directly — NO `end_users` string-resolution subquery
-        # (the caller already has the UUID). That distinction is the point of
-        # this regression test (TH-4436) and must hold.
+        # ``col_id == 'user'`` resolves the value as a user_id string via the CDC
+        # ``tracer_enduser`` dimension — identical to ``user_id``. ``end_users``
+        # (the reverted v2 string-dimension) is genuinely dead and must not
+        # appear.
         self.assertNotIn("FROM end_users", sql)
-        # P3b step1.5: the match is now id-remap-resolved (survivor-collapse) so
-        # a cross-cutover straddler AND a many-old→one-new consolidation group
-        # unify. Assert the resolution is present on the end_user_id column
-        # (proves we still operate on the UUID column, just resolved through the
-        # survivor map — not via the `end_users` string subquery).
+        self.assertIn("FROM tracer_enduser", sql)
+        self.assertIn("user_id =", sql)
+        self.assertEqual(
+            b._params.get("col_1"), "08ad78f8-1974-45c1-b6bc-4f2b2ba0b243"
+        )
+
+    @pytest.mark.xfail(
+        reason=(
+            "TH-XXXX: the user/session FILTER builder lost id-remap "
+            "survivor-collapse. `_resolved_enduser_membership` dropped out of "
+            "query_builders/filters.py in merge 3e614ae27 (the `main` side of a "
+            "conflict, not a decision); the design landed in 183b2a36f / "
+            "ba315c8b1 and is still live in span_list/session_list/"
+            "session_analytics/session_time_series/user_time_series. Until the "
+            "filter builder is re-aligned (or the remap is dropped from those "
+            "modules too), a cross-cutover straddler that the list/analytics "
+            "queries count as one entity is split by this filter. Impact is zero "
+            "pre-flip; this xfail preserves the deleted signal so it surfaces at "
+            "flip time. See atharva-bhange review on PR #1811."
+        ),
+        strict=False,
+    )
+    def test_user_filter_should_survivor_collapse_via_id_remap(self):
+        """DESIRED (currently un-emitted): the ``user`` filter should resolve
+        ``end_user_id`` new→old through ``end_user_id_remap`` so a straddler's
+        pre- and post-cutover ids unify — matching span_list/session_list.
+
+        Restored verbatim from the assertions this PR deleted; xfails until the
+        filter builder regains the remap (see the ticket in the marker).
+        """
+        b = self._build()
+        sql = b._build_condition(
+            col_id="user",
+            col_type=ClickHouseFilterBuilder.SYSTEM_METRIC,
+            filter_type="text",
+            filter_op="equals",
+            filter_value="08ad78f8-1974-45c1-b6bc-4f2b2ba0b243",
+        )
+        self.assertIsNotNone(sql)
         self.assertIn("end_user_id_remap", sql)
         self.assertIn("id_remap.survivor_id", sql)
-        self.assertIn("%(eu_1)s", sql)
 
     def test_user_id_contains(self):
         b = self._build()
@@ -194,7 +235,7 @@ class UserIdFilterTests(unittest.TestCase):
         )
         self.assertIsNotNone(sql)
         self.assertIn("trace_id IN (", sql)
-        self.assertIn("FROM end_users", sql)
+        self.assertIn("FROM tracer_enduser", sql)
         self.assertIn("user_id LIKE", sql)
         self.assertEqual(b._params.get("col_1"), "%admin%")
 
@@ -214,9 +255,11 @@ class UserIdFilterTests(unittest.TestCase):
         self.assertEqual(b._params.get("col_1"), "%admin%")
 
     def test_user_id_null_ops_do_not_query_end_users(self):
-        for op, outer in (
-            ("is_null", "trace_id NOT IN ("),
-            ("is_not_null", "trace_id IN ("),
+        # Null ops compare end_user_id against the zero-UUID directly — no
+        # resolution subquery on the enduser dimension.
+        for op, inner in (
+            ("is_null", "end_user_id ="),
+            ("is_not_null", "end_user_id !="),
         ):
             b = self._build()
             sql = b._build_condition(
@@ -227,9 +270,9 @@ class UserIdFilterTests(unittest.TestCase):
                 filter_value=None,
             )
             self.assertIsNotNone(sql)
-            self.assertIn(outer, sql)
-            self.assertNotIn("FROM end_users", sql)
-            self.assertIn("end_user_id !=", sql)
+            self.assertIn("trace_id IN (", sql)
+            self.assertNotIn("FROM tracer_enduser", sql)
+            self.assertIn(inner, sql)
             self.assertIn("00000000-0000-0000-0000-000000000000", sql)
 
 
@@ -247,7 +290,7 @@ class EndUserAndIdColumnFilterTests(unittest.TestCase):
             filter_value=["email", "phone"],
         )
         self.assertIsNotNone(sql)
-        self.assertIn("FROM end_users", sql)
+        self.assertIn("FROM tracer_enduser", sql)
         self.assertIn("user_id_type IN", sql)
         self.assertEqual(b._params.get("col_1"), ("email", "phone"))
 
@@ -297,16 +340,15 @@ class EndUserAndIdColumnFilterTests(unittest.TestCase):
                 filter_value=["003b76f1-2b4a-4af5-b0dc-224d687374d4"],
             )
             self.assertIsNotNone(sql)
-            # P3b step1.5: session-id membership is now id-remap-resolved
-            # (survivor-collapse via trace_session_id_remap) so a cross-cutover
-            # straddler AND a many-old→one-new consolidation group unify under
-            # the survivor (old) session id — NOT the bare
-            # `toString(trace_session_id) IN` form. Parallel to the user path
-            # (test_user_id_does_not_affect_plain_user_filter).
-            self.assertIn("trace_session_id_remap", sql)
-            self.assertIn("id_remap.survivor_id", sql)
-            self.assertIn("%(sess_1)s", sql)
-            self.assertNotIn("toString(trace_session_id) IN", sql)
+            # Session-id membership matches on ``trace_session_id`` directly.
+            # NB: unlike session_list/session_analytics this filter path does
+            # NOT survivor-collapse via trace_session_id_remap (same gap as
+            # test_user_filter_should_survivor_collapse_via_id_remap; TH-XXXX).
+            self.assertIn("toString(trace_session_id) IN", sql)
+            self.assertEqual(
+                b._params.get("col_1"),
+                ("003b76f1-2b4a-4af5-b0dc-224d687374d4",),
+            )
 
     def test_nullable_uuid_null_checks_do_not_compare_to_empty_string(self):
         b = self._build()

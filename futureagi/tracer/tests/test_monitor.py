@@ -79,6 +79,7 @@ class TestUserAlertMonitorCreateAPI:
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
+    @pytest.mark.requires_ee
     def test_create_monitor_success(self, auth_client, observe_project):
         """Create a new user alert monitor."""
         response = auth_client.post(
@@ -97,7 +98,56 @@ class TestUserAlertMonitorCreateAPI:
         assert response.status_code == status.HTTP_200_OK
         monitor = UserAlertMonitor.objects.get(name="Error Rate Alert")
         assert monitor.workspace_id == observe_project.workspace_id
+        # The server seeds the creation audit entry (regression guard: this must
+        # not be dropped by any read-only field handling).
+        assert monitor.logs and monitor.logs[0]["type"] == "INFO"
 
+    def test_create_ignores_client_supplied_server_owned_fields(
+        self, auth_client, observe_project
+    ):
+        """Client cannot set operational/soft-delete fields on create."""
+        from django.utils import timezone
+
+        response = auth_client.post(
+            "/tracer/user-alerts/",
+            {
+                "project": str(observe_project.id),
+                "name": "Tamper Alert",
+                "metric_type": "count_of_errors",
+                "threshold_operator": "greater_than",
+                "threshold_type": "static",
+                "critical_threshold_value": 1,
+                "alert_frequency": 60,
+                "last_checked_at": timezone.now().isoformat(),
+                "deleted": True,
+                "logs": [{"message": "injected"}],
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        monitor = UserAlertMonitor.objects.get(name="Tamper Alert")
+        assert monitor.last_checked_at is None
+        assert monitor.deleted is False
+        assert all(entry.get("message") != "injected" for entry in monitor.logs)
+
+    def test_update_ignores_client_supplied_server_owned_fields(
+        self, auth_client, user_alert_monitor
+    ):
+        """Client cannot tamper with last_checked_at / deleted via update."""
+        from django.utils import timezone
+
+        stamp = timezone.now().isoformat()
+        response = auth_client.patch(
+            f"/tracer/user-alerts/{user_alert_monitor.id}/",
+            {"last_checked_at": stamp, "deleted": True},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        user_alert_monitor.refresh_from_db()
+        assert user_alert_monitor.last_checked_at is None
+        assert user_alert_monitor.deleted is False
+
+    @pytest.mark.requires_ee
     def test_create_monitor_rejects_other_workspace_project(
         self, auth_client, organization, user
     ):
@@ -124,6 +174,7 @@ class TestUserAlertMonitorCreateAPI:
             name="Cross Workspace Alert"
         ).exists()
 
+    @pytest.mark.requires_ee
     def test_create_monitor_with_slack_config(self, auth_client, observe_project):
         """Create monitor with Slack notification config."""
         response = auth_client.post(
@@ -142,6 +193,7 @@ class TestUserAlertMonitorCreateAPI:
         )
         assert response.status_code == status.HTTP_200_OK
 
+    @pytest.mark.requires_ee
     def test_create_monitor_accepts_canonical_span_attribute_filters(
         self, auth_client, observe_project
     ):
@@ -178,6 +230,7 @@ class TestUserAlertMonitorCreateAPI:
             "customer_tier"
         )
 
+    @pytest.mark.requires_ee
     def test_create_monitor_rejects_camel_case_span_attribute_filters(
         self, auth_client, observe_project
     ):
@@ -771,6 +824,43 @@ class TestUserAlertMonitorGraphAPI:
         data = get_result(response)
         assert isinstance(data, dict) or isinstance(data, list)
 
+    def test_get_graph_invalid_config_is_400(self, auth_client, user_alert_monitor):
+        """A monitor with unparseable stored filters is a client error (400)."""
+        user_alert_monitor.filters = {
+            "span_attributes_filters": [
+                {
+                    "column_id": "x",
+                    "filter_config": {
+                        "col_type": "SPAN_ATTRIBUTE",
+                        "filter_type": "text",
+                        "filter_op": "nonsense_op",
+                        "filter_value": "v",
+                    },
+                }
+            ]
+        }
+        user_alert_monitor.save()
+        response = auth_client.get(
+            f"/tracer/user-alerts/{user_alert_monitor.id}/graph/"
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_get_graph_ch_failure_is_500_without_leak(
+        self, auth_client, user_alert_monitor
+    ):
+        """A ClickHouse failure is a 5xx with a generic body (no SQL/host leak)."""
+        from unittest import mock
+
+        secret = "clickhouse://internal-host:9000 SELECT secret_table"
+        with mock.patch(
+            "tracer.views.monitor.get_graph_data", side_effect=RuntimeError(secret)
+        ):
+            response = auth_client.get(
+                f"/tracer/user-alerts/{user_alert_monitor.id}/graph/"
+            )
+        assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert secret not in response.content.decode()
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -1087,3 +1177,56 @@ class TestUserAlertMonitorLogResolveAPI:
         log2.refresh_from_db()
         assert log1.resolved is True
         assert log2.resolved is True
+
+
+@pytest.mark.django_db
+class TestMonitorViewHardening:
+    """Pagination input guard + preview-graph config-error mapping."""
+
+    def test_list_non_integer_page_params_is_400(self, auth_client, observe_project):
+        response = auth_client.get("/tracer/user-alerts/?page_number=abc")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        response = auth_client.get("/tracer/user-alerts/?page_size=abc")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_preview_graph_deleted_eval_config_is_400(
+        self, auth_client, observe_project
+    ):
+        # Real path, no mocks: build_monitor_ch_builder raises for the missing
+        # eval config, so the graph surfaces the misconfig instead of
+        # rendering silently empty.
+        payload = {
+            "project": str(observe_project.id),
+            "metric_type": "evaluation_metrics",
+            "metric": "22222222-2222-2222-2222-222222222222",
+            "threshold_operator": "greater_than",
+            "threshold_type": "static",
+            "critical_threshold_value": 0.15,
+            "alert_frequency": 60,
+        }
+        response = auth_client.post(
+            "/tracer/user-alerts/preview-graph/", payload, format="json"
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_preview_graph_config_error_is_400(self, auth_client, observe_project):
+        from unittest import mock
+
+        from tracer.utils.monitor import MonitorConfigError
+
+        payload = {
+            "project": str(observe_project.id),
+            "metric_type": "count_of_errors",
+            "threshold_operator": "greater_than",
+            "threshold_type": "static",
+            "critical_threshold_value": 0.15,
+            "alert_frequency": 60,
+        }
+        with mock.patch(
+            "tracer.views.monitor.get_graph_data",
+            side_effect=MonitorConfigError("bad stored filter"),
+        ):
+            response = auth_client.post(
+                "/tracer/user-alerts/preview-graph/", payload, format="json"
+            )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
