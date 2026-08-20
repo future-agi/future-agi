@@ -68,6 +68,7 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { format } from "date-fns";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import useCanEditDashboard from "./hooks/useCanEditDashboard";
+import WIDGET_TEMPLATES from "./widgetTemplates";
 import {
   coerceFilterValue,
   isAllowedFilterOperator,
@@ -1154,6 +1155,44 @@ export default function WidgetEditorView() {
   const [mfValueTarget, setMfValueTarget] = useState(null); // { metricIdx, filterIdx }
   const mfValueRefs = useRef({});
   const [initialized, setInitialized] = useState(false);
+  const [templateAnchor, setTemplateAnchor] = useState(null);
+
+  const applyTemplate = useCallback(
+    (template) => {
+      const qc = template.queryConfig;
+      const cc = template.chartConfig;
+      setChartName(template.name);
+      setChartDescription(template.description);
+      setTimePreset(qc.timeRange?.preset || "7D");
+      setGranularity(qc.granularity || "day");
+      setChartType(cc.chartType || "line");
+      setMetrics(
+        (qc.metrics || []).map((m) => ({
+          ...m,
+          type: m.type === "system_metric" ? "system" : m.type,
+          filters: [],
+        })),
+      );
+      setFilters([]);
+      setBreakdowns(
+        (qc.breakdowns || []).map((b) => ({
+          ...b,
+          type: b.type === "custom_attribute" ? "custom" : b.type,
+        })),
+      );
+      if (cc.axisConfig) {
+        setAxisConfig((prev) => ({
+          leftY: { ...prev.leftY, ...cc.axisConfig.leftY },
+          rightY: { ...prev.rightY, ...cc.axisConfig.rightY },
+          xAxis: { ...prev.xAxis, ...cc.axisConfig.xAxis },
+          seriesAxis: cc.axisConfig.seriesAxis || {},
+        }));
+      }
+      setTemplateAnchor(null);
+      setInitialized(true);
+    },
+    [],
+  );
   // "chart" = chart only, "split-chart" = chart bigger, "split-table" = table bigger, "table" = table only
   const [viewMode, setViewMode] = useState("split-chart");
   const [chartHeight, setChartHeight] = useState(300);
@@ -2864,6 +2903,41 @@ export default function WidgetEditorView() {
           width={14}
           sx={{ color: "text.disabled", flexShrink: 0 }}
         />
+
+        {/* Starter template picker — only on blank new widgets */}
+        {!isEditing && metrics.length === 0 && (
+          <>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<Iconify icon="mdi:view-grid-plus-outline" width={16} />}
+              onClick={(e) => setTemplateAnchor(e.currentTarget)}
+              sx={{ textTransform: "none", fontSize: "13px", flexShrink: 0 }}
+            >
+              Start from template
+            </Button>
+            <Menu
+              anchorEl={templateAnchor}
+              open={Boolean(templateAnchor)}
+              onClose={() => setTemplateAnchor(null)}
+              slotProps={{ paper: { sx: { width: 280, maxHeight: 360 } } }}
+            >
+              {WIDGET_TEMPLATES.map((tpl) => (
+                <MenuItem key={tpl.id} onClick={() => applyTemplate(tpl)}>
+                  <ListItemIcon sx={{ minWidth: 36 }}>
+                    <Iconify icon={tpl.icon} width={18} />
+                  </ListItemIcon>
+                  <ListItemText
+                    primary={tpl.name}
+                    secondary={tpl.description}
+                    primaryTypographyProps={{ fontSize: "13px", fontWeight: 500 }}
+                    secondaryTypographyProps={{ fontSize: "12px" }}
+                  />
+                </MenuItem>
+              ))}
+            </Menu>
+          </>
+        )}
 
         {/* Inline editable name */}
         {editingName ? (
