@@ -1,4 +1,4 @@
-FROM futureagi/future-agi-base:v1.0.1
+FROM futureagi/future-agi-base:v1.0.2
 
 COPY . .
 
