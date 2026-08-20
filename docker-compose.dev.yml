@@ -180,6 +180,11 @@ services:
     env_file:
       - path: .env
         required: false
+      # The WebRTC target and the harness must use the same LiveKit project. Keep
+      # platform/model settings from this repo, but take LiveKit credentials from
+      # the local agent that is actually registered for these calls.
+      - path: ../uber-voice-agent/.env.local
+        required: false
     environment:
       HARNESS_HOST: 0.0.0.0
       HARNESS_PORT: 8777
@@ -200,12 +205,18 @@ services:
       # Voice. 1.1.2 reaches a LiveKit worker over WebRTC; the caller and the agent must be
       # on the same LiveKit instance, so this is the agent's project, not the EU one.
       HARNESS_VOICE_CASE: ${HARNESS_VOICE_CASE:-1.1.2}
-      LIVEKIT_URL: ${LIVEKIT_URL:-}
-      ACCEPTANCE_LIVEKIT_URL: ${ACCEPTANCE_LIVEKIT_URL:-${LIVEKIT_URL:-}}
-      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
-      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
-      LIVEKIT_TARGET_AGENT_NAME: ${LIVEKIT_TARGET_AGENT_NAME:-}
+      # Empty means voice_cases falls back to LIVEKIT_URL from the agent env file.
+      ACCEPTANCE_LIVEKIT_URL: ""
+      # Match the dedicated local worker; the generic name may also be registered by
+      # old or remote deployments and makes scenario identity nondeterministic.
+      LIVEKIT_TARGET_AGENT_NAME: uber-voice-booking-harness-local
       LIVEKIT_TARGET_SYSTEM_PROMPT: ${LIVEKIT_TARGET_SYSTEM_PROMPT:-}
+      # Flash Lite tended to repeat the caller's opening line instead of using
+      # scenario details (address, OTP, payment) after the target asked for them.
+      SIMULATOR_LLM_MODEL: gemini-2.5-flash
+      # A normal booking needs enough room for address confirmation, fares,
+      # payment verification and final read-back without a hard two-minute cut.
+      VOICE_MAX_SECONDS: ${VOICE_MAX_SECONDS:-240}
       DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
       # .env names the credentials by a path relative to the host checkout, which resolves to
       # nothing in here. Mounted below at a fixed location and repointed, or every stage fails

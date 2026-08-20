@@ -47,6 +47,10 @@ class Persona(BaseModel):
     accent: str = ""
     multilingual: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Optional deterministic voice policy for transactional scenarios. It keeps
+    # caller facts realistic and varied while avoiding LLM role drift during a
+    # long tool-heavy phone flow.
+    scripted_caller: dict[str, Any] | None = None
 
     def described(self) -> bool:
         return bool(

@@ -385,6 +385,11 @@ def run_tools(
                 os.environ["HARNESS_INSTRUCTION"] = instruction
                 os.environ["HARNESS_SCENARIO"] = scenario.name
                 os.environ["HARNESS_OUTCOME"] = scenario.tests
+                os.environ["HARNESS_PERSONA"] = json.dumps(
+                    scenario.persona.model_dump(exclude_none=True)
+                    if scenario.persona is not None
+                    else {"name": "customer"}
+                )
                 code = place_the_call(voice_case)
                 run = grade(scenario, world, world_root)
                 if code != 0 and not run.calls:

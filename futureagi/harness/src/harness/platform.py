@@ -319,9 +319,38 @@ def report(
     chat view, with no player and no audio, whatever actually happened on it.
     """
     api = platform or Platform()
-    reported = Reported(run_test_id=run_test_id)
+    reported, ids = begin(
+        scenarios,
+        name=name,
+        run_test_id=run_test_id,
+        modality=modality,
+        platform=api,
+    )
 
-    if not run_test_id:
+    # Calls come back in the order the scenarios were attached, which is the order they were run
+    # in. Zip rather than assume equal length: a suite can be a subset of its own test.
+    for call_execution_id, result in zip(ids, results, strict=False):
+        send_result(reported, call_execution_id, result, platform=api)
+    if len(ids) < len(results):
+        reported.problems.append(
+            f"the platform allocated {len(ids)} calls for {len(results)} scenarios, "
+            "so the rest were not reported"
+        )
+    return reported
+
+
+def begin(
+    scenarios: list[Any],
+    *,
+    name: str,
+    run_test_id: str = "",
+    modality: str = "text",
+    platform: Platform | None = None,
+) -> tuple[Reported, list[str]]:
+    """Create the platform rows before a suite starts, so the run is visible while it runs."""
+    api = platform or Platform()
+    reported = Reported(run_test_id=run_test_id)
+    if not reported.run_test_id:
         provisioned = api.provision(
             name, [persona_of(one) for one in scenarios], modality=modality
         )
@@ -331,32 +360,32 @@ def report(
 
     started = api.start(reported.run_test_id)
     reported.test_execution_id = str(started.get("test_execution_id", ""))
+    if not reported.test_execution_id:
+        raise PlatformError("the platform returned no test execution for this run")
+    claimed = api.batch(reported.test_execution_id, max(1, len(scenarios)))
+    return reported, [str(one) for one in claimed.get("call_execution_ids", [])]
 
-    claimed = api.batch(reported.test_execution_id, max(1, len(results)))
-    ids = [str(one) for one in claimed.get("call_execution_ids", [])]
 
-    # Calls come back in the order the scenarios were attached, which is the order they were run
-    # in. Zip rather than assume equal length: a suite can be a subset of its own test.
-    for call_execution_id, result in zip(ids, results, strict=False):
-        try:
-            api.result(call_execution_id, result_of(result))
-            reported.calls[getattr(result, "scenario", "")] = call_execution_id
-            # The audio, where the run left any. Reported after the result so a call that has
-            # already landed is not lost to an upload that fails.
-            audio = str(getattr(result, "recording", "") or "")
-            if audio and Path(audio).exists():
-                try:
-                    api.recording(call_execution_id, Path(audio))
-                except PlatformError as refused:
-                    reported.problems.append(f"recording not sent: {refused}")
-        except PlatformError as failed:
-            reported.problems.append(f"{getattr(result, 'scenario', '?')}: {failed}")
-    if len(ids) < len(results):
-        reported.problems.append(
-            f"the platform allocated {len(ids)} calls for {len(results)} scenarios, "
-            "so the rest were not reported"
-        )
-    return reported
+def send_result(
+    reported: Reported,
+    call_execution_id: str,
+    result: Any,
+    *,
+    platform: Platform | None = None,
+) -> None:
+    """Patch one pre-allocated platform row as soon as its scenario finishes."""
+    api = platform or Platform()
+    try:
+        api.result(call_execution_id, result_of(result))
+        reported.calls[getattr(result, "scenario", "")] = call_execution_id
+        audio = str(getattr(result, "recording", "") or "")
+        if audio and Path(audio).exists():
+            try:
+                api.recording(call_execution_id, Path(audio))
+            except PlatformError as refused:
+                reported.problems.append(f"recording not sent: {refused}")
+    except PlatformError as failed:
+        reported.problems.append(f"{getattr(result, 'scenario', '?')}: {failed}")
 
 
 def deliver(

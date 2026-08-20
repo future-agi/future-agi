@@ -383,11 +383,14 @@ services:
   postgres:
     image: postgres:16
     # wal_level=logical + slots enable PeerDB CDC replication.
+    # The local API plus Temporal/Celery workers can exhaust PostgreSQL's
+    # default 100 clients after a stack restart, breaking simulation ingestion.
     command: >
       postgres
       -c wal_level=logical
       -c max_wal_senders=25
       -c max_replication_slots=25
+      -c max_connections=300
     environment:
       POSTGRES_USER: ${PG_USER:-futureagi}
       POSTGRES_PASSWORD: ${PG_PASSWORD:-futureagi}

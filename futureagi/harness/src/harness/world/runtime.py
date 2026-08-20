@@ -167,6 +167,12 @@ class GeneratedWorld(EnvironmentAdapter):
         # writes statements in whatever the agent's own store speaks and they have to reach
         # it. A world with no store of its own gets one that says so.
         self.store = store or open_store(kind or "sqlite", database=self.database)
+        # A world is usable as soon as it is constructed.  SQLite happens to open its
+        # connection in __init__, which used to hide this missing lifecycle step; container
+        # stores (Postgres, MySQL, …) do not have an address until start() is called.
+        # Starting here also makes snapshot.restore() safe, since load_from() immediately
+        # writes the frozen rows into the newly-created store.
+        self.store.start()
         self.calls: list[Call] = []
 
     @property

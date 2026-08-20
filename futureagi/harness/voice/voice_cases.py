@@ -98,7 +98,10 @@ CASES = {
         "1.1.2",
         "LiveKit agent · inbound · WebRTC",
         "proven",
-        "simulator_first",
+        # The dispatched inbound target greets as soon as it joins. Starting
+        # the simulator too creates two simultaneous opening turns and leaves
+        # the scripted customer answering an empty prompt.
+        "agent_first",
         ("LIVEKIT_TARGET_AGENT_NAME", "LIVEKIT_TARGET_SYSTEM_PROMPT"),
         "A registered LiveKit target worker reachable by LIVEKIT_TARGET_AGENT_NAME.",
     ),
@@ -210,18 +213,18 @@ def _harness_scenario() -> simulate.Scenario | None:
         return None
     scripted = os.environ.get("HARNESS_SCRIPTED_CALLER", "").strip()
     scripted_caller = json.loads(scripted) if scripted else None
+    persona_json = os.environ.get("HARNESS_PERSONA", "").strip()
+    persona = json.loads(persona_json) if persona_json else {"name": "customer"}
+    persona["role"] = "customer"
+    persona["initial_message"] = os.environ.get(
+        "HARNESS_INITIAL_MESSAGE", ""
+    ).strip()
+    persona["scripted_caller"] = scripted_caller
     return simulate.Scenario(
         name=os.environ.get("HARNESS_SCENARIO", "harness"),
         dataset=[
             simulate.Persona(
-                persona={
-                    "name": "customer",
-                    "role": "customer",
-                    "initial_message": os.environ.get(
-                        "HARNESS_INITIAL_MESSAGE", ""
-                    ).strip(),
-                    "scripted_caller": scripted_caller,
-                },
+                persona=persona,
                 situation=instruction,
                 outcome=os.environ.get("HARNESS_OUTCOME", "")
                 or "Do what you came to do, or accept that you cannot.",
@@ -294,7 +297,10 @@ def build_inputs(case_id: str, run_id: str) -> VoiceInputs:
             if {stt_provider.lower(), tts_provider.lower()} & _GOOGLE_PROVIDERS
             else 150.0
             if "telephony" in case.description.lower()
-            else 120.0
+            # Transactional voice agents commonly need address confirmation,
+            # option selection, payment verification, and a final read-back.
+            # Two minutes cuts valid calls off before those stages complete.
+            else 240.0
         ),
     )
 

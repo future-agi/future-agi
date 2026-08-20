@@ -19,6 +19,7 @@ Run it:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -36,7 +37,10 @@ CASE = os.environ.get("HARNESS_VOICE_CASE", "2.1.2")
 VOICE_DIR = Path(__file__).resolve().parents[3] / "voice"
 
 
-def place_the_call(case: str, dry_run: bool = False) -> int:
+LIVE_EVENT = "HARNESS_EXCHANGE "
+
+
+def place_the_call(case: str, dry_run: bool = False, on_exchange=None) -> int:
     """Hand over to ALK's voice case, which owns everything about placing a call."""
     named = os.environ.get("HARNESS_VOICE_RUNNER", "").strip()
     runner = Path(named) if named else VOICE_DIR / "run_voice_case.py"
@@ -46,7 +50,25 @@ def place_the_call(case: str, dry_run: bool = False) -> int:
             "HARNESS_VOICE_RUNNER if it lives somewhere else."
         )
     command = [sys.executable, str(runner), case] + (["--dry-run"] if dry_run else [])
-    return subprocess.call(command)
+    if on_exchange is None:
+        return subprocess.call(command)
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        if line.startswith(LIVE_EVENT):
+            try:
+                on_exchange(json.loads(line[len(LIVE_EVENT):]))
+            except (json.JSONDecodeError, TypeError):
+                pass
+        else:
+            print(line, end="", flush=True)
+    return process.wait()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -83,6 +105,11 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["HARNESS_INSTRUCTION"] = instruction
         os.environ["HARNESS_SCENARIO"] = scenario.name
         os.environ["HARNESS_OUTCOME"] = scenario.tests
+        os.environ["HARNESS_PERSONA"] = json.dumps(
+            scenario.persona.model_dump(exclude_none=True)
+            if scenario.persona is not None
+            else {"name": "customer"}
+        )
 
         code = place_the_call(args.case, dry_run=args.dry_run)
         if args.dry_run:

@@ -94,6 +94,37 @@ class WorldWebhook:
         if world is None:
             return "the environment is not ready"
 
+        # Caller hydration is an adapter concern, not a contract tool. The local
+        # LiveKit worker normally gets this from its demo API before exposing any
+        # conversational tools. Resolve the same safe profile from the generated
+        # world without adding a call that scenario grading would mistake for an
+        # agent action.
+        if name == "lookup_rider_by_phone":
+            phone = str(arguments.get("phone") or "")
+            state = world.observe().state
+            user = next(
+                (row for row in state.get("users", []) if str(row.get("phone")) == phone),
+                None,
+            )
+            if user is None:
+                return json.dumps({"rider_id": None, "phone": phone})
+            market = next(
+                (
+                    row
+                    for row in state.get("market_config", [])
+                    if row.get("market") == user.get("default_market")
+                ),
+                {},
+            )
+            return json.dumps(
+                {
+                    **user,
+                    "cash_supported_in_market": bool(market.get("cash_supported")),
+                    "accessibility_needs": [],
+                },
+                default=str,
+            )
+
         done = world.handle_tool_call({"name": name, "arguments": dict(arguments)})
         if done is None:
             return f"there is no tool called {name}"

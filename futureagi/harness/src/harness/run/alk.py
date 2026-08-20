@@ -37,26 +37,24 @@ def as_persona(scenario: Scenario, simulator_prompt: str = "") -> Persona:
     values filled in. ALK wraps it in its own voice-execution rules, so what goes here is only
     what changes per scenario, not a second set of instructions about how to behave on a call.
 
-    There is no persona payload beyond a label. Who the caller is does not vary between
-    scenarios; what varies is what they want and what they know.
+    The structured persona is preserved so LiveKit can vary the caller's identity, speech style,
+    and scenario metadata instead of flattening every test into the same generic customer.
     """
     from ..simulator import fill
 
-    # Only the circumstance, not the behavioural prompt. ALK composes the opening line as
-    # "My name is X. {situation} I want this outcome: {outcome}" and sends it verbatim, so
-    # anything put here is read aloud: with the whole simulator prompt in it, the conversation
-    # opened with the person reciting their own instructions, including the rules about what
-    # they are supposed to hold back.
-    #
-    # What that costs is real and worth naming: the behaviours the prompt describes — waiting to
-    # be asked, accepting a refusal once, ending when the answer arrives — are not reaching the
-    # simulator on this path. Carrying them properly means ALK letting a persona have a briefing
-    # separate from its first utterance, which is a change to make there rather than to work
-    # around here.
+    # The LiveKit voice simulator treats ``situation`` as private context rather than a
+    # line to recite. Preserve the harness-authored caller rules here: they explicitly keep
+    # the simulator in the customer role and stop it from volunteering held-back details.
+    # Fall back to the plain scenario instruction for older sessions without a prompt.
     filled = fill(simulator_prompt, scenario.slots())[0] if simulator_prompt else ""
+    persona = (
+        scenario.persona.model_dump(exclude_none=True)
+        if scenario.persona is not None
+        else {"name": "customer"}
+    )
     return Persona(
-        persona={"name": "customer"},
-        situation=scenario.instruction or filled,
+        persona=persona,
+        situation=filled or scenario.instruction,
         # Said in the person's own terms, because it is read aloud with the situation.
         # ``scenario.tests`` describes what the suite is checking — "agent correctly counts
         # customers filtered by country" — and a person who opens by announcing what the agent

@@ -22,7 +22,9 @@ runs that can be compared rather than one result file that the next run overwrit
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
+import logging
 import time
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -38,6 +40,7 @@ RUN = "run.json"
 RESULT = "result.json"
 TRANSCRIPT = "transcript.txt"
 CALLS = "calls.json"
+logger = logging.getLogger(__name__)
 
 # How many scenarios run at once by default. One, because the shipped default should be the one
 # that cannot surprise anybody: a voice suite places real calls that cost real money, and fanning
@@ -176,6 +179,7 @@ async def simulate(
     run_id: str = "",
     on_case_start: Callable[[Scenario], Any] | None = None,
     on_case_done: Callable[[Result], Any] | None = None,
+    on_exchange: Callable[[str, dict[str, Any]], Any] | None = None,
 ) -> dict[str, Any]:
     """Run a whole suite through ALK and write it out as one run.
 
@@ -197,13 +201,19 @@ async def simulate(
     async def one(index: int, scenario: Scenario) -> None:
         async with room:
             if on_case_start:
-                on_case_start(scenario)
+                notified = on_case_start(scenario)
+                if inspect.isawaitable(notified):
+                    await notified
             began = time.time()
             folder = root / scenario.name
             folder.mkdir(parents=True, exist_ok=True)
             try:
                 result = await _run_one(
-                    scenario, contract, world_root, folder, roles=roles
+                    scenario, contract, world_root, folder, roles=roles,
+                    on_exchange=(
+                        (lambda turn: on_exchange(scenario.name, turn))
+                        if on_exchange else None
+                    ),
                 )
             except Exception as failed:  # noqa: BLE001 - one bad scenario never stops the suite
                 result = Result(
@@ -214,7 +224,9 @@ async def simulate(
             _write_case(folder, result)
             ordered[index] = result
             if on_case_done:
-                on_case_done(result)
+                notified = on_case_done(result)
+                if inspect.isawaitable(notified):
+                    await notified
 
     await asyncio.gather(
         *(one(index, scenario) for index, scenario in enumerate(scenarios))
@@ -282,6 +294,7 @@ async def _run_one(
     folder: Path,
     *,
     roles: dict[str, str],
+    on_exchange: Callable[[dict[str, Any]], Any] | None = None,
 ) -> Result:
     """One scenario, in its own world, through ALK's runner.
 
@@ -332,10 +345,14 @@ async def _run_one(
         # ALK places the call and drives a simulated caller that is a real model over STT and
         # TTS, so this half was never deterministic.
         return await _spoken_to(
-            scenario, contract, world, world_root, folder, roles=roles
+            scenario, contract, world, world_root, folder, roles=roles,
+            on_exchange=on_exchange,
         )
     finally:
-        world.close()
+        try:
+            world.close()
+        except Exception:  # cleanup must never replace a completed scenario result
+            logger.exception("world cleanup failed after scenario %s", scenario.name)
 
 
 def _found_audio(directory: Path) -> Path | None:
@@ -429,6 +446,7 @@ async def _spoken_to(
     folder: Path,
     *,
     roles: dict[str, str],
+    on_exchange: Callable[[dict[str, Any]], Any] | None = None,
 ) -> Result:
     """A real call, with the agent's own tools answered by this world.
 
@@ -455,6 +473,12 @@ async def _spoken_to(
     if stopping:
         raise RuntimeError("cannot place a call:\n  - " + "\n  - ".join(stopping))
 
+    loop = asyncio.get_running_loop()
+
+    def live_exchange(turn: dict[str, Any]) -> None:
+        if on_exchange:
+            loop.call_soon_threadsafe(on_exchange, turn)
+
     def placed() -> tuple[Any, str, str]:
         """Everything about the call, off the event loop.
 
@@ -470,11 +494,31 @@ async def _spoken_to(
             os.environ["HARNESS_INSTRUCTION"] = instruction
             os.environ["HARNESS_SCENARIO"] = scenario.name
             os.environ["HARNESS_OUTCOME"] = scenario.tests
-            code = place_the_call(os.environ.get("HARNESS_VOICE_CASE", "2.1.2"))
+            os.environ["HARNESS_PERSONA"] = json.dumps(
+                scenario.persona.model_dump(exclude_none=True)
+                if scenario.persona is not None
+                else {"name": "customer"}
+            )
+            os.environ["HARNESS_SCRIPTED_CALLER"] = json.dumps(
+                scenario.persona.scripted_caller
+                if scenario.persona is not None
+                and scenario.persona.scripted_caller is not None
+                else {}
+            )
+            code = place_the_call(
+                os.environ.get("HARNESS_VOICE_CASE", "2.1.2"),
+                on_exchange=live_exchange if on_exchange else None,
+            )
         finally:
-            webhook.stop()
+            try:
+                webhook.stop()
+            except Exception:
+                logger.exception("webhook cleanup failed after scenario %s", scenario.name)
             if tunnel is not None:
-                tunnel.terminate()
+                try:
+                    tunnel.terminate()
+                except Exception:
+                    logger.exception("tunnel cleanup failed after scenario %s", scenario.name)
         # Everything the runner recorded about this call, read from the report it wrote.
         return code, newest_report(started)
 

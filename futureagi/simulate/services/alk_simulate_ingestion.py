@@ -168,7 +168,10 @@ def store_alk_recording(
     # pages read ``recording_url`` off the row, so a call whose audio uploaded but whose row
     # was never updated shows no player at all -- indistinguishable from one never recorded.
     call_execution.recording_url = recording_url
-    call_execution.save(update_fields=["recording_url", "updated_at"])
+    call_execution.recording_available = True
+    call_execution.save(
+        update_fields=["recording_url", "recording_available", "updated_at"]
+    )
     return RecordingUploadResult(
         recording_url=recording_url,
         object_key=object_key,

@@ -13,6 +13,8 @@ from fi.simulate.evaluation import evaluate_agent_report
 from fi.simulate.runtime import new_run_id
 from voice_cases import CASES, build_inputs, missing_env
 
+LIVE_EVENT = "HARNESS_EXCHANGE "
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run one voice acceptance matrix cell")
@@ -86,6 +88,9 @@ def main() -> int:
         return 0
 
     trigger = _start_livekit_outbound_trigger(case.case_id)
+    async def on_exchange(_index: int, turn: dict) -> None:
+        print(LIVE_EVENT + json.dumps(turn), flush=True)
+
     try:
         report = asyncio.run(
             simulate.run_voice_simulation(
@@ -104,6 +109,7 @@ def main() -> int:
                 cleanup_timeout=30,
                 conversation_direction=inputs.conversation_direction,
                 agent_first_silence_timeout_seconds=agent_first_silence,
+                on_exchange=on_exchange,
             )
         )
         evaluation = evaluate_agent_report(report, attach=True)
