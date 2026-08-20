@@ -8,6 +8,7 @@ import {
   IconButton,
   Typography,
 } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import React, { useEffect, useRef, useState } from "react";
 import Iconify from "src/components/iconify";
 import EvalsGrid from "./EvalsGrid";
@@ -222,16 +223,10 @@ const EvalsTasksView = ({ observeId = null }) => {
           )
         }
       />
-      <Box
-        sx={{
-          flex: 1,
-          display: shouldShowLoading ? "flex" : "none",
-          justifyContent: "center",
-          alignItems: "center",
-        }}
-      >
-        <CircularProgress />
-      </Box>
+      <LoadingScreen
+        variant="orbit"
+        sx={{ flex: 1, display: shouldShowLoading ? "flex" : "none" }}
+      />
       <Box
         sx={{
           flex: 1,

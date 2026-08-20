@@ -1,7 +1,30 @@
 import structlog
 from django.apps import AppConfig
+from django.db.models.signals import post_migrate
 
 logger = structlog.get_logger(__name__)
+
+
+def _seed_prompt_labels_after_migrate(sender, **kwargs):
+    """Auto-seed the global Production/Staging/Development prompt labels
+    after every migrate (TH-7261).
+
+    Nothing else ever creates these rows — the only other caller is an API
+    action the frontend never hits — so a fresh database shows "No labels
+    found" in the Add Tags modal. Mirrors the node-template seeding in
+    agent_playground.apps. Idempotent via get_or_create.
+    """
+    try:
+        from model_hub.models.prompt_label import PromptLabel
+
+        created = PromptLabel.create_default_system_labels()
+        if created:
+            logger.info(
+                "default_prompt_labels_seeded",
+                created=[label.name for label in created],
+            )
+    except Exception:
+        logger.exception("default_prompt_label_seed_failed")
 
 
 class ModelHubConfig(AppConfig):
@@ -14,6 +37,14 @@ class ModelHubConfig(AppConfig):
         import sys
 
         import model_hub.signals  # noqa: F401
+
+        # Registered before the migrate early-return below — post_migrate
+        # fires during the `migrate` command itself.
+        post_migrate.connect(
+            _seed_prompt_labels_after_migrate,
+            sender=self,
+            dispatch_uid="model_hub_seed_default_prompt_labels",
+        )
 
         if "migrate" in sys.argv or "makemigrations" in sys.argv:
             return

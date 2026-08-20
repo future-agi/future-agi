@@ -121,8 +121,8 @@ class TestAddItemsEnumeratedRegression:
         self, auth_client, active_queue, observe_project
     ):
         """The denormalized project_id is stamped on add so the render/list read can
-        scope its CH scan to one tenant (TH-6864). Fails if the write path drops it —
-        NULL project_id degrades to the full-table wide scan the fix removes."""
+        scope its CH scan to one tenant. A NULL project_id degrades to a
+        full-table scan."""
         t = Trace.objects.create(project=observe_project, name="t-proj")
         _seed_ch_trace_root(t)
         resp = auth_client.post(
@@ -369,8 +369,8 @@ class TestAddItemsFilterMode:
     def test_filter_mode_add_populates_project_id(
         self, auth_client, active_queue, observe_project
     ):
-        """Filter-mode add stamps project_id from the selection too (TH-6864), so
-        every path that fills a queue leaves items scope-able by the render read."""
+        """Filter-mode add stamps project_id from the selection too, so every path
+        that fills a queue leaves items scope-able by the render read."""
         _seed_ch_trace_root(
             Trace.objects.create(project=observe_project, name="t-fp")
         )
@@ -996,13 +996,13 @@ class TestAddItemsFilterModeCallExecutionRichFilters:
                 "filters": json.dumps(
                     [
                         _api_filter(
-                            str(priority_column.id),
+                            priority_column.name,
                             "text",
                             "equals",
                             "high",
                         ),
                         _api_filter(
-                            str(attempts_column.id),
+                            attempts_column.name,
                             "number",
                             "less_than",
                             5,

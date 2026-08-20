@@ -10,6 +10,7 @@ The builder builds SQL STRINGS only — nothing here touches ClickHouse.
 """
 
 import re
+from datetime import datetime
 
 import pytest
 
@@ -235,6 +236,42 @@ def test_id_query_selects_only_ids():
     # No page-limit/offset — resolver wants the full matched id set.
     assert "%(limit)s" not in s
     assert "%(offset)s" not in s
+
+
+@pytest.mark.unit
+def test_id_query_continuous_floor_windows_on_created_at():
+    floor = datetime(2026, 8, 1, 12, 0)
+    sql, params = VoiceCallListQueryBuilder(project_id=PROJECT_ID).build_id_query(
+        created_at_floor=floor
+    )
+    s = _squash(sql)
+    # Arrival floor replaces the start_time window — a call can start long before
+    # its root span reaches CH (Vapi end-of-call flush).
+    assert "created_at >= %(created_at_floor)s" in s
+    assert "start_time >= %(start_date)s" not in s
+    assert params["created_at_floor"] == floor
+
+
+@pytest.mark.unit
+def test_id_query_continuous_ceiling_upper_bounds_arrival():
+    floor = datetime(2026, 8, 1, 12, 0)
+    ceil = datetime(2026, 8, 1, 12, 5)
+    sql, params = VoiceCallListQueryBuilder(project_id=PROJECT_ID).build_id_query(
+        created_at_floor=floor, created_at_ceiling=ceil
+    )
+    s = _squash(sql)
+    assert "created_at >= %(created_at_floor)s" in s
+    assert "created_at < %(created_at_ceiling)s" in s
+    assert params["created_at_ceiling"] == ceil
+
+
+@pytest.mark.unit
+def test_id_query_ceiling_ignored_without_floor():
+    sql, params = VoiceCallListQueryBuilder(project_id=PROJECT_ID).build_id_query(
+        created_at_ceiling=datetime(2026, 8, 1, 12, 5)
+    )
+    assert "created_at_ceiling" not in params
+    assert "start_time >= %(start_date)s" in _squash(sql)
 
 
 # ---------------------------------------------------------------------------

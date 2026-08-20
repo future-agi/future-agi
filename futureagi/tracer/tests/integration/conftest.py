@@ -135,9 +135,16 @@ def ch_schema(ch_client):
     # (deleted = 0 OR deleted IS NULL)`` (see query_builders/eval_metrics.py,
     # schema.py:CDC_EVAL_LOGGER). Add those CDC columns (defaulting to
     # not-deleted) so both readers resolve against the seeded rows.
+    # `_peerdb_version` backs the enrichment reader's `ORDER BY _peerdb_version
+    # DESC LIMIT 1 BY id` page-scoped dedup; without it the eval read 500s.
+    # NB: no seeder writes `_peerdb_version` here, so it stays at the DEFAULT 0
+    # constant — the version-collapse/supersede behaviour is NOT exercised by
+    # this fixture, only kept present so the reader resolves. Add a seeder that
+    # sets distinct versions if that dedup ever needs real coverage.
     for col_ddl in (
         "_peerdb_is_deleted UInt8 DEFAULT 0",
         "deleted UInt8 DEFAULT 0",
+        "_peerdb_version Int64 DEFAULT 0",
     ):
         ch_client.command(
             f"ALTER TABLE {db}.tracer_eval_logger ADD COLUMN IF NOT EXISTS {col_ddl}"

@@ -3296,7 +3296,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 textTransform: "none",
                 fontSize: 12,
                 fontWeight: 600,
-                color: "#573FCC",
+                color: (t) =>
+                  t.palette.mode === "dark" ? "text.primary" : "#573FCC",
                 minWidth: "auto",
                 p: 0,
                 "&:hover": { bgcolor: "transparent" },

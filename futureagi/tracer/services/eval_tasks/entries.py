@@ -23,6 +23,8 @@ from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.eval_tasks.config_hash import resolved_config_hash
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from tracer.models.eval_task import EvalTask
     from tracer.services.clickhouse.v2.span_reader import CHSpanReader
 
@@ -106,8 +108,12 @@ def persist_eval_result(logger_kwargs: dict[str, Any]) -> EvalLogger | None:
     return EvalLogger.objects.filter(id=entry_id).first()
 
 
-def materialize_pending(task: EvalTask) -> int:
-    """Create one pending entry per (desired row, eval). Returns rows submitted."""
+def materialize_pending(task: EvalTask, *, ceiling: datetime | None = None) -> int:
+    """Create one pending entry per (desired row, eval). Returns rows submitted.
+
+    ``ceiling`` (the reconcile pass's frozen now) upper-bounds the continuous
+    arrival window so a slow pass can't leave rows above the next cursor.
+    """
     evals = list(task.evals.all())
     if not evals:
         return 0
@@ -116,7 +122,9 @@ def materialize_pending(task: EvalTask) -> int:
     submitted = 0
     reader = get_reader()
     try:
-        for batch in iter_desired_rows(task, batch_size=_MATERIALIZE_BATCH):
+        for batch in iter_desired_rows(
+            task, batch_size=_MATERIALIZE_BATCH, ceiling=ceiling
+        ):
             fk_by_id = _resolve_entry_fks(
                 reader, task.row_type, batch, project_id=str(task.project_id)
             )
@@ -235,24 +243,22 @@ def _resolve_entry_fks(
     for start in range(0, len(ids), _FK_CHUNK):
         chunk = ids[start : start + _FK_CHUNK]
         if row_type == RowType.TRACES:
-            # Only root.id is used below, so skip the fat JSON columns.
             roots = reader.list_root_spans_by_trace_ids(
-                chunk, include_heavy=False, project_id=project_id
+                chunk, project_id=project_id, columns=["id", "trace_id"]
             )
             fks.update(
                 {
-                    trace_id: {"observation_span_id": root.id, "trace_id": trace_id}
+                    trace_id: {"observation_span_id": root["id"], "trace_id": trace_id}
                     for trace_id, root in roots.items()
                 }
             )
         else:
-            # SPANS / VOICE_CALLS: only id + trace_id are used.
             spans = reader.list_by_ids(
-                chunk, include_heavy=False, project_id=project_id
+                chunk, project_id=project_id, columns=["id", "trace_id"]
             )
             fks.update(
                 {
-                    s.id: {"observation_span_id": s.id, "trace_id": s.trace_id}
+                    s["id"]: {"observation_span_id": s["id"], "trace_id": s["trace_id"]}
                     for s in spans
                 }
             )

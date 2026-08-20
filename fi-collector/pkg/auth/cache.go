@@ -78,3 +78,21 @@ func (c *cache) addProjects(key string, projects map[string]string) {
 	}
 	e.result.SetProjects(projects)
 }
+
+// evictProjectID drops every name mapped to projectID from all cached entries
+// so the next ingest re-resolves it from PG. Returns entries touched.
+func (c *cache) evictProjectID(projectID string) int {
+	if projectID == "" {
+		return 0
+	}
+	touched := 0
+	c.m.Range(func(_, val any) bool {
+		if e, ok := val.(*cacheEntry); ok && e.result != nil {
+			if e.result.DeleteProjectByID(projectID) {
+				touched++
+			}
+		}
+		return true
+	})
+	return touched
+}

@@ -25,6 +25,7 @@ import React, {
   useState,
 } from "react";
 import Iconify from "src/components/iconify";
+import { useMapToVariable } from "./useMapToVariable";
 import axios, { endpoints } from "src/utils/axios";
 import { canonicalEntries } from "src/utils/utils";
 import { useDebounce } from "src/hooks/use-debounce";
@@ -35,6 +36,7 @@ import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
 import { unwrapCellValue } from "./datasetCellValue";
 import { buildTree } from "./columnTree";
+import RequiredMark from "src/components/RequiredMark";
 
 const DATASET_PAGE_SIZE = 25;
 
@@ -718,6 +720,14 @@ const DatasetTestMode = React.forwardRef(
         ? { ...initialMapping }
         : {},
     );
+
+    // Shared click-to-map behaviour for the Columns/Value table rows. Here a
+    // row's path is the column name (cell.name), matching the mapping options.
+    const { renderRowMapAction, mapMenu, rowHoverSx } = useMapToVariable({
+      variables,
+      mapping,
+      setMapping,
+    });
 
     // Search + expand
     const [tableSearch, setTableSearch] = useState("");
@@ -1419,7 +1429,8 @@ const DatasetTestMode = React.forwardRef(
         {!initialDatasetId && !isWorkbenchMode && (
           <Box>
             <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
-              Choose Dataset<span style={{ color: "#d32f2f" }}>*</span>
+              Choose Dataset
+              <RequiredMark />
             </Typography>
             <Autocomplete
               fullWidth
@@ -1667,6 +1678,7 @@ const DatasetTestMode = React.forwardRef(
                       borderColor: "divider",
                       "&:last-child": { borderBottom: "none" },
                       "&:hover": { backgroundColor: "action.hover" },
+                      ...rowHoverSx,
                     }}
                   >
                     {/* Column name */}
@@ -1744,6 +1756,7 @@ const DatasetTestMode = React.forwardRef(
                         </Typography>
                       )}
                     </Box>
+                    {renderRowMapAction(cell.name)}
                   </Box>
                 );
               })}
@@ -1875,6 +1888,9 @@ const DatasetTestMode = React.forwardRef(
             </Typography>
           </Box>
         )}
+
+        {/* Map-from-table menu — shared across mapping surfaces */}
+        {mapMenu}
 
         {/* Result */}
         {result && !isRunning && (

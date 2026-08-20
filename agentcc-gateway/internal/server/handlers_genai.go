@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -469,20 +468,6 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 
 		if eventCh == nil && errCh == nil && translatorErrCh == nil {
 			return
-		}
-	}
-}
-
-// parseMetadataHeader parses the x-agentcc-metadata JSON header into the request context.
-// Security-sensitive keys are blocked to prevent client-side injection.
-func parseMetadataHeader(meta string, rc *models.RequestContext) {
-	var m map[string]string
-	if err := json.Unmarshal([]byte(meta), &m); err == nil {
-		for k, v := range m {
-			if isBlockedMetadataKey(k) {
-				continue
-			}
-			rc.Metadata[k] = v
 		}
 	}
 }

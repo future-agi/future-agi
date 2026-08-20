@@ -1147,6 +1147,7 @@ dependencies = [
     { name = "clickhouse-connect" },
     { name = "clickhouse-driver" },
     { name = "datasets" },
+    { name = "disposable-email-domains" },
     { name = "django" },
     { name = "django-anymail" },
     { name = "django-celery-beat" },
@@ -1221,7 +1222,6 @@ dependencies = [
     { name = "optuna" },
     { name = "pandas" },
     { name = "partial-json-parser" },
-    { name = "pdfminer" },
     { name = "pdfminer-six" },
     { name = "pdfplumber" },
     { name = "pillow" },
@@ -1291,11 +1291,13 @@ dev = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "en-core-web-sm" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "pytest-django" },
     { name = "pytest-mock" },
+    { name = "pytest-split" },
     { name = "pytest-xdist" },
 ]
 
@@ -1313,6 +1315,7 @@ requires-dist = [
     { name = "clickhouse-connect" },
     { name = "clickhouse-driver" },
     { name = "datasets" },
+    { name = "disposable-email-domains", specifier = "==0.0.239" },
     { name = "django", specifier = "==5.1.8" },
     { name = "django-anymail" },
     { name = "django-celery-beat" },
@@ -1392,7 +1395,6 @@ requires-dist = [
     { name = "optuna", specifier = ">=4.6.0" },
     { name = "pandas" },
     { name = "partial-json-parser" },
-    { name = "pdfminer" },
     { name = "pdfminer-six", specifier = "<=20240706" },
     { name = "pdfplumber", specifier = ">=0.10.0" },
     { name = "pillow" },
@@ -1454,11 +1456,13 @@ provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "en-core-web-sm", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest-asyncio", specifier = ">=0.21.0" },
     { name = "pytest-cov", specifier = ">=6.2.1" },
     { name = "pytest-django", specifier = ">=4.11.1" },
     { name = "pytest-mock", specifier = ">=3.14.1" },
+    { name = "pytest-split", specifier = ">=0.11.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
 ]
 
@@ -1839,6 +1843,15 @@ wheels = [
 ]
 
 [[package]]
+name = "disposable-email-domains"
+version = "0.0.239"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6b/96/d9cbcb9f6a7228c961fbdfcf1e537a240d3135fb2fcd73fefcbc25678019/disposable_email_domains-0.0.239.tar.gz", hash = "sha256:b32dcfc839a0851d8cdba7117aec0e72c569344de186deb4462c69cfbec5f16f", size = 101343, upload-time = "2026-08-19T01:47:29.608Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cb/43/b2a2af68bd2b06bd8e01a6a52d97529df54ac4ceff435a7abaf8a5f4143f/disposable_email_domains-0.0.239-py3-none-any.whl", hash = "sha256:8b33f253eb3c1fcb260cc036000c755acbbc0115541f38b8a6a149712fc0a601", size = 52073, upload-time = "2026-08-19T01:47:28.196Z" },
+]
+
+[[package]]
 name = "distlib"
 version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2162,6 +2175,14 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/3d/a0/e7761b7a5a73f3933480ff3bdf87fcc9228ab8bf776fc08d1af0e4ff2f89/elevenlabs-2.30.0.tar.gz", hash = "sha256:a6a0474e045b93475fcd5f5829b67438d5a6aef9698b6f8758e7148ac03c2b12", size = 438124, upload-time = "2026-01-13T09:25:21.352Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/eb/16/7854a5d114f23fe3e2778b3b7838f4e63973f4ab6f0d71247ce0bcb9038f/elevenlabs-2.30.0-py3-none-any.whl", hash = "sha256:eeee92703a27e7ecd0e8ba4d547f730bcef4ecb02485efa59aeecab3a904d024", size = 1171600, upload-time = "2026-01-13T09:25:19.515Z" },
+]
+
+[[package]]
+name = "en-core-web-sm"
+version = "3.8.0"
+source = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
+wheels = [
+    { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl", hash = "sha256:1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85" },
 ]
 
 [[package]]
@@ -5525,15 +5546,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pdfminer"
-version = "20191125"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pycryptodome" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/71/a3/155c5cde5f9c0b1069043b2946a93f54a41fd72cc19c6c100f6f2f5bdc15/pdfminer-20191125.tar.gz", hash = "sha256:9e700bc731300ed5c8936343c1dd4529638184198e54e91dd2b59b64a755dc01", size = 4173248, upload-time = "2019-11-25T12:02:21.1Z" }
-
-[[package]]
 name = "pdfminer-six"
 version = "20231228"
 source = { registry = "https://pypi.org/simple" }
@@ -6677,6 +6689,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/68/14/eb014d26be205d38ad5ad20d9a80f7d201472e08167f0bb4361e251084a9/pytest_mock-3.15.1.tar.gz", hash = "sha256:1849a238f6f396da19762269de72cb1814ab44416fa73a8686deac10b0d87a0f", size = 34036, upload-time = "2025-09-16T16:37:27.081Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5a/cc/06253936f4a7fa2e0f48dfe6d851d9c56df896a9ab09ac019d70b760619c/pytest_mock-3.15.1-py3-none-any.whl", hash = "sha256:0a25e2eb88fe5168d535041d09a4529a188176ae608a6d249ee65abc0949630d", size = 10095, upload-time = "2025-09-16T16:37:25.734Z" },
+]
+
+[[package]]
+name = "pytest-split"
+version = "0.11.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2f/16/8af4c5f2ceb3640bb1f78dfdf5c184556b10dfe9369feaaad7ff1c13f329/pytest_split-0.11.0.tar.gz", hash = "sha256:8ebdb29cc72cc962e8eb1ec07db1eeb98ab25e215ed8e3216f6b9fc7ce0ec2b5", size = 13421, upload-time = "2026-02-03T09:14:31.469Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ae/a1/d4423657caaa8be9b31e491592b49cebdcfd434d3e74512ce71f6ec39905/pytest_split-0.11.0-py3-none-any.whl", hash = "sha256:899d7c0f5730da91e2daf283860eb73b503259cb416851a65599368849c7f382", size = 11911, upload-time = "2026-02-03T09:14:33.708Z" },
 ]
 
 [[package]]

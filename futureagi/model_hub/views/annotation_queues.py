@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 import structlog
+from accounts.models.user import User
 from django.conf import settings
 from django.db import transaction
 from django.db.models import (
@@ -22,12 +23,6 @@ from django.db.models import (
 from django.db.models.functions import Coalesce, Lower, TruncDate
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework import serializers, status, viewsets
-from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
-
-from accounts.models.user import User
 from model_hub.models.annotation_queues import (
     FULL_ACCESS_QUEUE_ROLES,
     SOURCE_TYPE_FK_MAP,
@@ -135,11 +130,16 @@ from model_hub.utils.annotation_queue_helpers import (
     filter_available_source_ids_for_annotation,
     get_fk_field_name,
     is_source_available_for_annotation,
+    preview_payload_for_source,
     resolve_source_content,
     resolve_source_object,
     resolve_source_objects_bulk,
 )
 from model_hub.utils.utils import send_message_to_channel
+from rest_framework import serializers, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 from simulate.models.test_execution import CallTranscript
 from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
 from tfc.utils.api_contracts import validated_request
@@ -2660,7 +2660,6 @@ def _restore_archived_default_queue(queue):
     (hourly/daily/etc) so the user sees a smooth ramp-back-up.
     """
     from django.utils import timezone as tz
-
     from model_hub.models.annotation_queues import AutomationRule
 
     queue.deleted = False
@@ -2878,22 +2877,6 @@ def _check_annotation_queue_create_limit(org, workspace=None):
         raise
 
 
-def _review_workflow_entitlement_denial(request):
-    try:
-        from ee.usage.services.entitlements import Entitlements
-    except ImportError:
-        return None
-
-    org = getattr(request, "organization", None) or request.user.organization
-    feat_check = Entitlements.check_feature(
-        str(org.id),
-        "has_review_workflow",
-    )
-    if not feat_check.allowed:
-        return feat_check.reason
-    return None
-
-
 def _related_count_subquery(manager, fk_field, **filters):
     """Live rows of *manager* pointing at the outer row, as a correlated scalar
     subquery: one indexed aggregate on ``fk_field``, never a join the outer
@@ -3045,16 +3028,13 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         try:
             serializer.is_valid(raise_exception=True)
 
-            from tfc.ee_gating import (
-                EEFeature,
-                check_ee_feature,
-            )
-
             requires_review = _is_truthy(
                 serializer.validated_data.get("requires_review", False)
             )
             if requires_review:
-                check_ee_feature(EEFeature.REVIEW_WORKFLOW, org_id=str(org.id))
+                from tfc.ee_gating import check_ee_feature
+
+                check_ee_feature("review_workflow", org_id=str(org.id))
             _check_annotation_queue_create_limit(
                 org, getattr(request, "workspace", None)
             )
@@ -3088,10 +3068,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         if requires_review_requested is not None and _is_truthy(
             requires_review_requested
         ):
-            from tfc.ee_gating import EEFeature, check_ee_feature
+            from tfc.ee_gating import check_ee_feature
 
             org = getattr(request, "organization", None) or request.user.organization
-            check_ee_feature(EEFeature.REVIEW_WORKFLOW, org_id=str(org.id))
+            check_ee_feature("review_workflow", org_id=str(org.id))
 
         try:
             return super().update(request, *args, **kwargs)
@@ -4688,6 +4668,22 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                         QueueItemReviewThread.STATUS_REOPENED,
                     ],
                 ),
+                # workflow_status and workflow_status_label each resolved this same
+                # lookup per rendered item, so a page of items awaiting review cost
+                # 2 extra queries per row on top of the base — 55 queries for 25
+                # items vs 15 for 5 (TH-7211). It was already annotated below, but
+                # only when the caller filtered by in_review/resubmitted, and the
+                # serializer never read it. Annotating unconditionally makes the
+                # status flat for every page and for a single-item retrieve; the
+                # status filters below read this same alias.
+                _has_addressed_review=Exists(
+                    QueueItemReviewThread.objects.filter(
+                        queue_item_id=OuterRef("pk"),
+                        blocking=True,
+                        status=QueueItemReviewThread.STATUS_ADDRESSED,
+                        deleted=False,
+                    )
+                ),
             )
         )
         queue_id = self.kwargs.get("queue_id")
@@ -4708,20 +4704,6 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
 
         if statuses:
             status_q = Q()
-            addressed_threads = QueueItemReviewThread.objects.filter(
-                queue_item_id=OuterRef("pk"),
-                blocking=True,
-                status=QueueItemReviewThread.STATUS_ADDRESSED,
-                deleted=False,
-            )
-            if any(
-                workflow_status in statuses
-                for workflow_status in ("in_review", "resubmitted")
-            ):
-                queryset = queryset.annotate(
-                    _has_addressed_review=Exists(addressed_threads)
-                )
-
             for item_status in statuses:
                 if item_status == "in_review":
                     status_q |= Q(
@@ -4989,6 +4971,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     organization=organization,
                     workspace=workspace or queue.workspace,
                     project_id=getattr(source_obj, "project_id", None),
+                    # Captured from the source we already resolved above, so the
+                    # items grid never re-reads CH to render this row (TH-7211).
+                    source_preview=preview_payload_for_source(source_type, source_obj),
                     order=max_order,
                     **{f"{fk_field}_id": source_pk},
                 )
@@ -5100,6 +5085,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             available_ids,
             unavailable_count,
             unavailable_error,
+            previews_by_id,
         ) = filter_available_source_ids_for_annotation(
             source_type,
             resolved_ids,
@@ -5136,6 +5122,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 organization=request.organization,
                 workspace=getattr(request, "workspace", None) or queue.workspace,
                 project_id=project_id,
+                # Built from the roots the availability check already read, so
+                # the grid never re-reads CH to render this row (TH-7211).
+                source_preview=previews_by_id.get(tid),
                 order=max_order + i,
                 **{f"{fk_field}_id": tid},
             )
@@ -5449,14 +5438,22 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             )
         )
 
+        # One read for every label in the payload; this was a .get() per label
+        # in the annotator's inner loop (TH-7211).
+        labels_by_id = {
+            label.pk: label
+            for label in AnnotationsLabels.objects.filter(
+                pk__in=[ann["label_id"] for ann in annotations_data], deleted=False
+            )
+        }
+
         annotations_to_save = []
         for ann_data in annotations_data:
             label_id = ann_data["label_id"]
             value = ann_data["value"]
 
-            try:
-                label = AnnotationsLabels.objects.get(pk=label_id, deleted=False)
-            except AnnotationsLabels.DoesNotExist:
+            label = labels_by_id.get(label_id)
+            if label is None:
                 continue
 
             # Validate label belongs to this queue
@@ -5471,41 +5468,139 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 return self._gm.bad_request(str(exc))
             annotations_to_save.append((ann_data, label, value))
 
-        for ann_data, label, value in annotations_to_save:
-            per_label_notes = (
-                ann_data.get("notes", label_notes_fallback) if label.allow_notes else ""
-            )
+        # A payload may repeat a label_id. The sequential update_or_create this
+        # replaces created then updated the same row, so the LAST entry won;
+        # bulk_create(ignore_conflicts) would keep the FIRST and drop the rest.
+        # Collapse to the last entry per label to preserve that.
+        if len({label.pk for _, label, _ in annotations_to_save}) != len(
+            annotations_to_save
+        ):
+            deduped = {}
+            for ann_data, label, value in annotations_to_save:
+                deduped[label.pk] = (ann_data, label, value)
+            annotations_to_save = list(deduped.values())
 
-            # Upsert Score (unified annotation primitive)
-            # Use no_workspace_objects + _id fields to avoid the LEFT JOIN
-            # on nullable workspace FK that triggers PostgreSQL's "FOR UPDATE
-            # cannot be applied to the nullable side of an outer join".
-            if source_id and source_fk_field:
-                # Scope the upsert by queue_item so each queue review context
-                # owns its own Score row even when the same annotator scores
-                # the same label across multiple queues.
-                score, _ = Score.no_workspace_objects.update_or_create(
+        # Upsert every Score in three statements instead of update_or_create per
+        # label, which cost a SELECT, an INSERT/UPDATE and its own savepoint each
+        # — ~8 queries per label in the annotator's inner loop (TH-7211).
+        #
+        # Use no_workspace_objects + _id fields to avoid the LEFT JOIN on the
+        # nullable workspace FK that triggers PostgreSQL's "FOR UPDATE cannot be
+        # applied to the nullable side of an outer join".
+        if source_id and source_fk_field and annotations_to_save:
+            request_workspace = getattr(request, "workspace", None)
+            # _id, not the object: item.workspace would lazy-load the FK.
+            score_workspace_id = (
+                request_workspace.id if request_workspace else item.workspace_id
+            )
+            # Scoped by queue_item so each queue review context owns its own Score
+            # row even when the same annotator scores the same label across queues.
+            existing_by_label = {
+                score.label_id: score
+                for score in Score.no_workspace_objects.filter(
                     **{f"{source_fk_field}_id": source_id},
-                    label_id=label.pk,
+                    label_id__in=[label.pk for _, label, _ in annotations_to_save],
                     annotator_id=request.user.pk,
                     queue_item=item,
                     deleted=False,
-                    defaults={
-                        "source_type": item.source_type,
-                        "value": value,
-                        "score_source": "human",
-                        "notes": per_label_notes,
-                        "organization": request.organization,
-                        # Denormalized tracer project id (QueueItem.project is the
-                        # tracer.Project; null for non-tracer sources).
-                        **(
-                            {"tracer_project_id": item.project_id}
-                            if item.project_id
-                            else {}
-                        ),
-                    },
                 )
-                submitted += 1
+            }
+            now = timezone.now()
+            to_create, to_update = [], []
+            for ann_data, label, value in annotations_to_save:
+                per_label_notes = (
+                    ann_data.get("notes", label_notes_fallback)
+                    if label.allow_notes
+                    else ""
+                )
+                score = existing_by_label.get(label.pk)
+                if score is None:
+                    to_create.append(
+                        Score(
+                            **{f"{source_fk_field}_id": source_id},
+                            label_id=label.pk,
+                            annotator_id=request.user.pk,
+                            queue_item=item,
+                            source_type=item.source_type,
+                            value=value,
+                            score_source="human",
+                            notes=per_label_notes,
+                            organization=request.organization,
+                            # bulk_create skips the post_save tenancy backfill.
+                            # With a request workspace this is the value that
+                            # backfill would have written; with none it writes
+                            # item.workspace_id where the old path left NULL —
+                            # a deliberate improvement, not an equivalence, and
+                            # the same expression QueueItemNote uses below.
+                            workspace_id=score_workspace_id,
+                            # Denormalized tracer project id (QueueItem.project is
+                            # the tracer.Project; null for non-tracer sources).
+                            tracer_project_id=item.project_id or None,
+                        )
+                    )
+                else:
+                    # Score.save() writes value_history and bulk_update bypasses
+                    # it. The row just read IS the previous version, so the entry
+                    # is built here rather than re-reading it as save() must.
+                    if score.value != value:
+                        score.value_history = Score.appended_value_history(
+                            score.value,
+                            score.value_history,
+                            score.updated_at or score.created_at,
+                        )
+                    score.source_type = item.source_type
+                    score.value = value
+                    score.score_source = "human"
+                    score.notes = per_label_notes
+                    score.organization = request.organization
+                    if item.project_id:
+                        score.tracer_project_id = item.project_id
+                    # bulk_update does not honour auto_now.
+                    score.updated_at = now
+                    to_update.append(score)
+
+            # no_workspace_objects for the writes too, not just the read above:
+            # bulk_update filters through the manager's queryset, and the default
+            # manager scopes by the request workspace — which would silently skip
+            # exactly the NULL/mismatched-workspace rows this manager exists to
+            # reach, reporting them as submitted.
+            #
+            # The old per-label update_or_create took a FOR UPDATE row lock and
+            # serialised concurrent writers; this read is unlocked. Only the same
+            # annotator can collide (annotator_id is in every applicable unique
+            # key), so the exposure is one user double-submitting an item: the
+            # update path is last-writer-wins and can lose one value_history
+            # entry, and the create path drops the loser's value below.
+            with transaction.atomic():
+                if to_create:
+                    # A concurrent submit of the same label can win the race; the
+                    # partial unique index on (source, label, annotator,
+                    # queue_item) WHERE NOT deleted makes that a no-op, not a 500.
+                    Score.no_workspace_objects.bulk_create(
+                        to_create, ignore_conflicts=True
+                    )
+                if to_update:
+                    Score.no_workspace_objects.bulk_update(
+                        to_update,
+                        [
+                            "source_type",
+                            "value",
+                            "value_history",
+                            "score_source",
+                            "notes",
+                            "organization",
+                            "tracer_project_id",
+                            "updated_at",
+                        ],
+                    )
+            # Labels accepted for this item. Every one of them ends up with a
+            # live Score row, so this is not inflated by the ignore_conflicts
+            # drop above — but in that race the surviving row holds the
+            # concurrent request's value, not this one's. Deliberately not
+            # verified with a COUNT: that would add a query to the inner loop
+            # this change exists to shrink, to correct a number only a
+            # self-conflicting double-submit can skew.
+            submitted = len(annotations_to_save)
 
         if item_notes is not None:
             if item_notes:
@@ -6292,14 +6387,31 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 deleted=True,
             ).update(deleted=False, deleted_at=None)
 
-        # Update legacy FK to first assigned user (backward compat)
-        for item_pk in item_pks:
-            first_assignment = (
-                QueueItemAssignment.objects.filter(queue_item_id=item_pk, deleted=False)
-                .values_list("user_id", flat=True)
-                .first()
+        # Update legacy FK to first assigned user (backward compat).
+        # Was a SELECT plus an UPDATE per item — the whole N+1 on this endpoint.
+        # Now one SELECT for the batch, then one UPDATE per distinct assignee.
+        # order_by("pk") is load-bearing, not tidiness: the per-item .first() it
+        # replaces ran on an unordered queryset, and QuerySet.first() falls back
+        # to order_by("pk") in that case, so the old code deterministically
+        # picked the lowest-pk assignment. Reading the batch in the same order
+        # and keeping the first row per item reproduces that exactly; without it
+        # assigned_to would follow scan order and could differ between two
+        # identical calls.
+        first_by_item = {}
+        for qi_id, user_id in (
+            QueueItemAssignment.objects.filter(
+                queue_item_id__in=item_pks, deleted=False
             )
-            QueueItem.objects.filter(pk=item_pk).update(assigned_to_id=first_assignment)
+            .order_by("pk")
+            .values_list("queue_item_id", "user_id")
+        ):
+            first_by_item.setdefault(qi_id, user_id)
+
+        pks_by_assignee = {}
+        for item_pk in item_pks:
+            pks_by_assignee.setdefault(first_by_item.get(item_pk), []).append(item_pk)
+        for user_id, assignee_pks in pks_by_assignee.items():
+            QueueItem.objects.filter(pk__in=assignee_pks).update(assigned_to_id=user_id)
 
         return self._gm.success_response({"assigned": len(item_pks) * len(user_ids)})
 
@@ -6883,10 +6995,6 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     @action(detail=False, methods=["post"], url_path="bulk-review")
     def bulk_review(self, request, queue_id=None):
         """Approve or send back multiple pending-review items."""
-        entitlement_denial = _review_workflow_entitlement_denial(request)
-        if entitlement_denial:
-            return self._gm.forbidden_response(entitlement_denial)
-
         if not _has_queue_role(
             queue_id,
             request.user,
@@ -6925,9 +7033,46 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         reviewed = []
         now = timezone.now()
         workspace = getattr(request, "workspace", None)
+        is_approve = review_action == QueueItemReviewComment.ACTION_APPROVE
 
+        # Validation was 4 queries per item (label set refetched per row despite
+        # being one queue, two score .exists(), a blocking-thread .exists()).
+        # Three queries for the whole request now (TH-7211).
+        item_pks = [item.id for item in items]
+        label_ids = (
+            list(
+                items[0]
+                .queue.queue_labels.filter(deleted=False)
+                .values_list("label_id", flat=True)
+            )
+            if items
+            else []
+        )
+        # {queue_item_id: {annotator_id}} — same per-queue scoping as
+        # _scores_for_queue_item, which this replaces for the bulk path.
+        annotators_by_item: dict = {}
+        if label_ids and item_pks:
+            for qi_id, annotator_id in Score.objects.filter(
+                queue_item_id__in=item_pks,
+                label_id__in=label_ids,
+                deleted=False,
+            ).values_list("queue_item_id", "annotator_id"):
+                annotators_by_item.setdefault(qi_id, set()).add(annotator_id)
+        blocked_pks = (
+            set(
+                QueueItemReviewThread.objects.filter(
+                    queue_item_id__in=item_pks,
+                    blocking=True,
+                    status__in=OPEN_REVIEW_THREAD_STATUSES,
+                    deleted=False,
+                ).values_list("queue_item_id", flat=True)
+            )
+            if item_pks
+            else set()
+        )
+
+        eligible = []
         for item in items:
-            item_scores = _scores_for_queue_item(item)
             if item.review_status != "pending_review":
                 errors.append(
                     {
@@ -6936,7 +7081,8 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     }
                 )
                 continue
-            if not item_scores.exists():
+            item_annotators = annotators_by_item.get(item.id, set())
+            if not item_annotators:
                 errors.append(
                     {
                         "item_id": str(item.id),
@@ -6944,7 +7090,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     }
                 )
                 continue
-            if item_scores.filter(annotator=request.user).exists():
+            if request.user.pk in item_annotators:
                 errors.append(
                     {
                         "item_id": str(item.id),
@@ -6952,10 +7098,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     }
                 )
                 continue
-            if (
-                review_action == QueueItemReviewComment.ACTION_APPROVE
-                and _open_blocking_review_threads(item).exists()
-            ):
+            if is_approve and item.id in blocked_pks:
                 errors.append(
                     {
                         "item_id": str(item.id),
@@ -6963,48 +7106,84 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     }
                 )
                 continue
+            eligible.append(item)
 
-            if review_action == QueueItemReviewComment.ACTION_APPROVE:
+        # Resolve prior threads for every approved item in one statement, before
+        # any new thread exists — the replacement threads are created RESOLVED
+        # and would not match this filter anyway, but doing it first keeps that
+        # independent of the new thread's status.
+        if is_approve and eligible:
+            QueueItemReviewThread.objects.filter(
+                queue_item_id__in=[item.id for item in eligible],
+                status__in=[
+                    QueueItemReviewThread.STATUS_OPEN,
+                    QueueItemReviewThread.STATUS_REOPENED,
+                    QueueItemReviewThread.STATUS_ADDRESSED,
+                ],
+                deleted=False,
+            ).update(
+                status=QueueItemReviewThread.STATUS_RESOLVED,
+                resolved_by=request.user,
+                resolved_at=now,
+                updated_at=now,
+            )
+
+        # Two bulk_creates instead of two INSERTs per item; client-generated
+        # UUID pks let a comment reference its thread before either is written.
+        # workspace/organization passed explicitly because bulk_create skips the
+        # post_save backfill in tfc/utils/signals.py — same values either way.
+        new_threads, new_comments = [], []
+        for item in eligible:
+            if is_approve:
                 item.status = QueueItemStatus.COMPLETED.value
                 item.review_status = "approved"
                 comment_text = notes or "Approved."
                 thread_status = QueueItemReviewThread.STATUS_RESOLVED
-                QueueItemReviewThread.objects.filter(
-                    queue_item=item,
-                    status__in=[
-                        QueueItemReviewThread.STATUS_OPEN,
-                        QueueItemReviewThread.STATUS_REOPENED,
-                        QueueItemReviewThread.STATUS_ADDRESSED,
-                    ],
-                    deleted=False,
-                ).update(
-                    status=QueueItemReviewThread.STATUS_RESOLVED,
-                    resolved_by=request.user,
-                    resolved_at=now,
-                    updated_at=now,
-                )
             else:
                 item.status = QueueItemStatus.IN_PROGRESS.value
                 item.review_status = "rejected"
                 comment_text = notes
                 thread_status = QueueItemReviewThread.STATUS_OPEN
 
-            created_comment = _create_review_thread_comment(
-                item=item,
-                reviewer=request.user,
+            thread = QueueItemReviewThread(
+                queue_item=item,
+                created_by=request.user,
                 action=review_action,
-                comment=comment_text,
-                organization=request.organization,
-                workspace=workspace,
+                scope=_review_thread_scope(None, None),
                 blocking=review_action == QueueItemReviewComment.ACTION_REQUEST_CHANGES,
                 status=thread_status,
+                organization=request.organization,
+                workspace=workspace,
+            )
+            new_threads.append(thread)
+            new_comments.append(
+                QueueItemReviewComment(
+                    thread=thread,
+                    queue_item=item,
+                    reviewer=request.user,
+                    action=review_action,
+                    comment=comment_text,
+                    organization=request.organization,
+                    workspace=workspace,
+                )
             )
             item.reviewed_by = request.user
             item.reviewed_at = now
             item.review_notes = comment_text
             self._clear_reservation(item)
-            item.save(
-                update_fields=[
+            # bulk_update does not honour auto_now, so updated_at is set here to
+            # match what save() would have written.
+            item.updated_at = now
+            reviewed.append(str(item.id))
+
+        if new_threads:
+            QueueItemReviewThread.objects.bulk_create(new_threads, batch_size=500)
+            QueueItemReviewComment.objects.bulk_create(new_comments, batch_size=500)
+
+        if eligible:
+            QueueItem.objects.bulk_update(
+                eligible,
+                [
                     "status",
                     "review_status",
                     "reviewed_by",
@@ -7014,10 +7193,17 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     "reserved_at",
                     "reservation_expires_at",
                     "updated_at",
-                ]
+                ],
             )
-            _notify_annotation_discussion(item, created_comment, created_comment.thread)
-            reviewed.append(str(item.id))
+
+        # Broadcast only, deliberately. _notify_annotation_discussion's email
+        # step is unreachable here — no mentions, and the just-created thread's
+        # only participant is the actor — so it spent two queries per item
+        # proving recipients were empty. If that path is ever made to fire for
+        # approve/request-changes, wiring it in should be a deliberate call
+        # about one mail per item, not inherited silently.
+        for item, comment in zip(eligible, new_comments, strict=True):
+            _broadcast_annotation_discussion_update(item, comment, comment.thread)
 
         if reviewed:
             self._maybe_auto_complete_queue(queue_id)
@@ -7038,10 +7224,6 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="review")
     def review_item(self, request, queue_id=None, pk=None):
         """Approve, request changes, or leave reviewer feedback on an item."""
-        entitlement_denial = _review_workflow_entitlement_denial(request)
-        if entitlement_denial:
-            return self._gm.forbidden_response(entitlement_denial)
-
         # Verify requesting user has reviewer or manager role
         if not _has_queue_role(
             queue_id,
@@ -7654,7 +7836,6 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
         # row and ``QueueItem`` unique constraints make the bulk_create
         # idempotent.
         from temporalio.exceptions import WorkflowAlreadyStartedError
-
         from tfc.temporal.drop_in.runner import start_activity_sync
 
         task_id = f"automation-rule-eval-{rule.pk}"

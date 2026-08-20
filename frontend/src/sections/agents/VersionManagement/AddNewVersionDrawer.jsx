@@ -38,7 +38,11 @@ const AddNewVersionDrawer = ({ open, onClose, latestVersion }) => {
     setValue,
     getValues,
     trigger,
-  } = useAgentConfigForm(createAgentDefinitionSchema({ agentDefinitionId }), agentDetails);
+    clearErrors,
+  } = useAgentConfigForm(
+    createAgentDefinitionSchema({ agentDefinitionId }),
+    agentDetails,
+  );
 
   useEffect(() => {
     return () => resetAgentDetails();
@@ -200,6 +204,7 @@ const AddNewVersionDrawer = ({ open, onClose, latestVersion }) => {
             setValue={setValue}
             getValues={getValues}
             trigger={trigger}
+            clearErrors={clearErrors}
           />
         </Box>
         <Box

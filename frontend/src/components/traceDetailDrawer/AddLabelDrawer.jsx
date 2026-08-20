@@ -23,41 +23,9 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import PropTypes from "prop-types";
 import CreateLabelDrawer from "src/sections/annotations/labels/create-label-drawer";
+import LabelTypeChip from "src/components/label-type-chip/LabelTypeChip";
 
-const TYPE_CHIP_COLORS = {
-  text: { bg: "#f0f4ff", color: "#3b6ce7" },
-  numeric: { bg: "#f0faf4", color: "#1a8a4a" },
-  categorical: { bg: "#fef6ee", color: "#c4631a" },
-  thumbs_up_down: { bg: "#fdf2f8", color: "#c026a3" },
-  star: { bg: "#fffbeb", color: "#b45309" },
-};
 
-function TypeChip({ type }) {
-  const label = (type || "")
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-  const colors = TYPE_CHIP_COLORS[type] || { bg: "#f5f5f5", color: "#666" };
-  return (
-    <Box
-      sx={{
-        px: 1,
-        py: 0.25,
-        borderRadius: 0.5,
-        bgcolor: colors.bg,
-        fontSize: 11,
-        fontWeight: 500,
-        color: colors.color,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {label}
-    </Box>
-  );
-}
-
-TypeChip.propTypes = {
-  type: PropTypes.string,
-};
 
 const AddLabelDrawerContent = ({
   projectId,
@@ -273,7 +241,7 @@ const AddLabelDrawerContent = ({
                     {label.name}
                   </Typography>
                 </Box>
-                <TypeChip type={label.type} />
+                <LabelTypeChip type={label.type} />
               </Box>
             ))
           )}

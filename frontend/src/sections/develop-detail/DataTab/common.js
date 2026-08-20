@@ -906,9 +906,14 @@ export const normalizeEvalResult = (value, outputType) => {
       items = [v];
     }
     items = items
-      .map((/** @type {any} */ x) =>
-        x && typeof x === "object" ? x.choice ?? x.label ?? x.value ?? "" : x,
-      )
+      .flatMap((x) => {
+        if (!x || typeof x !== "object") return [x];
+        return (
+          extractChoiceArray(x) ?? [
+            extractChoiceLabel(x) ?? x.label ?? x.value ?? "",
+          ]
+        );
+      })
       .map((/** @type {any} */ x) => String(x ?? ""))
       .filter(Boolean);
     if (items.length === 0) return { kind: "empty" };

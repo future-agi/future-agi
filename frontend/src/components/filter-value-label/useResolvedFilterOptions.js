@@ -12,18 +12,46 @@ const getFilterBackendType = (filter) => {
   return map[filter?.type] || filter?.type || "system_metric";
 };
 
-export function useResolvedFilterOptions(filter, source, enabled = true) {
+/**
+ * True when the backend's labels are just the values — a caller that only
+ * needs a label can then render the value directly instead of fetching the
+ * whole value list (a workspace-wide span scan).
+ *
+ * Only `custom_attribute` qualifies, and deliberately so: its backend branch
+ * returns {value: v, label: v} unconditionally, with no per-field exceptions
+ * to track. system_metric is mostly identity too, but several of its fields
+ * DO relabel (project/project_id -> project name, session -> display name),
+ * the set differs per surface, and its scans are cheap anyway (narrow
+ * columns, no attribute-map I/O) — not worth the misclassification risk of
+ * rendering a raw id where a name belongs.
+ */
+export function filterLabelsMatchValues(filter) {
+  return getFilterBackendType(filter) === "custom_attribute";
+}
+
+export function useResolvedFilterOptions(
+  filter,
+  source,
+  enabled = true,
+  search = "",
+) {
   const backendType = getFilterBackendType(filter);
   const evalOutputType = filter?.outputType?.toUpperCase() || "";
   const isEvalWithStaticOptions =
     backendType === "eval_metric" &&
     (evalOutputType === "PASS_FAIL" || evalOutputType === "CHOICES");
 
+  // Backend search is index-backed for custom attributes and can reach values
+  // outside the default lookback, which client-side filtering of the fetched
+  // page cannot. Other types keep filtering the fetched page client-side.
+  const usesBackendSearch = backendType === "custom_attribute";
+
   const { data: fetchedOptions = [], isLoading } = useDashboardFilterValues({
     metricName: filter?.id || "",
     metricType: backendType,
     projectIds: [],
     source: source || "traces",
+    search: usesBackendSearch ? search : "",
     enabled: enabled && !isEvalWithStaticOptions,
   });
 

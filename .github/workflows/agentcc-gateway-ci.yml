@@ -66,6 +66,16 @@ jobs:
         working-directory: agentcc-gateway
         run: make test
 
+      # The post-parallel plugin window relies on nothing writing to the shared
+      # RequestContext while it is open; a write there is a runtime fatal that
+      # kills the process. Only the race detector catches it, so these packages
+      # are gated on it. Scoped rather than `make test-race` because
+      # internal/server has an unrelated pre-existing race in the A2A cancel
+      # path; widen this once that is fixed.
+      - name: Run gateway tests under the race detector
+        working-directory: agentcc-gateway
+        run: go test -race -count=1 ./internal/pipeline/... ./internal/plugins/... ./internal/models/... ./internal/otel/...
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Build gateway image
