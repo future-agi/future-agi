@@ -25,8 +25,6 @@ import {
   normalizeConfigKeys,
   toBackendFilters,
 } from "./common";
-import { buildColumnBlocks } from "./evalTaskGrouping";
-import EvalTaskGroupHeader from "./Renderers/EvalTaskGroupHeader";
 import CustomTraceRenderer from "./Renderers/CustomTraceRenderer";
 import CustomTraceHeaderRenderer from "./Renderers/CustomTraceHeaderRenderer";
 import EvalResultChips from "./Renderers/EvalResultChips";
@@ -362,48 +360,31 @@ const SpanGrid = React.forwardRef(
         if (flat.length) annotationDefsById.set(c.id, flat);
       }
 
-      // Eval columns grouped under their parent Eval Task (two-tier header with
-      // T/S glyph). Everything else — custom and annotation columns included —
-      // stays flat in its store position: a shared bucket collapsed them
-      // together and oscillated the order (TH-6119). Only eval columns carry
-      // evalTaskName, so buildColumnBlocks emits the rest as flat blocks.
-      const columnDefsResult = buildColumnBlocks(columns).flatMap((block) => {
-        if (block.type === "col") {
-          const c = block.col;
-          if (annotationDefsById.has(c?.id)) {
-            return annotationDefsById.get(c.id);
-          }
-          bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-          const colDef = getSpanListColumnDefs(c);
-          // Custom col: flat, but keep its width/style.
-          if (c?.groupBy === "Custom Columns") {
-            return {
-              ...colDef,
-              minWidth: 200,
-              flex: 1,
-              cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
-            };
-          }
-          return colDef;
+      // Eval columns render flat in store order. Annotation defs drop in at
+      // their own store position.
+      const columnDefsResult = [];
+      for (const c of columns) {
+        if (!c) continue;
+        if (annotationDefsById.has(c?.id)) {
+          columnDefsResult.push(...annotationDefsById.get(c.id));
+          continue;
         }
-        const task = block.group;
-        return {
-          headerName: task.taskName,
-          headerGroupComponent: EvalTaskGroupHeader,
-          headerGroupComponentParams: { rowType: task.rowType },
-          marryChildren: true,
-          children: task.evals.map((c) => {
-            bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-            const colDef = getSpanListColumnDefs(c);
-            return {
-              ...colDef,
-              minWidth: 200,
-              flex: 1,
-              cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
-            };
-          }),
-        };
-      });
+        bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+        const colDef = getSpanListColumnDefs(c);
+        if (
+          c?.groupBy === "Custom Columns" ||
+          c?.groupBy === "Evaluation Metrics"
+        ) {
+          columnDefsResult.push({
+            ...colDef,
+            minWidth: 200,
+            flex: 1,
+            cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
+          });
+          continue;
+        }
+        columnDefsResult.push(colDef);
+      }
 
       return {
         columnDefs: columnDefsResult,

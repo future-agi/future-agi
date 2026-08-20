@@ -12,11 +12,9 @@ import React, {
 } from "react";
 import { useAgTheme } from "src/hooks/use-ag-theme";
 import axios, { endpoints } from "src/utils/axios";
-import { getRandomId } from "src/utils/utils";
 import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
 import NoRowsOverlay from "src/sections/project-detail/CompareDrawer/NoRowsOverlay";
 import {
-  AllowedGroups,
   applyQuickFilters,
   TRACE_DEFAULT_COLUMNS,
   getTraceListColumnDefs,
@@ -37,8 +35,6 @@ import { REPLAY_MODULES } from "../SessionsView/ReplaySessions/configurations";
 import { useShallowToggleAnnotationsStore } from "../../agents/store";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
-import { buildColumnBlocks } from "./evalTaskGrouping";
-import EvalTaskGroupHeader from "./Renderers/EvalTaskGroupHeader";
 
 const ROWS_LIMIT = 25;
 const EMPTY_EXTRA_FILTERS = [];
@@ -403,34 +399,24 @@ const TraceGrid = React.forwardRef(
         if (flat.length) annotationDefsById.set(c.id, flat);
       }
 
-      // Eval columns group under their eval-task header; everything else —
-      // custom and annotation columns included — stays flat in store order
-      // (TH-6119). Only eval columns carry evalTaskName, so buildColumnBlocks
-      // emits the rest as flat blocks at their own position.
-      const columnDefsResult = buildColumnBlocks(columns).flatMap((block) => {
-        if (block.type === "col") {
-          const c = block.col;
-          if (annotationDefsById.has(c?.id)) {
-            return annotationDefsById.get(c.id);
-          }
-          bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-          const colDef = getTraceListColumnDefs(c);
-          return c?.groupBy === "Custom Columns"
-            ? { ...colDef, minWidth: 200, flex: 1 }
-            : colDef;
+      // Eval columns render flat in store order, same as every other column.
+      // Annotation defs drop in at their own store position — appending them
+      // after everything else silently undid a user's drag.
+      const columnDefsResult = [];
+      for (const c of columns) {
+        if (!c) continue;
+        if (annotationDefsById.has(c?.id)) {
+          columnDefsResult.push(...annotationDefsById.get(c.id));
+          continue;
         }
-        const task = block.group;
-        return {
-          headerName: task.taskName,
-          headerGroupComponent: EvalTaskGroupHeader,
-          headerGroupComponentParams: { rowType: task.rowType },
-          marryChildren: true,
-          children: task.evals.map((c) => {
-            bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-            return getTraceListColumnDefs(c);
-          }),
-        };
-      });
+        bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+        const colDef = getTraceListColumnDefs(c);
+        columnDefsResult.push(
+          c?.groupBy === "Custom Columns"
+            ? { ...colDef, minWidth: 200, flex: 1 }
+            : colDef,
+        );
+      }
       return {
         columnDefs: columnDefsResult,
         bottomRow: [

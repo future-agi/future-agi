@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { spanOwnEvalRows, collectSubtreeEvals } from "../evalScores";
+import { spanOwnEvalRows, collectSubtreeEvals, evalsOf } from "../evalScores";
 
-// A trace entry in the new grouped eval_scores shape (scope: trace).
+// A trace entry in the flat eval_scores shape (scope: trace).
 const entry = (id, evals) => ({
   observation_span: { id },
-  eval_scores: { scope: "trace", eval_tasks: [{ eval_task_name: "t", evals }] },
+  eval_scores: { scope: "trace", evals },
 });
 
 const numericEval = (spans) => ({
@@ -63,16 +63,15 @@ describe("spanOwnEvalRows", () => {
     expect(spanOwnEvalRows(null)).toEqual([]);
   });
 
-  // Defensive: the OLD array shape must not crash (reads .eval_tasks → [])
+  // The OLD array shape must not crash: it has no `evals`, so it reads as empty.
   it("does not crash on the legacy array-shaped eval_scores", () => {
     expect(
       spanOwnEvalRows({ observation_span: { id: "s1" }, eval_scores: [] }),
     ).toEqual([]);
   });
 
-  // A *populated* legacy array is silently ignored — the rollup reads only the
-  // grouped {eval_tasks} shape. Documents current (pre-guard) behavior; update
-  // this when/if a legacy-array guard lands.
+  // A *populated* legacy array is silently ignored — evalsOf only reads the
+  // flat {evals} shape, so an array-shaped eval_scores always yields [].
   it("yields no rows for a populated legacy array-shaped eval_scores", () => {
     const legacy = {
       observation_span: { id: "s1" },
@@ -106,5 +105,25 @@ describe("collectSubtreeEvals", () => {
       },
     ]);
     expect(collectSubtreeEvals(root)).toEqual({ pass: 0, fail: 0, total: 0 });
+  });
+});
+
+describe("evalsOf", () => {
+  it("reads the flat evals list", () => {
+    expect(evalsOf({ scope: "trace", evals: [{ eval_name: "a" }] })).toHaveLength(1);
+  });
+
+  it("returns [] for the legacy array shape, null, and undefined", () => {
+    expect(evalsOf([{ eval_name: "legacy" }])).toEqual([]);
+    expect(evalsOf(null)).toEqual([]);
+    expect(evalsOf(undefined)).toEqual([]);
+  });
+
+  it("returns [] when the key is missing entirely", () => {
+    expect(evalsOf({ scope: "trace" })).toEqual([]);
+  });
+
+  it("returns [] instead of throwing when evals is the wrong type", () => {
+    expect(evalsOf({ scope: "trace", evals: { foo: "bar" } })).toEqual([]);
   });
 });

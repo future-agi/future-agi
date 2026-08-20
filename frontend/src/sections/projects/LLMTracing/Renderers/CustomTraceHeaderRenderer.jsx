@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo } from "react";
 import PropTypes from "prop-types";
 import { useTheme } from "@mui/material/styles";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import HeaderIcon from "./HeaderIcon";
+import { getGlyphMeta } from "../evalGlyph";
 
 const wrapperStyle = {
   display: "flex",
@@ -29,11 +31,12 @@ const CustomTraceHeaderRenderer = ({
     }
   }, [eGridHeader]);
 
+  const sourceColumn = column?.colDef?.context?.sourceColumn;
   const isEvaluationMetric = useMemo(
-    () =>
-      column?.colDef?.context?.sourceColumn?.groupBy === "Evaluation Metrics",
-    [column],
+    () => sourceColumn?.groupBy === "Evaluation Metrics",
+    [sourceColumn],
   );
+  const glyph = isEvaluationMetric ? getGlyphMeta(sourceColumn?.targetType) : null;
   const isGroupHeader = Boolean(group);
 
   const textStyle = {
@@ -53,6 +56,26 @@ const CustomTraceHeaderRenderer = ({
         isGroup={isGroupHeader}
         isEvaluationMetric={isEvaluationMetric}
       />
+      {glyph && (
+        <CustomTooltip show title={glyph.label} arrow placement="top" size="small">
+          <span
+            style={{
+              flexShrink: 0,
+              fontSize: "10px",
+              fontWeight: 700,
+              lineHeight: 1,
+              padding: "3px 5px",
+              borderRadius: "4px",
+              border: `1px solid ${theme.palette.divider}`,
+              color: theme.palette.text.secondary,
+              backgroundColor: theme.palette.background.neutral,
+              cursor: "default",
+            }}
+          >
+            {glyph.code}
+          </span>
+        </CustomTooltip>
+      )}
       <span style={textStyle}>{displayName}</span>
     </div>
   );

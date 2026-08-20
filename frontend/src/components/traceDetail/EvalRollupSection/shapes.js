@@ -25,13 +25,7 @@ export const evalShape = PropTypes.shape({
   choices_map: PropTypes.objectOf(PropTypes.string),
 });
 
-export const evalTaskShape = PropTypes.shape({
-  eval_task_id: PropTypes.string,
-  eval_task_name: PropTypes.string,
-  evals: PropTypes.arrayOf(evalShape),
-});
-
 export const evalScoresShape = PropTypes.shape({
   scope: PropTypes.string,
-  eval_tasks: PropTypes.arrayOf(evalTaskShape),
+  evals: PropTypes.arrayOf(evalShape),
 });

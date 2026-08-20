@@ -242,7 +242,7 @@ const TimelineRow = ({
 
   // Eval scores
   const subtreeEvals = useMemo(() => collectSubtreeEvals(entry), [entry]);
-  // This span's own eval rows flattened from the task-grouped eval_scores.
+  // This span's own eval rows, filtered from the flat eval_scores.
   const ownEvalRows = spanOwnEvalRows(entry);
 
   // Bar label — duration only (metrics are in the left panel)

@@ -4,12 +4,13 @@ import { Box, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { ResultChip } from "src/sections/projects/LLMTracing/Renderers/EvalResultChips";
 import EvalDetailExpansion from "./EvalDetailExpansion";
+import EvalTargetGlyph from "./EvalTargetGlyph";
 import { spanResultChip, spanHasDetail, NAME_W, activatableProps } from "./utils";
 import { evalShape } from "./shapes";
 
 // Span scope: one eval's result for the selected span; expands to the
 // explanation + error localizer.
-const EvalSingleRow = ({ ev, onFixWithFalcon }) => {
+const EvalSingleRow = ({ ev, onFixWithFalcon, showGlyph = true }) => {
   const span = (ev.spans || [])[0] || {};
   const canExpand = spanHasDetail(span, ev.output_type);
   const [open, setOpen] = useState(false);
@@ -44,12 +45,20 @@ const EvalSingleRow = ({ ev, onFixWithFalcon }) => {
             />
           )}
         </Box>
-        <Typography
-          noWrap
-          sx={{ width: NAME_W, fontSize: 11.5, fontWeight: 500 }}
+        <Box
+          sx={{
+            width: NAME_W,
+            display: "flex",
+            alignItems: "center",
+            gap: 0.5,
+            minWidth: 0,
+          }}
         >
-          {ev.eval_name}
-        </Typography>
+          <Typography noWrap sx={{ fontSize: 11.5, fontWeight: 500, minWidth: 0 }}>
+            {ev.eval_name}
+          </Typography>
+          {showGlyph && <EvalTargetGlyph rowType={ev.target_type} />}
+        </Box>
         <Box sx={{ flex: 1, display: "flex", gap: 0.5, flexWrap: "wrap" }}>
           <ResultChip label={chip.label} tone={chip.tone} dense />
         </Box>
@@ -71,6 +80,7 @@ const EvalSingleRow = ({ ev, onFixWithFalcon }) => {
 EvalSingleRow.propTypes = {
   ev: evalShape.isRequired,
   onFixWithFalcon: PropTypes.func,
+  showGlyph: PropTypes.bool,
 };
 
 export default EvalSingleRow;

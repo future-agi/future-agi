@@ -37,22 +37,16 @@ describe("failingEvals is not duplicated per failing span", () => {
     const onFix = vi.fn();
     const evalScores = {
       scope: "trace",
-      eval_tasks: [
+      evals: [
         {
-          eval_task_id: "t1",
-          eval_task_name: "QA",
-          evals: [
-            {
-              eval_config_id: "c1",
-              eval_name: "score-eval",
-              output_type: "score",
-              aggregate: 10,
-              spans: [
-                { span_id: "s1", span_name: "a", value: 10 },
-                { span_id: "s2", span_name: "b", value: 20 },
-                { span_id: "s3", span_name: "c", value: 30 },
-              ],
-            },
+          eval_config_id: "c1",
+          eval_name: "score-eval",
+          output_type: "score",
+          aggregate: 10,
+          spans: [
+            { span_id: "s1", span_name: "a", value: 10 },
+            { span_id: "s2", span_name: "b", value: 20 },
+            { span_id: "s3", span_name: "c", value: 30 },
           ],
         },
       ],

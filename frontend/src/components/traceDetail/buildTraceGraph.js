@@ -27,7 +27,6 @@ function flattenEntryEvals(entry) {
     eval_name: r.evalName,
     eval_config_id: r.evalConfigId,
     output_type: r.outputType,
-    eval_task_name: r.taskName,
     score: r.score,
     result: r.result,
     error: r.error,

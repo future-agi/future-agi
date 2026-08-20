@@ -16,6 +16,7 @@ import ScoresListSection from "src/components/ScoresListSection/ScoresListSectio
 import { buildVoiceCallScoreSource } from "src/components/voiceAnnotationSources";
 import EvalsTabView from "src/components/traceDetail/EvalsTabView";
 import EvalRollupSection from "src/components/traceDetail/EvalRollupSection";
+import { evalsOf } from "src/components/traceDetail/evalScores";
 import { openFixWithFalcon } from "src/sections/falcon-ai/helpers/openFixWithFalcon";
 import VoiceLogsView from "./VoiceLogsView";
 import LoadingStateComponent from "src/components/CallLogsDetailDrawer/LoadingStateComponent";
@@ -200,12 +201,10 @@ const VoiceRightPanel = ({
     };
   }, [isSimulate, data, observationSpan]);
 
-  // Observe returns grouped eval_scores (like trace detail); simulate emits the
+  // Observe returns flat eval_scores (like trace detail); simulate emits the
   // flat map → fall back to EvalsTabView.
-  const groupedEvalScores =
-    !isSimulate && data?.eval_scores?.eval_tasks?.length
-      ? data.eval_scores
-      : null;
+  const rollupEvalScores =
+    !isSimulate && evalsOf(data?.eval_scores).length ? data.eval_scores : null;
 
   const evalRows = useMemo(() => {
     if (isSimulate) {
@@ -262,7 +261,6 @@ const VoiceRightPanel = ({
       return {
         id: `eval-${id}-${i}`,
         eval_name: e?.name || e?.metric || String(id),
-        eval_task_name: e?.eval_task_name || null,
         score,
         score_label: scoreLabel,
         score_items: scoreItems,
@@ -415,10 +413,10 @@ const VoiceRightPanel = ({
           </ShowComponent>
 
           <ShowComponent
-            condition={currentTab === TABS.EVALUATIONS && !!groupedEvalScores}
+            condition={currentTab === TABS.EVALUATIONS && !!rollupEvalScores}
           >
             <EvalRollupSection
-              evalScores={groupedEvalScores}
+              evalScores={rollupEvalScores}
               emptyMessage="No evaluations for this call"
               showGlyph={false}
               onFixWithFalcon={({
@@ -465,13 +463,12 @@ const VoiceRightPanel = ({
           </ShowComponent>
 
           <ShowComponent
-            condition={currentTab === TABS.EVALUATIONS && !groupedEvalScores}
+            condition={currentTab === TABS.EVALUATIONS && !rollupEvalScores}
           >
             <EvalsTabView
               evals={normalizedEvals}
               emptyMessage="No evaluations for this call"
               showSpanColumn={false}
-              groupByTask
               onFixWithFalcon={({ level, ev, failingEvals, allEvals }) => {
                 const projectId = data?.project_id;
                 const callId = data?.id;
