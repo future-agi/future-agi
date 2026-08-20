@@ -239,10 +239,6 @@ def is_work_email(email):
     if domain in free_domains:
         return False
 
-    # The set above covers the mainstream free providers (gmail, yahoo, ...),
-    # which are real mailboxes rather than throwaway ones and so are absent
-    # from the package list. The two are complementary; a domain has to clear
-    # both to count as a work address.
     return not is_disposable_email_domain(domain)
 
 
