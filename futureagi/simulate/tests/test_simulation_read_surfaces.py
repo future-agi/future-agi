@@ -151,7 +151,8 @@ def test_chat_sdk_code_uses_placeholders_without_leaking_org_keys(
     payload = _result(response)
     sdk_code = payload["sdk_code"]
     assert payload["run_test_id"] == str(run_test.id)
-    assert run_test.name in sdk_code
+    assert str(run_test.id) in sdk_code
+    assert run_test.name not in sdk_code
     assert "liveapikey1234567890" not in sdk_code
     assert "livesecret1234567890" not in sdk_code
     assert 'FI_API_KEY="<YOUR_FI_API_KEY>"' in sdk_code
@@ -910,7 +911,7 @@ class TestSDKCodeContent:
         # either the run name or its id should appear in the response.
         assert payload.get("run_test_id") == str(run_test.id)
         assert payload.get("run_test_name") == run_test.name
-        assert run_test.name in payload["sdk_code"]
+        assert str(run_test.id) in payload["sdk_code"]
 
     def test_sdk_code_other_workspace_returns_404(self, auth_client, user):
         other_org = Organization.objects.create(name="Other Org For SDK Code")

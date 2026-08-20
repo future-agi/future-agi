@@ -99,7 +99,8 @@ def get_observation_span(
     Mirrors the surface area of `ObservationSpan.objects.select_related(*).get(id=...)`
     so the eval runner can swap call sites mechanically.
 
-    ``project_id`` (the eval config's project) scopes the CH read to one tenant.
+    ``project_id`` (the eval task's project — where the target data lives, not
+    the project the eval config was authored in) scopes the CH read to one tenant.
     ``spans`` is sorted by ``project_id`` first, so passing it lets ClickHouse
     prune by the primary index instead of scanning every project's parts for the
     span id — the difference between a whole-table read and a pruned one.
@@ -158,7 +159,8 @@ def _hybrid_load_from_ch(
     if ch_row is None:
         if _forced_clickhouse():
             raise ObservationSpan.DoesNotExist(
-                f"Span {span_id} not in ClickHouse (CH-direct; PG fallback disabled)"
+                f"Span {span_id} not in ClickHouse for project "
+                f"{project_id or '<unscoped>'} (CH-direct; PG fallback disabled)"
             )
         # Non-forced clickhouse mode — fall back to PG with the requested FKs.
         qs = ObservationSpan.objects
@@ -324,9 +326,11 @@ def get_trace(
     trace isn't in ClickHouse. Pass ``reader`` to reuse an open CHSpanReader
     across a loop of traces instead of opening (and leaking) one per call.
 
-    ``project_id`` scopes the CH read; ``traces`` is sorted ``(project_id, id)``
-    and has no bloom on ``id``, so without it a lone-id lookup scans every
-    project's parts — passing it enables the sort-key prefix prune."""
+    ``project_id`` (the eval task's project — where the target data lives, not
+    the project the eval config was authored in) scopes the CH read; ``traces``
+    is sorted ``(project_id, id)`` and has no bloom on ``id``, so without it a
+    lone-id lookup scans every project's parts — passing it enables the sort-key
+    prefix prune."""
     import json as _json
 
     from tracer.models.trace import Trace
@@ -352,7 +356,8 @@ def get_trace(
     if row is None:
         if _forced_clickhouse():
             raise Trace.DoesNotExist(
-                f"Trace {trace_id} not in ClickHouse (CH-direct; PG fallback disabled)"
+                f"Trace {trace_id} not in ClickHouse for project "
+                f"{project_id or '<unscoped>'} (CH-direct; PG fallback disabled)"
             )
         return Trace.objects.get(id=trace_id)
 
@@ -389,7 +394,12 @@ def get_trace_session(session_id: str, *, project: Project) -> TraceSession:
     """Return a TraceSession for the id. CH mode builds an unsaved vehicle from
     the curated CH session fields (the same source the session list endpoint
     uses); PG mode keeps the Django path. Raises TraceSession.DoesNotExist when
-    forced-CH and the session isn't in ClickHouse."""
+    forced-CH and the session isn't in ClickHouse.
+
+    ``project`` is the eval task's project — where the session data lives, not
+    the project the eval config was authored in. It scopes the CH field lookup
+    and is stamped on the returned vehicle, so everything downstream that reads
+    ``session.project_id`` inherits it."""
     from tracer.models.trace_session import TraceSession
 
     if _read_source() != "clickhouse":
@@ -405,8 +415,8 @@ def get_trace_session(session_id: str, *, project: Project) -> TraceSession:
     if not fields:
         if _forced_clickhouse():
             raise TraceSession.DoesNotExist(
-                f"TraceSession {session_id} not in ClickHouse "
-                "(CH-direct; PG fallback disabled)"
+                f"TraceSession {session_id} not in ClickHouse for project "
+                f"{project.id} (CH-direct; PG fallback disabled)"
             )
         return TraceSession.objects.get(id=session_id)
 

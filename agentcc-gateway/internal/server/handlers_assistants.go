@@ -3,7 +3,6 @@ package server
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -60,15 +59,7 @@ func (h *Handlers) setupAssistantsRC(r *http.Request, operation string) *models.
 
 	setAuthMetadataFromRequest(rc, r)
 	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
-		var m map[string]string
-		if err := json.Unmarshal([]byte(meta), &m); err == nil {
-			for k, v := range m {
-				if isBlockedMetadataKey(k) {
-					continue
-				}
-				rc.Metadata[k] = v
-			}
-		}
+		parseMetadataHeader(meta, rc)
 	}
 
 	// Peek key org_id before resolving org config (same as ChatCompletion).

@@ -41,6 +41,7 @@ import {
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import ReactApexChart from "react-apexcharts";
 import ChartLegend from "./ChartLegend";
+import WidgetPieCharts from "./WidgetPieCharts";
 import {
   buildTimeRangePayload,
   resolveInitialTimeRange,
@@ -81,7 +82,8 @@ import {
   fromAxisConfigPayload,
   getAggColumnLabel,
   getAutoDecimals,
-  getSeriesAverage,
+  getSeriesScalar,
+  groupPieSeries,
   getSuggestedUnitConfig,
   getUnitRendering,
   getYAxisRangeWarning,
@@ -1163,11 +1165,9 @@ export default function WidgetEditorView() {
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [customDateRange, setCustomDateRange] = useState(null); // [startDate, endDate]
   const customDateAnchorRef = useRef(null);
-  const pieChartRef = useRef(null);
   const lineChartRef = useRef(null);
   const saveNavTimerRef = useRef(null);
   useEffect(() => () => clearTimeout(saveNavTimerRef.current), []);
-  const [pieConnectors, setPieConnectors] = useState([]);
 
   // Auto-set granularity when time preset changes
   const customDays =
@@ -2052,7 +2052,12 @@ export default function WidgetEditorView() {
   };
 
   const handleRemoveBreakdown = (index) => {
-    setBreakdowns(breakdowns.filter((_, i) => i !== index));
+    const next = breakdowns.filter((_, i) => i !== index);
+    setBreakdowns(next);
+    // Pie needs something to slice by. Fall back here rather than in an effect,
+    // so loading a legacy breakdown-less pie widget for editing doesn't get
+    // silently rewritten before the user touches anything.
+    if (chartType === "pie" && !next.some((b) => b.id)) setChartType("column");
   };
 
   const [saveStatus, setSaveStatus] = useState("idle"); // "idle" | "saving" | "saved"
@@ -2116,7 +2121,7 @@ export default function WidgetEditorView() {
   const previewSeries = useMemo(() => {
     if (!previewResult?.metrics) return [];
     const allSeries = [];
-    for (const metric of previewResult.metrics) {
+    for (const [metricIndex, metric] of previewResult.metrics.entries()) {
       for (const s of metric.series || []) {
         const isSingleMetric = previewResult.metrics.length === 1;
         let seriesLabel;
@@ -2130,7 +2135,14 @@ export default function WidgetEditorView() {
         allSeries.push({
           name: seriesLabel,
           key: makeSeriesKey(metric, s.name),
+          // Metric identity survives only inside `seriesLabel`, a composite
+          // display string. Carry it explicitly so pie rendering can group per
+          // metric and honour each metric's own aggregation.
+          metricIndex,
+          metricName: metric.name,
+          aggregation: metric.aggregation,
           unit: metric.unit ?? "",
+          breakdownName: s.name,
           data: (s.data || []).map((point) => ({
             x: new Date(point.timestamp).getTime(),
             y: point.value != null ? Number(point.value) : null,
@@ -2287,6 +2299,35 @@ export default function WidgetEditorView() {
     [chartSeries, seriesColorMap],
   );
 
+  // Pie slices are breakdown values, which repeat across metrics — key their
+  // colours by the raw breakdown name so a project stays one colour in every pie.
+  const pieColorMap = useMemo(
+    () =>
+      buildSeriesColorMap([
+        ...new Set(previewSeries.map((s) => s.breakdownName)),
+      ]),
+    [previewSeries],
+  );
+  const pieColorFor = useCallback(
+    (name) => getSeriesColor(name, pieColorMap),
+    [pieColorMap],
+  );
+
+  // A pie needs a category to slice by. `hasBreakdown` mirrors the filter in
+  // buildQueryConfig so the gate matches what is actually queried;
+  // `pieHasBreakdown` is response-driven so legacy saved pies render correctly.
+  const hasBreakdown = breakdowns.some((b) => b.id);
+  const pieHasBreakdown = useMemo(
+    () => previewSeries.some((s) => s.breakdownName !== "total"),
+    [previewSeries],
+  );
+  // From previewSeries, not the top-10-filtered chartSeries: a global cap can
+  // starve one metric of every slice, and groupPieSeries caps per metric.
+  const pieGroups = useMemo(
+    () => (isPie && pieHasBreakdown ? groupPieSeries(previewSeries) : []),
+    [isPie, pieHasBreakdown, previewSeries],
+  );
+
   // Legend hover → highlight series by dimming others via SVG opacity
   const handleLegendHover = useCallback((seriesIndex) => {
     const el = lineChartRef.current;
@@ -2317,74 +2358,6 @@ export default function WidgetEditorView() {
   );
 
   const chartOptions = useMemo(() => {
-    if (isPie) {
-      const pieTotal = chartSeries.reduce(
-        (sum, s) => sum + s.data.reduce((a, pt) => a + (pt.y || 0), 0),
-        0,
-      );
-      const fmtTotal =
-        pieTotal >= 1000000
-          ? `${(pieTotal / 1000000).toFixed(1)}M`
-          : pieTotal >= 1000
-            ? pieTotal.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
-            : pieTotal.toFixed(0);
-      const txtColor = isDark ? "#fff" : "#1a1a2e";
-      return {
-        chart: {
-          type: "donut",
-          toolbar: { show: false },
-          animations: { enabled: true, easing: "easeinout", speed: 400 },
-        },
-        labels: chartSeries.map((s) => s.name),
-        colors: chartColors,
-        plotOptions: {
-          pie: {
-            expandOnClick: false,
-            donut: {
-              size: "58%",
-              labels: {
-                show: true,
-                name: { show: false },
-                value: {
-                  show: true,
-                  fontSize: "36px",
-                  fontWeight: 700,
-                  color: txtColor,
-                  offsetY: 12,
-                  formatter: () => fmtTotal,
-                },
-                total: {
-                  show: true,
-                  showAlways: true,
-                  fontSize: "36px",
-                  fontWeight: 700,
-                  color: txtColor,
-                  label: "",
-                  formatter: () => fmtTotal,
-                },
-              },
-            },
-          },
-        },
-        dataLabels: { enabled: false },
-        legend: { show: false, height: 0 },
-        stroke: { width: 4, colors: [isDark ? "#1e1e2e" : "#fff"] },
-        states: {
-          hover: { filter: { type: "darken", value: 0.92 } },
-          active: { filter: { type: "none" } },
-        },
-        tooltip: {
-          theme: theme.palette.mode,
-          style: { fontSize: "12px" },
-          y: {
-            formatter: (val) =>
-              val >= 1000
-                ? val.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
-                : val.toLocaleString(undefined, { maximumFractionDigits: 2 }),
-          },
-        },
-      };
-    }
     const makeFormatter =
       (cfg, fallbackDecimals = autoDecimals, includeUnit = true) =>
       (val) =>
@@ -2744,7 +2717,6 @@ export default function WidgetEditorView() {
     isLineChart,
     isStacked,
     isHorizontal,
-    isPie,
     chartSeries,
     chartColors,
     theme,
@@ -2755,72 +2727,6 @@ export default function WidgetEditorView() {
     visibleSeries,
   ]);
 
-  // Pie series: sum of all values per series
-  const pieSeries = useMemo(() => {
-    if (!isPie) return [];
-    return chartSeries.map((s) =>
-      s.data.reduce((sum, pt) => sum + (pt.y || 0), 0),
-    );
-  }, [isPie, chartSeries]);
-
-  // Compute pie connector lines + labels via ref measurement
-  useEffect(() => {
-    if (!isPie || !pieSeries.length) {
-      setPieConnectors([]);
-      return;
-    }
-    const timer = setTimeout(() => {
-      const container = pieChartRef.current;
-      if (!container) return;
-      const w = container.offsetWidth;
-      const h = container.offsetHeight;
-      // Donut center: horizontally centered, vertically offset for legend (~30px top)
-      const cx = w / 2;
-      const cy = h * 0.48 + 15;
-      const outerR = Math.min(w, h - 40) * 0.33;
-      const total = pieSeries.reduce((a, b) => a + b, 0);
-      if (total === 0) return;
-      const items = [];
-      let cumAngle = -90;
-      pieSeries.forEach((val, i) => {
-        const sliceAngle = (val / total) * 360;
-        const midAngle = cumAngle + sliceAngle / 2;
-        const midRad = (midAngle * Math.PI) / 180;
-        cumAngle += sliceAngle;
-        if (sliceAngle < 3) return;
-        const origIdx = previewSeries.indexOf(chartSeries[i]);
-        const idx = origIdx >= 0 ? origIdx : i;
-        const letter = LETTER_LABELS[idx] || "";
-        const name = chartSeries[i]?.name || "";
-        const fv =
-          val >= 1000
-            ? val.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
-            : val.toLocaleString(undefined, { maximumFractionDigits: 2 });
-        const edgeX = cx + outerR * Math.cos(midRad);
-        const edgeY = cy + outerR * Math.sin(midRad);
-        const elbowDist = outerR + 22;
-        const elbowX = cx + elbowDist * Math.cos(midRad);
-        const elbowY = cy + elbowDist * Math.sin(midRad);
-        const isRight = Math.cos(midRad) >= 0;
-        const endX = isRight ? elbowX + 22 : elbowX - 22;
-        const textX = isRight ? endX + 5 : endX - 5;
-        items.push({
-          edgeX,
-          edgeY,
-          elbowX,
-          elbowY,
-          endX,
-          textX,
-          isRight,
-          line1: `${letter}. ${name}`,
-          line2: fv,
-        });
-      });
-      setPieConnectors(items);
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [isPie, pieSeries, chartSeries, previewSeries]);
-
   // Horizontal bar: aggregate each series into one bar
   const barData = useMemo(() => {
     if (!isHorizontal) return null;
@@ -2829,10 +2735,12 @@ export default function WidgetEditorView() {
       return name.length > 25 ? name.slice(0, 22) + "..." : name;
     });
     const values = chartSeries.map((s) => {
-      const avg = getSeriesAverage(s.data);
+      // Same aggregation-aware value the metric card, table and pie use, so
+      // one widget cannot read differently per chart type.
+      const value = getSeriesScalar(s.data, s.aggregation);
       return {
-        value: avg,
-        numericValue: avg == null ? 0 : avg,
+        value,
+        numericValue: value == null ? 0 : value,
       };
     });
     return {
@@ -3120,7 +3028,9 @@ export default function WidgetEditorView() {
                 ),
               ];
               const rows = previewSeries.map((s) => {
-                const avg = getSeriesAverage(s.data);
+                // Agg column header is aggregation-derived, so the value must
+                // honour that aggregation too.
+                const avg = getSeriesScalar(s.data, s.aggregation);
                 return [
                   s.name,
                   avg == null ? "—" : avg.toFixed(2),
@@ -3156,7 +3066,9 @@ export default function WidgetEditorView() {
                 ),
               ];
               const rows = previewSeries.map((s) => {
-                const avg = getSeriesAverage(s.data);
+                // Agg column header is aggregation-derived, so the value must
+                // honour that aggregation too.
+                const avg = getSeriesScalar(s.data, s.aggregation);
                 return [
                   s.name,
                   avg == null ? "—" : avg.toFixed(2),
@@ -3376,13 +3288,48 @@ export default function WidgetEditorView() {
                 {CHART_TYPES.map((ct, i) => {
                   const prev = i > 0 ? CHART_TYPES[i - 1] : null;
                   const showDivider = prev && prev.group !== ct.group;
+                  // A pie shows parts of one whole, so it needs a breakdown to
+                  // slice by — without one every metric is a single value and
+                  // would render as a meaningless 100% circle (TH-6530).
+                  const pieDisabled = ct.value === "pie" && !hasBreakdown;
+                  const label = (
+                    <Stack direction="row" alignItems="center" gap={0.5}>
+                      <Iconify icon={ct.icon} width={16} />
+                      {ct.label}
+                    </Stack>
+                  );
                   return [
                     showDivider && <Divider key={`div-${i}`} />,
-                    <MenuItem key={ct.value} value={ct.value}>
-                      <Stack direction="row" alignItems="center" gap={0.5}>
-                        <Iconify icon={ct.icon} width={16} />
-                        {ct.label}
-                      </Stack>
+                    // The tooltip goes inside the MenuItem, never around it:
+                    // Select matches its current value against `props.value` on
+                    // its direct children, and a wrapper has none. A legacy
+                    // breakdown-less pie widget is exactly the case where the
+                    // disabled item is also the selected one, so wrapping it
+                    // made MUI log an out-of-range value and forward option
+                    // props onto the wrapper.
+                    <MenuItem
+                      key={ct.value}
+                      value={ct.value}
+                      disabled={pieDisabled}
+                    >
+                      {pieDisabled ? (
+                        <CustomTooltip
+                          show
+                          size="small"
+                          title="Add a breakdown to slice the pie by"
+                          placement="right"
+                        >
+                          {/* A disabled MenuItem sets pointer-events: none, so
+                              the trigger has to opt back in to receive hover —
+                              and span the whole row, or the dead area beside
+                              the label swallows the pointer. */}
+                          <Stack sx={{ pointerEvents: "auto", width: "100%" }}>
+                            {label}
+                          </Stack>
+                        </CustomTooltip>
+                      ) : (
+                        label
+                      )}
                     </MenuItem>,
                   ];
                 })}
@@ -3803,7 +3750,7 @@ export default function WidgetEditorView() {
                   <CircularProgress size={24} />
                 ) : previewSeries.length > 0 ? (
                   <Box sx={{ width: "100%", height: "100%" }}>
-                    {isMetricCard ? (
+                    {isMetricCard || (isPie && !pieHasBreakdown) ? (
                       <Stack
                         direction="row"
                         gap={3}
@@ -3812,7 +3759,15 @@ export default function WidgetEditorView() {
                         sx={{ height: "100%" }}
                       >
                         {chartSeries.map((s, i) => {
-                          const avg = getSeriesAverage(s.data);
+                          // Honour the metric's own aggregation and unit, so
+                          // this matches the saved widget exactly.
+                          const value = getSeriesScalar(s.data, s.aggregation);
+                          const cellConfig = s.unit
+                            ? {
+                                ...leftAxisFormatConfig,
+                                ...getUnitRendering(s.unit),
+                              }
+                            : leftAxisFormatConfig;
                           return (
                             <Box key={i} sx={{ textAlign: "center" }}>
                               <Typography
@@ -3821,7 +3776,11 @@ export default function WidgetEditorView() {
                                   color: chartColors[i % chartColors.length],
                                 }}
                               >
-                                {avg == null ? "—" : formatValFn(avg)}
+                                {value == null
+                                  ? "—"
+                                  : formatValueWithConfig(value, cellConfig, {
+                                      fallbackDecimals: autoDecimals,
+                                    })}
                               </Typography>
                               <Typography
                                 variant="body2"
@@ -3996,81 +3955,12 @@ export default function WidgetEditorView() {
                         );
                       })()
                     ) : isPie ? (
-                      <Box
-                        sx={{
-                          display: "flex",
-                          flexDirection: "column",
-                          width: "100%",
-                          height: "100%",
-                        }}
-                      >
-                        {chartSeries.length > 1 && (
-                          <ChartLegend
-                            items={chartSeries.map((s) => s.name)}
-                            colors={chartColors}
-                          />
-                        )}
-                        <Box
-                          ref={pieChartRef}
-                          sx={{
-                            position: "relative",
-                            flex: 1,
-                            minHeight: 0,
-                          }}
-                        >
-                          <ReactApexChart
-                            key={`pie-${axisConfig.leftY.unit}-${axisConfig.leftY.prefixSuffix}-${axisConfig.leftY.abbreviation}-${axisConfig.leftY.decimals}`}
-                            options={chartOptions}
-                            series={pieSeries}
-                            type="donut"
-                            height="100%"
-                          />
-                          {pieConnectors.length > 0 && (
-                            <svg
-                              style={{
-                                position: "absolute",
-                                top: 0,
-                                left: 0,
-                                width: "100%",
-                                height: "100%",
-                                pointerEvents: "none",
-                                overflow: "visible",
-                              }}
-                            >
-                              {pieConnectors.map((c, i) => (
-                                <g key={i}>
-                                  <polyline
-                                    points={`${c.edgeX},${c.edgeY} ${c.elbowX},${c.elbowY} ${c.endX},${c.elbowY}`}
-                                    fill="none"
-                                    stroke={
-                                      isDark
-                                        ? "rgba(255,255,255,0.35)"
-                                        : "rgba(0,0,0,0.25)"
-                                    }
-                                    strokeWidth="1"
-                                  />
-                                  <text
-                                    x={c.textX}
-                                    y={c.elbowY - 6}
-                                    textAnchor={c.isRight ? "start" : "end"}
-                                    fill={isDark ? "#fff" : "#1a1a2e"}
-                                    fontSize="12"
-                                    fontWeight="500"
-                                    fontFamily="inherit"
-                                  >
-                                    <tspan x={c.textX} dy="0">
-                                      {c.line1}
-                                    </tspan>
-                                    <tspan x={c.textX} dy="15">
-                                      {c.line2}
-                                    </tspan>
-                                  </text>
-                                </g>
-                              ))}
-                            </svg>
-                          )}
-                        </Box>
-                      </Box>
+                      <WidgetPieCharts
+                        groups={pieGroups}
+                        colorFor={pieColorFor}
+                        baseFormatConfig={leftAxisFormatConfig}
+                        fallbackDecimals={autoDecimals}
+                      />
                     ) : outOfRangeWarning ? (
                       <Box
                         sx={{
@@ -4245,7 +4135,8 @@ export default function WidgetEditorView() {
               )}
 
             {/* Pie chart: summary columns below the chart */}
-            {isPie && previewSeries.length > 0 && (
+            {/* Pie chart: one summary column per metric */}
+            {isPie && pieGroups.length > 0 && (
               <Box
                 sx={{
                   flex: 1,
@@ -4256,47 +4147,43 @@ export default function WidgetEditorView() {
                   overflow: "auto",
                 }}
               >
-                {chartSeries.map((s, i) => {
-                  const origIdx = previewSeries.indexOf(s);
-                  const idx = origIdx >= 0 ? origIdx : i;
-                  return (
-                    <Box
-                      key={i}
+                {pieGroups.map((g, i) => (
+                  <Box
+                    key={g.metricIndex}
+                    sx={{
+                      flex: 1,
+                      textAlign: "center",
+                      py: 2,
+                      px: 1.5,
+                      borderRight:
+                        i < pieGroups.length - 1
+                          ? `1px solid ${theme.palette.divider}`
+                          : "none",
+                    }}
+                  >
+                    <Typography
+                      variant="body2"
                       sx={{
-                        flex: 1,
-                        textAlign: "center",
-                        py: 2,
-                        px: 1.5,
-                        borderRight:
-                          i < chartSeries.length - 1
-                            ? `1px solid ${theme.palette.divider}`
-                            : "none",
+                        fontWeight: 600,
+                        fontSize: "13px",
+                        color: "text.primary",
                       }}
                     >
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          fontWeight: 600,
-                          fontSize: "13px",
-                          color: "text.primary",
-                        }}
-                      >
-                        {LETTER_LABELS[idx]} {s.name}
-                      </Typography>
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          color: "text.secondary",
-                          fontSize: "11px",
-                          display: "block",
-                        }}
-                      >
-                        {metrics[idx]?.name || ""} -{" "}
-                        {metrics[idx]?.aggregation || "avg"}
-                      </Typography>
-                    </Box>
-                  );
-                })}
+                      {LETTER_LABELS[g.metricIndex]} {g.metricName}
+                    </Typography>
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: "text.secondary",
+                        fontSize: "11px",
+                        display: "block",
+                      }}
+                    >
+                      {g.aggregation} · {g.slices.length}{" "}
+                      {g.slices.length === 1 ? "slice" : "slices"}
+                    </Typography>
+                  </Box>
+                ))}
               </Box>
             )}
 
@@ -4342,8 +4229,14 @@ export default function WidgetEditorView() {
                         .includes(tableSearch.toLowerCase()),
                   )
                   .sort((a, b) => {
-                    const avgA = getSeriesAverage(previewSeries[a].data);
-                    const avgB = getSeriesAverage(previewSeries[b].data);
+                    const avgA = getSeriesScalar(
+                      previewSeries[a].data,
+                      previewSeries[a].aggregation,
+                    );
+                    const avgB = getSeriesScalar(
+                      previewSeries[b].data,
+                      previewSeries[b].aggregation,
+                    );
                     const scoreA =
                       avgA == null ? Number.NEGATIVE_INFINITY : avgA;
                     const scoreB =
@@ -4507,7 +4400,7 @@ export default function WidgetEditorView() {
                             const s = previewSeries[si];
                             const checked =
                               visibleSeries === null || visibleSeries.has(si);
-                            const avg = getSeriesAverage(s.data);
+                            const avg = getSeriesScalar(s.data, s.aggregation);
                             const color = getSeriesColor(
                               s.name,
                               seriesColorMap,

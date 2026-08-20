@@ -559,6 +559,21 @@ TEMPORAL_TEST_EXECUTION_ENABLED = os.getenv(
     "TEMPORAL_TEST_EXECUTION_ENABLED", "false"
 ).lower() in ("true", "1", "yes")
 
+# Hosted simulation runner (plan §9): when enabled, eligible runs are dispatched
+# to the simulation-runner worker which executes the released SDK, instead of the
+# native in-backend simulation path. Default off — no regression.
+HOSTED_RUNNER_ENABLED = os.getenv("HOSTED_RUNNER_ENABLED", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
+# Route VOICE runs to the hosted simulation runner too (default off: voice stays
+# on the native path). Requires HOSTED_RUNNER_ENABLED.
+HOSTED_RUNNER_VOICE_ENABLED = os.getenv(
+    "HOSTED_RUNNER_VOICE_ENABLED", "false"
+).lower() in ("true", "1", "yes")
+
 # Structured logging configuration with django-structlog
 # This provides:
 # - JSON output in production, colored console in development
@@ -839,19 +854,19 @@ WEBAUTHN_CHALLENGE_TTL = 120  # 2 minutes
 # to the legacy CLICKHOUSE dict above for connection details if not set
 # explicitly — see tracer/services/clickhouse/v2/__init__.py:get_v2_config().
 CLICKHOUSE_V2 = {
-    "CH25_HOST":      os.getenv("CH25_HOST"),
+    "CH25_HOST": os.getenv("CH25_HOST"),
     "CH25_HTTP_PORT": os.getenv("CH25_HTTP_PORT", "8123"),
-    "CH25_TCP_PORT":  os.getenv("CH25_TCP_PORT", "9000"),
-    "CH25_USER":      os.getenv("CH25_USER", "default"),
-    "CH25_PASSWORD":  os.getenv("CH25_PASSWORD", ""),
-    "CH25_DATABASE":  os.getenv("CH25_DATABASE", "default"),
+    "CH25_TCP_PORT": os.getenv("CH25_TCP_PORT", "9000"),
+    "CH25_USER": os.getenv("CH25_USER", "default"),
+    "CH25_PASSWORD": os.getenv("CH25_PASSWORD", ""),
+    "CH25_DATABASE": os.getenv("CH25_DATABASE", "default"),
     # ─── Per-query-type routing for the shadow-mode rollout ──────────────────
     # Comma-separated query type names. See tracer/services/clickhouse/v2/shadow.py
     # for RoutingMode definitions. Anything not listed defaults to V1_ONLY.
     "QUERY_TYPES_V2_PRIMARY": os.getenv("CH25_QUERY_TYPES_V2_PRIMARY", ""),
-    "QUERY_TYPES_V2_ONLY":    os.getenv("CH25_QUERY_TYPES_V2_ONLY", ""),
-    "QUERY_TYPES_SHADOW":     os.getenv("CH25_QUERY_TYPES_SHADOW", ""),
-    "QUERY_TYPES_DISABLED":   os.getenv("CH25_QUERY_TYPES_DISABLED", ""),
+    "QUERY_TYPES_V2_ONLY": os.getenv("CH25_QUERY_TYPES_V2_ONLY", ""),
+    "QUERY_TYPES_SHADOW": os.getenv("CH25_QUERY_TYPES_SHADOW", ""),
+    "QUERY_TYPES_DISABLED": os.getenv("CH25_QUERY_TYPES_DISABLED", ""),
 }
 
 # Fail-closed: rollup routing requires both flag=on and window >= coverage date.

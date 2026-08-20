@@ -14,6 +14,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from tracer.models.custom_eval_config import CustomEvalConfig
+from tracer.models.eval_task import EvalTask
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger, EvalTargetType
 from tracer.services.eval_tasks.config_hash import resolved_config_hash
 from tracer.services.eval_tasks.entries import mark_terminal, writing_onto_entry
@@ -93,6 +94,7 @@ def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
     )
 
     task_id = entry.eval_task_id
+    task_project = EvalTask.objects.select_related("project").get(id=task_id).project
     template_id = config.eval_template_id
 
     with eval_read_source("clickhouse"), writing_onto_entry(entry.id):
@@ -104,7 +106,7 @@ def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
                     "project__organization",
                     "project__workspace",
                 ),
-                project_id=config.project_id,
+                project_id=task_project.id,
             )
             run_params = _process_mapping(config.mapping, span, template_id)
             result = _execute_evaluation(
@@ -126,7 +128,7 @@ def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
                     "project__organization",
                     "project__workspace",
                 ),
-                project_id=config.project_id,
+                project_id=task_project.id,
             )
             run_params = resolve_trace_mapping_lean_first(
                 config.mapping, trace, template_id
@@ -139,7 +141,7 @@ def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
                 run_params=run_params,
             )
         elif entry.target_type == EvalTargetType.SESSION:
-            session = get_trace_session(entry.trace_session_id, project=config.project)
+            session = get_trace_session(entry.trace_session_id, project=task_project)
             run_params = resolve_session_mapping_lean_first(
                 config.mapping, session, template_id
             )

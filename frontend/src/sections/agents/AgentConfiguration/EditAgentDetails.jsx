@@ -5,7 +5,15 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Box, Typography, Grid, Stack, Button } from "@mui/material";
+import {
+  Box,
+  Typography,
+  Grid,
+  Stack,
+  Button,
+  ToggleButton,
+  ToggleButtonGroup,
+} from "@mui/material";
 import PropTypes from "prop-types";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
@@ -26,7 +34,11 @@ import {
   defaultAuthMethodForProvider,
   VOICE_CHAT_PROVIDERS,
   INBOUND_OUTBOUND_COPY,
+  TARGET_SPEAKS_FIRST_COPY,
+  VOICE_TRANSPORT,
+  VOICE_TRANSPORT_COPY,
   isLiveKitProvider,
+  supportsConcurrency,
   validateLiveKitCredentials,
 } from "../constants";
 import { ShowComponent } from "src/components/show";
@@ -50,6 +62,7 @@ const EditAgentDetails = ({
   trigger,
   setValue,
   getValues,
+  clearErrors,
 }) => {
   const { orgLimit } = useAuthContext();
   const { agentDefinitionId } = useParams();
@@ -65,6 +78,11 @@ const EditAgentDetails = ({
     control,
     name: "agentName",
     defaultValue: getValues("agentName"),
+  });
+  const voiceTransport = useWatch({
+    control,
+    name: "voiceTransport",
+    defaultValue: getValues("voiceTransport") || VOICE_TRANSPORT.WEBRTC,
   });
   const assistantId = useWatch({
     control,
@@ -393,7 +411,7 @@ const EditAgentDetails = ({
                     setValue("livekitApiSecret", "");
                     setValue("livekitAgentName", "");
                     setValue("livekitConfigJson", {});
-                    setValue("livekitMaxConcurrency", 2);
+                    setValue("livekitMaxConcurrency", 5);
                   }
                   // "others" provider has no outbound path (user's own
                   // endpoint, nothing for us to call), so snap back to
@@ -632,6 +650,7 @@ const EditAgentDetails = ({
               required
               fullWidth
               size="small"
+              autoComplete="new-password"
               error={errors && !!errors.livekitApiKey?.message}
               helperText={errors && errors.livekitApiKey?.message}
             />
@@ -644,6 +663,7 @@ const EditAgentDetails = ({
               required
               fullWidth
               size="small"
+              autoComplete="new-password"
               error={errors && !!errors.livekitApiSecret?.message}
               helperText={errors && errors.livekitApiSecret?.message}
             />
@@ -715,6 +735,8 @@ const EditAgentDetails = ({
               multiline
               rows={6}
             />
+          </ShowComponent>
+          <ShowComponent condition={supportsConcurrency(selectedProvider)}>
             <FormTextFieldV2
               control={control}
               fieldName="livekitMaxConcurrency"
@@ -814,11 +836,67 @@ const EditAgentDetails = ({
             />
           </Box>
         </Box>
+        {/* Call transport: decides whether a phone number is collected */}
+        <ShowComponent condition={agentType === AGENT_TYPES.VOICE}>
+          <Box
+            display="flex"
+            justifyContent="space-between"
+            alignItems="center"
+            gap={2}
+            border={"1px solid"}
+            borderColor={"background.neutral"}
+            borderRadius={"8px !important"}
+            bgcolor={"background.neutral"}
+            p={1.5}
+          >
+            <Box display={"flex"} flexDirection={"column"}>
+              <Typography
+                typography="s1"
+                fontWeight={"fontWeightMedium"}
+                color={"text.primary"}
+              >
+                {VOICE_TRANSPORT_COPY[voiceTransport]?.title}
+              </Typography>
+              <Typography
+                typography="s2_1"
+                fontWeight={"fontWeightRegular"}
+                color={"text.secondary"}
+              >
+                {VOICE_TRANSPORT_COPY[voiceTransport]?.description}
+              </Typography>
+            </Box>
+            <ToggleButtonGroup
+              value={voiceTransport}
+              exclusive
+              size="small"
+              onChange={(_, value) => {
+                if (!value) return;
+                setValue("voiceTransport", value);
+                if (value === VOICE_TRANSPORT.WEBRTC) {
+                  clearErrors(["countryCode", "contactNumber"]);
+                }
+              }}
+            >
+              <ToggleButton
+                value={VOICE_TRANSPORT.WEBRTC}
+                sx={{ px: 2, py: 0.5, fontSize: "0.75rem" }}
+              >
+                {VOICE_TRANSPORT_COPY[VOICE_TRANSPORT.WEBRTC].label}
+              </ToggleButton>
+              <ToggleButton
+                value={VOICE_TRANSPORT.TELEPHONY}
+                sx={{ px: 2, py: 0.5, fontSize: "0.75rem" }}
+              >
+                {VOICE_TRANSPORT_COPY[VOICE_TRANSPORT.TELEPHONY].label}
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
+        </ShowComponent>
         {/* Contact Number and Pin Code */}
         <ShowComponent
           condition={
             agentType === AGENT_TYPES.VOICE &&
-            !isLiveKitProvider(selectedProvider)
+            voiceTransport === VOICE_TRANSPORT.TELEPHONY
           }
         >
           <Box>
@@ -988,6 +1066,53 @@ const EditAgentDetails = ({
                 uses your own endpoint, which we can only receive calls into.
               </Typography>
             )}
+
+            <Box
+              display="flex"
+              justifyContent="space-between"
+              alignItems="center"
+              border={"1px solid"}
+              borderColor={"background.neutral"}
+              borderRadius={"8px !important"}
+              p={1.5}
+            >
+              <Box display={"flex"} flexDirection={"column"}>
+                <Typography
+                  typography="s1"
+                  fontWeight={"fontWeightMedium"}
+                  color={"text.primary"}
+                >
+                  {TARGET_SPEAKS_FIRST_COPY.title}
+                </Typography>
+                <Typography
+                  typography="s2_1"
+                  fontWeight={"fontWeightRegular"}
+                  color={"text.secondary"}
+                >
+                  {TARGET_SPEAKS_FIRST_COPY.description}
+                </Typography>
+              </Box>
+              <CustomTooltip
+                show={true}
+                title={TARGET_SPEAKS_FIRST_COPY.tooltip}
+                placement="bottom"
+                arrow
+                size="small"
+                type="black"
+                slotProps={{
+                  tooltip: { sx: { maxWidth: "200px !important" } },
+                }}
+              >
+                <Box>
+                  <SwitchField
+                    control={control}
+                    fieldName="targetSpeaksFirst"
+                    label=""
+                    labelPlacement="end"
+                  />
+                </Box>
+              </CustomTooltip>
+            </Box>
           </Stack>
         </ShowComponent>
         <ShowComponent
@@ -1054,6 +1179,7 @@ EditAgentDetails.propTypes = {
   setValue: PropTypes.func,
   getValues: PropTypes.func,
   trigger: PropTypes.func,
+  clearErrors: PropTypes.func,
 };
 
 export default EditAgentDetails;

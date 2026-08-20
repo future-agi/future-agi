@@ -440,7 +440,7 @@ class AnnotationsLabelsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelV
             label = AnnotationsLabels.all_objects.get(
                 pk=pk,
                 deleted=True,
-                organization=request.user.organization,
+                organization=get_request_organization(request),
             )
         except AnnotationsLabels.DoesNotExist:
             return self._gm.not_found("Label not found or not archived.")

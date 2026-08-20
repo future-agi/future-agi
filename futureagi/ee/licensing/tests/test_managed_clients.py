@@ -67,24 +67,40 @@ class TestFalconManagedClient:
         assert client.model == "falcon_ai"
 
     @pytest.mark.asyncio
-    @patch("ee.licensing.managed_ai.chat_completion")
-    async def test_stream_completion_uses_managed_gateway(self, mock_call):
-        mock_call.return_value = {
-            "choices": [{"message": {"content": "falcon managed"}}],
-            "usage": {"total_tokens": 4},
-        }
+    async def test_stream_completion_uses_managed_gateway(self):
+        payloads = []
 
-        client = FalconLLMClient()
-        chunks = []
-        async for chunk in client.stream_completion(
-            [{"role": "user", "content": "analyze"}],
-            tools=[{"type": "function", "function": {"name": "create"}}],
+        async def managed_stream(payload):
+            payloads.append(payload)
+            yield {
+                "choices": [
+                    {
+                        "delta": {"content": "falcon managed"},
+                        "finish_reason": None,
+                    }
+                ]
+            }
+            yield {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+
+        with patch(
+            "ee.licensing.managed_ai.stream_chat_completion",
+            new=managed_stream,
         ):
-            chunks.append(chunk)
+            client = FalconLLMClient()
+            chunks = [
+                chunk
+                async for chunk in client.stream_completion(
+                    [{"role": "user", "content": "analyze"}],
+                    tools=[{"type": "function", "function": {"name": "create"}}],
+                )
+            ]
 
         assert chunks[0]["choices"][0]["delta"]["content"] == "falcon managed"
         assert chunks[-1]["choices"][0]["finish_reason"] == "stop"
-        payload = mock_call.call_args.args[0]
+        payload = payloads[0]
         assert payload["model"] == "falcon_ai"
         assert payload["messages"] == [{"role": "user", "content": "analyze"}]
-        assert payload["tools"] == [{"type": "function", "function": {"name": "create"}}]
+        assert payload["tools"] == [
+            {"type": "function", "function": {"name": "create"}}
+        ]
+        assert payload["stream"] is True

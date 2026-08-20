@@ -85,7 +85,7 @@ CLICKHOUSE_V2 = {
 }
 
 CH25_EVAL_LOGGER_TABLE = os.environ.get(
-    "CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger_v2"
+    "CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger"
 )
 
 # Test cache configuration

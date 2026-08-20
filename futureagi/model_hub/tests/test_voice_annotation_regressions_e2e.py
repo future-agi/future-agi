@@ -868,14 +868,13 @@ class TestVoiceAnnotationRegressionE2E:
     ):
         """voice_call_detail must surface the simulation path context.
 
-        The ``OPTIMIZE TABLE spans FINAL`` below works around a production bug:
-        ``voice_call_detail``'s root-span query has no ``FINAL`` and no
-        ``argMax(_, _version)`` dedup, so it can return a stale
-        ReplacingMergeTree row and drop ``call_execution_id``. Delete the
-        OPTIMIZE once the query is fixed.
+        The fixture seeds this span without eval_attributes and the re-seed
+        below adds them, so two ReplacingMergeTree rows share the id. The
+        endpoint's root-span query reads with ``FINAL``, so the later,
+        eval-bearing row must win without any table maintenance here — this
+        doubles as the regression test for that dedup.
         """
         from tracer.tests._ch_seed import (
-            _get_ch_client,
             seed_ch_span,
             seed_ch_trace,
         )
@@ -918,14 +917,6 @@ class TestVoiceAnnotationRegressionE2E:
         # (PG tracer_trace is dropped on CH25), so the trace row must be seeded too;
         # seeding only the span leaves the traces lookup empty (404).
         seed_ch_trace(observe_trace)
-        # The fixture seeded this span without eval_attributes and the re-seed
-        # above added them, so two ReplacingMergeTree rows share the id. Merge
-        # them so the later, eval-bearing row wins deterministically.
-        _ch = _get_ch_client()
-        try:
-            _ch.command("OPTIMIZE TABLE spans FINAL")
-        finally:
-            _ch.close()
 
         resp = auth_client.get(
             "/tracer/trace/voice_call_detail/",

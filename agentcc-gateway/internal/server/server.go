@@ -200,6 +200,9 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	}
 
 	handlers := NewHandlers(registry, engine, cfg.Server.MaxRequestBodySize, cfg.Server.DefaultRequestTimeout, failover, modelFallbacks, condRouter, healthMonitor, cfg.Routing.ModelTimeouts, mirror, guardrailEngine, policyStore, cfg.Guardrails.Streaming, modelDBPtr, tenantStore, orgProviderCache, authKeyStore)
+	// A streamed completion exists nowhere else — it has to be assembled while
+	// the chunks go past, and only if something is going to record it.
+	handlers.SetCaptureStreamContent(cfg.Logging.RequestLogging.IncludeBodies || (cfg.OTel.Enabled && cfg.OTel.IncludeBodies))
 	s.handlers = handlers
 
 	// Set up Files API store.

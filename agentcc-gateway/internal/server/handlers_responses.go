@@ -61,15 +61,7 @@ func (h *Handlers) CreateResponse(w http.ResponseWriter, r *http.Request) {
 
 	// Extract Agentcc metadata (with security key blocklist).
 	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
-		var m map[string]string
-		if err := json.Unmarshal([]byte(meta), &m); err == nil {
-			for k, v := range m {
-				if isBlockedMetadataKey(k) {
-					continue
-				}
-				rc.Metadata[k] = v
-			}
-		}
+		parseMetadataHeader(meta, rc)
 	}
 
 	// Resolve timeout.

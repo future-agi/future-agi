@@ -66,6 +66,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     "simulate.tasks.scenario_tasks",
     "simulate.services.test_executor",
     "simulate.tasks.chat_sim",
+    "simulate.tasks.alk_sim",
     # voice tasks
     "ee.voice.tasks.call_log_tasks",
     # integration tasks
@@ -351,6 +352,26 @@ def _ensure_workflows_registered() -> None:
             "could_not_load_call_execution_workflows", error=str(e)
         )
 
+    # Register the hosted simulation-runner workflow on its dedicated queue.
+    # This workflow dispatches the released SDK to the simulation-runner worker
+    # (plan §9); it runs on `simulation_runner`, not the native call queues.
+    try:
+        from simulate.temporal.constants import QUEUE_RUNNER
+        from simulate.temporal.workflows.simulation_runner_workflow import (
+            SimulationRunnerWorkflow,
+        )
+
+        register_for_queues(
+            queues=[QUEUE_RUNNER],
+            workflows=[SimulationRunnerWorkflow],
+        )
+    except ImportError as e:
+        from tfc.logging.temporal import get_logger
+
+        get_logger(__name__).warning(
+            "could_not_load_simulation_runner_workflow", error=str(e)
+        )
+
     # Register billing/usage workflows for default queue
     # UsageConsumerWorkflow (long-running singleton) + MonthlyResetWorkflow
     try:
@@ -576,6 +597,29 @@ def _ensure_activities_registered() -> None:
         log.info("registered_call_execution_small_activities", count=9)
     except ImportError as e:
         log.warning("could_not_load_call_execution_small_activities", error=str(e))
+
+    # Hosted simulation-runner activities (plan §9) — dedicated queue. The
+    # runner spawns the released SDK as a child process; these do not run on the
+    # native voice queues.
+    try:
+        from simulate.temporal.activities.hosted_runner import (
+            build_runner_job,
+            finalize_hosted_execution,
+            run_hosted_sdk_job,
+        )
+        from simulate.temporal.constants import QUEUE_RUNNER
+
+        register_for_queues(
+            queues=[QUEUE_RUNNER],
+            activities=[
+                build_runner_job,
+                run_hosted_sdk_job,
+                finalize_hosted_execution,
+            ],
+        )
+        log.info("registered_hosted_runner_activities", count=3)
+    except ImportError as e:
+        log.warning("could_not_load_hosted_runner_activities", error=str(e))
 
     # Voice small activities (Enterprise Edition)
     try:
