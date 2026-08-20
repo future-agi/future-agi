@@ -917,7 +917,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         model,
       });
       enqueueSnackbar(
-        `Version V${newVersion?.version_number || newVersion?.versionNumber || ""} saved`,
+        `Version V${newVersion?.version_number || ""} saved`,
         { variant: "success" },
       );
       setIsDirty(false);
