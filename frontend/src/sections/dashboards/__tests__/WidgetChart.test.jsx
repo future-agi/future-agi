@@ -4,6 +4,7 @@ import { render, screen } from "src/utils/test-utils";
 import WidgetChart from "../WidgetChart";
 import WidgetPieCharts from "../WidgetPieCharts";
 import { NO_DATA_FOR_RANGE_MESSAGE } from "../constants";
+import { buildChartSeriesColorMap } from "../chartColors";
 
 const h = vi.hoisted(() => ({
   query: { data: null, isPending: false, isError: false, mutate: vi.fn() },
@@ -19,6 +20,17 @@ vi.mock("react-apexcharts", () => ({
       data-testid={`apex-${props.type}`}
       data-series={JSON.stringify(props.series)}
       data-labels={JSON.stringify(props.options?.labels ?? null)}
+      data-colors={JSON.stringify(props.options?.colors ?? null)}
+    />
+  ),
+}));
+
+vi.mock("../ChartLegend", () => ({
+  default: ({ items, colors }) => (
+    <div
+      data-testid="chart-legend"
+      data-items={JSON.stringify(items)}
+      data-colors={JSON.stringify(colors)}
     />
   ),
 }));
@@ -84,6 +96,102 @@ describe("WidgetChart — empty time-range state", () => {
 
     expect(screen.getByText(NO_DATA_MESSAGE)).toBeInTheDocument();
     expect(screen.queryByTestId("apex-pie")).not.toBeInTheDocument();
+  });
+});
+
+describe("WidgetChart — breakdown and metric color encoding", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.query.isPending = false;
+    h.query.isError = false;
+    h.query.data = {
+      data: {
+        result: {
+          metrics: [
+            {
+              id: "latency",
+              name: "Latency",
+              aggregation: "avg",
+              series: [
+                {
+                  name: "alpha",
+                  data: [{ timestamp: "2026-07-09T00:00:00Z", value: 10 }],
+                },
+                {
+                  name: "beta",
+                  data: [{ timestamp: "2026-07-09T00:00:00Z", value: 20 }],
+                },
+              ],
+            },
+            {
+              id: "tokens",
+              name: "Tokens",
+              aggregation: "sum",
+              series: [
+                {
+                  name: "alpha",
+                  data: [{ timestamp: "2026-07-09T00:00:00Z", value: 30 }],
+                },
+                {
+                  name: "beta",
+                  data: [{ timestamp: "2026-07-09T00:00:00Z", value: 40 }],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+  });
+
+  it("passes the same breakdown-aware colors to the chart and legend", () => {
+    render(
+      <WidgetChart
+        widget={{
+          id: "w-breakdown",
+          query_config: {
+            metrics: [
+              { id: "latency", name: "Latency", aggregation: "avg" },
+              { id: "tokens", name: "Tokens", aggregation: "sum" },
+            ],
+            breakdowns: [{ name: "project" }],
+          },
+          chart_config: { chart_type: "line" },
+        }}
+        globalDateRange={null}
+      />,
+    );
+
+    const chart = screen.getByTestId("apex-line");
+    const legend = screen.getByTestId("chart-legend");
+    const chartColors = JSON.parse(chart.getAttribute("data-colors"));
+    const legendColors = JSON.parse(legend.getAttribute("data-colors"));
+    const series = [
+      {
+        name: "Latency / alpha (avg)",
+        breakdownName: "alpha",
+        metricIndex: 0,
+      },
+      {
+        name: "Latency / beta (avg)",
+        breakdownName: "beta",
+        metricIndex: 0,
+      },
+      {
+        name: "Tokens / alpha (sum)",
+        breakdownName: "alpha",
+        metricIndex: 1,
+      },
+      {
+        name: "Tokens / beta (sum)",
+        breakdownName: "beta",
+        metricIndex: 1,
+      },
+    ];
+    const expectedMap = buildChartSeriesColorMap(series, "light");
+
+    expect(chartColors).toEqual(series.map((item) => expectedMap[item.name]));
+    expect(legendColors).toEqual(chartColors);
   });
 });
 

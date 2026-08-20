@@ -23,52 +23,13 @@ import {
 import WidgetPieCharts from "./WidgetPieCharts";
 import { toTimeRangePayload } from "./dashboardDateRange";
 import { NO_DATA_FOR_RANGE_MESSAGE } from "./constants";
+import {
+  buildChartSeriesColorMap,
+  buildSeriesColorMap,
+  getSeriesColorFromMap,
+} from "./chartColors";
 
 const CHART_HEIGHT_FALLBACK = 280;
-const COLORS = [
-  "#7B56DB", // purple (primary)
-  "#1ABCFE", // cyan
-  "#FF6B6B", // coral red
-  "#2ECB71", // emerald green
-  "#F7B731", // amber
-  "#E84393", // magenta pink
-  "#0984E3", // ocean blue
-  "#FD7E14", // tangerine orange
-  "#00CEC9", // teal
-  "#A29BFE", // lavender
-];
-
-const hashSeriesName = (name) => {
-  const s = String(name || "");
-  let h = 0;
-  for (let i = 0; i < s.length; i += 1) {
-    h = (h * 31 + s.charCodeAt(i)) | 0;
-  }
-  return Math.abs(h);
-};
-// Name-hash gives cross-reload stability, but a bare hash % palette collides ~50%
-// at 4 series. Walk each name once and, on a taken slot, advance to the next
-// free one — distinct up to palette size, stable for the common non-colliding case.
-const buildSeriesColorMap = (names) => {
-  const map = {};
-  const used = new Set();
-  (names || []).forEach((name) => {
-    const start = hashSeriesName(name) % COLORS.length;
-    let picked = start;
-    for (let i = 0; i < COLORS.length; i += 1) {
-      const candidate = (start + i) % COLORS.length;
-      if (!used.has(candidate)) {
-        picked = candidate;
-        break;
-      }
-    }
-    used.add(picked);
-    map[name] = COLORS[picked];
-  });
-  return map;
-};
-const getSeriesColorFromMap = (map, name) =>
-  (map && map[name]) || COLORS[hashSeriesName(name) % COLORS.length];
 
 function getApexType(chartType) {
   const map = {
@@ -218,13 +179,14 @@ export default function WidgetChart({ widget, globalDateRange }) {
     return series.filter((_, i) => visibleSeries.has(i));
   }, [series, visibleSeries]);
 
-  // Build from the full `series` list (not filtered chartSeries) so a
-  // hidden series keeps its slot and its color stays put when unhidden.
+  // Resolve from the full list so a hidden series keeps its color. Breakdown
+  // values select the hue; metric position selects a theme-aware shade.
   const seriesColorMap = useMemo(
-    () => buildSeriesColorMap(series.map((s) => s.name)),
-    [series],
+    () => buildChartSeriesColorMap(series, theme.palette.mode),
+    [series, theme.palette.mode],
   );
   const colorFor = (name) => getSeriesColorFromMap(seriesColorMap, name);
+  const chartColors = chartSeries.map((item) => colorFor(item.name));
 
   // Pie slices are breakdown values, which repeat across metrics. Key their
   // colours by the raw breakdown name so a given project is the same colour in
@@ -1110,7 +1072,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
       xaxis: { lines: { show: false } },
       padding: { left: 8, right: 8 },
     },
-    colors: chartSeries.map((s) => colorFor(s.name)),
+    colors: chartColors,
     legend: { show: false, height: 0 },
   };
 
@@ -1148,7 +1110,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
       {legendNames.length > 1 && (
         <ChartLegend
           items={legendNames}
-          colors={COLORS}
+          colors={chartColors}
           onHoverSeries={handleLegendHover}
           onLeaveSeries={handleLegendLeave}
         />
