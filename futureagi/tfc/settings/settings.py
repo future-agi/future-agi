@@ -480,9 +480,12 @@ SERVER_EMAIL = os.getenv("SERVER_EMAIL")  # ditto (default from-email for Django
 APP_URL = os.getenv("APP_URL")
 
 # ── Billing ───────────────────────────────────────────────────
+# Ships only with the cloud overlay, which is the future-agi/ee repo checked
+# out at futureagi/ee/cloud/. Absent on OSS/EE — BillingConfig falls open to
+# empty defaults there (and fails closed on cloud).
 BILLING_CONFIG_PATH = os.environ.get(
     "BILLING_CONFIG_PATH",
-    os.path.join(BASE_DIR, "..", "ee", "billing.yaml"),
+    os.path.join(BASE_DIR, "..", "ee", "cloud", "billing.yaml"),
 )
 
 # EE license key (self-hosted only, JWT RS256)
