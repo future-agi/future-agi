@@ -282,6 +282,10 @@ jobs:
         run: |
           if ! ./scripts/generate-openapi-schema.sh > /tmp/openapi-generation.log 2>&1; then
             echo "::error::OpenAPI generation failed with EE checked out. Logs are suppressed here to avoid printing private EE source context; run locally with futureagi/ee present for details."
+            # Surface only the final exception line (type + message, no
+            # traceback/source context) so failures are debuggable from CI.
+            grep -Eo '^[A-Za-z_.]*(Error|Exception|Exit)[A-Za-z_]*: .*' /tmp/openapi-generation.log | tail -n 2 || true
+            tail -n 1 /tmp/openapi-generation.log || true
             exit 1
           fi
           git diff --exit-code api_contracts/openapi/swagger.json
