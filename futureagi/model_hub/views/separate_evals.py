@@ -2491,6 +2491,7 @@ class EvalTemplateListView(APIView):
                 owner_filter=req.get("owner_filter", "all"),
                 search=req.get("search"),
                 filters=req.get("filters"),
+                filter_combinator=req.get("filter_combinator", "and"),
             )
 
             # Prefetch evaluators + user and versions + user to avoid N+1 in get_created_by_name
@@ -2514,23 +2515,9 @@ class EvalTemplateListView(APIView):
                 order_field = f"-{order_field}"
             qs = qs.order_by(order_field)
 
-            # 4. Handle eval_type filter
-            filters = req.get("filters") or {}
-            eval_type_filter = (
-                filters.get("eval_type")
-                if isinstance(filters, dict)
-                else getattr(filters, "eval_type", None)
-            )
-            if eval_type_filter:
-                qs = qs.filter(eval_type__in=eval_type_filter)
-
-            eval_type_not_filter = (
-                filters.get("eval_type_not")
-                if isinstance(filters, dict)
-                else getattr(filters, "eval_type_not", None)
-            )
-            if eval_type_not_filter:
-                qs = qs.exclude(eval_type__in=eval_type_not_filter)
+            # 4. Eval_type filter is applied inside build_eval_list_queryset
+            # alongside the other advanced filters so the single
+            # ``filter_combinator`` (AND/OR) covers it too.
 
             total = qs.count()
             page = req.get("page", 0)

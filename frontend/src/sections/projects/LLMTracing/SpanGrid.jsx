@@ -233,6 +233,7 @@ const SpanGrid = React.forwardRef(
       hasEvalFilter,
       cellHeight,
       metricFilters,
+      filterCombinator = "and",
       pendingCustomColumnsRef,
       canonicalOrderRef,
       canonicalColumnsRef,
@@ -326,6 +327,7 @@ const SpanGrid = React.forwardRef(
           filters,
           extraFilters: extraFilters || EMPTY_EXTRA_FILTERS,
           metricFilters: metricFilters || [],
+          filterCombinator,
           hasEvalFilter,
           observeId,
           enabled,
@@ -335,6 +337,7 @@ const SpanGrid = React.forwardRef(
         filters,
         extraFilters,
         metricFilters,
+        filterCombinator,
         hasEvalFilter,
         observeId,
         enabled,
@@ -583,6 +586,9 @@ const SpanGrid = React.forwardRef(
                       ...(metricFilters || []),
                     ]),
                   ),
+                  // OR must reach the backend; absent keeps today's AND
+                  // behaviour for every caller without the control.
+                  filter_combinator: filterCombinator,
                 });
 
               const exactPage = await shareInFlightListPage({

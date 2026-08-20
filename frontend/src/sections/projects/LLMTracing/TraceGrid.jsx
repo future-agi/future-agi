@@ -104,6 +104,7 @@ const TraceGrid = React.forwardRef(
       cellHeight,
       hasEvalFilter,
       metricFilters,
+      filterCombinator = "and",
       pendingCustomColumnsRef,
       canonicalOrderRef,
       canonicalColumnsRef,
@@ -213,6 +214,7 @@ const TraceGrid = React.forwardRef(
           filters,
           extraFilters: extraFilters || EMPTY_EXTRA_FILTERS,
           metricFilters: metricFilters || [],
+          filterCombinator,
           hasEvalFilter,
           dateInterval,
           projectId,
@@ -224,6 +226,7 @@ const TraceGrid = React.forwardRef(
         filters,
         extraFilters,
         metricFilters,
+        filterCombinator,
         hasEvalFilter,
         dateInterval,
         projectId,
@@ -405,6 +408,9 @@ const TraceGrid = React.forwardRef(
                       ...(metricFilters || []),
                     ]),
                   ),
+                  // OR must reach the backend; absent keeps today's AND
+                  // behaviour for every caller without the control.
+                  filter_combinator: filterCombinator,
                   ...(dateInterval && { interval: dateInterval }),
                 });
 

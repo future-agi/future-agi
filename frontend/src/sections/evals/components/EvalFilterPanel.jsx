@@ -226,6 +226,8 @@ function parseNaturalLanguage(query) {
 function QueryInput({ onApply, initialTokens = [] }) {
   // Each token: { field, operator, value } — a complete filter
   const [tokens, setTokens] = useState(initialTokens);
+  // AND/OR between every pair of chips. One value for the whole builder.
+  const [combinator, setCombinator] = useState("and");
   // Partial state for the clause being built
   const [partialField, setPartialField] = useState(null);
   const [partialOp, setPartialOp] = useState(null);
@@ -270,6 +272,12 @@ function QueryInput({ onApply, initialTokens = [] }) {
     return options.filter((o) => o.label.toLowerCase().includes(q));
   }, [options, inputValue]);
 
+  const toggleCombinator = useCallback(() => {
+    const next = combinator === "and" ? "or" : "and";
+    setCombinator(next);
+    onApply(tokens, next);
+  }, [combinator, tokens, onApply]);
+
   const commitFilter = useCallback(
     (field, op, value) => {
       const updated = [...tokens, { field, operator: op, value }];
@@ -278,9 +286,9 @@ function QueryInput({ onApply, initialTokens = [] }) {
       setPartialOp(null);
       setInputValue("");
       setTimeout(() => setDropdownOpen(true), 0);
-      onApply(updated);
+      onApply(updated, combinator);
     },
-    [tokens, onApply],
+    [tokens, onApply, combinator],
   );
 
   // Re-open dropdown after a selection — needs setTimeout because
@@ -318,9 +326,9 @@ function QueryInput({ onApply, initialTokens = [] }) {
       setPartialOp(token.operator);
       setInputValue(token.value);
       setTimeout(() => setDropdownOpen(true), 0);
-      onApply(updated.length > 0 ? updated : []);
+      onApply(updated.length > 0 ? updated : [], combinator);
     },
-    [tokens, onApply],
+    [tokens, onApply, combinator],
   );
 
   const handleKeyDown = useCallback(
@@ -368,9 +376,9 @@ function QueryInput({ onApply, initialTokens = [] }) {
       const updated = tokens.filter((_, i) => i !== index);
       setTokens(updated);
       setDropdownOpen(true);
-      onApply(updated.length > 0 ? updated : []);
+      onApply(updated.length > 0 ? updated : [], combinator);
     },
-    [tokens, onApply],
+    [tokens, onApply, combinator],
   );
 
   // Build the inline prefix showing partial clause being typed
@@ -471,9 +479,48 @@ function QueryInput({ onApply, initialTokens = [] }) {
             startAdornment: (
               <>
                 {/* Completed filter chips */}
-                {tokens.map((t, i) => (
+                {tokens.flatMap((t, i) => [
+                  i > 0 ? (
+                    <Box
+                      key={`combinator-${i}`}
+                      component="button"
+                      type="button"
+                      aria-pressed={combinator === "or"}
+                      aria-label={`Combine filters with ${combinator === "and" ? "AND" : "OR"}`}
+                      onClick={toggleCombinator}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          toggleCombinator();
+                        }
+                      }}
+                      sx={{
+                        border: "1px solid",
+                        borderColor: "warning.main",
+                        borderRadius: "4px",
+                        px: 0.5,
+                        py: 0,
+                        fontSize: 10,
+                        fontWeight: 700,
+                        lineHeight: 1.6,
+                        color: "warning.main",
+                        bgcolor: "transparent",
+                        cursor: "pointer",
+                        mr: 0.5,
+                        fontFamily: "monospace",
+                        "&:hover": { bgcolor: "action.hover" },
+                        "&:focus-visible": {
+                          outline: "2px solid",
+                          outlineColor: "primary.main",
+                          outlineOffset: 1,
+                        },
+                      }}
+                    >
+                      {combinator === "and" ? "AND" : "OR"}
+                    </Box>
+                  ) : null,
                   <Chip
-                    key={i}
+                    key={`token-${i}`}
                     size="small"
                     onClick={() => editToken(i)}
                     onDelete={() => handleDeleteToken(i)}
@@ -495,8 +542,8 @@ function QueryInput({ onApply, initialTokens = [] }) {
                       cursor: "pointer",
                       "&:hover": { borderColor: "primary.main" },
                     }}
-                  />
-                ))}
+                  />,
+                ])}
                 {/* Partial clause tokens (field, operator typed but value pending) */}
                 {inlinePrefix.map((p, i) => (
                   <Box
@@ -853,6 +900,9 @@ const EvalFilterPanel = ({
   }, [currentFilters, lockedFields]);
 
   const [rows, setRows] = useState(buildInitialRows);
+  // AND/OR combinator last chosen in the Query tab. Kept so the debounced
+  // auto-apply below re-sends the same value instead of resetting to "and".
+  const combinatorRef = useRef("and");
 
   // Re-initialize rows when the panel opens. We intentionally only watch
   // `open` here — re-running on every `currentFilters` change would fight
@@ -870,7 +920,7 @@ const EvalFilterPanel = ({
     if (!open) return;
     if (applyTimerRef.current) clearTimeout(applyTimerRef.current);
     applyTimerRef.current = setTimeout(() => {
-      onApply(rowsToApiFilters(rows));
+      onApply(rowsToApiFilters(rows), combinatorRef.current);
     }, 400);
     return () => {
       if (applyTimerRef.current) clearTimeout(applyTimerRef.current);
@@ -898,11 +948,15 @@ const EvalFilterPanel = ({
   }, []);
 
   const handleApplyFromNlp = useCallback(
-    (nlpRows) => {
+    (nlpRows, combinator) => {
+      const next = combinator === "or" ? "or" : "and";
+      // Remember the combinator so the debounced auto-apply (triggered by
+      // setRows below) keeps it instead of resetting back to "and".
+      combinatorRef.current = next;
       // Sync to Basic tab rows so user can see/edit them there too
       setRows(nlpRows);
-      // Auto-apply immediately
-      onApply(rowsToApiFilters(nlpRows));
+      // Auto-apply immediately, carrying the AND/OR combinator.
+      onApply(rowsToApiFilters(nlpRows), next);
       // Don't close — user can keep adding or switch to Basic to edit
     },
     [onApply],
@@ -932,12 +986,14 @@ const EvalFilterPanel = ({
 
     setRows(parsed);
     setAiQuery("");
+    combinatorRef.current = "and";
     onApply(rowsToApiFilters(parsed));
     onClose();
   }, [aiQuery, aiParseQuery, onApply, onClose]);
 
   const handleClear = useCallback(() => {
     setRows([{ field: "name", operator: "contains", value: "" }]);
+    combinatorRef.current = "and";
     onApply(null);
     onClose();
   }, [onApply, onClose]);

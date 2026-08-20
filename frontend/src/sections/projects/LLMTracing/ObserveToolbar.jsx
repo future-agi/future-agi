@@ -455,28 +455,33 @@ const ObserveToolbar = ({
             attributeSource={attributeSource}
             projectId={projectId}
             allowWorkspaceScope={allowWorkspaceScope}
-            onApply={(newFilters) => {
+            // Only the trace/span surfaces have an OR-capable grid behind
+            // them; sessions/users keep the panel AND-only (no separator).
+            {...(filterCombinator !== undefined
+              ? { showCombinator: true, currentCombinator: filterCombinator }
+              : {})}
+            onApply={(newFilters, combinator) => {
               setPanelFilters(newFilters);
               if (!newFilters || newFilters.length === 0) {
                 if (filterTarget === "compare") {
                   if (onClearCompareExtraFilters) {
                     onClearCompareExtraFilters();
                   } else {
-                    onApplyCompareExtraFilters?.([]);
+                    onApplyCompareExtraFilters?.([], "and");
                   }
                 } else if (onClearExtraFilters) {
                   onClearExtraFilters();
                 } else {
-                  onApplyExtraFilters?.([]);
+                  onApplyExtraFilters?.([], "and");
                 }
                 return;
               }
               const apiFilters = newFilters.map(buildApiFilterFromPanelRow);
               // Route to correct handler based on which graph's filter was clicked
               if (filterTarget === "compare" && onApplyCompareExtraFilters) {
-                onApplyCompareExtraFilters(apiFilters);
+                onApplyCompareExtraFilters(apiFilters, combinator);
               } else {
-                onApplyExtraFilters?.(apiFilters);
+                onApplyExtraFilters?.(apiFilters, combinator);
               }
             }}
           />
