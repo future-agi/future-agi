@@ -146,6 +146,7 @@ func TestPreset_KnownProvidersComplete(t *testing.T) {
 		"anyscale":    {BaseURL: "https://api.endpoints.anyscale.com", APIFormat: "openai"},
 		"replicate":   {BaseURL: "https://api.replicate.com", APIFormat: "openai"},
 		"openrouter":  {BaseURL: "https://openrouter.ai/api", APIFormat: "openai"},
+		"orcarouter":  {BaseURL: "https://api.orcarouter.ai", APIFormat: "openai"},
 		"azure":       {BaseURL: "", APIFormat: "azure"},
 	}
 

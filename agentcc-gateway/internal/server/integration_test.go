@@ -66,6 +66,16 @@ func createRealServer(t *testing.T) *Server {
 		}
 	}
 
+	// OrcaRouter (OpenAI-compatible)
+	if key := os.Getenv("ORCAROUTER_API_KEY"); key != "" {
+		cfg.Providers["orcarouter"] = config.ProviderConfig{
+			BaseURL:   "https://api.orcarouter.ai",
+			APIKey:    key,
+			APIFormat: "openai",
+			Models:    []string{"orcarouter/auto"},
+		}
+	}
+
 	registry, err := providers.NewRegistry(cfg)
 	if err != nil {
 		t.Fatalf("creating registry: %v", err)
@@ -281,6 +291,31 @@ func TestIntegration_OpenRouter_NonStreaming(t *testing.T) {
 	var resp models.ChatCompletionResponse
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	t.Logf("OpenRouter response: id=%s model=%s choices=%d", resp.ID, resp.Model, len(resp.Choices))
+}
+
+// --- OrcaRouter ---
+
+func TestIntegration_OrcaRouter_NonStreaming(t *testing.T) {
+	skipIfNoKey(t, "ORCAROUTER_API_KEY")
+	srv := createRealServer(t)
+
+	reqBody := `{"model":"orcarouter/auto","messages":[{"role":"user","content":"Say hello in exactly 3 words."}],"max_tokens":20}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	srv.httpServer.Handler.ServeHTTP(w, req)
+
+	if w.Code == 502 && strings.Contains(w.Body.String(), "401") {
+		t.Skip("OrcaRouter API key expired/invalid, skipping")
+	}
+	if w.Code != 200 {
+		t.Fatalf("OrcaRouter non-streaming: status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	var resp models.ChatCompletionResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	t.Logf("OrcaRouter response: id=%s model=%s choices=%d", resp.ID, resp.Model, len(resp.Choices))
 }
 
 // --- List Models ---
