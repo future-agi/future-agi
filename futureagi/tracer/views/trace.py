@@ -21,6 +21,7 @@ from django.db.models import (
     FloatField,
     IntegerField,
     JSONField,
+    Max,
     OuterRef,
     Q,
     Subquery,
@@ -92,7 +93,12 @@ from tracer.utils.annotations import (
 )
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import (
+    EvalFetchError,
+    attach_grouped_eval_scores,
+    build_eval_target_map,
+    eval_count_cell,
     eval_output_type_for_config,
+    fetch_grouped_eval_rows,
     flatten_eval_score_into_entry,
     get_annotation_labels_for_project,
     get_default_trace_config,
@@ -1085,19 +1091,56 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 get_query_builder_class,
             )
 
+            analytics = AnalyticsQueryService()
             HandlerCls = get_query_builder_class("TRACE_DETAIL")
             handler = HandlerCls(
                 view=self,
                 request=request,
                 pk=trace_id,
-                analytics=AnalyticsQueryService(),
+                analytics=analytics,
             )
-            return self._gm.success_response(handler.fetch())
+            detail = handler.fetch()
+            self._attach_detail_eval_scores(detail, trace_id, analytics)
+            return self._gm.success_response(detail)
+        except EvalFetchError as e:
+            # Explicit failure beats fail-open: an empty eval section is
+            # indistinguishable from "no evals ran" on the client.
+            logger.error("trace_detail_eval_fetch_failed", error=str(e))
+            return self._gm.bad_request("error fetching evaluation scores for trace")
         except Exception as e:
             logger.exception(f"Error in fetching the trace: {str(e)}")
             return self._gm.bad_request(
                 f"error retrieving trace {get_error_message('ERROR_GETTING_TRACE')}"
             )
+
+    @staticmethod
+    def _attach_detail_eval_scores(detail, trace_id, analytics):
+        """Attach grouped ``eval_scores`` to every span-tree entry (TH-7610).
+
+        Root entries carry the trace-level rollup (``scope: "trace"``,
+        per-span rows across the whole trace); child entries carry their own
+        ``scope: "span"`` slice. Runs one CH read + one batched PG config
+        lookup regardless of which detail handler (v1 PG / v2 CH) assembled
+        the tree. ``EvalFetchError`` propagates so the endpoint surfaces a
+        fetch failure explicitly.
+        """
+        span_targets = []
+
+        def _walk(entries, is_root):
+            for entry in entries:
+                span = entry.get("observation_span") or {}
+                sid = str(span.get("id") or "")
+                if sid:
+                    span_targets.append((sid, span.get("name"), is_root, entry))
+                _walk(entry.get("children") or [], False)
+
+        _walk(detail.get("observation_spans") or [], True)
+        if not span_targets:
+            return
+        eval_rows, rows_by_span, config_lookup = fetch_grouped_eval_rows(
+            analytics, trace_id
+        )
+        attach_grouped_eval_scores(span_targets, eval_rows, rows_by_span, config_lookup)
 
     # Keys to strip from the list response (heavy / detail-only fields).
     _VOICE_CALL_HEAVY_KEYS = frozenset(
@@ -3461,17 +3504,29 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # project_id — multi-project CH variant not implemented yet.
         eval_config_ids = []
         if org_scope:
-            eval_configs = CustomEvalConfig.objects.filter(
-                id__in=EvalLogger.objects.filter(
+            # One aggregated scan serves both discoveries: which configs have
+            # rows (the column set — same population the old DISTINCT
+            # subquery matched) and the most recent target_type per config
+            # (the S/T column glyph).
+            target_rows = list(
+                EvalLogger.objects.filter(
                     trace_id__in=Trace.objects.filter(
                         project_id__in=org_project_ids
                     ).values("id")
                 )
-                .values("custom_eval_config_id")
-                .distinct(),
+                .values("custom_eval_config_id", "target_type")
+                .annotate(last_seen=Max("created_at"))
+                .order_by()
+            )
+            eval_configs = CustomEvalConfig.objects.filter(
+                id__in={r["custom_eval_config_id"] for r in target_rows},
                 deleted=False,
             ).select_related("eval_template")
             eval_config_ids = [str(c.id) for c in eval_configs]
+            discovery_rows = [
+                (r["custom_eval_config_id"], r["target_type"], r["last_seen"])
+                for r in target_rows
+            ]
         else:
             # PERF: resolve this project's configs from PG first (indexed by
             # the project FK), then ask CH which of them have recent data via
@@ -3480,8 +3535,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # inline query ran ``FINAL`` over the ENTIRE eval table plus a
             # per-row ``dictGet('trace_dict', 'project_id', …)`` call — a
             # full-table merge + dictionary lookup per eval row that
-            # OOM-crashed the server at tens of millions of eval rows. See
-            # AnalyticsQueryService.get_eval_config_ids_with_data_ch.
+            # OOM-crashed the server at tens of millions of eval rows. The
+            # same single scan also yields each config's most recent
+            # target_type (the S/T column glyph). See
+            # AnalyticsQueryService.get_eval_config_targets_with_data_ch.
             project_configs = list(
                 CustomEvalConfig.objects.filter(
                     project_id=project_id, deleted=False
@@ -3492,20 +3549,23 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # [start, now]), not a fixed 30 days — so configs with data anywhere
             # in the viewed range keep their columns. Bounded by candidate ids.
             window_days = BuilderCls.window_days_covering(filters)
-            ids_with_data = (
-                set(
-                    analytics.get_eval_config_ids_with_data_ch(
-                        str(project_id),
-                        timeout_ms=30000,
-                        candidate_config_ids=candidate_ids,
-                        window_days=window_days,
-                    )
+            target_rows = (
+                analytics.get_eval_config_targets_with_data_ch(
+                    candidate_ids,
+                    timeout_ms=30000,
+                    window_days=window_days,
                 )
                 if candidate_ids
-                else set()
+                else []
             )
+            ids_with_data = {r["config_id"] for r in target_rows}
             eval_configs = [c for c in project_configs if str(c.id) in ids_with_data]
             eval_config_ids = [str(c.id) for c in eval_configs]
+            discovery_rows = [
+                (r["config_id"], r.get("target_type"), r.get("last_seen"))
+                for r in target_rows
+            ]
+        eval_target_map = build_eval_target_map(discovery_rows, eval_config_ids)
 
         # Annotation labels — skip in org-scoped mode (deferred enhancement)
         if org_scope:
@@ -3598,7 +3658,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         user_id_map = builder.resolve_user_ids(trace_ids, analytics)
 
-        # Phase 2: Eval scores
+        # Phase 2: Eval scores — count mode: Pass/Fail cells carry exact
+        # {"pass", "fail"} counts and Choices cells carry {label: count}
+        # (one chip column), mapped by eval_count_cell below.
         eval_map = {}
         if trace_ids and eval_config_ids:
             eval_query, eval_params = builder.build_eval_query(trace_ids)
@@ -3609,6 +3671,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 eval_map = builder.pivot_eval_results(
                     [(list(row.values())) for row in eval_result.data],
                     list(eval_result.data[0].keys()) if eval_result.data else [],
+                    count_mode=True,
                 )
 
         # Phase 3: Annotations — PG values, span->trace resolved via CH.
@@ -3690,9 +3753,14 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         # Build column config — get_default_trace_config() already includes
         # all standard columns (latency, tokens, cost, user_id, etc.)
+        # skip_choices: Choices evals render as ONE chip column ({label:
+        # count}), not per-choice ``{config}**{choice}`` sub-columns.
         column_config = get_default_trace_config()
         column_config = update_column_config_based_on_eval_config(
-            column_config, eval_configs
+            column_config,
+            eval_configs,
+            skip_choices=True,
+            eval_target_map=eval_target_map,
         )
         column_config = update_span_column_config_based_on_annotations(
             column_config, annotation_labels
@@ -3736,18 +3804,17 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "user_id": user_id_map.get(trace_id),
             }
 
-            # Add eval metrics
+            # Add eval metrics. count_mode pivot gives raw appearance counts;
+            # eval_count_cell renders each eval as ONE column whose value is
+            # a number (Score), {"pass", "fail"} counts (Pass/Fail) or
+            # {label: count} (Choices). Error / lifecycle markers pass
+            # through unchanged.
             trace_evals = eval_map.get(trace_id, {})
             for config in eval_configs:
                 config_id = str(config.id)
                 if config_id not in trace_evals:
                     continue
-                flatten_eval_score_into_entry(
-                    entry,
-                    config_id,
-                    trace_evals[config_id],
-                    eval_output_type_for_config(config),
-                )
+                entry[config_id] = eval_count_cell(trace_evals[config_id], config)
 
             # Add annotations
             trace_annotations = annotation_map.get(trace_id, {})
@@ -4048,14 +4115,18 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # provider_transcript / fi.conversation.transcript / metrics_data are
             # detail-only transcript payloads — never in a list row.
             for key, value in span_attrs.items():
-                if key in (
-                    "raw_log",
-                    "call",
-                    "call_logs",
-                    "provider_transcript",
-                    "fi.conversation.transcript",
-                    "metrics_data",
-                ) or key in entry:
+                if (
+                    key
+                    in (
+                        "raw_log",
+                        "call",
+                        "call_logs",
+                        "provider_transcript",
+                        "fi.conversation.transcript",
+                        "metrics_data",
+                    )
+                    or key in entry
+                ):
                     continue
                 if isinstance(value, (str, int, float, bool)):
                     entry[key] = value

@@ -572,7 +572,13 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             countIf(status = 'skipped') AS skipped_count,
             countIf(status = 'running') AS running_count,
             countIf(status = 'pending') AS pending_count,
-            anyIf(skipped_reason, status = 'skipped') AS skipped_reason
+            anyIf(skipped_reason, status = 'skipped') AS skipped_reason,
+            countIf(
+                output_bool = 1 AND error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS pass_count,
+            countIf(
+                output_bool = 0 AND error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS fail_count
         -- PERF: no table-level FINAL. FINAL forced a merge across the WHOLE
         -- eval table before the WHERE was applied, so a page of ~50 trace ids
         -- dragged a merge over tens of millions of rows — GBs of memory that
@@ -781,12 +787,22 @@ class TraceListQueryBuilder(BaseQueryBuilder):
     def pivot_eval_results(
         eval_rows: list[tuple],
         eval_columns: list[str],
+        count_mode: bool = False,
     ) -> dict[str, dict[str, Any]]:
         """Pivot eval query results into a nested dict keyed by trace_id.
 
         Args:
             eval_rows: Rows from the Phase-2 eval query.
             eval_columns: Column names for those rows.
+            count_mode: When True (Observe trace list), Choices cells carry
+                exact label counts (``{"choice_counts": {label: n}}``) and
+                Pass/Fail + Score cells carry
+                ``{"avg_score", "pass_count", "fail_count", "pass_rate",
+                "count"}`` — the chip "count" rendering, mapped downstream by
+                ``eval_count_cell``. Default False keeps the legacy
+                percentage shapes byte-identical for every other caller. The
+                ``{"error": True}`` and lifecycle ``{"status": ...}`` markers
+                are emitted identically in both modes.
 
         Returns:
             A dict of ``{trace_id: {eval_config_id: score_dict}}``.
@@ -804,6 +820,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             )
 
         import json as _json
+
+        # Lazy import: the count-cell shape lives in tracer.utils.helper
+        # (shared with the span pivot + the view-side eval_count_cell mapper);
+        # importing at module top would couple the builder to the Django-heavy
+        # helper module for every caller.
+        from tracer.utils.helper import build_count_eval_cell
 
         for row in eval_rows:
             trace_id = str(_get(row, "trace_id", 0, ""))
@@ -849,6 +871,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 for lst in parsed:
                     for choice in set(lst):
                         counts[choice] = counts.get(choice, 0) + 1
+                if count_mode:
+                    # Exact appearance counts — one chip per label.
+                    result.setdefault(trace_id, {})[config_id] = {
+                        "choice_counts": counts,
+                    }
+                    continue
                 per_choice = {k: round(100.0 * v / total, 2) for k, v in counts.items()}
                 result.setdefault(trace_id, {})[config_id] = {
                     "per_choice": per_choice,
@@ -885,6 +913,16 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 if marker is not None:
                     result.setdefault(trace_id, {})[config_id] = marker
                     continue
+
+            if count_mode:
+                result.setdefault(trace_id, {})[config_id] = build_count_eval_cell(
+                    avg_score=avg_val,
+                    pass_count=_get(row, "pass_count", 12, 0),
+                    fail_count=_get(row, "fail_count", 13, 0),
+                    pass_rate=pass_val,
+                    eval_count=_get(row, "eval_count", 6, 0),
+                )
+                continue
 
             score_data = {
                 "avg_score": avg_val,
