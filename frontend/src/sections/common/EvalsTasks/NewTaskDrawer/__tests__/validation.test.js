@@ -253,3 +253,39 @@ describe("eval task filter payload contract", () => {
     expect(attributeFilters[0].filter_config.filter_value).toBe("");
   });
 });
+
+describe("spansLimit coercion", () => {
+  // The custom row-limit input yields a string ("10"); the request contract
+  // declares spans_limit as an integer, and strict request-contract
+  // validation aborts the POST before it is sent — surfacing only a generic
+  // "Something went wrong". Preset buttons set numbers and work.
+  const baseForm = {
+    name: "t",
+    project: "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+    samplingRate: 50,
+    evalsDetails: [{ id: "cfg-1" }],
+    startDate: "2026-08-01",
+    endDate: "2026-08-20",
+    runType: "historical",
+    rowType: "traces",
+    filters: [],
+  };
+
+  it("coerces a custom string row limit to a number", async () => {
+    const { NewTaskValidationSchema } = await import("../validation");
+    const parsed = NewTaskValidationSchema().parse({
+      ...baseForm,
+      spansLimit: "10",
+    });
+    expect(parsed.spansLimit).toBe(10);
+  });
+
+  it("keeps preset numeric row limits as numbers", async () => {
+    const { NewTaskValidationSchema } = await import("../validation");
+    const parsed = NewTaskValidationSchema().parse({
+      ...baseForm,
+      spansLimit: 100000,
+    });
+    expect(parsed.spansLimit).toBe(100000);
+  });
+});
