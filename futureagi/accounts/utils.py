@@ -173,10 +173,11 @@ def is_disposable_email_domain(domain):
     match on `mailinator.com` would miss every one of them. The bare TLD is
     never tested, so a stray entry there can't take out a whole namespace.
     """
-    parts = domain.split(".")
-    return any(
-        ".".join(parts[i:]) in DISPOSABLE_EMAIL_DOMAINS for i in range(len(parts) - 1)
-    )
+    domain_parts = domain.split(".")
+    for i in range(len(domain_parts) - 1):
+        if ".".join(domain_parts[i:]) in DISPOSABLE_EMAIL_DOMAINS:
+            return True
+    return False
 
 
 def is_work_email(email):
