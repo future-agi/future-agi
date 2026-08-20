@@ -210,9 +210,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const versionSeededRef = useRef(false);
   useEffect(() => {
     if (versionSeededRef.current) return;
-    versionSeededRef.current = true;
     const pinned = evalData?.pinned_version_id ?? null;
-    if (pinned) setSelectedVersionId(pinned);
+    if (pinned) {
+      versionSeededRef.current = true;
+      setSelectedVersionId(pinned);
+    }
   }, [evalData?.pinned_version_id]);
   const [isTesting, setIsTesting] = useState(false);
   const [testPassed, setTestPassed] = useState(false);
@@ -835,7 +837,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         if (Array.isArray(config.children)) {
           setCompositeChildWeights(buildCompositeWeightsFromSnapshot(config.children));
         }
-        setIsDirty(false);
+        setIsDirty(true);
       }
     },
     [versions, fullEval, normalizedFullEval, normalizedEvalData],
@@ -985,7 +987,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     setTimeout(() => setIsTesting((v) => (v ? false : v)), 60000);
   }, [templateId, fagiLocked, evalType, model, isComposite]);
 
-  const handleAdd = useCallback(() => {
+  const handleAdd = useCallback(async () => {
     if (fagiLocked && evalType !== "code" && !model && !isComposite) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
@@ -1065,17 +1067,14 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
 
     const resolvedVersionId = isSystemEval
       ? null
-      : selectedVersionId
-        || versions.find((v) => v.is_default)?.id
-        || versions[0]?.id
-        || null;
+      : selectedVersionId || null;
 
     if (templateType === "composite") {
       // Composite metrics don't carry prompt/model/output-type/choice-score
       // state — those live on each child template. Emit only the fields
       // the host needs to create a UserEvalMetric plus the per-binding
       // weight overrides.
-      onSave({
+      await onSave({
         templateId,
         evalTemplateId: templateId,
         userEvalId,
@@ -1094,7 +1093,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       return;
     }
 
-    onSave({
+    await onSave({
       templateId,
       evalTemplateId: templateId,
       userEvalId,

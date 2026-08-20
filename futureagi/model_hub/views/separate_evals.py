@@ -3959,20 +3959,21 @@ class CompositeEvalDetailView(APIView):
                 except ValueError as ve:
                     return self._gm.bad_request(str(ve))
 
-                for link in existing_links:
-                    cid = str(link.child_id)
-                    update_fields = []
-                    if req.child_weights is not None and cid in req.child_weights:
-                        link.weight = req.child_weights[cid]
-                        update_fields.append("weight")
-                    if pinned_versions is not None and cid in req.child_pinned_versions:
-                        link.pinned_version = pinned_versions.get(cid)
-                        update_fields.append("pinned_version")
-                    if req.child_configs is not None and cid in req.child_configs:
-                        link.config = req.child_configs[cid] or {}
-                        update_fields.append("config")
-                    if update_fields:
-                        link.save(update_fields=update_fields)
+                if not req.skip_template_update:
+                    for link in existing_links:
+                        cid = str(link.child_id)
+                        update_fields = []
+                        if req.child_weights is not None and cid in req.child_weights:
+                            link.weight = req.child_weights[cid]
+                            update_fields.append("weight")
+                        if pinned_versions is not None and cid in req.child_pinned_versions:
+                            link.pinned_version = pinned_versions.get(cid)
+                            update_fields.append("pinned_version")
+                        if req.child_configs is not None and cid in req.child_configs:
+                            link.config = req.child_configs[cid] or {}
+                            update_fields.append("config")
+                        if update_fields:
+                            link.save(update_fields=update_fields)
 
             parent.save()
 
@@ -3983,9 +3984,12 @@ class CompositeEvalDetailView(APIView):
                 .order_by("order")
             )
 
-            # Create a new version snapshot for the composite
+            # Create a new version snapshot for the composite.
+            # In snapshot_only mode, overlay requested weights into the snapshot
+            # without having written them to the shared CompositeEvalChild rows.
             from model_hub.models.evals_metric import EvalTemplateVersion
 
+            weight_overrides = (req.child_weights or {}) if req.skip_template_update else {}
             config_snapshot = {
                 "aggregation_enabled": parent.aggregation_enabled,
                 "aggregation_function": parent.aggregation_function,
@@ -3995,7 +3999,7 @@ class CompositeEvalDetailView(APIView):
                         "child_id": str(link.child_id),
                         "child_name": link.child.name,
                         "order": link.order,
-                        "weight": link.weight,
+                        "weight": weight_overrides.get(str(link.child_id), link.weight),
                         "config": link.config or {},
                         "pinned_version_id": (
                             str(link.pinned_version_id)

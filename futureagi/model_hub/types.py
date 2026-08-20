@@ -411,6 +411,7 @@ class CompositeUpdateRequest(BaseModel):
     child_pinned_versions: dict[str, str | None] | None = None
     child_configs: dict[str, dict[str, Any]] | None = None
     composite_child_axis: str | None = None
+    skip_template_update: bool = False
 
 
 class CompositeExecuteRequest(BaseModel):

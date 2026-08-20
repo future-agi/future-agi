@@ -740,14 +740,14 @@ export const promptConfigTransform = (
   return [];
 };
 
-export const buildExperimentRunConfig = (evalConfig) => {
-  const isCompositeEval =
-    evalConfig.templateType === "composite" ||
-    evalConfig.evalTemplate?.template_type === "composite" ||
-    evalConfig.evalTemplate?.templateType === "composite";
+export const isCompositeEval = (evalConfig) =>
+  evalConfig.templateType === "composite" ||
+  evalConfig.evalTemplate?.template_type === "composite" ||
+  evalConfig.evalTemplate?.templateType === "composite";
 
+export const buildExperimentRunConfig = (evalConfig) => {
   const runConfig = {};
-  if (!isCompositeEval) {
+  if (!isCompositeEval(evalConfig)) {
     if (evalConfig.model) runConfig.model = evalConfig.model;
     if (evalConfig.agent_mode) runConfig.agent_mode = evalConfig.agent_mode;
     if (evalConfig.check_internet !== undefined)
@@ -779,16 +779,12 @@ export const createEvalVersionForExperiment = async (
   evalConfig,
   queryClient,
 ) => {
-  const isCompositeEval =
-    evalConfig.templateType === "composite" ||
-    evalConfig.evalTemplate?.template_type === "composite" ||
-    evalConfig.evalTemplate?.templateType === "composite";
   const isSystemEval = evalConfig.evalTemplate?.owner === "system";
 
   if (isSystemEval) return null;
 
-  if (isCompositeEval) {
-    const patchPayload = {};
+  if (isCompositeEval(evalConfig)) {
+    const patchPayload = { skip_template_update: true };
     if (evalConfig.composite_weight_overrides) {
       const weights = {};
       for (const [childId, w] of Object.entries(
@@ -813,26 +809,10 @@ export const createEvalVersionForExperiment = async (
   }
 
   const isCodeEval = evalConfig.evalTemplate?.eval_type === "code";
-  const resolvedConfig = evalConfig.config || evalConfig.evalTemplate?.config || {};
-  const configSnapshot = {
-    ...resolvedConfig,
-    model: evalConfig.model,
-    output: evalConfig.outputType,
-    pass_threshold: evalConfig.pass_threshold,
-    choice_scores: evalConfig.choice_scores,
-    multi_choice: evalConfig.multi_choice,
-    messages: evalConfig.messages,
-    agent_mode: evalConfig.agent_mode,
-    check_internet: evalConfig.check_internet,
-    summary: evalConfig.summary,
-    tools: evalConfig.tools,
-    knowledge_bases: evalConfig.knowledge_bases,
-    data_injection: evalConfig.data_injection,
-    error_localizer_enabled: evalConfig.error_localizer_enabled,
-  };
+  const configSnapshot = { ...(evalConfig.config || evalConfig.evalTemplate?.config || {}) };
   const criteria = isCodeEval
-    ? resolvedConfig.code
-    : resolvedConfig.rule_prompt || evalConfig.instructions;
+    ? configSnapshot.code
+    : configSnapshot.rule_prompt;
   const { data: versionData } = await axios.post(
     endpoints.develop.eval.createEvalVersion(evalConfig.templateId),
     {

@@ -26,6 +26,7 @@ import { isUUID } from "src/utils/utils";
 import {
   buildExperimentRunConfig,
   createEvalVersionForExperiment,
+  isCompositeEval,
 } from "../utils";
 
 const EvaluationStepExperimentCreation = ({
@@ -108,11 +109,6 @@ const EvaluationStepExperimentCreation = ({
     // how to execute the eval (eval_type_id, rule_prompt, output, etc.)
     const templateConfig =
       evalConfig.config || evalConfig.evalTemplate?.config || {};
-    const isCompositeEval =
-      evalConfig.templateType === "composite" ||
-      evalConfig.evalTemplate?.template_type === "composite" ||
-      evalConfig.evalTemplate?.templateType === "composite";
-
     const runConfig = buildExperimentRunConfig(evalConfig);
 
     const fullConfig = {
@@ -134,7 +130,7 @@ const EvaluationStepExperimentCreation = ({
         evalConfig.evalTemplate?.requiredKeys ||
         templateConfig.requiredKeys ||
         [],
-      ...(isCompositeEval &&
+      ...(isCompositeEval(evalConfig) &&
       (evalConfig.compositeWeightOverrides || evalConfig.composite_weight_overrides)
         ? {
             compositeWeightOverrides:
