@@ -201,8 +201,10 @@ def is_work_email(email):
         "yandex.ru",
         "mailinator.com",
         "yopmail.com",
+        "guerrillamailblock.com",
         "web-library.net",
         "example.com",
+        "example.net",
         "noreply.github.com",  # GitHub's no-reply emails
         "github.com",  # In case GitHub emails are used
     }
