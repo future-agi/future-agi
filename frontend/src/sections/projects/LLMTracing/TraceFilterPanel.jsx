@@ -1997,11 +1997,16 @@ const TraceFilterPanel = ({
     error: aiError,
   } = useAIFilter(aiFilterSchema);
   const [rows, setRows] = useState([{ ...DEFAULT_ROW }]);
+  // AND/OR between the Query tab's tokens. Basic/AI filters stay AND-only, so
+  // the combinator only changes from the Query tab and resets to "and" when
+  // the panel reopens or the user switches back to the Basic tab.
+  const [filterCombinator, setFilterCombinator] = useState("and");
   // Serialized snapshot of the filter set last sent to onApply. Auto-apply
   // compares against this so we only hit the API when the applyable filter set
   // actually changes — picking a field/operator with no value, or re-opening
   // the popover, yields the same set and is skipped.
   const lastAppliedRef = useRef(undefined);
+  const lastCombinatorRef = useRef("and");
 
   // Convert dashboard properties to QueryInput format (same IDs as dashboard API)
   const queryFilterFields = useMemo(() => {
@@ -2041,6 +2046,8 @@ const TraceFilterPanel = ({
 
   useEffect(() => {
     if (open) {
+      setFilterCombinator("and");
+      lastCombinatorRef.current = "and";
       if (currentFilters?.length) {
         // Enrich rows with fieldCategory and fieldType from properties lookup
         const enriched = currentFilters.map((f) => {
@@ -2128,9 +2135,10 @@ const TraceFilterPanel = ({
   );
 
   const handleQueryTokensChange = useCallback(
-    (tokens) => {
+    (tokens, combinator) => {
       const converted = queryTokensToRows(tokens);
       setRows(converted.length ? converted : [{ ...effectiveDefaultRow }]);
+      setFilterCombinator(combinator === "or" ? "or" : "and");
     },
     [effectiveDefaultRow, queryTokensToRows],
   );
@@ -2172,11 +2180,13 @@ const TraceFilterPanel = ({
       if (hasIncompleteNumericRow(sourceRows)) return;
       const next = computeValidFilters(sourceRows);
       const serialized = serializeFilterSet(next);
-      if (serialized === lastAppliedRef.current) return;
+      const combinatorChanged = filterCombinator !== lastCombinatorRef.current;
+      if (serialized === lastAppliedRef.current && !combinatorChanged) return;
       lastAppliedRef.current = serialized;
-      onApply(next);
+      lastCombinatorRef.current = filterCombinator;
+      onApply(next, filterCombinator);
     },
-    [onApply],
+    [onApply, filterCombinator],
   );
 
   useEffect(() => {
@@ -2216,8 +2226,10 @@ const TraceFilterPanel = ({
 
   const handleClear = useCallback(() => {
     setRows([{ ...effectiveDefaultRow }]);
+    setFilterCombinator("and");
+    lastCombinatorRef.current = "and";
     lastAppliedRef.current = serializeFilterSet(null);
-    onApply(null);
+    onApply(null, "and");
     onClose();
   }, [onApply, onClose, effectiveDefaultRow]);
 
@@ -2247,7 +2259,11 @@ const TraceFilterPanel = ({
       const validFilters = computeValidFilters(merged);
       setRows(merged);
       lastAppliedRef.current = serializeFilterSet(validFilters);
-      onApply(validFilters);
+      // AI filter produces an AND-ed set; reset the combinator so the
+      // panel's internal state stays in sync with what we send downstream.
+      setFilterCombinator("and");
+      lastCombinatorRef.current = "and";
+      onApply(validFilters, "and");
       setAiQuery("");
       bypassNextCloseFlushRef.current = true;
       onClose();
@@ -2366,7 +2382,13 @@ const TraceFilterPanel = ({
         {showQueryTab && (
           <Tabs
             value={activeTab}
-            onChange={(_, v) => setActiveTab(v)}
+            onChange={(_, v) => {
+              setActiveTab(v);
+              if (v === "basic") {
+                setFilterCombinator("and");
+                lastCombinatorRef.current = "and";
+              }
+            }}
             sx={{
               minHeight: 24,
               borderBottom: "1px solid",
@@ -2458,6 +2480,7 @@ const TraceFilterPanel = ({
               fieldMap={queryFieldMap}
               getOperators={queryGetOperators}
               onApply={handleQueryTokensChange}
+              showCombinator
               initialTokens={rows
                 .filter((r) => {
                   if (!r.field) return false;

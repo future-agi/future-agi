@@ -1455,6 +1455,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # both — keep the v1 import for those static calls.
 
         filters = list(validated_data.get("filters", []) or [])
+        filter_combinator = validated_data.get("filter_combinator", "and")
         page_number = validated_data["page_number"]
         page_size = validated_data["page_size"]
 
@@ -1576,6 +1577,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             project_id=None if org_scope else str(project_id),
             project_ids=[str(p) for p in org_project_ids] if org_scope else None,
             filters=filters,
+            filter_combinator=filter_combinator,
             page_number=page_number,
             page_size=page_size,
             eval_config_ids=eval_config_ids,

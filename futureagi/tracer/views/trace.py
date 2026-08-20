@@ -3436,6 +3436,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         org_scope = bool(org_project_ids)
         filters = list(validated_data.get("filters", []) or [])
+        filter_combinator = validated_data.get("filter_combinator", "and")
         page_number = validated_data["page_number"]
         page_size = validated_data["page_size"]
         session_id = (
@@ -3523,6 +3524,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             page_size=page_size,
             eval_config_ids=eval_config_ids,
             annotation_label_ids=annotation_label_ids,
+            filter_combinator=filter_combinator,
         )
 
         # Phase 1: Paginated traces (light columns only — no input/output)
@@ -4190,6 +4192,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         sort_params = query_params["sort_params"]
         page_number = query_params["page_number"]
         page_size = query_params["page_size"]
+        filter_combinator = query_params.get("filter_combinator", "and")
 
         # Get project_id from project_version
         project_version = ProjectVersion.objects.get(
@@ -4246,6 +4249,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             sort_params=sort_params,
             eval_config_ids=eval_config_ids,
             project_version_id=str(project_version_id),
+            filter_combinator=filter_combinator,
         )
 
         # Phase 1: Get paginated traces

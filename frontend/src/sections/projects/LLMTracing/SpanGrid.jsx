@@ -186,6 +186,7 @@ const SpanGrid = React.forwardRef(
       hasEvalFilter,
       cellHeight,
       metricFilters,
+      filterCombinator = "and",
       pendingCustomColumnsRef,
       canonicalOrderRef,
       enabled = true,
@@ -225,11 +226,20 @@ const SpanGrid = React.forwardRef(
           filters,
           extraFilters: extraFilters || EMPTY_EXTRA_FILTERS,
           metricFilters: metricFilters || [],
+          filterCombinator,
           hasEvalFilter,
           observeId,
           enabled,
         }),
-      [filters, extraFilters, metricFilters, hasEvalFilter, observeId, enabled],
+      [
+        filters,
+        extraFilters,
+        metricFilters,
+        filterCombinator,
+        hasEvalFilter,
+        observeId,
+        enabled,
+      ],
     );
     const previousFilterRequestKeyRef = useRef(filterRequestKey);
 
@@ -412,6 +422,7 @@ const SpanGrid = React.forwardRef(
                     ...(metricFilters || []),
                   ]),
                 ),
+                filter_combinator: filterCombinator,
               });
 
               // Use prefetched data if available, otherwise fetch

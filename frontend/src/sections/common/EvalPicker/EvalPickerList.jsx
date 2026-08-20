@@ -500,6 +500,7 @@ const EvalPickerList = ({ onSelectEval }) => {
     setSorting,
     filters,
     setFilters,
+    setFilterCombinator,
   } = useEvalPickerData({
     sourceId: useScopedEvals ? sourceId : null,
     enabled: true,
@@ -949,8 +950,9 @@ const EvalPickerList = ({ onSelectEval }) => {
         onClose={() => setFilterAnchorEl(null)}
         currentFilters={filters}
         lockedFilters={lockedFilters}
-        onApply={(newFilters) => {
+        onApply={(newFilters, combinator) => {
           setFilters(newFilters);
+          setFilterCombinator(combinator === "or" ? "or" : "and");
           setPage(0);
           setExpandedEvalId(null);
         }}
