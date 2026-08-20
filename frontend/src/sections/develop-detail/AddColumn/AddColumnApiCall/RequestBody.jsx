@@ -342,8 +342,8 @@ const RequestBody = ({
       <div
         style={{
           position: "relative",
-          backgroundColor: theme.palette.background.default,
-          borderRadius: "8px",
+          backgroundColor: sx?.backgroundColor || theme.palette.background.default,
+          borderRadius: sx?.borderRadius || "8px",
         }}
       >
         {/* Highlight backdrop — same text with colored variables */}
@@ -395,10 +395,10 @@ const RequestBody = ({
             outline: "none",
             color: theme.palette.text.primary,
             caretColor: theme.palette.text.primary,
-            backgroundColor: "transparent",
             position: "relative",
             verticalAlign: "top",
             ...sx,
+            backgroundColor: "transparent",
           }}
           onKeyDown={onKeyDown}
         />
