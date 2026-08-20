@@ -266,13 +266,17 @@ def _extract_model_name(
         if invocation_params.get("model_name"):
             return invocation_params.get("model_name")
 
-        deployment_name = None
-        if serialized.get("kwargs").get("openai_api_version"):
-            deployment_name = serialized.get("kwargs").get("deployment_version")
-        deployment_version = None
-        if serialized.get("kwargs").get("deployment_name"):
-            deployment_name = serialized.get("kwargs").get("deployment_name")
-        return deployment_name + "-" + deployment_version
+        ser_kwargs = serialized.get("kwargs") or {}
+        deployment_name = ser_kwargs.get("deployment_name") or ser_kwargs.get("azure_deployment")
+        deployment_version = ser_kwargs.get("deployment_version") or ser_kwargs.get("openai_api_version")
+
+        if deployment_name and deployment_version:
+            return f"{deployment_name}-{deployment_version}"
+        elif deployment_name:
+            return deployment_name
+        elif deployment_version:
+            return deployment_version
+        return None
 
     # anthropic
     model = _extract_model_by_pattern("Anthropic", serialized, "model", "anthropic")
