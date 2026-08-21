@@ -224,6 +224,26 @@ const JsonCellEditor = forwardRef((props, ref) => {
     });
   };
 
+  const [codeMode, setCodeMode] = useState(false);
+  const [codeText, setCodeText] = useState("");
+  const [codeError, setCodeError] = useState("");
+
+  const enterCodeMode = () => {
+    setCodeText(JSON.stringify(value, null, 2));
+    setCodeError("");
+    setCodeMode(true);
+  };
+
+  const applyCodeMode = () => {
+    try {
+      const parsed = JSON.parse(codeText);
+      setValue(parsed);
+      setCodeMode(false);
+    } catch (e) {
+      setCodeError(e.message);
+    }
+  };
+
   return (
     <div
       style={{
@@ -295,54 +315,96 @@ const JsonCellEditor = forwardRef((props, ref) => {
         </div>
       )}
 
-      <Box
-        sx={{
-          resize: "both",
-          overflow: "auto",
-          minHeight: "180px",
-          maxHeight: "500px",
-          width: "412px",
-          scrollbarWidth: "none",
-          msOverflowStyle: "none",
-          "&::-webkit-scrollbar": {
-            display: "none",
-          },
-        }}
-      >
-        <JsonViewer
-          value={value}
-          theme={theme.palette.mode}
-          displayDataTypes={false}
-          displaySize={false}
-          indentWidth={2}
-          rootName={false}
-          editable={true}
-          enableAdd={(path, currentValue) =>
-            typeof currentValue === "object" && currentValue !== null
-          }
-          enableDelete={() => true}
-          onDelete={handleRemoveElement}
-          onAdd={handleInlineAdd}
-          onChange={handleValueChange}
-          valueTypes={[imageType]}
+      {codeMode ? (
+        <Box sx={{ flex: 1, display: "flex", flexDirection: "column", gap: 1 }}>
+          <TextField
+            multiline
+            fullWidth
+            minRows={8}
+            maxRows={20}
+            value={codeText}
+            onChange={(e) => {
+              setCodeText(e.target.value);
+              setCodeError("");
+            }}
+            error={!!codeError}
+            helperText={codeError || "Paste valid JSON, then click Apply"}
+            sx={{
+              flex: 1,
+              "& .MuiInputBase-root": {
+                fontFamily: "monospace",
+                fontSize: "13px",
+                height: "100%",
+              },
+              "& textarea": { height: "100% !important" },
+            }}
+          />
+        </Box>
+      ) : (
+        <Box
           sx={{
-            fontSize: "14px",
-            "& .jv-edit-input": {
-              border: "1px solid var(--border-default)",
-              borderRadius: "4px",
-              padding: "2px 4px",
+            resize: "both",
+            overflow: "auto",
+            minHeight: "180px",
+            maxHeight: "500px",
+            width: "412px",
+            scrollbarWidth: "none",
+            msOverflowStyle: "none",
+            "&::-webkit-scrollbar": {
+              display: "none",
             },
           }}
-        />
-      </Box>
+        >
+          <JsonViewer
+            value={value}
+            theme={theme.palette.mode}
+            displayDataTypes={false}
+            displaySize={false}
+            indentWidth={2}
+            rootName={false}
+            editable={true}
+            enableAdd={(path, currentValue) =>
+              typeof currentValue === "object" && currentValue !== null
+            }
+            enableDelete={() => true}
+            onDelete={handleRemoveElement}
+            onAdd={handleInlineAdd}
+            onChange={handleValueChange}
+            valueTypes={[imageType]}
+            sx={{
+              fontSize: "14px",
+              "& .jv-edit-input": {
+                border: "1px solid var(--border-default)",
+                borderRadius: "4px",
+                padding: "2px 4px",
+              },
+            }}
+          />
+        </Box>
+      )}
 
       <div style={{ marginTop: "12px", textAlign: "right" }}>
         <Stack
           direction="row"
           spacing={2}
-          justifyContent="flex-start"
+          justifyContent="space-between"
           sx={{ mt: 1.5 }}
         >
+          <Button
+            variant="text"
+            size="small"
+            color="primary"
+            startIcon={
+              <Icon
+                icon={codeMode ? "mdi:tree" : "mdi:code-json"}
+                style={{ width: 16, height: 16, color: "inherit" }}
+              />
+            }
+            onClick={codeMode ? () => setCodeMode(false) : enterCodeMode}
+            sx={{ fontSize: "12px", fontWeight: 500 }}
+          >
+            {codeMode ? "Visual editor" : "Code editor"}
+          </Button>
           <Button
             variant="outlined"
             size="small"
@@ -357,7 +419,7 @@ const JsonCellEditor = forwardRef((props, ref) => {
                 }}
               />
             }
-            onClick={triggerValueChange}
+            onClick={codeMode ? applyCodeMode : triggerValueChange}
             sx={{
               fontSize: "12px",
               fontWeight: 500,
