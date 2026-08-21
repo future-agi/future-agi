@@ -135,9 +135,10 @@ const ChatTranscriptView = ({ data }) => {
             : null;
         return {
           ...item,
-          // Flatten `messages[0].content` into a plain `content` field so
-          // TranscriptView's enrichTurns/getContent picks it up.
+
           content,
+
+          rawMessages: Array.isArray(item.content) ? item.content : null,
           ...(ts != null ? { startTimeSeconds: ts } : {}),
           ...(existingDuration == null
             ? { duration: countWords(content) }
@@ -166,6 +167,8 @@ const ChatTranscriptView = ({ data }) => {
         hideTalkRatioPercentages
         talkRatioLegendAlign="left"
         hideSilenceMarkers
+        hideTurnDurations
+        hideInterruptBadges
       />
     </Box>
   );
