@@ -13,8 +13,10 @@
 //  3. Environment overrides (FI_CH_URL, FI_GRPC_ADDR, FI_HTTP_ADDR,
 //     FI_GRPC_MAX_RECV_MIB, FI_DEAD_LETTER_FILE, ...)
 //
-// Health surfaces:
+// Health surfaces (internal-only admin listener, default 127.0.0.1:9464,
+// configurable via admin.addr or FI_ADMIN_ADDR):
 //   - /healthz (HTTP 200 unless writer dead-letter rate > threshold)
+//   - /metrics (Prometheus text exposition of writer + Go runtime stats)
 //   - Structured logs on stderr (JSON lines)
 package main
 
@@ -22,10 +24,12 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"syscall"
 	"time"
@@ -38,10 +42,31 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type adminConfig struct {
+	Addr string `yaml:"addr"`
+}
+
 type rootConfig struct {
 	Writer chwriter.Config `yaml:"writer"`
 	Server server.Config   `yaml:"server"`
 	Auth   auth.Config     `yaml:"auth"`
+	Admin  adminConfig     `yaml:"admin"`
+}
+
+// defaultAdminAddr is the internal-only admin listener. Loopback by
+// default: /healthz and /metrics are for the local host / container health
+// checks, not for external scraping, so the default must not bind on
+// 0.0.0.0. Deployments that need it on the wire set admin.addr (or
+// FI_ADMIN_ADDR) explicitly.
+const defaultAdminAddr = "127.0.0.1:9464"
+
+// resolveAdminAddr returns the configured admin listener address, falling
+// back to defaultAdminAddr when admin.addr is unset.
+func resolveAdminAddr(cfg rootConfig) string {
+	if cfg.Admin.Addr != "" {
+		return cfg.Admin.Addr
+	}
+	return defaultAdminAddr
 }
 
 func main() {
@@ -104,8 +129,10 @@ func main() {
 	}
 	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, opts...)
 
-	// Admin HTTP server — internal only, health check endpoint.
-	go runAdmin(":9464", writer, log)
+	// Admin HTTP server — internal only: /healthz (container health checks)
+	// and /metrics (Prometheus text exposition). Honors admin.addr from the
+	// YAML config (fallback defaultAdminAddr).
+	go runAdmin(resolveAdminAddr(cfg), writer, log)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -211,6 +238,12 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) {
 	if v := os.Getenv("FI_DEAD_LETTER_FILE"); v != "" {
 		c.Writer.DeadLetterFile = v
 	}
+	if v := os.Getenv("FI_ADMIN_ADDR"); v != "" {
+		// Already referenced by docker-compose.yml and
+		// docker-compose.standalone.yml; wire it up so it is not silently
+		// ignored like admin.addr used to be.
+		c.Admin.Addr = v
+	}
 	// Auth overrides (auth is active when PG_WRITE is set)
 	if v := os.Getenv("FI_PG_WRITE"); v != "" {
 		c.Auth.PGWrite = v
@@ -223,8 +256,11 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) {
 	}
 }
 
-// runAdmin serves /healthz for container health checks.
-func runAdmin(addr string, w *chwriter.Writer, log *slog.Logger) {
+// newAdminMux builds the admin HTTP mux: /healthz (container health
+// checks) and /metrics (Prometheus text exposition of writer + Go runtime
+// stats). Extracted from runAdmin so tests can exercise the handlers
+// without binding a socket.
+func newAdminMux(w *chwriter.Writer, log *slog.Logger) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(rw http.ResponseWriter, r *http.Request) {
 		s := w.Snapshot()
@@ -237,7 +273,43 @@ func runAdmin(addr string, w *chwriter.Writer, log *slog.Logger) {
 		rw.WriteHeader(200)
 		_ = json.NewEncoder(rw).Encode(map[string]any{"status": "ok", "stats": s})
 	})
-	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	mux.HandleFunc("/metrics", func(rw http.ResponseWriter, r *http.Request) {
+		writeMetrics(rw, w)
+	})
+	return mux
+}
+
+// writeMetrics renders a minimal Prometheus text exposition (format 0.0.4)
+// of the writer's lifetime stats plus basic Go runtime gauges. The
+// fi-collector deliberately stays stdlib-only (no prometheus client
+// dependency), so this is the honest, dependency-free surface the config
+// comment promises at /metrics.
+func writeMetrics(rw http.ResponseWriter, w *chwriter.Writer) {
+	rw.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	s := w.Snapshot()
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+
+	write := func(name, help, typ string, value uint64) {
+		fmt.Fprintf(rw, "# HELP %s %s\n# TYPE %s %s\n%s %d\n", name, help, name, typ, name, value)
+	}
+	write("fi_collector_batches_inserted_total", "Batches inserted into ClickHouse.", "counter", s.BatchesInserted)
+	write("fi_collector_rows_inserted_total", "Rows inserted into ClickHouse.", "counter", s.RowsInserted)
+	write("fi_collector_batches_retried_total", "Batches that needed at least one retry.", "counter", s.BatchesRetried)
+	write("fi_collector_rows_dead_lettered_total", "Rows persisted to the dead-letter file.", "counter", s.RowsDeadLettered)
+	write("fi_collector_batches_failed_total", "Batches that exhausted their retry budget.", "counter", s.BatchesFailed)
+	write("fi_collector_curated_batches_inserted_total", "Curated-dimension batches inserted.", "counter", s.CuratedBatchesInserted)
+	write("fi_collector_curated_batches_failed_total", "Curated-dimension batches failed.", "counter", s.CuratedBatchesFailed)
+
+	fmt.Fprintf(rw, "# HELP go_goroutines Number of goroutines that currently exist.\n# TYPE go_goroutines gauge\ngo_goroutines %d\n", runtime.NumGoroutine())
+	fmt.Fprintf(rw, "# HELP go_memstats_alloc_bytes Number of bytes allocated and still in use.\n# TYPE go_memstats_alloc_bytes gauge\ngo_memstats_alloc_bytes %d\n", ms.Alloc)
+	fmt.Fprintf(rw, "# HELP go_memstats_heap_objects Number of allocated objects.\n# TYPE go_memstats_heap_objects gauge\ngo_memstats_heap_objects %d\n", ms.HeapObjects)
+}
+
+// runAdmin serves /healthz and /metrics for container health checks and
+// local scraping.
+func runAdmin(addr string, w *chwriter.Writer, log *slog.Logger) {
+	srv := &http.Server{Addr: addr, Handler: newAdminMux(w, log), ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Warn("admin server stopped", "err", err)
 	}
