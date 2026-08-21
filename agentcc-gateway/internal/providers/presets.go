@@ -22,6 +22,7 @@ var KnownProviders = map[string]ProviderPreset{
 	"anyscale":    {BaseURL: "https://api.endpoints.anyscale.com", APIFormat: "openai"},
 	"replicate":   {BaseURL: "https://api.replicate.com", APIFormat: "openai"},
 	"openrouter":  {BaseURL: "https://openrouter.ai/api", APIFormat: "openai"},
+	"atlascloud":  {BaseURL: "https://api.atlascloud.ai/v1", APIFormat: "openai"},
 	"azure":       {APIFormat: "azure"},
 }
 
