@@ -33,13 +33,19 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import axios, { endpoints } from "src/utils/axios";
 import { SpanTypes } from "src/utils/constant";
-import { useDashboardFilterValues } from "src/hooks/useDashboards";
+import {
+  buildPropertyRegistryId,
+  isPropertyCatalogNotReadyError,
+  PROPERTY_CATALOG_REQUEST_TIMEOUT_MS,
+  useDashboardFilterValues,
+  usePropertyCatalog,
+} from "src/hooks/useDashboards";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useAIFilter } from "src/hooks/use-ai-filter";
 import { QueryInput } from "src/components/filter-panel";
@@ -65,6 +71,16 @@ import {
   normalizeVoiceCallStatus,
   VOICE_CALL_FILTER_FIELDS,
 } from "./voiceCallFilterFields";
+import {
+  FILTER_AUTO_APPLY_DEBOUNCE_MS,
+  FILTER_VALUE_SEARCH_DEBOUNCE_MS,
+  INTERACTIVE_TABLE_PAGE_SIZE,
+  PROPERTY_CATALOG_LEGACY_CACHE_TIME_MS,
+  PROPERTY_CATALOG_LEGACY_PAGE_SIZE,
+  PROPERTY_CATALOG_LEGACY_STALE_TIME_MS,
+  PROPERTY_CATALOG_SEARCH_DEBOUNCE_MS,
+  PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
+} from "src/config/runtime_limits";
 
 function useSingleFlightPageRequest({ identity, enabled, request }) {
   const activeRequestRef = useRef(null);
@@ -90,6 +106,48 @@ function useSingleFlightPageRequest({ identity, enabled, request }) {
     return promise;
   }, [enabled, identity, request]);
 }
+
+const filterValueAdapterMetricName = (source, propertyId) =>
+  source === "sessions" && propertyId === "session_id" ? "session" : propertyId;
+
+const filterValueTransportSource = (source, metricType) =>
+  source === "sessions" && metricType === "custom_attribute"
+    ? "traces"
+    : source;
+
+const defaultPropertyNamespace = (tab, source) => {
+  if (tab === "voiceCalls") return "voice_calls";
+  if (source === "dataset") return "dataset_column";
+  return source;
+};
+
+const categoryForFilterField = (field) => {
+  if (field?.category) return field.category;
+  if (field?.apiColType === "EVAL_METRIC") return "eval";
+  if (field?.apiColType === "ANNOTATION") return "annotation";
+  if (field?.apiColType === "SPAN_ATTRIBUTE") return "attribute";
+  if (field?.apiColType === "CUSTOM_COLUMN") return "dataset";
+  return "system";
+};
+
+const apiColTypeForFilterField = (field, category) => {
+  if (field?.apiColType) return field.apiColType;
+  if (["eval", "eval_metric", "evalMetric"].includes(category)) {
+    return "EVAL_METRIC";
+  }
+  if (
+    ["annotation", "annotation_metric", "annotationMetric"].includes(category)
+  ) {
+    return "ANNOTATION";
+  }
+  if (["attribute", "custom_attribute", "customAttribute"].includes(category)) {
+    return "SPAN_ATTRIBUTE";
+  }
+  if (["dataset", "custom_column", "customColumn"].includes(category)) {
+    return "CUSTOM_COLUMN";
+  }
+  return "SYSTEM_METRIC";
+};
 
 // ---------------------------------------------------------------------------
 // Trace filter fields (for Query tab via shared FilterPanel)
@@ -144,25 +202,24 @@ export const getTraceFilterFields = (tab) => {
 // Map a static trace field to a picker property. In spans view the root
 // "Trace Name" field is reused as "Span Name" — remap its id so the picker
 // fires a distinct span_name request instead of duplicating the name request.
-export const toStaticFilterProperty = (field, isSpansView = false) => {
-  if (isSpansView && field.value === "name") {
-    return {
-      id: "span_name",
-      name: "Span Name",
-      category: "system",
-      type: "string",
-      apiColType: "SYSTEM_METRIC",
-    };
-  }
-  return {
-    id: field.value,
-    name: field.label,
-    category: field.category || "system",
+export const toStaticFilterProperty = (
+  field,
+  isSpansView = false,
+  propertyNamespace = "traces",
+  source = "traces",
+) => {
+  const isSpanName = isSpansView && field.value === "name";
+  const id = isSpanName ? "span_name" : field.value;
+  const category = categoryForFilterField(field);
+  const property = {
+    id,
+    name: isSpanName ? "Span Name" : field.label,
+    category,
     // Pinned so the eval-task wire encoding doesn't have to guess
     // from `category` alone — without this every static field would
     // round-trip through the chain with apiColType=undefined and
     // get coerced to SPAN_ATTRIBUTE downstream.
-    apiColType: field.apiColType || "SYSTEM_METRIC",
+    apiColType: apiColTypeForFilterField(field, category),
     type: field.type === "enum" ? "string" : field.type,
     ...(field.choices ? { choices: field.choices } : {}),
     ...(field.responseKey ? { responseKey: field.responseKey } : {}),
@@ -175,6 +232,9 @@ export const toStaticFilterProperty = (field, isSpansView = false) => {
       ? { allowCustomValue: field.allowCustomValue }
       : {}),
   };
+  return attachPropertyRegistryIdentity(property, source, propertyNamespace, {
+    suppliedRegistryId: field.registryId || field.property_id,
+  });
 };
 
 // Static fields are authoritative for their own ids. Voice fields also own a
@@ -184,11 +244,20 @@ export const toStaticFilterProperty = (field, isSpansView = false) => {
 export function mergeTraceFilterProperties({
   tab,
   isSpansView = false,
+  source = "traces",
+  propertyNamespace,
   dynamicProperties = [],
   filterFields = [],
 }) {
+  const effectivePropertyNamespace =
+    propertyNamespace || defaultPropertyNamespace(tab, source);
   const staticProps = getTraceFilterFields(tab).map((field) =>
-    toStaticFilterProperty(field, isSpansView),
+    toStaticFilterProperty(
+      field,
+      isSpansView,
+      effectivePropertyNamespace,
+      source,
+    ),
   );
   const canonicalIds = new Set(staticProps.map((property) => property.id));
   const coveredSystemAliases = new Set(
@@ -198,14 +267,23 @@ export function mergeTraceFilterProperties({
       ...(property.dynamicAliases || []),
     ]),
   );
-  const dynamicExtras = dynamicProperties.filter((property) => {
-    const isSystemProperty =
-      property.category === "system" || property.apiColType === "SYSTEM_METRIC";
-    return !(
-      isSystemProperty &&
-      (canonicalIds.has(property.id) || coveredSystemAliases.has(property.id))
+  const dynamicExtras = dynamicProperties
+    .filter((property) => {
+      const isSystemProperty =
+        property.category === "system" ||
+        property.apiColType === "SYSTEM_METRIC";
+      return !(
+        isSystemProperty &&
+        (canonicalIds.has(property.id) || coveredSystemAliases.has(property.id))
+      );
+    })
+    .map((property) =>
+      attachPropertyRegistryIdentity(
+        property,
+        source,
+        effectivePropertyNamespace,
+      ),
     );
-  });
   const dynamicSystemIds = dynamicExtras
     .filter(
       (property) =>
@@ -220,14 +298,89 @@ export function mergeTraceFilterProperties({
   ]);
   const fieldExtras = filterFields
     .filter((field) => !allIds.has(field.id || field.value))
-    .map((field) => ({
-      id: field.id || field.value,
-      name: field.name || field.label,
-      category: "system",
-      apiColType: "SYSTEM_METRIC",
-      type: field.type || "string",
-    }));
+    .map((field) => {
+      const id = field.id || field.value;
+      const category = categoryForFilterField(field);
+      const property = {
+        id,
+        name: field.name || field.label,
+        category,
+        rawCategory: field.rawCategory,
+        apiColType: apiColTypeForFilterField(field, category),
+        type: field.type || "string",
+        ...(field.choices ? { choices: field.choices } : {}),
+        ...(field.allowCustomValue !== undefined
+          ? { allowCustomValue: field.allowCustomValue }
+          : {}),
+      };
+      return attachPropertyRegistryIdentity(
+        property,
+        source,
+        effectivePropertyNamespace,
+        { suppliedRegistryId: field.registryId || field.property_id },
+      );
+    });
   return [...staticProps, ...dynamicExtras, ...fieldExtras];
+}
+
+const propertyMetricType = (property, source) => {
+  const apiColType = property?.apiColType;
+  const category = property?.category || property?.rawCategory;
+  if (
+    apiColType === "EVAL_METRIC" ||
+    ["eval", "eval_metric", "evalMetric"].includes(category)
+  ) {
+    return "eval_metric";
+  }
+  if (
+    apiColType === "ANNOTATION" ||
+    ["annotation", "annotation_metric", "annotationMetric"].includes(category)
+  ) {
+    return "annotation_metric";
+  }
+  if (
+    apiColType === "CUSTOM_COLUMN" ||
+    ["custom_column", "customColumn"].includes(category) ||
+    source === "dataset_column"
+  ) {
+    return "custom_column";
+  }
+  if (
+    apiColType === "SPAN_ATTRIBUTE" ||
+    ["attribute", "custom_attribute", "customAttribute"].includes(category)
+  ) {
+    return "custom_attribute";
+  }
+  return "system_metric";
+};
+
+function attachPropertyRegistryIdentity(
+  property,
+  source,
+  propertyNamespace = source,
+  { suppliedRegistryId } = {},
+) {
+  if (!property) return property;
+  const registryId =
+    suppliedRegistryId || property.registryId || property.property_id;
+  if (registryId) {
+    return property.registryId === registryId
+      ? property
+      : { ...property, registryId };
+  }
+  const metricType = propertyMetricType(property, source);
+  const metricName = filterValueAdapterMetricName(
+    source,
+    property.id || property.value || "",
+  );
+  return {
+    ...property,
+    registryId: buildPropertyRegistryId({
+      metricName,
+      metricType,
+      source: propertyNamespace,
+    }),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -580,6 +733,8 @@ export const serializeFilterSet = (filters) =>
   JSON.stringify(
     (filters || []).map((f) => ({
       field: f.field,
+      registryId: f.registryId,
+      apiColType: f.apiColType,
       operator: normalizeFilterRowOperator(f).operator,
       value: f.value,
       valueTypes: f.valueTypes,
@@ -787,6 +942,7 @@ export function buildManualAttributeProperty({
   }
   return {
     id: exactName,
+    registryId: `custom_attribute:${exactName}`,
     name: exactName,
     category: "attribute",
     rawCategory: "custom_attribute",
@@ -813,6 +969,14 @@ const PROPERTY_CATEGORY_TO_API_COL_TYPE = {
 };
 
 export function findTraceFilterProperty(properties, filter) {
+  const registryId = filter?.registryId || filter?.property_id;
+  if (registryId) {
+    const exactRegistryMatch = (properties || []).find(
+      (property) =>
+        (property.registryId || property.property_id) === registryId,
+    );
+    if (exactRegistryMatch) return exactRegistryMatch;
+  }
   let matches = (properties || []).filter(
     (property) => property.id === filter?.field,
   );
@@ -833,11 +997,23 @@ export function findTraceFilterProperty(properties, filter) {
 }
 
 const queryPropertyIdentity = (property) =>
-  `__field_identity__${JSON.stringify([
-    property.apiColType || "",
-    property.category || "",
-    property.id,
-  ])}`;
+  `__field_identity__${
+    property.registryId ||
+    JSON.stringify([
+      property.apiColType || "",
+      property.category || "",
+      property.id,
+    ])
+  }`;
+
+export function mergeCatalogPropertyPages(...propertyLists) {
+  const propertiesByIdentity = new Map();
+  for (const property of propertyLists.flat()) {
+    if (!property?.id) continue;
+    propertiesByIdentity.set(queryPropertyIdentity(property), property);
+  }
+  return [...propertiesByIdentity.values()];
+}
 
 export function buildQueryPropertyEntries(properties) {
   return {
@@ -850,6 +1026,7 @@ export function buildQueryPropertyEntries(properties) {
 
 const ANNOTATOR_FILTER_PROPERTY = {
   id: "annotator",
+  registryId: "annotation:annotator",
   name: "Annotator",
   category: "annotation",
   rawCategory: "annotation_metric",
@@ -897,6 +1074,18 @@ function metricToTraceFilterProperty(m) {
         : "SPAN_ATTRIBUTE";
   return {
     id: m.name,
+    registryId:
+      m.propertyId ||
+      m.property_id ||
+      `${
+        isEval
+          ? "eval"
+          : isAnnotation
+            ? "annotation"
+            : apiColType === "SYSTEM_METRIC"
+              ? "system_attribute"
+              : "custom_attribute"
+      }:${apiColType === "SYSTEM_METRIC" ? `${m.source || "all"}:` : ""}${m.name}`,
     name: m.displayName || m.display_name || m.name,
     category: mapCategory(m.category),
     rawCategory: m.category,
@@ -926,12 +1115,38 @@ export function buildTraceFilterProperties(
         !sources.includes("traces");
       const isSimulationMetric =
         src === "simulation" || sources.includes("simulation");
+      const sourceTokens = new Set([src, ...sources].filter(Boolean));
+      const voiceCallTraceFamily =
+        sourceScope === "voice_calls" &&
+        sourceTokens.has("traces") &&
+        [
+          "eval_metric",
+          "evalMetric",
+          "annotation_metric",
+          "annotationMetric",
+          "custom_attribute",
+          "customAttribute",
+        ].includes(cat);
+      const sourceCompatible =
+        !sourceScope ||
+        sourceTokens.has("all") ||
+        sourceTokens.has("both") ||
+        sourceTokens.has(sourceScope) ||
+        (sourceScope === "spans" && sourceTokens.has("traces")) ||
+        voiceCallTraceFamily;
 
       // Always exclude blacklisted metrics
       if (EXCLUDED_METRICS.has(name)) return false;
 
       // Exclude dataset-only metrics
       if (src === "datasets") return false;
+
+      // A catalog page can be reused by older/fallback consumers, so retain a
+      // defensive source check in addition to the server-side source filter.
+      // In particular, simulator projects also have trace pages: simulation
+      // definitions must never be offered there and then submitted through
+      // source=traces, which the API correctly rejects as an invalid binding.
+      if (!sourceCompatible) return false;
 
       if (sourceScope === "simulation" && !isSimulationMetric) return false;
 
@@ -975,17 +1190,20 @@ export function buildTraceFilterProperties(
   return properties;
 }
 
-export function useTraceFilterProperties(
+export function useLegacyTraceFilterProperties(
   projectId,
   { enabled = true, isSimulator = false, sourceScope = null } = {},
 ) {
-  return useQuery({
+  const query = useInfiniteQuery({
     // Key on projectId only — isSimulator/sourceScope affect only the
     // per-observer `select`, not the request, so keying on them duplicated fetches.
     queryKey: ["trace-filter-properties-v2", projectId],
     enabled: enabled && Boolean(projectId),
-    queryFn: async () => {
-      const params = {};
+    queryFn: async ({ pageParam = 1, signal }) => {
+      const params = {
+        page: pageParam,
+        page_size: PROPERTY_CATALOG_LEGACY_PAGE_SIZE,
+      };
       if (projectId) params.project_ids = projectId;
       // Observe filter dropdown wants per-CustomEvalConfig eval entries (so
       // the dropdown matches the per-config columns in the trace/span list
@@ -993,15 +1211,85 @@ export function useTraceFilterProperties(
       // template-level — used by dashboards, PrimaryGraph, widget pickers.
       params.per_eval_config = true;
       params.exclude_custom_attributes = true;
-      const { data } = await axios.get(endpoints.dashboard.metrics, { params });
-      return data?.result?.metrics || [];
+      const { data } = await axios.get(endpoints.dashboard.metrics, {
+        params,
+        signal,
+        timeout: PROPERTY_CATALOG_REQUEST_TIMEOUT_MS,
+      });
+      return data?.result || { metrics: [], has_more: false };
     },
-    select: (metrics) =>
-      buildTraceFilterProperties(metrics, { isSimulator, sourceScope }),
-    staleTime: 5 * 60_000,
-    gcTime: 15 * 60_000,
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) =>
+      lastPage?.has_more === true ? Number(lastPage.page || 1) + 1 : undefined,
+    staleTime: PROPERTY_CATALOG_LEGACY_STALE_TIME_MS,
+    gcTime: PROPERTY_CATALOG_LEGACY_CACHE_TIME_MS,
     meta: { errorHandled: true },
   });
+  const metrics = (query.data?.pages || []).flatMap(
+    (page) => page?.metrics || [],
+  );
+  return {
+    ...query,
+    data: buildTraceFilterProperties(metrics, { isSimulator, sourceScope }),
+  };
+}
+
+export function useTraceFilterProperties(
+  projectId,
+  {
+    enabled = true,
+    isSimulator = false,
+    sourceScope = null,
+    search = "",
+    allowWorkspaceScope = false,
+  } = {},
+) {
+  const hasCatalogScope = Boolean(projectId || allowWorkspaceScope);
+  const fallbackScopeKey = JSON.stringify([
+    "trace-filter-property-catalog",
+    projectId || (allowWorkspaceScope ? "workspace" : ""),
+    sourceScope || "",
+  ]);
+  const catalog = usePropertyCatalog({
+    projectIds: projectId ? [projectId] : [],
+    source: sourceScope || "",
+    search,
+    perEvalConfig: true,
+    pageSize: PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
+    enabled: enabled && hasCatalogScope,
+    // The retained page-number endpoint requires one project. Workspace
+    // mode therefore stays on the authorized unified catalog.
+    allowLegacyNotReadyFallback: Boolean(projectId),
+    fallbackScopeKey,
+  });
+  const legacy = useLegacyTraceFilterProperties(projectId, {
+    enabled: enabled && catalog.legacyFallbackRequired,
+    isSimulator,
+    sourceScope,
+  });
+
+  if (catalog.legacyFallbackRequired) {
+    return { ...legacy, usesUnifiedCatalog: false };
+  }
+
+  const metrics = catalog.metrics;
+  const catalogNotReady = isPropertyCatalogNotReadyError(catalog.error);
+  const catalogError = Boolean(catalog.isError && !catalogNotReady);
+  return {
+    ...catalog,
+    data: buildTraceFilterProperties(metrics, { isSimulator, sourceScope }),
+    usesUnifiedCatalog: true,
+    categoryCounts: catalog.categoryCounts,
+    categoryCountsExact: catalog.categoryCountsExact,
+    isLoading: catalog.isLoading || catalogNotReady,
+    isError: catalogError,
+    error: catalogError ? catalog.error : null,
+    isSuccess: catalog.isSuccess && !catalog.cursorChainStopped,
+    hasNextPage: Boolean(catalog.hasNextPage),
+    isFetchNextPageError: Boolean(
+      catalog.isFetchNextPageError || catalog.cursorChainStopped,
+    ),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1060,6 +1348,109 @@ export function shouldUseRetainedAttributePages({
   );
 }
 
+export function PropertyPickerPaginationControl({
+  search,
+  attributePageAvailable,
+  attributeSearchContinuation,
+  isFetchingAttributePage,
+  attributePageError,
+  onLoadMoreAttributes,
+  catalogPageAvailable,
+  isFetchingCatalogPage,
+  catalogPageError,
+  onLoadMoreCatalog,
+}) {
+  const activeRequestRef = useRef(null);
+  const loading = isFetchingAttributePage || isFetchingCatalogPage;
+
+  const handleLoadMore = useCallback(() => {
+    if (loading || activeRequestRef.current) return;
+
+    const actions = [];
+    if (attributePageAvailable && onLoadMoreAttributes) {
+      actions.push(onLoadMoreAttributes);
+    }
+    if (catalogPageAvailable && onLoadMoreCatalog) {
+      actions.push(onLoadMoreCatalog);
+    }
+    if (actions.length === 0) return;
+
+    const actionResults = actions.map((action) => {
+      try {
+        const result = action();
+        return Promise.resolve(result);
+      } catch (error) {
+        return Promise.reject(error);
+      }
+    });
+    const request = Promise.allSettled(actionResults);
+    activeRequestRef.current = request;
+    const clearRequest = () => {
+      if (activeRequestRef.current === request) {
+        activeRequestRef.current = null;
+      }
+    };
+    request.then(clearRequest, clearRequest);
+  }, [
+    attributePageAvailable,
+    catalogPageAvailable,
+    loading,
+    onLoadMoreAttributes,
+    onLoadMoreCatalog,
+  ]);
+
+  if (loading) {
+    return (
+      <Box
+        role="status"
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 0.75,
+          py: 1,
+        }}
+      >
+        <CircularProgress size={14} />
+        <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+          Loading more properties…
+        </Typography>
+      </Box>
+    );
+  }
+  if (!attributePageAvailable && !catalogPageAvailable) return null;
+
+  const unifiedCatalogLabel = catalogPageAvailable;
+  const retrying = attributePageError || catalogPageError;
+  const searching = Boolean(
+    search.trim() && (catalogPageAvailable || attributeSearchContinuation),
+  );
+  const label = retrying
+    ? unifiedCatalogLabel
+      ? "Retry loading properties"
+      : "Retry loading attributes"
+    : searching
+      ? unifiedCatalogLabel
+        ? "Continue searching properties"
+        : "Continue searching attributes"
+      : unifiedCatalogLabel
+        ? "Load more properties"
+        : "Load more attributes";
+
+  return (
+    <Box sx={{ display: "flex", justifyContent: "center", py: 0.5 }}>
+      <Button
+        data-filter-property-load-more
+        size="small"
+        onClick={handleLoadMore}
+        sx={{ fontSize: 11 }}
+      >
+        {label}
+      </Button>
+    </Box>
+  );
+}
+
 function PropertyPicker({
   anchorEl,
   open,
@@ -1068,18 +1459,121 @@ function PropertyPicker({
   onSelect,
   categories = CATEGORIES,
   projectId,
+  allowWorkspaceScope = false,
   source = "traces",
   enableExactAttributeLookup = true,
+  unifiedCatalogActive = false,
+  isSimulator = false,
   catalogError = false,
+  hasNextCatalogPage = false,
+  isFetchingNextCatalogPage = false,
+  catalogNextPageError = false,
+  loadNextCatalogPage,
+  catalogCategoryCounts = null,
+  catalogCategoryCountsExact = false,
 }) {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
-  const autoAttributeScrollPageUsedRef = useRef(false);
   const autoExactSearchIdentityRef = useRef(null);
   const [visiblePropertyLimit, setVisiblePropertyLimit] = useState(
     PROPERTY_PICKER_RENDER_BATCH_SIZE,
   );
   const hasCategorySidebar = categories && categories.length > 0;
+  const trimmedSearch = search.trim();
+  const debouncedCatalogSearch = useDebounce(
+    trimmedSearch,
+    PROPERTY_CATALOG_SEARCH_DEBOUNCE_MS,
+  );
+  const catalogSearchSettled = debouncedCatalogSearch === trimmedSearch;
+  const selectedCatalogCategory =
+    {
+      system: "system_metric",
+      eval: "eval_metric",
+      annotation: "annotation_metric",
+      attribute: "custom_attribute",
+    }[category] || "";
+  const unifiedCatalogScopeActive = Boolean(
+    unifiedCatalogActive &&
+      open &&
+      (projectId || allowWorkspaceScope) &&
+      (debouncedCatalogSearch || selectedCatalogCategory),
+  );
+  const searchedCatalog = usePropertyCatalog({
+    category: selectedCatalogCategory,
+    projectIds: projectId ? [projectId] : [],
+    source,
+    search: debouncedCatalogSearch,
+    perEvalConfig: true,
+    pageSize: PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
+    enabled: unifiedCatalogScopeActive,
+  });
+  const searchedCatalogProperties = useMemo(
+    () =>
+      buildTraceFilterProperties(searchedCatalog.metrics || [], {
+        isSimulator,
+        sourceScope: source,
+      }),
+    [isSimulator, searchedCatalog.metrics, source],
+  );
+  const searchedCatalogOwnsResults = Boolean(
+    unifiedCatalogScopeActive && catalogSearchSettled,
+  );
+  const unifiedCatalogSearchPending = Boolean(
+    unifiedCatalogActive &&
+      open &&
+      (projectId || allowWorkspaceScope) &&
+      trimmedSearch &&
+      !catalogSearchSettled,
+  );
+  const effectiveCatalogProperties = useMemo(
+    () =>
+      searchedCatalogOwnsResults
+        ? mergeCatalogPropertyPages(properties, searchedCatalogProperties)
+        : properties,
+    [properties, searchedCatalogOwnsResults, searchedCatalogProperties],
+  );
+  const searchedCatalogHasExactCounts = Boolean(
+    searchedCatalog.categoryCountsExact && searchedCatalog.categoryCounts,
+  );
+  const searchedCatalogCountsOwnSidebar = Boolean(
+    trimmedSearch &&
+      catalogSearchSettled &&
+      searchedCatalogOwnsResults &&
+      searchedCatalogHasExactCounts,
+  );
+  // Category navigation only changes the visible result page. Its response
+  // must never replace the base scope's exact sidebar totals; doing so makes
+  // the counts change merely because System, Evals, Annotations, or Attributes
+  // was selected. A settled text search is the only narrower request that owns
+  // the breakdown because those counts intentionally describe search matches.
+  const effectiveCatalogCategoryCounts = searchedCatalogCountsOwnSidebar
+    ? searchedCatalog.categoryCounts
+    : catalogCategoryCounts;
+  const effectiveCatalogCategoryCountsExact = searchedCatalogCountsOwnSidebar
+    ? true
+    : catalogCategoryCountsExact;
+  const effectiveCatalogError = searchedCatalogOwnsResults
+    ? Boolean(searchedCatalog.isError || searchedCatalog.cursorChainStopped)
+    : catalogError;
+  const effectiveHasNextCatalogPage = searchedCatalogOwnsResults
+    ? Boolean(searchedCatalog.hasNextPage)
+    : hasNextCatalogPage;
+  const effectiveIsFetchingNextCatalogPage = searchedCatalogOwnsResults
+    ? searchedCatalog.isFetchingNextPage
+    : isFetchingNextCatalogPage;
+  const effectiveCatalogNextPageError = searchedCatalogOwnsResults
+    ? Boolean(
+        searchedCatalog.isFetchNextPageError ||
+          searchedCatalog.cursorChainStopped,
+      )
+    : catalogNextPageError;
+  const effectiveLoadNextCatalogPage = searchedCatalogOwnsResults
+    ? searchedCatalog.fetchNextPage
+    : loadNextCatalogPage;
+  const unifiedCatalogSearchLoading = Boolean(
+    unifiedCatalogSearchPending ||
+      (unifiedCatalogScopeActive && searchedCatalog.isLoading),
+  );
   const {
     data: exactAttributeProperties,
     isFetching: exactAttributeLoading,
@@ -1095,7 +1589,6 @@ function PropertyPicker({
     queryReadState: exactAttributeReadState,
     browseStatus: exactAttributeBrowseStatus,
     totalCount: exactAttributeTotalCount = null,
-    pageCount: exactAttributePageCount,
     exactSearchMatched: exactAttributeSearchMatched = false,
     cursorRetryExhausted: exactAttributeCursorRetryExhausted = false,
     debouncedSearch,
@@ -1104,7 +1597,12 @@ function PropertyPicker({
     projectId,
     search,
     source,
-    enabled: enableExactAttributeLookup && open,
+    // The activated unified catalog already owns category browsing, text
+    // search, and pagination. Running the retained-attribute hook alongside
+    // it issues a second category=custom_attribute request every time the
+    // picker opens and can make the UI look stuck behind the slower request.
+    // Keep this hook exclusively as the rolling-deploy fallback.
+    enabled: enableExactAttributeLookup && open && !unifiedCatalogActive,
   });
   const hasSettledExactAttributeError = Boolean(
     search.trim() &&
@@ -1116,7 +1614,6 @@ function PropertyPicker({
 
   useEffect(() => {
     if (!open) {
-      autoAttributeScrollPageUsedRef.current = false;
       autoExactSearchIdentityRef.current = null;
       setSearch("");
       setCategory("all");
@@ -1124,7 +1621,6 @@ function PropertyPicker({
   }, [open]);
 
   useEffect(() => {
-    autoAttributeScrollPageUsedRef.current = false;
     // The same text can be searched again without closing the picker
     // (foo -> clear/other -> foo). Each settled search gesture owns one
     // bounded automatic continuation; retaining the old identity here made
@@ -1136,16 +1632,8 @@ function PropertyPicker({
     setVisiblePropertyLimit(PROPERTY_PICKER_RENDER_BATCH_SIZE);
   }, [open, search, category, projectId, source]);
 
-  useEffect(() => {
-    // A completed cursor page (including an empty one), a continuation error,
-    // or a locally revealed render batch finishes the prior scroll action.
-    // The next natural downward gesture may therefore advance once without
-    // requiring the user to scroll upward merely to clear a permanent latch.
-    autoAttributeScrollPageUsedRef.current = false;
-  }, [exactAttributePageCount, hasAttributePageError, visiblePropertyLimit]);
-
   const usesRetainedAttributePages = shouldUseRetainedAttributePages({
-    enabled: enableExactAttributeLookup,
+    enabled: enableExactAttributeLookup && !unifiedCatalogActive,
     source,
     readState: exactAttributeReadState,
     attributes: exactAttributeProperties,
@@ -1159,13 +1647,17 @@ function PropertyPicker({
     // sample makes a continuation look broken because newly fetched keys were
     // already rendered.  Keep the sample only as a degraded-read fallback.
     return mergeRetainedAttributeProperties(
-      properties,
+      effectiveCatalogProperties,
       exactAttributeProperties,
       {
         canonical: usesRetainedAttributePages,
       },
     );
-  }, [properties, exactAttributeProperties, usesRetainedAttributePages]);
+  }, [
+    effectiveCatalogProperties,
+    exactAttributeProperties,
+    usesRetainedAttributePages,
+  ]);
 
   const filtered = useMemo(
     () =>
@@ -1182,6 +1674,14 @@ function PropertyPicker({
     const c = { all: propertiesWithExactAttribute.length };
     for (const p of propertiesWithExactAttribute)
       c[p.category] = (c[p.category] || 0) + 1;
+    if (effectiveCatalogCategoryCountsExact && effectiveCatalogCategoryCounts) {
+      c.all = effectiveCatalogCategoryCounts.all;
+      c.system = effectiveCatalogCategoryCounts.system_metric;
+      c.eval = effectiveCatalogCategoryCounts.eval_metric;
+      c.annotation = effectiveCatalogCategoryCounts.annotation_metric;
+      c.attribute = effectiveCatalogCategoryCounts.custom_attribute;
+      return c;
+    }
     const exactLookupOwnsAttributeInventory =
       enableExactAttributeLookup && (source === "traces" || source === "spans");
     if (exactLookupOwnsAttributeInventory) {
@@ -1203,6 +1703,8 @@ function PropertyPicker({
     }
     return c;
   }, [
+    effectiveCatalogCategoryCounts,
+    effectiveCatalogCategoryCountsExact,
     enableExactAttributeLookup,
     exactAttributeTotalCount,
     propertiesWithExactAttribute,
@@ -1210,10 +1712,29 @@ function PropertyPicker({
   ]);
   const visibleProperties = filtered.slice(0, visiblePropertyLimit);
   const hiddenCount = Math.max(filtered.length - visiblePropertyLimit, 0);
+  const catalogCategoryCanContinue = (
+    unifiedCatalogActive
+      ? ["all", "system", "eval", "annotation", "attribute"]
+      : ["all", "eval", "annotation"]
+  ).includes(category);
+  const attributeCategoryCanContinue = ["all", "attribute"].includes(category);
+  const catalogSearchAlreadyMatched = Boolean(
+    search.trim() && filtered.length > 0,
+  );
+  // An activated catalog owns every category and every matching search page.
+  // The compatibility path still keeps attributes on its retained cursor, so
+  // unrelated legacy catalog pages stay hidden after a local match.
+  const shouldShowCatalogContinuation =
+    catalogCategoryCanContinue &&
+    (unifiedCatalogActive || !catalogSearchAlreadyMatched);
   // A successful exact probe stops only that supplemental chain. The retained
   // catalog remains explicitly pageable so sibling substring matches can be
   // discovered without automatically draining it.
-  const canLoadNextAttributePage = hasNextAttributePage;
+  const canLoadNextAttributePage = Boolean(
+    hasNextAttributePage ||
+      (search.trim() &&
+        (hasNextExactAttributePage || hasSettledExactAttributeError)),
+  );
   const exactAttributeDiscoveryTerminal =
     exactAttributeCursorRetryExhausted ||
     exactAttributeBrowseStatus === "exhausted" ||
@@ -1253,10 +1774,7 @@ function PropertyPicker({
   const loadNextAttributePage = useSingleFlightPageRequest({
     identity: JSON.stringify([projectId, source, debouncedSearch]),
     enabled: canLoadNextAttributePage && !isFetchingNextAttributePage,
-    request: () => {
-      autoAttributeScrollPageUsedRef.current = true;
-      return fetchNextAttributePage();
-    },
+    request: fetchNextAttributePage,
   });
   const loadNextExactAttributePage = useSingleFlightPageRequest({
     identity: JSON.stringify(["exact", projectId, source, debouncedSearch]),
@@ -1267,9 +1785,20 @@ function PropertyPicker({
     request: fetchNextExactAttributePage,
   });
   const loadNextVisibleAttributePage =
-    search.trim() && hasNextExactAttributePage
+    search.trim() &&
+    (hasNextExactAttributePage || hasSettledExactAttributeError)
       ? loadNextExactAttributePage
       : loadNextAttributePage;
+  const attributePageAvailable =
+    attributeCategoryCanContinue && canLoadNextAttributePage;
+  const catalogPageAvailable =
+    shouldShowCatalogContinuation &&
+    !unifiedCatalogSearchPending &&
+    effectiveHasNextCatalogPage;
+  const isFetchingVisibleAttributePage = Boolean(
+    attributeCategoryCanContinue &&
+      (isFetchingNextAttributePage || isFetchingNextExactPage),
+  );
   useEffect(() => {
     const settledSearch = search.trim();
     if (
@@ -1311,7 +1840,6 @@ function PropertyPicker({
     exactAttributeCursorRetryExhausted,
   ]);
   const revealNextPropertyBatch = useCallback(() => {
-    autoAttributeScrollPageUsedRef.current = true;
     setVisiblePropertyLimit((current) =>
       Math.min(current + PROPERTY_PICKER_RENDER_BATCH_SIZE, filtered.length),
     );
@@ -1320,29 +1848,14 @@ function PropertyPicker({
     (event) => {
       const { scrollTop, clientHeight, scrollHeight } = event.currentTarget;
       const isNearBottom = scrollHeight - scrollTop - clientHeight <= 40;
-      // One wheel/touchpad gesture must advance at most one cursor page.  A
-      // fast response can otherwise leave the list pinned at the bottom and
-      // consume every continuation (or race a later one) without user intent.
-      if (!isNearBottom) {
-        autoAttributeScrollPageUsedRef.current = false;
-        return;
-      }
-      if (
-        !autoAttributeScrollPageUsedRef.current &&
-        (hiddenCount > 0 ||
-          (canLoadNextAttributePage && !isFetchingNextAttributePage))
-      ) {
-        if (hiddenCount > 0) revealNextPropertyBatch();
-        else loadNextVisibleAttributePage();
-      }
+      // Scrolling may reveal rows that are already in memory, but server
+      // cursor advancement is always an explicit button action. Programmatic
+      // layout shifts and inertial scroll events can otherwise keep a list at
+      // its bottom and drain every remaining page without another user
+      // gesture.
+      if (isNearBottom && hiddenCount > 0) revealNextPropertyBatch();
     },
-    [
-      canLoadNextAttributePage,
-      hiddenCount,
-      isFetchingNextAttributePage,
-      loadNextVisibleAttributePage,
-      revealNextPropertyBatch,
-    ],
+    [hiddenCount, revealNextPropertyBatch],
   );
 
   return (
@@ -1387,20 +1900,23 @@ function PropertyPicker({
                     />
                   </InputAdornment>
                 ),
-                endAdornment: filtered.length > 0 && (
+                endAdornment: Number.isSafeInteger(
+                  search.trim() ? filtered.length : counts.all,
+                ) && (
                   <InputAdornment position="end">
                     <Typography
                       variant="caption"
                       sx={{ color: "text.disabled", fontSize: 11 }}
                     >
-                      {filtered.length}
+                      {search.trim() ? filtered.length : counts.all}
                     </Typography>
                   </InputAdornment>
                 ),
                 sx: { fontSize: 13 },
               }}
             />
-            {search.trim() &&
+            {enableExactAttributeLookup &&
+              search.trim() &&
               debouncedSearch === search.trim() &&
               exactAttributeReadState !== "complete" && (
                 <Typography
@@ -1441,7 +1957,7 @@ function PropertyPicker({
                   {getAttributeLookupMessage(exactAttributeReadState)}
                 </Typography>
               )}
-            {!search.trim() && catalogError && (
+            {effectiveCatalogError && (
               <Typography
                 role="status"
                 sx={{ mt: 0.75, fontSize: 11, color: "warning.main" }}
@@ -1554,7 +2070,8 @@ function PropertyPicker({
               {filtered.length === 0 &&
                 !manualAttributeProperty &&
                 !canLoadNextAttributePage &&
-                !exactAttributeLoading && (
+                !exactAttributeLoading &&
+                !unifiedCatalogSearchLoading && (
                   <Typography
                     sx={{
                       p: 2,
@@ -1570,6 +2087,7 @@ function PropertyPicker({
                 !manualAttributeProperty &&
                 canLoadNextAttributePage &&
                 !exactAttributeLoading &&
+                !unifiedCatalogSearchLoading &&
                 !isFetchingNextAttributePage && (
                   <Typography
                     role="status"
@@ -1585,7 +2103,7 @@ function PropertyPicker({
                   </Typography>
                 )}
               {filtered.length === 0 &&
-                exactAttributeLoading &&
+                (exactAttributeLoading || unifiedCatalogSearchLoading) &&
                 !isFetchingNextAttributePage && (
                   <Box
                     role="status"
@@ -1599,7 +2117,7 @@ function PropertyPicker({
                   >
                     <CircularProgress size={16} />
                     <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
-                      Loading attributes…
+                      Loading properties…
                     </Typography>
                   </Box>
                 )}
@@ -1707,23 +2225,6 @@ function PropertyPicker({
                   />
                 </Box>
               )}
-              {isFetchingNextAttributePage && (
-                <Box
-                  role="status"
-                  sx={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 0.75,
-                    py: 1,
-                  }}
-                >
-                  <CircularProgress size={14} />
-                  <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
-                    Searching more attributes…
-                  </Typography>
-                </Box>
-              )}
               {hasAttributePageError && !isFetchingNextAttributePage && (
                 <Typography
                   role="status"
@@ -1751,28 +2252,27 @@ function PropertyPicker({
                   </Button>
                 </Box>
               )}
-              {hiddenCount === 0 &&
-                canLoadNextAttributePage &&
-                !isFetchingNextAttributePage && (
-                  <Box
-                    sx={{ display: "flex", justifyContent: "center", py: 0.5 }}
-                  >
-                    <Button
-                      data-filter-property-load-more
-                      size="small"
-                      onClick={loadNextVisibleAttributePage}
-                      sx={{ fontSize: 11 }}
-                    >
-                      {hasAttributePageError
-                        ? hasNextExactAttributePage
-                          ? "Retry searching attributes"
-                          : "Retry loading attributes"
-                        : hasNextExactAttributePage
-                          ? "Continue searching attributes"
-                          : "Load more attributes"}
-                    </Button>
-                  </Box>
-                )}
+              {hiddenCount === 0 && (
+                <PropertyPickerPaginationControl
+                  search={search}
+                  attributePageAvailable={attributePageAvailable}
+                  attributeSearchContinuation={Boolean(
+                    search.trim() &&
+                      (hasNextExactAttributePage ||
+                        hasSettledExactAttributeError),
+                  )}
+                  isFetchingAttributePage={isFetchingVisibleAttributePage}
+                  attributePageError={hasAttributePageError}
+                  onLoadMoreAttributes={loadNextVisibleAttributePage}
+                  catalogPageAvailable={catalogPageAvailable}
+                  isFetchingCatalogPage={
+                    shouldShowCatalogContinuation &&
+                    effectiveIsFetchingNextCatalogPage
+                  }
+                  catalogPageError={effectiveCatalogNextPageError}
+                  onLoadMoreCatalog={effectiveLoadNextCatalogPage}
+                />
+              )}
               {hiddenCount > 0 && (
                 <Typography
                   sx={{
@@ -1824,7 +2324,7 @@ function ValuePicker({
 }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const [search, setSearch] = useState("");
-  const debouncedSearch = useDebounce(search, 500);
+  const debouncedSearch = useDebounce(search, FILTER_VALUE_SEARCH_DEBOUNCE_MS);
   // A touchpad/wheel gesture can keep the options list pinned at the bottom
   // while a fast continuation response appends the next page. Without a
   // per-open gate, the remaining inertial scroll events drain every cursor
@@ -1863,10 +2363,17 @@ function ValuePicker({
 
   const isSessionFreeTextField =
     !hasStaticChoices && SESSION_FREE_TEXT_FIELDS.has(propertyId);
-  const filterValueMetricName =
-    source === "sessions" && propertyId === "session_id"
-      ? "session"
-      : propertyId;
+  const filterValueSource = filterValueTransportSource(source, metricType);
+  const filterValueMetricName = filterValueAdapterMetricName(
+    filterValueSource,
+    propertyId,
+  );
+  const filterValuePropertyId = buildPropertyRegistryId({
+    propertyId: property?.registryId,
+    metricName: filterValueMetricName,
+    metricType,
+    source: filterValueSource,
+  });
 
   const isIdOnlyField = !hasStaticChoices && ID_ONLY_FIELDS.has(propertyId);
 
@@ -1898,16 +2405,17 @@ function ValuePicker({
     isRetryingFreshPage: isRetryingDashboardOptions,
     refetch: refetchDashboardOptions,
   } = useDashboardFilterValues({
+    propertyId: filterValuePropertyId,
     metricName: filterValueMetricName,
     metricType,
     projectIds: projectId ? [projectId] : [],
-    source,
+    source: filterValueSource,
     search: usesBackendSearch ? debouncedSearch : "",
     // Keep the transport keyed by settled text, while allowing the hook to
     // detect rapid clear/re-entry gestures that happen inside the debounce
     // interval and recover one cached failed continuation.
     searchGesture: usesBackendSearch ? search.trim() : "",
-    pageSize: 10,
+    pageSize: INTERACTIVE_TABLE_PAGE_SIZE,
     attributeType:
       propertyCategory === "attribute"
         ? property?.attributeTypesExact === true &&
@@ -1932,8 +2440,9 @@ function ValuePicker({
   const loadNextDashboardValues = useSingleFlightPageRequest({
     identity: JSON.stringify([
       projectId,
-      source,
-      propertyId,
+      filterValueSource,
+      property?.registryId || propertyId,
+      metricType,
       usesBackendSearch ? debouncedSearch : "",
     ]),
     enabled: hasMoreDashboardValues && !isFetchingNextDashboardPage,
@@ -2545,6 +3054,7 @@ function FilterRow({
   index,
   properties,
   projectId,
+  allowWorkspaceScope = false,
   onChange,
   onRemove,
   source = "traces",
@@ -2554,7 +3064,15 @@ function FilterRow({
   operatorFilter,
   defaultOperatorForType,
   enableExactAttributeLookup = true,
+  unifiedCatalogActive = false,
+  isSimulator = false,
   catalogError = false,
+  hasNextCatalogPage = false,
+  isFetchingNextCatalogPage = false,
+  catalogNextPageError = false,
+  loadNextCatalogPage,
+  catalogCategoryCounts,
+  catalogCategoryCountsExact,
   attributeSource,
 }) {
   const [pickerAnchor, setPickerAnchor] = useState(null);
@@ -2621,6 +3139,7 @@ function FilterRow({
       else defaultValue = [];
       onChange(index, {
         field: prop.id,
+        registryId: prop.registryId,
         fieldName: prop.name,
         fieldCategory: prop.category,
         fieldType: nt,
@@ -2943,6 +3462,7 @@ function FilterRow({
         property={
           selectedProp || {
             id: filter.field,
+            registryId: filter.registryId,
             category: filter.fieldCategory,
             apiColType: filter.apiColType,
             type: filter.fieldType,
@@ -3020,9 +3540,18 @@ function FilterRow({
         categories={categories}
         onSelect={handlePropertySelect}
         projectId={projectId}
+        allowWorkspaceScope={allowWorkspaceScope}
         source={attributeSource || source}
         enableExactAttributeLookup={enableExactAttributeLookup}
+        unifiedCatalogActive={unifiedCatalogActive}
+        isSimulator={isSimulator}
         catalogError={catalogError}
+        hasNextCatalogPage={hasNextCatalogPage}
+        isFetchingNextCatalogPage={isFetchingNextCatalogPage}
+        catalogNextPageError={catalogNextPageError}
+        loadNextCatalogPage={loadNextCatalogPage}
+        catalogCategoryCounts={catalogCategoryCounts}
+        catalogCategoryCountsExact={catalogCategoryCountsExact}
       />
 
       <Select
@@ -3076,8 +3605,10 @@ const TraceFilterPanel = ({
   onApply,
   filterFields,
   source = "traces",
+  propertyNamespace,
   tab = null,
   projectId: projectIdProp,
+  allowWorkspaceScope = false,
   properties: propertiesOverride,
   ValuePickerOverride,
   showAi = true,
@@ -3096,6 +3627,8 @@ const TraceFilterPanel = ({
   const { observeId: routeObserveId } = useParams();
   const observeId = projectIdProp || routeObserveId;
   const skipDynamicProperties = Boolean(propertiesOverride);
+  const effectivePropertyNamespace =
+    propertyNamespace || defaultPropertyNamespace(tab, source);
   const dynamicPropertySource =
     isSpansView || tab === "spans" ? "spans" : "traces";
   // Voice-call rows are conversation roots, but their custom-property names
@@ -3109,40 +3642,57 @@ const TraceFilterPanel = ({
   const exactAttributeSource =
     attributeSourceOverride ||
     (source === "traces" ? defaultAttributeSource : source);
-  // Warm the retained attribute cursor as soon as the filter panel opens.
-  // This request has its own React Query key and runs concurrently with the
-  // dashboard metric catalog. Property browsing must never wait for the broad
-  // catalog (whose cold path also discovers compatibility attributes) before
-  // it can start the canonical retained-data read.
-  useExactTraceAttributeProperties({
-    projectId: observeId,
-    search: "",
-    source: exactAttributeSource,
-    enabled: Boolean(
-      open &&
-        observeId &&
-        (exactAttributeSource === "traces" || exactAttributeSource === "spans"),
-    ),
-  });
+  // Voice-call system fields have their own canonical identities, while their
+  // eval/annotation/attribute families are derived from the related trace
+  // data. The activated catalog bridges those families server-side, so keep
+  // one voice_calls source for definitions and counts. The retained-key
+  // compatibility cursor below remains on spans.
+  const unifiedCatalogSource =
+    tab === "voiceCalls" ? "voice_calls" : exactAttributeSource;
   const {
     data: dynamicProperties = [],
     isLoading: dynamicPropsLoading,
     isError: dynamicPropsError,
+    hasNextPage: hasNextDynamicPropsPage,
+    fetchNextPage: fetchNextDynamicPropsPage,
+    isFetchingNextPage: isFetchingNextDynamicPropsPage,
+    isFetchNextPageError: isNextDynamicPropsPageError,
+    categoryCounts: dynamicPropertyCategoryCounts,
+    categoryCountsExact: dynamicPropertyCategoryCountsExact,
+    usesUnifiedCatalog,
   } = useTraceFilterProperties(observeId, {
-    enabled: !skipDynamicProperties,
+    // Several pages keep trace/session/voice filter panels mounted at once.
+    // Only the visible panel should read the catalog; otherwise one click can
+    // fan out into multiple project, source, and attribute requests.
+    enabled: !skipDynamicProperties && open,
     isSimulator,
-    sourceScope: dynamicPropertySource,
+    // Definition pages, category counts, and category continuations must keep
+    // one source identity for the lifetime of the picker.
+    sourceScope: unifiedCatalogSource,
+    allowWorkspaceScope,
   });
+  const unifiedPropertyCatalogActive = Boolean(
+    !skipDynamicProperties && usesUnifiedCatalog,
+  );
   // Merge: static trace fields + dynamic dashboard properties + any extra static fields
   const properties = useMemo(() => {
     if (propertiesOverride) {
+      const identifiedProperties = propertiesOverride.map((property) =>
+        attachPropertyRegistryIdentity(
+          property,
+          source,
+          effectivePropertyNamespace,
+        ),
+      );
       return propertyFilter
-        ? propertiesOverride.filter(propertyFilter)
-        : propertiesOverride;
+        ? identifiedProperties.filter(propertyFilter)
+        : identifiedProperties;
     }
     const merged = mergeTraceFilterProperties({
       tab,
       isSpansView,
+      source,
+      propertyNamespace: effectivePropertyNamespace,
       dynamicProperties,
       filterFields,
     });
@@ -3152,6 +3702,8 @@ const TraceFilterPanel = ({
     filterFields,
     propertiesOverride,
     propertyFilter,
+    effectivePropertyNamespace,
+    source,
     tab,
     isSpansView,
   ]);
@@ -3175,6 +3727,7 @@ const TraceFilterPanel = ({
             : "string";
           return {
             field: p.id,
+            property_id: p.registryId,
             label: p.name,
             category: p.category,
             type,
@@ -3195,6 +3748,41 @@ const TraceFilterPanel = ({
   const [queryFieldSearch, setQueryFieldSearch] = useState("");
   const [pinnedQueryAttributeProperties, setPinnedQueryAttributeProperties] =
     useState([]);
+  const trimmedQueryFieldSearch = queryFieldSearch.trim();
+  const debouncedQueryCatalogSearch = useDebounce(
+    trimmedQueryFieldSearch,
+    PROPERTY_CATALOG_SEARCH_DEBOUNCE_MS,
+  );
+  const queryCatalogSearchSettled =
+    debouncedQueryCatalogSearch === trimmedQueryFieldSearch;
+  const queryPropertyCatalog = usePropertyCatalog({
+    projectIds: observeId ? [observeId] : [],
+    source: unifiedCatalogSource,
+    search: debouncedQueryCatalogSearch,
+    perEvalConfig: true,
+    pageSize: PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
+    enabled: Boolean(
+      unifiedPropertyCatalogActive &&
+        open &&
+        showQueryTab &&
+        activeTab === "query" &&
+        (observeId || allowWorkspaceScope) &&
+        debouncedQueryCatalogSearch,
+    ),
+  });
+  const queryCatalogProperties = useMemo(
+    () =>
+      buildTraceFilterProperties(queryPropertyCatalog.metrics || [], {
+        isSimulator,
+        sourceScope: unifiedCatalogSource,
+      }),
+    [isSimulator, queryPropertyCatalog.metrics, unifiedCatalogSource],
+  );
+  const queryCatalogSearchOwnsResults = Boolean(
+    unifiedPropertyCatalogActive &&
+      trimmedQueryFieldSearch &&
+      queryCatalogSearchSettled,
+  );
   // Serialized snapshot of the filter set last sent to onApply. Auto-apply
   // compares against this so we only hit the API when the applyable filter set
   // actually changes — picking a field/operator with no value, or re-opening
@@ -3202,7 +3790,8 @@ const TraceFilterPanel = ({
   const lastAppliedRef = useRef(undefined);
 
   const queryAttributeLookupEnabled = Boolean(
-    open &&
+    !unifiedPropertyCatalogActive &&
+      open &&
       showQueryTab &&
       activeTab === "query" &&
       observeId &&
@@ -3218,7 +3807,7 @@ const TraceFilterPanel = ({
     exactSearchError: queryExactAttributeSearchError,
     queryReadState: queryAttributeReadState,
     browseStatus: queryAttributeBrowseStatus,
-    debouncedSearch: debouncedQueryFieldSearch,
+    debouncedSearch: debouncedQueryAttributeSearch,
   } = useExactTraceAttributeProperties({
     projectId: observeId,
     search: queryFieldSearch,
@@ -3229,7 +3818,7 @@ const TraceFilterPanel = ({
   useEffect(() => {
     setQueryFieldSearch("");
     setPinnedQueryAttributeProperties([]);
-  }, [observeId, exactAttributeSource]);
+  }, [observeId, exactAttributeSource, unifiedCatalogSource]);
 
   const filteredQueryExactAttributeProperties = useMemo(
     () =>
@@ -3258,6 +3847,10 @@ const TraceFilterPanel = ({
         return [
           {
             id: row.field,
+            registryId:
+              row.registryId ||
+              row.property_id ||
+              `custom_attribute:${row.field}`,
             name: row.fieldName || row.field,
             category: "attribute",
             rawCategory: "custom_attribute",
@@ -3271,8 +3864,11 @@ const TraceFilterPanel = ({
     [rows],
   );
   const queryProperties = useMemo(() => {
+    const catalogProperties = queryCatalogSearchOwnsResults
+      ? mergeCatalogPropertyPages(properties, queryCatalogProperties)
+      : properties;
     const discovered = mergeRetainedAttributeProperties(
-      properties,
+      catalogProperties,
       filteredQueryExactAttributeProperties,
       { canonical: queryUsesRetainedAttributePages },
     );
@@ -3290,6 +3886,8 @@ const TraceFilterPanel = ({
     filteredQueryExactAttributeProperties,
     pinnedQueryAttributeProperties,
     properties,
+    queryCatalogProperties,
+    queryCatalogSearchOwnsResults,
     queryUsesRetainedAttributePages,
     selectedQueryAttributeProperties,
   ]);
@@ -3314,6 +3912,7 @@ const TraceFilterPanel = ({
       panelType: p.type || "string",
       category: p.category, // system, eval, annotation, attribute
       rawCategory: p.rawCategory,
+      registryId: p.registryId || p.property_id,
       apiColType: p.apiColType,
       attributeTypes: p.attributeTypes,
       attributeTypesExact: p.attributeTypesExact,
@@ -3334,15 +3933,55 @@ const TraceFilterPanel = ({
     },
     [queryProperties],
   );
-  const loadNextQueryAttributePage = useSingleFlightPageRequest({
+  const queryCatalogSearchPageActive = Boolean(
+    unifiedPropertyCatalogActive && queryCatalogSearchOwnsResults,
+  );
+  const queryCatalogSearchPending = Boolean(
+    unifiedPropertyCatalogActive &&
+      trimmedQueryFieldSearch &&
+      !queryCatalogSearchSettled,
+  );
+  const queryHasNextFieldPage = unifiedPropertyCatalogActive
+    ? Boolean(
+        !queryCatalogSearchPending &&
+          (queryCatalogSearchPageActive
+            ? queryPropertyCatalog.hasNextPage
+            : hasNextDynamicPropsPage),
+      )
+    : Boolean(hasNextQueryAttributePage);
+  const queryIsFetchingNextFieldPage = unifiedPropertyCatalogActive
+    ? queryCatalogSearchPageActive
+      ? queryPropertyCatalog.isFetchingNextPage
+      : isFetchingNextDynamicPropsPage
+    : isFetchingNextQueryAttributePage;
+  const queryFieldPageError = unifiedPropertyCatalogActive
+    ? queryCatalogSearchPageActive
+      ? Boolean(
+          queryPropertyCatalog.isError ||
+            queryPropertyCatalog.isFetchNextPageError ||
+            queryPropertyCatalog.cursorChainStopped,
+        )
+      : Boolean(dynamicPropsError || isNextDynamicPropsPageError)
+    : Boolean(isNextQueryAttributePageError || queryExactAttributeSearchError);
+  const loadNextQueryFieldPage = useSingleFlightPageRequest({
     identity: JSON.stringify([
       observeId,
       exactAttributeSource,
-      debouncedQueryFieldSearch,
+      unifiedPropertyCatalogActive
+        ? queryCatalogSearchPageActive
+          ? "catalog-search"
+          : "catalog-base"
+        : "retained",
+      queryCatalogSearchPageActive
+        ? debouncedQueryCatalogSearch
+        : debouncedQueryAttributeSearch,
     ]),
-    enabled:
-      Boolean(hasNextQueryAttributePage) && !isFetchingNextQueryAttributePage,
-    request: fetchNextQueryAttributePage,
+    enabled: queryHasNextFieldPage && !queryIsFetchingNextFieldPage,
+    request: unifiedPropertyCatalogActive
+      ? queryCatalogSearchPageActive
+        ? queryPropertyCatalog.fetchNextPage
+        : fetchNextDynamicPropsPage
+      : fetchNextQueryAttributePage,
   });
 
   // Query tab — fetch values for the selected field
@@ -3351,20 +3990,42 @@ const TraceFilterPanel = ({
     field: null,
     value: "",
   });
-  const debouncedQueryValueSearch = useDebounce(queryValueSearch, 500);
+  const debouncedQueryValueSearch = useDebounce(
+    queryValueSearch,
+    FILTER_VALUE_SEARCH_DEBOUNCE_MS,
+  );
   const queryFieldProp = queryPropertyById[queryField];
   const queryMetricType = (() => {
     const cat = queryFieldProp?.category || "system";
+    if (source === "dataset") return "custom_column";
     if (cat === "system") return "system_metric";
     if (cat === "eval") return "eval_metric";
     if (cat === "annotation") return "annotation_metric";
     if (cat === "attribute") return "custom_attribute";
     return "system_metric";
   })();
+  const queryValueSource = filterValueTransportSource(
+    source === "dataset" ? "dataset_column" : source,
+    queryMetricType,
+  );
+  const queryValueMetricName = filterValueAdapterMetricName(
+    queryValueSource,
+    queryFieldProp?.id || queryField || "",
+  );
+  const isQuerySessionFreeTextField =
+    queryValueSource === "sessions" &&
+    SESSION_FREE_TEXT_FIELDS.has(queryFieldProp?.id || queryField || "");
+  const queryValuePropertyId = buildPropertyRegistryId({
+    propertyId: queryFieldProp?.registryId,
+    metricName: queryValueMetricName,
+    metricType: queryMetricType,
+    source: queryValueSource,
+  });
   const shouldFetchQueryValues = Boolean(
     open &&
       activeTab === "query" &&
       queryField &&
+      !isQuerySessionFreeTextField &&
       (!queryFieldProp?.choices?.length ||
         (queryFieldProp?.category === "annotation" &&
           queryFieldProp?.type === "categorical")),
@@ -3389,10 +4050,12 @@ const TraceFilterPanel = ({
     isRetryingFreshPage: isRetryingQueryValues,
     refetch: refetchQueryValues,
   } = useDashboardFilterValues({
-    metricName: queryFieldProp?.id || queryField || "",
+    propertyId: queryValuePropertyId,
+    metricName: queryValueMetricName,
     metricType: queryMetricType,
-    projectIds: observeId ? [observeId] : [],
-    source,
+    projectIds: source === "dataset" ? [] : observeId ? [observeId] : [],
+    datasetId: source === "dataset" ? observeId : undefined,
+    source: queryValueSource,
     search: [
       "custom_attribute",
       "system_metric",
@@ -3412,7 +4075,7 @@ const TraceFilterPanel = ({
     // System, eval, and annotation values must use the same signed-cursor
     // contract as custom attributes. A missing page_size enters the legacy
     // non-pageable branch and can exceed the property picker's five-second SLA.
-    pageSize: 10,
+    pageSize: INTERACTIVE_TABLE_PAGE_SIZE,
     attributeType:
       queryMetricType === "custom_attribute"
         ? queryFieldProp?.attributeTypesExact === true &&
@@ -3480,6 +4143,7 @@ const TraceFilterPanel = ({
           }
           return normalizeFilterRowOperator({
             ...f,
+            registryId: f.registryId || f.property_id || prop?.registryId,
             fieldCategory: resolveFieldCategory(f.fieldCategory, prop),
             fieldName: f.fieldName || prop?.name,
             fieldType,
@@ -3535,6 +4199,11 @@ const TraceFilterPanel = ({
               : [t.value];
         return {
           field: prop?.id || t.field,
+          registryId:
+            prop?.registryId ||
+            prop?.property_id ||
+            queryFieldDef?.registryId ||
+            queryFieldDef?.property_id,
           fieldName: prop?.name || queryFieldDef?.label,
           fieldCategory: resolveFieldCategory(undefined, prop || queryFieldDef),
           fieldType,
@@ -3590,29 +4259,31 @@ const TraceFilterPanel = ({
   // so there's no Apply button — only Clear all. We apply WITHOUT closing the
   // popover so the user can keep adjusting filters and see them apply live.
   const autoApplyTimerRef = useRef(null);
+  // ObserveToolbar adapts this callback inline. Keep the latest implementation
+  // without making its changing identity restart the debounce; graph/query
+  // progress renders can otherwise postpone a committed filter indefinitely.
+  const onApplyRef = useRef(onApply);
+  onApplyRef.current = onApply;
   // Apply only when the resulting filter set differs from the last one sent.
-  const applyIfChanged = useCallback(
-    (sourceRows) => {
-      // Hold while a typed editor is incomplete so partial values do not
-      // auto-fire or drop the last valid, already-applied filter.
-      if (
-        hasIncompleteNumericRow(sourceRows) ||
-        hasIncompleteMapRow(sourceRows)
-      )
-        return;
-      const next = computeValidFilters(sourceRows);
-      const serialized = serializeFilterSet(next);
-      if (serialized === lastAppliedRef.current) return;
-      lastAppliedRef.current = serialized;
-      onApply(next);
-    },
-    [onApply],
-  );
+  const applyIfChanged = useCallback((sourceRows) => {
+    // Hold while a typed editor is incomplete so partial values do not
+    // auto-fire or drop the last valid, already-applied filter.
+    if (hasIncompleteNumericRow(sourceRows) || hasIncompleteMapRow(sourceRows))
+      return;
+    const next = computeValidFilters(sourceRows);
+    const serialized = serializeFilterSet(next);
+    if (serialized === lastAppliedRef.current) return;
+    lastAppliedRef.current = serialized;
+    onApplyRef.current(next);
+  }, []);
 
   useEffect(() => {
     if (!open) return undefined;
     if (autoApplyTimerRef.current) clearTimeout(autoApplyTimerRef.current);
-    autoApplyTimerRef.current = setTimeout(() => applyIfChanged(rows), 350);
+    autoApplyTimerRef.current = setTimeout(
+      () => applyIfChanged(rows),
+      FILTER_AUTO_APPLY_DEBOUNCE_MS,
+    );
     return () => {
       if (autoApplyTimerRef.current) clearTimeout(autoApplyTimerRef.current);
     };
@@ -3668,13 +4339,20 @@ const TraceFilterPanel = ({
       const aiRows = aiFilters.map((f) => {
         // Attribute fields are intentionally excluded from aiFilterSchema;
         // keep same-id raw attributes from hijacking an AI-selected system id.
-        const prop = properties.find(
-          (property) =>
-            property.id === f.field && property.category !== "attribute",
-        );
+        const prop = f.property_id
+          ? properties.find(
+              (property) =>
+                property.registryId === f.property_id &&
+                property.category !== "attribute",
+            )
+          : properties.find(
+              (property) =>
+                property.id === f.field && property.category !== "attribute",
+            );
         const fieldType = prop?.type || "string";
         return {
-          field: f.field,
+          field: prop?.id || f.field,
+          registryId: f.property_id || prop?.registryId,
           fieldCategory: resolveFieldCategory(undefined, prop),
           fieldType,
           apiColType: prop?.apiColType,
@@ -3838,7 +4516,7 @@ const TraceFilterPanel = ({
                 >
                   <CircularProgress size={14} />
                   <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
-                    Loading additional evaluation and annotation properties…
+                    Loading properties…
                   </Typography>
                 </Box>
               )}
@@ -3849,6 +4527,7 @@ const TraceFilterPanel = ({
                   index={idx}
                   properties={properties}
                   projectId={observeId}
+                  allowWorkspaceScope={allowWorkspaceScope}
                   onChange={handleChange}
                   onRemove={handleRemove}
                   source={source}
@@ -3858,12 +4537,29 @@ const TraceFilterPanel = ({
                   operatorFilter={operatorFilter}
                   defaultOperatorForType={defaultOperatorForType}
                   enableExactAttributeLookup={Boolean(
-                    observeId &&
+                    !unifiedPropertyCatalogActive &&
+                      observeId &&
                       (exactAttributeSource === "traces" ||
                         exactAttributeSource === "spans"),
                   )}
+                  unifiedCatalogActive={unifiedPropertyCatalogActive}
+                  isSimulator={isSimulator}
                   catalogError={!skipDynamicProperties && dynamicPropsError}
-                  attributeSource={exactAttributeSource}
+                  hasNextCatalogPage={
+                    !skipDynamicProperties && hasNextDynamicPropsPage
+                  }
+                  isFetchingNextCatalogPage={isFetchingNextDynamicPropsPage}
+                  catalogNextPageError={isNextDynamicPropsPageError}
+                  loadNextCatalogPage={fetchNextDynamicPropsPage}
+                  catalogCategoryCounts={dynamicPropertyCategoryCounts}
+                  catalogCategoryCountsExact={
+                    dynamicPropertyCategoryCountsExact
+                  }
+                  attributeSource={
+                    unifiedPropertyCatalogActive
+                      ? unifiedCatalogSource
+                      : exactAttributeSource
+                  }
                 />
               ))}
             </Stack>
@@ -3941,16 +4637,22 @@ const TraceFilterPanel = ({
                 })}
               valueOptions={queryValueOptions}
               fieldLoading={
-                queryAttributeLookupEnabled &&
-                ((queryAttributeLoading && !isFetchingNextQueryAttributePage) ||
-                  queryFieldSearch.trim() !== debouncedQueryFieldSearch)
+                unifiedPropertyCatalogActive
+                  ? Boolean(
+                      trimmedQueryFieldSearch &&
+                        (!queryCatalogSearchSettled ||
+                          (queryPropertyCatalog.isLoading &&
+                            !queryPropertyCatalog.isFetchingNextPage)),
+                    )
+                  : queryAttributeLookupEnabled &&
+                    ((queryAttributeLoading &&
+                      !isFetchingNextQueryAttributePage) ||
+                      trimmedQueryFieldSearch !== debouncedQueryAttributeSearch)
               }
-              fieldLoadingMore={isFetchingNextQueryAttributePage}
-              fieldLoadError={Boolean(
-                isNextQueryAttributePageError || queryExactAttributeSearchError,
-              )}
-              hasMoreFields={Boolean(hasNextQueryAttributePage)}
-              onLoadMoreFields={loadNextQueryAttributePage}
+              fieldLoadingMore={queryIsFetchingNextFieldPage}
+              fieldLoadError={queryFieldPageError}
+              hasMoreFields={queryHasNextFieldPage}
+              onLoadMoreFields={loadNextQueryFieldPage}
               onFieldSearchChange={setQueryFieldSearch}
               valueLoading={queryValuesLoading}
               valueLoadingMore={
@@ -4028,8 +4730,10 @@ TraceFilterPanel.propTypes = {
   onApply: PropTypes.func.isRequired,
   filterFields: PropTypes.array,
   source: PropTypes.string,
+  propertyNamespace: PropTypes.string,
   tab: PropTypes.oneOf(["trace", "spans", "voiceCalls"]),
   projectId: PropTypes.string,
+  allowWorkspaceScope: PropTypes.bool,
   properties: PropTypes.array,
   ValuePickerOverride: PropTypes.elementType,
   showAi: PropTypes.bool,

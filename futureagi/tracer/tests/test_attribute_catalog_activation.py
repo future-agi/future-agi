@@ -7,6 +7,8 @@ import pytest
 from tracer.services.clickhouse.v2.attribute_catalog_activation import (
     CATALOG_ACTIVATION_ACK,
     CATALOG_ACTIVATION_ENVIRONMENT,
+    CATALOG_ACTIVATION_SUPERSESSION_ACK,
+    CATALOG_PROJECTION_VERSION,
     CatalogActivationConfig,
     CatalogActivationError,
     CatalogFrozenEpochActivator,
@@ -29,6 +31,7 @@ def _checkpoint(start, **overrides):
         "value_rows": 4,
         "gap_count": 0,
         "gap_reasons": [],
+        "projection_version": CATALOG_PROJECTION_VERSION,
         "state_version": 100,
         "latest_state_variants": 1,
     }
@@ -277,6 +280,7 @@ def test_activation_is_idempotent_only_for_identical_frozen_evidence():
     activation_values = first_io.inserts[1][1][0]
     activation_columns = first_io.inserts[1][2]
     activation = dict(zip(activation_columns, activation_values, strict=True))
+    activation["state_version"] = activation.pop("_version")
     activation["latest_state_variants"] = 1
 
     second_io = _IO(streams=[stream], activation=[activation])
@@ -290,3 +294,119 @@ def test_activation_is_idempotent_only_for_identical_frozen_evidence():
     conflict_io = _IO(streams=[{**stream, "source_fence_digest": "f" * 64}])
     with pytest.raises(CatalogActivationError, match="does not match"):
         CatalogFrozenEpochActivator(conflict_io, _config()).run()
+
+
+def _active_v1(**overrides):
+    row = {
+        "catalog_epoch": 6,
+        "projection_version": 1,
+        "handoff_start": SINCE,
+        "handoff_end": UNTIL,
+        "writer_watermark": UNTIL,
+        "status": "active",
+        "state_version": 9_999_999_999_999_999,
+        "latest_state_variants": 1,
+    }
+    row.update(overrides)
+    return row
+
+
+def _supersession_config(**overrides):
+    return _config(
+        allow_projection_supersession=True,
+        supersession_acknowledgement=CATALOG_ACTIVATION_SUPERSESSION_ACK,
+        **overrides,
+    )
+
+
+def test_projection_supersession_is_explicit_and_version_monotonic():
+    old = _active_v1()
+    io = _IO(activation=[old])
+
+    summary = CatalogFrozenEpochActivator(
+        io,
+        _supersession_config(),
+        now=lambda: datetime(2026, 8, 13, 3, tzinfo=UTC),
+    ).run()
+
+    assert summary.superseded_epoch == 6
+    assert summary.already_active is False
+    activation_call = io.inserts[1]
+    activation = dict(zip(activation_call[2], activation_call[1][0], strict=True))
+    assert activation["catalog_epoch"] == 7
+    assert activation["projection_version"] == CATALOG_PROJECTION_VERSION
+    assert activation["_version"] == old["state_version"] + 1
+
+
+def test_projection_supersession_defaults_to_refusal_and_requires_exact_ack():
+    io = _IO(activation=[_active_v1()])
+    with pytest.raises(CatalogActivationError, match="different activation"):
+        CatalogFrozenEpochActivator(io, _config()).run()
+    assert io.inserts == []
+
+    with pytest.raises(CatalogActivationError, match="acknowledgement missing"):
+        _config(
+            allow_projection_supersession=True,
+            supersession_acknowledgement="wrong",
+        ).validated()
+    with pytest.raises(CatalogActivationError, match="requires its explicit flag"):
+        _config(
+            supersession_acknowledgement=CATALOG_ACTIVATION_SUPERSESSION_ACK,
+        ).validated()
+
+
+@pytest.mark.parametrize(
+    "activation",
+    (
+        _active_v1(catalog_epoch=7),
+        _active_v1(projection_version=2),
+        _active_v1(handoff_start=SINCE - timedelta(hours=1)),
+        _active_v1(handoff_end=UNTIL + timedelta(hours=1)),
+        _active_v1(writer_watermark=UNTIL - timedelta(hours=1)),
+        _active_v1(status="disabled"),
+    ),
+)
+def test_projection_supersession_rejects_any_nonexact_v1_snapshot(activation):
+    io = _IO(activation=[activation])
+
+    with pytest.raises(CatalogActivationError, match="not an exact v1 snapshot"):
+        CatalogFrozenEpochActivator(io, _supersession_config()).run()
+
+    assert io.inserts == []
+
+
+@pytest.mark.parametrize(
+    ("activation", "match"),
+    (
+        (_active_v1(latest_state_variants=2), "latest state conflicts"),
+        (_active_v1(state_version=0), "state version is missing"),
+        (
+            {
+                key: value
+                for key, value in _active_v1().items()
+                if key != "projection_version"
+            },
+            "projection_version must be a non-negative integer",
+        ),
+    ),
+)
+def test_projection_supersession_fails_closed_on_ambiguous_or_incomplete_state(
+    activation,
+    match,
+):
+    io = _IO(activation=[activation])
+
+    with pytest.raises(CatalogActivationError, match=match):
+        CatalogFrozenEpochActivator(io, _supersession_config()).run()
+
+    assert io.inserts == []
+
+
+def test_checkpoint_projection_version_is_required_and_must_be_current():
+    missing = _checkpoint(SINCE)
+    missing.pop("projection_version")
+    for projection in (missing, _checkpoint(SINCE, projection_version=1)):
+        io = _IO(checkpoints=[projection, _checkpoint(SINCE + timedelta(hours=1))])
+        with pytest.raises(CatalogActivationError, match="projection"):
+            CatalogFrozenEpochActivator(io, _config()).run()
+        assert io.inserts == []

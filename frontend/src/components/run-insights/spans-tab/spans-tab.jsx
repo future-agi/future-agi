@@ -1,4 +1,4 @@
-import { Box, Collapse } from "@mui/material";
+import { Box, Button, Collapse } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import React, { useMemo, useState, useEffect } from "react";
@@ -29,6 +29,12 @@ import { parsePrototypeSpanListResponse } from "src/api/project/telemetry-list-c
 import { getSpanPhysicalRowId } from "src/sections/projects/LLMTracing/spanPhysicalIdentity";
 import AttributeInventoryControls from "src/sections/projects/LLMTracing/AttributeInventoryControls";
 import { useCursorAttributeInventory } from "src/sections/projects/LLMTracing/useCursorAttributeInventory";
+import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
+import { readRunInsightListPage } from "../run_insight_list_read";
+import {
+  FILTER_VALUE_SEARCH_DEBOUNCE_MS,
+  INTERACTIVE_TABLE_PAGE_SIZE,
+} from "src/config/runtime_limits";
 
 const defaultFilter = {
   column_id: "",
@@ -65,6 +71,7 @@ const SpanTab = React.forwardRef(
     const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.borderless);
     const { projectId, runId } = useParams();
     const [openQuickFilter, setOpenQuickFilter] = useState(null);
+    const [readError, setReadError] = useState(null);
 
     const [statusBar] = useState({
       statusPanels: [
@@ -114,7 +121,10 @@ const SpanTab = React.forwardRef(
       getFilterExtraProperties,
     );
 
-    const debouncedValidatedFilters = useDebounce(validatedFilters, 500);
+    const debouncedValidatedFilters = useDebounce(
+      validatedFilters,
+      FILTER_VALUE_SEARCH_DEBOUNCE_MS,
+    );
 
     useEffect(() => {
       const hasActiveFilter = debouncedValidatedFilters?.some((f) =>
@@ -242,20 +252,22 @@ const SpanTab = React.forwardRef(
           try {
             const { request } = params;
 
-            // request has startRow and endRow get next page number and each page has 10 rows
-            const pageNumber = Math.floor(request.startRow / 10);
+            const pageNumber = Math.floor(
+              request.startRow / INTERACTIVE_TABLE_PAGE_SIZE,
+            );
 
-            const results = await axios.get(
-              endpoints.project.getSpanList(),
-
-              {
-                params: {
-                  filters: JSON.stringify(debouncedValidatedFilters),
-                  project_version_id: runId,
-                  page_number: pageNumber,
-                  page_size: 10,
-                },
-              },
+            const results = await readRunInsightListPage(
+              ({ signal, timeout }) =>
+                axios.get(endpoints.project.getSpanList(), {
+                  signal,
+                  timeout,
+                  params: {
+                    filters: JSON.stringify(debouncedValidatedFilters),
+                    project_version_id: runId,
+                    page_number: pageNumber,
+                    page_size: INTERACTIVE_TABLE_PAGE_SIZE,
+                  },
+                }),
             );
             const res = normalizeSpanListPayload(results.data);
             const columns = res.columnConfig.map((o) => ({
@@ -272,8 +284,10 @@ const SpanTab = React.forwardRef(
             if (!res.totalRowCountIsLowerBound) {
               successPayload.totalRows = res.totalRows;
             }
+            setReadError(null);
             params.success(successPayload);
-          } catch (error) {
+          } catch {
+            setReadError(QUERY_FAILED_RETRY_MESSAGE);
             params.fail();
           }
         },
@@ -325,6 +339,33 @@ const SpanTab = React.forwardRef(
             className="ag-theme-quartz custom-grid"
             style={{ height: "100%", overflowX: "auto" }}
           >
+            {readError && (
+              <Box
+                role="alert"
+                sx={{
+                  px: 1.5,
+                  py: 0.75,
+                  color: "warning.main",
+                  bgcolor: "warning.lighter",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
+              >
+                {readError}
+                <Button
+                  size="small"
+                  onClick={() => {
+                    setReadError(null);
+                    gridApiRef?.current?.api?.refreshServerSide({
+                      purge: false,
+                    });
+                  }}
+                >
+                  Retry
+                </Button>
+              </Box>
+            )}
             <AgGridReact
               ref={gridApiRef}
               className="clean-data-table"
@@ -332,12 +373,12 @@ const SpanTab = React.forwardRef(
               columnDefs={columnDefs}
               defaultColDef={defaultColDef}
               pagination={false}
-              cacheBlockSize={10}
+              cacheBlockSize={INTERACTIVE_TABLE_PAGE_SIZE}
               maxBlocksInCache={10}
               suppressRowClickSelection={true}
               rowModelType="serverSide"
               suppressServerSideFullWidthLoadingRow={true}
-              serverSideInitialRowCount={10}
+              serverSideInitialRowCount={INTERACTIVE_TABLE_PAGE_SIZE}
               serverSideDatasource={dataSource}
               onRowClicked={(event) => {
                 setTraceDetailDrawerOpen({

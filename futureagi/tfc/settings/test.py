@@ -247,6 +247,9 @@ FEATURE_FLAGS = {
     "enable_monitoring": False,
 }
 
+# Exercise the post-backfill reader in unit/API tests. Production defaults to
+# the bounded legacy reader until operators explicitly pass the readiness gate.
+
 
 def ensure_clickhouse_test_database():
     """Ensure the ClickHouse test database exists"""

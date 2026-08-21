@@ -58,6 +58,9 @@ from tracer.utils.attribute_suggestion_contract import (
 
 CATALOG_BACKFILL_ACK = "TH7247_DEV_CATALOG_BACKFILL"
 CATALOG_BACKFILL_ENVIRONMENT = "development"
+CATALOG_BACKFILL_CLOUD_DEPLOYMENT = "DEV"
+CATALOG_DATABASE_PREFIX = "th7247_catalog_dev_"
+CATALOG_PROJECTION_VERSION = 2
 
 SOURCE_TABLE = "spans"
 KEY_TABLE = "span_attribute_key_catalog"
@@ -108,12 +111,14 @@ GAP_SOURCE_ATTRIBUTE_BYTES = "source_attribute_bytes"
 GAP_SELECTABLE_VALUE_PROJECTION = "selectable_value_projection"
 GAP_INVALID_SOURCE_MAPS = "invalid_source_maps"
 GAP_INVALID_ATTRIBUTES_EXTRA = "invalid_attributes_extra"
+GAP_SYSTEM_VALUE_PROJECTION = "system_value_projection"
 _SOURCE_GAP_ORDER = (
     GAP_SOURCE_ATTRIBUTE_ENTRIES,
     GAP_SOURCE_ATTRIBUTE_BYTES,
     GAP_SELECTABLE_VALUE_PROJECTION,
     GAP_INVALID_SOURCE_MAPS,
     GAP_INVALID_ATTRIBUTES_EXTRA,
+    GAP_SYSTEM_VALUE_PROJECTION,
 )
 _BUILDER_GAP_ORDER = (
     GAP_MAX_KEYS,
@@ -125,6 +130,9 @@ _BUILDER_GAP_ORDER = (
 )
 
 _IDENTIFIER_RE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]*\Z")
+_CATALOG_DATABASE_RE = re.compile(
+    rf"\A{re.escape(CATALOG_DATABASE_PREFIX)}[a-z0-9][a-z0-9_]*\Z"
+)
 _TERMINAL_STATUSES = frozenset(("complete", "gap"))
 _RESUMABLE_STATUSES = frozenset(("pending", "running", "failed"))
 _ALL_STATUSES = _TERMINAL_STATUSES | _RESUMABLE_STATUSES
@@ -172,6 +180,8 @@ class CatalogBackfillIO(Protocol):
 @dataclass(frozen=True, slots=True)
 class CatalogBackfillConfig:
     environment: str
+    cloud_deployment: str
+    dev_identity: str
     acknowledgement: str
     project_id: str
     since: datetime
@@ -190,6 +200,18 @@ class CatalogBackfillConfig:
     def validated(self) -> CatalogBackfillConfig:
         if self.environment != CATALOG_BACKFILL_ENVIRONMENT:
             raise CatalogBackfillError("catalog backfill is development-only")
+        if self.cloud_deployment != CATALOG_BACKFILL_CLOUD_DEPLOYMENT:
+            raise CatalogBackfillError("catalog backfill requires CLOUD_DEPLOYMENT=DEV")
+        if (
+            not isinstance(self.dev_identity, str)
+            or re.fullmatch(r"dev:[a-z0-9][a-z0-9._:/-]{2,127}", self.dev_identity)
+            is None
+            or "prod" in self.dev_identity
+            or "live" in self.dev_identity
+        ):
+            raise CatalogBackfillError(
+                "catalog backfill requires a pinned dev:<identity> endpoint identity"
+            )
         if self.acknowledgement != CATALOG_BACKFILL_ACK:
             raise CatalogBackfillError(
                 "explicit catalog backfill acknowledgement missing"
@@ -219,6 +241,10 @@ class CatalogBackfillConfig:
         if self.source_database == self.target_database:
             raise CatalogBackfillError(
                 "source_database and target_database must be distinct"
+            )
+        if _CATALOG_DATABASE_RE.fullmatch(self.target_database) is None:
+            raise CatalogBackfillError(
+                f"target_database must start {CATALOG_DATABASE_PREFIX!r}"
             )
         _bounded_positive(self.page_rows, MAX_PAGE_ROWS, "page_rows")
         _bounded_positive(self.max_windows, MAX_WINDOWS, "max_windows")
@@ -279,6 +305,7 @@ class WindowCheckpoint:
     gap_reasons: tuple[str, ...]
     started_at: datetime
     state_version: int
+    projection_version: int
     state_variants: int = 1
 
 
@@ -290,6 +317,7 @@ class SourceSpan:
     attrs_number: Mapping[str, int | float | Decimal]
     attrs_bool: Mapping[str, int]
     attributes_extra: Mapping[str, Any]
+    system_attributes: Mapping[str, str] = field(default_factory=dict)
     key_only_attributes: frozenset[tuple[str, AttributeType]] = frozenset()
     gap_reasons: tuple[str, ...] = ()
 
@@ -392,6 +420,21 @@ WITH projected_rows AS
         sp.trace_id AS trace_id,
         sp.id AS span_id,
         sp.start_time AS seen_at,
+        ifNull(toString(sp.model), '') AS system_model_raw,
+        (
+            system_model_raw IN ('', '00000000-0000-0000-0000-000000000000')
+            OR length(system_model_raw)
+                <= %(catalog_projected_typed_string_value_bytes)s
+        )
+            AS system_model_complete,
+        if(
+            system_model_complete
+            AND system_model_raw NOT IN (
+                '', '00000000-0000-0000-0000-000000000000'
+            ),
+            system_model_raw,
+            ''
+        ) AS system_model,
         sp._version AS source_version,
         sp.is_deleted AS is_deleted,
         arraySum(
@@ -532,7 +575,9 @@ WITH projected_rows AS
                 projected_attrs_bool,
                 projected_attributes_extra,
                 attributes_extra_valid,
-                selectable_projection_complete
+                selectable_projection_complete,
+                system_model,
+                system_model_complete
             ),
             source_version
         ) AS latest_state
@@ -562,6 +607,8 @@ WITH projected_rows AS
         tupleElement(latest_state, 5) AS attributes_extra_projection,
         tupleElement(latest_state, 6) AS attributes_extra_valid,
         tupleElement(latest_state, 7) AS selectable_projection_complete,
+        tupleElement(latest_state, 8) AS system_model,
+        tupleElement(latest_state, 9) AS system_model_complete,
         length(attrs_string_projection)
           + length(mapKeys(attrs_number))
           + length(mapKeys(attrs_bool))
@@ -591,7 +638,9 @@ SELECT
     attrs_bool,
     attributes_extra_projection,
     attributes_extra_valid,
-    selectable_projection_complete
+    selectable_projection_complete,
+    system_model,
+    system_model_complete
 FROM measured_rows
 ORDER BY
     observation_type ASC,
@@ -634,7 +683,8 @@ WITH checkpoint_rows AS
                 value_rows,
                 gap_count,
                 gap_reasons,
-                started_at
+                started_at,
+                projection_version
             ),
             _version
         ) AS state,
@@ -653,7 +703,8 @@ WITH checkpoint_rows AS
                 value_rows,
                 gap_count,
                 gap_reasons,
-                started_at
+                started_at,
+                projection_version
             ),
             _version = latest_version
         ) AS state_variants
@@ -676,6 +727,7 @@ SELECT
     tupleElement(state, 11) AS gap_count,
     tupleElement(state, 12) AS gap_reasons,
     tupleElement(state, 13) AS started_at,
+    tupleElement(state, 14) AS projection_version,
     state_version,
     state_variants
 FROM latest_checkpoints
@@ -692,6 +744,7 @@ KEY_INSERT_COLUMNS = (
     "first_seen",
     "last_seen",
     "catalog_epoch",
+    "source_kind",
 )
 VALUE_INSERT_COLUMNS = (
     "project_id",
@@ -703,10 +756,12 @@ VALUE_INSERT_COLUMNS = (
     "first_seen",
     "last_seen",
     "catalog_epoch",
+    "source_kind",
 )
 CHECKPOINT_INSERT_COLUMNS = (
     "project_id",
     "catalog_epoch",
+    "projection_version",
     "window_start",
     "window_end",
     "source_version_fence",
@@ -734,6 +789,7 @@ _ATTRIBUTE_ENUM_TYPE = (
     "Enum8('string' = 1, 'number' = 2, 'boolean' = 3, "
     "'array' = 4, 'map' = 5, 'json' = 6)"
 )
+_SOURCE_KIND_ENUM_TYPE = "Enum8('custom_attribute' = 1, 'system_attribute' = 2)"
 _CHECKPOINT_STATUS_ENUM_TYPE = (
     "Enum8('pending' = 1, 'running' = 2, 'complete' = 3, 'gap' = 4, 'failed' = 5)"
 )
@@ -751,6 +807,7 @@ CATALOG_INSERT_COLUMN_TYPES: dict[str, tuple[str, ...]] = {
         "DateTime64(6, 'UTC')",
         "DateTime64(6, 'UTC')",
         "UInt16",
+        _SOURCE_KIND_ENUM_TYPE,
     ),
     VALUE_TABLE: (
         "UUID",
@@ -762,9 +819,11 @@ CATALOG_INSERT_COLUMN_TYPES: dict[str, tuple[str, ...]] = {
         "DateTime64(6, 'UTC')",
         "DateTime64(6, 'UTC')",
         "UInt16",
+        _SOURCE_KIND_ENUM_TYPE,
     ),
     CHECKPOINT_TABLE: (
         "UUID",
+        "UInt16",
         "UInt16",
         "DateTime64(6, 'UTC')",
         "DateTime64(6, 'UTC')",
@@ -791,6 +850,10 @@ CATALOG_INSERT_COLUMN_TYPES: dict[str, tuple[str, ...]] = {
 }
 
 READ_SETTINGS: dict[str, Any] = {
+    # Every source/catalog read is server-enforced read-only even if an
+    # operator accidentally supplies a broader ClickHouse identity.  Writes
+    # use the separate WRITE_SETTINGS path and the hard table allowlist below.
+    "readonly": 2,
     "max_execution_time": CLICKHOUSE_SERVER_MAX_EXECUTION_SECONDS,
     "timeout_overflow_mode": "throw",
     "max_threads": CLICKHOUSE_MAX_THREADS,
@@ -828,6 +891,7 @@ class TimedCatalogBackfillIO:
         source_cancel_client: Any,
         catalog_cancel_client: Any,
         *,
+        target_database: str,
         clock: Callable[[], float] = time.monotonic,
         max_call_seconds: float = MAX_CLICKHOUSE_CALL_SECONDS,
         query_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
@@ -844,10 +908,16 @@ class TimedCatalogBackfillIO:
             raise CatalogBackfillError(
                 "source, catalog, and cancellation clients must be distinct"
             )
+        _validate_database(target_database, "target_database")
+        if _CATALOG_DATABASE_RE.fullmatch(target_database) is None:
+            raise CatalogBackfillError(
+                f"target_database must start {CATALOG_DATABASE_PREFIX!r}"
+            )
         self._source_client = source_client
         self._catalog_client = catalog_client
         self._source_cancel_client = source_cancel_client
         self._catalog_cancel_client = catalog_cancel_client
+        self._target_database = target_database
         self._clock = clock
         self._max_call_seconds = max_call_seconds
         self._query_id_factory = query_id_factory
@@ -900,7 +970,16 @@ class TimedCatalogBackfillIO:
     ) -> None:
         if not rows:
             return
-        unqualified = table.rsplit(".", 1)[-1].strip("`")
+        expected_prefix = f"`{self._target_database}`."
+        if not table.startswith(expected_prefix):
+            raise CatalogBackfillError(
+                "write target must use the configured fully-qualified catalog database"
+            )
+        unqualified = table.removeprefix(expected_prefix).strip("`")
+        if "." in unqualified or f"`{unqualified}`" != table.removeprefix(
+            expected_prefix
+        ):
+            raise CatalogBackfillError("write target qualification is malformed")
         if unqualified not in CATALOG_BACKFILL_WRITE_TABLES:
             raise CatalogBackfillError(f"write target {unqualified!r} is not allowed")
         expected_columns = CATALOG_INSERT_COLUMNS[unqualified]
@@ -1160,7 +1239,7 @@ class CatalogAttributeBackfillRunner:
                 for source_row in page:
                     row_reasons = set(source_row.gap_reasons)
                     if not row_reasons:
-                        result = build_catalog_rows(
+                        custom_result = build_catalog_rows(
                             scope=CatalogScope(
                                 project_id=self.config.project_id,
                                 seen_at=source_row.seen_at,
@@ -1173,9 +1252,26 @@ class CatalogAttributeBackfillRunner:
                             limits=CATALOG_BUILD_LIMITS,
                             key_only_attributes=source_row.key_only_attributes,
                         )
-                        key_rows.extend(result.key_rows)
-                        value_rows.extend(result.value_rows)
-                        row_reasons.update(result.metadata.gap_reasons)
+                        key_rows.extend(custom_result.key_rows)
+                        value_rows.extend(custom_result.value_rows)
+                        row_reasons.update(custom_result.metadata.gap_reasons)
+                        if source_row.system_attributes:
+                            system_result = build_catalog_rows(
+                                scope=CatalogScope(
+                                    project_id=self.config.project_id,
+                                    seen_at=source_row.seen_at,
+                                    catalog_epoch=self.config.catalog_epoch,
+                                    source_kind="system_attribute",
+                                ),
+                                attrs_string=source_row.system_attributes,
+                                attrs_number={},
+                                attrs_bool={},
+                                attributes_extra={},
+                                limits=CATALOG_BUILD_LIMITS,
+                            )
+                            key_rows.extend(system_result.key_rows)
+                            value_rows.extend(system_result.value_rows)
+                            row_reasons.update(system_result.metadata.gap_reasons)
                     if row_reasons:
                         page_gap_rows += 1
                         page_gap_reasons.update(row_reasons)
@@ -1461,6 +1557,7 @@ class CatalogAttributeBackfillRunner:
                     row.first_seen,
                     row.last_seen,
                     row.catalog_epoch,
+                    row.source_kind,
                 )
                 for row in rows
             ],
@@ -1482,6 +1579,7 @@ class CatalogAttributeBackfillRunner:
                     row.first_seen,
                     row.last_seen,
                     row.catalog_epoch,
+                    row.source_kind,
                 )
                 for row in rows
             ],
@@ -1513,6 +1611,7 @@ class CatalogAttributeBackfillRunner:
                 (
                     self.config.project_id,
                     self.config.catalog_epoch,
+                    CATALOG_PROJECTION_VERSION,
                     progress.window.start,
                     progress.window.end,
                     progress.source_version_fence,
@@ -1608,6 +1707,20 @@ def _parse_source_row(
         reasons.add(GAP_SOURCE_ATTRIBUTE_ENTRIES)
     if source_bytes > config.max_source_attribute_bytes:
         reasons.add(GAP_SOURCE_ATTRIBUTE_BYTES)
+    system_attributes: dict[str, str] = {}
+    if "system_model_complete" in row:
+        try:
+            system_model_complete = _projection_flag(row.get("system_model_complete"))
+        except TypeError:
+            reasons.add(GAP_SYSTEM_VALUE_PROJECTION)
+        else:
+            system_model = row.get("system_model")
+            if not isinstance(system_model, str):
+                reasons.add(GAP_SYSTEM_VALUE_PROJECTION)
+            elif not system_model_complete:
+                reasons.add(GAP_SYSTEM_VALUE_PROJECTION)
+            elif system_model:
+                system_attributes["model"] = system_model
 
     if "attrs_string_projection" in row or "attributes_extra_projection" in row:
         (
@@ -1659,6 +1772,7 @@ def _parse_source_row(
         attrs_number=attrs_number,  # type: ignore[arg-type]
         attrs_bool=attrs_bool,  # type: ignore[arg-type]
         attributes_extra=extra,
+        system_attributes=system_attributes,
         key_only_attributes=key_only_attributes,
         gap_reasons=_ordered_gap_reasons(reasons),
     )
@@ -1927,6 +2041,10 @@ def _parse_checkpoint_row(row: Mapping[str, Any]) -> WindowCheckpoint:
         gap_reasons=tuple(raw_reasons),
         started_at=_as_clickhouse_utc(row.get("started_at"), "started_at"),
         state_version=_nonnegative_int(row.get("state_version"), "state_version"),
+        projection_version=_nonnegative_int(
+            row.get("projection_version"),
+            "projection_version",
+        ),
         state_variants=_nonnegative_int(row.get("state_variants"), "state_variants"),
     )
 
@@ -1938,6 +2056,10 @@ def _validate_checkpoint(checkpoint: WindowCheckpoint) -> None:
         raise CatalogBackfillError("checkpoint source fence must be positive")
     if checkpoint.state_version <= 0 or checkpoint.state_variants != 1:
         raise CatalogBackfillError("checkpoint latest state is ambiguous")
+    if checkpoint.projection_version != CATALOG_PROJECTION_VERSION:
+        raise CatalogBackfillError(
+            "checkpoint belongs to an incompatible catalog projection"
+        )
     if checkpoint.source_rows != checkpoint.processed_rows:
         raise CatalogBackfillError("checkpoint source/processed counts disagree")
     if checkpoint.gap_count == 0 and checkpoint.gap_reasons:
@@ -2044,7 +2166,9 @@ def _close_client_quietly(client: Any) -> None:
 
 __all__ = [
     "CATALOG_BACKFILL_ACK",
+    "CATALOG_BACKFILL_CLOUD_DEPLOYMENT",
     "CATALOG_BACKFILL_ENVIRONMENT",
+    "CATALOG_DATABASE_PREFIX",
     "CATALOG_BACKFILL_WRITE_TABLES",
     "CATALOG_BUILD_LIMITS",
     "CATALOG_INSERT_COLUMNS",

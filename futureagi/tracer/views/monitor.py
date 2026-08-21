@@ -6,15 +6,14 @@ import structlog
 from django.db.models import Count, Exists, Max, OuterRef, Q
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
+from rest_framework import status as drf_status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
 from tfc.utils.api_contracts import validated_request
-from tfc.utils.api_serializers import (
-    ApiErrorResponseSerializer,
-)
+from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import (
     BaseModelViewSetMixin,
     BaseModelViewSetMixinWithUserOrg,
@@ -33,6 +32,7 @@ from tracer.serializers.monitor import (
     UserAlertMonitorDetailSerializer,
     UserAlertMonitorDuplicateResponseSerializer,
     UserAlertMonitorDuplicateSerializer,
+    UserAlertMonitorGraphResponseSerializer,
     UserAlertMonitorLogResolveRequestSerializer,
     UserAlertMonitorLogResolveResponseSerializer,
     UserAlertMonitorLogSerializer,
@@ -44,7 +44,13 @@ from tracer.serializers.monitor import (
     UserAlertMonitorSerializer,
 )
 from tracer.utils.helper import get_sort_query
-from tracer.utils.monitor_graphs import get_graph_data
+from tracer.utils.monitor_graphs import (
+    MONITOR_GRAPH_METADATA_PG_TIMEOUT_CAP_MS,
+    MonitorGraphUnavailable,
+    get_graph_data,
+    monitor_graph_postgres_budget,
+    start_monitor_graph_deadline,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -664,8 +670,12 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             return self._gm.bad_request(get_error_message("FAILED_TO_GET_MONITOR"))
 
     @validated_request(
-        request_serializer=UserAlertMonitorPreviewGraphSerializer,
-        strict_request_validation=False,
+        request_body=UserAlertMonitorPreviewGraphSerializer,
+        responses={
+            200: UserAlertMonitorGraphResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            503: ApiErrorResponseSerializer,
+        },
     )
     @action(detail=False, methods=["post"], url_path="preview-graph")
     def preview_graph(self, request, *args, **kwargs):
@@ -673,6 +683,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         Returns time-series data for a temporary monitor's metric, suitable for graphing a preview.
         Accepts monitor configuration in the request body.
         """
+        deadline = start_monitor_graph_deadline()
         try:
             data = request.data.copy()
             data["organization"] = (
@@ -688,10 +699,14 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             serializer = self.get_serializer(data=data)
             serializer.fields["name"].required = False
 
-            if serializer.is_valid():
-                validated_data = serializer.validated_data
-            else:
-                return self._gm.bad_request(serializer.errors)
+            with monitor_graph_postgres_budget(
+                deadline,
+                timeout_cap_ms=MONITOR_GRAPH_METADATA_PG_TIMEOUT_CAP_MS,
+            ):
+                if serializer.is_valid():
+                    validated_data = serializer.validated_data
+                else:
+                    return self._gm.bad_request(serializer.errors)
 
             # Create a non-persistent monitor instance
             monitor = UserAlertMonitor(**validated_data)
@@ -708,10 +723,18 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 monitor=monitor,
                 time_window_start=start_time,
                 time_window_end=end_time,
+                deadline=deadline,
             )
 
             return self._gm.success_response(graph_data)
 
+        except MonitorGraphUnavailable:
+            logger.warning("monitor_preview_graph_unavailable")
+            return self._gm.custom_error_response(
+                drf_status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Monitor graph data is temporarily unavailable. Please retry.",
+                code="monitor_graph_unavailable",
+            )
         except Exception as e:
             logger.error(
                 f"Failed to get monitor preview graph data: {e}", exc_info=True
@@ -720,6 +743,14 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 get_error_message("FAILED_TO_GET_MONITOR_PREVIEW", str(e))
             )
 
+    @validated_request(
+        responses={
+            200: UserAlertMonitorGraphResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            404: ApiErrorResponseSerializer,
+            503: ApiErrorResponseSerializer,
+        }
+    )
     @action(detail=True, methods=["get"], url_path="graph")
     def graph_data(self, request, *args, **kwargs):
         """
@@ -728,8 +759,13 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         Accepts `start_date` and `end_date` query parameters (ISO 8601 format).
         If not provided, it defaults to the last 7 days.
         """
+        deadline = start_monitor_graph_deadline()
         try:
-            monitor = self.get_object()
+            with monitor_graph_postgres_budget(
+                deadline,
+                timeout_cap_ms=MONITOR_GRAPH_METADATA_PG_TIMEOUT_CAP_MS,
+            ):
+                monitor = self.get_object()
 
             # Get the time window from query params, with sane defaults.
             end_time_str = request.query_params.get("end_date")
@@ -745,12 +781,20 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 monitor=monitor,
                 time_window_start=start_time,
                 time_window_end=end_time,
+                deadline=deadline,
             )
 
             return self._gm.success_response(graph_data)
 
         except UserAlertMonitor.DoesNotExist:
             return self._gm.not_found(get_error_message("MONITOR_NOT_FOUND"))
+        except MonitorGraphUnavailable:
+            logger.warning("monitor_graph_unavailable")
+            return self._gm.custom_error_response(
+                drf_status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Monitor graph data is temporarily unavailable. Please retry.",
+                code="monitor_graph_unavailable",
+            )
         except Exception as e:
             logger.error(f"Failed to get monitor graph data: {e}", exc_info=True)
             return self._gm.bad_request(get_error_message("FAILED_TO_GET_MONITOR"))

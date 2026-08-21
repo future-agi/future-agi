@@ -12,6 +12,7 @@ from tracer.services.clickhouse.filter_value_reads import (
     FilterValueRead,
     _value_digest,
     read_end_user_filter_value_cursor_page,
+    read_session_filter_value_cursor_page,
     read_span_system_filter_value_cursor_page,
     read_span_system_filter_values,
 )
@@ -244,6 +245,57 @@ def test_end_user_cursor_consumes_the_request_owned_property_deadline():
     assert analytics.call[2]["timeout_ms"] == 3_750
 
 
+def test_session_values_search_curated_labels_before_keyset_pagination():
+    session_ids = [
+        "00000000-0000-4000-8000-000000000010",
+        "00000000-0000-4000-8000-000000000020",
+        "00000000-0000-4000-8000-000000000030",
+    ]
+
+    class Analytics:
+        calls = []
+
+        def execute_ch_query(self, query, params, **kwargs):
+            self.calls.append((query, params, kwargs))
+            rows = session_ids
+            if params.get("value_after") is not None:
+                rows = [value for value in rows if value > params["value_after"]]
+            return SimpleNamespace(data=[{"val": value} for value in rows[:3]])
+
+    analytics = Analytics()
+    first = read_session_filter_value_cursor_page(
+        analytics,
+        project_ids=[PROJECT_ID],
+        page_size=2,
+        search="customer-session",
+        overlay_session_ids=[session_ids[1]],
+    )
+    second = read_session_filter_value_cursor_page(
+        analytics,
+        project_ids=[PROJECT_ID],
+        page_size=2,
+        search="customer-session",
+        value_after=first.next_value_after,
+        overlay_session_ids=[session_ids[2]],
+    )
+
+    assert first.values == tuple(session_ids[:2])
+    assert first.has_more is True
+    assert first.next_value_after == session_ids[1]
+    assert second.values == (session_ids[2],)
+    assert second.has_more is False
+    sql, params, settings = analytics.calls[0]
+    assert "FROM trace_sessions" in sql
+    assert "argMax(is_deleted, version) AS latest_is_deleted" in sql
+    assert "trace_session_id_remap" in sql
+    assert "arrayExists(" in sql
+    assert "resolved_session_id IN %(overlay_session_ids)s" in sql
+    assert "FROM spans" not in sql
+    assert params["filter_value_search"] == "customer-session"
+    assert params["overlay_session_ids"] == (session_ids[1],)
+    assert settings["settings"]["timeout_overflow_mode"] == "throw"
+
+
 def test_system_values_cursor_exhausts_dense_slice_without_duplicates():
     class Analytics:
         def execute_ch_query(self, _query, params, **_kwargs):
@@ -339,6 +391,65 @@ def test_system_value_budget_backoff_changes_cursor_then_fails_at_floor():
             segment_start=first.next_segment_start,
             seen_value_digests=first.seen_value_digests,
         )
+
+
+def test_system_value_floor_failure_keeps_values_from_completed_slices():
+    class Analytics:
+        calls = 0
+
+        def execute_ch_query(self, *_args, **_kwargs):
+            type(self).calls += 1
+            if type(self).calls == 1:
+                return SimpleNamespace(
+                    data=[{"val": "agent_hangup"}, {"val": "user_hangup"}]
+                )
+            raise ReadDeadlineExceeded("dense older system value slice")
+
+    read = read_span_system_filter_value_cursor_page(
+        Analytics(),
+        project_ids=[PROJECT_ID],
+        metric_name="ended_reason",
+        page_size=10,
+        window_start=NOW - timedelta(seconds=10),
+        window_end=NOW,
+        segment_start=NOW - FILTER_VALUE_CURSOR_MIN_SEGMENT,
+    )
+
+    assert read.values == ("agent_hangup", "user_hangup")
+    assert read.has_more is True
+    assert read.browse_status == "continuation"
+    assert read.next_segment_end == NOW - FILTER_VALUE_CURSOR_MIN_SEGMENT
+    assert read.next_segment_start == NOW - timedelta(seconds=10)
+
+
+def test_system_value_floor_failure_keeps_duplicate_only_slice_progress():
+    duplicate_digest = _value_digest("agent_hangup")
+
+    class Analytics:
+        calls = 0
+
+        def execute_ch_query(self, *_args, **_kwargs):
+            type(self).calls += 1
+            if type(self).calls == 1:
+                return SimpleNamespace(data=[{"val": "agent_hangup"}])
+            raise ReadDeadlineExceeded("dense older system value slice")
+
+    read = read_span_system_filter_value_cursor_page(
+        Analytics(),
+        project_ids=[PROJECT_ID],
+        metric_name="ended_reason",
+        page_size=10,
+        window_start=NOW - timedelta(seconds=10),
+        window_end=NOW,
+        segment_start=NOW - FILTER_VALUE_CURSOR_MIN_SEGMENT,
+        seen_value_digests=(duplicate_digest,),
+    )
+
+    assert read.values == ()
+    assert read.has_more is True
+    assert read.browse_status == "continuation"
+    assert read.next_segment_end == NOW - FILTER_VALUE_CURSOR_MIN_SEGMENT
+    assert read.next_segment_start == NOW - timedelta(seconds=10)
 
 
 def test_system_value_cursor_shares_one_deadline_across_adjacent_slices(monkeypatch):

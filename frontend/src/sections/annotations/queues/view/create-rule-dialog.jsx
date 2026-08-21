@@ -1,7 +1,7 @@
 /* eslint-disable react/prop-types */
 /* eslint-disable react-refresh/only-export-components */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import {
   Alert,
   Autocomplete,
@@ -20,6 +20,11 @@ import {
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import axios, { endpoints } from "src/utils/axios";
+import {
+  isPropertyCatalogNotReadyError,
+  PROPERTY_CATALOG_REQUEST_TIMEOUT_MS,
+  usePropertyCatalog,
+} from "src/hooks/useDashboards";
 import SvgColor from "src/components/svg-color";
 import {
   extractErrorMessage,
@@ -73,6 +78,11 @@ import {
   resolveRuleScopeId,
   transformDatasetFilter,
 } from "src/sections/annotations/queues/utils/automation-rule-utils";
+import {
+  PROPERTY_CATALOG_LEGACY_PAGE_SIZE,
+  PROPERTY_CATALOG_LEGACY_STALE_TIME_MS,
+  PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
+} from "src/config/runtime_limits";
 
 const activeFilterButtonBg = (theme) => alpha(theme.palette.primary.main, 0.12);
 
@@ -627,23 +637,86 @@ function SimulationRuleFilters({
   );
 
   const snakeFilters = useMemo(() => getSubmittableFilters(filters), [filters]);
-  const { data: simulationEvalFields = [] } = useQuery({
+  const propertyCatalog = usePropertyCatalog({
+    category: "eval_metric",
+    source: "simulation",
+    agentDefinitionId,
+    pageSize: PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
+    enabled: Boolean(agentDefinitionId),
+    allowLegacyNotReadyFallback: true,
+    fallbackScopeKey: `simulation-eval-property-catalog:${agentDefinitionId}`,
+  });
+  const {
+    data: simulationEvalCatalog,
+    fetchNextPage: fetchNextSimulationEvalPageLegacy,
+    hasNextPage: hasNextSimulationEvalPageLegacy,
+    isFetchingNextPage: isFetchingNextSimulationEvalPageLegacy,
+    isFetchNextPageError: isNextSimulationEvalPageErrorLegacy,
+  } = useInfiniteQuery({
     queryKey: ["automation-rule-simulation-eval-fields", agentDefinitionId],
-    queryFn: () =>
+    queryFn: ({ pageParam = 1, signal }) =>
       axios.get(endpoints.dashboard.metrics, {
         params: {
           agent_definition_id: agentDefinitionId,
           exclude_custom_attributes: true,
+          page: pageParam,
+          page_size: PROPERTY_CATALOG_LEGACY_PAGE_SIZE,
         },
+        signal,
+        timeout: PROPERTY_CATALOG_REQUEST_TIMEOUT_MS,
       }),
-    enabled: Boolean(agentDefinitionId),
-    select: (response) =>
-      buildTraceFilterProperties(response.data?.result?.metrics || [], {
+    getNextPageParam: (lastPage, _pages, lastPageParam) => {
+      const result = lastPage.data?.result;
+      if (!result?.has_more) return undefined;
+      const currentPage = Number(result.page ?? lastPageParam);
+      return Number.isSafeInteger(currentPage) && currentPage >= 1
+        ? currentPage + 1
+        : undefined;
+    },
+    initialPageParam: 1,
+    enabled:
+      Boolean(agentDefinitionId) && propertyCatalog.legacyFallbackRequired,
+    staleTime: PROPERTY_CATALOG_LEGACY_STALE_TIME_MS,
+  });
+  const useLegacySimulationEvalCatalog = propertyCatalog.legacyFallbackRequired;
+  const catalogNotReady = isPropertyCatalogNotReadyError(propertyCatalog.error);
+  const simulationEvalMetrics = useMemo(
+    () =>
+      useLegacySimulationEvalCatalog
+        ? simulationEvalCatalog?.pages.flatMap(
+            (page) => page.data?.result?.metrics || [],
+          ) || []
+        : propertyCatalog.metrics,
+    [
+      propertyCatalog.metrics,
+      simulationEvalCatalog?.pages,
+      useLegacySimulationEvalCatalog,
+    ],
+  );
+  const fetchNextSimulationEvalPage = useLegacySimulationEvalCatalog
+    ? fetchNextSimulationEvalPageLegacy
+    : propertyCatalog.fetchNextPage;
+  const hasNextSimulationEvalPage = useLegacySimulationEvalCatalog
+    ? hasNextSimulationEvalPageLegacy
+    : Boolean(propertyCatalog.hasNextPage);
+  const isFetchingNextSimulationEvalPage = useLegacySimulationEvalCatalog
+    ? isFetchingNextSimulationEvalPageLegacy
+    : propertyCatalog.isFetchingNextPage;
+  const isNextSimulationEvalPageError = useLegacySimulationEvalCatalog
+    ? isNextSimulationEvalPageErrorLegacy
+    : Boolean(
+        (propertyCatalog.isError && !catalogNotReady) ||
+          propertyCatalog.isFetchNextPageError ||
+          propertyCatalog.cursorChainStopped,
+      );
+  const simulationEvalFields = useMemo(
+    () =>
+      buildTraceFilterProperties(simulationEvalMetrics, {
         isSimulator: true,
         sourceScope: "simulation",
       }).filter((property) => property.category === "eval"),
-    staleTime: 5 * 60_000,
-  });
+    [simulationEvalMetrics],
+  );
   const properties = useMemo(() => {
     const fieldsById = new Map(
       SIMULATION_RULE_FILTER_FIELDS.map((field) => [field.id, field]),
@@ -683,6 +756,21 @@ function SimulationRuleFilters({
           sx={{ width: 16, height: 16 }}
         />
       </IconButton>
+
+      {(hasNextSimulationEvalPage || isNextSimulationEvalPageError) && (
+        <Button
+          size="small"
+          disabled={isFetchingNextSimulationEvalPage}
+          onClick={() => fetchNextSimulationEvalPage()}
+          sx={{ ml: 1, mb: 1, textTransform: "none" }}
+        >
+          {isFetchingNextSimulationEvalPage
+            ? "Loading more eval properties…"
+            : isNextSimulationEvalPageError
+              ? "Retry loading more eval properties"
+              : "Load more eval properties"}
+        </Button>
+      )}
 
       <TraceFilterPanel
         anchorEl={filterAnchorEl || buttonRef.current}

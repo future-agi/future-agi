@@ -79,6 +79,7 @@ import {
 import { filtersContentEqual } from "../saved-view-utils";
 import { getDefaultDateRangeForMode } from "../dateRangeDefaults";
 import { useCursorAttributeInventory } from "../LLMTracing/useCursorAttributeInventory";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
 
 // ---------------------------------------------------------------------------
 // Base session filter fields (always available)
@@ -170,6 +171,7 @@ const noopExtraProperties = () => ({});
 
 const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const isUserMode = mode === "user";
+  const { currentWorkspaceId } = useWorkspace();
   const { observeId: routeObserveId } = useParams();
   const observeId = isUserMode ? null : routeObserveId;
   const navigate = useNavigate();
@@ -701,16 +703,11 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       activeViewConfig.extra_filters,
     );
     setExtraFilters((prev) => {
-      if (prev.length === 0 && nextExtraFilters.length === 0) return prev;
-      if (prev.length === nextExtraFilters.length) {
-        const allSame = prev.every(
-          (f, i) =>
-            f?.column_id === nextExtraFilters[i]?.column_id &&
-            JSON.stringify(f?.filter_config) ===
-              JSON.stringify(nextExtraFilters[i]?.filter_config),
-        );
-        if (allSame) return prev;
-      }
+      // Reuse the canonical saved-view comparator so property_id participates
+      // in hydration equality. Otherwise switching between same-name system
+      // and custom properties keeps the stale row because column_id/config
+      // happen to match.
+      if (filtersContentEqual(prev, nextExtraFilters)) return prev;
       return nextExtraFilters;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -811,14 +808,11 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           },
         });
       } else if (action === "annotation-queue") {
-        // Without filter-mode opt-in under select-all, toggledNodes holds
-        // the *deselected* rows — an enumerated add would be wrong.
+        // Choosing the queue action is an explicit request to operate on the
+        // header's inverted select-all set. Switch to the server-side filter
+        // contract immediately; `toggledNodes` remains the exclusion list.
         if (selectAll && !sessionFilterSelectionMode) {
-          enqueueSnackbar(
-            "Use the 'Select all matching your filter' banner to add the full set, or deselect 'all' and pick specific rows.",
-            { variant: "info" },
-          );
-          return;
+          setSessionFilterSelectionMode(true);
         }
         setQueueAnchorEl(event?.currentTarget || null);
       }
@@ -962,10 +956,14 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   );
   const { attributes, inventoryControlProps } = useCursorAttributeInventory({
     projectId: observeId,
+    workspaceScope: isUserMode,
+    workspaceScopeKey: currentWorkspaceId,
     discoveryMode: "eval_mapping",
     search: customAttributeSearch,
     preservedKeys: preservedCustomAttributeKeys,
-    enabled: Boolean(observeId),
+    enabled:
+      openCustomColumn &&
+      Boolean(observeId || (isUserMode && currentWorkspaceId)),
   });
 
   const handleAddCustomColumns = useCallback((newCols) => {
@@ -999,6 +997,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       <ObserveToolbar
         mode="sessions"
         projectId={toolbarProjectId}
+        allowWorkspaceScope={isUserMode}
         // Date
         dateLabel={getDateLabel(dateFilter)}
         dateFilter={dateFilter}

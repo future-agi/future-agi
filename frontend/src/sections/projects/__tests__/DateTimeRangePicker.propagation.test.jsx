@@ -36,6 +36,9 @@ describe("DateTimeRangePicker option propagation", () => {
       />,
     );
     await waitFor(() => expect(setParentDateFilter).toHaveBeenCalled());
+    expect(
+      screen.queryByRole("button", { name: "1 hr" }),
+    ).not.toBeInTheDocument();
     events.length = 0;
     setParentDateFilter.mockClear();
     setDateOption.mockClear();
@@ -46,6 +49,28 @@ describe("DateTimeRangePicker option propagation", () => {
     expect(events[0]?.range).toHaveLength(2);
     expect(events[1]).toEqual({ type: "option", option: "Today" });
     await waitFor(() => expect(setParentDateFilter).toHaveBeenCalledTimes(1));
+  });
+
+  it("offers the required one-hour preset", async () => {
+    const setParentDateFilter = vi.fn();
+    const setDateOption = vi.fn();
+    render(
+      <DateTimeRangePicker
+        includeOneHour
+        dateOption="30D"
+        setDateOption={setDateOption}
+        setParentDateFilter={setParentDateFilter}
+      />,
+    );
+    await waitFor(() => expect(setParentDateFilter).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "1 hr" }));
+
+    expect(setDateOption).toHaveBeenCalledWith("1 hr");
+    expect(setParentDateFilter).toHaveBeenLastCalledWith([
+      expect.any(String),
+      expect.any(String),
+    ]);
   });
 
   it("publishes a custom range before switching the parent option", async () => {

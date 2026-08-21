@@ -79,6 +79,8 @@ TEMPORAL_ACTIVITY_MODULES = [
     "tfc.temporal.schedules.deployment_telemetry",
     # Deployment telemetry receiver-side integrations (PostHog, HubSpot, Slack)
     "ee.usage.services.deployment_telemetry_integrations",
+    # Default-off isolated DEV unified property catalog reconciliation
+    "tfc.temporal.schedules.property_catalog",
 ]
 
 
@@ -297,6 +299,7 @@ def _ensure_workflows_registered() -> None:
     # Register drop-in TaskRunnerWorkflow for all queues
     try:
         from tfc.temporal.drop_in import TaskRunnerWorkflow
+        from tfc.temporal.property_catalog_queue import PROPERTY_CATALOG_TASK_QUEUE
 
         register_for_queues(
             queues=[
@@ -305,6 +308,7 @@ def _ensure_workflows_registered() -> None:
                 "tasks_l",
                 "tasks_xl",
                 "exact_aggregation",
+                PROPERTY_CATALOG_TASK_QUEUE,
                 "trace_ingestion",
                 "agent_compass",
             ],
@@ -526,15 +530,28 @@ def _ensure_activities_registered() -> None:
         # the explicit compatibility route for deployments not yet running the
         # dedicated worker.
         from tfc.temporal.drop_in.decorator import get_temporal_activities
+        from tfc.temporal.property_catalog_queue import PROPERTY_CATALOG_TASK_QUEUE
 
         drop_in_activities = get_temporal_activities()
         exact_aggregation_activities = get_temporal_activities(
             queue="exact_aggregation"
         )
+        property_catalog_activities = get_temporal_activities(
+            queue=PROPERTY_CATALOG_TASK_QUEUE
+        )
+        dedicated_activities = {
+            *exact_aggregation_activities,
+            *property_catalog_activities,
+        }
         generic_drop_in_activities = [
             registered_activity
             for registered_activity in drop_in_activities
-            if registered_activity not in exact_aggregation_activities
+            if registered_activity not in dedicated_activities
+        ]
+        tasks_xl_drop_in_activities = [
+            registered_activity
+            for registered_activity in drop_in_activities
+            if registered_activity not in property_catalog_activities
         ]
         log.info("registering_dropin_activities", count=len(drop_in_activities))
 
@@ -553,7 +570,7 @@ def _ensure_activities_registered() -> None:
         )
         register_for_queues(
             queues=["tasks_xl"],
-            activities=drop_in_activities,
+            activities=tasks_xl_drop_in_activities,
         )
 
         # Exact graph reads have their own single-slot production worker.  Keep
@@ -562,6 +579,10 @@ def _ensure_activities_registered() -> None:
         register_for_queues(
             queues=["exact_aggregation"],
             activities=exact_aggregation_activities,
+        )
+        register_for_queues(
+            queues=[PROPERTY_CATALOG_TASK_QUEUE],
+            activities=property_catalog_activities,
         )
     except Exception as e:
         log.exception("could_not_load_dropin_activities", error=str(e))

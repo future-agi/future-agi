@@ -10,7 +10,7 @@ import {
   getEvaluationMetricFilterDefinition,
   getSystemMetricFilterDefinition,
 } from "../../../utils/prototypeObserveUtils";
-import { avoidDuplicateFilterSet } from "../../../components/ComplexFilter/common";
+import { filtersSharePropertyIdentity } from "../../../components/ComplexFilter/common";
 import logger from "src/utils/logger";
 import _ from "lodash";
 import React from "react";
@@ -207,9 +207,12 @@ const NUMBER_FILTER_FIELDS = [
 const DATE_FILTER_FIELDS = ["Last Used", "First Used", "Start Time"];
 
 export const applyQuickFilters =
-  (setFilters, openQuickFilter, setFilterOpen) =>
+  (setFilters, openQuickFilter, _setFilterOpen) =>
   ({ col, value, filterAnchor }) => {
     let filter = null;
+    const registryId =
+      col?.propertyId || col?.property_id || col?.registryId || undefined;
+    const registryIdentity = registryId ? { registryId } : {};
 
     // Early return for number fields with popup
     if (NUMBER_FILTER_FIELDS.includes(col.name)) {
@@ -218,6 +221,7 @@ export const applyQuickFilters =
         value,
         filter: {
           column_id: col.id,
+          ...registryIdentity,
           filter_config: {
             filter_type: "number",
             filter_op: "equals",
@@ -240,6 +244,7 @@ export const applyQuickFilters =
 
       filter = {
         column_id: col.id,
+        ...registryIdentity,
         filter_config: {
           filter_type: filter_type,
           filter_op: "equals",
@@ -261,6 +266,7 @@ export const applyQuickFilters =
       if (DATE_FILTER_FIELDS.includes(col.name)) {
         filter = {
           column_id: _.snakeCase(col.id),
+          ...registryIdentity,
           filter_config: {
             filter_type: "datetime",
             filter_op: "equals",
@@ -281,6 +287,7 @@ export const applyQuickFilters =
         value,
         filter: {
           column_id: col.id,
+          ...registryIdentity,
           filter_config: {
             filter_type: "number",
             filter_op: "equals",
@@ -296,6 +303,7 @@ export const applyQuickFilters =
     } else if (col?.groupBy === "Annotation Metrics") {
       filter = {
         column_id: col.id,
+        ...registryIdentity,
         _meta: {
           parentProperty: "Annotation Metrics",
           "Annotation Metrics": col.id,
@@ -386,6 +394,7 @@ export const applyQuickFilters =
 
       const extraFilter = buildApiFilterFromPanelRow({
         field,
+        registryId,
         fieldName,
         fieldType: filter.filter_config?.filter_type,
         apiColType,
@@ -395,7 +404,7 @@ export const applyQuickFilters =
       setFilters((prev) => {
         const exists = (prev || []).some(
           (f) =>
-            f.column_id === extraFilter.column_id &&
+            filtersSharePropertyIdentity(f, extraFilter) &&
             f.filter_config?.filter_value ===
               extraFilter.filter_config.filter_value,
         );
@@ -884,7 +893,10 @@ export const FILTER_FOR_HAS_EVAL = {
 
 // Strip UI-only keys per UI_FILTER_ITEM_KEYS in src/api/contracts/filter-contract.js.
 export const toBackendFilters = (filters) =>
-  (filters || []).map(({ id, _meta, col_type, ...rest }) => rest);
+  (filters || []).map(({ id, registryId, _meta, col_type, ...rest }) => ({
+    ...rest,
+    ...(registryId && !rest.property_id ? { property_id: registryId } : {}),
+  }));
 
 export const FILTER_FOR_ERRORS = {
   column_id: "status",

@@ -86,6 +86,7 @@ describe("filter contract", () => {
   it("builds canonical API filters from observe panel rows", () => {
     const apiFilter = buildApiFilterFromPanelRow({
       field: "latency_ms",
+      registryId: "system_attribute:traces:latency_ms",
       fieldName: "Latency",
       fieldCategory: "system",
       fieldType: "number",
@@ -95,6 +96,7 @@ describe("filter contract", () => {
 
     expect(apiFilter).toEqual({
       column_id: "latency_ms",
+      property_id: "system_attribute:traces:latency_ms",
       display_name: "Latency",
       filter_config: {
         filter_type: "number",

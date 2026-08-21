@@ -284,19 +284,8 @@ const SpanGrid = React.forwardRef(
         }),
       [filters, extraFilters, metricFilters, hasEvalFilter, observeId, enabled],
     );
-    const previousFilterRequestKeyRef = useRef(filterRequestKey);
-
-    useEffect(() => {
-      if (previousFilterRequestKeyRef.current === filterRequestKey) return;
-      previousFilterRequestKeyRef.current = filterRequestKey;
-      setGridLoading(enabled);
-      prefetchCache.current.clear();
-      cursorPagination.current.reset();
-      refreshGrid(true);
-    }, [enabled, filterRequestKey, refreshGrid]);
-
     // Keep the last exact same-query rows during a manual refresh. A query-key
-    // change uses the purge path above and shows a neutral loading state.
+    // change replaces the datasource and shows a neutral loading state.
     useEffect(() => {
       const handler = () => refreshGrid(false);
       window.addEventListener("observe-refresh", handler);
@@ -662,9 +651,13 @@ const SpanGrid = React.forwardRef(
               if (
                 !continuationPending &&
                 firstPageRequestId !== null &&
-                firstPageRequestId === firstPageRequestRef.current &&
-                cursorPagination.current.isCurrent(requestGeneration)
+                firstPageRequestId === firstPageRequestRef.current
               ) {
+                // The newest started page-zero request owns the loading state.
+                // Cursor generations guard row publication above, but they must
+                // not keep the overlay alive when a transition invalidates this
+                // request before AG Grid starts its replacement. A replacement
+                // getRows call increments the id and re-enters loading.
                 setGridLoading(false);
               }
               if (!continuationPending) setLoading(false);
@@ -846,10 +839,7 @@ const SpanGrid = React.forwardRef(
           tooltipHideDelay={2000}
           tooltipInteraction={true}
           serverSideDatasource={dataSource}
-          loading={
-            gridLoading ||
-            previousFilterRequestKeyRef.current !== filterRequestKey
-          }
+          loading={gridLoading}
           suppressServerSideFullWidthLoadingRow={true}
           noRowsOverlayComponent={() =>
             continuationNotice

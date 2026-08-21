@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, TypedDict
 
 import structlog
+from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import DatabaseError
 from django.db.models import DateTimeField, F, FloatField, Q
@@ -1696,14 +1697,27 @@ def resolve_source_content(item, *, ch_cache=None, cell_cache=None):
     return {"type": item.source_type, "error": "Could not resolve content"}
 
 
-def assign_items_to_all_annotators(queue, items):
+_DEADLINE_CHECK_INTERVAL = settings.ANNOTATION_QUEUE_DEADLINE_CHECK_INTERVAL
+_DEADLINE_BULK_BATCH_SIZE = settings.ANNOTATION_QUEUE_DEADLINE_BULK_BATCH_SIZE
+
+
+def _assignment_deadline_checkpoint(deadline_check, *, index=None):
+    if deadline_check is not None and (
+        index is None or index % _DEADLINE_CHECK_INTERVAL == 0
+    ):
+        deadline_check()
+
+
+def assign_items_to_all_annotators(queue, items, *, deadline_check=None):
     """Assign every item to every queue member with the annotator role."""
     from model_hub.models.annotation_queues import (
         QueueItemAssignment,
         annotation_queue_role_q,
     )
 
+    _assignment_deadline_checkpoint(deadline_check)
     item_list = list(items or [])
+    _assignment_deadline_checkpoint(deadline_check)
     if not item_list:
         return 0
 
@@ -1713,28 +1727,63 @@ def assign_items_to_all_annotators(queue, items):
         .values_list("user_id", flat=True)
         .distinct()
     )
+    _assignment_deadline_checkpoint(deadline_check)
     if not annotator_ids:
         return 0
 
-    assignments = [
-        QueueItemAssignment(queue_item=item, user_id=user_id)
-        for item in item_list
-        for user_id in annotator_ids
-    ]
-    QueueItemAssignment.objects.bulk_create(assignments, ignore_conflicts=True)
-    return len(assignments)
+    if deadline_check is None:
+        assignments = [
+            QueueItemAssignment(queue_item=item, user_id=user_id)
+            for item in item_list
+            for user_id in annotator_ids
+        ]
+        QueueItemAssignment.objects.bulk_create(assignments, ignore_conflicts=True)
+        return len(assignments)
+
+    # The request-owned filter-mode path can produce a large Cartesian product.
+    # Build and write it incrementally so a deadline failure is observed during
+    # Python materialization, while the caller's outer transaction still rolls
+    # every completed chunk back.
+    pending = []
+    assignment_count = 0
+    for item in item_list:
+        for user_id in annotator_ids:
+            assignment_count += 1
+            _assignment_deadline_checkpoint(
+                deadline_check,
+                index=assignment_count,
+            )
+            pending.append(QueueItemAssignment(queue_item=item, user_id=user_id))
+            if len(pending) == _DEADLINE_BULK_BATCH_SIZE:
+                QueueItemAssignment.objects.bulk_create(
+                    pending,
+                    batch_size=_DEADLINE_BULK_BATCH_SIZE,
+                    ignore_conflicts=True,
+                )
+                pending = []
+                _assignment_deadline_checkpoint(deadline_check)
+    if pending:
+        QueueItemAssignment.objects.bulk_create(
+            pending,
+            batch_size=_DEADLINE_BULK_BATCH_SIZE,
+            ignore_conflicts=True,
+        )
+    _assignment_deadline_checkpoint(deadline_check)
+    return assignment_count
 
 
-def auto_assign_items(queue, items):
+def auto_assign_items(queue, items, *, deadline_check=None):
     """Assign items to annotators based on queue strategy. Mutates items in-place."""
     from model_hub.models.annotation_queues import QueueItem, annotation_queue_role_q
 
+    _assignment_deadline_checkpoint(deadline_check)
     annotator_ids = list(
         queue.queue_annotators.filter(deleted=False)
         .filter(annotation_queue_role_q(AnnotatorRole.ANNOTATOR.value))
         .values_list("user_id", flat=True)
         .distinct()
     )
+    _assignment_deadline_checkpoint(deadline_check)
     if not annotator_ids or queue.assignment_strategy == "manual":
         return
 
@@ -1745,7 +1794,9 @@ def auto_assign_items(queue, items):
             .exclude(assigned_to__isnull=True)
             .count()
         )
+        _assignment_deadline_checkpoint(deadline_check)
         for i, item in enumerate(items):
+            _assignment_deadline_checkpoint(deadline_check, index=i + 1)
             idx = (existing_count + i) % len(annotator_ids)
             item.assigned_to_id = annotator_ids[idx]
 
@@ -1763,13 +1814,17 @@ def auto_assign_items(queue, items):
             .values("assigned_to_id")
             .annotate(cnt=Count("id"))
         )
-        for row in qs:
+        for i, row in enumerate(qs, start=1):
+            _assignment_deadline_checkpoint(deadline_check, index=i)
             if row["assigned_to_id"] in counts:
                 counts[row["assigned_to_id"]] = row["cnt"]
-        for item in items:
+        _assignment_deadline_checkpoint(deadline_check)
+        for i, item in enumerate(items, start=1):
+            _assignment_deadline_checkpoint(deadline_check, index=i)
             uid = min(counts, key=counts.get)
             item.assigned_to_id = uid
             counts[uid] += 1
+    _assignment_deadline_checkpoint(deadline_check)
 
 
 def calculate_agreement(queue):

@@ -1,5 +1,6 @@
 from datetime import timedelta
 
+from django.conf import settings
 from rest_framework import serializers
 
 from tfc.utils.serializer_fields import JsonValueField
@@ -23,17 +24,27 @@ from tracer.services.filter_principal_context import (
     bind_request_my_annotations_principal,
 )
 
-EVAL_TASK_USAGE_MAX_PAGE = 100
+EVAL_TASK_USAGE_DEFAULT_PAGE_SIZE = settings.EVAL_TASK_USAGE_DEFAULT_PAGE_SIZE
+EVAL_TASK_USAGE_MAX_PAGE_SIZE = settings.EVAL_TASK_USAGE_MAX_PAGE_SIZE
+EVAL_TASK_USAGE_MAX_PAGE = settings.EVAL_TASK_USAGE_MAX_PAGE_NUMBER
+EVAL_TASK_LIST_DEFAULT_PAGE_SIZE = settings.EVAL_TASK_LIST_DEFAULT_PAGE_SIZE
+EVAL_TASK_LIST_WITH_PROJECT_DEFAULT_PAGE_SIZE = (
+    settings.EVAL_TASK_LIST_WITH_PROJECT_DEFAULT_PAGE_SIZE
+)
 
 
 class PaginationQuerySerializer(serializers.Serializer):
     """Shared query-params validator for eval-log endpoints."""
 
     page = serializers.IntegerField(required=False, default=0, min_value=0)
-    page_size = serializers.IntegerField(required=False, default=25, min_value=1)
+    page_size = serializers.IntegerField(
+        required=False,
+        default=EVAL_TASK_USAGE_DEFAULT_PAGE_SIZE,
+        min_value=1,
+    )
 
     def validate_page_size(self, value):
-        return min(value, 100)
+        return min(value, EVAL_TASK_USAGE_MAX_PAGE_SIZE)
 
 
 class EvalTaskUsageQuerySerializer(StrictInputSerializer):
@@ -41,7 +52,7 @@ class EvalTaskUsageQuerySerializer(StrictInputSerializer):
 
     eval_task_id = serializers.UUIDField(required=True)
     period = serializers.ChoiceField(
-        choices=("30m", "6h", "1d", "7d", "30d", "90d", "180d", "365d"),
+        choices=("30m", "1h", "6h", "1d", "7d", "30d", "90d", "180d", "365d"),
         required=False,
         default="30d",
     )
@@ -53,12 +64,15 @@ class EvalTaskUsageQuerySerializer(StrictInputSerializer):
         max_value=EVAL_TASK_USAGE_MAX_PAGE,
     )
     page_size = serializers.IntegerField(
-        required=False, default=25, min_value=1, max_value=100
+        required=False,
+        default=EVAL_TASK_USAGE_DEFAULT_PAGE_SIZE,
+        min_value=1,
+        max_value=EVAL_TASK_USAGE_MAX_PAGE_SIZE,
     )
     limit = serializers.IntegerField(
         required=False,
         min_value=1,
-        max_value=100,
+        max_value=EVAL_TASK_USAGE_MAX_PAGE_SIZE,
         help_text="Legacy alias for page_size.",
     )
     eval_aggregation = serializers.BooleanField(required=False, default=False)
@@ -217,13 +231,19 @@ class EvalTaskListQuerySerializer(StrictInputSerializer):
     sort_params = SortParamListQueryParamField(required=False, default=list)
     page_number = serializers.IntegerField(required=False, default=0, min_value=0)
     page_size = serializers.IntegerField(
-        required=False, default=30, min_value=1, max_value=500
+        required=False,
+        default=EVAL_TASK_LIST_DEFAULT_PAGE_SIZE,
+        min_value=1,
+        max_value=settings.INTERACTIVE_READ_DEFAULT_MAX_PAGE_SIZE,
     )
 
 
 class EvalTaskListWithProjectNameQuerySerializer(EvalTaskListQuerySerializer):
     page_size = serializers.IntegerField(
-        required=False, default=10, min_value=1, max_value=500
+        required=False,
+        default=EVAL_TASK_LIST_WITH_PROJECT_DEFAULT_PAGE_SIZE,
+        min_value=1,
+        max_value=settings.INTERACTIVE_READ_DEFAULT_MAX_PAGE_SIZE,
     )
 
 

@@ -22,9 +22,12 @@ export default function StepProjectMapping({ data, onUpdate, onNext, onBack }) {
     data: projects,
     isLoading: projectsLoading,
     isError: projectsError,
+    isFetching: projectsFetching,
+    refetch: refetchProjects,
   } = useQuery({
     queryKey: ["project-list-observe"],
     queryFn: ({ signal }) => fetchAllObserveProjects({ signal }),
+    retry: false,
   });
 
   const projectOptions = useMemo(() => {
@@ -99,7 +102,19 @@ export default function StepProjectMapping({ data, onUpdate, onNext, onBack }) {
       {selectedLangfuse && (
         <>
           {projectsError && (
-            <Alert severity="error">
+            <Alert
+              severity="error"
+              action={
+                <Button
+                  color="inherit"
+                  size="small"
+                  disabled={projectsFetching}
+                  onClick={() => refetchProjects()}
+                >
+                  Retry
+                </Button>
+              }
+            >
               Failed to load projects. Please try again.
             </Alert>
           )}

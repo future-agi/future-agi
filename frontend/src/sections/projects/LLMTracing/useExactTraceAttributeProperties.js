@@ -1,12 +1,24 @@
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useDebounce } from "src/hooks/use-debounce";
+import {
+  isPropertyCatalogNotReadyError,
+  usePropertyCatalog,
+} from "src/hooks/useDashboards";
 import axios, { endpoints } from "src/utils/axios";
 import { getQueryReadState } from "src/utils/queryReadState";
+import {
+  ATTRIBUTE_INVENTORY_SEARCH_DEBOUNCE_MS,
+  INTERACTIVE_TABLE_PAGE_SIZE,
+  PROPERTY_CATALOG_CACHE_TIME_MS,
+  PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
+  PROPERTY_CATALOG_STALE_TIME_MS,
+} from "src/config/runtime_limits";
 import {
   ATTRIBUTE_KEY_REQUEST_TIMEOUT_MS,
   compactAttributeKeyRetryPage,
   getAttributeKeyCursorStopSignature,
+  getAttributeKeyNextCursor,
   getNextAttributeKeyPageParam,
   isAttributeKeyCursorChainStopped,
   readAttributeKeyPage,
@@ -35,7 +47,8 @@ export function getAttributeKeyPageReadState(page, { exact = false } = {}) {
   return getQueryReadState(page);
 }
 
-export function useExactTraceAttributeProperties({
+/** Rollout-only adapter for the retained span-key endpoint. */
+export function useLegacyExactTraceAttributeProperties({
   projectId,
   search,
   source = "traces",
@@ -43,7 +56,10 @@ export function useExactTraceAttributeProperties({
 }) {
   const queryClient = useQueryClient();
   const normalizedSearch = String(search || "").trim();
-  const debouncedSearch = useDebounce(normalizedSearch, 350);
+  const debouncedSearch = useDebounce(
+    normalizedSearch,
+    ATTRIBUTE_INVENTORY_SEARCH_DEBOUNCE_MS,
+  );
   const supportedSource = source === "traces" || source === "spans";
   const retainedQueryKey = ["trace-attribute-retained", projectId, source];
   const exactQueryKey = [
@@ -95,7 +111,7 @@ export function useExactTraceAttributeProperties({
     queryFn: ({ signal, pageParam }) =>
       readAttributeKeyPage({
         pageParam,
-        pageSize: 10,
+        pageSize: INTERACTIVE_TABLE_PAGE_SIZE,
         publishedData: queryClient.getQueryData(retainedQueryKey),
         signal,
         requestPage: (cursor, requestSignal = signal) =>
@@ -105,7 +121,7 @@ export function useExactTraceAttributeProperties({
               timeout: ATTRIBUTE_KEY_REQUEST_TIMEOUT_MS,
               params: {
                 project_id: projectId,
-                page_size: 10,
+                page_size: INTERACTIVE_TABLE_PAGE_SIZE,
                 ...(cursor ? { cursor } : {}),
               },
             })
@@ -115,8 +131,8 @@ export function useExactTraceAttributeProperties({
     getNextPageParam: getNextAttributeKeyPageParam,
     enabled: enabled && supportedSource && Boolean(projectId),
     retry: false,
-    staleTime: 60_000,
-    gcTime: 5 * 60_000,
+    staleTime: PROPERTY_CATALOG_STALE_TIME_MS,
+    gcTime: PROPERTY_CATALOG_CACHE_TIME_MS,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
     refetchOnReconnect: false,
@@ -133,7 +149,7 @@ export function useExactTraceAttributeProperties({
     queryFn: ({ signal, pageParam }) =>
       readAttributeKeyPage({
         pageParam,
-        pageSize: 10,
+        pageSize: INTERACTIVE_TABLE_PAGE_SIZE,
         publishedData: queryClient.getQueryData(exactQueryKey),
         signal,
         requestPage: (cursor, requestSignal = signal) =>
@@ -143,7 +159,7 @@ export function useExactTraceAttributeProperties({
               timeout: ATTRIBUTE_KEY_REQUEST_TIMEOUT_MS,
               params: {
                 project_id: projectId,
-                page_size: 10,
+                page_size: INTERACTIVE_TABLE_PAGE_SIZE,
                 q: debouncedSearch,
                 ...(cursor ? { cursor } : {}),
               },
@@ -158,8 +174,8 @@ export function useExactTraceAttributeProperties({
       Boolean(projectId) &&
       Boolean(debouncedSearch),
     retry: false,
-    staleTime: 60_000,
-    gcTime: 5 * 60_000,
+    staleTime: PROPERTY_CATALOG_STALE_TIME_MS,
+    gcTime: PROPERTY_CATALOG_CACHE_TIME_MS,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
     refetchOnReconnect: false,
@@ -228,6 +244,7 @@ export function useExactTraceAttributeProperties({
         return [
           {
             id: key,
+            registryId: `custom_attribute:${key}`,
             name: key,
             category: "attribute",
             rawCategory: "custom_attribute",
@@ -332,7 +349,7 @@ export function useExactTraceAttributeProperties({
     setFreshChainRecoveryLane(lane);
     const request = readAttributeKeyPage({
       pageParam: null,
-      pageSize: 10,
+      pageSize: INTERACTIVE_TABLE_PAGE_SIZE,
       publishedData: undefined,
       requestPage: (cursor, signal) =>
         axios
@@ -341,7 +358,7 @@ export function useExactTraceAttributeProperties({
             timeout: ATTRIBUTE_KEY_REQUEST_TIMEOUT_MS,
             params: {
               project_id: projectId,
-              page_size: 10,
+              page_size: INTERACTIVE_TABLE_PAGE_SIZE,
               ...(exact ? { q: debouncedSearch } : {}),
               ...(cursor ? { cursor } : {}),
             },
@@ -395,7 +412,8 @@ export function useExactTraceAttributeProperties({
       return;
     }
     const continuationFailed =
-      exactQuery.isFetchNextPageError && exactQuery.hasNextPage;
+      exactQuery.isFetchNextPageError &&
+      Boolean(getAttributeKeyNextCursor(exactPages.at(-1)));
     const cachedReadFailed = exactQuery.isError || exactQuery.isRefetchError;
     if (!continuationFailed && !cachedReadFailed) {
       state.pendingRetry = null;
@@ -414,7 +432,14 @@ export function useExactTraceAttributeProperties({
         exact: true,
       }).catch(() => undefined);
     }
-  }, [debouncedSearch, exactQuery, normalizedSearch, projectId, source]);
+  }, [
+    debouncedSearch,
+    exactPages,
+    exactQuery,
+    normalizedSearch,
+    projectId,
+    source,
+  ]);
 
   const fetchNextPage = (...args) => {
     const reads = [];
@@ -550,5 +575,119 @@ export function useExactTraceAttributeProperties({
     // scroll-to-load action even when a valid continuation page contains no
     // previously unseen keys and therefore leaves `data.length` unchanged.
     pageCount: retainedPages.length + exactPages.length,
+  };
+}
+
+const propertyCatalogMetricToTraceAttribute = (metric) => {
+  const type = metric?.type || metric?.data_type || "string";
+  const declaredTypes = metric?.attribute_types || metric?.attributeTypes;
+  const attributeTypes = Array.isArray(declaredTypes)
+    ? declaredTypes.filter((valueType) => typeof valueType === "string")
+    : [];
+  return {
+    id: metric.name,
+    registryId: metric.property_id,
+    name: metric.display_name || metric.name,
+    category: "attribute",
+    rawCategory: "custom_attribute",
+    type,
+    attributeTypes: attributeTypes.length > 0 ? attributeTypes : [type],
+    attributeTypesExact:
+      metric?.attribute_types_exact === true ||
+      metric?.attributeTypesExact === true,
+    apiColType: "SPAN_ATTRIBUTE",
+  };
+};
+
+/**
+ * Read trace/span attribute definitions from the single activated property
+ * catalog. One search owns one signed cursor chain. The legacy span-key walk
+ * above is activated only by the rollout-specific typed not-ready response.
+ */
+export function useExactTraceAttributeProperties({
+  projectId,
+  search,
+  source = "traces",
+  enabled = true,
+}) {
+  const normalizedSearch = String(search || "").trim();
+  const debouncedSearch = useDebounce(
+    normalizedSearch,
+    ATTRIBUTE_INVENTORY_SEARCH_DEBOUNCE_MS,
+  );
+  const supportedSource = source === "traces" || source === "spans";
+  const scopeReady = supportedSource && Boolean(projectId);
+  const fallbackScopeKey = JSON.stringify([
+    "trace-attribute-property-catalog",
+    projectId || "",
+    source,
+  ]);
+  const catalog = usePropertyCatalog({
+    category: "custom_attribute",
+    // Span attributes are definitions in the tracing adapter. `source` still
+    // controls the consumer's row/path semantics, not catalog storage.
+    source: "traces",
+    search: debouncedSearch,
+    projectIds: projectId ? [projectId] : [],
+    pageSize: PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
+    enabled: enabled && scopeReady,
+    allowLegacyNotReadyFallback: true,
+    fallbackScopeKey,
+  });
+  const useLegacyFallback = catalog.legacyFallbackRequired;
+  const legacy = useLegacyExactTraceAttributeProperties({
+    projectId,
+    search,
+    source,
+    enabled: enabled && useLegacyFallback,
+  });
+
+  if (useLegacyFallback) return legacy;
+
+  const properties = catalog.metrics.map(propertyCatalogMetricToTraceAttribute);
+  const catalogNotReady = isPropertyCatalogNotReadyError(catalog.error);
+  const catalogError = Boolean(catalog.isError && !catalogNotReady);
+  const hasNextPage = Boolean(catalog.hasNextPage);
+  const searchActive = Boolean(debouncedSearch);
+  const exactSearchMatched = Boolean(
+    searchActive &&
+      properties.some((property) => property.id === debouncedSearch),
+  );
+  const nextPageFailed = Boolean(
+    catalog.isFetchNextPageError || catalog.cursorChainStopped,
+  );
+  const fetchNextPage = (...args) =>
+    hasNextPage ? catalog.fetchNextPage(...args) : Promise.resolve();
+
+  return {
+    data: properties,
+    queryReadState: catalog.queryReadState,
+    browseStatus: catalog.isSuccess
+      ? hasNextPage
+        ? "continuation"
+        : "exhausted"
+      : undefined,
+    totalCount: null,
+    browseLimit: undefined,
+    browseLimitReached: false,
+    exactSearchMatched,
+    debouncedSearch,
+    isFetching: catalog.isFetching,
+    isLoading: catalog.isLoading || catalogNotReady,
+    isError: catalogError,
+    isSuccess: catalog.isSuccess && !catalog.cursorChainStopped,
+    error: catalogError ? catalog.error : null,
+    exactSearchError: searchActive && catalogError ? catalog.error : null,
+    hasNextPage,
+    hasNextExactPage: searchActive && hasNextPage,
+    fetchNextExactPage: fetchNextPage,
+    isFetchingExactSearch: searchActive && catalog.isFetching,
+    isFetchingNextExactPage: searchActive && catalog.isFetchingNextPage,
+    fetchNextPage,
+    refetch: catalog.refetch,
+    isFetchingNextPage: catalog.isFetchingNextPage,
+    isFetchNextPageError: nextPageFailed,
+    cursorRetryExhausted: catalog.cursorChainStopped,
+    pageCount: catalog.data?.pages?.length || 0,
   };
 }

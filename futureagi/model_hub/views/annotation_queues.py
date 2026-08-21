@@ -3,12 +3,15 @@ import re
 import threading
 import unicodedata
 import uuid
+from collections.abc import Mapping
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from functools import wraps
 
 import structlog
 from django.conf import settings
-from django.db import transaction
+from django.db import DatabaseError, connection, transaction
 from django.db.models import (
     Count,
     Exists,
@@ -20,6 +23,7 @@ from django.db.models import (
     Value,
 )
 from django.db.models.functions import Coalesce, Lower, TruncDate
+from django.db.utils import OperationalError
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, status, viewsets
@@ -158,6 +162,8 @@ from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.models.observation_span import EvalLogger
 from tracer.models.project import Project
 from tracer.models.span_notes import SpanNotes
+from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
+from tracer.services.clickhouse.v2.query_settings import ch_query_settings
 
 logger = structlog.get_logger(__name__)
 
@@ -172,21 +178,94 @@ ERROR_RESPONSES = {
 # Shared cap for filter-mode bulk add. Phase 11 may introduce an async job
 # path for selections exceeding this; until then, the endpoint errors with
 # ``selection_too_large`` so the UI can prompt the user to narrow the filter.
-MAX_SELECTION_CAP = 10_000
+MAX_SELECTION_CAP = settings.BULK_SELECTION_MAX_CAP
+
+# Finish the request-owned backend transaction before the separately configured
+# browser transport wall, leaving response/network headroom.
+ADD_ITEMS_FILTER_MODE_WALL_MS = settings.INTERACTIVE_READ_DEFAULT_WALL_MS
+ADD_ITEMS_DEADLINE_CHECK_INTERVAL = settings.ANNOTATION_QUEUE_DEADLINE_CHECK_INTERVAL
+_ADD_ITEMS_FILTER_DEADLINE_ATTR = "_annotation_queue_add_items_filter_deadline"
+
+
+def _with_add_items_filter_deadline(view_func):
+    """Inject the filter request wall before ``validated_request`` runs.
+
+    ``wraps`` deliberately preserves DRF ``@action`` and drf-yasg metadata on
+    the outermost callable. Enumerated payloads never receive or enforce this
+    deadline, so their existing request path is unchanged.
+    """
+
+    @wraps(view_func)
+    def wrapper(self, request, *args, **kwargs):
+        raw_data = request.data
+        if isinstance(raw_data, Mapping) and "selection" in raw_data:
+            setattr(
+                request,
+                _ADD_ITEMS_FILTER_DEADLINE_ATTR,
+                ReadDeadline.start(ADD_ITEMS_FILTER_MODE_WALL_MS),
+            )
+        return view_func(self, request, *args, **kwargs)
+
+    return wrapper
+
+
+def _add_items_deadline_checkpoint(
+    deadline: ReadDeadline | None,
+    *,
+    index: int | None = None,
+) -> None:
+    if deadline is not None and (
+        index is None or index % ADD_ITEMS_DEADLINE_CHECK_INTERVAL == 0
+    ):
+        deadline.remaining_ms(floor_ms=1)
+
+
+@contextmanager
+def _bounded_add_items_postgres(deadline: ReadDeadline):
+    """Give every filter-mode PostgreSQL statement the shrinking request wall."""
+
+    if connection.vendor != "postgresql":
+        yield
+        deadline.remaining_ms(floor_ms=1)
+        return
+
+    def execute_with_remaining_timeout(execute, sql, params, many, context):
+        remaining_ms = deadline.remaining_ms(floor_ms=1)
+        try:
+            # Use the underlying DB cursor so this SET LOCAL does not recurse
+            # through the execute wrapper. The caller owns one outer atomic
+            # block, so every subsequent statement inherits only its current
+            # remaining request budget and any timeout rolls back all writes.
+            context["cursor"].cursor.execute(
+                "SELECT set_config('statement_timeout', %s, true)",
+                (str(remaining_ms),),
+            )
+            result = execute(sql, params, many, context)
+        except OperationalError as exc:
+            raise ReadDeadlineExceeded(
+                "Annotation queue add-items PostgreSQL deadline exceeded"
+            ) from exc
+        deadline.remaining_ms(floor_ms=1)
+        return result
+
+    with connection.execute_wrapper(execute_with_remaining_timeout):
+        yield
+        deadline.remaining_ms(floor_ms=1)
+
 
 # Enumerated add-items is synchronous: the whole payload is resolved (one CH
 # IN-list per kind) and inserted in one request. The FE chunks at 500, so cap the
 # raw payload at 2x that — an SDK/API caller can otherwise POST a pathological
 # list that becomes one giant CH IN(...) plus a long sequential INSERT run under
 # the gateway timeout. Filter-mode has its own MAX_SELECTION_CAP.
-ADD_ITEMS_SYNC_MAX = 1_000
+ADD_ITEMS_SYNC_MAX = settings.ANNOTATION_QUEUE_ADD_ITEMS_SYNC_MAX
 
 # Synchronous export materializes and resolves full content for every item in one
 # HTTP request. Past this size it can't reliably finish under the gateway timeout,
 # and the ClickHouse content reads over very wide (voice) rows risk OOM-ing the
 # shared cluster, so cap it and let the caller narrow the set (a background export
 # lifts the ceiling). Conservative default; override via settings to tune in prod.
-EXPORT_SYNC_MAX_ITEMS = 1_000
+EXPORT_SYNC_MAX_ITEMS = settings.ANNOTATION_QUEUE_EXPORT_SYNC_MAX_ITEMS
 
 
 def _queue_item_export_prefetches():
@@ -2727,10 +2806,10 @@ def _ensure_default_queue_member_can_manage(queue, user):
 
 # Cap the rows per INSERT / UPDATE round-trip so a large add (thousands of items) can't
 # build one oversized statement — the FE already chunks add-items requests at 500.
-_BULK_ADD_BATCH_SIZE = 500
+_BULK_ADD_BATCH_SIZE = settings.ANNOTATION_QUEUE_DEADLINE_BULK_BATCH_SIZE
 
 
-def _finalize_bulk_add(queue, items_to_create):
+def _finalize_bulk_add(queue, items_to_create, *, deadline=None):
     """Bulk-create QueueItems, run auto-assign, flip queue status if needed.
 
     Shared by both the enumerated ``items`` branch and the filter-mode
@@ -2745,20 +2824,62 @@ def _finalize_bulk_add(queue, items_to_create):
     created = []
     if items_to_create:
         with transaction.atomic():
-            created = QueueItem.objects.bulk_create(
-                items_to_create, batch_size=_BULK_ADD_BATCH_SIZE
-            )
+            if deadline is None:
+                created = QueueItem.objects.bulk_create(
+                    items_to_create, batch_size=_BULK_ADD_BATCH_SIZE
+                )
+            else:
+                # Resetting the PostgreSQL timeout happens in the outer execute
+                # wrapper for every INSERT. Chunk explicitly so Python work and
+                # each database round-trip receive a fresh remaining-wall check.
+                for start in range(0, len(items_to_create), _BULK_ADD_BATCH_SIZE):
+                    _add_items_deadline_checkpoint(deadline)
+                    created.extend(
+                        QueueItem.objects.bulk_create(
+                            items_to_create[start : start + _BULK_ADD_BATCH_SIZE],
+                            batch_size=_BULK_ADD_BATCH_SIZE,
+                        )
+                    )
+                _add_items_deadline_checkpoint(deadline)
 
     # Auto-assign: when auto_assign is True, assign all items to all annotators
     # (each item gets no specific assigned_to — all members can work on any
     # item). When using round-robin/load-balanced strategy, distribute items.
     if created and queue.assignment_strategy != "manual":
-        auto_assign_items(queue, created)
-        QueueItem.objects.bulk_update(
-            created, ["assigned_to"], batch_size=_BULK_ADD_BATCH_SIZE
-        )
+        _add_items_deadline_checkpoint(deadline)
+        if deadline is None:
+            auto_assign_items(queue, created)
+        else:
+            auto_assign_items(
+                queue,
+                created,
+                deadline_check=lambda: _add_items_deadline_checkpoint(deadline),
+            )
+        _add_items_deadline_checkpoint(deadline)
+        if deadline is None:
+            QueueItem.objects.bulk_update(
+                created, ["assigned_to"], batch_size=_BULK_ADD_BATCH_SIZE
+            )
+        else:
+            for start in range(0, len(created), _BULK_ADD_BATCH_SIZE):
+                _add_items_deadline_checkpoint(deadline)
+                QueueItem.objects.bulk_update(
+                    created[start : start + _BULK_ADD_BATCH_SIZE],
+                    ["assigned_to"],
+                    batch_size=_BULK_ADD_BATCH_SIZE,
+                )
+        _add_items_deadline_checkpoint(deadline)
     elif created and queue.auto_assign:
-        assign_items_to_all_annotators(queue, created)
+        _add_items_deadline_checkpoint(deadline)
+        if deadline is None:
+            assign_items_to_all_annotators(queue, created)
+        else:
+            assign_items_to_all_annotators(
+                queue,
+                created,
+                deadline_check=lambda: _add_items_deadline_checkpoint(deadline),
+            )
+        _add_items_deadline_checkpoint(deadline)
 
     # Re-activate the queue if it was completed and new items were added
     new_status = queue.status
@@ -2766,9 +2887,12 @@ def _finalize_bulk_add(queue, items_to_create):
         len(created) > 0
         and queue.status == AnnotationQueueStatusChoices.COMPLETED.value
     ):
+        _add_items_deadline_checkpoint(deadline)
         queue.status = AnnotationQueueStatusChoices.ACTIVE.value
         queue.save()
         new_status = queue.status
+
+    _add_items_deadline_checkpoint(deadline)
 
     return len(created), new_status
 
@@ -4833,6 +4957,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @_with_add_items_filter_deadline
     @validated_request(
         request_serializer=AddItemsSerializer,
         responses={
@@ -4846,6 +4971,16 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     )
     @action(detail=False, methods=["post"], url_path="add-items")
     def add_items(self, request, queue_id=None):
+        data = request.validated_data
+        selection = data.get("selection")
+        if selection:
+            return self._add_items_filter_mode_request(
+                request,
+                queue_id,
+                selection,
+                deadline=getattr(request, _ADD_ITEMS_FILTER_DEADLINE_ATTR),
+            )
+
         try:
             queue = AnnotationQueue.objects.get(
                 pk=queue_id,
@@ -4858,10 +4993,6 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         denied = self._require_queue_manager(queue, request)
         if denied is not None:
             return denied
-
-        data = request.validated_data
-        if data.get("selection"):
-            return self._add_items_filter_mode(request, queue, data["selection"])
 
         items = data["items"]
         if len(items) > ADD_ITEMS_SYNC_MAX:
@@ -4878,6 +5009,52 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         return self._add_items_enumerated(
             request, queue, items, project_id=data.get("project_id")
         )
+
+    def _add_items_filter_mode_request(
+        self,
+        request,
+        queue_id,
+        selection,
+        *,
+        deadline,
+    ):
+        """Own one deadline and atomic commit for a filter-mode add request."""
+
+        try:
+            with transaction.atomic(), _bounded_add_items_postgres(deadline):
+                queue = AnnotationQueue.objects.get(
+                    pk=queue_id,
+                    organization=request.organization,
+                    deleted=False,
+                )
+                denied = self._require_queue_manager(queue, request)
+                if denied is not None:
+                    return denied
+                response = self._add_items_filter_mode(
+                    request,
+                    queue,
+                    selection,
+                    deadline=deadline,
+                )
+                deadline.remaining_ms(floor_ms=1)
+                return response
+        except AnnotationQueue.DoesNotExist:
+            return self._gm.not_found("Queue not found.")
+        except ReadDeadlineExceeded as exc:
+            logger.warning(
+                "queue_add_items_filter_mode_deadline_exceeded",
+                queue_id=str(queue_id),
+                source_type=str(selection.get("source_type") or ""),
+                error_type=type(exc).__name__,
+            )
+            return self._gm.custom_error_response(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                result=(
+                    "Adding matching items took too long. Nothing was added. "
+                    "Please retry."
+                ),
+                code="add_items_deadline_exceeded",
+            )
 
     def _add_items_enumerated(self, request, queue, items_data, project_id=None):
         """Add QueueItems from an explicit list of (source_type, source_id) dicts.
@@ -4992,7 +5169,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             }
         )
 
-    def _add_items_filter_mode(self, request, queue, selection):
+    def _add_items_filter_mode(self, request, queue, selection, *, deadline=None):
         """Add QueueItems for every source row matching ``selection.filter``
         in ``selection.project_id``, minus ``selection.exclude_ids``.
         """
@@ -5018,6 +5195,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 "workspace": getattr(request, "workspace", None),
                 "cap": MAX_SELECTION_CAP,
                 "user": request.user,
+                "deadline": deadline,
             }
             # Voice-call flags are only honored by the trace resolver.
             # Other resolvers don't accept these kwargs, so gate on
@@ -5030,10 +5208,13 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     selection.get("remove_simulation_calls", False)
                 )
             result = resolver(**resolver_kwargs)
+            _add_items_deadline_checkpoint(deadline)
         except Project.DoesNotExist:
             return self._gm.not_found("Project not found in organization.")
         except ValueError as e:
             return self._gm.bad_request(str(e))
+        except ReadDeadlineExceeded:
+            raise
         except Exception as exc:  # noqa: BLE001 — CH driver raises many subclasses
             # The filter-mode resolvers are ClickHouse-only (no PG fallback), so a
             # CH outage/timeout propagates here. Return a structured, retryable 503
@@ -5083,18 +5264,30 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
 
         resolved_ids = result.ids
         fk_field = get_fk_field_name(source_type)
-        (
-            available_ids,
-            unavailable_count,
-            unavailable_error,
-            previews_by_id,
-        ) = filter_available_source_ids_for_annotation(
-            source_type,
-            resolved_ids,
-            organization=request.organization,
-            workspace=getattr(request, "workspace", None),
-            project_id=project_id,
+        _add_items_deadline_checkpoint(deadline)
+        remaining_ms = (
+            deadline.remaining_ms(floor_ms=1) if deadline is not None else None
         )
+        with ch_query_settings(
+            **(
+                {"max_execution_time": remaining_ms / 1000}
+                if remaining_ms is not None
+                else {}
+            )
+        ):
+            (
+                available_ids,
+                unavailable_count,
+                unavailable_error,
+                previews_by_id,
+            ) = filter_available_source_ids_for_annotation(
+                source_type,
+                resolved_ids,
+                organization=request.organization,
+                workspace=getattr(request, "workspace", None),
+                project_id=project_id,
+            )
+        _add_items_deadline_checkpoint(deadline)
         errors = [unavailable_error] if unavailable_error else []
 
         # Duplicate detection in a single IN query — cheaper than per-row
@@ -5107,6 +5300,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 **{f"{fk_field}_id__in": available_ids},
             ).values_list(f"{fk_field}_id", flat=True)
         }
+        _add_items_deadline_checkpoint(deadline)
         fresh_ids = [tid for tid in available_ids if tid not in existing_ids]
         duplicates = len(existing_ids)
 
@@ -5117,23 +5311,32 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             .first()
             or 0
         )
-        items_to_create = [
-            QueueItem(
-                queue=queue,
-                source_type=source_type,
-                organization=request.organization,
-                workspace=getattr(request, "workspace", None) or queue.workspace,
-                project_id=project_id,
-                # Built from the roots the availability check already read, so
-                # the grid never re-reads CH to render this row (TH-7211).
-                source_preview=previews_by_id.get(tid),
-                order=max_order + i,
-                **{f"{fk_field}_id": tid},
+        _add_items_deadline_checkpoint(deadline)
+        items_to_create = []
+        for i, tid in enumerate(fresh_ids, start=1):
+            _add_items_deadline_checkpoint(deadline, index=i)
+            items_to_create.append(
+                QueueItem(
+                    queue=queue,
+                    source_type=source_type,
+                    organization=request.organization,
+                    workspace=(getattr(request, "workspace", None) or queue.workspace),
+                    project_id=project_id,
+                    # Built from roots the availability check already read, so
+                    # the grid never re-reads CH to render this row (TH-7211).
+                    source_preview=previews_by_id.get(tid),
+                    order=max_order + i,
+                    **{f"{fk_field}_id": tid},
+                )
             )
-            for i, tid in enumerate(fresh_ids, start=1)
-        ]
+        _add_items_deadline_checkpoint(deadline)
 
-        added, new_status = _finalize_bulk_add(queue, items_to_create)
+        added, new_status = _finalize_bulk_add(
+            queue,
+            items_to_create,
+            deadline=deadline,
+        )
+        _add_items_deadline_checkpoint(deadline)
 
         logger.info(
             "queue_add_items_filter_mode",
@@ -7652,10 +7855,115 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         return self._gm.success_response({"imported": imported})
 
 
+class AutomationRulePagination(ExtendedPageNumberPagination):
+    """Bound one automation-rule page without changing shared pagination."""
+
+    page_size = settings.ANNOTATION_QUEUE_AUTOMATION_DEFAULT_PAGE_SIZE
+    max_page_size = settings.ANNOTATION_QUEUE_AUTOMATION_MAX_PAGE_SIZE
+
+
+_AUTOMATION_RULE_READ_WALL_MS = settings.INTERACTIVE_READ_DEFAULT_WALL_MS
+_AUTOMATION_RULE_READ_MAX_RESPONSE_UNITS = (
+    settings.ANNOTATION_QUEUE_AUTOMATION_MAX_RESPONSE_UNITS
+)
+
+
+class AutomationRuleReadLimitExceeded(RuntimeError):
+    """A rule page/detail cannot fit inside one interactive response."""
+
+
+def _ensure_automation_rule_response_bounded(value):
+    remaining = _AUTOMATION_RULE_READ_MAX_RESPONSE_UNITS
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if item is None or isinstance(item, bool):
+            remaining -= 4
+        elif isinstance(item, str):
+            remaining -= 4 * len(item) + 2
+        elif isinstance(item, int | float):
+            remaining -= 32
+        elif isinstance(item, dict):
+            remaining -= 2 + 2 * len(item)
+            for key, child in item.items():
+                remaining -= 4 * len(str(key)) + 2
+                stack.append(child)
+        elif isinstance(item, list | tuple):
+            remaining -= 2 + len(item)
+            stack.extend(item)
+        else:
+            remaining -= 4 * len(str(item)) + 2
+        if remaining < 0:
+            raise AutomationRuleReadLimitExceeded
+
+
+def _execute_automation_rule_query_with_deadline(
+    deadline, execute, sql, params, many, context
+):
+    remaining_ms = deadline.remaining_ms(floor_ms=1)
+    context["cursor"].cursor.execute(
+        "SELECT set_config('statement_timeout', %s, true)",
+        (str(remaining_ms),),
+    )
+    result = execute(sql, params, many, context)
+    deadline.remaining_ms(floor_ms=1)
+    return result
+
+
+@contextmanager
+def _bounded_automation_rule_postgres(deadline):
+    """Apply one shrinking wall to count, page, prefetch, and detail reads."""
+
+    if connection.vendor != "postgresql":
+        yield
+        deadline.remaining_ms(floor_ms=1)
+        return
+
+    def execute_with_remaining_timeout(execute, sql, params, many, context):
+        return _execute_automation_rule_query_with_deadline(
+            deadline, execute, sql, params, many, context
+        )
+
+    with transaction.atomic():
+        with connection.execute_wrapper(execute_with_remaining_timeout):
+            yield
+            deadline.remaining_ms(floor_ms=1)
+
+
+def _bounded_automation_rule_read(view_method):
+    @wraps(view_method)
+    def wrapped(view, request, *args, **kwargs):
+        deadline = ReadDeadline.start(_AUTOMATION_RULE_READ_WALL_MS)
+        try:
+            with _bounded_automation_rule_postgres(deadline):
+                response = view_method(view, request, *args, **kwargs)
+                if getattr(response, "status_code", 500) < 400:
+                    _ensure_automation_rule_response_bounded(response.data)
+            deadline.remaining_ms(floor_ms=1)
+            return response
+        except (
+            ReadDeadlineExceeded,
+            DatabaseError,
+            AutomationRuleReadLimitExceeded,
+        ) as exc:
+            logger.warning(
+                "automation_rule_read_unavailable",
+                action=view_method.__name__,
+                error_type=type(exc).__name__,
+            )
+            return view._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Automation rules are temporarily unavailable. Please retry.",
+                code="automation_rule_read_unavailable",
+            )
+
+    return wrapped
+
+
 class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     serializer_class = AutomationRuleSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = ExtendedPageNumberPagination
+    pagination_class = AutomationRulePagination
     queryset = AutomationRule.objects.all()
     _gm = GeneralMethods()
 
@@ -7682,7 +7990,15 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
         queue_id = self.kwargs.get("queue_id")
         if queue_id:
             queryset = queryset.filter(queue_id=queue_id)
-        return queryset.order_by("-created_at")
+        return queryset.order_by("-created_at", "-id")
+
+    @_bounded_automation_rule_read
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
+    @_bounded_automation_rule_read
+    def retrieve(self, request, *args, **kwargs):
+        return super().retrieve(request, *args, **kwargs)
 
     def create(self, request, *args, **kwargs):
         manager_error = self._queue_manager_error(request)

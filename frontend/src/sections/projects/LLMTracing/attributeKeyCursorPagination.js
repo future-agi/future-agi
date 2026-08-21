@@ -1,4 +1,5 @@
 import { accumulateUniqueListContinuations } from "./listCursorPagination";
+import { FILTER_VALUE_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
 
 // `limit_reached` describes one bounded backend walk, not necessarily the end
 // of the retained catalog. When the response also carries an advancing signed
@@ -10,10 +11,9 @@ const CURSOR_STOPPED_KEY = "__attributeKeyCursorStopped";
 
 // The shared Axios client intentionally has no global timeout. Attribute-key
 // browsing is interactive, so one stalled proxy/backend response must not
-// leave a picker in an endless loading state. Keep this just above the
-// server-side four-second property wall so structured server timeouts still
-// win while a proxy stall also releases the UI below five seconds.
-export const ATTRIBUTE_KEY_REQUEST_TIMEOUT_MS = 4_800;
+// leave a picker in an endless loading state. Its configured browser wall is
+// independent from the server wall so proxy stalls also release the UI.
+export const ATTRIBUTE_KEY_REQUEST_TIMEOUT_MS = FILTER_VALUE_REQUEST_TIMEOUT_MS;
 
 const attributeKey = (item) =>
   typeof item?.key === "string" && item.key.length > 0 ? item.key : null;

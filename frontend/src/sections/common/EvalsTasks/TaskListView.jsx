@@ -21,6 +21,8 @@ import { enqueueSnackbar } from "src/components/snackbar";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import DeleteConfirmation from "./DeleteConfirmation";
+import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
+import { readEvalTaskListPage } from "./task_list_read";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -313,7 +315,7 @@ const TaskListView = ({
     ? endpoints.project.getEvalTaskList
     : endpoints.project.getEvalTasksWithProjectName;
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: [
       "eval-tasks",
       observeId,
@@ -323,7 +325,7 @@ const TaskListView = ({
       sorting,
       refreshKey,
     ],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const params = {
         page_number: page,
         page_size: pageSize,
@@ -349,8 +351,15 @@ const TaskListView = ({
         { column_id: sortField, direction: sortDir },
       ]);
 
-      const { data: resp } = await axios.get(apiEndpoint(), { params });
-      return resp?.result;
+      return readEvalTaskListPage(
+        ({ signal: requestSignal, timeout }) =>
+          axios.get(apiEndpoint(), {
+            params,
+            signal: requestSignal,
+            timeout,
+          }),
+        signal,
+      );
     },
     keepPreviousData: true,
     structuralSharing: false,
@@ -694,6 +703,25 @@ const TaskListView = ({
       </Box>
 
       {/* Table */}
+      {isError && (
+        <Box
+          role="alert"
+          sx={{
+            px: 1.5,
+            py: 0.75,
+            color: "warning.main",
+            bgcolor: "warning.lighter",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          {QUERY_FAILED_RETRY_MESSAGE}
+          <Button size="small" onClick={() => refetch()}>
+            Retry
+          </Button>
+        </Box>
+      )}
       <DataTable
         columns={columns}
         data={items}
@@ -706,7 +734,7 @@ const TaskListView = ({
         onRowClick={(row) => onRowClick?.(row)}
         getRowId={(row) => row.id}
         enableSelection
-        emptyMessage="No tasks found"
+        emptyMessage={isError ? QUERY_FAILED_RETRY_MESSAGE : "No tasks found"}
       />
 
       {/* Pagination */}

@@ -92,6 +92,13 @@ const NewTaskFilterRow = ({
             label="Property"
             showClear={false}
             fullWidth={!compact ? false : Boolean(property !== "")}
+            onChange={(event) =>
+              updateFilter({
+                property: event.target.value,
+                propertyId: "",
+                registryId: undefined,
+              })
+            }
           />
           <ShowComponent condition={property === "observation_type"}>
             <Typography
@@ -166,6 +173,21 @@ const NewTaskFilterRow = ({
               showClear={false}
               placeholder="Select Attribute"
               onSearchChange={onAttributeSearchChange}
+              onChange={(event) => {
+                const nativePropertyId = event.target.value;
+                const selected = (attributes || []).find(
+                  (option) => option.value === nativePropertyId,
+                );
+                updateFilter({
+                  propertyId: nativePropertyId,
+                  registryId:
+                    selected?.registryId ||
+                    selected?.property_id ||
+                    (nativePropertyId
+                      ? `custom_attribute:${nativePropertyId}`
+                      : undefined),
+                });
+              }}
             />
             {/* </Box> */}
             {propertyId && (

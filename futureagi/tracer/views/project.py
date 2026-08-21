@@ -1,4 +1,5 @@
 from datetime import timedelta
+from functools import wraps
 
 import structlog
 from django.db import models
@@ -43,6 +44,13 @@ from tracer.serializers.project import (
     ProjectUserMetricsRequestSerializer,
     ProjectUsersAggregateGraphDataRequestSerializer,
 )
+from tracer.services.clickhouse.graph_action_deadline import (
+    GraphActionUnavailable,
+    finish_graph_action_response,
+    graph_action_postgres_budget,
+    graph_action_remaining_ms,
+    start_graph_action_deadline,
+)
 from tracer.services.clickhouse.graph_dispatch import (
     enforce_exact_graph_data_contract,
     fetch_annotation_graph_ch,
@@ -81,6 +89,7 @@ from tracer.utils.graphs_optimized import (
     get_all_system_metrics,
 )
 from tracer.utils.helper import get_default_project_version_config, get_sort_query
+from tracer.utils.property_registry import validate_property_graph_namespace
 
 logger = structlog.get_logger(__name__)
 
@@ -109,10 +118,9 @@ _PROJECT_ACTIVITY_READ_SETTINGS = {
 
 # The legacy per-user metrics panel is still a production Observe read even
 # though the project-level user graph has moved to exact snapshots. Keep this
-# one statement under the same public contract: source-row volume is not an
+# one statement under the shared graph-action wall: source-row volume is not an
 # error condition, while bytes, memory, result size, threads, and wall time are
 # finite and fail closed.
-_PROJECT_USER_GRAPH_TIMEOUT_MS = 9_500
 _PROJECT_USER_GRAPH_READ_SETTINGS = {
     "max_threads": 1,
     "max_block_size": 8_192,
@@ -125,6 +133,40 @@ _PROJECT_USER_GRAPH_READ_SETTINGS = {
     "result_overflow_mode": "throw",
     "timeout_overflow_mode": "throw",
 }
+
+
+def _bounded_project_user_action(*, log_event: str, unavailable_message: str):
+    """Start a project user-action wall before runtime request validation."""
+
+    def decorate(view_method):
+        @wraps(view_method)
+        def wrapped(view, request, *args, **kwargs):
+            deadline = start_graph_action_deadline()
+            kwargs.pop("_graph_action_deadline", None)
+            try:
+                response = view_method(
+                    view,
+                    request,
+                    *args,
+                    _graph_action_deadline=deadline,
+                    **kwargs,
+                )
+                return finish_graph_action_response(deadline, response)
+            except GraphActionUnavailable:
+                logger.warning(log_event)
+                return view._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    unavailable_message,
+                    code="service_unavailable",
+                )
+
+        # Keep one-level ``.__wrapped__`` and ``inspect.unwrap`` callers on the
+        # original action. Runtime calls still execute ``view_method`` above,
+        # including its request-validation wrapper and copied DRF metadata.
+        wrapped.__wrapped__ = getattr(view_method, "__wrapped__", view_method)
+        return wrapped
+
+    return decorate
 
 
 class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
@@ -861,9 +903,23 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 code="server_error",
             )
 
+    @_bounded_project_user_action(
+        log_event="project_user_metrics_action_deadline_exceeded",
+        unavailable_message="User metrics are temporarily unavailable. Please retry.",
+    )
     @validated_request(request_serializer=ProjectUserMetricsRequestSerializer)
     @action(detail=False, methods=["post"])
     def get_user_metrics(self, request, *args, **kwargs):
+        deadline = kwargs.pop("_graph_action_deadline", None)
+        deadline_injected = deadline is not None
+        if deadline is None:
+            deadline = start_graph_action_deadline()
+
+        def finish(response):
+            if deadline_injected:
+                return response
+            return finish_graph_action_response(deadline, response)
+
         try:
             body = request.validated_data
             end_user_id = str(body["end_user_id"])
@@ -873,21 +929,23 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 body["filters"],
             )
 
-            project = self._get_project_in_scope(project_id)
+            with graph_action_postgres_budget(deadline):
+                project = self._get_project_in_scope(project_id)
             if not project:
-                return self._gm.bad_request("Project not found.")
+                return finish(self._gm.bad_request("Project not found."))
 
             _org = get_request_organization(request) or request.user.organization
             _org_id = str(_org.id)
             analytics = V2AnalyticsQueryService()
             if not analytics.supports_per_query_read_settings:
                 logger.warning("project_user_metrics_requires_enforced_read_limits")
-                return self._gm.custom_error_response(
-                    status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "User metrics are temporarily unavailable. Please retry.",
-                    code="service_unavailable",
+                return finish(
+                    self._gm.custom_error_response(
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "User metrics are temporarily unavailable. Please retry.",
+                        code="service_unavailable",
+                    )
                 )
-            deadline = ReadDeadline.start(_PROJECT_USER_GRAPH_TIMEOUT_MS)
             builder = UserListQueryBuilderV2(
                 organization_id=_org_id,
                 workspace_id=str(request.workspace.id),
@@ -902,7 +960,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             result = analytics.execute_ch_query(
                 query,
                 params,
-                timeout_ms=deadline.remaining_ms(),
+                timeout_ms=graph_action_remaining_ms(deadline),
                 settings=_PROJECT_USER_GRAPH_READ_SETTINGS,
             )
             output = []
@@ -927,7 +985,16 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     }
                 )
 
-            return self._gm.success_response(output)
+            return finish(self._gm.success_response(output))
+        except GraphActionUnavailable:
+            if deadline_injected:
+                raise
+            logger.warning("project_user_metrics_action_deadline_exceeded")
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "User metrics are temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
         except Exception as exc:
             if is_clickhouse_api_read_unavailable_error(exc):
                 logger.warning(
@@ -947,6 +1014,10 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 "User metrics could not be loaded"
             )
 
+    @_bounded_project_user_action(
+        log_event="project_users_graph_action_deadline_exceeded",
+        unavailable_message="User graph data is temporarily unavailable. Please retry.",
+    )
     @validated_request(
         query_serializer=ObserveGraphDataQuerySerializer,
         request_serializer=ProjectUsersAggregateGraphDataRequestSerializer,
@@ -965,6 +1036,16 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         Supports SYSTEM_METRIC, EVAL, and ANNOTATION types.
         All metrics are aggregated at the user level.
         """
+        deadline = kwargs.pop("_graph_action_deadline", None)
+        deadline_injected = deadline is not None
+        if deadline is None:
+            deadline = start_graph_action_deadline()
+
+        def finish(response):
+            if deadline_injected:
+                return response
+            return finish_graph_action_response(deadline, response)
+
         try:
             body = request.validated_data
             allow_sampled = request.validated_query_data["allow_sampled"]
@@ -976,25 +1057,39 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             )
             interval = body["interval"]
             req_data_config = body["req_data_config"]
+            try:
+                validate_property_graph_namespace(
+                    req_data_config.get("property_id"),
+                    expected_definition_source="users",
+                )
+            except ValueError:
+                return finish(
+                    self._gm.bad_request(
+                        "property_id is not valid for this graph endpoint"
+                    )
+                )
             metric_type = req_data_config.get("type", "SYSTEM_METRIC")
             metric_id = req_data_config.get("id", "active_users")
 
-            project = self._get_project_in_scope(project_id)
+            with graph_action_postgres_budget(deadline):
+                project = self._get_project_in_scope(project_id)
             if not project:
-                return self._gm.bad_request("Project not found.")
+                return finish(self._gm.bad_request("Project not found."))
             workspace_id = getattr(getattr(request, "workspace", None), "id", None)
 
-            if (
-                metric_type == "EVAL"
-                and not CustomEvalConfig.objects.filter(
-                    id=metric_id,
-                    project_id=project_id,
-                    deleted=False,
-                ).exists()
-            ):
-                return self._gm.bad_request(
-                    "Evaluation config is not available for this project."
-                )
+            if metric_type == "EVAL":
+                with graph_action_postgres_budget(deadline):
+                    eval_config_available = CustomEvalConfig.objects.filter(
+                        id=metric_id,
+                        project_id=project_id,
+                        deleted=False,
+                    ).exists()
+                if not eval_config_available:
+                    return finish(
+                        self._gm.bad_request(
+                            "Evaluation config is not available for this project."
+                        )
+                    )
 
             analytics = V2AnalyticsQueryService()
 
@@ -1006,6 +1101,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                         filters=filters,
                         interval=interval,
                         metric_id=metric_id,
+                        timeout_ms=graph_action_remaining_ms(deadline),
                         refresh=refresh,
                         organization_id=str(project.organization_id),
                         workspace_id=str(workspace_id) if workspace_id else None,
@@ -1015,12 +1111,14 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                         graph_data,
                         allow_sampled=allow_sampled,
                     ):
-                        return self._gm.custom_error_response(
-                            status.HTTP_503_SERVICE_UNAVAILABLE,
-                            "User graph data is temporarily unavailable. Please retry.",
-                            code="service_unavailable",
+                        return finish(
+                            self._gm.custom_error_response(
+                                status.HTTP_503_SERVICE_UNAVAILABLE,
+                                "User graph data is temporarily unavailable. Please retry.",
+                                code="service_unavailable",
+                            )
                         )
-                    return self._gm.success_response(graph_data)
+                    return finish(self._gm.success_response(graph_data))
                 except Exception as e:
                     logger.warning("CH user time-series failed", error=str(e))
                     raise
@@ -1046,6 +1144,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                             filters=user_filters,
                             interval=interval,
                             req_data_config=req_data_config,
+                            timeout_ms=graph_action_remaining_ms(deadline),
                             refresh=refresh,
                             aggregation_context="user",
                             organization_id=str(project.organization_id),
@@ -1067,6 +1166,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                             interval=interval,
                             req_data_config=req_data_config,
                             observe_type="trace",
+                            timeout_ms=graph_action_remaining_ms(deadline),
                             refresh=refresh,
                             aggregation_context="user",
                             organization_id=str(project.organization_id),
@@ -1084,15 +1184,28 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     graph_data,
                     allow_sampled=allow_sampled,
                 ):
-                    return self._gm.custom_error_response(
-                        status.HTTP_503_SERVICE_UNAVAILABLE,
-                        "User graph data is temporarily unavailable. Please retry.",
-                        code="service_unavailable",
+                    return finish(
+                        self._gm.custom_error_response(
+                            status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "User graph data is temporarily unavailable. Please retry.",
+                            code="service_unavailable",
+                        )
                     )
-                return self._gm.success_response(graph_data)
+                return finish(self._gm.success_response(graph_data))
 
             # Fallback: empty
-            return self._gm.success_response({"metric_name": metric_id, "data": []})
+            return finish(
+                self._gm.success_response({"metric_name": metric_id, "data": []})
+            )
+        except GraphActionUnavailable:
+            if deadline_injected:
+                raise
+            logger.warning("project_users_graph_action_deadline_exceeded")
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "User graph data is temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
         except Exception as exc:
             if is_clickhouse_api_read_unavailable_error(exc):
                 logger.warning(
@@ -1112,6 +1225,10 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 "User graph data could not be loaded"
             )
 
+    @_bounded_project_user_action(
+        log_event="project_user_graph_action_deadline_exceeded",
+        unavailable_message="User graph data is temporarily unavailable. Please retry.",
+    )
     @validated_request(
         query_serializer=ProjectUserGraphDataQuerySerializer,
         request_serializer=ProjectUserGraphDataRequestSerializer,
@@ -1124,13 +1241,25 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     )
     @action(detail=False, methods=["post"])
     def get_user_graph_data(self, request, *args, **kwargs):
+        deadline = kwargs.pop("_graph_action_deadline", None)
+        deadline_injected = deadline is not None
+        if deadline is None:
+            deadline = start_graph_action_deadline()
+
+        def finish(response):
+            if deadline_injected:
+                return response
+            return finish_graph_action_response(deadline, response)
+
         try:
             query_params = request.validated_query_data
             body = request.validated_data
             project_id = str(query_params["project_id"])
             end_user_id = str(query_params["end_user_id"])
-            if not self._get_project_in_scope(project_id):
-                return self._gm.bad_request("Project not found.")
+            with graph_action_postgres_budget(deadline):
+                project = self._get_project_in_scope(project_id)
+            if not project:
+                return finish(self._gm.bad_request("Project not found."))
 
             try:
                 interval = body["interval"]
@@ -1141,12 +1270,13 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 analytics = V2AnalyticsQueryService()
                 if not analytics.supports_per_query_read_settings:
                     logger.warning("project_user_graph_requires_enforced_read_limits")
-                    return self._gm.custom_error_response(
-                        status.HTTP_503_SERVICE_UNAVAILABLE,
-                        "User graph data is temporarily unavailable. Please retry.",
-                        code="service_unavailable",
+                    return finish(
+                        self._gm.custom_error_response(
+                            status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "User graph data is temporarily unavailable. Please retry.",
+                            code="service_unavailable",
+                        )
                     )
-                deadline = ReadDeadline.start(_PROJECT_USER_GRAPH_TIMEOUT_MS)
                 _org = get_request_organization(request) or request.user.organization
                 builder = UserDetailTimeSeriesQueryBuilderV2(
                     project_id=project_id,
@@ -1162,7 +1292,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 result = analytics.execute_ch_query(
                     query,
                     params,
-                    timeout_ms=deadline.remaining_ms(),
+                    timeout_ms=graph_action_remaining_ms(deadline),
                     settings=_PROJECT_USER_GRAPH_READ_SETTINGS,
                 )
                 rows = result.data or []
@@ -1184,17 +1314,21 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                         value_keys=[output_key],
                     )
 
-                return self._gm.success_response(
-                    {
-                        "session": _series("session_count", "session"),
-                        "trace": _series("trace_count", "trace"),
-                        "cost": _series("cost", "cost"),
-                        "input_tokens": _series("input_tokens", "input_tokens"),
-                        "output_tokens": _series("output_tokens", "output_tokens"),
-                    }
+                return finish(
+                    self._gm.success_response(
+                        {
+                            "session": _series("session_count", "session"),
+                            "trace": _series("trace_count", "trace"),
+                            "cost": _series("cost", "cost"),
+                            "input_tokens": _series("input_tokens", "input_tokens"),
+                            "output_tokens": _series("output_tokens", "output_tokens"),
+                        }
+                    )
                 )
             except Project.DoesNotExist:
                 return self._gm.bad_request("Project not found.")
+            except GraphActionUnavailable:
+                raise
             except Exception as exc:
                 if is_clickhouse_api_read_unavailable_error(exc):
                     logger.warning(
@@ -1213,6 +1347,15 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 return self._gm.internal_server_error_response(
                     "User graph data could not be loaded"
                 )
+        except GraphActionUnavailable:
+            if deadline_injected:
+                raise
+            logger.warning("project_user_graph_action_deadline_exceeded")
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "User graph data is temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
         except Exception as exc:
             logger.exception(
                 "project_user_graph_request_failed",

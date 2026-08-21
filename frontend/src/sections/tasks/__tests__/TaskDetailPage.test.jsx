@@ -123,11 +123,14 @@ describe("TaskDetailPage", () => {
     useGetTaskData.mockReset();
   });
 
-  it("shows a not-found state instead of an endless spinner when the task API fails", () => {
+  it("shows a retryable failure instead of an endless spinner when the task API fails", () => {
+    const refetch = vi.fn();
     useGetTaskData.mockReturnValue({
       data: undefined,
       isLoading: false,
       isError: true,
+      isFetching: false,
+      refetch,
       error: {
         statusCode: 404,
         result: "Eval task not found",
@@ -141,6 +144,30 @@ describe("TaskDetailPage", () => {
     expect(
       screen.getByRole("button", { name: /Back to Tasks/i }),
     ).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: /^retry$/i }));
+    expect(refetch).toHaveBeenCalledOnce();
+  });
+
+  it("keeps prior task truth visible when a refresh fails and offers retry", () => {
+    const refetch = vi.fn();
+    useGetTaskData.mockReturnValue({
+      data: loadedTask(),
+      isLoading: false,
+      isFetching: false,
+      isError: true,
+      error: new Error("refresh failed"),
+      refetch,
+    });
+
+    renderTaskDetail("task-1");
+
+    expect(screen.getByText("task header")).toBeInTheDocument();
+    expect(screen.getByText("panels")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Existing task details are still shown/i),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^retry$/i }));
+    expect(refetch).toHaveBeenCalledOnce();
   });
 
   it("uses the detail PATCH route for inline rename without requiring edit_type", async () => {

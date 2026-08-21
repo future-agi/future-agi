@@ -563,8 +563,8 @@ def resolve_session_fields(
                         if not already_in_atomic_block:
                             cursor.execute("SET TRANSACTION READ ONLY")
                         cursor.execute(
-                            "SET LOCAL statement_timeout = %s",
-                            [f"{timeout_ms}ms"],
+                            "SELECT set_config('statement_timeout', %s, true)",
+                            [str(timeout_ms)],
                         )
                     overlay_rows = list(overlay_queryset)
             else:

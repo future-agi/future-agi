@@ -3,10 +3,15 @@ import {
   CREATED_AT,
   buildDefaultDateEntry,
   combineGraphFilters,
+  resolveAgentGraphProjectScopes,
   selectPanelGraphFilters,
   singleProjectIdFromFilters,
 } from "../graphFilterUtils";
-import { FILTER_FOR_HAS_EVAL } from "../../common";
+import {
+  FILTER_FOR_ERRORS,
+  FILTER_FOR_HAS_EVAL,
+  FILTER_FOR_NON_ANNOTATED,
+} from "../../common";
 
 const dateFilter = {
   dateFilter: ["2026-07-01T00:00:00.000Z", "2026-07-08T00:00:00.000Z"],
@@ -107,6 +112,48 @@ describe("combineGraphFilters", () => {
     });
     expect(result).toEqual([FILTER_FOR_HAS_EVAL]);
   });
+
+  it.each([
+    [false, false, []],
+    [true, false, ["status"]],
+    [false, true, ["has_annotation"]],
+    [true, true, ["status", "has_annotation"]],
+  ])(
+    "keeps Display filters aligned for errors=%s nonAnnotated=%s",
+    (errors, nonAnnotated, expectedColumns) => {
+      const metricFilters = [
+        ...(errors ? [FILTER_FOR_ERRORS] : []),
+        ...(nonAnnotated ? [FILTER_FOR_NON_ANNOTATED] : []),
+      ];
+      const result = combineGraphFilters({
+        filters: [],
+        extraFilters: [],
+        metricFilters,
+        dateFilter: undefined,
+        hasEvalFilter: false,
+      });
+
+      expect(result.map((filter) => filter.column_id)).toEqual(expectedColumns);
+    },
+  );
+
+  it("composes Basic, Display, eval-only, and date filters once", () => {
+    const result = combineGraphFilters({
+      filters: [],
+      extraFilters: [metricFilter],
+      metricFilters: [FILTER_FOR_ERRORS, FILTER_FOR_NON_ANNOTATED],
+      dateFilter,
+      hasEvalFilter: true,
+    });
+
+    expect(result.map((filter) => filter.column_id)).toEqual([
+      "latency",
+      "status",
+      "has_annotation",
+      "has_eval",
+      CREATED_AT,
+    ]);
+  });
 });
 
 describe("buildDefaultDateEntry", () => {
@@ -178,5 +225,41 @@ describe("singleProjectIdFromFilters", () => {
       filter_config: { filter_op: "in", filter_value: ["project-1"] },
     };
     expect(singleProjectIdFromFilters([filter, filter])).toBeNull();
+  });
+});
+
+describe("resolveAgentGraphProjectScopes", () => {
+  const projectFilter = (projectId) => ({
+    column_id: "project_id",
+    filter_config: {
+      filter_op: "equals",
+      filter_value: projectId,
+    },
+  });
+
+  it("uses the route project for both panes on a project Observe page", () => {
+    expect(
+      resolveAgentGraphProjectScopes({
+        routeProjectId: "route-project",
+        primaryFilters: [projectFilter("ignored-primary")],
+        compareFilters: [projectFilter("ignored-compare")],
+      }),
+    ).toEqual({
+      primaryProjectId: "route-project",
+      compareProjectId: "route-project",
+    });
+  });
+
+  it("keeps primary and compare project filters independent in user detail", () => {
+    expect(
+      resolveAgentGraphProjectScopes({
+        routeProjectId: null,
+        primaryFilters: [projectFilter("primary-project")],
+        compareFilters: [projectFilter("compare-project")],
+      }),
+    ).toEqual({
+      primaryProjectId: "primary-project",
+      compareProjectId: "compare-project",
+    });
   });
 });

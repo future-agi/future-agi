@@ -271,7 +271,12 @@ def _is_identifier(token: _SqlToken) -> bool:
     return bool(_DATABASE_RE.fullmatch(token.text))
 
 
-def _validate_catalog_query(query: str, *, database: str) -> None:
+def _validate_catalog_query(
+    query: str,
+    *,
+    database: str,
+    allowed_tables: frozenset[str] = _CATALOG_TABLES,
+) -> None:
     if not isinstance(query, str):
         raise TypeError("catalog query must be SQL text")
     ensure_read_statement(query)
@@ -304,7 +309,7 @@ def _validate_catalog_query(query: str, *, database: str) -> None:
                 raise RuntimeError("catalog query contains an invalid table source")
             table = tokens[end + 1].text
             end += 2
-            if first != database or table not in _CATALOG_TABLES:
+            if first != database or table not in allowed_tables:
                 raise RuntimeError("catalog query may read only catalog tables")
             physical_tables += 1
         elif first not in cte_names:

@@ -261,6 +261,94 @@ def test_final_status_v2_seed_respects_trace_any_span_scope(
     assert "Rejected" not in sql
 
 
+def test_typed_value_metadata_keeps_public_span_seed_indexed() -> None:
+    attribute = _attribute_filter(
+        filter_op="in",
+        filter_value=["Rejected"],
+    )
+    attribute["filter_config"]["attribute_value_types"] = ["string"]
+    builder = SpanListQueryBuilderV2(
+        project_id=PROJECT_ID,
+        filters=[_time_filter(), attribute],
+    )
+
+    sql, params = builder.build_filter_seed_page(
+        slice_start=START,
+        slice_end=END,
+        limit=200,
+    )
+
+    assert "indexHint(has(mapKeys(attrs_string)" in sql
+    assert "has(attrs_string.keys, %(latest_filter_key_0)s)" in sql
+    assert "mapContains(attrs_string, %(latest_filter_key_0)s)" in sql
+    assert "lowerUTF8(toString(attrs_string[%(latest_filter_key_0)s])) IN" in sql
+    assert "WHERE 1 = 1" not in sql
+    assert params["latest_filter_key_0"] == "final_status"
+    assert params["latest_filter_param_0_string"] == ("rejected",)
+
+
+def test_indexed_attribute_seed_conjoins_positive_model_witness() -> None:
+    attribute = _attribute_filter(
+        filter_op="in",
+        filter_value=["Rejected"],
+    )
+    attribute["filter_config"]["attribute_value_types"] = ["string"]
+    model = {
+        "column_id": "model",
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "text",
+            "filter_op": "in",
+            "filter_value": ["gpt-4o-mini"],
+        },
+    }
+    builder = SpanListQueryBuilderV2(
+        project_id=PROJECT_ID,
+        filters=[_time_filter(), attribute, model],
+    )
+
+    sql, params = builder.build_filter_seed_page(
+        slice_start=START,
+        slice_end=END,
+        limit=200,
+    )
+
+    assert "indexHint(has(mapKeys(attrs_string)" in sql
+    assert "lowerUTF8(toString(model)) IN %(latest_filter_param_1)s" in sql
+    assert params["latest_filter_param_1"] == ("gpt-4o-mini",)
+
+
+def test_indexed_attribute_seed_does_not_apply_negative_model_witness() -> None:
+    attribute = _attribute_filter(
+        filter_op="in",
+        filter_value=["Rejected"],
+    )
+    attribute["filter_config"]["attribute_value_types"] = ["string"]
+    model = {
+        "column_id": "model",
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "text",
+            "filter_op": "not_in",
+            "filter_value": ["gpt-4o-mini"],
+        },
+    }
+    builder = SpanListQueryBuilderV2(
+        project_id=PROJECT_ID,
+        filters=[_time_filter(), attribute, model],
+    )
+
+    sql, params = builder.build_filter_seed_page(
+        slice_start=START,
+        slice_end=END,
+        limit=200,
+    )
+
+    assert "indexHint(has(mapKeys(attrs_string)" in sql
+    assert "latest_filter_param_1" not in params
+    assert "lowerUTF8(toString(model)) NOT IN" not in sql
+
+
 def test_final_status_v2_match_classifies_latest_typed_map_state_only() -> None:
     builder = TraceListQueryBuilderV2(
         project_id=PROJECT_ID,

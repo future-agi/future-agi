@@ -42,6 +42,9 @@ export const makeDatasetDefaultFilter = () => ({
 export const datasetFilterToCamel = (filter) => ({
   id: filter.id,
   columnId: filter.column_id || "",
+  ...((filter.property_id || filter.registryId) && {
+    registryId: filter.property_id || filter.registryId,
+  }),
   filterConfig: {
     filterType: filter.filter_config?.filter_type || "",
     filterOp: filter.filter_config?.filter_op || "",
@@ -52,6 +55,9 @@ export const datasetFilterToCamel = (filter) => ({
 export const datasetFilterToSnake = (filter) => ({
   id: filter.id,
   column_id: filter.columnId || "",
+  ...((filter.registryId || filter.propertyId) && {
+    property_id: filter.registryId || filter.propertyId,
+  }),
   filter_config: {
     filter_type: filter.filterConfig?.filterType || "",
     filter_op: filter.filterConfig?.filterOp || "",
@@ -94,6 +100,7 @@ export const transformDatasetFilter = (filter) => {
   const config = filter.filter_config || {};
   return buildApiFilterFromPanelRow({
     field: filter.column_id,
+    registryId: filter.property_id || filter.registryId,
     fieldType: config.filter_type,
     operator: config.filter_op,
     value:
@@ -170,6 +177,7 @@ function snakeFilterToUi(filter) {
   return {
     id: getRandomId(),
     column_id: filter?.column_id || "",
+    ...(filter?.property_id && { property_id: filter.property_id }),
     display_name: filter?.display_name,
     filter_config: {
       filter_type: filterType,

@@ -13,7 +13,11 @@ vi.mock("src/utils/axios", () => ({
   },
 }));
 
-import { useTaskUsageChart, useTaskUsageLogs } from "../useTaskUsage";
+import {
+  TASK_USAGE_REQUEST_TIMEOUT_MS,
+  useTaskUsageChart,
+  useTaskUsageLogs,
+} from "../useTaskUsage";
 
 function createQueryWrapper() {
   const queryClient = new QueryClient({
@@ -39,7 +43,7 @@ describe("task usage bounded query params", () => {
           stats: {},
           chart: [],
           evals: [],
-          logs: { count: 0, results: [] },
+          logs: { count: 0, results: [], has_more: false },
           period_requested: "custom",
           period_used: "custom",
         },
@@ -91,6 +95,15 @@ describe("task usage bounded query params", () => {
         }),
       ]),
     );
+    for (const [, options] of mocks.get.mock.calls) {
+      expect(options).toEqual(
+        expect.objectContaining({
+          signal: expect.any(AbortSignal),
+          timeout: TASK_USAGE_REQUEST_TIMEOUT_MS,
+        }),
+      );
+    }
+    expect(TASK_USAGE_REQUEST_TIMEOUT_MS).toBeLessThan(9_800);
   });
 
   it("makes a same-day Custom selection one complete local calendar day", async () => {
@@ -127,5 +140,19 @@ describe("task usage bounded query params", () => {
     });
     expect(mocks.get.mock.calls[0][1].params).not.toHaveProperty("start_date");
     expect(mocks.get.mock.calls[0][1].params).not.toHaveProperty("end_date");
+  });
+
+  it("fails malformed usage responses instead of publishing zero data", async () => {
+    mocks.get.mockResolvedValueOnce({ data: { result: {} } });
+    const wrapper = createQueryWrapper();
+    const { result } = renderHook(() => useTaskUsageChart("task-1"), {
+      wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.data).toBeUndefined();
+    expect(result.current.error).toMatchObject({
+      code: "task_usage_invalid_response",
+    });
   });
 });

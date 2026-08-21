@@ -20,29 +20,16 @@ the existing ``ObservabilityService.process_raw_logs()``.
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from django.conf import settings
+
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryBuilder
+from tracer.services.simulator_phones import SIMULATOR_PHONE_NUMBERS
 
-# Hardcoded simulator phone numbers (must match FilterEngine)
-VAPI_PHONE_NUMBERS = [
-    "+18568806998",
-    "+17755715840",
-    "+13463424590",
-    "+12175683677",
-    "+12175696753",
-    "+12175683493",
-    "+12175681887",
-    "+12176018447",
-    "+12176018280",
-    "+12175696862",
-    "+19168660414",
-    "+19163473349",
-    "+18563161617",
-    "+13463619738",
-    "+19847339395",
-]
+# Backward-compatible public name used by existing callers and tests.
+VAPI_PHONE_NUMBERS = SIMULATOR_PHONE_NUMBERS
 
 
 def _unix_microseconds(value: datetime) -> int:
@@ -105,7 +92,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         self,
         project_id: str,
         page_number: int = 0,
-        page_size: int = 10,
+        page_size: int = settings.VOICE_LIST_DEFAULT_PAGE_SIZE,
         filters: list[dict] | None = None,
         eval_config_ids: list[str] | None = None,
         remove_simulation_calls: bool = False,
@@ -281,6 +268,54 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
 
         return self.recommended_filter_initial_slice_width()
 
+    def allow_filter_anchor_probe_for_initial_continuation(self) -> bool:
+        """Let fresh cursor pages use the trace selector's sparse proof."""
+
+        return self._bounded_delegate().allow_filter_anchor_probe_for_initial_continuation()
+
+    def supports_filter_anchor_probe(self) -> bool:
+        """Expose only complete-population trace witnesses to voice pages.
+
+        Voice pages delegate membership to ``TraceListQueryBuilder`` but used
+        to omit its anchor capability hooks.  A long-range ``status=ERROR``
+        request therefore walked the complete window in resumable time slices
+        even when the indexed global error witness was empty.  Forwarding the
+        global error witness lets that safe population proof terminate the
+        voice page.  Ordinary temporal attribute anchors are only positive
+        accelerators and cannot prove voice result order; running one before
+        the canonical root seed adds a redundant ClickHouse scan before the
+        normal finite classifier enforces the conversation-root invariant.
+        """
+
+        delegate = self._bounded_delegate()
+        return bool(
+            delegate.supports_filter_anchor_probe()
+            and delegate.filter_anchor_probe_proves_complete_population()
+        )
+
+    def filter_anchor_probe_proves_complete_population(self) -> bool:
+        return self._bounded_delegate().filter_anchor_probe_proves_complete_population()
+
+    def skip_full_window_filter_anchor_probe(self) -> bool:
+        return self._bounded_delegate().skip_full_window_filter_anchor_probe()
+
+    def recommended_filter_anchor_probe_limit(self) -> int | None:
+        return self._bounded_delegate().recommended_filter_anchor_probe_limit()
+
+    def recommended_filter_anchor_probe_timeout_ms(self) -> int | None:
+        return self._bounded_delegate().recommended_filter_anchor_probe_timeout_ms()
+
+    def recommended_filter_anchor_probe_strata(self) -> int | None:
+        return self._bounded_delegate().recommended_filter_anchor_probe_strata()
+
+    def recommended_filter_anchor_probe_max_bytes_to_read(self) -> int | None:
+        return (
+            self._bounded_delegate().recommended_filter_anchor_probe_max_bytes_to_read()
+        )
+
+    def build_filter_anchor_probe(self, **kwargs: Any) -> tuple[str, dict[str, Any]]:
+        return self._bounded_delegate().build_filter_anchor_probe(**kwargs)
+
     def bounded_filter_degraded_error_code(self) -> str | None:
         return self._bounded_delegate().bounded_filter_degraded_error_code()
 
@@ -292,11 +327,43 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
 
         return self._bounded_delegate().recommended_filter_seed_batch_size()
 
+    def recommended_filter_cursor_seed_batch_size(self) -> int:
+        """Amortize sparse voice cursor scans without widening one classifier.
+
+        A cursor used to force every generic root seed down to ``page_size + 1``.
+        For a 15-row page that meant two ClickHouse statements per 16 roots,
+        even though the identity classifier is explicitly chunked and can
+        safely consume a larger finite seed. Keep structured/JSON filters to
+        four qualified classifier chunks and allow lighter filters eight; the
+        selector still enforces its query, candidate, memory, byte and wall
+        limits and checkpoints only fully classified roots.
+        """
+
+        delegate = self._bounded_delegate()
+        classify_batch_size = int(
+            self.recommended_filter_classify_batch_size()
+            or settings.VOICE_FILTER_CLASSIFY_FALLBACK_BATCH_SIZE
+        )
+        expensive_classifier = bool(
+            delegate._custom_span_attribute_filter_count()
+            or delegate._unindexed_positive_micro_seed_plan() is not None
+        )
+        classifier_chunks = (
+            settings.VOICE_FILTER_EXPENSIVE_CLASSIFIER_CHUNKS
+            if expensive_classifier
+            else settings.VOICE_FILTER_LIGHT_CLASSIFIER_CHUNKS
+        )
+        requested = max(
+            self.page_size + 1,
+            classify_batch_size * classifier_chunks,
+        )
+        return min(self.recommended_filter_seed_batch_size(), requested)
+
     def recommended_filter_query_timeout_ms(self) -> int | None:
         """Share the public endpoint's 9.5-second wall across required reads."""
 
         if not self._bounded_internal_scan and not self._bounded_identity_only:
-            return 9_500
+            return settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
         return None
 
     def recommended_filter_classify_batch_size(self) -> int | None:
@@ -484,7 +551,25 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         return bool(
             not self._bounded_internal_scan
             and not self._bounded_identity_only
-            and self.page_size <= 512
+            and self.page_size <= settings.VOICE_FILTER_PUBLIC_MAX_PAGE_SIZE
+        )
+
+    def fill_bounded_cursor_page_across_slices(self) -> bool:
+        """Fill one public voice page before returning a cursor checkpoint.
+
+        Voice roots can be sparse across adjacent time slices. Publishing each
+        fully classified slice separately is exact, but makes the browser pay
+        one HTTP round trip for every handful of calls. Public interactive
+        reads may retain those classified roots and continue within the
+        selector's existing query, memory, and wall-clock limits. Historical,
+        sampled, and internal scans retain the smaller chunk contract.
+        """
+
+        return bool(
+            not self._bounded_internal_scan
+            and not self._bounded_identity_only
+            and self._bounded_sampling_rate is None
+            and self.page_size <= settings.VOICE_FILTER_PUBLIC_MAX_PAGE_SIZE
         )
 
     @staticmethod
@@ -838,7 +923,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         )
         if root_identities is not None and len(identities) != len(root_identities):
             raise ValueError("voice root identities are incomplete")
-        if len(identities) > 200:
+        if len(identities) > settings.VOICE_CONTENT_MAX_BATCH_SIZE:
             raise ValueError("voice content batch exceeds bounded limit")
 
         params = {**self.params, "content_span_ids": tuple(dict.fromkeys(span_ids))}
@@ -913,7 +998,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         ) AS latest_voice_content
         WHERE latest_is_deleted = 0
         ORDER BY grouped_start_time DESC, grouped_id DESC
-        LIMIT 200
+        LIMIT {settings.VOICE_CONTENT_MAX_BATCH_SIZE}
         """
         return query, params
 

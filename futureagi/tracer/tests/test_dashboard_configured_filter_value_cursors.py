@@ -7,8 +7,8 @@ import pytest
 from model_hub.models.score import Score
 from tracer.services.annotation_label_source import AnnotationLabelScoresProjectPG
 from tracer.services.clickhouse.list_cursor import ListCursorError
+from tracer.services.configured_value_options import configured_value_options
 from tracer.views.dashboard import (
-    _append_configured_filter_value_option,
     _filter_value_options_for_search,
     _finite_filter_value_cursor_page,
 )
@@ -95,11 +95,7 @@ def test_configured_json_values_are_preserved_deduped_and_searchable():
         {"value": False, "label": "Duplicate disabled"},
         {"value": 0, "label": "Duplicate zero"},
     ]
-    values = []
-    seen = set()
-
-    for choice in choices:
-        _append_configured_filter_value_option(values, seen, choice)
+    values = list(configured_value_options(choices))
 
     assert values == [
         {"value": False, "label": "Disabled"},
@@ -341,17 +337,23 @@ def test_annotation_choice_label_search_returns_the_stored_value(
         },
     )
 
-    response = auth_client.get(
-        FILTER_VALUES_URL,
-        {
-            "source": "traces",
-            "metric_type": "annotation_metric",
-            "metric_name": str(label.id),
-            "project_ids": str(project.id),
-            "page_size": 10,
-            "search": "rEfUnD rEqUeStEd",
-        },
-    )
+    with patch.object(
+        AnnotationLabelScoresProjectPG,
+        "categorical_values_for_label",
+        side_effect=AssertionError("configured values must not scan Score history"),
+        create=True,
+    ):
+        response = auth_client.get(
+            FILTER_VALUES_URL,
+            {
+                "source": "traces",
+                "metric_type": "annotation_metric",
+                "metric_name": str(label.id),
+                "project_ids": str(project.id),
+                "page_size": 10,
+                "search": "rEfUnD rEqUeStEd",
+            },
+        )
 
     assert response.status_code == 200
     payload = response.json()["result"]
@@ -399,34 +401,40 @@ def test_annotation_configured_choices_preserve_json_values_and_search_them(
         "page_size": 20,
     }
 
-    payload = auth_client.get(FILTER_VALUES_URL, params).json()["result"]
-
-    assert payload["values"] == [
-        {"value": False, "label": "Disabled"},
-        {"value": 0, "label": "Zero code"},
-        {"value": "Null fallback", "label": "Null fallback"},
-        {"value": "Empty fallback", "label": "Empty fallback"},
-        {"value": "Plain string", "label": "Plain string"},
-    ]
-    assert payload["query_complete"] is True
-
-    for search, expected in (
-        ("false", [{"value": False, "label": "Disabled"}]),
-        ("0", [{"value": 0, "label": "Zero code"}]),
-        (
-            "fallback",
-            [
-                {"value": "Null fallback", "label": "Null fallback"},
-                {"value": "Empty fallback", "label": "Empty fallback"},
-            ],
-        ),
-        ("plain", [{"value": "Plain string", "label": "Plain string"}]),
+    with patch.object(
+        AnnotationLabelScoresProjectPG,
+        "categorical_values_for_label",
+        side_effect=AssertionError("configured values must not scan Score history"),
+        create=True,
     ):
-        searched = auth_client.get(
-            FILTER_VALUES_URL,
-            {**params, "search": search},
-        ).json()["result"]
-        assert searched["values"] == expected
+        payload = auth_client.get(FILTER_VALUES_URL, params).json()["result"]
+
+        assert payload["values"] == [
+            {"value": False, "label": "Disabled"},
+            {"value": 0, "label": "Zero code"},
+            {"value": "Null fallback", "label": "Null fallback"},
+            {"value": "Empty fallback", "label": "Empty fallback"},
+            {"value": "Plain string", "label": "Plain string"},
+        ]
+        assert payload["query_complete"] is True
+
+        for search, expected in (
+            ("false", [{"value": False, "label": "Disabled"}]),
+            ("0", [{"value": 0, "label": "Zero code"}]),
+            (
+                "fallback",
+                [
+                    {"value": "Null fallback", "label": "Null fallback"},
+                    {"value": "Empty fallback", "label": "Empty fallback"},
+                ],
+            ),
+            ("plain", [{"value": "Plain string", "label": "Plain string"}]),
+        ):
+            searched = auth_client.get(
+                FILTER_VALUES_URL,
+                {**params, "search": search},
+            ).json()["result"]
+            assert searched["values"] == expected
     assert payload["query_status"] == "complete"
     assert "query_error_code" not in payload
     assert payload["browse_status"] == "exhausted"
@@ -435,7 +443,7 @@ def test_annotation_configured_choices_preserve_json_values_and_search_them(
 
 
 @pytest.mark.django_db
-def test_annotation_stored_categorical_values_are_included_in_exact_cursor_response(
+def test_annotation_configured_values_do_not_scan_score_history(
     auth_client,
     project,
     organization,
@@ -463,7 +471,8 @@ def test_annotation_stored_categorical_values_are_included_in_exact_cursor_respo
     with patch.object(
         AnnotationLabelScoresProjectPG,
         "categorical_values_for_label",
-        return_value=[{"selected": ["Stored only"]}],
+        side_effect=AssertionError("configured values must not scan Score history"),
+        create=True,
     ) as stored_read:
         payload = auth_client.get(
             FILTER_VALUES_URL,
@@ -479,7 +488,6 @@ def test_annotation_stored_categorical_values_are_included_in_exact_cursor_respo
     expected_values = [
         {"value": "Configured", "label": "Configured"},
         {"value": "Configured Other", "label": "Configured Other"},
-        {"value": "Stored only", "label": "Stored only"},
     ]
     assert payload["values"] == expected_values
     assert payload["query_complete"] is True
@@ -488,7 +496,7 @@ def test_annotation_stored_categorical_values_are_included_in_exact_cursor_respo
     assert payload["browse_status"] == "exhausted"
     assert payload["has_more"] is False
     assert payload["next_cursor"] is None
-    stored_read.assert_called_once_with(label.id, [str(project.id)])
+    stored_read.assert_not_called()
 
 
 @pytest.mark.django_db

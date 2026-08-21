@@ -394,6 +394,58 @@ def test_internal_voice_selection_retains_unhydrated_membership_projection():
     )
 
     assert builder.use_identity_only_filter_classification() is False
+    assert builder.fill_bounded_cursor_page_across_slices() is False
+
+
+@pytest.mark.unit
+def test_public_voice_cursor_fills_page_across_adjacent_slices():
+    builder = VoiceCallListQueryBuilder(
+        project_id=PROJECT_ID,
+        page_size=25,
+    )
+
+    assert builder.use_identity_only_filter_classification() is True
+    assert builder.fill_bounded_cursor_page_across_slices() is True
+    assert builder.recommended_filter_cursor_seed_batch_size() == 50
+
+
+@pytest.mark.unit
+def test_sparse_voice_cursor_amortizes_safe_identity_classifier_batches():
+    end = datetime(2026, 8, 8, tzinfo=UTC)
+    model_filter = {
+        "column_id": "model",
+        "filter_config": {
+            "filter_type": "text",
+            "filter_op": "in",
+            "filter_value": ["gpt-4o-mini"],
+            "col_type": "SYSTEM_METRIC",
+        },
+    }
+    light_builder = VoiceCallListQueryBuilder(
+        project_id=PROJECT_ID,
+        page_size=15,
+        filters=[
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": [end - timedelta(days=365), end],
+                },
+            },
+            model_filter,
+        ],
+    )
+    structured_builder = VoiceCallListQueryBuilder(
+        project_id=PROJECT_ID,
+        page_size=15,
+        filters=_voice_multi_filters(end),
+    )
+
+    assert light_builder.recommended_filter_cursor_seed_batch_size() > 16
+    assert light_builder.recommended_filter_cursor_seed_batch_size() <= 512
+    assert structured_builder.recommended_filter_classify_batch_size() == 10
+    assert structured_builder.recommended_filter_cursor_seed_batch_size() == 40
 
 
 @pytest.mark.unit

@@ -1,7 +1,7 @@
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor } from "src/utils/test-utils";
+import { act, fireEvent, render, screen, waitFor } from "src/utils/test-utils";
 import axios from "src/utils/axios";
 import {
   AGGREGATION_POLLING_PAUSED_MESSAGE,
@@ -23,6 +23,23 @@ vi.mock("react-apexcharts", () => ({
 
 vi.mock("src/components/custom-datepicker/DatePicker", () => ({
   default: () => null,
+}));
+
+vi.mock("src/hooks/useDashboards", () => ({
+  PROPERTY_CATALOG_REQUEST_TIMEOUT_MS: 9_000,
+  isPropertyCatalogNotReadyError: (error) =>
+    error?.response?.status === 503 &&
+    error?.response?.data?.code === "property_catalog_not_ready",
+  usePropertyCatalog: () => ({
+    error: {
+      response: {
+        status: 503,
+        data: { code: "property_catalog_not_ready" },
+      },
+    },
+    legacyFallbackRequired: true,
+    metrics: [],
+  }),
 }));
 
 vi.mock("../../common", () => ({
@@ -98,17 +115,73 @@ describe("PrimaryGraph", () => {
     );
 
     await waitFor(() => expect(axios.post).toHaveBeenCalled());
+    expect(axios.get).not.toHaveBeenCalled();
+
+    fireEvent.click(await screen.findByText("Latency"));
+    await waitFor(() => expect(axios.get).toHaveBeenCalled());
 
     expect(axios.get).toHaveBeenCalledWith("/dashboard/metrics/", {
-      params: { exclude_custom_attributes: true },
+      params: {
+        exclude_custom_attributes: true,
+        page: 1,
+        page_size: 200,
+        project_ids: "project-override",
+        per_eval_config: true,
+      },
+      signal: expect.anything(),
+      timeout: 9_000,
     });
 
     expect(axios.post).toHaveBeenCalledWith(
       "/tracer/trace/get_graph_methods/",
       expect.objectContaining({
         project_id: "project-override",
+        req_data_config: expect.objectContaining({
+          id: "latency",
+          type: "SYSTEM_METRIC",
+          property_id: "system_attribute:traces:latency",
+          source: "traces",
+        }),
       }),
       expect.objectContaining({ params: { allow_sampled: false } }),
+    );
+  });
+
+  it("binds session aggregate graphs to the session property source", async () => {
+    renderWithQueryClient(
+      <PrimaryGraph
+        observeIdOverride="project-override"
+        graphEndpoint="/tracer/trace-session/get_session_graph_data/"
+        trafficLabel="sessions"
+      />,
+    );
+
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+    expect(axios.post.mock.calls.at(-1)[1].req_data_config).toEqual(
+      expect.objectContaining({
+        id: "latency",
+        property_id: "system_attribute:sessions:latency",
+        source: "sessions",
+      }),
+    );
+  });
+
+  it("preserves the users namespace while using the session transport", async () => {
+    renderWithQueryClient(
+      <PrimaryGraph
+        observeIdOverride="project-override"
+        graphEndpoint="/tracer/project/get_users_aggregate_graph_data/"
+        trafficLabel="users"
+      />,
+    );
+
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+    expect(axios.post.mock.calls.at(-1)[1].req_data_config).toEqual(
+      expect.objectContaining({
+        id: "latency",
+        property_id: "system_attribute:users:latency",
+        source: "sessions",
+      }),
     );
   });
 
@@ -117,6 +190,7 @@ describe("PrimaryGraph", () => {
       <PrimaryGraph
         observeIdOverride="project-override"
         graphEndpoint="/tracer/observation-span/get_graph_methods/"
+        trafficLabel="spans"
       />,
     );
 
@@ -126,9 +200,130 @@ describe("PrimaryGraph", () => {
       "/tracer/observation-span/get_graph_methods/",
       expect.objectContaining({
         project_id: "project-override",
+        req_data_config: expect.objectContaining({
+          property_id: "system_attribute:spans:latency",
+          source: "traces",
+        }),
       }),
       expect.objectContaining({ params: { allow_sampled: false } }),
     );
+  });
+
+  it("offers project eval configs and excludes simulation-only system metrics", async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        result: {
+          metrics: [
+            {
+              category: "system_metric",
+              name: "latency",
+              display_name: "Latency",
+              source: "traces",
+              property_id: "system_attribute:traces:latency",
+              type: "number",
+            },
+            {
+              category: "system_metric",
+              name: "call_count",
+              display_name: "Call Count",
+              source: "simulation",
+              property_id: "system_attribute:simulation:call_count",
+              type: "number",
+            },
+            {
+              category: "eval_metric",
+              name: "config-1",
+              display_name: "Quality eval",
+              source: "traces",
+              property_id: "eval_config:config-1",
+              output_type: "SCORE",
+            },
+          ],
+        },
+      },
+    });
+
+    renderWithQueryClient(
+      <PrimaryGraph observeIdOverride="project-override" />,
+    );
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+
+    fireEvent.click(await screen.findByText("Latency"));
+    expect(await screen.findByText("Quality eval")).toBeVisible();
+    expect(screen.queryByText("Call Count")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Quality eval"));
+    await waitFor(() =>
+      expect(axios.post.mock.calls.at(-1)[1].req_data_config).toEqual(
+        expect.objectContaining({
+          id: "config-1",
+          type: "EVAL",
+          property_id: "eval_config:config-1",
+          source: "traces",
+        }),
+      ),
+    );
+  });
+
+  it("loads each additional metric catalog page only when requested", async () => {
+    axios.get.mockImplementation((_url, { params }) =>
+      Promise.resolve({
+        data: {
+          result:
+            params.page === 1
+              ? {
+                  metrics: [
+                    {
+                      category: "system_metric",
+                      name: "latency",
+                      display_name: "Latency",
+                      source: "traces",
+                      property_id: "system_attribute:traces:latency",
+                      type: "number",
+                    },
+                  ],
+                  page: 1,
+                  page_size: 200,
+                  total: 201,
+                  has_more: true,
+                }
+              : {
+                  metrics: [
+                    {
+                      category: "annotation_metric",
+                      name: "annotation-1",
+                      display_name: "QA Annotation",
+                      source: "both",
+                      property_id: "annotation:annotation-1",
+                      output_type: "numeric",
+                    },
+                  ],
+                  page: 2,
+                  page_size: 200,
+                  total: 201,
+                  has_more: false,
+                },
+        },
+      }),
+    );
+
+    renderWithQueryClient(
+      <PrimaryGraph observeIdOverride="project-override" />,
+    );
+    fireEvent.click(await screen.findByText("Latency"));
+
+    expect(await screen.findByText("Load more metrics")).toBeVisible();
+    expect(axios.get).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByText("Load more metrics"));
+
+    expect(await screen.findByText("QA Annotation")).toBeVisible();
+    expect(axios.get).toHaveBeenLastCalledWith("/dashboard/metrics/", {
+      params: expect.objectContaining({ page: 2, page_size: 200 }),
+      signal: expect.anything(),
+      timeout: 9_000,
+    });
+    expect(screen.queryByText("Load more metrics")).not.toBeInTheDocument();
   });
 
   const statusFilter = {

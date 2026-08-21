@@ -324,6 +324,13 @@ class SpanListMetadataSerializer(serializers.Serializer):
     query_count = serializers.IntegerField(required=False, min_value=0)
     query_rows_returned = serializers.IntegerField(required=False, min_value=0)
     query_result_payload_bytes = serializers.IntegerField(required=False, min_value=0)
+    query_applied_filter_version = serializers.ChoiceField(
+        choices=("canonical-json-sha256-v1",), required=False
+    )
+    query_applied_filter_sha256 = serializers.RegexField(
+        r"^[0-9a-f]{64}$", required=False
+    )
+    query_applied_filter_count = serializers.IntegerField(required=False, min_value=0)
 
 
 class SpanListColumnConfigSerializer(serializers.Serializer):
@@ -347,6 +354,9 @@ class SpanListColumnConfigSerializer(serializers.Serializer):
     annotators = JsonValueField(required=False, allow_null=True)
     source_field = serializers.CharField(required=False, allow_null=True)
     parent_eval_id = serializers.CharField(required=False, allow_null=True)
+    property_id = serializers.CharField(required=False, allow_null=True)
+    property_kind = serializers.CharField(required=False, allow_null=True)
+    property_source = serializers.CharField(required=False, allow_null=True)
 
 
 class SpanPrototypeListResultSerializer(serializers.Serializer):

@@ -12,7 +12,7 @@ from tracer.services.clickhouse.v2.apply_schema_rewriter import (
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCHEMA_PATH = (
     REPO_ROOT
-    / "futureagi/tracer/services/clickhouse/v2/schema/026_span_attribute_catalog_delivery.sql"
+    / "futureagi/tracer/services/clickhouse/v2/schema/027_property_catalog_delivery.sql"
 )
 
 
@@ -23,8 +23,8 @@ def _statements() -> list[str]:
 def test_delivery_schema_is_additive_and_catalog_only() -> None:
     statements = _statements()
     assert [extract_table_name(statement) for statement in statements] == [
-        "span_attribute_catalog_deliveries",
-        "span_attribute_catalog_source_streams",
+        "property_catalog_deliveries",
+        "property_catalog_source_streams",
     ]
     executable = "\n".join(statements).lower()
     assert "alter table" not in executable
@@ -47,9 +47,12 @@ def test_delivery_schema_pins_hash_chain_and_freeze_identity() -> None:
         "source_batch_digest",
     ):
         assert field in delivery
-    assert (
-        "ORDER BY (project_id, catalog_epoch, producer_stream_id, sequence)" in delivery
-    )
+    delivery_order = delivery.partition("ORDER BY")[2]
+    assert "workspace_id" in delivery_order
+    assert "catalog_revision" in delivery_order
+    assert "build_token" in delivery_order
+    assert "producer_stream_id" in delivery_order
+    assert "sequence" in delivery_order
     assert "'committed' = 1" in delivery
     assert "'gap' = 2" in delivery
     assert all(f"'{mode}'" in delivery for mode in ("direct", "kafka", "reconcile"))
@@ -58,15 +61,21 @@ def test_delivery_schema_pins_hash_chain_and_freeze_identity() -> None:
         "envelope_version",
         "first_sequence",
         "last_sequence",
-        "frozen_sequence",
+        "max_contiguous_sequence",
+        "last_issued_sequence",
+        "fenced_sequence",
         "terminal_payload_sha256",
-        "source_fence_digest",
+        "build_lease_sha256",
     ):
         assert field in streams
-    assert "ORDER BY (project_id, catalog_epoch, producer_stream_id)" in streams
+    stream_order = streams.partition("ORDER BY")[2]
+    assert "workspace_id" in stream_order
+    assert "catalog_revision" in stream_order
+    assert "build_token" in stream_order
+    assert "producer_stream_id" in stream_order
     assert all(
         f"'{status}'" in streams
-        for status in ("open", "frozen", "complete", "gap", "failed")
+        for status in ("open", "draining", "fenced", "complete", "gap", "failed")
     )
 
 
@@ -81,7 +90,12 @@ def test_delivery_tables_rewrite_to_observed_prod_replica_contract() -> None:
             zk_prefix="/clickhouse/tables/ch25",
         )
         assert f"CREATE TABLE IF NOT EXISTS {table} ON CLUSTER 'cluster'" in rewritten
-        assert "ReplicatedReplacingMergeTree(" in rewritten
+        expected_engine = (
+            "ReplicatedMergeTree("
+            if table == "property_catalog_deliveries"
+            else "ReplicatedReplacingMergeTree("
+        )
+        assert expected_engine in rewritten
         assert f"'/clickhouse/tables/ch25/{{shard}}/{table}'" in rewritten
         assert "'{replica}'" in rewritten
-        assert "PARTITION BY cityHash64(project_id) % 64" in rewritten
+        assert "PARTITION BY cityHash64(workspace_id) % 64" in rewritten

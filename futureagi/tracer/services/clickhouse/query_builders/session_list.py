@@ -992,7 +992,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         )
 
     def supports_candidate_cursor_page(self) -> bool:
-        """Use the exact keyset fast path for a single positive user filter.
+        """Use the exact keyset fast path for a finite positive identity seed.
 
         Cursor mode normally uses the generic bounded classifier so arbitrary
         span predicates can publish a resumable prefix.  A user-detail page is
@@ -1002,14 +1002,23 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         shape through the generic root scan makes a sparse user search replay
         unrelated roots until its wall deadline.
 
-        Keep the exception deliberately narrow.  Negative/null user filters,
-        extra session/span predicates, and custom sorts retain the existing
-        bounded path and its semantics.
+        An explicit positive session-ID filter is even narrower.  The selected
+        IDs (including remap aliases) are a finite authorization-scoped seed,
+        so every other candidate-safe session/user predicate can be evaluated
+        against only those sessions.  Keeping that shape on the generic scan
+        path turns a one-session lookup into a project-wide 12-month search.
+
+        Keep both exceptions deliberately narrow.  Without a positive session
+        seed, negative/null user filters, extra session/span predicates, and
+        custom sorts retain the existing bounded path and its semantics.
         """
 
         if self.sort_params or not self.supports_candidate_first_page():
             return False
-        return self._positive_exact_end_user_detail_filter()
+        return (
+            bool(self._candidate_positive_filter_values(self._SESSION_ID_FILTER_COLS))
+            or self._positive_exact_end_user_detail_filter()
+        )
 
     def _positive_exact_end_user_detail_filter(self) -> bool:
         """Recognize only the structural user-detail membership predicate."""
@@ -1738,6 +1747,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         org_project_count_cte = ""
         org_project_count_join = ""
         org_project_count_select = ""
+        org_project_evidence_select = ""
         if self.project_ids is not None:
             # Session UUIDs are generated globally, but an imported/direct-write
             # tenant can still reuse one.  Detect that impossible-to-represent
@@ -1757,6 +1767,11 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 "INNER JOIN candidate_session_project_counts USING (session_id)"
             )
             org_project_count_select = ", max(project_count) AS project_count"
+            # Cross-project user-detail rows still need one authoritative
+            # project identity for route construction and enrichment. The
+            # collision guard proves this aggregate has exactly one project
+            # before the view consumes it.
+            org_project_evidence_select = ", any(project_id) AS project_id"
         return f"""
         {ts_map_ctes}
         {candidate_session_cte}
@@ -1812,6 +1827,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 min(start_time) AS session_start
                 {session_metric_select}
                 {org_project_count_select}
+                {org_project_evidence_select}
             FROM resolved_root_sessions
             {org_project_count_join}
             WHERE 1 = 1
@@ -2136,7 +2152,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         {candidate_ctes}
         {seed_order_ctes}
         SELECT session_id, {seed_order_select}
-            {", project_count" if self.project_ids is not None else ""}
+            {", project_id, project_count" if self.project_ids is not None else ""}
         FROM sessions
         {seed_order_join}
         {seed_order_clause}
@@ -2197,6 +2213,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         SELECT
             session_id,
             session_start,
+            {"project_id," if self.project_ids is not None else ""}
             {"project_count," if self.project_ids is not None else ""}
             {"max(project_count) OVER() AS max_project_count," if self.project_ids is not None else ""}
             count() OVER() AS total_count
@@ -2213,7 +2230,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         before_start_time: datetime | None = None,
         before_session_id: str | None = None,
     ) -> tuple[str, dict[str, Any]]:
-        """Select an exact positive-user cursor page in stable root order.
+        """Select an exact finite-identity cursor page in stable root order.
 
         The cursor order is the same total order as the numbered default page:
         ``(session_start DESC, session_id DESC)``.  ``remaining_count`` is
@@ -2257,6 +2274,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         SELECT
             session_id,
             session_start,
+            {"project_id," if self.project_ids is not None else ""}
             {"project_count," if self.project_ids is not None else ""}
             {"max(project_count) OVER() AS max_project_count," if self.project_ids is not None else ""}
             count() OVER() AS remaining_count

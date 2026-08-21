@@ -1218,8 +1218,9 @@ def test_org_session_has_annotation_branches_by_project_and_disjoint_labels():
     assert "candidate_session_project_counts AS" in sql
     assert "uniqExact(project_id) AS project_count" in sql
     assert "max(project_count) AS project_count" in sql
+    assert "any(project_id) AS project_id" in sql
     assert "SELECT session_id, session_start AS start_time" in sql
-    assert ", project_count" in sql
+    assert ", project_id, project_count" in sql
     # The OR-ed project branches are one membership unit and cannot bypass
     # session/user predicates through SQL AND/OR precedence.
     assert "AND ((project_id =" in sql
@@ -1238,6 +1239,7 @@ def test_default_org_session_page_exposes_global_collision_guard():
 
     assert "candidate_session_project_counts AS" in page_sql
     assert "uniqExact(project_id) AS project_count" in page_sql
+    assert "any(project_id) AS project_id" in page_sql
     assert "max(project_count) OVER() AS max_project_count" in page_sql
     assert "max(project_count) AS max_project_count" in count_sql
 
@@ -1658,6 +1660,94 @@ def test_positive_end_user_cursor_uses_exact_stable_keyset_query():
     assert "session_start < fromUnixTimestamp64Micro(" in next_sql
     assert "session_id < toUUID(%(cursor_before_session_id)s)" in next_sql
     assert "OFFSET" not in next_sql
+
+
+@pytest.mark.unit
+def test_positive_session_cursor_uses_finite_session_seed():
+    session_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+    builder = SessionListQueryBuilderV2(
+        project_id=str(uuid.uuid4()),
+        page_size=25,
+        filters=[
+            {
+                "column_id": "trace_session_id",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "in",
+                    "filter_value": session_ids,
+                },
+            }
+        ],
+        bounded_internal_scan=True,
+    )
+
+    sql, params = builder.build_candidate_cursor_page_query()
+
+    assert builder.supports_candidate_cursor_page() is True
+    assert params["candidate_filter_session_id_array"] == session_ids
+    assert params["candidate_sess_1"] == tuple(session_ids)
+    assert "candidate_filter_sessions AS" in sql
+    assert "candidate_root_raw_session_ids AS" not in sql
+    assert "count() OVER() AS remaining_count" in sql
+
+
+@pytest.mark.unit
+def test_positive_session_cursor_can_intersect_user_membership():
+    session_id = str(uuid.uuid4())
+    end_user_id = str(uuid.uuid4())
+    builder = SessionListQueryBuilderV2(
+        project_id=str(uuid.uuid4()),
+        page_size=25,
+        filters=[
+            {
+                "column_id": "trace_session_id",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "equals",
+                    "filter_value": session_id,
+                },
+            },
+            {
+                "column_id": "end_user_id",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "in",
+                    "filter_value": [end_user_id],
+                },
+            },
+        ],
+        bounded_internal_scan=True,
+    )
+
+    sql, params = builder.build_candidate_cursor_page_query()
+
+    assert builder.supports_candidate_cursor_page() is True
+    assert params["candidate_filter_session_id_array"] == [session_id]
+    assert params["candidate_filter_user_ids"] == (end_user_id,)
+    assert "candidate_filter_sessions AS" in sql
+    assert "matching_user_sessions AS" in sql
+    assert "session_id IN (SELECT session_id FROM matching_user_sessions)" in sql
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("operator", ["not_equals", "not_in", "is_null", "is_not_null"])
+def test_non_positive_session_cursor_keeps_bounded_path(operator):
+    builder = SessionListQueryBuilderV2(
+        project_id=str(uuid.uuid4()),
+        filters=[
+            {
+                "column_id": "trace_session_id",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": operator,
+                    "filter_value": [str(uuid.uuid4())],
+                },
+            }
+        ],
+        bounded_internal_scan=True,
+    )
+
+    assert builder.supports_candidate_cursor_page() is False
 
 
 @pytest.mark.unit

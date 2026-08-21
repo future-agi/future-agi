@@ -5,6 +5,7 @@ import (
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
 	"github.com/future-agi/future-agi/fi-collector/pkg/catalogwriter"
+	"github.com/future-agi/future-agi/fi-collector/pkg/propertycatalog"
 )
 
 // UsageEmitter is the billing emission contract the server depends on.
@@ -29,6 +30,13 @@ type Metering interface {
 type AttributeCatalogWriter interface {
 	StageCanonicalSpansByProject([]map[string]any) []catalogwriter.StagedProjectJob
 	Enqueue(catalogwriter.Job) error
+}
+
+// PropertyCatalogWriter receives canonical rows plus authenticated tenant
+// scope out-of-band. It must not require workspace metadata to be persisted in
+// the existing spans table.
+type PropertyCatalogWriter interface {
+	EnqueueCanonicalSpans([]propertycatalog.ScopedSpan) error
 }
 
 // NoopUsageEmitter is used when Redis is not configured — all calls are silent no-ops.

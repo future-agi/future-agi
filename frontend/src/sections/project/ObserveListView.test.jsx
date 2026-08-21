@@ -31,7 +31,18 @@ const project = (overrides) => ({
 
 const respondWith = (table) =>
   axiosGetMock.mockResolvedValue({
-    data: { result: { table, metadata: { total_rows: table.length } } },
+    data: {
+      status: true,
+      result: {
+        table,
+        metadata: {
+          total_rows: table.length,
+          total_pages: table.length > 0 ? 1 : 0,
+          page_number: 0,
+          page_size: 25,
+        },
+      },
+    },
   });
 
 const renderList = () => {

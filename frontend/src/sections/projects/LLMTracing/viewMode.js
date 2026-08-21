@@ -1,11 +1,14 @@
 /**
  * Resolve historical/surface-specific view modes into a supported topology.
  *
- * `agentPath` inferred sequence from parentage and produced misleading paths,
- * so legacy URLs and saved views now open the truthful Agent Graph instead.
- * Simulator projects support only the standard graph.
+ * Simulator projects support only the standard graph. Cross-project user
+ * detail also needs one selected project before either topology is meaningful.
  */
-export const canonicalObserveViewMode = ({ viewMode, isSimulator }) => {
-  if (isSimulator) return "graph";
-  return viewMode === "agentPath" ? "agentGraph" : viewMode;
+export const canonicalObserveViewMode = ({
+  viewMode,
+  isSimulator,
+  agentGraphEnabled = true,
+}) => {
+  if (isSimulator || !agentGraphEnabled) return "graph";
+  return viewMode;
 };

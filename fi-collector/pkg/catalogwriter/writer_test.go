@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -206,7 +207,7 @@ func TestStageCopiesCompactRowsAndDedupesMinMax(t *testing.T) {
 		}
 	}
 	wantKey := keyRow{
-		ProjectID: testProjectID, AttributeKey: "User.Name", KeyFolded: "user.name",
+		ProjectID: testProjectID, SourceKind: "custom_attribute", AttributeKey: "User.Name", KeyFolded: "user.name",
 		AttributeType: "string", FirstSeen: "2026-01-02 03:04:05.000006",
 		LastSeen: "2026-08-13 12:00:00.900001", CatalogEpoch: 1,
 	}
@@ -486,29 +487,169 @@ func TestReplayRejectsTamperAndTrailingJSONWithoutDeleting(t *testing.T) {
 }
 
 func TestInsertRowsUseOnlyCatalogSchemaColumns(t *testing.T) {
-	key := keyRowMap(keyRow{})
-	value := valueRowMap(valueRow{})
+	key := keyRowMap(keyRow{SourceKind: attributecatalog.SourceKindCustomAttribute})
+	value := valueRowMap(valueRow{SourceKind: attributecatalog.SourceKindCustomAttribute})
 	for _, column := range []string{
-		"project_id", "attribute_key", "key_folded", "attribute_type",
+		"project_id", "source_kind", "attribute_key", "key_folded", "attribute_type",
 		"first_seen", "last_seen", "catalog_epoch",
 	} {
 		if _, ok := key[column]; !ok {
 			t.Errorf("key row missing %s", column)
 		}
 	}
-	if len(key) != 7 {
+	if len(key) != 8 {
 		t.Errorf("key row has extra columns: %v", key)
 	}
 	for _, column := range []string{
-		"project_id", "attribute_key", "attribute_type", "value_fingerprint",
+		"project_id", "source_kind", "attribute_key", "attribute_type", "value_fingerprint",
 		"value_json", "value_search_text", "first_seen", "last_seen", "catalog_epoch",
 	} {
 		if _, ok := value[column]; !ok {
 			t.Errorf("value row missing %s", column)
 		}
 	}
-	if len(value) != 9 {
+	if len(value) != 10 {
 		t.Errorf("value row has extra columns: %v", value)
+	}
+}
+
+func TestLegacySpoolRowsReplayWithoutChangingChecksumOrEncodedBytes(t *testing.T) {
+	dir := t.TempDir()
+	writer, err := New(enabledConfig(dir), &recordingInserter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, _ := writer.StageCanonicalSpans([]map[string]any{
+		canonicalSpan("2026-08-13 12:00:00.000001", map[string]string{"legacy": "value"}),
+	})
+	for index := range job.keyRows {
+		job.keyRows[index].SourceKind = ""
+	}
+	for index := range job.valueRows {
+		job.valueRows[index].SourceKind = ""
+	}
+	job.encodedBytes = 0
+	for _, row := range job.keyRows {
+		size, sizeErr := wireSize(row)
+		if sizeErr != nil {
+			t.Fatal(sizeErr)
+		}
+		job.encodedBytes += size
+	}
+	for _, row := range job.valueRows {
+		size, sizeErr := wireSize(row)
+		if sizeErr != nil {
+			t.Fatal(sizeErr)
+		}
+		job.encodedBytes += size
+	}
+	job.metadata.EncodedBytes = job.encodedBytes
+	if err := writer.Submit(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+
+	restartedInserter := &recordingInserter{}
+	restarted, err := New(enabledConfig(dir), restartedInserter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := restarted.Replay(context.Background())
+	if err != nil || result.Delivered != 1 {
+		t.Fatalf("legacy restart replay=%+v err=%v", result, err)
+	}
+	if len(restartedInserter.calls) != 2 {
+		t.Fatalf("legacy rows were not delivered: %+v", restartedInserter.calls)
+	}
+	for _, call := range restartedInserter.calls {
+		for _, row := range call.rows {
+			if _, exists := row["source_kind"]; exists {
+				t.Fatalf("legacy replay rewrote durable row shape: %v", row)
+			}
+		}
+	}
+}
+
+func TestStageCanonicalModelUsesCollisionFreeSystemNamespace(t *testing.T) {
+	w, err := New(enabledConfig(t.TempDir()), &recordingInserter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	span := canonicalSpan(
+		"2026-08-13 12:00:00.000001",
+		map[string]string{"model": "customer-defined-model"},
+	)
+	span["model"] = "gpt-4.1"
+
+	job, report := w.StageCanonicalSpans([]map[string]any{span})
+	if report.RejectedSpans != 0 || report.IncompleteSpans != 0 {
+		t.Fatalf("unexpected staging gap: %+v", report)
+	}
+	gotKeys := map[string]string{}
+	for _, row := range job.keyRows {
+		if row.AttributeKey == "model" {
+			gotKeys[row.SourceKind] = row.AttributeType
+		}
+	}
+	if !reflect.DeepEqual(gotKeys, map[string]string{
+		"custom_attribute": "string", "system_attribute": "string",
+	}) {
+		t.Fatalf("model namespaces=%v", gotKeys)
+	}
+	gotValues := map[string]string{}
+	for _, row := range job.valueRows {
+		if row.AttributeKey == "model" {
+			gotValues[row.SourceKind] = row.ValueSearchText
+		}
+	}
+	if !reflect.DeepEqual(gotValues, map[string]string{
+		"custom_attribute": "customer-defined-model", "system_attribute": "gpt-4.1",
+	}) {
+		t.Fatalf("model values=%v", gotValues)
+	}
+	wire := ExportWireJob(job)
+	for _, rows := range [][]map[string]any{wire.KeyRows, wire.ValueRows} {
+		for _, row := range rows {
+			if row["source_kind"] == nil {
+				t.Fatalf("transport row omitted source_kind: %v", row)
+			}
+		}
+	}
+}
+
+func TestStageCanonicalModelMatchesBackfillSuggestionByteBoundary(t *testing.T) {
+	w, err := New(enabledConfig(t.TempDir()), &recordingInserter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name       string
+		model      string
+		wantValues int
+		incomplete int
+	}{
+		{name: "exact-16-kib", model: strings.Repeat("x", 16<<10), wantValues: 1},
+		{name: "16-kib-plus-one", model: strings.Repeat("x", (16<<10)+1), incomplete: 1},
+		{name: "utf8-bytes-plus-one", model: strings.Repeat("é", (8<<10)+1), incomplete: 1},
+		{name: "authoritative-nil-uuid-sentinel", model: catalogSystemNilUUIDValue},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			span := canonicalSpan("2026-08-13 12:00:00.000001", map[string]string{})
+			span["model"] = test.model
+			job, report := w.StageCanonicalSpans([]map[string]any{span})
+			systemValues := 0
+			for _, row := range job.valueRows {
+				if row.SourceKind == attributecatalog.SourceKindSystemAttribute && row.AttributeKey == "model" {
+					systemValues++
+				}
+			}
+			if systemValues != test.wantValues || report.IncompleteSpans != test.incomplete {
+				t.Fatalf("system values=%d report=%+v", systemValues, report)
+			}
+			if test.incomplete != 0 && !containsString(report.BuildGapReasons, "system_value_projection") {
+				t.Fatalf("oversized Model lacks durable projection gap: %+v", report)
+			}
+		})
 	}
 }
 

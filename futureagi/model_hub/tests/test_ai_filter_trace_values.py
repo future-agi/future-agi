@@ -9,7 +9,9 @@ import pytest
 
 from model_hub.views.ai_filter import (
     SmartFilterGroundingError,
+    _authorize_smart_property_schema,
     _fetch_trace_field_values,
+    _run_smart_agent,
 )
 from tracer.services.clickhouse.attribute_reads import (
     AttributeReadMetadata,
@@ -255,3 +257,108 @@ def test_reader_exception_returns_sanitized_typed_unavailable(monkeypatch):
         )
     assert error.value.status_code == 503
     assert secret not in error.value.public_message
+
+
+def test_smart_schema_keeps_logical_source_separate_from_native_transport():
+    schema = [
+        {
+            "field": "model",
+            "property_id": "system_attribute:voice_calls:model",
+            "label": "Model",
+            "category": "system",
+            "type": "string",
+        }
+    ]
+
+    assert (
+        _authorize_smart_property_schema(
+            schema,
+            source="traces",
+            workspace=SimpleNamespace(),
+            project_ids=(PROJECT_ID,),
+        )
+        == schema
+    )
+
+
+def test_smart_schema_accepts_session_native_alias_but_rejects_wrong_source():
+    schema = [
+        {
+            "field": "session_id",
+            "property_id": "system_attribute:sessions:session",
+            "label": "Session ID",
+            "category": "system",
+            "type": "string",
+        }
+    ]
+
+    assert (
+        _authorize_smart_property_schema(
+            schema,
+            source="sessions",
+            workspace=SimpleNamespace(),
+            project_ids=(PROJECT_ID,),
+        )
+        == schema
+    )
+    with pytest.raises(SmartFilterGroundingError):
+        _authorize_smart_property_schema(
+            schema,
+            source="traces",
+            workspace=SimpleNamespace(),
+            project_ids=(PROJECT_ID,),
+        )
+
+
+def test_smart_agent_does_not_alias_same_native_field_across_properties(monkeypatch):
+    schema = [
+        {
+            "field": "status",
+            "property_id": "system_attribute:traces:status",
+            "label": "Status",
+            "category": "system",
+            "type": "string",
+            "choices": ["OK"],
+        },
+        {
+            "field": "status",
+            "property_id": "annotation:status",
+            "label": "Review status",
+            "category": "annotation",
+            "type": "string",
+            "choices": ["Approved"],
+        },
+    ]
+    submit = SimpleNamespace(
+        id="submit",
+        function=SimpleNamespace(
+            name="submit_filter",
+            arguments=(
+                '{"filters":[{"field":"annotation:status",'
+                '"operator":"is","value":"Approved"}]}'
+            ),
+        ),
+    )
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(message=SimpleNamespace(content="", tool_calls=[submit]))
+        ]
+    )
+
+    class _LLM:
+        def __init__(self, **kwargs):
+            pass
+
+        def _get_completion_with_tools(self, *args, **kwargs):
+            return response
+
+    monkeypatch.setattr("agentic_eval.core.llm.llm.LLM", _LLM)
+
+    assert _run_smart_agent("approved reviews", schema, lambda *a, **k: []) == [
+        {
+            "field": "status",
+            "property_id": "annotation:status",
+            "operator": "is",
+            "value": "Approved",
+        }
+    ]

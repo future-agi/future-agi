@@ -17,7 +17,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from threading import Lock
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 from urllib.parse import urlencode
 
 import pytest
@@ -1064,6 +1064,11 @@ def _get_metrics_with_annotation_labels(auth_client, project_id, label_ids):
             "tracer.services.dashboard_metrics_catalog.AnnotationLabelScoresProjectPG",
             source_class,
         ) as direct_source_class,
+        patch(
+            "tracer.services.dashboard_metrics_catalog."
+            "V2AnalyticsQueryService.get_span_attribute_keys_ch_for_projects",
+            return_value=[],
+        ),
     ):
         response = auth_client.get(
             f"/tracer/dashboard/metrics/?project_ids={project_id}"
@@ -1558,6 +1563,745 @@ class TestWidgetReadEndpoints:
 
 
 class TestMetricsEndpoint:
+    def test_catalog_dataset_column_uses_exact_column_value_adapter(self):
+        from tracer.views.dashboard import DashboardViewSet
+
+        dataset_id = "11111111-1111-4111-8111-111111111111"
+        column_id = "22222222-2222-4222-8222-222222222222"
+        request = SimpleNamespace(
+            workspace=SimpleNamespace(id="workspace-1"),
+            validated_query_data={
+                "property_id": f"dataset_column:{column_id}",
+                "metric_name": column_id,
+                "metric_type": "custom_column",
+                "source": "datasets",
+                "project_ids": [],
+                "search": "",
+            },
+        )
+        view = DashboardViewSet()
+        sentinel = object()
+        deadline = MagicMock()
+        view._filter_values_dataset_column = MagicMock(return_value=sentinel)
+
+        with (
+            patch(
+                "tracer.views.dashboard.ReadDeadline.start",
+                return_value=deadline,
+            ),
+            patch(
+                "tracer.views.dashboard._run_filter_value_pg_read",
+                return_value=dataset_id,
+            ),
+        ):
+            response = inspect.unwrap(DashboardViewSet.filter_values)(view, request)
+
+        assert response is sentinel
+        view._filter_values_dataset_column.assert_called_once_with(
+            request,
+            dataset_id=dataset_id,
+            column_id=column_id,
+            query_params=request.validated_query_data,
+            deadline=deadline,
+        )
+
+    def test_dataset_native_values_use_remaining_wall_and_result_ceiling(self):
+        from tracer.views.dashboard import (
+            _FINITE_NATIVE_FILTER_VALUE_MAX_RESULT_BYTES,
+            DashboardViewSet,
+        )
+
+        analytics = MagicMock()
+        analytics.execute_ch_query.return_value = SimpleNamespace(
+            data=[{"val": "dataset-a"}]
+        )
+        deadline = MagicMock()
+        deadline.remaining_ms.return_value = 321
+        request = SimpleNamespace(
+            user=SimpleNamespace(pk="user-1"),
+            organization=SimpleNamespace(pk="org-1"),
+            workspace=SimpleNamespace(pk="workspace-1", id="workspace-1"),
+            auth=None,
+        )
+
+        with (
+            patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True),
+            patch(
+                "tracer.views.dashboard.AnalyticsQueryService",
+                return_value=analytics,
+            ),
+        ):
+            response = DashboardViewSet()._filter_values_dataset(
+                request,
+                "dataset",
+                "system_metric",
+                query_params={"page_size": 10, "search": ""},
+                deadline=deadline,
+            )
+
+        assert response.status_code == 200
+        execute_kwargs = analytics.execute_ch_query.call_args.kwargs
+        assert execute_kwargs["timeout_ms"] == 321
+        assert execute_kwargs["settings"] == {
+            "max_result_rows": 5_001,
+            "max_result_bytes": _FINITE_NATIVE_FILTER_VALUE_MAX_RESULT_BYTES,
+            "result_overflow_mode": "throw",
+        }
+
+    def test_dataset_native_values_do_not_relabel_programming_errors_as_retryable(self):
+        from tracer.views.dashboard import DashboardViewSet
+
+        analytics = MagicMock()
+        analytics.execute_ch_query.side_effect = RuntimeError("broken query builder")
+        deadline = MagicMock()
+        deadline.remaining_ms.return_value = 321
+        request = SimpleNamespace(workspace=SimpleNamespace(id="workspace-1"))
+
+        with (
+            patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True),
+            patch(
+                "tracer.views.dashboard.AnalyticsQueryService",
+                return_value=analytics,
+            ),
+        ):
+            response = DashboardViewSet()._filter_values_dataset(
+                request,
+                "dataset",
+                "system_metric",
+                query_params={"page_size": 10, "search": ""},
+                deadline=deadline,
+            )
+
+        assert response.status_code == 500
+        assert response.data["code"] == "server_error"
+
+    def test_native_value_vocabularies_use_signed_fixed_size_pages(self):
+        from tracer.views.dashboard import DashboardViewSet
+
+        request = SimpleNamespace(
+            user=SimpleNamespace(pk="user-1"),
+            organization=SimpleNamespace(pk="org-1"),
+            workspace=SimpleNamespace(pk="workspace-1"),
+            auth=None,
+        )
+        values = [
+            {"value": "alpha", "label": "alpha"},
+            {"value": "beta", "label": "beta"},
+            {"value": "gamma", "label": "gamma"},
+        ]
+        view = DashboardViewSet()
+        first = view._finite_native_filter_values_response(
+            request,
+            query_params={"page_size": 2, "search": ""},
+            values=values,
+            query={"source": "simulation", "metric_name": "status"},
+        )
+        first_payload = first.data["result"]
+
+        assert first.status_code == 200
+        assert first_payload["values"] == values[:2]
+        assert first_payload["query_complete"] is True
+        assert first_payload["has_more"] is True
+        assert first_payload["next_cursor"]
+
+        second = view._finite_native_filter_values_response(
+            request,
+            query_params={
+                "page_size": 2,
+                "search": "",
+                "cursor": first_payload["next_cursor"],
+            },
+            values=values,
+            query={"source": "simulation", "metric_name": "status"},
+        )
+        second_payload = second.data["result"]
+
+        assert second.status_code == 200
+        assert second_payload["values"] == values[2:]
+        assert second_payload["has_more"] is False
+        assert second_payload["next_cursor"] is None
+
+    def test_native_value_cursor_rejects_vocabulary_drift(self):
+        from tracer.views.dashboard import DashboardViewSet
+
+        request = SimpleNamespace(
+            user=SimpleNamespace(pk="user-1"),
+            organization=SimpleNamespace(pk="org-1"),
+            workspace=SimpleNamespace(pk="workspace-1"),
+            auth=None,
+        )
+        view = DashboardViewSet()
+        first = view._finite_native_filter_values_response(
+            request,
+            query_params={"page_size": 1, "search": ""},
+            values=[
+                {"value": "alpha", "label": "alpha"},
+                {"value": "beta", "label": "beta"},
+            ],
+            query={"source": "datasets", "metric_name": "dataset"},
+        )
+
+        changed = view._finite_native_filter_values_response(
+            request,
+            query_params={
+                "page_size": 1,
+                "search": "",
+                "cursor": first.data["result"]["next_cursor"],
+            },
+            values=[
+                {"value": "alpha", "label": "alpha"},
+                {"value": "changed", "label": "changed"},
+            ],
+            query={"source": "datasets", "metric_name": "dataset"},
+        )
+
+        assert changed.status_code == 400
+
+    def test_native_value_vocabularies_refuse_oversized_success(self):
+        from tracer.views.dashboard import (
+            _LEGACY_NATIVE_FILTER_VALUE_MAX,
+            DashboardViewSet,
+        )
+
+        request = SimpleNamespace()
+        values = [
+            {"value": str(index), "label": str(index)}
+            for index in range(_LEGACY_NATIVE_FILTER_VALUE_MAX + 1)
+        ]
+        response = DashboardViewSet()._finite_native_filter_values_response(
+            request,
+            query_params={"search": ""},
+            values=values,
+            query={"source": "datasets", "metric_name": "dataset"},
+        )
+
+        assert response.status_code == 422
+        assert response.data["code"] == "filter_value_inventory_too_broad"
+
+    def test_dashboard_eval_config_registry_id_resolves_to_its_template(self):
+        config_id = "11111111-1111-4111-8111-111111111111"
+        template_id = "22222222-2222-4222-8222-222222222222"
+
+        class _ConfigQuery:
+            def __init__(self):
+                self.filters = []
+
+            def filter(self, **kwargs):
+                self.filters.append(kwargs)
+                return self
+
+            def values_list(self, *_args, **_kwargs):
+                return self
+
+            def first(self):
+                return template_id
+
+        query = _ConfigQuery()
+        builder = DashboardQueryBuilder(
+            {
+                "organization_id": "org-1",
+                "workspace_id": "workspace-1",
+                "project_ids": ["project-1"],
+            }
+        )
+        with patch("tracer.models.custom_eval_config.CustomEvalConfig.objects", query):
+            resolved = builder._resolve_eval_template_identity(
+                {"property_id": f"eval_config:{config_id}"}, config_id
+            )
+
+        assert resolved == template_id
+        assert any(filters.get("id") == config_id for filters in query.filters)
+        assert any(
+            filters.get("project_id__in") == ["project-1"] for filters in query.filters
+        )
+
+    def test_metrics_catalog_contract_keeps_runtime_registry_adapter_fields(self):
+        from tracer.serializers.dashboard import DashboardMetricCatalogItemSerializer
+
+        serializer = DashboardMetricCatalogItemSerializer(
+            data={
+                "name": "config-id",
+                "property_id": "eval_config:config-id",
+                "property_kind": "eval_config",
+                "category": "eval_metric",
+                "source": "all",
+                "eval_template_id": "22222222-2222-4222-8222-222222222222",
+                "role": "metric",
+            }
+        )
+        assert serializer.is_valid(), serializer.errors
+        assert str(serializer.validated_data["eval_template_id"]) == (
+            "22222222-2222-4222-8222-222222222222"
+        )
+        assert serializer.validated_data["role"] == "metric"
+
+    def test_property_registry_identities_keep_system_and_customer_keys_distinct(self):
+        from tracer.services.dashboard_metrics_catalog import (
+            _annotate_property_registry_identity,
+        )
+
+        metrics = _annotate_property_registry_identity(
+            [
+                {
+                    "name": "model",
+                    "category": "system_metric",
+                    "source": "traces",
+                },
+                {"name": "model", "category": "custom_attribute"},
+                {"name": "template-id", "category": "eval_metric"},
+                {
+                    "name": "config-id",
+                    "category": "eval_metric",
+                    "_property_kind": "eval_config",
+                },
+                {"name": "label-id", "category": "annotation_metric"},
+                {"name": "column-id", "category": "custom_column"},
+            ]
+        )
+
+        assert [metric["property_id"] for metric in metrics] == [
+            "system_attribute:traces:model",
+            "custom_attribute:model",
+            "eval_template:template-id",
+            "eval_config:config-id",
+            "annotation:label-id",
+            "dataset_column:column-id",
+        ]
+        assert metrics[0]["property_id"] != metrics[1]["property_id"]
+
+    def test_property_registry_id_routes_to_native_filter_value_adapter(self):
+        from tracer.serializers.dashboard import DashboardFilterValuesQuerySerializer
+
+        serializer = DashboardFilterValuesQuerySerializer(
+            data={
+                "property_id": "system_attribute:traces:model",
+                "source": "traces",
+                "page_size": 10,
+            }
+        )
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["metric_name"] == "model"
+        assert serializer.validated_data["metric_type"] == "system_metric"
+        assert serializer.validated_data["source"] == "traces"
+
+        voice_transport = DashboardFilterValuesQuerySerializer(
+            data={
+                "property_id": "system_attribute:voice_calls:call_status",
+                "source": "traces",
+            }
+        )
+        assert voice_transport.is_valid(), voice_transport.errors
+        assert voice_transport.validated_data["metric_name"] == "call_status"
+
+        wrong_source = DashboardFilterValuesQuerySerializer(
+            data={
+                "property_id": "system_attribute:traces:model",
+                "source": "sessions",
+            }
+        )
+        assert not wrong_source.is_valid()
+        assert "property_id" in wrong_source.errors
+
+        legacy = DashboardFilterValuesQuerySerializer(
+            data={
+                "metric_name": "model",
+                "metric_type": "system_metric",
+                "source": "sessions",
+            }
+        )
+        assert legacy.is_valid(), legacy.errors
+
+        legacy_registry_id = DashboardFilterValuesQuerySerializer(
+            data={"property_id": "eval:legacy-id", "source": "traces"}
+        )
+        assert legacy_registry_id.is_valid(), legacy_registry_id.errors
+        assert legacy_registry_id.validated_data["metric_type"] == "eval_metric"
+        assert legacy_registry_id.validated_data["_property_kind"] == "eval"
+
+        eval_config = DashboardFilterValuesQuerySerializer(
+            data={"property_id": "eval_config:config-id", "source": "traces"}
+        )
+        assert eval_config.is_valid(), eval_config.errors
+        assert eval_config.validated_data["_property_kind"] == "eval_config"
+
+        eval_template = DashboardFilterValuesQuerySerializer(
+            data={"property_id": "eval_template:template-id", "source": "traces"}
+        )
+        assert eval_template.is_valid(), eval_template.errors
+        assert eval_template.validated_data["_property_kind"] == "eval_template"
+
+        conflicting = DashboardFilterValuesQuerySerializer(
+            data={
+                "property_id": "custom_attribute:model",
+                "metric_name": "other",
+            }
+        )
+        assert not conflicting.is_valid()
+        assert "metric_name" in conflicting.errors
+
+    def test_eval_filter_values_never_guess_between_config_and_template_ids(self):
+        from tracer.models.custom_eval_config import CustomEvalConfig
+        from tracer.views.dashboard import DashboardViewSet
+
+        metric_id = "11111111-1111-4111-8111-111111111111"
+        project_scope = SimpleNamespace(
+            mode="fixed",
+            batched=False,
+            project_ids=("project-1",),
+            requested_project_ids=frozenset({"project-1"}),
+        )
+        eval_template = SimpleNamespace(
+            config={"output": "PASS_FAIL"},
+            choices=[],
+        )
+        config = SimpleNamespace(
+            project_id="project-1",
+            eval_template=eval_template,
+        )
+
+        class _EvalConfigQuery:
+            def __init__(self, *, config_result=None, template_result=None):
+                self.config_result = config_result
+                self.template_result = template_result
+                self.lookups = []
+                self.current_lookup = {}
+
+            def filter(self, *_args, **kwargs):
+                self.lookups.append(kwargs)
+                if "id" in kwargs or "eval_template_id" in kwargs:
+                    self.current_lookup = kwargs
+                return self
+
+            def select_related(self, *_args):
+                return self
+
+            def first(self):
+                if "id" in self.current_lookup:
+                    return self.config_result
+                if "eval_template_id" in self.current_lookup:
+                    return self.template_result
+                return None
+
+        def run_request(property_kind, query, *, page_size=None):
+            property_id = f"{property_kind}:{metric_id}"
+            request_data = {
+                "property_id": property_id,
+                "_property_kind": property_kind,
+                "metric_name": metric_id,
+                "metric_type": "eval_metric",
+                "source": "traces",
+                "project_ids": ["project-1"],
+                "search": "",
+            }
+            if page_size is not None:
+                request_data["page_size"] = page_size
+            request = SimpleNamespace(
+                workspace=SimpleNamespace(id="workspace-1"),
+                validated_query_data=request_data,
+            )
+            view = DashboardViewSet()
+            with (
+                patch(
+                    "tracer.views.dashboard._prepare_filter_value_project_scope",
+                    return_value=project_scope,
+                ),
+                patch(
+                    "tracer.views.dashboard._run_filter_value_pg_read",
+                    side_effect=lambda _deadline, reader: reader(),
+                ),
+                patch(
+                    "tracer.views.dashboard.project_workspace_scope_q",
+                    return_value=object(),
+                ),
+                patch.object(
+                    CustomEvalConfig,
+                    "no_workspace_objects",
+                    query,
+                ),
+                patch(
+                    "tracer.views.dashboard._finite_filter_value_cursor_page",
+                    return_value={"values": [], "query_complete": True},
+                ) as finite_page,
+            ):
+                inspect.unwrap(DashboardViewSet.filter_values)(view, request)
+            return property_id, finite_page
+
+        config_query = _EvalConfigQuery(config_result=None, template_result=config)
+        run_request("eval_config", config_query)
+        assert any("id" in lookup for lookup in config_query.lookups)
+        assert not any("eval_template_id" in lookup for lookup in config_query.lookups)
+
+        template_query = _EvalConfigQuery(config_result=config, template_result=config)
+        property_id, finite_page = run_request(
+            "eval_template",
+            template_query,
+            page_size=10,
+        )
+        assert not any("id" in lookup for lookup in template_query.lookups)
+        assert any("eval_template_id" in lookup for lookup in template_query.lookups)
+        assert finite_page.call_args.kwargs["query"]["property_id"] == property_id
+
+    def test_property_registry_id_is_bound_to_persisted_filter_family(self):
+        from rest_framework import serializers
+
+        from tracer.serializers.filters import FilterItemField
+
+        field = FilterItemField()
+        valid = field.run_validation(
+            {
+                "column_id": "model",
+                "property_id": "custom_attribute:model",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "equals",
+                    "filter_value": "gpt-4.1",
+                    "col_type": "SPAN_ATTRIBUTE",
+                },
+            }
+        )
+        assert valid["property_id"] == "custom_attribute:model"
+
+        with pytest.raises(serializers.ValidationError, match="col_type"):
+            field.run_validation(
+                {
+                    "column_id": "model",
+                    "property_id": "system_attribute:traces:model",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "gpt-4.1",
+                        "col_type": "SPAN_ATTRIBUTE",
+                    },
+                }
+            )
+
+        session_filter = field.run_validation(
+            {
+                "column_id": "session_id",
+                "property_id": "system_attribute:sessions:session",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "equals",
+                    "filter_value": "session-123",
+                    "col_type": "SYSTEM_METRIC",
+                },
+            }
+        )
+        assert session_filter["property_id"] == "system_attribute:sessions:session"
+
+        annotation_choice_filter = field.run_validation(
+            {
+                "column_id": "annotation-id**thumbs_up",
+                "property_id": "annotation:annotation-id",
+                "filter_config": {
+                    "filter_type": "number",
+                    "filter_op": "greater_than",
+                    "filter_value": 0,
+                    "col_type": "ANNOTATION",
+                },
+            }
+        )
+        assert annotation_choice_filter["property_id"] == "annotation:annotation-id"
+
+        eval_choice_filter = field.run_validation(
+            {
+                "column_id": "eval-config-id**positive",
+                "property_id": "eval_config:eval-config-id",
+                "filter_config": {
+                    "filter_type": "number",
+                    "filter_op": "greater_than",
+                    "filter_value": 0,
+                    "col_type": "EVAL_METRIC",
+                },
+            }
+        )
+        assert eval_choice_filter["property_id"] == "eval_config:eval-config-id"
+
+        with pytest.raises(serializers.ValidationError, match="column_id"):
+            field.run_validation(
+                {
+                    "column_id": "other-eval-config-id**positive",
+                    "property_id": "eval_config:eval-config-id",
+                    "filter_config": {
+                        "filter_type": "number",
+                        "filter_op": "greater_than",
+                        "filter_value": 0,
+                        "col_type": "EVAL_METRIC",
+                    },
+                }
+            )
+
+        with pytest.raises(serializers.ValidationError, match="column_id"):
+            field.run_validation(
+                {
+                    "column_id": "other-annotation-id**thumbs_up",
+                    "property_id": "annotation:annotation-id",
+                    "filter_config": {
+                        "filter_type": "number",
+                        "filter_op": "greater_than",
+                        "filter_value": 0,
+                        "col_type": "ANNOTATION",
+                    },
+                }
+            )
+
+        with pytest.raises(serializers.ValidationError, match="source"):
+            field.run_validation(
+                {
+                    "column_id": "model",
+                    "property_id": "system_attribute:traces:model",
+                    "source": "sessions",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "gpt-4.1",
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            )
+
+    def test_exact_graph_registry_binding_requires_config_identity_and_source(self):
+        from rest_framework import serializers
+
+        from tracer.serializers.filters import ObserveGraphMetricConfigField
+        from tracer.utils.property_registry import validate_property_graph_namespace
+
+        field = ObserveGraphMetricConfigField()
+        valid = field.run_validation(
+            {
+                "id": "config-id",
+                "type": "EVAL",
+                "property_id": "eval_config:config-id",
+                "source": "traces",
+            }
+        )
+        assert valid["property_id"] == "eval_config:config-id"
+
+        span_metric = field.run_validation(
+            {
+                "id": "latency",
+                "type": "SYSTEM_METRIC",
+                "property_id": "system_attribute:spans:latency",
+                "source": "traces",
+            }
+        )
+        assert span_metric["source"] == "traces"
+        validate_property_graph_namespace(
+            span_metric["property_id"], expected_definition_source="spans"
+        )
+        with pytest.raises(ValueError, match="graph endpoint"):
+            validate_property_graph_namespace(
+                span_metric["property_id"], expected_definition_source="traces"
+            )
+
+        user_metric = field.run_validation(
+            {
+                "id": "latency",
+                "type": "SYSTEM_METRIC",
+                "property_id": "system_attribute:users:latency",
+                "source": "sessions",
+            }
+        )
+        assert user_metric["source"] == "sessions"
+        with pytest.raises(ValueError, match="graph endpoint"):
+            validate_property_graph_namespace(
+                user_metric["property_id"], expected_definition_source="sessions"
+            )
+
+        for ambiguous_id in ("eval_template:config-id", "eval:config-id"):
+            with pytest.raises(serializers.ValidationError, match="exact graph"):
+                field.run_validation(
+                    {
+                        "id": "config-id",
+                        "type": "EVAL",
+                        "property_id": ambiguous_id,
+                        "source": "traces",
+                    }
+                )
+
+        with pytest.raises(serializers.ValidationError, match="provided together"):
+            field.run_validation(
+                {
+                    "id": "latency",
+                    "type": "SYSTEM_METRIC",
+                    "property_id": "system_attribute:traces:latency",
+                }
+            )
+
+        # Pre-registry clients remain supported only when neither identity
+        # field is present.
+        assert field.run_validation({"id": "config-id", "type": "EVAL"}) == {
+            "id": "config-id",
+            "type": "EVAL",
+        }
+
+    def test_property_registry_id_is_bound_to_saved_metric_family(self):
+        from tracer.serializers.dashboard import (
+            DashboardBreakdownSerializer,
+            DashboardMetricSerializer,
+        )
+
+        valid_metric = DashboardMetricSerializer(
+            data={
+                "name": "model",
+                "property_id": "system_attribute:traces:model",
+                "type": "system_metric",
+            }
+        )
+        assert valid_metric.is_valid(), valid_metric.errors
+
+        template_metric = DashboardMetricSerializer(
+            data={
+                "name": "template-id",
+                "property_id": "eval_template:template-id",
+                "type": "eval_metric",
+                "source": "all",
+            }
+        )
+        assert template_metric.is_valid(), template_metric.errors
+
+        config_metric = DashboardMetricSerializer(
+            data={
+                "name": "config-id",
+                "property_id": "eval_config:config-id",
+                "type": "eval_metric",
+                "source": "traces",
+            }
+        )
+        assert config_metric.is_valid(), config_metric.errors
+
+        wrong_source = DashboardMetricSerializer(
+            data={
+                "name": "model",
+                "property_id": "system_attribute:traces:model",
+                "type": "system_metric",
+                "source": "datasets",
+            }
+        )
+        assert not wrong_source.is_valid()
+        assert "property_id" in wrong_source.errors
+
+        invalid_metric = DashboardMetricSerializer(
+            data={
+                "name": "model",
+                "attribute_key": "model",
+                "property_id": "custom_attribute:model",
+                "type": "system_metric",
+            }
+        )
+        assert not invalid_metric.is_valid()
+        assert "property_id" in invalid_metric.errors
+
+        annotation_breakdown = DashboardBreakdownSerializer(
+            data={
+                "name": "Quality",
+                "label_id": "label-id",
+                "property_id": "annotation:label-id",
+                "type": "annotation_metric",
+            }
+        )
+        assert annotation_breakdown.is_valid(), annotation_breakdown.errors
+
     def test_metrics_cache_separates_attribute_and_finite_catalogs(self):
         from tracer.services.dashboard_metrics_catalog import (
             get_cached_metrics_catalog,
@@ -1579,8 +2323,8 @@ class TestMetricsEndpoint:
 
         assert len(observed_keys) == 2
         assert observed_keys[0] != observed_keys[1]
-        assert observed_keys[0].endswith(":1")
-        assert observed_keys[1].endswith(":0")
+        assert ":1::" in observed_keys[0]
+        assert ":0::" in observed_keys[1]
 
     @pytest.mark.django_db
     def test_metrics_without_project_ids_returns_all(self, auth_client):
@@ -1608,7 +2352,11 @@ class TestMetricsEndpoint:
                 "tracer.services.dashboard_metrics_catalog.cache.set",
                 side_effect=RuntimeError("redis down"),
             ),
+            patch(
+                "tracer.services.dashboard_metrics_catalog.V2AnalyticsQueryService"
+            ) as analytics_cls,
         ):
+            analytics_cls.return_value.get_span_attribute_keys_ch_for_projects.return_value = []
             response = auth_client.get(
                 f"/tracer/dashboard/metrics/?project_ids={observe_project.id}"
             )
@@ -1617,7 +2365,11 @@ class TestMetricsEndpoint:
         assert "latency" in metric_names
 
     @pytest.mark.django_db
-    def test_metrics_returns_system_metrics(self, auth_client, observe_project):
+    @patch("tracer.services.dashboard_metrics_catalog.V2AnalyticsQueryService")
+    def test_metrics_returns_system_metrics(
+        self, mock_analytics_cls, auth_client, observe_project
+    ):
+        mock_analytics_cls.return_value.get_span_attribute_keys_ch_for_projects.return_value = []
         response = auth_client.get(
             f"/tracer/dashboard/metrics/?project_ids={observe_project.id}"
         )
@@ -1728,6 +2480,9 @@ class TestMetricsEndpoint:
                 "tracer.services.dashboard_metrics_catalog.V2AnalyticsQueryService",
                 return_value=analytics,
             ),
+            patch(
+                "tracer.services.dashboard_metrics_catalog.logger.warning"
+            ) as warning,
         ):
             response = auth_client.get(
                 f"/tracer/dashboard/metrics/?project_ids={observe_project.id}"
@@ -1737,6 +2492,13 @@ class TestMetricsEndpoint:
         metric_names = {item["name"] for item in response.json()["result"]["metrics"]}
         assert str(custom_eval_config.eval_template_id) in metric_names
         assert "private ClickHouse timeout detail" not in str(response.json())
+        assert any(
+            call.args
+            and call.args[0] == "dashboard_metrics_catalog_optimization_fallback"
+            and call.kwargs.get("optimization") == "eval_usage"
+            and call.kwargs.get("fallback") == "configured_eval_definitions"
+            for call in warning.call_args_list
+        )
 
     @pytest.mark.django_db
     def test_metrics_returns_agent_scoped_simulation_eval_metrics(
@@ -2125,8 +2887,10 @@ class TestMetricsEndpoint:
         assert str(label.id) in annotation_ids
 
     @pytest.mark.django_db
+    @patch("tracer.services.dashboard_metrics_catalog.V2AnalyticsQueryService")
     def test_metrics_excludes_annotation_label_from_other_project(
         self,
+        mock_analytics_cls,
         auth_client,
         organization,
         workspace,
@@ -2135,6 +2899,7 @@ class TestMetricsEndpoint:
         _annotation_label_factory,
     ):
         """A label used only in a different project must not leak into this one."""
+        mock_analytics_cls.return_value.get_span_attribute_keys_ch_for_projects.return_value = []
         from model_hub.models.ai_model import AIModel
         from model_hub.models.score import Score
         from tracer.models.observation_span import ObservationSpan
@@ -6447,10 +7212,18 @@ class TestDashboardQueryExecution:
         assert "AND deleted = 0" in sql
 
     @pytest.mark.django_db
+    @patch(
+        "tracer.services.clickhouse.v2.trace_session_dict_reader.resolve_session_fields"
+    )
     @patch("tracer.views.dashboard.V2AnalyticsQueryService")
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
     def test_filter_values_session_uses_remap_survivor_values(
-        self, _mock_enabled, mock_analytics_cls, auth_client, observe_project
+        self,
+        _mock_enabled,
+        mock_analytics_cls,
+        mock_resolve_session_fields,
+        auth_client,
+        observe_project,
     ):
         survivor_id = str(uuid.uuid4())
         mock_service = MagicMock()
@@ -6458,6 +7231,12 @@ class TestDashboardQueryExecution:
         mock_result.data = [{"val": survivor_id}]
         mock_service.execute_ch_query.return_value = mock_result
         mock_analytics_cls.return_value = mock_service
+        mock_resolve_session_fields.return_value = {
+            survivor_id: {
+                "external_session_id": None,
+                "display_name": None,
+            }
+        }
 
         response = auth_client.get(
             "/tracer/dashboard/filter_values/",
@@ -6665,15 +7444,12 @@ class TestDashboardQueryExecution:
         ]
 
     @pytest.mark.django_db
-    def test_filter_values_annotation_categorical_uses_stored_score_values(
-        self, auth_client, project, user, organization, workspace
+    def test_filter_values_annotation_categorical_uses_only_configured_values(
+        self, auth_client, project, organization, workspace
     ):
-        import json
-
         from model_hub.models.choices import AnnotationTypeChoices
         from model_hub.models.develop_annotations import AnnotationsLabels
         from tracer.services.annotation_label_source import (
-            AnnotationLabelScoresCH,
             AnnotationLabelScoresProjectPG,
         )
 
@@ -6692,17 +7468,11 @@ class TestDashboardQueryExecution:
             },
         )
 
-        with (
-            patch.object(
-                AnnotationLabelScoresProjectPG,
-                "categorical_values_for_label",
-                return_value=[json.dumps({"selected": ["matrix"]})],
-            ),
-            patch.object(
-                AnnotationLabelScoresCH,
-                "categorical_values_for_label",
-                side_effect=AssertionError("legacy ClickHouse score source used"),
-            ),
+        with patch.object(
+            AnnotationLabelScoresProjectPG,
+            "categorical_values_for_label",
+            side_effect=AssertionError("configured values must not scan Score history"),
+            create=True,
         ):
             response = auth_client.get(
                 "/tracer/dashboard/filter_values/",
@@ -6719,7 +7489,6 @@ class TestDashboardQueryExecution:
         assert values == [
             {"value": "accuracy", "label": "accuracy"},
             {"value": "coverage", "label": "coverage"},
-            {"value": "matrix", "label": "matrix"},
         ]
 
     @pytest.mark.django_db
@@ -6757,7 +7526,7 @@ class TestAnnotationLabelScoresCH:
     def _make_ch_client(self, captured: dict):
         mock_client = MagicMock()
         mock_client.execute_read.side_effect = lambda q, p, **kw: (
-            captured.update({"query": q, "params": p}) or ([], [], 0)
+            captured.update({"query": q, "params": p, "kwargs": kw}) or ([], [], 0)
         )
         return mock_client
 
@@ -6790,36 +7559,9 @@ class TestAnnotationLabelScoresCH:
         assert "tracer_observation_span" not in sql
         assert "tracer_trace" not in sql
         assert "tracer_trace_session" not in sql
-
-    def test_categorical_values_empty_returns_empty_without_ch(self):
-        from tracer.services.annotation_label_source import AnnotationLabelScoresCH
-
-        with patch(
-            "tracer.services.clickhouse.client.get_clickhouse_client"
-        ) as mock_get:
-            result = AnnotationLabelScoresCH().categorical_values_for_label("lbl-1", [])
-        mock_get.assert_not_called()
-        assert result == []
-
-    def test_categorical_values_query_uses_ch_not_dropped_tables(self):
-        from tracer.services.annotation_label_source import AnnotationLabelScoresCH
-
-        captured: dict = {}
-        mock_client = self._make_ch_client(captured)
-
-        with patch(
-            "tracer.services.clickhouse.client.get_clickhouse_client",
-            return_value=mock_client,
-        ):
-            AnnotationLabelScoresCH().categorical_values_for_label("lbl-1", ["proj-1"])
-
-        sql = captured["query"]
-        assert "FROM model_hub_score" in sql
-        assert "FROM spans" in sql
-        assert "project_id IN %(project_ids)s" in sql
-        assert "tracer_observation_span" not in sql
-        assert "tracer_trace" not in sql
-        assert "tracer_trace_session" not in sql
+        assert captured["kwargs"]["timeout_ms"] == (
+            settings.CLICKHOUSE_REVIEWED_READ_TIMEOUT_CEILING_MS
+        )
 
 
 class TestDashboardTraceTimeoutSelection:
@@ -9505,6 +10247,129 @@ class TestDashboardV2RewriteRouting:
 
 
 class TestInvalidMetricCombination:
+    def test_cataloged_unknown_system_metric_fails_closed(self):
+        config = _single_metric_config(
+            {
+                "id": "unknown_dimension",
+                "name": "unknown_dimension",
+                "property_id": "system_attribute:traces:unknown_dimension",
+                "type": "system_metric",
+                "aggregation": "count",
+            }
+        )
+
+        with pytest.raises(
+            InvalidMetricCombinationError,
+            match="Unsupported cataloged system metric",
+        ):
+            DashboardQueryBuilder(config).build_all_queries()
+
+    def test_cataloged_unknown_system_filter_fails_closed(self):
+        config = _single_metric_config(
+            {
+                "id": "latency",
+                "name": "latency",
+                "type": "system_metric",
+                "aggregation": "avg",
+                "filters": [
+                    {
+                        "metric_type": "system_metric",
+                        "metric_name": "unknown_dimension",
+                        "property_id": "system_attribute:traces:unknown_dimension",
+                        "operator": "equal_to",
+                        "value": "value",
+                    }
+                ],
+            }
+        )
+
+        with pytest.raises(
+            InvalidMetricCombinationError,
+            match="Unsupported cataloged system filter",
+        ):
+            DashboardQueryBuilder(config).build_all_queries()
+
+    def test_cataloged_unknown_system_breakdown_fails_closed(self):
+        config = _single_metric_config(
+            {
+                "id": "latency",
+                "name": "latency",
+                "type": "system_metric",
+                "aggregation": "avg",
+            },
+            breakdowns=[
+                {
+                    "name": "unknown_dimension",
+                    "property_id": "system_attribute:traces:unknown_dimension",
+                    "type": "system_metric",
+                    "source": "traces",
+                }
+            ],
+        )
+
+        with pytest.raises(
+            InvalidMetricCombinationError,
+            match="Unsupported cataloged system breakdown",
+        ):
+            DashboardQueryBuilder(config).build_all_queries()
+
+    @pytest.mark.parametrize(
+        ("field", "value", "error_role"),
+        [
+            (
+                "filters",
+                [
+                    {
+                        "metric_type": "system_metric",
+                        "metric_name": "unknown_dimension",
+                        "property_id": "system_attribute:traces:unknown_dimension",
+                        "operator": "equal_to",
+                        "value": "value",
+                    }
+                ],
+                "filter",
+            ),
+            (
+                "breakdowns",
+                [
+                    {
+                        "name": "unknown_dimension",
+                        "property_id": "system_attribute:traces:unknown_dimension",
+                        "type": "system_metric",
+                        "source": "traces",
+                    }
+                ],
+                "breakdown",
+            ),
+        ],
+    )
+    def test_eval_metric_rejects_unknown_cataloged_system_dimension(
+        self,
+        field,
+        value,
+        error_role,
+    ):
+        eval_id = "44444444-4444-4444-4444-444444444444"
+        metric = {
+            "id": eval_id,
+            "name": "quality",
+            "type": "eval_metric",
+            "config_id": eval_id,
+            "output_type": "SCORE",
+            "aggregation": "count",
+        }
+        if field == "filters":
+            metric["filters"] = value
+            config = _single_metric_config(metric)
+        else:
+            config = _single_metric_config(metric, breakdowns=value)
+
+        with pytest.raises(
+            InvalidMetricCombinationError,
+            match=f"Unsupported cataloged system {error_role}",
+        ):
+            DashboardQueryBuilder(config).build_all_queries()
+
     def test_avg_of_text_attribute_raises(self):
         config = _single_metric_config(
             {
@@ -9783,6 +10648,33 @@ class TestDashboardTimeRangeValidation:
 
 
 class TestMetricsCatalogPagination:
+    def test_manual_catalog_actions_disable_drf_pagination(self):
+        from tracer.views.dashboard import DashboardViewSet
+
+        assert DashboardViewSet.metrics.kwargs["pagination_class"] is None
+        assert DashboardViewSet.filter_values.kwargs["pagination_class"] is None
+
+    def test_response_contract_covers_legacy_and_paginated_shapes(self):
+        from tracer.serializers.dashboard import (
+            DashboardMetricsCatalogResultSerializer,
+        )
+
+        legacy = DashboardMetricsCatalogResultSerializer(data={"metrics": []})
+        assert legacy.is_valid(), legacy.errors
+
+        paginated = DashboardMetricsCatalogResultSerializer(
+            data={
+                "metrics": [],
+                "total": 401,
+                "page": 2,
+                "page_size": 200,
+                "has_more": True,
+            }
+        )
+        assert paginated.is_valid(), paginated.errors
+        assert paginated.validated_data["total"] == 401
+        assert paginated.validated_data["has_more"] is True
+
     @pytest.mark.django_db
     def test_pagination_returns_page_metadata(self, auth_client):
         response = auth_client.get("/tracer/dashboard/metrics/?page=1&page_size=5")
@@ -9795,18 +10687,763 @@ class TestMetricsCatalogPagination:
         assert len(result["metrics"]) <= 5
 
     @pytest.mark.django_db
-    def test_page_size_clamped_to_200(self, auth_client):
-        response = auth_client.get("/tracer/dashboard/metrics/?page=1&page_size=999")
-        assert response.status_code == 200
-        assert response.json()["result"]["page_size"] == 200
+    def test_later_page_preserves_exact_total_and_exhaustion(self, auth_client):
+        catalog = [{"name": f"metric-{index}"} for index in range(5)]
+        with patch(
+            "tracer.views.dashboard.build_metrics_catalog_page",
+            return_value=(catalog[4:], 5, False),
+        ):
+            response = auth_client.get("/tracer/dashboard/metrics/?page=3&page_size=2")
 
-    @pytest.mark.django_db
-    def test_garbage_page_falls_back_to_defaults(self, auth_client):
-        response = auth_client.get("/tracer/dashboard/metrics/?page=abc&page_size=5")
         assert response.status_code == 200
         result = response.json()["result"]
-        assert result["page"] == 1
-        assert result["page_size"] == 50
+        assert result == {
+            "metrics": [{"name": "metric-4"}],
+            "total": 5,
+            "page": 3,
+            "page_size": 2,
+            "has_more": False,
+        }
+
+    @pytest.mark.django_db
+    def test_page_size_over_200_is_rejected(self, auth_client):
+        response = auth_client.get("/tracer/dashboard/metrics/?page=1&page_size=999")
+        assert response.status_code == 400
+
+    @pytest.mark.django_db
+    def test_garbage_page_is_rejected(self, auth_client):
+        response = auth_client.get("/tracer/dashboard/metrics/?page=abc&page_size=5")
+        assert response.status_code == 400
+
+    @pytest.mark.django_db
+    def test_unknown_query_parameter_is_rejected(self, auth_client):
+        response = auth_client.get(
+            "/tracer/dashboard/metrics/?page=1&page_size=5&surprise=true"
+        )
+        assert response.status_code == 400
+
+    def test_query_serializer_enforces_positive_bounded_pages(self):
+        from tracer.serializers.dashboard import (
+            DashboardMetricsCatalogQuerySerializer,
+        )
+
+        assert not DashboardMetricsCatalogQuerySerializer(
+            data={"page": 0, "page_size": 50}
+        ).is_valid()
+        assert not DashboardMetricsCatalogQuerySerializer(
+            data={"page": 1, "page_size": 201}
+        ).is_valid()
+        valid = DashboardMetricsCatalogQuerySerializer(
+            data={"page": 1, "page_size": 200}
+        )
+        assert valid.is_valid(), valid.errors
+        unknown = DashboardMetricsCatalogQuerySerializer(data={"surprise": True})
+        assert not unknown.is_valid()
+        assert "surprise" in unknown.errors
+        invalid_project = DashboardMetricsCatalogQuerySerializer(
+            data={"project_ids": "not-a-uuid"}
+        )
+        assert not invalid_project.is_valid()
+        assert "project_ids" in invalid_project.errors
+
+    def test_page_family_walk_counts_all_but_reads_only_boundary_slices(self):
+        from tracer.services.clickhouse.read_budget import ReadDeadline
+        from tracer.services.dashboard_metrics_catalog import (
+            _CatalogPageFamily,
+            _paginate_catalog_families,
+        )
+
+        count_calls = []
+        read_calls = []
+
+        def family(name, rows):
+            return _CatalogPageFamily(
+                name=name,
+                count_rows=lambda: count_calls.append(name) or len(rows),
+                read_rows=lambda offset, limit: (
+                    read_calls.append((name, offset, limit))
+                    or rows[offset : offset + limit]
+                ),
+            )
+
+        rows, total, has_more = _paginate_catalog_families(
+            [
+                family("system_metrics", [{"name": "s0"}, {"name": "s1"}]),
+                family(
+                    "eval_metrics",
+                    [
+                        {"name": "e0"},
+                        {"name": "e1"},
+                        {"name": "e2"},
+                        {"name": "e3"},
+                    ],
+                ),
+                family(
+                    "annotation_metrics",
+                    [{"name": "a0"}, {"name": "a1"}],
+                ),
+            ],
+            page=2,
+            page_size=4,
+            deadline=ReadDeadline.start(8_500),
+        )
+
+        assert count_calls == [
+            "system_metrics",
+            "eval_metrics",
+            "annotation_metrics",
+        ]
+        assert read_calls == [
+            ("eval_metrics", 2, 2),
+            ("annotation_metrics", 0, 2),
+        ]
+        assert [row["name"] for row in rows] == ["e2", "e3", "a0", "a1"]
+        assert total == 8
+        assert has_more is False
+
+    def test_page_first_order_does_not_change_with_python_casefold_page_size(self):
+        from tracer.services.clickhouse.read_budget import ReadDeadline
+        from tracer.services.dashboard_metrics_catalog import build_metrics_catalog_page
+
+        workspace = SimpleNamespace(id="workspace-order", organization=object())
+        preordered = [
+            {
+                "name": "z",
+                "display_name": "ss",
+                "category": "system_metric",
+                "source": "traces",
+                "type": "string",
+            },
+            {
+                "name": "a",
+                "display_name": "ß",
+                "category": "system_metric",
+                "source": "traces",
+                "type": "string",
+            },
+        ]
+
+        def read_page(page, page_size):
+            with (
+                patch(
+                    "tracer.services.dashboard_metrics_catalog._resolve_metrics_catalog_project_scope",
+                    return_value=([], False),
+                ),
+                patch(
+                    "tracer.services.dashboard_metrics_catalog.build_metrics_catalog",
+                    return_value=[dict(row) for row in preordered],
+                ),
+                patch(
+                    "tracer.services.dashboard_metrics_catalog._run_metrics_catalog_pg_snapshot",
+                    side_effect=lambda _deadline, read: read(),
+                ),
+            ):
+                rows, _total, _has_more = build_metrics_catalog_page(
+                    workspace,
+                    page=page,
+                    page_size=page_size,
+                    include_custom_attributes=False,
+                    category="system_metric",
+                    deadline=ReadDeadline.start(8_500),
+                )
+            return [row["display_name"] for row in rows]
+
+        assert read_page(1, 2) == read_page(1, 1) + read_page(2, 1)
+        assert read_page(1, 2) == ["ss", "ß"]
+
+    def test_required_family_count_failure_reads_no_payload(self):
+        from tracer.services.clickhouse.read_budget import ReadDeadline
+        from tracer.services.dashboard_metrics_catalog import (
+            MetricsCatalogUnavailable,
+            _CatalogPageFamily,
+            _paginate_catalog_families,
+        )
+
+        read_rows = MagicMock(return_value=[])
+        families = [
+            _CatalogPageFamily("system_metrics", lambda: 3, read_rows),
+            _CatalogPageFamily(
+                "annotation_metrics",
+                lambda: (_ for _ in ()).throw(RuntimeError("private db error")),
+                read_rows,
+            ),
+        ]
+
+        with pytest.raises(MetricsCatalogUnavailable) as exc_info:
+            _paginate_catalog_families(
+                families,
+                page=1,
+                page_size=2,
+                deadline=ReadDeadline.start(8_500),
+            )
+
+        assert exc_info.value.family == "annotation_metrics"
+        read_rows.assert_not_called()
+
+    def test_queryset_family_applies_slice_before_materializing(self):
+        from tracer.services.clickhouse.read_budget import ReadDeadline
+        from tracer.services.dashboard_metrics_catalog import (
+            _queryset_catalog_family,
+        )
+
+        class FakeQuerySet:
+            def __init__(self):
+                self.values_fields = None
+                self.slices = []
+
+            def values(self, *fields):
+                self.values_fields = fields
+                return self
+
+            def count(self):
+                return 10_000
+
+            def __getitem__(self, value):
+                self.slices.append(value)
+                return [{"id": index} for index in range(value.start, value.stop)]
+
+        queryset = FakeQuerySet()
+        deadline = ReadDeadline.start(8_500)
+        with patch(
+            "tracer.services.dashboard_metrics_catalog._run_metrics_catalog_pg_read",
+            side_effect=lambda _deadline, _family, read: read(),
+        ):
+            family = _queryset_catalog_family(
+                name="eval_metrics",
+                queryset=queryset,
+                fields=("id", "name"),
+                convert=lambda row: {"name": str(row["id"])},
+                deadline=deadline,
+            )
+            assert family.count_rows() == 10_000
+            assert family.read_rows(4_000, 50)[0] == {"name": "4000"}
+
+        assert queryset.values_fields == ("id", "name")
+        assert queryset.slices == [slice(4_000, 4_050)]
+
+    @pytest.mark.parametrize(
+        (
+            "family_category",
+            "family_source",
+            "family_sources",
+            "category",
+            "source",
+            "expected",
+        ),
+        [
+            ("eval_metric", "all", ("all",), "eval_metric", "all", True),
+            ("eval_metric", "all", ("all",), "eval_metric", "traces", False),
+            (
+                "annotation_metric",
+                "both",
+                ("datasets", "traces"),
+                "annotation_metric",
+                "datasets",
+                True,
+            ),
+            (
+                "annotation_metric",
+                "both",
+                ("datasets", "traces"),
+                "annotation_metric",
+                "simulation",
+                False,
+            ),
+            ("custom_column", "datasets", (), "", "datasets", True),
+            ("custom_column", "datasets", (), "eval_metric", "datasets", False),
+        ],
+    )
+    def test_category_and_source_are_applied_before_family_reads(
+        self,
+        family_category,
+        family_source,
+        family_sources,
+        category,
+        source,
+        expected,
+    ):
+        from tracer.services.dashboard_metrics_catalog import (
+            _catalog_family_requested,
+        )
+
+        assert (
+            _catalog_family_requested(
+                category=category,
+                source=source,
+                family_category=family_category,
+                family_source=family_source,
+                family_sources=family_sources,
+            )
+            is expected
+        )
+
+    def test_project_eval_search_query_is_correlated_and_page_ordered(self):
+        from tracer.services.clickhouse.read_budget import ReadDeadline
+        from tracer.services.dashboard_metrics_catalog import (
+            _CatalogPageFamily,
+            build_metrics_catalog_page,
+        )
+
+        captured_querysets = []
+
+        def capture_family(*, name, queryset, **_kwargs):
+            captured_querysets.append(queryset)
+            return _CatalogPageFamily(name, lambda: 0, lambda _offset, _limit: [])
+
+        project_id = "11111111-1111-4111-8111-111111111111"
+        workspace = SimpleNamespace(
+            id="22222222-2222-4222-8222-222222222222",
+            organization="33333333-3333-4333-8333-333333333333",
+        )
+        with (
+            patch(
+                "tracer.services.dashboard_metrics_catalog._resolve_metrics_catalog_project_scope",
+                return_value=([project_id], True),
+            ),
+            patch(
+                "tracer.services.dashboard_metrics_catalog._queryset_catalog_family",
+                side_effect=capture_family,
+            ),
+            patch(
+                "tracer.services.dashboard_metrics_catalog._run_metrics_catalog_pg_snapshot",
+                side_effect=lambda _deadline, read: read(),
+            ),
+        ):
+            metrics, total, has_more = build_metrics_catalog_page(
+                workspace,
+                page=1,
+                page_size=50,
+                project_ids_param=project_id,
+                include_custom_attributes=False,
+                search="quality",
+                category="eval_metric",
+                source="all",
+                deadline=ReadDeadline.start(8_500),
+            )
+
+        assert metrics == []
+        assert total == 0
+        assert has_more is False
+        assert len(captured_querysets) == 1
+        sql = str(captured_querysets[0].query).upper()
+        assert "EXISTS" in sql
+        assert "LOWER" in sql
+        assert "QUALITY" in sql
+
+    def test_bounded_view_routes_page_first_and_never_builds_legacy_catalog(self):
+        from tracer.views.dashboard import DashboardViewSet
+
+        request = SimpleNamespace(
+            workspace=SimpleNamespace(id="workspace-page-first"),
+            query_params={"page": "2", "page_size": "25", "search": "quality"},
+            validated_query_data={
+                "project_ids": [],
+                "category": "",
+                "source": "",
+                "search": "quality",
+                "page": 2,
+                "page_size": 25,
+                "per_eval_config": False,
+                "exclude_custom_attributes": True,
+            },
+        )
+        with (
+            patch(
+                "tracer.views.dashboard.build_metrics_catalog_page",
+                return_value=([{"name": "quality"}], 26, False),
+            ) as page_builder,
+            patch(
+                "tracer.views.dashboard.get_cached_metrics_catalog"
+            ) as legacy_builder,
+        ):
+            response = inspect.unwrap(DashboardViewSet.metrics)(
+                DashboardViewSet(), request
+            )
+
+        assert response.status_code == 200
+        assert response.data["result"] == {
+            "metrics": [{"name": "quality"}],
+            "total": 26,
+            "page": 2,
+            "page_size": 25,
+            "has_more": False,
+        }
+        page_builder.assert_called_once()
+        assert page_builder.call_args.kwargs["search"] == "quality"
+        assert page_builder.call_args.kwargs["include_custom_attributes"] is False
+        legacy_builder.assert_not_called()
+
+    def test_unpaged_compatibility_shape_is_deadline_bound_and_deprecated(self):
+        from tracer.views.dashboard import DashboardViewSet
+
+        request = SimpleNamespace(
+            workspace=SimpleNamespace(id="workspace-legacy"),
+            query_params={},
+            validated_query_data={
+                "project_ids": [],
+                "category": "",
+                "source": "",
+                "search": "",
+                "per_eval_config": False,
+                "exclude_custom_attributes": True,
+            },
+        )
+        with (
+            patch("tracer.views.dashboard.build_metrics_catalog_page") as page_builder,
+            patch(
+                "tracer.views.dashboard.get_cached_metrics_catalog",
+                return_value=[{"name": "legacy"}],
+            ) as legacy_builder,
+        ):
+            response = inspect.unwrap(DashboardViewSet.metrics)(
+                DashboardViewSet(), request
+            )
+
+        assert response.status_code == 200
+        assert response.data["result"] == {"metrics": [{"name": "legacy"}]}
+        assert response["Deprecation"] == "true"
+        assert legacy_builder.call_args.kwargs["deadline"] is not None
+        page_builder.assert_not_called()
+
+    def test_requested_family_failure_is_sanitized_503(self):
+        from tracer.services.dashboard_metrics_catalog import (
+            MetricsCatalogUnavailable,
+        )
+        from tracer.views.dashboard import DashboardViewSet
+
+        with patch(
+            "tracer.views.dashboard.build_metrics_catalog_page",
+            side_effect=MetricsCatalogUnavailable("annotation_metrics"),
+        ):
+            request = SimpleNamespace(
+                workspace=SimpleNamespace(id="workspace-1"),
+                query_params={
+                    "category": "annotation_metric",
+                    "page": "1",
+                    "page_size": "50",
+                },
+                validated_query_data={
+                    "project_ids": [],
+                    "category": "annotation_metric",
+                    "source": "",
+                    "search": "",
+                    "page": 1,
+                    "page_size": 50,
+                    "per_eval_config": False,
+                    "exclude_custom_attributes": False,
+                },
+            )
+            response = inspect.unwrap(DashboardViewSet.metrics)(
+                DashboardViewSet(), request
+            )
+
+        assert response.status_code == 503
+        payload = response.data
+        assert payload["code"] == "service_unavailable"
+        assert "annotation_metrics" not in str(payload)
+
+    def test_incomplete_catalog_is_never_cached(self):
+        from tracer.services.clickhouse.read_budget import ReadDeadline
+        from tracer.services.dashboard_metrics_catalog import (
+            METRICS_CATALOG_TIMEOUT_MS,
+            MetricsCatalogUnavailable,
+            get_cached_metrics_catalog,
+        )
+
+        workspace = SimpleNamespace(id="workspace-complete-only")
+        with (
+            patch(
+                "tracer.services.dashboard_metrics_catalog.cache.get",
+                return_value=None,
+            ),
+            patch("tracer.services.dashboard_metrics_catalog.cache.set") as cache_set,
+            patch(
+                "tracer.services.dashboard_metrics_catalog.build_metrics_catalog",
+                side_effect=MetricsCatalogUnavailable("custom_columns"),
+            ),
+        ):
+            with pytest.raises(MetricsCatalogUnavailable):
+                get_cached_metrics_catalog(
+                    workspace,
+                    include_custom_attributes=False,
+                    deadline=ReadDeadline.start(METRICS_CATALOG_TIMEOUT_MS),
+                )
+
+        cache_set.assert_not_called()
+
+    def test_each_catalog_pg_statement_uses_the_shrinking_request_wall(self):
+        from tracer.services.dashboard_metrics_catalog import (
+            _execute_metrics_catalog_pg_query_with_deadline,
+        )
+
+        class Deadline:
+            def __init__(self):
+                self.remaining = iter((8_250, 8_100, 7_600, 7_450))
+                self.calls = []
+
+            def remaining_ms(self, *, floor_ms):
+                self.calls.append(floor_ms)
+                return next(self.remaining)
+
+        class RawCursor:
+            def __init__(self):
+                self.calls = []
+
+            def execute(self, sql, params):
+                self.calls.append((sql, params))
+
+        deadline = Deadline()
+        raw_cursor = RawCursor()
+        executed = []
+
+        def execute(sql, params, many, context):
+            executed.append((sql, params, many, context))
+            return sql
+
+        context = {"cursor": SimpleNamespace(cursor=raw_cursor)}
+        first = _execute_metrics_catalog_pg_query_with_deadline(
+            deadline,
+            execute,
+            "SELECT first_family",
+            (),
+            False,
+            context,
+        )
+        second = _execute_metrics_catalog_pg_query_with_deadline(
+            deadline,
+            execute,
+            "SELECT second_family",
+            (),
+            False,
+            context,
+        )
+
+        assert first == "SELECT first_family"
+        assert second == "SELECT second_family"
+        assert raw_cursor.calls == [
+            ("SELECT set_config('statement_timeout', %s, true)", ("8250",)),
+            ("SELECT set_config('statement_timeout', %s, true)", ("7600",)),
+        ]
+        assert [call[:3] for call in executed] == [
+            ("SELECT first_family", (), False),
+            ("SELECT second_family", (), False),
+        ]
+        assert deadline.calls == [1, 1, 1, 1]
+
+    def test_catalog_counts_and_slices_share_a_read_only_repeatable_snapshot(self):
+        from tracer.services.dashboard_metrics_catalog import (
+            METRICS_CATALOG_TIMEOUT_MS,
+            _run_metrics_catalog_pg_snapshot,
+        )
+
+        deadline = MagicMock()
+        deadline.remaining_ms.return_value = 8_000
+        fake_connection = MagicMock(vendor="postgresql", in_atomic_block=False)
+        cursor = fake_connection.cursor.return_value.__enter__.return_value
+        atomic = MagicMock()
+
+        with (
+            patch(
+                "tracer.services.dashboard_metrics_catalog.connection",
+                fake_connection,
+            ),
+            patch(
+                "tracer.services.dashboard_metrics_catalog.transaction.atomic",
+                return_value=atomic,
+            ),
+        ):
+            result = _run_metrics_catalog_pg_snapshot(deadline, lambda: "page")
+
+        assert result == "page"
+        atomic.__enter__.assert_called_once_with()
+        atomic.__exit__.assert_called_once()
+        cursor.execute.assert_called_once_with(
+            "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+        )
+        assert deadline.remaining_ms.call_args_list == [
+            call(METRICS_CATALOG_TIMEOUT_MS),
+            call(floor_ms=1),
+            call(floor_ms=1),
+        ]
+
+    def test_stalled_remote_cache_is_skipped_without_spending_request_wall(self):
+        import time
+
+        from tracer.services.clickhouse.read_budget import ReadDeadline
+        from tracer.services.dashboard_metrics_catalog import (
+            get_cached_metrics_catalog,
+        )
+
+        remote_cache = MagicMock()
+        remote_cache.get.side_effect = lambda *_args, **_kwargs: time.sleep(5)
+        remote_cache.set.side_effect = lambda *_args, **_kwargs: time.sleep(5)
+        metrics = [{"name": "complete"}]
+
+        started = time.monotonic()
+        with (
+            patch(
+                "tracer.services.dashboard_metrics_catalog.caches",
+                {"default": remote_cache},
+            ),
+            patch(
+                "tracer.services.dashboard_metrics_catalog.cache",
+                remote_cache,
+            ),
+            patch(
+                "tracer.services.dashboard_metrics_catalog.build_metrics_catalog",
+                return_value=metrics,
+            ),
+        ):
+            result = get_cached_metrics_catalog(
+                SimpleNamespace(id="workspace-remote-cache"),
+                deadline=ReadDeadline.start(100),
+            )
+        elapsed = time.monotonic() - started
+
+        assert result == metrics
+        assert elapsed < 0.5
+        remote_cache.get.assert_not_called()
+        remote_cache.set.assert_not_called()
+
+    def test_static_scope_is_deterministic_and_skips_dynamic_readers(self):
+        from tracer.services.clickhouse.read_budget import ReadDeadline
+        from tracer.services.dashboard_metrics_catalog import (
+            METRICS_CATALOG_TIMEOUT_MS,
+            _metric_catalog_sort_key,
+            build_metrics_catalog,
+        )
+
+        workspace = SimpleNamespace(id="workspace-static", organization=object())
+        with (
+            patch(
+                "tracer.services.dashboard_metrics_catalog.Project.objects.filter"
+            ) as project_filter,
+            patch(
+                "tracer.services.dashboard_metrics_catalog.V2AnalyticsQueryService"
+            ) as analytics,
+            patch(
+                "tracer.services.dashboard_metrics_catalog.AnnotationLabelScoresProjectPG"
+            ) as annotation_source,
+        ):
+            metrics = build_metrics_catalog(
+                workspace,
+                include_custom_attributes=False,
+                category="system_metric",
+                source="datasets",
+                deadline=ReadDeadline.start(METRICS_CATALOG_TIMEOUT_MS),
+            )
+
+        assert metrics
+        assert all(item["category"] == "system_metric" for item in metrics)
+        assert all(item["source"] == "datasets" for item in metrics)
+        assert metrics == sorted(metrics, key=_metric_catalog_sort_key)
+        project_filter.assert_not_called()
+        analytics.assert_not_called()
+        annotation_source.assert_not_called()
+
+    def test_attribute_future_uses_shared_deadline_and_fails_closed(self):
+        from tracer.services.clickhouse.read_budget import ReadDeadline
+        from tracer.services.dashboard_metrics_catalog import (
+            METRICS_CATALOG_TIMEOUT_MS,
+            MetricsCatalogUnavailable,
+            build_metrics_catalog,
+        )
+
+        project_id = "11111111-1111-4111-8111-111111111111"
+        analytics = MagicMock()
+        analytics.get_span_attribute_keys_ch_for_projects.side_effect = RuntimeError(
+            "private attribute failure"
+        )
+        with (
+            patch(
+                "tracer.services.dashboard_metrics_catalog._run_metrics_catalog_pg_read",
+                return_value=[project_id],
+            ),
+            patch(
+                "tracer.services.dashboard_metrics_catalog.V2AnalyticsQueryService",
+                return_value=analytics,
+            ),
+        ):
+            with pytest.raises(MetricsCatalogUnavailable) as exc_info:
+                build_metrics_catalog(
+                    SimpleNamespace(id="workspace-worker", organization=object()),
+                    project_ids_param=project_id,
+                    category="custom_attribute",
+                    source="traces",
+                    deadline=ReadDeadline.start(METRICS_CATALOG_TIMEOUT_MS),
+                )
+
+        assert exc_info.value.family == "custom_attributes"
+        kwargs = analytics.get_span_attribute_keys_ch_for_projects.call_args.kwargs
+        assert 0 < kwargs["timeout_ms"] <= METRICS_CATALOG_TIMEOUT_MS
+
+    @pytest.mark.django_db
+    def test_scope_skips_unrequested_dynamic_families(
+        self,
+        auth_client,
+    ):
+        with (
+            patch(
+                "tracer.services.dashboard_metrics_catalog.cache.get",
+                return_value=None,
+            ),
+            patch("tracer.services.dashboard_metrics_catalog.cache.set"),
+            patch(
+                "tracer.services.dashboard_metrics_catalog.V2AnalyticsQueryService"
+            ) as analytics,
+            patch(
+                "tracer.services.dashboard_metrics_catalog.AnnotationLabelScoresProjectPG"
+            ) as annotation_source,
+        ):
+            response = auth_client.get(
+                "/tracer/dashboard/metrics/"
+                "?category=system_metric&source=datasets&page=1&page_size=50"
+            )
+
+        assert response.status_code == 200
+        metrics = response.json()["result"]["metrics"]
+        assert metrics
+        assert all(item["category"] == "system_metric" for item in metrics)
+        assert all(item["source"] == "datasets" for item in metrics)
+        analytics.assert_not_called()
+        annotation_source.assert_not_called()
+
+    @pytest.mark.django_db
+    def test_custom_attribute_worker_failure_is_503_and_uses_shared_timeout(
+        self,
+        auth_client,
+        observe_project,
+    ):
+        analytics = MagicMock()
+        analytics.get_span_attribute_keys_ch_for_projects.side_effect = RuntimeError(
+            "private attribute failure"
+        )
+        with (
+            patch(
+                "tracer.services.dashboard_metrics_catalog.cache.get",
+                return_value=None,
+            ),
+            patch("tracer.services.dashboard_metrics_catalog.cache.set") as cache_set,
+            patch(
+                "tracer.services.dashboard_metrics_catalog.V2AnalyticsQueryService",
+                return_value=analytics,
+            ),
+        ):
+            response = auth_client.get(
+                "/tracer/dashboard/metrics/",
+                {
+                    "project_ids": str(observe_project.id),
+                    "category": "custom_attribute",
+                    "page": 1,
+                    "page_size": 50,
+                },
+            )
+
+        assert response.status_code == 503
+        assert "private attribute failure" not in str(response.json())
+        cache_set.assert_not_called()
+        kwargs = analytics.get_span_attribute_keys_ch_for_projects.call_args.kwargs
+        assert 0 < kwargs["timeout_ms"] <= 8_500
 
 
 class TestDashboardAuthRequired:
@@ -10231,7 +11868,7 @@ class TestFilterValuesEndpoint:
 
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=False)
-    def test_simulation_source_returns_empty_when_clickhouse_disabled(
+    def test_simulation_source_fails_closed_when_clickhouse_disabled(
         self, _mock_ch, auth_client
     ):
         response = auth_client.get(
@@ -10242,8 +11879,10 @@ class TestFilterValuesEndpoint:
                 "metric_name": "status",
             },
         )
-        assert response.status_code == 200
-        assert response.json()["result"]["values"] == []
+        assert response.status_code == 503
+        payload = response.json()
+        assert payload["code"] == "service_unavailable"
+        assert "temporarily unavailable" in json.dumps(payload)
 
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
@@ -10342,6 +11981,75 @@ class TestFilterValuesAnnotationBranches:
         assert response.status_code == 200
         values = response.json()["result"]["values"]
         assert {v["value"] for v in values} == {"thumbs_up", "thumbs_down"}
+
+    @pytest.mark.django_db
+    def test_workspace_label_without_requested_project_score_returns_empty(
+        self,
+        auth_client,
+        project,
+        organization,
+        workspace,
+    ):
+        from tracer.services.annotation_label_source import (
+            AnnotationLabelScoresProjectPG,
+        )
+
+        label = self._label(organization, workspace, "thumbs_up_down")
+        with patch.object(
+            AnnotationLabelScoresProjectPG,
+            "label_has_scores_for_projects",
+            return_value=False,
+        ) as visibility_read:
+            response = auth_client.get(
+                self.URL,
+                {
+                    "source": "traces",
+                    "metric_type": "annotation_metric",
+                    "metric_name": str(label.id),
+                    "project_ids": str(project.id),
+                    "page_size": 20,
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["result"]["values"] == []
+        visibility_read.assert_called_once_with(label.id, [str(project.id)])
+
+    @pytest.mark.django_db
+    def test_workspace_label_with_requested_project_score_returns_values(
+        self,
+        auth_client,
+        project,
+        organization,
+        workspace,
+    ):
+        from tracer.services.annotation_label_source import (
+            AnnotationLabelScoresProjectPG,
+        )
+
+        label = self._label(organization, workspace, "thumbs_up_down")
+        with patch.object(
+            AnnotationLabelScoresProjectPG,
+            "label_has_scores_for_projects",
+            return_value=True,
+        ) as visibility_read:
+            response = auth_client.get(
+                self.URL,
+                {
+                    "source": "traces",
+                    "metric_type": "annotation_metric",
+                    "metric_name": str(label.id),
+                    "project_ids": str(project.id),
+                    "page_size": 20,
+                },
+            )
+
+        assert response.status_code == 200
+        assert {item["value"] for item in response.json()["result"]["values"]} == {
+            "thumbs_up",
+            "thumbs_down",
+        }
+        visibility_read.assert_called_once_with(label.id, [str(project.id)])
 
     @pytest.mark.django_db
     def test_unknown_label_returns_empty(self, auth_client):

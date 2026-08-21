@@ -16,6 +16,9 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from tracer.services.clickhouse.query_builders.dashboard import (
+    InvalidMetricCombinationError,
+)
 from tracer.services.clickhouse.query_builders.dashboard_base import (
     FILTER_OPERATORS,
     GRANULARITY_TO_CH,
@@ -145,6 +148,7 @@ DATASET_BREAKDOWN_COLUMNS: dict[str, str] = {
 # Filter dimensions for dataset workflow
 DATASET_FILTER_COLUMNS: dict[str, str] = {
     "dataset": "toString(c.dataset_id)",
+    "eval_template": "dictGet('column_dict', 'name', c.column_id)",
     "column_name": "dictGet('column_dict', 'name', c.column_id)",
     "column_source": "dictGet('column_dict', 'source', c.column_id)",
     "cell_status": "c.status",
@@ -604,11 +608,25 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
         if not self.breakdowns:
             return None
         bd = self.breakdowns[0]
+        source = bd.get("source")
+        targets_dataset = self.config.get("workflow") == "dataset" or source in {
+            "datasets",
+            "all",
+            "both",
+        }
+        if not targets_dataset:
+            return None
+        if bd.get("type", "system_metric") != "system_metric":
+            raise InvalidMetricCombinationError(
+                "Dataset breakdowns do not support this property type."
+            )
         bd_name = bd.get("name", "")
         col = DATASET_BREAKDOWN_COLUMNS.get(bd_name)
         if col:
             return col
-        return None
+        raise InvalidMetricCombinationError(
+            f"Unsupported dataset breakdown dimension: {bd_name}"
+        )
 
     def metric_info(self, metric: dict) -> dict:
         info = super().metric_info(metric)
@@ -666,9 +684,19 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
             op = f.get("operator", "")
             val = f.get("value")
 
-            if f_type != "system_metric":
-                # Dataset filters only support system_metric dimensions for now
+            source = f.get("source")
+            targets_dataset = self.config.get("workflow") == "dataset" or source in {
+                "datasets",
+                "all",
+                "both",
+            }
+            if not targets_dataset:
                 continue
+
+            if f_type != "system_metric":
+                raise InvalidMetricCombinationError(
+                    "Dataset filters do not support this property type."
+                )
 
             if f_name == "dataset":
                 if op in ("is_set", "is_not_set"):
@@ -701,7 +729,9 @@ class DatasetQueryBuilder(DashboardQueryBuilderBase):
 
             col = DATASET_FILTER_COLUMNS.get(f_name)
             if not col:
-                continue
+                raise InvalidMetricCombinationError(
+                    f"Unsupported dataset filter dimension: {f_name}"
+                )
 
             if op in ("is_set", "is_not_set"):
                 op_tpl = FILTER_OPERATORS.get(op)

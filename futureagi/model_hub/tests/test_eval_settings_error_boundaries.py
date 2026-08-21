@@ -2,6 +2,7 @@
 
 import ast
 import inspect
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -116,9 +117,10 @@ def test_eval_metrics_sanitize_unexpected_errors(
         SimpleNamespace(objects=SimpleNamespace(filter=lambda **_kwargs: object())),
     )
     monkeypatch.setattr(
-        separate_evals.EvalTemplate.no_workspace_objects,
-        "filter",
-        lambda **_kwargs: SimpleNamespace(first=lambda: eval_template),
+        separate_evals, "_get_eval_metric_template", lambda *_args: eval_template
+    )
+    monkeypatch.setattr(
+        separate_evals, "_bounded_eval_metric_read", lambda _deadline: nullcontext()
     )
     monkeypatch.setattr(separate_evals, "get_eval_metric_data", _raise_private_error)
     organization = SimpleNamespace(id="org-1")
@@ -154,9 +156,10 @@ def test_eval_metrics_preserve_missing_template_bad_request(
         SimpleNamespace(objects=SimpleNamespace(filter=lambda **_kwargs: object())),
     )
     monkeypatch.setattr(
-        separate_evals.EvalTemplate.no_workspace_objects,
-        "filter",
-        lambda **_kwargs: SimpleNamespace(first=lambda: None),
+        separate_evals, "_get_eval_metric_template", lambda *_args: None
+    )
+    monkeypatch.setattr(
+        separate_evals, "_bounded_eval_metric_read", lambda _deadline: nullcontext()
     )
     organization = SimpleNamespace(id="org-1")
     request = SimpleNamespace(

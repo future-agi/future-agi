@@ -1,11 +1,16 @@
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useDebounce } from "src/hooks/use-debounce";
+import {
+  isPropertyCatalogNotReadyError,
+  usePropertyCatalog,
+} from "src/hooks/useDashboards";
 import axios, { endpoints } from "src/utils/axios";
 import {
   ATTRIBUTE_KEY_REQUEST_TIMEOUT_MS,
   compactAttributeKeyRetryPage,
   getAttributeKeyCursorStopSignature,
+  getAttributeKeyNextCursor,
   getNextAttributeKeyPageParam,
   isAttributeKeyCursorChainStopped,
   readAttributeKeyPage,
@@ -224,7 +229,8 @@ const exactSearchMatched = (pages, rawSearch) =>
       ),
   );
 
-export function useCursorAttributeInventory({
+/** Rollout-only adapter for the retained span-key endpoint. */
+export function useLegacyCursorAttributeInventory({
   projectId,
   workspaceScope = false,
   workspaceScopeKey = "",
@@ -294,6 +300,7 @@ export function useCursorAttributeInventory({
     previous: null,
     pendingRetry: null,
   });
+  const failedExactContinuationIdentityRef = useRef(null);
 
   useEffect(() => {
     const retainedChanged =
@@ -436,6 +443,14 @@ export function useCursorAttributeInventory({
   const exactContinuationFailed = Boolean(
     debouncedRawSearch && exactQuery.isFetchNextPageError,
   );
+  useEffect(() => {
+    if (
+      exactContinuationFailed &&
+      getAttributeKeyNextCursor(exactPages.at(-1))
+    ) {
+      failedExactContinuationIdentityRef.current = exactRetryIdentity;
+    }
+  }, [exactContinuationFailed, exactPages, exactRetryIdentity]);
   const shouldAdvanceExact =
     Boolean(debouncedRawSearch) &&
     !exactContinuationFailed &&
@@ -532,12 +547,19 @@ export function useCursorAttributeInventory({
     ) {
       return;
     }
+    if (failedExactContinuationIdentityRef.current === exactRetryIdentity) {
+      failedExactContinuationIdentityRef.current = null;
+      state.pendingRetry = null;
+      void exactQuery.fetchNextPage();
+      return;
+    }
     if (exactQuery.isFetching) {
       state.pendingRetry = null;
       return;
     }
     const continuationFailed =
-      exactQuery.isFetchNextPageError && exactQuery.hasNextPage;
+      exactQuery.isFetchNextPageError &&
+      Boolean(getAttributeKeyNextCursor(exactPages.at(-1)));
     const cachedReadFailed = exactQuery.isError || exactQuery.isRefetchError;
     if (!continuationFailed && !cachedReadFailed) {
       state.pendingRetry = null;
@@ -559,6 +581,7 @@ export function useCursorAttributeInventory({
     cursorRetryState.exact,
     debouncedRawSearch,
     discoveryMode,
+    exactPages,
     exactQuery,
     pageSize,
     rawSearch,
@@ -654,6 +677,144 @@ export function useCursorAttributeInventory({
       isFetchNextPageError,
       cursorRetryExhausted,
       canRetry: canRetryInventory,
+      onRetry: retryInventory,
+    },
+  };
+}
+
+const propertyMetricToRawAttribute = (metric) => {
+  const type = metric?.type || metric?.data_type || "string";
+  const declaredTypes = metric?.attribute_types || metric?.attributeTypes;
+  const types = Array.isArray(declaredTypes)
+    ? declaredTypes.filter((valueType) => typeof valueType === "string")
+    : [];
+  return {
+    key: metric?.name,
+    property_id: metric?.property_id,
+    type,
+    types: types.length > 0 ? types : [type],
+    types_exact:
+      metric?.attribute_types_exact === true ||
+      metric?.attributeTypesExact === true,
+  };
+};
+
+/**
+ * Unified property-definition inventory. The legacy span-key reader is kept
+ * above as an explicit rollout adapter and is enabled only after the backend
+ * returns the typed 503 `property_catalog_not_ready` response.
+ */
+export function useCursorAttributeInventory({
+  projectId,
+  workspaceScope = false,
+  workspaceScopeKey = "",
+  rowType = "spans",
+  discoveryMode = "filter",
+  search = "",
+  preservedKeys = EMPTY_KEYS,
+  enabled = true,
+  pageSize = 50,
+  cacheScopeKey = "",
+}) {
+  const workspaceScoped = workspaceScope === true;
+  const scopeIdentity = workspaceScoped
+    ? `workspace:${workspaceScopeKey || ""}`
+    : `project:${projectId || ""}`;
+  const scopeReady = workspaceScoped
+    ? Boolean(workspaceScopeKey)
+    : Boolean(projectId);
+  const normalizedRowType = normalizeAttributeInventoryRowType(rowType);
+  const normalizedSearch = String(search || "").trim();
+  const rawSearch = rawAttributeSearchFromPath(
+    normalizedSearch,
+    normalizedRowType,
+  );
+  const debouncedRawSearch = useDebounce(rawSearch, 350);
+  const fallbackScopeKey = JSON.stringify([scopeIdentity, "custom_attribute"]);
+  const catalog = usePropertyCatalog({
+    category: "custom_attribute",
+    source: "traces",
+    search: debouncedRawSearch,
+    projectIds: workspaceScoped || !projectId ? [] : [projectId],
+    pageSize,
+    enabled: enabled && scopeReady,
+    allowLegacyNotReadyFallback: true,
+    fallbackScopeKey,
+    cacheScopeKey,
+  });
+  const useLegacyFallback = catalog.legacyFallbackRequired;
+  const legacy = useLegacyCursorAttributeInventory({
+    projectId,
+    workspaceScope,
+    workspaceScopeKey,
+    rowType,
+    discoveryMode,
+    search,
+    preservedKeys,
+    enabled: enabled && useLegacyFallback,
+    pageSize,
+  });
+
+  if (useLegacyFallback) return legacy;
+
+  const rawAttributes = mergeCursorAttributeRows(
+    catalog.metrics.map(propertyMetricToRawAttribute),
+  );
+  const attributes = expandCursorAttributeInventory({
+    rawAttributes,
+    rowType: normalizedRowType,
+    preservedKeys,
+    search: normalizedSearch,
+  });
+  const normalizedLocalSearch = normalizedSearch.toLocaleLowerCase();
+  const filteredAttributes = normalizedLocalSearch
+    ? attributes.filter((attribute) =>
+        attributeInventoryKey(attribute)
+          ?.toLocaleLowerCase()
+          .includes(normalizedLocalSearch),
+      )
+    : attributes;
+  const catalogNotReady = isPropertyCatalogNotReadyError(catalog.error);
+  const initialError = Boolean(catalog.isError && !catalogNotReady);
+  const nextPageError = Boolean(
+    catalog.isFetchNextPageError || catalog.cursorChainStopped,
+  );
+  const exactSearchMatched = Boolean(
+    debouncedRawSearch &&
+      rawAttributes.some(({ key }) => key === debouncedRawSearch),
+  );
+  const fetchNextPage = (...args) =>
+    catalog.hasNextPage ? catalog.fetchNextPage(...args) : Promise.resolve();
+  const retryInventory = () =>
+    initialError ? catalog.refetch() : Promise.resolve();
+  const isLoading = catalog.isLoading || catalogNotReady;
+
+  return {
+    attributes,
+    filteredAttributes,
+    rawAttributes,
+    hasNextPage: Boolean(catalog.hasNextPage),
+    fetchNextPage,
+    isFetchingNextPage: catalog.isFetchingNextPage,
+    isLoading,
+    isFetching: catalog.isFetching,
+    isError: initialError,
+    error: initialError ? catalog.error : null,
+    exactSearchMatched,
+    debouncedSearch: debouncedRawSearch,
+    isFetchNextPageError: nextPageError,
+    cursorRetryExhausted: catalog.cursorChainStopped,
+    pageCount: catalog.data?.pages?.length || 0,
+    inventoryControlProps: {
+      hasNextPage: Boolean(catalog.hasNextPage),
+      onLoadMore: fetchNextPage,
+      isFetchingNextPage: catalog.isFetchingNextPage,
+      isError: initialError,
+      isExactSearchError: false,
+      isExactSearchDegraded: false,
+      isFetchNextPageError: nextPageError,
+      cursorRetryExhausted: catalog.cursorChainStopped,
+      canRetry: initialError,
       onRetry: retryInventory,
     },
   };

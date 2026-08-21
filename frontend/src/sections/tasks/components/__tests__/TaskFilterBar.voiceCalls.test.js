@@ -663,6 +663,36 @@ describe("TaskFilterBar structured and mixed filter contract", () => {
     });
   });
 
+  it("round-trips registry identity independently from the native task field", () => {
+    const panelRows = [
+      {
+        field: "model",
+        registryId: "custom_attribute:model",
+        fieldName: "Custom model",
+        fieldCategory: "attribute",
+        fieldType: "string",
+        apiColType: "SPAN_ATTRIBUTE",
+        operator: "equals",
+        value: "tenant-model",
+      },
+    ];
+
+    const formRows = convertNewToOld(panelRows, { rowType: "traces" });
+    expect(formRows[0]).toMatchObject({
+      property: "attributes",
+      propertyId: "model",
+      registryId: "custom_attribute:model",
+    });
+    expect(convertOldToNew(formRows, { rowType: "traces" })[0]).toMatchObject({
+      field: "model",
+      registryId: "custom_attribute:model",
+    });
+    expect(buildApiFilterArray(formRows)[0]).toMatchObject({
+      column_id: "model",
+      property_id: "custom_attribute:model",
+    });
+  });
+
   it("round-trips legacy json lists and objects without changing shape", () => {
     const legacyRows = [
       {

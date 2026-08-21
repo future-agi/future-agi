@@ -38,6 +38,7 @@ const DateTimeRangePicker = ({
   setDateOption,
   dateFilter: initialDateFilter,
   isEdit,
+  includeOneHour = false,
 }) => {
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const dateDisplayRef = useRef(null);
@@ -79,6 +80,8 @@ const DateTimeRangePicker = ({
       // Check if it matches any predefined option
       if (minutesDiff >= 25 && minutesDiff <= 35) {
         return "30 mins";
+      } else if (includeOneHour && minutesDiff >= 55 && minutesDiff <= 65) {
+        return "1 hr";
       } else if (hoursDiff >= 5.5 && hoursDiff <= 6.5) {
         return "6 hrs";
       } else if (
@@ -181,6 +184,16 @@ const DateTimeRangePicker = ({
           formatDate(
             sub(new Date(), {
               minutes: 30,
+            }),
+          ),
+          formatDate(new Date()),
+        ];
+        break;
+      case "1 hr":
+        filter = [
+          formatDate(
+            sub(new Date(), {
+              hours: 1,
             }),
           ),
           formatDate(new Date()),
@@ -332,9 +345,16 @@ const DateTimeRangePicker = ({
         </Button>
 
         {/* Time period buttons */}
-        {TIME_PERIOD_OPTIONS.map((option, index) => {
+        {(includeOneHour
+          ? [
+              TIME_PERIOD_OPTIONS[0],
+              { title: "1 hr" },
+              ...TIME_PERIOD_OPTIONS.slice(1),
+            ]
+          : TIME_PERIOD_OPTIONS
+        ).map((option, index, options) => {
           const selected = dateOption === option.title;
-          const isLast = index === TIME_PERIOD_OPTIONS.length - 1;
+          const isLast = index === options.length - 1;
 
           return (
             <Button
@@ -372,6 +392,7 @@ DateTimeRangePicker.propTypes = {
   setDateOption: PropTypes.func,
   dateFilter: PropTypes.array,
   isEdit: PropTypes.bool,
+  includeOneHour: PropTypes.bool,
 };
 
 DateTimeRangePicker.defaultProps = {

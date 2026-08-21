@@ -14,6 +14,8 @@ from datetime import UTC, datetime, timedelta
 from hashlib import blake2b
 from typing import Any, Literal, NotRequired, TypedDict
 
+from django.conf import settings
+
 from tracer.services.clickhouse.query_builders.voice_filter_expressions import (
     VOICE_CALL_ID_FILTER_EXPRESSION,
     VOICE_CALL_STATUS_FILTER_EXPRESSION,
@@ -38,21 +40,29 @@ from tracer.services.clickhouse.v2.query_builders.filters import (
 
 # Keep two seconds of the product's ten-second SLA for HTTP serialization and
 # transport. Adjacent exact slices share this selector-owned wall.
-FILTER_VALUE_READ_TIMEOUT_MS = 8_000
-FILTER_VALUE_MAX_BYTES_TO_READ = 36 * 1024 * 1024 * 1024
-FILTER_VALUE_MAX_MEMORY_USAGE = 36 * 1024 * 1024 * 1024
-FILTER_VALUE_CURSOR_MIN_SEGMENT = timedelta(seconds=5)
-FILTER_VALUE_CURSOR_INITIAL_SEGMENT = timedelta(minutes=5)
-FILTER_VALUE_CURSOR_MAX_SEGMENT = timedelta(days=60)
-FILTER_VALUE_CURSOR_MAX_QUERIES = 6
-FILTER_VALUE_CURSOR_SCAN_LIMIT = 201
+FILTER_VALUE_READ_TIMEOUT_MS = settings.FILTER_VALUE_READ_TIMEOUT_MS
+FILTER_VALUE_MAX_BYTES_TO_READ = settings.OBSERVABILITY_LIST_MAX_BYTES
+FILTER_VALUE_MAX_MEMORY_USAGE = settings.OBSERVABILITY_LIST_MAX_MEMORY_BYTES
+FILTER_VALUE_CURSOR_MIN_SEGMENT = timedelta(
+    seconds=settings.FILTER_VALUE_CURSOR_MIN_SEGMENT_SECONDS
+)
+FILTER_VALUE_CURSOR_INITIAL_SEGMENT = timedelta(
+    seconds=settings.FILTER_VALUE_CURSOR_INITIAL_SEGMENT_SECONDS
+)
+FILTER_VALUE_CURSOR_MAX_SEGMENT = timedelta(
+    seconds=settings.FILTER_VALUE_CURSOR_MAX_SEGMENT_SECONDS
+)
+FILTER_VALUE_CURSOR_MAX_QUERIES = settings.FILTER_VALUE_CURSOR_MAX_QUERIES
+FILTER_VALUE_CURSOR_SCAN_LIMIT = settings.FILTER_VALUE_CURSOR_SCAN_LIMIT
+FILTER_VALUE_MAX_PAGE_SIZE = settings.DASHBOARD_FILTER_VALUE_MAX_PAGE_SIZE
+FILTER_VALUE_LEGACY_MAX = settings.DASHBOARD_FILTER_VALUE_LEGACY_MAX
 
 FILTER_VALUE_READ_SETTINGS: dict[str, Any] = {
-    "max_threads": 2,
+    "max_threads": settings.FILTER_VALUE_READ_MAX_THREADS,
     "read_overflow_mode": "throw",
     "max_bytes_to_read": FILTER_VALUE_MAX_BYTES_TO_READ,
     "max_memory_usage": FILTER_VALUE_MAX_MEMORY_USAGE,
-    "max_result_bytes": 8 * 1024 * 1024,
+    "max_result_bytes": settings.DASHBOARD_FILTER_VALUE_MAX_RESULT_BYTES,
     "result_overflow_mode": "throw",
     "timeout_overflow_mode": "throw",
 }
@@ -166,6 +176,16 @@ class EndUserFilterValueCursorPageRead:
     browse_status: Literal["continuation", "exhausted"]
 
 
+@dataclass(frozen=True)
+class SessionFilterValueCursorPageRead:
+    """One exact keyset page from the curated trace-session dimension."""
+
+    values: tuple[str, ...]
+    has_more: bool
+    next_value_after: str | None
+    browse_status: Literal["continuation", "exhausted"]
+
+
 def _window(*, lookback_days: int, now: datetime | None) -> tuple[datetime, datetime]:
     if not 1 <= int(lookback_days) <= 365:
         raise ValueError("filter-value lookback must be between 1 and 365 days")
@@ -266,7 +286,7 @@ def read_span_system_filter_values(
     project_ids: list[str] | tuple[str, ...],
     metric_name: str,
     search: str = "",
-    limit: int = 500,
+    limit: int = FILTER_VALUE_LEGACY_MAX,
     lookback_days: int = 7,
     now: datetime | None = None,
     deadline: ReadDeadline | None = None,
@@ -278,8 +298,10 @@ def read_span_system_filter_values(
     allowed to reach the API boundary for sanitized degraded handling.
     """
 
-    if not 1 <= int(limit) <= 500:
-        raise ValueError("filter-value limit must be between 1 and 500")
+    if not 1 <= int(limit) <= FILTER_VALUE_LEGACY_MAX:
+        raise ValueError(
+            f"filter-value limit must be between 1 and {FILTER_VALUE_LEGACY_MAX}"
+        )
     voice_expression = _VOICE_SYSTEM_VALUE_EXPRESSIONS.get(metric_name)
     if voice_expression is None:
         try:
@@ -388,8 +410,10 @@ def read_end_user_filter_value_cursor_page(
 
     if source_column not in {"user_id", "user_id_type"}:
         raise ValueError("unsupported end-user filter-value column")
-    if not 1 <= int(page_size) <= 50:
-        raise ValueError("filter-value page_size must be between 1 and 50")
+    if not 1 <= int(page_size) <= FILTER_VALUE_MAX_PAGE_SIZE:
+        raise ValueError(
+            f"filter-value page_size must be between 1 and {FILTER_VALUE_MAX_PAGE_SIZE}"
+        )
     project_scope = tuple(dict.fromkeys(str(value) for value in project_ids if value))
     if not project_scope:
         return EndUserFilterValueCursorPageRead((), False, None, "exhausted")
@@ -454,6 +478,143 @@ def read_end_user_filter_value_cursor_page(
     )
 
 
+def read_session_filter_value_cursor_page(
+    analytics: QueryExecutor,
+    *,
+    project_ids: list[str] | tuple[str, ...],
+    page_size: int,
+    search: str = "",
+    value_after: str | None = None,
+    overlay_session_ids: list[str] | tuple[str, ...] = (),
+    deadline: ReadDeadline | None = None,
+) -> SessionFilterValueCursorPageRead:
+    """Read an exact keyset page from the curated trace-session state.
+
+    Session labels do not live on spans: the immutable external id is in the
+    curated ``trace_sessions`` dimension and an optional user-edited label is
+    a small PostgreSQL overlay. Reading raw span ids and filtering hydrated
+    labels after each time-slice page made an exact search appear to have an
+    effectively endless continuation. This selector applies external-id/raw-
+    id search before ``LIMIT`` and accepts the bounded overlay matches selected
+    by the API, so every continuation advances by the public canonical UUID.
+    """
+
+    if not 1 <= int(page_size) <= FILTER_VALUE_MAX_PAGE_SIZE:
+        raise ValueError(
+            f"filter-value page_size must be between 1 and {FILTER_VALUE_MAX_PAGE_SIZE}"
+        )
+    project_scope = tuple(dict.fromkeys(str(value) for value in project_ids if value))
+    if not project_scope:
+        return SessionFilterValueCursorPageRead((), False, None, "exhausted")
+
+    overlay_scope = tuple(
+        dict.fromkeys(str(value) for value in overlay_session_ids if value)
+    )
+    resolved_session_id = resolved_id_expr(
+        "latest_trace_sessions.trace_session_id",
+        "filter_value_session_remap",
+    )
+    session_remap_join = remap_left_join(
+        "latest_trace_sessions.trace_session_id",
+        "trace_session_id_remap",
+        "filter_value_session_remap",
+    )
+    search_clause = ""
+    if search:
+        overlay_clause = (
+            " OR resolved_session_id IN %(overlay_session_ids)s"
+            if overlay_scope
+            else ""
+        )
+        search_clause = f"""
+          AND (
+                arrayExists(
+                    label -> positionCaseInsensitiveUTF8(
+                        label, %(filter_value_search)s
+                    ) > 0,
+                    external_session_ids
+                )
+                OR positionCaseInsensitiveUTF8(
+                    toString(resolved_session_id), %(filter_value_search)s
+                ) > 0
+                {overlay_clause}
+          )
+        """
+    after_clause = (
+        "AND toString(resolved_session_id) > %(value_after)s"
+        if value_after is not None
+        else ""
+    )
+    query = f"""
+        WITH latest_trace_sessions AS (
+            SELECT
+                project_id,
+                trace_session_id,
+                argMax(tuple(external_session_id), version).1
+                    AS external_session_id,
+                argMax(is_deleted, version) AS latest_is_deleted
+            FROM trace_sessions
+            PREWHERE project_id IN %(project_ids)s
+            GROUP BY project_id, trace_session_id
+        ), resolved_sessions AS (
+            SELECT
+                latest_trace_sessions.project_id AS project_id,
+                {resolved_session_id} AS resolved_session_id,
+                latest_trace_sessions.external_session_id AS external_session_id
+            FROM latest_trace_sessions
+            {session_remap_join}
+            WHERE latest_trace_sessions.latest_is_deleted = 0
+        ), session_values AS (
+            SELECT
+                resolved_session_id,
+                groupUniqArray(external_session_id) AS external_session_ids
+            FROM resolved_sessions
+            WHERE resolved_session_id != toUUID('{NIL_UUID}')
+            GROUP BY resolved_session_id
+        )
+        SELECT toString(resolved_session_id) AS val
+        FROM session_values
+        WHERE 1
+          {search_clause}
+          {after_clause}
+        ORDER BY val
+        LIMIT %(result_limit)s
+    """
+    params: dict[str, Any] = {
+        "project_ids": project_scope,
+        "result_limit": int(page_size) + 1,
+    }
+    if search:
+        params["filter_value_search"] = search
+    if overlay_scope:
+        params["overlay_session_ids"] = overlay_scope
+    if value_after is not None:
+        params["value_after"] = value_after
+    query_timeout_ms = (
+        deadline.remaining_ms(FILTER_VALUE_READ_TIMEOUT_MS)
+        if deadline is not None
+        else FILTER_VALUE_READ_TIMEOUT_MS
+    )
+    result = analytics.execute_ch_query(
+        query,
+        params,
+        timeout_ms=query_timeout_ms,
+        settings={
+            **FILTER_VALUE_READ_SETTINGS,
+            "max_result_rows": int(page_size) + 1,
+        },
+    )
+    rows = tuple(str(row["val"]) for row in (result.data or []))
+    has_more = len(rows) > int(page_size)
+    values = rows[: int(page_size)]
+    return SessionFilterValueCursorPageRead(
+        values,
+        has_more,
+        values[-1] if has_more and values else None,
+        "continuation" if has_more else "exhausted",
+    )
+
+
 def read_span_system_filter_value_cursor_page(
     analytics: QueryExecutor,
     *,
@@ -479,8 +640,10 @@ def read_span_system_filter_value_cursor_page(
     digests suppress values already emitted from newer slices.
     """
 
-    if not 1 <= int(page_size) <= 50:
-        raise ValueError("filter-value page_size must be between 1 and 50")
+    if not 1 <= int(page_size) <= FILTER_VALUE_MAX_PAGE_SIZE:
+        raise ValueError(
+            f"filter-value page_size must be between 1 and {FILTER_VALUE_MAX_PAGE_SIZE}"
+        )
     deadline = deadline or ReadDeadline.start(FILTER_VALUE_READ_TIMEOUT_MS)
     start = _utc(window_start)
     end = _utc(window_end)
@@ -631,6 +794,16 @@ def read_span_system_filter_value_cursor_page(
                 (current_end - current_start) / 2,
             )
             if narrowed_width >= current_end - current_start:
+                # Earlier exact slices in this same request may already have
+                # produced selectable values or certified duplicate-only
+                # coverage. Do not discard that progress merely because the
+                # next, still-unconsumed floor slice is dense. Return the
+                # partial page with a checkpoint at that frontier; an explicit
+                # Load more can retry it with the accumulated seen-value proof.
+                # A first-slice failure at the same frontier still fails loudly.
+                progress_state = (current_end, current_start, after)
+                if emitted or progress_state != initial_state:
+                    break
                 raise
             width = narrowed_width
             active_start = max(start, current_end - width)
@@ -710,7 +883,7 @@ def read_session_message_filter_values(
     message_position: str,
     search: str = "",
     page: int = 0,
-    page_size: int = 50,
+    page_size: int = FILTER_VALUE_MAX_PAGE_SIZE,
     lookback_days: int = 30,
     now: datetime | None = None,
 ) -> FilterValueRead:
@@ -718,8 +891,11 @@ def read_session_message_filter_values(
 
     if message_position not in {"first", "last"}:
         raise ValueError("message_position must be first or last")
-    if page < 0 or not 1 <= int(page_size) <= 500:
-        raise ValueError("invalid session filter-value page")
+    if page < 0 or not 1 <= int(page_size) <= FILTER_VALUE_LEGACY_MAX:
+        raise ValueError(
+            "session filter-value page_size must be between 1 and "
+            f"{FILTER_VALUE_LEGACY_MAX}"
+        )
     window_start, window_end = _window(lookback_days=lookback_days, now=now)
     session_join = remap_left_join(
         "latest_roots.latest_trace_session_id",
@@ -819,7 +995,9 @@ __all__ = [
     "EndUserFilterValueCursorPageRead",
     "FilterValueCursorPageRead",
     "FilterValueRead",
+    "SessionFilterValueCursorPageRead",
     "read_end_user_filter_value_cursor_page",
+    "read_session_filter_value_cursor_page",
     "read_session_message_filter_values",
     "read_span_system_filter_value_cursor_page",
     "read_span_system_filter_values",

@@ -24,6 +24,10 @@ from tracer.utils.filter_operators import (
     normalize_span_attribute_filter_type,
     validate_json_map_filter_value,
 )
+from tracer.utils.property_registry import (
+    validate_property_filter_binding,
+    validate_property_graph_binding,
+)
 
 FILTER_CONFIG_SCHEMA = {
     "type": "object",
@@ -64,6 +68,10 @@ FILTER_ITEM_SCHEMA = {
         "column_id": {
             "type": "string",
             "description": "Column or attribute id to filter on.",
+        },
+        "property_id": {
+            "type": "string",
+            "description": "Optional stable namespaced Property Registry identity.",
         },
         "display_name": {
             "type": "string",
@@ -224,6 +232,8 @@ class ObserveGraphMetricConfigField(serializers.JSONField):
         "value",
         "filter_op",
         "filter_value",
+        "property_id",
+        "source",
     }
 
     class Meta:
@@ -241,6 +251,14 @@ class ObserveGraphMetricConfigField(serializers.JSONField):
                 "value": {},
                 "filter_op": {"type": "string"},
                 "filter_value": {},
+                "property_id": {
+                    "type": "string",
+                    "description": "Stable Property Registry identity.",
+                },
+                "source": {
+                    "type": "string",
+                    "enum": ["traces", "sessions"],
+                },
             },
             "required": ["id", "type"],
             "additionalProperties": False,
@@ -263,6 +281,39 @@ class ObserveGraphMetricConfigField(serializers.JSONField):
             raise serializers.ValidationError(
                 "req_data_config.type must be SYSTEM_METRIC, EVAL, or ANNOTATION."
             )
+        has_property_id = "property_id" in value
+        has_source = "source" in value
+        if has_property_id != has_source:
+            raise serializers.ValidationError(
+                "req_data_config.property_id and source must be provided together."
+            )
+        if has_property_id:
+            property_id = value.get("property_id")
+            source = value.get("source")
+            if not isinstance(property_id, str) or not property_id.strip():
+                raise serializers.ValidationError(
+                    "req_data_config.property_id must be a non-empty string."
+                )
+            if not isinstance(source, str) or not source.strip():
+                raise serializers.ValidationError(
+                    "req_data_config.source must be a non-empty string."
+                )
+            if source not in ("traces", "sessions"):
+                raise serializers.ValidationError(
+                    "req_data_config.source must be traces or sessions."
+                )
+            try:
+                validate_property_graph_binding(
+                    property_id,
+                    metric_name=value["id"],
+                    graph_type=value["type"],
+                    source=source,
+                )
+            except ValueError as exc:
+                raise serializers.ValidationError(str(exc)) from exc
+        # Both fields absent is the explicit compatibility contract for graph
+        # clients predating the Property Registry. Supplying only one is never
+        # interpreted as legacy because that could silently change adapters.
         return value
 
 
@@ -344,7 +395,12 @@ def validate_filter_list_complexity(filters: list[Any]) -> None:
         column_id = item.get("column_id")
         if isinstance(column_id, str):
             check_string(column_id, field=f"Filter {index + 1} column_id")
-        for optional_key in ("display_name", "source", "output_type"):
+        for optional_key in (
+            "property_id",
+            "display_name",
+            "source",
+            "output_type",
+        ):
             optional_value = item.get(optional_key)
             if isinstance(optional_value, str):
                 check_string(
@@ -434,6 +490,22 @@ class FilterItemField(serializers.JSONField):
             raise serializers.ValidationError(
                 f"Unknown filter config keys: {', '.join(extra_config_keys)}"
             )
+
+        property_id = value.get("property_id")
+        if property_id is not None:
+            if not isinstance(property_id, str) or not property_id.strip():
+                raise serializers.ValidationError(
+                    "property_id must be a non-empty string."
+                )
+            try:
+                validate_property_filter_binding(
+                    property_id,
+                    column_id=value.get("column_id"),
+                    column_type=config.get("col_type"),
+                    source=value.get("source"),
+                )
+            except ValueError as exc:
+                raise serializers.ValidationError(str(exc)) from exc
 
         filter_value = config.get("filter_value")
         attribute_value_types = config.get("attribute_value_types")
@@ -948,6 +1020,13 @@ class ObserveGraphDataResultSerializer(serializers.Serializer):
     )
     query_window_start = serializers.CharField(required=False)
     query_window_end = serializers.CharField(required=False)
+    query_applied_filter_version = serializers.ChoiceField(
+        choices=("canonical-json-sha256-v1",), required=False
+    )
+    query_applied_filter_sha256 = serializers.RegexField(
+        r"^[0-9a-f]{64}$", required=False
+    )
+    query_applied_filter_count = serializers.IntegerField(required=False, min_value=0)
     query_sample_size = serializers.IntegerField(required=False, min_value=0)
     query_count = serializers.IntegerField(required=False, min_value=0)
     query_elapsed_ms = serializers.FloatField(required=False, min_value=0)

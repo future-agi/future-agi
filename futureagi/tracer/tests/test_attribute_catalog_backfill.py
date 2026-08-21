@@ -14,7 +14,9 @@ import pytest
 from tracer.services.clickhouse.v2 import attribute_catalog_backfill as backfill
 from tracer.services.clickhouse.v2.attribute_catalog_backfill import (
     CATALOG_BACKFILL_ACK,
+    CATALOG_BACKFILL_CLOUD_DEPLOYMENT,
     CATALOG_BACKFILL_ENVIRONMENT,
+    CATALOG_DATABASE_PREFIX,
     CATALOG_INSERT_COLUMNS,
     CHECKPOINT_TABLE,
     GAP_INVALID_ATTRIBUTES_EXTRA,
@@ -52,18 +54,21 @@ PROJECT_ID = "11111111-1111-4111-8111-111111111111"
 SINCE = datetime(2026, 1, 1, tzinfo=UTC)
 UNTIL = SINCE + timedelta(hours=1)
 NOW = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+TARGET_DATABASE = f"{CATALOG_DATABASE_PREFIX}unit"
 
 
 def _config(**overrides: Any) -> CatalogBackfillConfig:
     values: dict[str, Any] = {
         "environment": CATALOG_BACKFILL_ENVIRONMENT,
+        "cloud_deployment": CATALOG_BACKFILL_CLOUD_DEPLOYMENT,
+        "dev_identity": "dev:unit-test",
         "acknowledgement": CATALOG_BACKFILL_ACK,
         "project_id": PROJECT_ID,
         "since": SINCE,
         "until": UNTIL,
         "catalog_epoch": 101,
         "source_database": "source_dev",
-        "target_database": "catalog_dev",
+        "target_database": TARGET_DATABASE,
         "page_rows": 2,
         "max_windows": 24,
         "max_runtime_seconds": 600,
@@ -152,6 +157,7 @@ def _checkpoint_row(
     fence: int = 77,
     state_version: int = 99,
     state_variants: int = 1,
+    projection_version: int = 2,
 ) -> dict[str, Any]:
     return {
         "window_start": SINCE,
@@ -171,6 +177,7 @@ def _checkpoint_row(
         "started_at": SINCE,
         "state_version": state_version,
         "state_variants": state_variants,
+        "projection_version": projection_version,
     }
 
 
@@ -290,12 +297,17 @@ def _nonempty_targets(io: FakeIO) -> list[str]:
     ("overrides", "message"),
     [
         ({"environment": "production"}, "development-only"),
+        ({"cloud_deployment": "PROD"}, "CLOUD_DEPLOYMENT=DEV"),
+        ({"dev_identity": "prod:unit-test"}, "dev:<identity>"),
         ({"acknowledgement": "yes"}, "acknowledgement"),
         ({"project_id": "not-a-uuid"}, "UUID"),
         ({"catalog_epoch": 0}, "UInt16"),
         ({"catalog_epoch": 65_536}, "UInt16"),
         ({"source_database": "source; DROP TABLE spans"}, "identifier"),
         ({"target_database": "system"}, "system database"),
+        ({"target_database": "production_catalog"}, "must start"),
+        ({"target_database": CATALOG_DATABASE_PREFIX}, "must start"),
+        ({"target_database": f"{CATALOG_DATABASE_PREFIX}Upper"}, "must start"),
         ({"target_database": "source_dev"}, "must be distinct"),
         ({"page_rows": MAX_PAGE_ROWS + 1}, "page_rows"),
         ({"max_windows": MAX_WINDOWS + 1}, "max_windows"),
@@ -435,6 +447,7 @@ def test_source_and_checkpoint_sql_pin_select_only_keyset_and_bounds() -> None:
     assert "window_end > %(catalog_since)s" in checkpoint_sql
 
     assert READ_SETTINGS == {
+        "readonly": 2,
         "max_execution_time": 8,
         "timeout_overflow_mode": "throw",
         "max_threads": 1,
@@ -573,6 +586,20 @@ def test_clickhouse_naive_utc_datetimes_are_normalized_for_resume() -> None:
         if call[1] and call[0].endswith(f"`{KEY_TABLE}`")
     )
     assert key_call[1][0][4].tzinfo is UTC
+
+
+def test_resume_requires_the_current_projection_version() -> None:
+    missing = _checkpoint_row()
+    missing.pop("projection_version")
+    cases = (
+        (missing, "projection_version must be a non-negative integer"),
+        (_checkpoint_row(projection_version=1), "incompatible catalog projection"),
+    )
+    for checkpoint, match in cases:
+        io = FakeIO(checkpoints=[checkpoint])
+        with pytest.raises(CatalogBackfillError, match=match):
+            _run(io)
+        assert io.insert_calls == []
 
 
 @pytest.mark.parametrize("status", ["complete", "gap"])
@@ -1022,6 +1049,7 @@ def _timed_io(source: _Client | None = None, catalog: _Client | None = None, **k
         catalog or _Client(),
         _Client(),
         _Client(),
+        target_database=TARGET_DATABASE,
         **kwargs,
     )
 
@@ -1031,7 +1059,15 @@ def test_timed_io_rejects_nonselect_sql_and_non_catalog_write_targets() -> None:
     with pytest.raises(CatalogBackfillError, match="one SELECT"):
         io.select("INSERT INTO x VALUES (1)", {}, role="source", settings={})
     with pytest.raises(CatalogBackfillError, match="not allowed"):
-        io.insert("dev.spans", [[1]], ["x"], settings={})
+        io.insert(f"`{TARGET_DATABASE}`.`spans`", [[1]], ["x"], settings={})
+
+    with pytest.raises(CatalogBackfillError, match="fully-qualified"):
+        io.insert(
+            "`production_catalog`.`span_attribute_key_catalog`",
+            [[1]],
+            CATALOG_INSERT_COLUMNS[KEY_TABLE],
+            settings={},
+        )
 
 
 def test_timed_io_enforces_absolute_ten_second_select_deadline() -> None:
@@ -1057,6 +1093,7 @@ def test_timed_io_enforces_absolute_ten_second_select_deadline() -> None:
         _Client(),
         cancel,
         _Client(),
+        target_database=TARGET_DATABASE,
         max_call_seconds=0.05,
         query_id_factory=lambda: next(tokens),
     )
@@ -1094,12 +1131,13 @@ def test_timed_io_enforces_absolute_ten_second_insert_deadline_after_safe_target
         client,
         _Client(),
         CancelClient(),
+        target_database=TARGET_DATABASE,
         max_call_seconds=0.05,
     )
     columns = CATALOG_INSERT_COLUMNS[KEY_TABLE]
     with pytest.raises(CatalogBackfillCallDeadlineExceeded, match="INSERT"):
         io.insert(
-            "dev.span_attribute_key_catalog",
+            f"`{TARGET_DATABASE}`.`span_attribute_key_catalog`",
             [[None] * len(columns)],
             columns,
             settings={},
@@ -1111,7 +1149,13 @@ def test_timed_io_enforces_absolute_ten_second_insert_deadline_after_safe_target
 def test_timed_io_routes_source_and_catalog_reads_to_distinct_clients() -> None:
     source = _Client()
     catalog = _Client()
-    io = TimedCatalogBackfillIO(source, catalog, _Client(), _Client())
+    io = TimedCatalogBackfillIO(
+        source,
+        catalog,
+        _Client(),
+        _Client(),
+        target_database=TARGET_DATABASE,
+    )
     io.select("SELECT 1", {}, role="source", settings={})
     io.select("SELECT 1", {}, role="catalog", settings={})
     assert len(source.query_calls) == 1
@@ -1123,10 +1167,15 @@ def test_timed_io_rejects_catalog_column_or_row_drift_without_network_call() -> 
     catalog = _Client()
     io = _timed_io(catalog=catalog)
     with pytest.raises(CatalogBackfillError, match="columns"):
-        io.insert("dev.span_attribute_key_catalog", [[1]], ["x"], settings={})
+        io.insert(
+            f"`{TARGET_DATABASE}`.`span_attribute_key_catalog`",
+            [[1]],
+            ["x"],
+            settings={},
+        )
     with pytest.raises(CatalogBackfillError, match="row"):
         io.insert(
-            "dev.span_attribute_key_catalog",
+            f"`{TARGET_DATABASE}`.`span_attribute_key_catalog`",
             [[PROJECT_ID]],
             CATALOG_INSERT_COLUMNS[KEY_TABLE],
             settings={},
@@ -1158,47 +1207,15 @@ def test_only_catalog_tables_are_present_in_runner_insert_targets() -> None:
     )
 
 
-def test_management_command_pins_dev_ack_scope_and_bounded_transport() -> None:
+def test_legacy_management_command_is_a_zero_io_retirement_stub() -> None:
     command_path = (
         Path(__file__).resolve().parents[1]
         / "management/commands/ch25_backfill_attribute_catalog.py"
     )
     source = command_path.read_text()
-    for option in (
-        "--environment",
-        "--ack",
-        "--project-id",
-        "--since",
-        "--until",
-        "--epoch",
-        "--source-database",
-        "--target-database",
-        "--page-rows",
-        "--max-windows",
-        "--max-runtime-seconds",
-        "--dry-run",
-    ):
-        assert option in source
-    assert 'runtime_environment not in {"dev", "development"}' in source
-    assert '"send_receive_timeout": MAX_CLICKHOUSE_CALL_SECONDS' in source
-    assert '"connect_timeout": min(5, int(MAX_CLICKHOUSE_CALL_SECONDS))' in source
-    assert '"query_retries": 0' in source
-    assert '"autogenerate_query_id": False' in source
-    assert (
-        "source_cancel_client = clickhouse_connect.get_client(**source_kwargs)"
-        in source
-    )
-    assert (
-        "catalog_cancel_client = clickhouse_connect.get_client(**catalog_kwargs)"
-        in source
-    )
-    assert "source_client = clickhouse_connect.get_client" in source
-    assert "catalog_client = clickhouse_connect.get_client" in source
-    assert "FI_CATALOG_CH_URL" in source
-    assert "FI_CATALOG_CH_DATABASE" in source
-    assert "FI_CATALOG_CH_USERNAME" in source
-    assert "FI_CATALOG_CH_PASSWORD" in source
-    assert "for client in (" in source
-    assert "source_cancel_client," in source
-    assert "catalog_cancel_client," in source
-    assert "client.close()" in source
+
+    assert "ch25_property_catalog_dev_rollout" in source
+    assert "performs zero I/O" in source
+    assert "clickhouse_connect" not in source
+    assert "get_v2_config" not in source
+    assert "CatalogAttributeBackfillRunner" not in source

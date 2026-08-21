@@ -17,6 +17,7 @@ const AttributeInventoryControls = ({
   canRetry = false,
   onRetry,
   showSearch = true,
+  showLoadMore = true,
   searchLabel = "Search attributes",
 }) => {
   const activeRequestRef = useRef(null);
@@ -44,7 +45,13 @@ const AttributeInventoryControls = ({
     isFetchNextPageError ||
     cursorRetryExhausted;
 
-  if (!showSearch && !hasNextPage && !canRetry && !loading && !hasWarning) {
+  if (
+    !showSearch &&
+    (!showLoadMore || !hasNextPage) &&
+    !canRetry &&
+    !loading &&
+    !hasWarning
+  ) {
     return null;
   }
 
@@ -96,7 +103,7 @@ const AttributeInventoryControls = ({
             )}
           </Button>
         )}
-        {(hasNextPage || pendingAction === "load") && (
+        {showLoadMore && (hasNextPage || pendingAction === "load") && (
           <Button
             size="small"
             disabled={loading}
@@ -137,6 +144,7 @@ AttributeInventoryControls.propTypes = {
   canRetry: PropTypes.bool,
   onRetry: PropTypes.func,
   showSearch: PropTypes.bool,
+  showLoadMore: PropTypes.bool,
   searchLabel: PropTypes.string,
 };
 

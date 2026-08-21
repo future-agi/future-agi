@@ -18,6 +18,9 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from tracer.services.clickhouse.query_builders.dashboard import (
+    InvalidMetricCombinationError,
+)
 from tracer.services.clickhouse.query_builders.dashboard_base import (
     FILTER_OPERATORS,
     GRANULARITY_TO_CH,
@@ -399,8 +402,77 @@ class SimulationQueryBuilder(DashboardQueryBuilderBase):
 
     def __init__(self, query_config: dict) -> None:
         super().__init__(query_config)
+        self.organization_id = query_config.get("organization_id", "")
         self.workspace_id = query_config.get("workspace_id", "")
         self.agent_definition_ids = query_config.get("agent_definition_ids", [])
+
+    def _resolve_eval_output_key(self, metric: dict, fallback_identifier: str) -> str:
+        """Resolve a registry eval definition to its stored simulation JSON key."""
+
+        property_id = str(metric.get("property_id") or "")
+        if not property_id:
+            # Non-UUID legacy values were already stored JSON keys. Preserve
+            # that compatibility path without touching tenant metadata.
+            from uuid import UUID
+
+            try:
+                UUID(str(fallback_identifier))
+            except (TypeError, ValueError):
+                return str(fallback_identifier)
+
+        from simulate.models.eval_config import SimulateEvalConfig
+        from tracer.utils.property_registry import parse_property_registry_id
+
+        configs = SimulateEvalConfig.objects.filter(
+            deleted=False,
+            run_test__deleted=False,
+        )
+        if self.organization_id:
+            configs = configs.filter(run_test__organization_id=self.organization_id)
+        if self.workspace_id:
+            configs = configs.filter(run_test__workspace_id=self.workspace_id)
+        if self.agent_definition_ids:
+            configs = configs.filter(
+                run_test__agent_definition_id__in=self.agent_definition_ids
+            )
+
+        if property_id:
+            try:
+                decoded = parse_property_registry_id(property_id)
+            except ValueError as exc:
+                raise InvalidMetricCombinationError(
+                    "Invalid simulation eval property identity."
+                ) from exc
+            definition_id = decoded["metric_name"]
+            if decoded["property_kind"] == "eval_config":
+                configs = configs.filter(id=definition_id)
+                rows = list(configs.values("id", "mapping")[:2])
+            elif decoded["property_kind"] in {"eval_template", "eval"}:
+                configs = configs.filter(eval_template_id=definition_id)
+                rows = list(configs.values("id", "mapping")[:3])
+            else:
+                rows = []
+        else:
+            # Explicit compatibility path for pre-registry saved widgets: the
+            # identifier historically meant a template UUID.
+            configs = configs.filter(eval_template_id=fallback_identifier)
+            rows = list(configs.values("id", "mapping")[:3])
+
+        if not rows:
+            raise InvalidMetricCombinationError(
+                "The selected simulation evaluation is not available in this workspace."
+            )
+        keys = {
+            str(row["mapping"].get("key") or row["id"])
+            if isinstance(row.get("mapping"), dict)
+            else str(row["id"])
+            for row in rows
+        }
+        if len(keys) != 1:
+            raise InvalidMetricCombinationError(
+                "The selected evaluation maps to multiple simulation outputs."
+            )
+        return keys.pop()
 
     # ------------------------------------------------------------------
     # Time range
@@ -629,33 +701,12 @@ LEFT JOIN simulate_run_test AS exact_run_test FINAL
         """
         eval_key = metric.get("eval_key", "") or ""
         if not eval_key:
-            # Fall back to config_id — may be a UUID template ID, resolve to key
             config_id = (
                 metric.get("config_id", "")
                 or metric.get("id")
                 or metric.get("name", "")
             )
-            try:
-                import uuid as _uuid
-
-                _uuid.UUID(config_id)
-                # It's a UUID — try to resolve from SimulateEvalConfig.mapping
-                try:
-                    from simulate.models.eval_config import SimulateEvalConfig
-
-                    sec = (
-                        SimulateEvalConfig.objects.filter(eval_template_id=config_id)
-                        .values("mapping")
-                        .first()
-                    )
-                    if sec and isinstance(sec.get("mapping"), dict):
-                        eval_key = sec["mapping"].get("key", config_id)
-                    else:
-                        eval_key = config_id
-                except Exception:
-                    eval_key = config_id
-            except (ValueError, AttributeError):
-                eval_key = config_id
+            eval_key = self._resolve_eval_output_key(metric, config_id)
         eval_key = _sanitize_key(eval_key)
         output_type = metric.get("output_type", "SCORE")
         params["eval_config_id"] = eval_key
@@ -761,11 +812,20 @@ LEFT JOIN simulate_run_test AS exact_run_test FINAL
         if not self.breakdowns:
             return None
         bd = self.breakdowns[0]
+        source = bd.get("source")
+        if source and source != "simulation":
+            return None
+        if bd.get("type", "system_metric") != "system_metric":
+            raise InvalidMetricCombinationError(
+                "Simulation breakdowns do not support this property type."
+            )
         bd_name = bd.get("name", "")
         col = SIMULATION_BREAKDOWN_COLUMNS.get(bd_name)
         if col:
             return col
-        return None
+        raise InvalidMetricCombinationError(
+            f"Unsupported simulation breakdown dimension: {bd_name}"
+        )
 
     def _effective_aggregation(self, metric: dict) -> str:
         metric_type = metric.get("type", "system_metric")
@@ -842,11 +902,15 @@ LEFT JOIN simulate_run_test AS exact_run_test FINAL
             val = f.get("value")
 
             if f_type != "system_metric":
-                continue
+                raise InvalidMetricCombinationError(
+                    "Simulation filters do not support this property type."
+                )
 
             col = SIMULATION_FILTER_COLUMNS.get(f_name)
             if not col:
-                continue
+                raise InvalidMetricCombinationError(
+                    f"Unsupported simulation filter dimension: {f_name}"
+                )
 
             if op in ("is_set", "is_not_set"):
                 op_tpl = FILTER_OPERATORS.get(op)

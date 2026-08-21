@@ -51,6 +51,7 @@ export const buildDefaultDateEntry = (existingFilters, dateFilter) => {
 export const combineGraphFilters = ({
   filters,
   extraFilters,
+  metricFilters,
   dateFilter,
   hasEvalFilter,
 }) => {
@@ -58,7 +59,11 @@ export const combineGraphFilters = ({
   const baseFilters = isTracingMode
     ? (filters || []).filter(isCreatedAtFilter)
     : filters || [];
-  const base = [...baseFilters, ...(extraFilters || [])];
+  const base = [
+    ...baseFilters,
+    ...(extraFilters || []),
+    ...(metricFilters || []),
+  ];
 
   return [
     ...base,
@@ -100,3 +105,22 @@ export const singleProjectIdFromFilters = (filters) => {
   );
   return values.length === 1 ? values[0] : null;
 };
+
+/**
+ * Resolve topology scopes independently for the two compare panes.
+ *
+ * Project Observe routes have one authoritative route project. Cross-project
+ * user detail has no such route scope, so each pane must supply its own single
+ * positive Project filter. Never let the currently edited filter panel choose
+ * the other pane's project.
+ */
+export const resolveAgentGraphProjectScopes = ({
+  routeProjectId,
+  primaryFilters,
+  compareFilters,
+}) => ({
+  primaryProjectId:
+    routeProjectId || singleProjectIdFromFilters(primaryFilters),
+  compareProjectId:
+    routeProjectId || singleProjectIdFromFilters(compareFilters),
+});

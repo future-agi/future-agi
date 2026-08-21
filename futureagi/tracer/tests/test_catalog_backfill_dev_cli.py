@@ -18,6 +18,10 @@ def _argv(*extra: str, write: bool = False) -> list[str]:
     return [
         "--environment",
         "development",
+        "--cloud-deployment",
+        "DEV",
+        "--dev-identity",
+        "dev:unit-test",
         "--ack",
         cli.CATALOG_BACKFILL_ACK,
         "--project-id",
@@ -37,7 +41,7 @@ def _argv(*extra: str, write: bool = False) -> list[str]:
         "--catalog-url",
         "https://catalog-dev:8443",
         "--catalog-database",
-        "th7247_catalog_dev",
+        "th7247_catalog_dev_unit",
         "--catalog-username",
         "catalog_writer",
         "--execute-writes" if write else "--dry-run",
@@ -48,6 +52,8 @@ def _argv(*extra: str, write: bool = False) -> list[str]:
 def _env() -> dict[str, str]:
     return {
         cli.RUNTIME_ENVIRONMENT_ENV: "development",
+        cli.RUNTIME_CLOUD_DEPLOYMENT_ENV: "DEV",
+        cli.DEV_ENDPOINT_IDENTITY_ENV: "dev:unit-test",
         cli.SOURCE_PASSWORD_ENV: "source-secret",
         cli.CATALOG_PASSWORD_ENV: "catalog-secret",
     }
@@ -65,7 +71,7 @@ def test_parse_config_requires_explicit_dev_scope_and_distinct_endpoints() -> No
     assert parsed.catalog.host == "catalog-dev"
     assert parsed.catalog.port == 8443
     assert parsed.catalog.secure
-    assert parsed.catalog.database == "th7247_catalog_dev"
+    assert parsed.catalog.database == "th7247_catalog_dev_unit"
 
 
 def test_execute_writes_mode_is_explicit_and_never_inferred() -> None:
@@ -84,6 +90,8 @@ def test_execute_writes_mode_is_explicit_and_never_inferred() -> None:
             _argv(),
             {
                 cli.RUNTIME_ENVIRONMENT_ENV: "development",
+                cli.RUNTIME_CLOUD_DEPLOYMENT_ENV: "DEV",
+                cli.DEV_ENDPOINT_IDENTITY_ENV: "dev:unit-test",
                 cli.CATALOG_PASSWORD_ENV: "x",
             },
             "SOURCE_PASSWORD",
@@ -92,6 +100,8 @@ def test_execute_writes_mode_is_explicit_and_never_inferred() -> None:
             _argv(),
             {
                 cli.RUNTIME_ENVIRONMENT_ENV: "development",
+                cli.RUNTIME_CLOUD_DEPLOYMENT_ENV: "DEV",
+                cli.DEV_ENDPOINT_IDENTITY_ENV: "dev:unit-test",
                 cli.SOURCE_PASSWORD_ENV: "x",
             },
             "CATALOG_PASSWORD",
@@ -111,6 +121,11 @@ def test_execute_writes_mode_is_explicit_and_never_inferred() -> None:
             _env(),
             "must be distinct",
         ),
+        (
+            _argv("--catalog-database", "production_catalog"),
+            _env(),
+            "must start",
+        ),
     ],
 )
 def test_parse_config_fails_closed_on_credentials_url_and_database_aliasing(
@@ -126,13 +141,23 @@ def test_parse_config_refuses_non_dev_or_bad_sentinel_before_connections() -> No
     with pytest.raises(cli.CatalogBackfillError, match="explicitly equal development"):
         cli.parse_config(_argv(), environ=environment)
     argv = _argv()
-    argv[1] = "production"
+    argv[argv.index("--environment") + 1] = "production"
     with pytest.raises(cli.CatalogBackfillError, match="development-only"):
         cli.parse_config(argv, environ=_env())
     argv = _argv()
-    argv[3] = "yes"
+    argv[argv.index("--ack") + 1] = "yes"
     with pytest.raises(cli.CatalogBackfillError, match="acknowledgement"):
         cli.parse_config(argv, environ=_env())
+
+    environment = _env()
+    environment[cli.RUNTIME_CLOUD_DEPLOYMENT_ENV] = "US"
+    with pytest.raises(cli.CatalogBackfillError, match="explicitly equal DEV"):
+        cli.parse_config(_argv(), environ=environment)
+
+    environment = _env()
+    environment[cli.DEV_ENDPOINT_IDENTITY_ENV] = "dev:different"
+    with pytest.raises(cli.CatalogBackfillError, match="exactly match"):
+        cli.parse_config(_argv(), environ=environment)
 
 
 class FakeClient:
@@ -195,7 +220,7 @@ def test_run_builds_four_bounded_clients_closes_all_and_renders_json() -> None:
     assert clients[1].kwargs["host"] == "catalog-dev"
     assert clients[1].kwargs["secure"] is True
     assert clients[1].kwargs["password"] == "catalog-secret"
-    assert clients[1].kwargs["database"] == "th7247_catalog_dev"
+    assert clients[1].kwargs["database"] == "th7247_catalog_dev_unit"
     assert clients[2].kwargs == clients[0].kwargs
     assert clients[3].kwargs == clients[1].kwargs
     assert len(runner_inputs) == 1

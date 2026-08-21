@@ -10,7 +10,11 @@ import {
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ get: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  get: vi.fn(),
+  propertyCatalog: vi.fn(),
+  catalogResult: null,
+}));
 
 vi.mock("src/utils/axios", () => ({
   default: mocks,
@@ -23,6 +27,15 @@ vi.mock("react-router-dom", () => ({
 }));
 vi.mock("src/hooks/use-debounce", () => ({
   useDebounce: (value) => value,
+}));
+vi.mock("src/hooks/useDashboards", () => ({
+  isPropertyCatalogNotReadyError: (error) =>
+    error?.response?.status === 503 &&
+    error?.response?.data?.code === "property_catalog_not_ready",
+  usePropertyCatalog: (options) => {
+    mocks.propertyCatalog(options);
+    return mocks.catalogResult;
+  },
 }));
 vi.mock("src/components/loading-screen", () => ({
   LoadingScreen: () => <div>Loading attributes…</div>,
@@ -64,7 +77,9 @@ vi.mock("../AttributeDetail", () => ({
   default: () => <div data-testid="attribute-detail" />,
 }));
 
-import AttributesView from "../AttributesView";
+import CatalogAttributesView, {
+  LegacyAttributesView as AttributesView,
+} from "../AttributesView";
 
 function QueryWrapper({ client, children }) {
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
@@ -85,6 +100,56 @@ const renderView = () => {
   );
   return client;
 };
+
+describe("AttributesView unified catalog", () => {
+  it("searches and paginates one signed property-definition chain", async () => {
+    const fetchNextPage = vi.fn().mockResolvedValue(undefined);
+    mocks.catalogResult = {
+      error: null,
+      legacyFallbackRequired: false,
+      metrics: [
+        {
+          name: "customer.plan",
+          property_id: "custom_attribute:customer.plan",
+          type: "string",
+        },
+      ],
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+      cursorChainStopped: false,
+      hasNextPage: true,
+      isFetchingNextPage: false,
+      fetchNextPage,
+      refetch: vi.fn(),
+    };
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryWrapper client={client}>
+        <CatalogAttributesView />
+      </QueryWrapper>,
+    );
+
+    expect(await screen.findByTestId("attribute-keys")).toHaveTextContent(
+      "customer.plan",
+    );
+    expect(mocks.get).not.toHaveBeenCalled();
+    expect(mocks.propertyCatalog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "custom_attribute",
+        source: "traces",
+        projectIds: ["project-large"],
+        allowLegacyNotReadyFallback: true,
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Load more attributes" }),
+    );
+    expect(fetchNextPage).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("AttributesView errors", () => {
   beforeEach(() => vi.clearAllMocks());

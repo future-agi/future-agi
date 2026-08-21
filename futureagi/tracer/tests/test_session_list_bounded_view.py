@@ -11,6 +11,7 @@ import pytest
 
 from tracer.selectors.trace_filter_reads import BoundedFilterPage
 from tracer.services.clickhouse.list_cursor import ListCursorError
+from tracer.services.filter_attestation import applied_filter_attestation
 
 
 def _attribute_filter() -> dict:
@@ -728,6 +729,11 @@ def test_attribute_session_list_uses_bounded_protocol_and_page_scoped_hydration(
         "query_exact": False,
         "query_provenance": "spans_per_session_candidate",
         "ordering_exact": False,
+        **applied_filter_attestation(
+            project_id=project_id,
+            observe_type="session",
+            filters=filters,
+        ),
     }
     assert payload["table"][0]["first_message"] == "first"
     assert payload["table"][0]["last_message"] == "last"
@@ -1205,6 +1211,11 @@ def test_positive_user_cursor_uses_exact_keyset_pages_without_duplicates():
         "query_complete": True,
         "query_status": "complete",
         "query_error_code": None,
+        **applied_filter_attestation(
+            project_id=project_id,
+            observe_type="session",
+            filters=validated_data["filters"],
+        ),
     }
     assert second_payload["metadata"] == {
         "total_rows": 2,
@@ -1215,6 +1226,11 @@ def test_positive_user_cursor_uses_exact_keyset_pages_without_duplicates():
         "query_complete": True,
         "query_status": "complete",
         "query_error_code": None,
+        **applied_filter_attestation(
+            project_id=project_id,
+            observe_type="session",
+            filters=validated_data["filters"],
+        ),
     }
     bounded_read.assert_not_called()
     first_call, second_call = builder.build_candidate_cursor_page_query.call_args_list

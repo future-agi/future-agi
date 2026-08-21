@@ -20,12 +20,13 @@ const MULTI_VALUE_TYPES = new Set([
 ]);
 const API_FILTER_ITEM_KEYS = new Set([
   "column_id",
+  "property_id",
   "display_name",
   "source",
   "output_type",
   "filter_config",
 ]);
-const UI_FILTER_ITEM_KEYS = new Set(["id", "_meta", "col_type"]);
+const UI_FILTER_ITEM_KEYS = new Set(["id", "registryId", "_meta", "col_type"]);
 const API_FILTER_CONFIG_KEYS = new Set([
   "filter_type",
   "filter_op",
@@ -35,6 +36,8 @@ const API_FILTER_CONFIG_KEYS = new Set([
 ]);
 const STORED_FILTER_ITEM_KEY_ALIASES = {
   columnId: "column_id",
+  propertyId: "property_id",
+  registryId: "property_id",
   displayName: "display_name",
   outputType: "output_type",
   filterConfig: "filter_config",
@@ -180,6 +183,7 @@ export const buildApiFilterFromPanelRow = (row) => {
 
   return {
     column_id: row?.field,
+    ...(row?.registryId && { property_id: row.registryId }),
     ...(row?.fieldName && { display_name: row.fieldName }),
     filter_config: {
       filter_type: filterType,
@@ -283,6 +287,7 @@ export const serializeFilterForApi = (filter) => {
 
   return {
     column_id: columnId,
+    ...(filter.property_id && { property_id: filter.property_id }),
     ...(filter.display_name && { display_name: filter.display_name }),
     ...(filter.source && { source: filter.source }),
     ...(filter.output_type && { output_type: filter.output_type }),

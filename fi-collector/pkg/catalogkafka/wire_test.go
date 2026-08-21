@@ -192,3 +192,60 @@ func TestPayloadInputFromWireJobUsesExactCatalogRows(t *testing.T) {
 		t.Fatal("WireJob with existing-table column was accepted")
 	}
 }
+
+func TestPayloadInputFromWriterCarriesBoundedSystemModelNamespace(t *testing.T) {
+	cfg := catalogwriter.DefaultConfig()
+	cfg.Enabled = true
+	cfg.SpoolDir = t.TempDir()
+	writer, err := catalogwriter.NewTransportWriter(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage := func(model string) (catalogwriter.WireJob, catalogwriter.StageReport) {
+		job, report := writer.StageCanonicalSpans([]map[string]any{{
+			"project_id": testProject, "start_time": testTime, "model": model,
+			"attrs_string": map[string]string{}, "attrs_number": map[string]float64{},
+			"attrs_bool": map[string]uint8{}, "attributes_extra": map[string]any{},
+		}})
+		return catalogwriter.ExportWireJob(job), report
+	}
+
+	exact, report := stage(strings.Repeat("x", 16<<10))
+	if report.IncompleteSpans != 0 {
+		t.Fatalf("exact-boundary stage report=%+v", report)
+	}
+	payload, err := PayloadInputFromWireJob(
+		exact, testProject, testDigest("model-boundary"), 1, 64<<10,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Chunks) != 2 || payload.ValueRows != 1 {
+		t.Fatalf("system Model payload=%+v", payload)
+	}
+	for _, rows := range [][]map[string]any{exact.KeyRows, exact.ValueRows} {
+		if len(rows) != 1 || rows[0]["source_kind"] != "system_attribute" || rows[0]["attribute_key"] != "model" {
+			t.Fatalf("system Model namespace missing: %v", rows)
+		}
+	}
+	input := testEnvelopeInput(t)
+	input.Payload = payload
+	if _, err := NewWireEnvelope(input); err != nil {
+		t.Fatal(err)
+	}
+
+	oversized, report := stage(strings.Repeat("x", (16<<10)+1))
+	if report.IncompleteSpans != 1 || len(oversized.KeyRows) != 0 || len(oversized.ValueRows) != 0 ||
+		!contains(report.BuildGapReasons, "system_value_projection") {
+		t.Fatalf("oversized Model was not a durable gap: wire=%+v report=%+v", oversized, report)
+	}
+}
+
+func contains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}

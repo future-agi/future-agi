@@ -49,7 +49,7 @@ _TRANSIENT_CLICKHOUSE_ERROR_CODES = {
 _API_READ_UNAVAILABLE_ERROR_CODES = {ErrorCodes.NO_COMMON_TYPE}
 
 _CLICKHOUSE_CONNECT_CODE_RE = re.compile(
-    r"\AReceived ClickHouse exception,\s*code:\s*(\d+)\b",
+    r"\A(?:Received ClickHouse exception,\s*code:|Code:)\s*(\d+)\b",
     flags=re.IGNORECASE,
 )
 _CLICKHOUSE_CONNECT_TRANSPORT_RE = re.compile(
@@ -62,6 +62,10 @@ _CLICKHOUSE_CONNECT_TRANSPORT_RE = re.compile(
 )
 _CLICKHOUSE_CONNECT_TRANSIENT_HTTP_RE = re.compile(
     r"\AHTTP driver received HTTP status (?:408|429|502|503|504)\b",
+    flags=re.IGNORECASE,
+)
+_CLICKHOUSE_MAX_QUERY_SIZE_RE = re.compile(
+    r"\bMax query size exceeded\b",
     flags=re.IGNORECASE,
 )
 
@@ -116,6 +120,26 @@ def is_read_budget_error(exc: Exception) -> bool:
     if isinstance(exc, ClickHouseConnectDatabaseError):
         return _clickhouse_connect_error_code(exc) in _READ_BUDGET_ERROR_CODES
     return False
+
+
+def is_clickhouse_query_size_error(exc: Exception) -> bool:
+    """Return whether *exc* is ClickHouse's bounded SQL-size rejection.
+
+    ClickHouse reports ``max_query_size`` as syntax error code 62 even when the
+    generated statement is otherwise valid. Only that canonical diagnostic is
+    safe for an identity-batch caller to retry at a smaller size; arbitrary
+    syntax errors remain programming failures and fail closed.
+    """
+
+    if isinstance(exc, ClickHouseError):
+        code = getattr(exc, "code", None)
+    elif isinstance(exc, ClickHouseConnectDatabaseError):
+        code = _clickhouse_connect_error_code(exc)
+    else:
+        return False
+    return code == ErrorCodes.SYNTAX_ERROR and bool(
+        _CLICKHOUSE_MAX_QUERY_SIZE_RE.search(str(exc))
+    )
 
 
 def is_clickhouse_query_error(exc: Exception) -> bool:

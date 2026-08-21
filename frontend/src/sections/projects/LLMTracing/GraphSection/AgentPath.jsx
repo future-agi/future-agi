@@ -1,4 +1,4 @@
-// AgentPath — Sankey-style flow view of an agent trace's span types.
+// AgentPath — Sankey-style parent/child flow view of agent span types.
 import React, { useMemo, useRef, useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import {

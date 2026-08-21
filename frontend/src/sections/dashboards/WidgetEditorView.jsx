@@ -48,11 +48,13 @@ import {
 import { paths } from "src/routes/paths";
 import {
   useDashboardDetail,
-  useDashboardMetricsPaginated,
   useDashboardQuery,
   useCreateWidget,
   useUpdateWidget,
   useDeleteWidget,
+  isPropertyCatalogNotReadyError,
+  useLegacyDashboardMetricsPaginated,
+  usePropertyCatalog,
   useSimulationAgents,
 } from "src/hooks/useDashboards";
 import { useDebounce } from "src/hooks/use-debounce";
@@ -79,6 +81,11 @@ import {
   normalizeColumnType,
   normalizeFilterType,
 } from "src/api/contracts/filter-contract";
+import {
+  FILTER_VALUE_SEARCH_DEBOUNCE_MS,
+  PROPERTY_CATALOG_PAGE_SIZE,
+  PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
+} from "src/config/runtime_limits";
 
 import {
   DEFAULT_DECIMALS,
@@ -118,8 +125,12 @@ import {
 import {
   getWidgetEditorLoadState,
   getWidgetPreviewState,
+  shouldBlockWidgetPreviewForFailure,
   WIDGET_PREVIEW_MAX_WAIT_MS,
 } from "./widgetEditorState";
+import { INTERACTIVE_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
+
+const WIDGET_PREVIEW_REQUEST_TIMEOUT_MS = INTERACTIVE_REQUEST_TIMEOUT_MS;
 
 const escapeCsvField = (field) => {
   const str = String(field ?? "");
@@ -335,6 +346,7 @@ export function buildWidgetCursorAttributeOptions(
       // Widget filter contract. Keep both out instead of coercing them to text.
       return eligibleTypes.map((dataType) => ({
         id: key,
+        registryId: `custom_attribute:${key}`,
         name: key,
         type: "custom_attribute",
         source: "traces",
@@ -358,7 +370,7 @@ export function mergeWidgetCursorAttributeOptions(
   ];
   const seen = new Set();
   return options.filter((option) => {
-    const identity = `${option.source || "all"}:${option.type}:${option.id}:${option.dataType || ""}`;
+    const identity = `${option.registryId || `${option.source || "all"}:${option.type}:${option.id}`}:${option.dataType || ""}`;
     if (seen.has(identity)) return false;
     seen.add(identity);
     return true;
@@ -369,6 +381,7 @@ export function getWidgetMetricCatalogRequest({
   pickerCategory,
   search,
   pickerOpen,
+  pickerMode = "metric",
 }) {
   const activeCategory = METRIC_CATEGORIES.find(
     (category) => category.key === pickerCategory,
@@ -379,13 +392,260 @@ export function getWidgetMetricCatalogRequest({
     search: activeCategory?.nameFilter
       ? search || activeCategory.nameFilter
       : search,
-    pageSize: 50,
-    // Custom attributes are supplied exclusively by the retained cursor
-    // inventory. No finite catalog category should trigger the legacy capped
-    // ClickHouse attribute scan before the backend applies its category filter.
+    // Metric selection must page and count only aggregatable properties.
+    // Without this server-side scope, a broad dimension-only search can say
+    // "302 results" while rendering none and offer an effectively endless
+    // Load more cursor through rows the picker intentionally hides.
+    role: pickerMode === "metric" ? "metric" : "",
+    pageSize: PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
+    // Only the legacy fallback reads this flag. The activated catalog always
+    // includes custom attributes; the fallback must never rescan the large
+    // source attribute maps while the catalog is unavailable.
     excludeCustomAttributes: true,
-    enabled: pickerOpen && pickerCategory !== "custom_attribute",
+    enabled: pickerOpen,
   };
+}
+
+export function WidgetCatalogPaginationControl({
+  pickerCategory,
+  hasNextPage,
+  isFetchingNextPage,
+  onLoadMore,
+  attributeHasNextPage = false,
+  isFetchingAttributeNextPage = false,
+  onLoadMoreAttributes,
+}) {
+  const activeRequestRef = useRef(null);
+  const [isRequestPending, setIsRequestPending] = useState(false);
+  const catalogPageAvailable = hasNextPage;
+  const attributePageAvailable =
+    (pickerCategory === "all" || pickerCategory === "custom_attribute") &&
+    attributeHasNextPage;
+  const loading =
+    isRequestPending || isFetchingNextPage || isFetchingAttributeNextPage;
+
+  const handleLoadMore = useCallback(() => {
+    if (loading || activeRequestRef.current) {
+      return;
+    }
+
+    const actions = [];
+    if (catalogPageAvailable && onLoadMore) actions.push(onLoadMore);
+    if (attributePageAvailable && onLoadMoreAttributes) {
+      actions.push(onLoadMoreAttributes);
+    }
+    if (actions.length === 0) return;
+
+    setIsRequestPending(true);
+    const request = Promise.allSettled(
+      actions.map((action) => {
+        try {
+          return Promise.resolve(action());
+        } catch (error) {
+          return Promise.reject(error);
+        }
+      }),
+    );
+    activeRequestRef.current = request;
+    const clearRequest = () => {
+      if (activeRequestRef.current === request) {
+        activeRequestRef.current = null;
+        setIsRequestPending(false);
+      }
+    };
+    request.then(clearRequest, clearRequest);
+  }, [
+    attributePageAvailable,
+    catalogPageAvailable,
+    loading,
+    onLoadMore,
+    onLoadMoreAttributes,
+  ]);
+
+  if (loading) {
+    return (
+      <Box
+        role="status"
+        sx={{
+          py: 1.5,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 0.75,
+        }}
+      >
+        <CircularProgress size={16} />
+        <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+          Loading more…
+        </Typography>
+      </Box>
+    );
+  }
+  if (!catalogPageAvailable && !attributePageAvailable) return null;
+
+  return (
+    <Box sx={{ py: 0.75, textAlign: "center" }}>
+      <Button size="small" onClick={handleLoadMore} sx={{ fontSize: 11 }}>
+        Load more
+      </Button>
+    </Box>
+  );
+}
+
+WidgetCatalogPaginationControl.propTypes = {
+  pickerCategory: PropTypes.string.isRequired,
+  hasNextPage: PropTypes.bool,
+  isFetchingNextPage: PropTypes.bool,
+  onLoadMore: PropTypes.func.isRequired,
+  attributeHasNextPage: PropTypes.bool,
+  isFetchingAttributeNextPage: PropTypes.bool,
+  onLoadMoreAttributes: PropTypes.func,
+};
+
+const DATASET_WIDGET_DIMENSIONS = new Set([
+  "dataset",
+  "eval_template",
+  "column_name",
+  "column_source",
+  "cell_status",
+]);
+
+const SIMULATION_FILTER_DIMENSIONS = new Set([
+  "agent_definition",
+  "agent_latency",
+  "agent_version",
+  "ai_interruption_rate",
+  "ai_interruptions",
+  "bot_wpm",
+  "call_type",
+  "customer_cost",
+  "duration",
+  "ended_reason",
+  "llm_cost",
+  "llm_latency",
+  "message_count",
+  "overall_score",
+  "persona",
+  "persona_accent",
+  "persona_age_group",
+  "persona_communication_style",
+  "persona_conversation_speed",
+  "persona_gender",
+  "persona_language",
+  "persona_location",
+  "persona_personality",
+  "persona_profession",
+  "response_time",
+  "run_test",
+  "scenario",
+  "scenario_type",
+  "simulation",
+  "status",
+  "stop_time_after_interruption",
+  "stt_cost",
+  "stt_latency",
+  "talk_ratio",
+  "test_execution",
+  "total_cost",
+  "tts_cost",
+  "tts_latency",
+  "user_interruption_rate",
+  "user_interruptions",
+  "user_wpm",
+]);
+
+const SIMULATION_BREAKDOWN_DIMENSIONS = new Set([
+  "agent_definition",
+  "agent_version",
+  "call_type",
+  "ended_reason",
+  "persona",
+  "persona_accent",
+  "persona_age_group",
+  "persona_communication_style",
+  "persona_conversation_speed",
+  "persona_gender",
+  "persona_language",
+  "persona_location",
+  "persona_personality",
+  "persona_profession",
+  "run_test",
+  "scenario",
+  "scenario_type",
+  "simulation",
+  "status",
+  "test_execution",
+]);
+
+export function isWidgetCatalogOptionAllowed(
+  metric,
+  pickerMode,
+  { selectedMetricSources = [], targetMetricSource = null } = {},
+) {
+  if (!["filter", "metric_filter", "breakdown"].includes(pickerMode)) {
+    return true;
+  }
+  const declaredSources = [
+    ...(metric.source ? [metric.source] : []),
+    ...(metric.sources || []),
+  ];
+  const optionSources = new Set(
+    declaredSources.length > 0 ? declaredSources : ["traces"],
+  );
+  const targetsTrace = ["traces", "all", "both"].some((source) =>
+    optionSources.has(source),
+  );
+  const targetsDataset = ["datasets", "all", "both"].some((source) =>
+    optionSources.has(source),
+  );
+  const targetsSimulation = optionSources.has("simulation");
+  const isSupportedDatasetDimension =
+    metric.category === "system_metric" &&
+    DATASET_WIDGET_DIMENSIONS.has(metric.name);
+  const isSupportedSimulationDimension =
+    metric.category === "system_metric" &&
+    (pickerMode === "breakdown"
+      ? SIMULATION_BREAKDOWN_DIMENSIONS
+      : SIMULATION_FILTER_DIMENSIONS
+    ).has(metric.name);
+
+  if (pickerMode === "metric_filter") {
+    if (targetMetricSource === "datasets") {
+      return isSupportedDatasetDimension;
+    }
+    return targetMetricSource === "simulation"
+      ? targetsSimulation && isSupportedSimulationDimension
+      : targetsTrace;
+  }
+
+  const selectedSources = new Set(selectedMetricSources);
+  if (
+    selectedSources.has("datasets") &&
+    targetsDataset &&
+    !isSupportedDatasetDimension
+  ) {
+    return false;
+  }
+  if (
+    selectedSources.has("simulation") &&
+    targetsSimulation &&
+    !isSupportedSimulationDimension
+  ) {
+    return false;
+  }
+  return (
+    (selectedSources.has("traces") && targetsTrace) ||
+    (selectedSources.has("datasets") && targetsDataset) ||
+    (selectedSources.has("simulation") && targetsSimulation)
+  );
+}
+
+function getWidgetMetricAdapterSource(metric) {
+  if (metric.source === "datasets") return "datasets";
+  if (metric.source === "simulation" && metric.type !== "custom_attribute") {
+    return "simulation";
+  }
+  return "traces";
 }
 
 // Additional aggregation options for dataset-specific types
@@ -508,6 +768,19 @@ export function hasWidgetFilterValue(filter) {
   return (
     filter.value !== "" && filter.value !== null && filter.value !== undefined
   );
+}
+
+export function buildLinkedProjectFilter(projectIds) {
+  return {
+    id: "project",
+    registryId: "system_attribute:traces:project",
+    name: "Project",
+    type: "system",
+    dataType: "string",
+    source: "traces",
+    operator: "contains",
+    value: projectIds,
+  };
 }
 
 const DASHBOARD_TYPE_TO_COL_TYPE = {
@@ -1226,7 +1499,7 @@ export function FilterValuePickerPopup({
   // Backend search (custom attributes) reaches values outside the fetched
   // page and the default lookback; the client-side filter below stays as the
   // instant layer on top of whatever is already loaded.
-  const debouncedSearch = useDebounce(search, 500);
+  const debouncedSearch = useDebounce(search, FILTER_VALUE_SEARCH_DEBOUNCE_MS);
   const {
     options,
     isLoading,
@@ -1580,6 +1853,8 @@ export default function WidgetEditorView() {
   const [lastExactPreview, setLastExactPreview] = useState(null);
   const currentPreviewSignatureRef = useRef("");
   const previewPollTimerRef = useRef(null);
+  const previewRequestControllerRef = useRef(null);
+  const previewRequestTimerRef = useRef(null);
   const previewGenerationRef = useRef(0);
   const [isPreviewRefreshing, setIsPreviewRefreshing] = useState(false);
   const [previewFailed, setPreviewFailed] = useState(false);
@@ -1637,6 +1912,7 @@ export default function WidgetEditorView() {
   const [rightTab, setRightTab] = useState(0);
   // Shared picker state: used for metric, filter, and breakdown pickers
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerCatalogSession, setPickerCatalogSession] = useState(0);
   const [pickerAnchor, setPickerAnchor] = useState(null);
   const [pickerCategory, setPickerCategory] = useState("all");
   const [pickerSearch, setPickerSearch] = useState("");
@@ -1751,12 +2027,13 @@ export default function WidgetEditorView() {
     return [...keys];
   }, [breakdowns, filters, metrics]);
 
-  const cursorAttributePickerActive =
-    pickerOpen &&
-    (pickerCategory === "all" || pickerCategory === "custom_attribute");
+  // The activated property catalog now owns trace attributes as well as the
+  // other property families. Keep the retained inventory hook mounted but
+  // disabled for rollout compatibility; the picker must have one cursor and
+  // one Load more action.
+  const cursorAttributePickerActive = false;
   const {
     filteredAttributes: cursorAttributes,
-    isLoading: isCursorAttributeLoading,
     inventoryControlProps: cursorAttributeControlProps,
   } = useCursorAttributeInventory({
     workspaceScope: true,
@@ -1766,28 +2043,59 @@ export default function WidgetEditorView() {
     search: pickerSearch,
     preservedKeys: preservedDashboardAttributeKeys,
     enabled: cursorAttributePickerActive,
-    pageSize: 50,
+    pageSize: PROPERTY_CATALOG_PAGE_SIZE,
+    cacheScopeKey: `widget-picker:${pickerCatalogSession}`,
   });
 
-  // Paginated metrics for the picker
-  const {
-    metrics: paginatedMetrics,
-    total: paginatedTotal,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-    isLoading: isPaginatedLoading,
-  } = useDashboardMetricsPaginated(
-    useMemo(
-      () =>
-        getWidgetMetricCatalogRequest({
-          pickerCategory,
-          search: debouncedPickerSearch,
-          pickerOpen,
-        }),
-      [pickerCategory, debouncedPickerSearch, pickerOpen],
-    ),
+  const widgetCatalogRequest = useMemo(
+    () =>
+      getWidgetMetricCatalogRequest({
+        pickerCategory,
+        search: debouncedPickerSearch,
+        pickerOpen,
+        pickerMode,
+      }),
+    [pickerCategory, debouncedPickerSearch, pickerOpen, pickerMode],
   );
+  const propertyCatalog = usePropertyCatalog({
+    category: widgetCatalogRequest.category,
+    source: widgetCatalogRequest.source,
+    search: widgetCatalogRequest.search,
+    role: widgetCatalogRequest.role,
+    pageSize: widgetCatalogRequest.pageSize,
+    enabled: widgetCatalogRequest.enabled,
+    allowLegacyNotReadyFallback: true,
+    fallbackScopeKey: `widget-property-catalog:${currentWorkspaceId || ""}`,
+    cacheScopeKey: `widget-picker:${pickerCatalogSession}`,
+  });
+  const legacyMetricCatalog = useLegacyDashboardMetricsPaginated({
+    ...widgetCatalogRequest,
+    enabled:
+      widgetCatalogRequest.enabled && propertyCatalog.legacyFallbackRequired,
+  });
+  const useLegacyMetricCatalog = propertyCatalog.legacyFallbackRequired;
+  const paginatedMetrics = useLegacyMetricCatalog
+    ? legacyMetricCatalog.metrics
+    : propertyCatalog.metrics;
+  const catalogCountKey = widgetCatalogRequest.category || "all";
+  const paginatedTotal = useLegacyMetricCatalog
+    ? legacyMetricCatalog.total
+    : propertyCatalog.categoryCountsExact
+      ? propertyCatalog.categoryCounts?.[catalogCountKey]
+      : null;
+  const fetchNextPage = useLegacyMetricCatalog
+    ? legacyMetricCatalog.fetchNextPage
+    : propertyCatalog.fetchNextPage;
+  const hasNextPage = useLegacyMetricCatalog
+    ? legacyMetricCatalog.hasNextPage
+    : Boolean(propertyCatalog.hasNextPage);
+  const isFetchingNextPage = useLegacyMetricCatalog
+    ? legacyMetricCatalog.isFetchingNextPage
+    : propertyCatalog.isFetchingNextPage;
+  const isPaginatedLoading = useLegacyMetricCatalog
+    ? legacyMetricCatalog.isLoading
+    : propertyCatalog.isLoading ||
+      isPropertyCatalogNotReadyError(propertyCatalog.error);
 
   // Map paginated backend metrics to frontend option shape
   const catalogMetricOptions = useMemo(() => {
@@ -1801,8 +2109,18 @@ export default function WidgetEditorView() {
     };
     return paginatedMetrics
       .filter((m) => pickerMode !== "metric" || m.role !== "dimension")
+      .filter((m) =>
+        isWidgetCatalogOptionAllowed(m, pickerMode, {
+          selectedMetricSources: metrics.map(getWidgetMetricAdapterSource),
+          targetMetricSource:
+            pickerMetricIndex == null
+              ? null
+              : getWidgetMetricAdapterSource(metrics[pickerMetricIndex] || {}),
+        }),
+      )
       .map((m) => ({
         id: m.name,
+        registryId: m.propertyId || m.property_id,
         name: m.displayName || m.display_name || m.name,
         type: categoryMap[m.category] || m.category,
         source: m.source,
@@ -1816,7 +2134,7 @@ export default function WidgetEditorView() {
         choices: m.choices,
         choiceOptions: m.choiceOptions || m.choice_options,
       }));
-  }, [paginatedMetrics, pickerMode]);
+  }, [paginatedMetrics, pickerMode, metrics, pickerMetricIndex]);
 
   const cursorAttributeOptions = useMemo(
     () => buildWidgetCursorAttributeOptions(cursorAttributes, pickerMode),
@@ -1833,26 +2151,7 @@ export default function WidgetEditorView() {
     [catalogMetricOptions, cursorAttributeOptions, cursorAttributePickerActive],
   );
 
-  const isPickerInventoryLoading =
-    isPaginatedLoading ||
-    (cursorAttributePickerActive && isCursorAttributeLoading);
-
-  // Infinite scroll handler for the picker's right panel
-  const pickerListRef = useRef(null);
-  const handlePickerScroll = useCallback(
-    (e) => {
-      const el = e.target;
-      if (
-        pickerCategory !== "custom_attribute" &&
-        el.scrollHeight - el.scrollTop - el.clientHeight < 50 &&
-        hasNextPage &&
-        !isFetchingNextPage
-      ) {
-        fetchNextPage();
-      }
-    },
-    [fetchNextPage, hasNextPage, isFetchingNextPage, pickerCategory],
-  );
+  const isPickerInventoryLoading = isPaginatedLoading;
 
   // Chart tab — axis config
   const [axisConfig, setAxisConfig] = useState({
@@ -1959,6 +2258,7 @@ export default function WidgetEditorView() {
           return {
             ...m,
             id: m.name || m.id,
+            registryId: m.property_id || m.propertyId,
             name: m.displayName || m.display_name || m.name || m.id,
             type: frontendType,
             dataType: m.dataType || m.data_type || m.attribute_type || "number",
@@ -1996,6 +2296,7 @@ export default function WidgetEditorView() {
         const savedBreakdowns = (qc.breakdowns || []).map((b) => ({
           ...b,
           id: b.id || b.name,
+          registryId: b.property_id || b.propertyId,
           name: b.displayName || b.display_name || b.name || b.id,
           type: bdTypeMap[b.type] || b.type || "system",
           dataType: b.dataType || b.data_type || b.attribute_type || "string",
@@ -2042,6 +2343,7 @@ export default function WidgetEditorView() {
 
     return {
       column_id: f.id,
+      ...(f.registryId && { property_id: f.registryId }),
       ...(f.name && { display_name: f.name }),
       ...(f.source && { source: f.source }),
       ...(f.outputType && { output_type: f.outputType }),
@@ -2056,6 +2358,7 @@ export default function WidgetEditorView() {
         f.metric_type || f.metricType || f.type || "system_metric";
       return {
         id: f.metric_name || f.metricName || f.id,
+        registryId: f.property_id || f.propertyId,
         name: f.metric_name || f.metricName || f.name || f.id || "",
         type: toDashboardFilterType(backendType),
         dataType: normalizeWidgetDashboardDataType(
@@ -2079,6 +2382,7 @@ export default function WidgetEditorView() {
 
     return {
       id: f.column_id,
+      registryId: f.property_id || f.propertyId,
       name: f.display_name || f.column_id,
       type: dashboardType,
       source: f.source || fallbackSource,
@@ -2097,6 +2401,7 @@ export default function WidgetEditorView() {
     const base = {
       id: m.id || `m${i}`,
       name: m.id,
+      ...(m.registryId && { property_id: m.registryId }),
       display_name: m.name || m.id,
       type: backendType,
       source: m.source || "traces",
@@ -2138,6 +2443,7 @@ export default function WidgetEditorView() {
     // b.id = backend key
     const base = {
       name: b.id,
+      ...(b.registryId && { property_id: b.registryId }),
       display_name: b.name || b.id,
       type: backendType,
       source: b.source || "traces",
@@ -2181,6 +2487,10 @@ export default function WidgetEditorView() {
 
   useEffect(() => {
     previewGenerationRef.current += 1;
+    previewRequestControllerRef.current?.abort();
+    previewRequestControllerRef.current = null;
+    clearTimeout(previewRequestTimerRef.current);
+    previewRequestTimerRef.current = null;
     clearTimeout(previewPollTimerRef.current);
     previewPollTimerRef.current = null;
     setIsPreviewRefreshing(false);
@@ -2190,6 +2500,9 @@ export default function WidgetEditorView() {
   useEffect(
     () => () => {
       previewGenerationRef.current += 1;
+      previewRequestControllerRef.current?.abort();
+      previewRequestControllerRef.current = null;
+      clearTimeout(previewRequestTimerRef.current);
       clearTimeout(previewPollTimerRef.current);
     },
     [],
@@ -2203,6 +2516,10 @@ export default function WidgetEditorView() {
       clearTimeout(previewPollTimerRef.current);
       previewPollTimerRef.current = null;
       const pollingController = createAggregationPollController();
+      // Include the first preview request in the same sub-ten-second action
+      // budget as any pending-response polls. Retry creates a fresh controller.
+      pollingController.start();
+      pollingController.recordAttempt();
       let refreshWasQueued = false;
       setPreviewFailed(false);
 
@@ -2227,10 +2544,42 @@ export default function WidgetEditorView() {
       };
 
       const execute = (forceRefresh) => {
+        previewRequestControllerRef.current?.abort();
+        clearTimeout(previewRequestTimerRef.current);
+        const requestController = new AbortController();
+        previewRequestControllerRef.current = requestController;
+        const finishAttempt = () => {
+          clearTimeout(previewRequestTimerRef.current);
+          previewRequestTimerRef.current = null;
+          if (previewRequestControllerRef.current === requestController) {
+            previewRequestControllerRef.current = null;
+          }
+        };
+        const requestTimeoutMs = pollingController.remainingMs(
+          WIDGET_PREVIEW_REQUEST_TIMEOUT_MS,
+        );
+        previewRequestTimerRef.current = window.setTimeout(() => {
+          if (
+            !isCurrent() ||
+            previewRequestControllerRef.current !== requestController
+          ) {
+            return;
+          }
+          finishAttempt();
+          previewGenerationRef.current = generation + 1;
+          requestController.abort();
+          setIsPreviewRefreshing(false);
+          setPreviewFailed(true);
+        }, requestTimeoutMs);
         mutateDashboardQuery(
-          { queryConfig, refresh: forceRefresh },
+          {
+            queryConfig,
+            refresh: forceRefresh,
+            signal: requestController.signal,
+          },
           {
             onSuccess: (response) => {
+              finishAttempt();
               if (!isCurrent()) return;
 
               const exactResult = getExactDashboardResult(response);
@@ -2277,6 +2626,7 @@ export default function WidgetEditorView() {
               }
             },
             onError: () => {
+              finishAttempt();
               if (!isCurrent()) return;
               if (refreshWasQueued && pollingController.recordFailure()) {
                 schedulePoll();
@@ -2333,6 +2683,7 @@ export default function WidgetEditorView() {
   ]);
 
   const openPicker = (e, mode, targetIndex = null, metricIndex = null) => {
+    setPickerCatalogSession((session) => session + 1);
     setPickerAnchor(e.currentTarget);
     setPickerOpen(true);
     setPickerCategory("all");
@@ -2382,15 +2733,7 @@ export default function WidgetEditorView() {
           const projectIds = [...new Set(obsProjects.map((p) => p.projectId))];
           newMetric.filters = [
             ...(newMetric.filters || []),
-            {
-              id: "project",
-              name: "Project",
-              type: "system",
-              dataType: "string",
-              source: "traces",
-              operator: "contains",
-              value: projectIds,
-            },
+            buildLinkedProjectFilter(projectIds),
           ];
           newMetric._linkedAgents = obsProjects
             .map((p) => p.agentName)
@@ -2420,6 +2763,7 @@ export default function WidgetEditorView() {
       const defaults = getWidgetFilterDefaults(dataType);
       const entry = {
         id: option.id,
+        registryId: option.registryId,
         name: option.name,
         type: option.type,
         dataType,
@@ -2454,6 +2798,7 @@ export default function WidgetEditorView() {
     } else if (pickerMode === "breakdown") {
       const entry = {
         id: option.id,
+        registryId: option.registryId,
         name: option.name,
         type: option.type,
         dataType: option.dataType || "string",
@@ -2481,6 +2826,7 @@ export default function WidgetEditorView() {
       const defaults = getWidgetFilterDefaults(dataType);
       const newFilter = {
         id: option.id,
+        registryId: option.registryId,
         name: option.name,
         type: option.type,
         dataType,
@@ -3358,6 +3704,10 @@ export default function WidgetEditorView() {
       isPreviewRefreshing ||
       serverPreviewState === "preparing");
   const previewActivity = previewPreparing && !activeExactPreview;
+  const previewFailureBlocksRendering = shouldBlockWidgetPreviewForFailure({
+    previewFailed,
+    hasExactPreview: Boolean(activeExactPreview),
+  });
 
   useEffect(() => {
     if (!previewActivity) return undefined;
@@ -3980,7 +4330,7 @@ export default function WidgetEditorView() {
                 />
               </Box>
             )}
-            {isHorizontal && previewFailed && (
+            {isHorizontal && previewFailureBlocksRendering && (
               <Box sx={{ p: 2 }}>
                 <WidgetPreviewStatus state="failed" onRetry={retryPreview} />
               </Box>
@@ -3988,7 +4338,7 @@ export default function WidgetEditorView() {
             {isHorizontal &&
               !previewLoading &&
               !previewPreparing &&
-              !previewFailed &&
+              !previewFailureBlocksRendering &&
               previewSeries.length === 0 && (
                 <Box
                   sx={{
@@ -4007,7 +4357,7 @@ export default function WidgetEditorView() {
             previewSeries.length > 0 &&
             !previewLoading &&
             !previewPreparing &&
-            !previewFailed
+            !previewFailureBlocksRendering
               ? (() => {
                   const maxVal = Math.max(
                     ...barData.series[0].data.map(Math.abs),
@@ -4382,7 +4732,7 @@ export default function WidgetEditorView() {
                   <WidgetPreviewStatus
                     state={previewPreparing ? "preparing" : "loading"}
                   />
-                ) : previewFailed ? (
+                ) : previewFailureBlocksRendering ? (
                   <WidgetPreviewStatus state="failed" onRetry={retryPreview} />
                 ) : previewSeries.length > 0 ? (
                   <Box sx={{ width: "100%", height: "100%" }}>
@@ -6881,7 +7231,8 @@ export default function WidgetEditorView() {
                     </InputAdornment>
                   ),
                   endAdornment:
-                    !cursorAttributePickerActive && paginatedTotal > 0 ? (
+                    !cursorAttributePickerActive &&
+                    Number.isSafeInteger(paginatedTotal) ? (
                       <InputAdornment position="end">
                         <Typography
                           variant="caption"
@@ -6957,12 +7308,8 @@ export default function WidgetEditorView() {
                   </Box>
                 ))}
               </Box>
-              {/* Right: items — paginated with infinite scroll */}
-              <Box
-                ref={pickerListRef}
-                onScroll={handlePickerScroll}
-                sx={{ flex: 1, overflow: "auto", maxHeight: 340 }}
-              >
+              {/* Right: items — each continuation requires an explicit click. */}
+              <Box sx={{ flex: 1, overflow: "auto", maxHeight: 340 }}>
                 {isPickerInventoryLoading &&
                   pickerMetricOptions.length === 0 &&
                   Array.from({ length: 8 }).map((_, i) => (
@@ -7111,17 +7458,28 @@ export default function WidgetEditorView() {
                     </Box>
                   );
                 })}
-                {isFetchingNextPage && (
-                  <Box sx={{ py: 1.5, textAlign: "center" }}>
-                    <CircularProgress size={16} />
-                  </Box>
-                )}
+                <WidgetCatalogPaginationControl
+                  pickerCategory={pickerCategory}
+                  hasNextPage={hasNextPage}
+                  isFetchingNextPage={isFetchingNextPage}
+                  onLoadMore={fetchNextPage}
+                  attributeHasNextPage={
+                    cursorAttributePickerActive &&
+                    cursorAttributeControlProps.hasNextPage
+                  }
+                  isFetchingAttributeNextPage={
+                    cursorAttributePickerActive &&
+                    cursorAttributeControlProps.isFetchingNextPage
+                  }
+                  onLoadMoreAttributes={cursorAttributeControlProps.onLoadMore}
+                />
                 {cursorAttributePickerActive && (
                   <Box sx={{ px: 1.5, pb: 1.5 }}>
                     <AttributeInventoryControls
                       {...cursorAttributeControlProps}
                       search={pickerSearch}
                       showSearch={false}
+                      showLoadMore={false}
                     />
                   </Box>
                 )}

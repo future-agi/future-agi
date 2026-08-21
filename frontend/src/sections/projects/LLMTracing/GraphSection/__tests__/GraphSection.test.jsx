@@ -46,6 +46,30 @@ vi.mock("../LeftControl", () => ({
       >
         Select tokens
       </button>
+      <button
+        type="button"
+        onClick={() =>
+          onGraphConfigChange({
+            id: "config-1",
+            type: "EVAL",
+            output_type: "SCORE",
+          })
+        }
+      >
+        Select eval
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          onGraphConfigChange({
+            id: "label-1",
+            type: "ANNOTATION",
+            output_type: "categorical",
+          })
+        }
+      >
+        Select annotation
+      </button>
     </>
   ),
 }));
@@ -340,7 +364,12 @@ describe("GraphSection exact graph boundary", () => {
     expect(axios.post).toHaveBeenLastCalledWith(
       "/tracer/observation-span/get_graph_methods/",
       expect.objectContaining({
-        req_data_config: { id: "latency", type: "SYSTEM_METRIC" },
+        req_data_config: {
+          id: "latency",
+          type: "SYSTEM_METRIC",
+          property_id: "system_attribute:spans:latency",
+          source: "traces",
+        },
       }),
       expect.objectContaining({ params: { allow_sampled: false } }),
     );
@@ -350,9 +379,51 @@ describe("GraphSection exact graph boundary", () => {
     expect(axios.post).toHaveBeenLastCalledWith(
       "/tracer/observation-span/get_graph_methods/",
       expect.objectContaining({
-        req_data_config: { id: "tokens", type: "SYSTEM_METRIC" },
+        req_data_config: {
+          id: "tokens",
+          type: "SYSTEM_METRIC",
+          property_id: "system_attribute:spans:tokens",
+          source: "traces",
+        },
       }),
       expect.objectContaining({ params: { allow_sampled: false } }),
+    );
+  });
+
+  it("sends unambiguous eval-config and annotation registry identities", async () => {
+    axios.post.mockResolvedValue({
+      data: {
+        result: {
+          metric_name: "config-1",
+          data: [],
+          query_complete: true,
+          query_status: "complete",
+          query_sampled: false,
+        },
+      },
+    });
+
+    renderGraph();
+    fireEvent.click(screen.getByRole("button", { name: "Select eval" }));
+    await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(1));
+    expect(axios.post.mock.calls.at(-1)[1].req_data_config).toEqual(
+      expect.objectContaining({
+        id: "config-1",
+        type: "EVAL",
+        property_id: "eval_config:config-1",
+        source: "traces",
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Select annotation" }));
+    await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(2));
+    expect(axios.post.mock.calls.at(-1)[1].req_data_config).toEqual(
+      expect.objectContaining({
+        id: "label-1",
+        type: "ANNOTATION",
+        property_id: "annotation:label-1",
+        source: "traces",
+      }),
     );
   });
 

@@ -16,6 +16,7 @@ import {
 const schema = [
   {
     field: "model",
+    property_id: "system_attribute:traces:model",
     label: "Model",
     type: "string",
     operators: ["is", "contains"],
@@ -28,7 +29,14 @@ describe("useAIFilter smart grounding contract", () => {
   });
 
   it("uses the bounded smart endpoint without a legacy retry", async () => {
-    const filters = [{ field: "model", operator: "is", value: "gpt-4o" }];
+    const filters = [
+      {
+        field: "model",
+        property_id: "system_attribute:traces:model",
+        operator: "is",
+        value: "gpt-4o",
+      },
+    ];
     mocks.post.mockResolvedValue({ data: { result: { filters } } });
     const { result } = renderHook(() => useAIFilter(schema));
 
@@ -52,7 +60,14 @@ describe("useAIFilter smart grounding contract", () => {
         project_id: "project-1",
         source: "traces",
       },
-      { timeout: SMART_AI_FILTER_TIMEOUT_MS },
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+        timeout: expect.any(Number),
+      }),
+    );
+    expect(mocks.post.mock.calls[0][2].timeout).toBeGreaterThan(0);
+    expect(mocks.post.mock.calls[0][2].timeout).toBeLessThanOrEqual(
+      SMART_AI_FILTER_TIMEOUT_MS,
     );
   });
 
@@ -103,5 +118,114 @@ describe("useAIFilter smart grounding contract", () => {
       "Select a project before using AI value grounding.",
     );
     expect(mocks.post).not.toHaveBeenCalled();
+  });
+
+  it("keeps the registry identity through multi-step field selection and values", async () => {
+    const filters = [
+      {
+        field: "model",
+        property_id: "system_attribute:traces:model",
+        operator: "is",
+        value: "gpt-4.1",
+      },
+    ];
+    mocks.post
+      .mockResolvedValueOnce({
+        data: {
+          result: { fields: ["system_attribute:traces:model"] },
+        },
+      })
+      .mockResolvedValueOnce({ data: { result: { filters } } });
+    const fetchValuesForFields = vi.fn().mockResolvedValue({
+      "system_attribute:traces:model": ["gpt-4.1"],
+    });
+    const { result } = renderHook(() => useAIFilter(schema));
+
+    let parsed;
+    await act(async () => {
+      parsed = await result.current.parseQuery("model gpt-4.1", {
+        fetchValuesForFields,
+      });
+    });
+
+    expect(parsed).toEqual(filters);
+    expect(fetchValuesForFields).toHaveBeenCalledWith(
+      ["system_attribute:traces:model"],
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+        timeoutMs: expect.any(Number),
+      }),
+    );
+    expect(mocks.post.mock.calls[0][1].schema).toEqual([
+      expect.objectContaining({
+        field: "model",
+        property_id: "system_attribute:traces:model",
+      }),
+    ]);
+    expect(mocks.post.mock.calls[1][1].schema).toEqual([
+      expect.objectContaining({
+        field: "model",
+        property_id: "system_attribute:traces:model",
+        choices: ["gpt-4.1"],
+      }),
+    ]);
+    expect(mocks.post.mock.calls[0][2].signal).toBe(
+      mocks.post.mock.calls[1][2].signal,
+    );
+    expect(mocks.post.mock.calls[1][2].timeout).toBeGreaterThan(0);
+    expect(mocks.post.mock.calls[1][2].timeout).toBeLessThanOrEqual(
+      mocks.post.mock.calls[0][2].timeout,
+    );
+  });
+
+  it("fails closed on a legacy transport error instead of returning empty filters", async () => {
+    mocks.post.mockRejectedValue(new Error("network failed"));
+    const { result } = renderHook(() => useAIFilter(schema));
+
+    let failure;
+    await act(async () => {
+      try {
+        await result.current.parseQuery("model gpt-4o");
+      } catch (error) {
+        failure = error;
+      }
+    });
+
+    expect(failure?.message).toBe("network failed");
+    await waitFor(() => expect(result.current.error).toBe("network failed"));
+  });
+
+  it("rejects a malformed success response instead of treating it as empty", async () => {
+    mocks.post.mockResolvedValue({ data: { result: {} } });
+    const { result } = renderHook(() => useAIFilter(schema));
+
+    await expect(
+      act(async () => result.current.parseQuery("model gpt-4o")),
+    ).rejects.toThrow("AI filter response omitted filters.");
+  });
+
+  it("enforces one action deadline even when the transport ignores abort", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.post.mockImplementation(() => new Promise(() => {}));
+      const { result } = renderHook(() => useAIFilter(schema));
+      let failure;
+
+      await act(async () => {
+        const request = result.current
+          .parseQuery("model gpt-4o")
+          .catch((error) => {
+            failure = error;
+          });
+        await vi.advanceTimersByTimeAsync(SMART_AI_FILTER_TIMEOUT_MS);
+        await request;
+      });
+
+      expect(failure?.code).toBe("ai_filter_timeout");
+      expect(mocks.post).toHaveBeenCalledTimes(1);
+      expect(mocks.post.mock.calls[0][2].signal.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

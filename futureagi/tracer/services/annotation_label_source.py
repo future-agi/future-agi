@@ -26,6 +26,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.conf import settings
+from django.db import DatabaseError
+
+FILTER_VALUE_MAX_PAGE_SIZE = settings.DASHBOARD_FILTER_VALUE_MAX_PAGE_SIZE
+GRAPH_EVENT_READ_LIMIT = settings.GRAPH_EVENT_LIMIT + 1
+COMPAT_CLICKHOUSE_QUERY_TIMEOUT_MS = (
+    settings.CLICKHOUSE_REVIEWED_READ_TIMEOUT_CEILING_MS
+)
+
 
 class AnnotationScoreReadUnavailable(RuntimeError):
     """Stable boundary error for authoritative annotation Score reads."""
@@ -33,8 +42,6 @@ class AnnotationScoreReadUnavailable(RuntimeError):
 
 def _materialize_score_rows(queryset):
     """Evaluate a Score queryset without exposing database diagnostics."""
-
-    from django.db import DatabaseError
 
     try:
         return list(queryset)
@@ -87,8 +94,7 @@ class AnnotationLabelScoresProjectPG:
     and non-observability scores out, matching the old public response.
     """
 
-    FILTER_VALUE_LIMIT = 5_000
-    GRAPH_EVENT_LIMIT = 2_001
+    GRAPH_EVENT_LIMIT = GRAPH_EVENT_READ_LIMIT
 
     @staticmethod
     def _trace_span_scope():
@@ -147,6 +153,33 @@ class AnnotationLabelScoresProjectPG:
                 grouped[project_key].append(str(label_id))
         return grouped
 
+    def label_has_scores_for_projects(self, label_id, project_ids: list[str]) -> bool:
+        """Return whether one label is visible in any requested tracer project.
+
+        Workspace-level annotation labels are only project-visible after an
+        observability Score binds them to that project.  Keep the exact-value
+        endpoint aligned with the property catalog without materializing every
+        distinct label in a high-volume project: the existing
+        ``(tracer_project_id, label)`` index can stop after the first match.
+        """
+
+        normalized = tuple(dict.fromkeys(str(value) for value in project_ids if value))
+        if not normalized:
+            return False
+
+        from model_hub.models.score import Score
+
+        rows = _materialize_score_rows(
+            Score.no_workspace_objects.filter(
+                self._trace_span_scope(),
+                tracer_project_id__in=normalized,
+                label_id=label_id,
+            )
+            .order_by()
+            .values_list("id", flat=True)[:1]
+        )
+        return bool(rows)
+
     def annotator_ids_for_projects(self, project_ids: list[str]) -> list[str]:
         """Return distinct annotators for the requested tracer projects only."""
 
@@ -193,8 +226,10 @@ class AnnotationLabelScoresProjectPG:
         """
 
         finite_page_size = int(page_size)
-        if finite_page_size < 1 or finite_page_size > 50:
-            raise ValueError("page_size must be between 1 and 50")
+        if finite_page_size < 1 or finite_page_size > FILTER_VALUE_MAX_PAGE_SIZE:
+            raise ValueError(
+                f"page_size must be between 1 and {FILTER_VALUE_MAX_PAGE_SIZE}"
+            )
         if not project_ids:
             return [], False
 
@@ -244,43 +279,6 @@ class AnnotationLabelScoresProjectPG:
                 pass
             users = users.filter(search_filter)
         return users.order_by("id")
-
-    def categorical_values_for_label(
-        self, label_id, project_ids: list[str]
-    ) -> list[Any]:
-        """Return stored Score JSON values only when the bounded read exhausts.
-
-        The deployed ``(tracer_project_id, label_id)`` index can stop an
-        unordered scan after ``FILTER_VALUE_LIMIT + 1`` rows, but it cannot
-        support an exact value cursor.  Reading one sentinel row lets callers
-        distinguish a small, exhaustive vocabulary source from a truncated
-        sample.  Large histories fail closed instead of being presented as a
-        successful sampled picker response.
-        """
-
-        if not project_ids:
-            return []
-
-        from model_hub.models.score import Score
-
-        # The picker deduplicates categorical choices, so ordering millions of
-        # Score rows adds work without helping completeness.  The sentinel read
-        # stays index-bounded and proves exhaustion when it returns at most the
-        # configured cap.
-        rows = _materialize_score_rows(
-            Score.no_workspace_objects.filter(
-                self._trace_span_scope(),
-                tracer_project_id__in=project_ids,
-                label_id=label_id,
-            )
-            .order_by()
-            .values_list("value", flat=True)[: self.FILTER_VALUE_LIMIT + 1]
-        )
-        if len(rows) > self.FILTER_VALUE_LIMIT:
-            raise AnnotationScoreReadUnavailable(
-                "Annotation score vocabulary exceeds the bounded exact-read limit"
-            )
-        return [value for value in rows if value not in (None, "")]
 
     def annotation_rows_for_candidates(
         self,
@@ -380,7 +378,9 @@ class AnnotationLabelScoresCH:
         from tracer.services.clickhouse.client import get_clickhouse_client
 
         rows, _types, _ms = get_clickhouse_client().execute_read(
-            self._QUERY, {"project_ids": [str(project_id)]}, timeout_ms=30000
+            self._QUERY,
+            {"project_ids": [str(project_id)]},
+            timeout_ms=COMPAT_CLICKHOUSE_QUERY_TIMEOUT_MS,
         )
         return [r[0] for r in rows if r and r[0]]
 
@@ -397,28 +397,8 @@ class AnnotationLabelScoresCH:
               AND {_CH_PROJECT_SCOPE}
         """
         rows, _t, _ms = get_clickhouse_client().execute_read(
-            query, {"project_ids": [str(p) for p in project_ids]}, timeout_ms=30000
+            query,
+            {"project_ids": [str(p) for p in project_ids]},
+            timeout_ms=COMPAT_CLICKHOUSE_QUERY_TIMEOUT_MS,
         )
         return [r[0] for r in rows if r and r[0]]
-
-    def categorical_values_for_label(
-        self, label_id, project_ids: list[str]
-    ) -> list[str]:
-        if not project_ids:
-            return []
-        from tracer.services.clickhouse.client import get_clickhouse_client
-
-        query = f"""
-            SELECT value FROM model_hub_score AS s FINAL
-            WHERE s.deleted = false AND s._peerdb_is_deleted = 0
-              AND toString(s.label_id) = %(label_id)s
-              AND {_CH_PROJECT_SCOPE}
-            ORDER BY s.updated_at DESC
-            LIMIT 5000
-        """
-        rows, _t, _ms = get_clickhouse_client().execute_read(
-            query,
-            {"label_id": str(label_id), "project_ids": [str(p) for p in project_ids]},
-            timeout_ms=30000,
-        )
-        return [r[0] for r in rows if r and r[0] not in (None, "")]

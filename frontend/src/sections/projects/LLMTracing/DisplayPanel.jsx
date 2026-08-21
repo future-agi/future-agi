@@ -109,12 +109,16 @@ PanelCheck.propTypes = {
 };
 
 // ---------------------------------------------------------------------------
-// View mode tab button. Agent Path is intentionally not exposed: the current
-// telemetry records hierarchy, not authoritative chronological transitions.
+// View mode tab button (Graph View / Agent Graph / Agent Path)
 // ---------------------------------------------------------------------------
 const VIEW_MODES = [
   { key: "graph", label: "Graph View", icon: "mdi:chart-line" },
   { key: "agentGraph", label: "Agent Graph", icon: "mdi:graph-outline" },
+  {
+    key: "agentPath",
+    label: "Agent Path",
+    icon: "mdi:transit-connection-variant",
+  },
 ];
 
 const ViewTabButton = ({
@@ -123,6 +127,7 @@ const ViewTabButton = ({
   isActive,
   onClick,
   disabled = false,
+  disabledReason = "Unavailable",
 }) => {
   const button = (
     <ButtonBase
@@ -177,13 +182,7 @@ const ViewTabButton = ({
 
   if (!disabled) return button;
   return (
-    <CustomTooltip
-      show
-      arrow
-      size="small"
-      type="black"
-      title="Not available for voice projects"
-    >
+    <CustomTooltip show arrow size="small" type="black" title={disabledReason}>
       <Box sx={{ flex: 1, display: "flex", cursor: "not-allowed" }}>
         {button}
       </Box>
@@ -197,6 +196,7 @@ ViewTabButton.propTypes = {
   isActive: PropTypes.bool,
   onClick: PropTypes.func,
   disabled: PropTypes.bool,
+  disabledReason: PropTypes.string,
 };
 
 // ---------------------------------------------------------------------------
@@ -211,6 +211,7 @@ const DisplayPanel = ({
   // View mode
   viewMode,
   onViewModeChange,
+  agentGraphEnabled = true,
   // Rows
   cellHeight,
   setCellHeight,
@@ -293,7 +294,8 @@ const DisplayPanel = ({
               }}
             >
               {VIEW_MODES.map((vm) => {
-                const isDisabled = isSimulator && vm.key !== "graph";
+                const isDisabled =
+                  vm.key !== "graph" && (isSimulator || !agentGraphEnabled);
                 return (
                   <ViewTabButton
                     key={vm.key}
@@ -302,6 +304,11 @@ const DisplayPanel = ({
                     isActive={viewMode === vm.key}
                     onClick={() => onViewModeChange?.(vm.key)}
                     disabled={isDisabled}
+                    disabledReason={
+                      isSimulator
+                        ? "Not available for voice projects"
+                        : "Select a project filter to use agent visualizations"
+                    }
                   />
                 );
               })}
@@ -544,6 +551,7 @@ DisplayPanel.propTypes = {
   mode: PropTypes.oneOf(["traces", "sessions", "users"]),
   viewMode: PropTypes.string,
   onViewModeChange: PropTypes.func,
+  agentGraphEnabled: PropTypes.bool,
   cellHeight: PropTypes.string,
   setCellHeight: PropTypes.func,
   columns: PropTypes.array,

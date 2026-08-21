@@ -33,9 +33,14 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import ReactApexChart from "react-apexcharts";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
+import {
+  isPropertyCatalogNotReadyError,
+  PROPERTY_CATALOG_REQUEST_TIMEOUT_MS,
+  usePropertyCatalog,
+} from "src/hooks/useDashboards";
 import {
   format,
   startOfToday,
@@ -62,6 +67,11 @@ import {
   awaitAggregationRequestWithDeadline,
 } from "src/utils/queryReadState";
 import { parseTraceGraphResponse } from "src/api/project/observe-contracts";
+import {
+  PROPERTY_CATALOG_LEGACY_PAGE_SIZE,
+  PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
+  PROPERTY_CATALOG_STALE_TIME_MS,
+} from "src/config/runtime_limits";
 
 // ---------------------------------------------------------------------------
 // Map dashboard category → graph API type
@@ -107,6 +117,9 @@ const EXCLUDED = new Set([
 
 const CHART_HEIGHT = 140;
 
+const graphMetricIdentity = (metric) =>
+  metric?.propertyId || metric?.property_id || metric?.id || "";
+
 const COMPARE_DATE_OPTIONS = [
   { key: "Today", label: "Today" },
   { key: "Yesterday", label: "Yesterday" },
@@ -119,61 +132,131 @@ const COMPARE_DATE_OPTIONS = [
 ];
 
 // ---------------------------------------------------------------------------
-// Hook: fetch all metrics from dashboard API (system + eval + annotation)
+// Hook: fetch metrics from dashboard API (system + eval + annotation)
 // ---------------------------------------------------------------------------
-function useGraphMetrics() {
-  return useQuery({
-    queryKey: ["graph-metrics-all"],
-    queryFn: async () => {
+function useLegacyGraphMetrics(projectId, transportSource, enabled = true) {
+  const query = useInfiniteQuery({
+    queryKey: ["graph-metrics", projectId],
+    queryFn: async ({ pageParam = 1, signal }) => {
       const { data } = await axios.get(endpoints.dashboard.metrics, {
-        params: { exclude_custom_attributes: true },
+        params: {
+          exclude_custom_attributes: true,
+          page: pageParam,
+          page_size: PROPERTY_CATALOG_LEGACY_PAGE_SIZE,
+          project_ids: projectId,
+          per_eval_config: true,
+        },
+        signal,
+        timeout: PROPERTY_CATALOG_REQUEST_TIMEOUT_MS,
       });
-      return data?.result?.metrics || [];
+      return data?.result || { metrics: [], has_more: false, page: pageParam };
     },
-    select: (metrics) => {
-      // Group by category, filter to graphable numeric types
-      const groups = {};
-
-      for (const m of metrics) {
-        const cat = m.category;
-        const apiType = CATEGORY_TO_TYPE[cat];
-        if (!apiType) continue; // skip custom_column, datasets, etc.
-        if (EXCLUDED.has(m.name)) continue;
-
-        // For system metrics, only include numeric ones (not string filters)
-        if (apiType === "SYSTEM_METRIC" && m.type === "string") continue;
-
-        const groupKey = cat
-          .replace(/([A-Z])/g, "_$1")
-          .toLowerCase()
-          .replace(/^_/, "");
-        // Normalize to snake_case key
-        const normalizedKey =
-          groupKey === "system_metric"
-            ? "system_metric"
-            : groupKey === "eval_metric"
-              ? "eval_metric"
-              : groupKey === "annotation_metric"
-                ? "annotation_metric"
-                : groupKey;
-
-        if (!groups[normalizedKey]) groups[normalizedKey] = [];
-
-        groups[normalizedKey].push({
-          id: m.name,
-          label: m.displayName || m.display_name || _.startCase(m.name),
-          unit: METRIC_UNITS[m.name] || "",
-          apiType,
-          outputType: m.outputType || m.output_type || "",
-          dataType: m.type || "number",
-        });
-      }
-
-      return groups;
+    getNextPageParam: (lastPage, _pages, lastPageParam) => {
+      if (!lastPage?.has_more) return undefined;
+      const currentPage = Number(lastPage.page ?? lastPageParam);
+      return Number.isSafeInteger(currentPage) && currentPage >= 1
+        ? currentPage + 1
+        : undefined;
     },
-    staleTime: 60_000,
+    initialPageParam: 1,
+    enabled: enabled && Boolean(projectId),
+    staleTime: PROPERTY_CATALOG_STALE_TIME_MS,
     meta: { errorHandled: true },
   });
+
+  const metrics =
+    query.data?.pages.flatMap((page) => page?.metrics || []) || [];
+  return { ...query, data: buildGraphMetricGroups(metrics, transportSource) };
+}
+
+function buildGraphMetricGroups(metrics, transportSource) {
+  // Group by category, filter to graphable numeric types.
+  const groups = {};
+
+  for (const m of metrics) {
+    const cat = m.category;
+    const apiType = CATEGORY_TO_TYPE[cat];
+    if (!apiType) continue; // skip custom_column, datasets, etc.
+    if (EXCLUDED.has(m.name)) continue;
+
+    const metricSources = Array.isArray(m.sources) ? m.sources : [];
+    const compatibleSystemSources =
+      transportSource === "traces"
+        ? ["traces", "spans", "all", "both"]
+        : [transportSource, "traces", "spans", "all"];
+    const supportsGraphSource =
+      !m.source ||
+      compatibleSystemSources.includes(m.source) ||
+      metricSources.some((source) => compatibleSystemSources.includes(source));
+    if (apiType === "SYSTEM_METRIC" && !supportsGraphSource) continue;
+
+    // For system metrics, only include numeric ones (not string filters).
+    if (apiType === "SYSTEM_METRIC" && m.type === "string") continue;
+
+    const groupKey = cat
+      .replace(/([A-Z])/g, "_$1")
+      .toLowerCase()
+      .replace(/^_/, "");
+    const normalizedKey =
+      groupKey === "system_metric"
+        ? "system_metric"
+        : groupKey === "eval_metric"
+          ? "eval_metric"
+          : groupKey === "annotation_metric"
+            ? "annotation_metric"
+            : groupKey;
+
+    if (!groups[normalizedKey]) groups[normalizedKey] = [];
+    groups[normalizedKey].push({
+      id: m.name,
+      propertyId: m.propertyId || m.property_id,
+      source: m.source,
+      label: m.displayName || m.display_name || _.startCase(m.name),
+      unit: METRIC_UNITS[m.name] || "",
+      apiType,
+      outputType: m.outputType || m.output_type || "",
+      dataType: m.type || "number",
+    });
+  }
+
+  return groups;
+}
+
+function useGraphMetrics(projectId, transportSource, enabled = true) {
+  const fallbackScopeKey = JSON.stringify([
+    "graph-property-catalog",
+    projectId || "",
+  ]);
+  const catalog = usePropertyCatalog({
+    projectIds: projectId ? [projectId] : [],
+    source: transportSource,
+    perEvalConfig: true,
+    pageSize: PROPERTY_CATALOG_SEARCH_PAGE_SIZE,
+    enabled: enabled && Boolean(projectId),
+    allowLegacyNotReadyFallback: true,
+    fallbackScopeKey,
+  });
+  const legacy = useLegacyGraphMetrics(
+    projectId,
+    transportSource,
+    enabled && catalog.legacyFallbackRequired,
+  );
+
+  if (catalog.legacyFallbackRequired) return legacy;
+
+  const catalogNotReady = isPropertyCatalogNotReadyError(catalog.error);
+  const catalogError = Boolean(catalog.isError && !catalogNotReady);
+  return {
+    ...catalog,
+    data: buildGraphMetricGroups(catalog.metrics, transportSource),
+    isLoading: catalog.isLoading || catalogNotReady,
+    isError: catalogError,
+    error: catalogError ? catalog.error : null,
+    hasNextPage: Boolean(catalog.hasNextPage),
+    isFetchNextPageError: Boolean(
+      catalog.isFetchNextPageError || catalog.cursorChainStopped,
+    ),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +265,7 @@ function useGraphMetrics() {
 const PrimaryGraph = ({
   filters = [],
   extraFilters,
+  metricFilters = [],
   dateFilter,
   setDateFilter,
   selectedInterval = "day",
@@ -205,6 +289,19 @@ const PrimaryGraph = ({
 }) => {
   const { observeId } = useParams();
   const effectiveObserveId = observeIdOverride || observeId;
+  // Keep the logical registry namespace (users/spans) distinct from the
+  // physical transport adapter (sessions/traces).
+  const graphPropertyNamespace = [
+    "traces",
+    "spans",
+    "sessions",
+    "users",
+  ].includes(trafficLabel)
+    ? trafficLabel
+    : "traces";
+  const graphTransportSource = ["sessions", "users"].includes(trafficLabel)
+    ? "sessions"
+    : "traces";
   const theme = useTheme();
   const aggregationSourceId = useId();
   const [selectedMetric, setSelectedMetric] = useState(
@@ -290,8 +387,20 @@ const PrimaryGraph = ({
     "&:hover": { bgcolor: "background.neutral", borderColor: "text.disabled" },
   };
 
-  // Fetch all available metrics (system + eval + annotation)
-  const { data: dynamicMetricGroups } = useGraphMetrics();
+  // Fetch the first bounded catalog page. Additional pages stay behind an
+  // explicit picker action so a large project is never silently truncated or
+  // drained in the background.
+  const {
+    data: dynamicMetricGroups,
+    fetchNextPage: fetchNextMetricPage,
+    hasNextPage: hasNextMetricPage,
+    isFetchingNextPage: isFetchingNextMetricPage,
+    isFetchNextPageError: isNextMetricPageError,
+  } = useGraphMetrics(
+    effectiveObserveId,
+    graphTransportSource,
+    !staticMetrics && Boolean(pickerAnchor),
+  );
   // Use staticMetrics if provided (for sessions/users), otherwise dynamic
   const metricGroups = staticMetrics || dynamicMetricGroups;
 
@@ -304,15 +413,27 @@ const PrimaryGraph = ({
   // Current selected metric definition
   const metricDef = useMemo(
     () =>
-      allMetrics.find((m) => m.id === selectedMetric) ||
+      allMetrics.find(
+        (m) =>
+          graphMetricIdentity(m) === selectedMetric || m.id === selectedMetric,
+      ) ||
       allMetrics[0] || {
         id: "latency",
+        propertyId: `system_attribute:${graphPropertyNamespace}:latency`,
+        source: graphTransportSource,
         label: "Latency",
         unit: "ms",
         apiType: "SYSTEM_METRIC",
       },
-    [allMetrics, selectedMetric],
+    [allMetrics, graphPropertyNamespace, graphTransportSource, selectedMetric],
   );
+
+  const graphPropertyId = useMemo(() => {
+    if ((metricDef.apiType || "SYSTEM_METRIC") === "SYSTEM_METRIC") {
+      return `system_attribute:${graphPropertyNamespace}:${metricDef.id}`;
+    }
+    return metricDef.propertyId || metricDef.property_id || "";
+  }, [graphPropertyNamespace, metricDef]);
 
   // Filter metrics by search term for the picker
   const filteredGroups = useMemo(() => {
@@ -332,8 +453,14 @@ const PrimaryGraph = ({
 
   const combinedFilters = useMemo(
     () =>
-      combineGraphFilters({ filters, extraFilters, dateFilter, hasEvalFilter }),
-    [filters, extraFilters, dateFilter, hasEvalFilter],
+      combineGraphFilters({
+        filters,
+        extraFilters,
+        metricFilters,
+        dateFilter,
+        hasEvalFilter,
+      }),
+    [filters, extraFilters, metricFilters, dateFilter, hasEvalFilter],
   );
 
   // Fetch graph data
@@ -369,11 +496,19 @@ const PrimaryGraph = ({
         setAggregationPollingPaused(false);
       }
 
+      // The first HTTP read and any pending-response polls share one visible
+      // action wall. The user-facing Refresh path resets this controller.
+      pollingControllerRef.current.start();
+      pollingControllerRef.current.recordAttempt();
       const generation = requestGenerationRef.current;
       return awaitAggregationRequestWithDeadline(request, {
-        timeoutMs: AGGREGATION_REQUEST_TIMEOUT_MS,
+        timeoutMs: pollingControllerRef.current.remainingMs(
+          AGGREGATION_REQUEST_TIMEOUT_MS,
+        ),
         signal,
         isCurrent: () => generation === requestGenerationRef.current,
+        onTimeout: () =>
+          pollingControllerRef.current.terminate("action_deadline"),
       });
     },
     [],
@@ -424,9 +559,10 @@ const PrimaryGraph = ({
       selectedInterval,
       combinedFilters,
       apiEndpoint,
+      graphPropertyId,
+      graphTransportSource,
     ],
     queryFn: async ({ queryKey, signal }) => {
-      pollingControllerRef.current.recordAttempt();
       const refresh = forceRefreshRef.current;
       forceRefreshRef.current = false;
       let response;
@@ -446,6 +582,10 @@ const PrimaryGraph = ({
                   type: metricDef.apiType || "SYSTEM_METRIC",
                   ...(metricDef.outputType && {
                     output_type: metricDef.outputType,
+                  }),
+                  ...(graphPropertyId && {
+                    property_id: graphPropertyId,
+                    source: graphTransportSource,
                   }),
                 },
                 project_id: effectiveObserveId,
@@ -491,6 +631,9 @@ const PrimaryGraph = ({
         pollingRef.current = false;
         return false;
       }
+      // React Query recalculates intervals when a poll starts. Do not spend the
+      // next delay budget until the in-flight response records its outcome.
+      if (query.state.fetchStatus === "fetching") return false;
       pollingControllerRef.current.start();
       const delay = pollingControllerRef.current.nextDelay();
       if (delay === false) {
@@ -1022,9 +1165,9 @@ const PrimaryGraph = ({
                     </Typography>
                     {items.map((m) => (
                       <ButtonBase
-                        key={m.id}
+                        key={graphMetricIdentity(m)}
                         onClick={() => {
-                          setSelectedMetric(m.id);
+                          setSelectedMetric(graphMetricIdentity(m));
                           setPickerAnchor(null);
                           setPickerSearch("");
                         }}
@@ -1037,6 +1180,7 @@ const PrimaryGraph = ({
                           py: 0.5,
                           gap: 0.5,
                           bgcolor:
+                            graphMetricIdentity(m) === selectedMetric ||
                             m.id === selectedMetric
                               ? "action.selected"
                               : "transparent",
@@ -1077,6 +1221,22 @@ const PrimaryGraph = ({
                   No metrics found
                 </Typography>
               )}
+              {!staticMetrics &&
+                (hasNextMetricPage || isNextMetricPageError) && (
+                  <Button
+                    fullWidth
+                    size="small"
+                    disabled={isFetchingNextMetricPage}
+                    onClick={() => fetchNextMetricPage()}
+                    sx={{ my: 0.5, textTransform: "none", fontSize: 12 }}
+                  >
+                    {isFetchingNextMetricPage
+                      ? "Loading more metrics…"
+                      : isNextMetricPageError
+                        ? "Retry loading more metrics"
+                        : "Load more metrics"}
+                  </Button>
+                )}
             </Box>
           </Popover>
 
@@ -1224,6 +1384,7 @@ const PrimaryGraph = ({
 PrimaryGraph.propTypes = {
   filters: PropTypes.array,
   extraFilters: PropTypes.array,
+  metricFilters: PropTypes.array,
   dateFilter: PropTypes.object,
   setDateFilter: PropTypes.func,
   selectedInterval: PropTypes.string,

@@ -21,7 +21,7 @@ vi.mock("src/utils/axios", () => ({
 
 import {
   retainedAttributeFieldName,
-  useExactEvalAttributeFields,
+  useLegacyExactEvalAttributeFields as useExactEvalAttributeFields,
 } from "./useExactEvalAttributeFields";
 
 function retainedPage(keys, overrides = {}) {

@@ -1,5 +1,16 @@
 import { AnnotationLabelTypes, TraceSpanColType } from "./constants";
 
+const propertyRegistryId = (definition) =>
+  definition?.registryId ||
+  definition?.property_id ||
+  definition?.propertyId ||
+  undefined;
+
+const withRegistryId = (definition) => {
+  const registryId = propertyRegistryId(definition);
+  return registryId ? { registryId } : {};
+};
+
 export const getEvaluationMetricFilterDefinition = (columns) => {
   const group = "Evaluation Metrics";
   const filteredColumns = columns.filter((col) => col.groupBy === group);
@@ -26,6 +37,7 @@ export const getEvaluationMetricFilterDefinition = (columns) => {
         return {
           propertyName: col.name,
           propertyId: col.id,
+          ...withRegistryId(col),
           maxUsage: 1,
           filterType: {
             type: "number",
@@ -41,6 +53,7 @@ export const getEvaluationMetricFilterDefinition = (columns) => {
       return {
         propertyName: col.name,
         propertyId: col.id,
+        ...withRegistryId(col),
         maxUsage: 1,
         filterType: {
           type: "number",
@@ -59,6 +72,7 @@ export const getAnnotationDefinition = (col, _source = null) => {
       return {
         propertyName: col.name,
         propertyId: col.id,
+        ...withRegistryId(col),
         maxUsage: 1,
         filterType: {
           type: "number",
@@ -75,13 +89,15 @@ export const getAnnotationDefinition = (col, _source = null) => {
       // if (source === PROJECT_SOURCE.SIMULATOR) {
       return {
         propertyName: col.name,
-        propertyId: col.name,
+        propertyId: col.id,
+        ...withRegistryId(col),
         maxUsage: 1,
         stringConnector: "is",
         filterType: { type: "text" },
         dependents: (col?.settings?.options || []).map(({ label }) => ({
           propertyName: label,
           propertyId: `${col.id}**${label}`,
+          ...withRegistryId(col),
           maxUsage: 1,
           filterType: { type: "number" },
           defaultFilter: "greater_than",
@@ -93,7 +109,8 @@ export const getAnnotationDefinition = (col, _source = null) => {
     case AnnotationLabelTypes.THUMBS_UP_DOWN:
       return {
         propertyName: col.name,
-        propertyId: col.name,
+        propertyId: col.id,
+        ...withRegistryId(col),
         maxUsage: 1,
         stringConnector: "is",
         filterType: { type: "text" },
@@ -101,6 +118,7 @@ export const getAnnotationDefinition = (col, _source = null) => {
           {
             propertyName: "Thumbs up",
             propertyId: `${col.id}**thumbs_up`,
+            ...withRegistryId(col),
             maxUsage: 1,
             filterType: { type: "number" },
             defaultFilter: "greater_than",
@@ -110,6 +128,7 @@ export const getAnnotationDefinition = (col, _source = null) => {
           {
             propertyName: "Thumbs down",
             propertyId: `${col.id}**thumbs_down`,
+            ...withRegistryId(col),
             maxUsage: 1,
             filterType: { type: "number" },
             defaultFilter: "greater_than",
@@ -122,6 +141,7 @@ export const getAnnotationDefinition = (col, _source = null) => {
       return {
         propertyName: col.name,
         propertyId: col.id,
+        ...withRegistryId(col),
         maxUsage: 1,
         showOperator: true,
         filterType: { type: "text" },
@@ -130,6 +150,7 @@ export const getAnnotationDefinition = (col, _source = null) => {
       return {
         propertyName: col.name,
         propertyId: col.id,
+        ...withRegistryId(col),
         maxUsage: 1,
         filterType: { type: "number" },
       };
@@ -228,6 +249,7 @@ export const getAnnotationMetricFilterDefinition = (columns) => {
       {
         propertyName: "Label name",
         propertyId: "label_name",
+        registryId: "annotation:label_name",
         stringConnector: "is",
         filterType: { type: "text" },
         dependents: filteredColumns.map((col) => getAnnotationDefinition(col)),
@@ -235,6 +257,7 @@ export const getAnnotationMetricFilterDefinition = (columns) => {
       {
         propertyName: "Annotator",
         propertyId: "annotator",
+        registryId: "annotation:annotator",
         maxUsage: 1,
         multiSelect: true,
         filterType: {
@@ -248,6 +271,7 @@ export const getAnnotationMetricFilterDefinition = (columns) => {
       {
         propertyName: "My Annotations",
         propertyId: "my_annotations",
+        registryId: "annotation:my_annotations",
         maxUsage: 1,
         filterType: { type: "boolean" },
         defaultFilterValue: true,
@@ -339,6 +363,10 @@ export const getAttributesDefinition = (
       return {
         propertyName: attrKey,
         propertyId: attrKey,
+        registryId:
+          (isEnriched &&
+            (attr.registryId || attr.property_id || attr.propertyId)) ||
+          `custom_attribute:${attrKey}`,
         maxUsage: 1,
         allowTypeChange: true,
         showOperator: true,

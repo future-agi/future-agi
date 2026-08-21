@@ -386,8 +386,14 @@ class AIFilterViewContractTests(unittest.TestCase):
         )
 
         with mock.patch("agentic_eval.core.llm.llm.LLM") as llm_cls:
-            llm_cls.return_value._get_completion_content.return_value = (
-                '{"fields": ["status"]}'
+            llm_cls.return_value._get_completion_with_tools.return_value = (
+                SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(content='{"fields": ["status"]}')
+                        )
+                    ]
+                )
             )
             response = AIFilterView.as_view()(request)
 
@@ -428,6 +434,7 @@ class AIFilterViewContractTests(unittest.TestCase):
                 "schema": [
                     {
                         "field": "model",
+                        "property_id": "system_attribute:traces:model",
                         "label": "Model",
                         "type": "string",
                         "category": "system",

@@ -3,11 +3,12 @@ import hashlib
 import json
 import uuid
 from collections import defaultdict
-from dataclasses import asdict, replace
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
 import structlog
+from django.conf import settings
 from django.core.cache import cache as django_cache
 from django.db import close_old_connections
 from django.db.models import (
@@ -104,6 +105,14 @@ from tracer.services.clickhouse.attribute_reads import (
     merge_read_metadata,
 )
 from tracer.services.clickhouse.bounded_graph_reads import BoundedGraphReadError
+from tracer.services.clickhouse.graph_action_deadline import (
+    GraphActionUnavailable,
+    bounded_graph_action_request,
+    finish_graph_action_response,
+    graph_action_postgres_budget,
+    graph_action_remaining_ms,
+    start_graph_action_deadline,
+)
 from tracer.services.clickhouse.graph_dispatch import (
     enforce_exact_graph_data_contract,
     fetch_annotation_graph_ch,
@@ -121,6 +130,7 @@ from tracer.services.clickhouse.list_cursor import (
     frozen_window_filter,
     snapshot_cursor_supported,
 )
+from tracer.services.clickhouse.list_request_deadline import bounded_list_request
 from tracer.services.clickhouse.page_dedup import paginate_deduped
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
@@ -141,6 +151,11 @@ from tracer.services.clickhouse.v2.span_selectors import (
     flatten_span_attributes_into_entry,
     merge_content_rows,
 )
+from tracer.services.filter_attestation import (
+    applied_filter_attestation,
+    graph_execution_filters,
+    graph_query_evidence,
+)
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
@@ -157,7 +172,6 @@ from tracer.utils.eval import (
 )
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import (
-    FieldConfig,
     get_annotation_labels_by_project,
     get_annotation_labels_for_project,
     get_default_span_config,
@@ -168,20 +182,21 @@ from tracer.utils.otel import (
     ResourceLimitError,
     calculate_cost_from_tokens,
 )
+from tracer.utils.property_registry import validate_property_graph_namespace
 from tracer.utils.sql_queries import SQL_query_handler
 
 logger = structlog.get_logger(__name__)
 
 
-SPAN_LIST_WALL_DEADLINE_MS = 9_500
-SPAN_LIST_CANDIDATE_DEADLINE_MS = 9_500
-SPAN_LIST_ENRICHMENT_TIMEOUT_MS = 9_500
+SPAN_LIST_WALL_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+SPAN_LIST_CANDIDATE_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+SPAN_LIST_ENRICHMENT_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 SPAN_LIST_READ_SETTINGS = {
     "max_threads": 1,
-    "max_block_size": 8192,
-    "max_memory_usage": 36 * 1024 * 1024 * 1024,
-    "max_bytes_to_read": 36 * 1024 * 1024 * 1024,
-    "max_result_rows": 5_001,
+    "max_block_size": settings.OBSERVABILITY_LIST_MAX_BLOCK_SIZE,
+    "max_memory_usage": settings.OBSERVABILITY_LIST_MAX_MEMORY_BYTES,
+    "max_bytes_to_read": settings.OBSERVABILITY_LIST_MAX_BYTES,
+    "max_result_rows": settings.OBSERVABILITY_LIST_MAX_RESULT_ROWS,
     "read_overflow_mode": "throw",
     "result_overflow_mode": "throw",
     "timeout_overflow_mode": "throw",
@@ -208,15 +223,15 @@ def _span_filtered_page_depth_exceeded(
     return has_non_time_filter and bounded_numbered_page_depth_exceeded(
         page_number=page_number,
         page_size=page_size,
-        classify_batch_size=200,
-        seed_batch_size=200,
+        classify_batch_size=settings.OBSERVABILITY_NAVIGATION_SCAN_PAGE_SIZE,
+        seed_batch_size=settings.OBSERVABILITY_NAVIGATION_SCAN_PAGE_SIZE,
     )
 
 
-SPAN_NAVIGATION_CANDIDATE_LIMIT = 4_095
-SPAN_NAVIGATION_SCAN_PAGE_SIZE = 200
-SPAN_NAVIGATION_MAX_QUERIES = 128
-SPAN_NAVIGATION_WALL_DEADLINE_MS = 9_500
+SPAN_NAVIGATION_CANDIDATE_LIMIT = settings.OBSERVABILITY_NAVIGATION_CANDIDATE_LIMIT
+SPAN_NAVIGATION_SCAN_PAGE_SIZE = settings.OBSERVABILITY_NAVIGATION_SCAN_PAGE_SIZE
+SPAN_NAVIGATION_MAX_QUERIES = settings.OBSERVABILITY_NAVIGATION_MAX_QUERIES
+SPAN_NAVIGATION_WALL_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 
 
 class SpanNavigationReadUnavailable(RuntimeError):
@@ -623,7 +638,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         rows = [
             self._span_row_from_postgres(span) for span in qs[start : start + page_size]
         ]
-        column_config = get_default_span_config()
+        column_config = get_default_span_config(include_user_fields=True)
         return self._gm.success_response(
             {
                 "metadata": {"total_rows": total_count},
@@ -1302,6 +1317,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 f"Error creating observation span: {get_error_message('FAILED_CREATION_OBSERVATION_SPAN')}"
             )
 
+    @bounded_list_request(
+        wall_ms=SPAN_LIST_WALL_DEADLINE_MS,
+        resource="prototype_spans",
+        unavailable_message="Span data is temporarily unavailable. Please retry.",
+    )
     @validated_request(
         query_serializer=SpanListQuerySerializer,
         responses={
@@ -1349,6 +1369,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 project_version,
                 analytics,
                 validated_data,
+                read_deadline=kwargs.get("read_deadline"),
             )
 
         except ProjectVersion.DoesNotExist:
@@ -1594,6 +1615,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 "Unable to submit feedback action. Please try again."
             )
 
+    @bounded_list_request(
+        wall_ms=SPAN_LIST_WALL_DEADLINE_MS,
+        resource="observe_spans",
+        unavailable_message="Span data is temporarily unavailable. Please retry.",
+    )
     @validated_request(
         query_serializer=SpanObserveListQuerySerializer,
         responses={
@@ -1653,7 +1679,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         {
                             "metadata": {"total_rows": 0},
                             "table": [],
-                            "config": get_default_span_config(),
+                            "config": get_default_span_config(include_user_fields=True),
                         }
                     )
 
@@ -1673,6 +1699,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 analytics,
                 org_project_ids=org_project_ids,
                 org=org,
+                read_deadline=kwargs.get("read_deadline"),
             )
 
         except ListCursorError as exc:
@@ -1717,11 +1744,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         analytics,
         org_project_ids=None,
         org=None,
+        read_deadline=None,
     ):
         """List spans from the direct-write ClickHouse 25 schema."""
         from tracer.services.clickhouse.query_builders import SpanListQueryBuilder
 
-        read_deadline = ReadDeadline.start(SPAN_LIST_WALL_DEADLINE_MS)
+        read_deadline = read_deadline or ReadDeadline.start(SPAN_LIST_WALL_DEADLINE_MS)
 
         org_scope = bool(org_project_ids)
         if org is None:
@@ -1730,6 +1758,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # helpers below. Query construction is always SpanListQueryBuilderV2.
 
         filters = list(validated_data.get("filters", []) or [])
+        attested_filters = list(filters)
         page_number = validated_data["page_number"]
         page_size = validated_data["page_size"]
         cursor_token = validated_data.get("cursor")
@@ -2344,54 +2373,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         )
 
         # Build column config (from PG config tables)
-        column_config = get_default_span_config()
-        column_config.append(
-            asdict(
-                FieldConfig(
-                    id="user_id", name="User Id", is_visible=True, group_by=None
-                )
-            )
-        )
-        column_config.append(
-            asdict(
-                FieldConfig(
-                    id="user_id_type",
-                    name="User Id Type",
-                    is_visible=False,
-                    group_by=None,
-                )
-            )
-        )
-        column_config.append(
-            asdict(
-                FieldConfig(
-                    id="user_id_hash",
-                    name="User Id Hash",
-                    is_visible=False,
-                    group_by=None,
-                )
-            )
-        )
-        column_config.append(
-            asdict(
-                FieldConfig(
-                    id="latency_ms", name="Latency (ms)", is_visible=True, group_by=None
-                )
-            )
-        )
-        column_config.append(
-            asdict(
-                FieldConfig(
-                    id="total_tokens",
-                    name="Total Tokens",
-                    is_visible=False,
-                    group_by=None,
-                )
-            )
-        )
-        column_config.append(
-            asdict(FieldConfig(id="cost", name="Cost", is_visible=True, group_by=None))
-        )
+        column_config = get_default_span_config(include_user_fields=True)
         column_config = update_column_config_based_on_eval_config(
             column_config, eval_configs
         )
@@ -2611,6 +2593,14 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 "Span data is temporarily unavailable. Please retry.",
                 code="service_unavailable",
             )
+        if project_id:
+            filter_evidence = applied_filter_attestation(
+                project_id=project_id,
+                observe_type="span",
+                filters=attested_filters,
+            )
+            if filter_evidence["query_applied_filter_count"]:
+                metadata.update(filter_evidence)
         response = {
             "metadata": metadata,
             "table": table_data,
@@ -2620,7 +2610,14 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         return self._gm.success_response(response)
 
     def _list_spans_non_observe_clickhouse(
-        self, request, project_version_id, project_version, analytics, validated_data
+        self,
+        request,
+        project_version_id,
+        project_version,
+        analytics,
+        validated_data,
+        *,
+        read_deadline=None,
     ):
         """List prompt-version/eval-task spans from direct-write ClickHouse 25."""
         from tracer.services.clickhouse.query_builders import SpanListQueryBuilder
@@ -2630,7 +2627,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         page_size = validated_data.get("page_size", 30)
 
         project_id = str(project_version.project_id)
-        read_deadline = ReadDeadline.start(SPAN_LIST_WALL_DEADLINE_MS)
+        read_deadline = read_deadline or ReadDeadline.start(SPAN_LIST_WALL_DEADLINE_MS)
 
         if _span_filtered_page_depth_exceeded(filters, page_number, page_size):
             logger.info(
@@ -2968,6 +2965,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
         return self._gm.success_response(response)
 
+    @bounded_graph_action_request(resource="span_graph")
     @validated_request(
         query_serializer=ObserveGraphDataQuerySerializer,
         request_serializer=ObserveGraphDataRequestSerializer,
@@ -2983,6 +2981,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         """
         Fetch data for the observe graph with optimized queries
         """
+        deadline = kwargs.pop("_graph_action_deadline", None)
+        deadline = deadline or start_graph_action_deadline()
+
+        def finish(response):
+            return finish_graph_action_response(deadline, response)
+
         try:
             body = request.validated_data
             allow_sampled = request.validated_query_data["allow_sampled"]
@@ -2990,41 +2994,58 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             project_id = str(body["project_id"])
 
             try:
-                project = Project.objects.get(
-                    _project_workspace_scope_q(self.request, project_prefix=""),
-                    id=project_id,
-                    organization=_get_request_organization(request),
-                )
+                with graph_action_postgres_budget(deadline):
+                    project = Project.objects.get(
+                        _project_workspace_scope_q(self.request, project_prefix=""),
+                        id=project_id,
+                        organization=_get_request_organization(request),
+                    )
             except Project.DoesNotExist:
-                return self._gm.bad_request("Project not found or access denied")
+                return finish(
+                    self._gm.bad_request("Project not found or access denied")
+                )
             if project.trace_type != "observe":
-                return self._gm.bad_request("Project should be of type observe")
+                return finish(self._gm.bad_request("Project should be of type observe"))
 
             filters = bind_request_my_annotations_principal(
                 request,
                 body["filters"],
             )
+            filters = graph_execution_filters(filters)
             _property = body["property"]
             interval = body["interval"]
             req_data_config = body["req_data_config"]
+            try:
+                validate_property_graph_namespace(
+                    req_data_config.get("property_id"),
+                    expected_definition_source="spans",
+                )
+            except ValueError:
+                return finish(
+                    self._gm.bad_request(
+                        "property_id is not valid for this graph endpoint"
+                    )
+                )
 
             metric_type = req_data_config.get("type", None)
             if metric_type not in ["EVAL", "ANNOTATION", "SYSTEM_METRIC"]:
-                return self._gm.bad_request("Filter property type is not valid")
+                return finish(self._gm.bad_request("Filter property type is not valid"))
             metric_id = req_data_config.get("id", "latency")
             # PostgreSQL remains authoritative for small config metadata and
             # authorization only. Telemetry still comes exclusively from CH25.
-            if (
-                metric_type == "EVAL"
-                and not CustomEvalConfig.objects.filter(
-                    id=metric_id,
-                    project_id=project_id,
-                    deleted=False,
-                ).exists()
-            ):
-                return self._gm.bad_request(
-                    "Evaluation config is not available for this project"
-                )
+            if metric_type == "EVAL":
+                with graph_action_postgres_budget(deadline):
+                    eval_config_available = CustomEvalConfig.objects.filter(
+                        id=metric_id,
+                        project_id=project_id,
+                        deleted=False,
+                    ).exists()
+                if not eval_config_available:
+                    return finish(
+                        self._gm.bad_request(
+                            "Evaluation config is not available for this project"
+                        )
+                    )
 
             # CH-only path post-migration. D-027: the previous PG fallback
             # (ObservationSpan.objects.filter + per-config eval-metric
@@ -3053,6 +3074,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                             else None
                         ),
                         workspace_id=str(workspace_id) if workspace_id else None,
+                        timeout_ms=graph_action_remaining_ms(deadline),
                     )
                 elif metric_type == "EVAL":
                     graph = fetch_eval_graph_ch(
@@ -3069,6 +3091,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                             else None
                         ),
                         workspace_id=str(workspace_id) if workspace_id else None,
+                        timeout_ms=graph_action_remaining_ms(deadline),
                     )
                 else:
                     graph = fetch_annotation_graph_ch(
@@ -3085,18 +3108,28 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                             else None
                         ),
                         workspace_id=str(workspace_id) if workspace_id else None,
+                        timeout_ms=graph_action_remaining_ms(deadline),
                     )
+                graph.update(
+                    graph_query_evidence(
+                        project_id=project_id,
+                        observe_type="span",
+                        filters=filters,
+                    )
+                )
                 graph = enforce_exact_graph_data_contract(graph)
                 if not graph_payload_is_publishable(
                     graph,
                     allow_sampled=allow_sampled,
                 ):
-                    return self._gm.custom_error_response(
-                        status.HTTP_503_SERVICE_UNAVAILABLE,
-                        "Graph data is temporarily unavailable. Please retry.",
-                        code="service_unavailable",
+                    return finish(
+                        self._gm.custom_error_response(
+                            status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "Graph data is temporarily unavailable. Please retry.",
+                            code="service_unavailable",
+                        )
                     )
-                return self._gm.success_response(graph)
+                return finish(self._gm.success_response(graph))
             except Exception as exc:
                 if not (
                     isinstance(exc, BoundedGraphReadError)
@@ -3113,12 +3146,26 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     metric_id=metric_id,
                     error_type=type(exc).__name__,
                 )
-                return self._gm.custom_error_response(
-                    status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "Graph data is temporarily unavailable. Please retry.",
-                    code="service_unavailable",
+                return finish(
+                    self._gm.custom_error_response(
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "Graph data is temporarily unavailable. Please retry.",
+                        code="service_unavailable",
+                    )
                 )
 
+        except GraphActionUnavailable:
+            logger.warning(
+                "span_graph_action_deadline_exceeded",
+                project_id=str(
+                    getattr(request, "validated_data", {}).get("project_id", "")
+                ),
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Graph data is temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
         except UnsupportedFilterShapeError:
             return self._gm.bad_request("Graph filter configuration is invalid")
         except FilterPrincipalContextError as exc:

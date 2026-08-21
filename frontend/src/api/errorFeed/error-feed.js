@@ -41,6 +41,7 @@ export const useObserveProjectList = (options = {}) => {
     select: (rows) =>
       rows.map((project) => ({ value: project.id, label: project.name })),
     staleTime: 5 * 60 * 1000,
+    retry: false,
   });
 };
 

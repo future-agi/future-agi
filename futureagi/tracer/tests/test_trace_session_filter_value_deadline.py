@@ -9,9 +9,130 @@ from django import db as django_db
 from tracer.models.trace_session import TraceSessionOverlay
 from tracer.services.clickhouse.v2 import query_service as query_service_module
 from tracer.services.clickhouse.v2 import trace_session_dict_reader
+from tracer.views import trace_session as trace_session_view
 
 PROJECT_ID = "00000000-0000-4000-8000-000000000001"
 SESSION_ID = "00000000-0000-4000-8000-000000000002"
+
+
+@pytest.mark.parametrize("column", ["session_id", "user_id"])
+def test_identity_picker_uses_one_deadline_and_a_truthful_sentinel(monkeypatch, column):
+    deadline_calls = []
+
+    class Deadline:
+        def remaining_ms(self, cap_ms=None, *, floor_ms=25):
+            deadline_calls.append((cap_ms, floor_ms))
+            return 3_425
+
+    deadline = Deadline()
+    raw_values = (
+        [
+            "00000000-0000-4000-8000-000000000002",
+            "00000000-0000-4000-8000-000000000003",
+            "00000000-0000-4000-8000-000000000004",
+        ]
+        if column == "session_id"
+        else ["alice", "bob", "charlie"]
+    )
+
+    class Analytics:
+        def __init__(self):
+            self.calls = []
+
+        def execute_ch_query(self, query, params, **kwargs):
+            self.calls.append((query, params, kwargs))
+            return SimpleNamespace(
+                data=[{"val": value, "label": value} for value in raw_values]
+            )
+
+    analytics = Analytics()
+    resolved_calls = []
+
+    monkeypatch.setattr(
+        trace_session_view.ReadDeadline,
+        "start",
+        lambda total_ms: deadline,
+    )
+    monkeypatch.setattr(
+        trace_session_view,
+        "_read_session_filter_project_in_scope",
+        lambda **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        trace_session_view,
+        "V2AnalyticsQueryService",
+        lambda: analytics,
+    )
+    monkeypatch.setattr(
+        trace_session_dict_reader,
+        "resolve_session_fields",
+        lambda ids, **kwargs: resolved_calls.append((ids, kwargs)) or {},
+    )
+    request = SimpleNamespace(
+        method="GET",
+        data={},
+        query_params={
+            "project_id": PROJECT_ID,
+            "column": column,
+            "page": 2,
+            "page_size": 2,
+        },
+    )
+
+    response = trace_session_view.TraceSessionView().get_session_filter_values(request)
+
+    assert response.status_code == 200
+    payload = response.data["result"]
+    assert len(payload["values"]) == 2
+    assert payload["next"] is True
+    _query, params, kwargs = analytics.calls[0]
+    assert params["limit"] == 3
+    assert params["offset"] == 4
+    assert kwargs["timeout_ms"] == 3_425
+    assert kwargs["settings"]["max_result_rows"] == 3
+    assert deadline_calls
+    if column == "session_id":
+        assert resolved_calls[0][0] == raw_values[:2]
+        assert resolved_calls[0][1]["deadline"] is deadline
+    else:
+        assert resolved_calls == []
+
+
+def test_identity_picker_deadline_exhaustion_has_a_typed_public_failure(monkeypatch):
+    class Deadline:
+        def remaining_ms(self, cap_ms=None, *, floor_ms=25):
+            raise trace_session_view.ReadDeadlineExceeded("private timing detail")
+
+    class Analytics:
+        def execute_ch_query(self, *_args, **_kwargs):
+            pytest.fail("ClickHouse must not start after deadline exhaustion")
+
+    monkeypatch.setattr(
+        trace_session_view.ReadDeadline,
+        "start",
+        lambda total_ms: Deadline(),
+    )
+    monkeypatch.setattr(
+        trace_session_view,
+        "_read_session_filter_project_in_scope",
+        lambda **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        trace_session_view,
+        "V2AnalyticsQueryService",
+        Analytics,
+    )
+    request = SimpleNamespace(
+        method="GET",
+        data={},
+        query_params={"project_id": PROJECT_ID, "column": "user_id"},
+    )
+
+    response = trace_session_view.TraceSessionView().get_session_filter_values(request)
+
+    assert response.status_code == 503
+    assert response.data["code"] == "read_budget_exceeded"
+    assert "private timing detail" not in str(response.data)
 
 
 def test_session_label_ch_read_consumes_the_picker_deadline(monkeypatch):
@@ -123,7 +244,9 @@ def test_session_label_overlay_inside_outer_transaction_only_sets_local(
 
     assert resolved[SESSION_ID]["bookmarked"] is True
     assert resolved[SESSION_ID]["display_name"] == "renamed session"
-    assert statements == [("SET LOCAL statement_timeout = %s", ["3125ms"])]
+    assert statements == [
+        ("SELECT set_config('statement_timeout', %s, true)", ["3125"])
+    ]
 
 
 def test_session_label_multi_project_scope_reaches_ch_and_overlay(monkeypatch):

@@ -223,4 +223,59 @@ describe("AddToQueueDialog", () => {
       { variant: "info" },
     );
   });
+
+  it("keeps the dialog open when a filter add outcome is unknown", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const onSuccess = vi.fn();
+    useAnnotationQueuesList.mockReturnValue({
+      data: {
+        results: [
+          {
+            id: "manager-queue",
+            name: "Manager Queue",
+            status: "active",
+            viewer_role: "manager",
+            viewer_roles: ["manager"],
+          },
+        ],
+      },
+      isLoading: false,
+    });
+    addItems.mockImplementationOnce((_variables, callbacks) => {
+      callbacks.onError?.({ transportCode: "ERR_CANCELED" });
+    });
+
+    renderDialog({
+      onClose,
+      onSuccess,
+      selectionMode: "filter",
+      projectId: "project-1",
+      filter: [],
+    });
+    await user.click(await screen.findByText("Manager Queue"));
+
+    await waitFor(() => {
+      expect(addItems).toHaveBeenCalledWith(
+        {
+          queueId: "manager-queue",
+          selection: {
+            mode: "filter",
+            source_type: "trace",
+            project_id: "project-1",
+            filter: [],
+            exclude_ids: ["trace-1"],
+            is_voice_call: false,
+            remove_simulation_calls: false,
+          },
+        },
+        expect.objectContaining({ onSuccess: expect.any(Function) }),
+      );
+    });
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    // The real shared API hook shows the refresh/check warning. With that hook
+    // mocked here, the consumer must not replace it with a success/empty toast.
+    expect(enqueueSnackbar).not.toHaveBeenCalled();
+  });
 });

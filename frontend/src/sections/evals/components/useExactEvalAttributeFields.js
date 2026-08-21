@@ -4,6 +4,16 @@ import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
 import { getQueryReadState } from "src/utils/queryReadState";
 import {
+  ATTRIBUTE_INVENTORY_SEARCH_DEBOUNCE_MS,
+  INTERACTIVE_TABLE_PAGE_SIZE,
+  PROPERTY_CATALOG_CACHE_TIME_MS,
+  PROPERTY_CATALOG_STALE_TIME_MS,
+} from "src/config/runtime_limits";
+import {
+  attributeInventoryKey,
+  useCursorAttributeInventory,
+} from "src/sections/projects/LLMTracing/useCursorAttributeInventory";
+import {
   ATTRIBUTE_KEY_REQUEST_TIMEOUT_MS,
   compactAttributeKeyRetryPage,
   getAttributeKeyCursorStopSignature,
@@ -56,7 +66,8 @@ function combineQueryReadStates(...states) {
   return "complete";
 }
 
-export function useExactEvalAttributeFields({
+/** Rollout-only retained span-key adapter kept for compatibility coverage. */
+export function useLegacyExactEvalAttributeFields({
   projectId,
   rowType,
   search,
@@ -65,7 +76,10 @@ export function useExactEvalAttributeFields({
   const queryClient = useQueryClient();
   const normalizedRowType = normalizeExactAttributeRowType(rowType);
   const rawSearch = String(search || "").trim();
-  const debouncedSearch = useDebounce(rawSearch, 350);
+  const debouncedSearch = useDebounce(
+    rawSearch,
+    ATTRIBUTE_INVENTORY_SEARCH_DEBOUNCE_MS,
+  );
   let exactSearch = debouncedSearch;
   if (normalizedRowType === "traces" && exactSearch.startsWith("spans.0.")) {
     exactSearch = exactSearch.slice("spans.0.".length);
@@ -138,7 +152,7 @@ export function useExactEvalAttributeFields({
     queryFn: ({ signal, pageParam }) =>
       readAttributeKeyPage({
         pageParam,
-        pageSize: 10,
+        pageSize: INTERACTIVE_TABLE_PAGE_SIZE,
         publishedData: queryClient.getQueryData(retainedQueryKey),
         signal,
         requestPage: (cursor, requestSignal = signal) =>
@@ -148,7 +162,7 @@ export function useExactEvalAttributeFields({
               timeout: ATTRIBUTE_KEY_REQUEST_TIMEOUT_MS,
               params: {
                 project_id: projectId,
-                page_size: 10,
+                page_size: INTERACTIVE_TABLE_PAGE_SIZE,
                 discovery_mode: "eval_mapping",
                 ...(cursor ? { cursor } : {}),
               },
@@ -159,8 +173,8 @@ export function useExactEvalAttributeFields({
     getNextPageParam: getNextAttributeKeyPageParam,
     enabled: enabled && Boolean(projectId) && Boolean(normalizedRowType),
     retry: false,
-    staleTime: 60_000,
-    gcTime: 5 * 60_000,
+    staleTime: PROPERTY_CATALOG_STALE_TIME_MS,
+    gcTime: PROPERTY_CATALOG_CACHE_TIME_MS,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
     refetchOnReconnect: false,
@@ -176,7 +190,7 @@ export function useExactEvalAttributeFields({
     queryFn: ({ signal, pageParam }) =>
       readAttributeKeyPage({
         pageParam,
-        pageSize: 10,
+        pageSize: INTERACTIVE_TABLE_PAGE_SIZE,
         publishedData: queryClient.getQueryData(exactQueryKey),
         signal,
         requestPage: (cursor, requestSignal = signal) =>
@@ -186,7 +200,7 @@ export function useExactEvalAttributeFields({
               timeout: ATTRIBUTE_KEY_REQUEST_TIMEOUT_MS,
               params: {
                 project_id: projectId,
-                page_size: 10,
+                page_size: INTERACTIVE_TABLE_PAGE_SIZE,
                 discovery_mode: "eval_mapping",
                 q: exactSearch,
                 ...(cursor ? { cursor } : {}),
@@ -202,8 +216,8 @@ export function useExactEvalAttributeFields({
       Boolean(normalizedRowType) &&
       Boolean(exactSearch),
     retry: false,
-    staleTime: 60_000,
-    gcTime: 5 * 60_000,
+    staleTime: PROPERTY_CATALOG_STALE_TIME_MS,
+    gcTime: PROPERTY_CATALOG_CACHE_TIME_MS,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
     refetchOnReconnect: false,
@@ -304,7 +318,7 @@ export function useExactEvalAttributeFields({
     try {
       const page = await readAttributeKeyPage({
         pageParam: null,
-        pageSize: 10,
+        pageSize: INTERACTIVE_TABLE_PAGE_SIZE,
         publishedData: undefined,
         requestPage: (cursor, signal) =>
           axios
@@ -313,7 +327,7 @@ export function useExactEvalAttributeFields({
               timeout: ATTRIBUTE_KEY_REQUEST_TIMEOUT_MS,
               params: {
                 project_id: projectId,
-                page_size: 10,
+                page_size: INTERACTIVE_TABLE_PAGE_SIZE,
                 discovery_mode: "eval_mapping",
                 ...(exact ? { q: exactSearch } : {}),
                 ...(cursor ? { cursor } : {}),
@@ -420,5 +434,57 @@ export function useExactEvalAttributeFields({
     browseStatus:
       (exactSearch ? exactPages.at(-1)?.browse_status : undefined) ||
       retainedPages.at(-1)?.browse_status,
+  };
+}
+
+export function useExactEvalAttributeFields({
+  projectId,
+  rowType,
+  search,
+  enabled = true,
+}) {
+  const normalizedRowType = normalizeExactAttributeRowType(rowType);
+  const inventory = useCursorAttributeInventory({
+    projectId,
+    rowType: normalizedRowType || "spans",
+    discoveryMode: "eval_mapping",
+    search,
+    enabled: enabled && Boolean(normalizedRowType),
+    pageSize: INTERACTIVE_TABLE_PAGE_SIZE,
+  });
+  const data = mergeTracingFieldNames(
+    [],
+    inventory.rawAttributes
+      .map((attribute) =>
+        retainedAttributeFieldName(
+          attributeInventoryKey(attribute),
+          normalizedRowType,
+        ),
+      )
+      .filter(Boolean),
+  );
+  const queryReadState = inventory.isError
+    ? "error"
+    : inventory.cursorRetryExhausted
+      ? "degraded"
+      : "complete";
+
+  return {
+    data,
+    queryReadState,
+    debouncedSearch: inventory.debouncedSearch,
+    isSupportedRowType: Boolean(normalizedRowType),
+    isFetching: inventory.isFetching,
+    isLoading: inventory.isLoading,
+    isError: inventory.isError,
+    isSuccess: !inventory.isError && !inventory.isLoading,
+    error: inventory.error,
+    fetchNextPage: inventory.fetchNextPage,
+    hasNextPage: inventory.hasNextPage,
+    isFetchingNextPage: inventory.isFetchingNextPage,
+    isFetchNextPageError: inventory.isFetchNextPageError,
+    cursorRetryExhausted: inventory.cursorRetryExhausted,
+    pageCount: inventory.pageCount,
+    browseStatus: inventory.hasNextPage ? "continuation" : "exhausted",
   };
 }

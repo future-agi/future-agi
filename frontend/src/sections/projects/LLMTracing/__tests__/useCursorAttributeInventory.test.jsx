@@ -4,10 +4,24 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ get: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  get: vi.fn(),
+  propertyCatalog: vi.fn(),
+  catalogResult: null,
+}));
 
 vi.mock("src/hooks/use-debounce", () => ({
   useDebounce: (value) => value,
+}));
+
+vi.mock("src/hooks/useDashboards", () => ({
+  isPropertyCatalogNotReadyError: (error) =>
+    error?.response?.status === 503 &&
+    error?.response?.data?.code === "property_catalog_not_ready",
+  usePropertyCatalog: (options) => {
+    mocks.propertyCatalog(options);
+    return mocks.catalogResult;
+  },
 }));
 
 vi.mock("src/utils/axios", () => ({
@@ -23,7 +37,8 @@ import {
   attributeInventoryKey,
   expandCursorAttributeInventory,
   mergeCursorAttributeRows,
-  useCursorAttributeInventory,
+  useCursorAttributeInventory as useUnifiedCursorAttributeInventory,
+  useLegacyCursorAttributeInventory as useCursorAttributeInventory,
 } from "../useCursorAttributeInventory";
 
 function createWrapper() {
@@ -160,7 +175,72 @@ describe("expandCursorAttributeInventory", () => {
 });
 
 describe("useCursorAttributeInventory", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.catalogResult = {
+      error: {
+        response: {
+          status: 503,
+          data: { code: "property_catalog_not_ready" },
+        },
+      },
+      legacyFallbackRequired: true,
+      metrics: [],
+    };
+  });
+
+  it("uses one unified signed catalog chain when the catalog is ready", async () => {
+    const fetchNextPage = vi.fn().mockResolvedValue(undefined);
+    mocks.catalogResult = {
+      data: { pages: [{ metrics: [] }] },
+      error: null,
+      legacyFallbackRequired: false,
+      metrics: [
+        {
+          name: "customer.tier",
+          property_id: "custom_attribute:customer.tier",
+          type: "string",
+        },
+      ],
+      hasNextPage: true,
+      fetchNextPage,
+      isFetchingNextPage: false,
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+      isFetchNextPageError: false,
+      cursorChainStopped: false,
+      refetch: vi.fn(),
+    };
+
+    const { result } = renderHook(
+      () =>
+        useUnifiedCursorAttributeInventory({
+          projectId: "project-a",
+          search: "customer",
+        }),
+      { wrapper: createWrapper() },
+    );
+
+    expect(mocks.get).not.toHaveBeenCalled();
+    expect(mocks.propertyCatalog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "custom_attribute",
+        source: "traces",
+        search: "customer",
+        projectIds: ["project-a"],
+        allowLegacyNotReadyFallback: true,
+      }),
+    );
+    expect(result.current.rawAttributes).toEqual([
+      expect.objectContaining({
+        key: "customer.tier",
+        property_id: "custom_attribute:customer.tier",
+      }),
+    ]);
+    await act(async () => result.current.fetchNextPage());
+    expect(fetchNextPage).toHaveBeenCalledTimes(1);
+  });
 
   it("uses the authorized workspace cursor scope without a project fan-out", async () => {
     mocks.get.mockResolvedValue(attributePage(["workspace.attribute"]));

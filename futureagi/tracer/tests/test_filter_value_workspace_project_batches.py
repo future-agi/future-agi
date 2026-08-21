@@ -8,7 +8,9 @@ from uuid import UUID
 
 import pytest
 
-from tracer.services.annotation_label_source import AnnotationLabelScoresProjectPG
+from tracer.services.annotation_label_source import (
+    AnnotationLabelScoresProjectPG,
+)
 from tracer.services.clickhouse.attribute_cursor_state import AttributeCursorSeenState
 from tracer.services.clickhouse.attribute_reads import (
     ATTRIBUTE_READ_MAX_PROJECTS,
@@ -20,6 +22,7 @@ from tracer.services.clickhouse.attribute_reads import (
 from tracer.services.clickhouse.filter_value_reads import (
     FilterValueCursorPageRead,
     FilterValueRead,
+    SessionFilterValueCursorPageRead,
 )
 from tracer.views import dashboard as dashboard_view
 
@@ -133,6 +136,68 @@ def _invoke(params):
 def _result(response):
     assert response.status_code == 200
     return response.data["result"]
+
+
+@pytest.mark.unit
+def test_workspace_session_search_finishes_after_bounded_project_batches(
+    monkeypatch,
+):
+    project_ids = [_uuid(index) for index in range(1, 66)]
+    projects = _ProjectQuery(project_ids, [])
+    _install_scope_and_seen_state(monkeypatch, projects)
+    session_id = _uuid(90_001)
+    observed_batches = []
+
+    def read_page(_analytics, **kwargs):
+        observed_batches.append(tuple(kwargs["project_ids"]))
+        values = (session_id,) if len(observed_batches) == 1 else ()
+        return SessionFilterValueCursorPageRead(
+            values,
+            False,
+            None,
+            "exhausted",
+        )
+
+    monkeypatch.setattr(dashboard_view, "V2AnalyticsQueryService", object)
+    monkeypatch.setattr(
+        dashboard_view,
+        "read_session_filter_value_cursor_page",
+        read_page,
+    )
+    monkeypatch.setattr(
+        dashboard_view,
+        "_session_overlay_filter_value_ids",
+        lambda **_kwargs: (),
+    )
+
+    from tracer.services.clickhouse.v2 import trace_session_dict_reader
+
+    monkeypatch.setattr(
+        trace_session_dict_reader,
+        "resolve_session_fields",
+        lambda values, **_kwargs: {
+            value: {"external_session_id": "matching-session"} for value in values
+        },
+    )
+    params = {
+        "metric_name": "session",
+        "metric_type": "system_metric",
+        "source": "sessions",
+        "project_ids": [],
+        "search": "matching-session",
+        "page_size": 10,
+    }
+
+    first = _result(_invoke(params))
+    second = _result(_invoke({**params, "cursor": first["next_cursor"]}))
+
+    assert first["values"] == [{"value": session_id, "label": "matching-session"}]
+    assert first["has_more"] is True
+    assert second["values"] == []
+    assert second["has_more"] is False
+    assert second["browse_status"] == "exhausted"
+    assert second["next_cursor"] is None
+    assert [len(batch) for batch in observed_batches] == [64, 1]
 
 
 @pytest.mark.unit
@@ -1013,35 +1078,30 @@ def test_workspace_configured_annotation_authorizes_target_beyond_first_batch(
 
 
 @pytest.mark.unit
-def test_workspace_legacy_categorical_annotation_reports_sampled_scope(monkeypatch):
+def test_workspace_categorical_annotation_uses_only_configured_values(monkeypatch):
     from model_hub.models.develop_annotations import AnnotationsLabels
 
     project_ids = [_uuid(index) for index in range(1, 66)]
-    slice_limits = []
-    projects = _ProjectQuery(project_ids, slice_limits)
+    projects = _ProjectQuery(project_ids, [])
     _install_scope_and_seen_state(monkeypatch, projects)
     label = SimpleNamespace(
         id=_uuid(33_001),
         project_id=project_ids[-1],
         type="categorical",
-        settings={"options": ["Configured"]},
+        settings={"options": ["Configured", "Second"]},
     )
     monkeypatch.setattr(
         AnnotationsLabels,
         "no_workspace_objects",
         _FirstQuery(label),
     )
-    observed_batches = []
-
-    def stored_values(_self, _label_id, batch):
-        observed_batches.append(tuple(batch))
-        return ["Stored"]
-
     monkeypatch.setattr(
         AnnotationLabelScoresProjectPG,
         "categorical_values_for_label",
-        stored_values,
+        lambda *_args, **_kwargs: pytest.fail("configured values must not scan Score"),
+        raising=False,
     )
+
     result = _result(
         _invoke(
             {
@@ -1050,74 +1110,15 @@ def test_workspace_legacy_categorical_annotation_reports_sampled_scope(monkeypat
                 "source": "traces",
                 "project_ids": [],
                 "search": "",
+                "page_size": 10,
             }
         )
     )
 
     assert result["values"] == [
         {"value": "Configured", "label": "Configured"},
-        {"value": "Stored", "label": "Stored"},
+        {"value": "Second", "label": "Second"},
     ]
-    assert result["query_complete"] is False
-    assert result["query_status"] == "sampled"
-    assert result["browse_status"] == "limit_reached"
-    assert result["next_cursor"] is None
-    assert [len(batch) for batch in observed_batches] == [64]
-
-
-@pytest.mark.unit
-def test_workspace_categorical_annotation_cursor_walks_exact_score_batches(
-    monkeypatch,
-):
-    from model_hub.models.develop_annotations import AnnotationsLabels
-
-    project_ids = [_uuid(index) for index in range(1, 66)]
-    slice_limits = []
-    projects = _ProjectQuery(project_ids, slice_limits)
-    _install_scope_and_seen_state(monkeypatch, projects)
-    label = SimpleNamespace(
-        id=_uuid(34_001),
-        project_id=project_ids[-1],
-        type="categorical",
-        settings={"options": ["Configured"]},
-    )
-    monkeypatch.setattr(
-        AnnotationsLabels,
-        "no_workspace_objects",
-        _FirstQuery(label),
-    )
-    observed_batches = []
-
-    def stored_values(_self, _label_id, batch):
-        observed_batches.append(tuple(batch))
-        values = [{"selected": ["Shared"]}]
-        if project_ids[-1] in batch:
-            values.append({"selected": ["Later only"]})
-        return values
-
-    monkeypatch.setattr(
-        AnnotationLabelScoresProjectPG,
-        "categorical_values_for_label",
-        stored_values,
-    )
-    params = {
-        "metric_name": str(label.id),
-        "metric_type": "annotation_metric",
-        "source": "traces",
-        "project_ids": [],
-        "search": "",
-        "page_size": 10,
-    }
-
-    first = _result(_invoke(params))
-    second = _result(_invoke({**params, "cursor": first["next_cursor"]}))
-
-    assert [item["value"] for item in first["values"]] == ["Configured", "Shared"]
-    assert [item["value"] for item in second["values"]] == ["Later only"]
-    assert first["query_complete"] is True
-    assert first["query_status"] == "complete"
-    assert "query_error_code" not in first
-    assert first["browse_status"] == "continuation"
-    assert second["browse_status"] == "exhausted"
-    assert [len(batch) for batch in observed_batches] == [64, 1]
-    assert all(limit <= ATTRIBUTE_READ_MAX_PROJECTS + 1 for limit in slice_limits)
+    assert result["query_complete"] is True
+    assert result["browse_status"] == "exhausted"
+    assert result["has_more"] is False

@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+from django.conf import settings
+
 # ClickHouse zero-value for UUID columns. dictGetOrDefault on Nullable(UUID)
 # dictionary columns may return this instead of NULL — see dashboard.py:1919.
 NIL_UUID = "00000000-0000-0000-0000-000000000000"
@@ -414,16 +416,18 @@ class BaseQueryBuilder(ABC):
             if strict:
                 raise ValueError(f"Unsupported datetime filter operator {op!r}.")
 
-        # Default window when no time filter supplied: 30 days back from now.
-        # Was previously 3650 days (10 years) — that bypassed partition pruning
+        # The default bounded lookback applies when no time filter is supplied.
+        # An earlier ten-year window bypassed partition pruning
         # and forced full-history scans for every dashboard-default page-load
         # (regression caught in kartik perf sweep; 100ms+ p95 just from the
-        # un-bounded window). 30 days matches the dashboard's default view
-        # range; users wanting older data set an explicit filter, which uses
-        # the path above and gets accurate pruning anyway.
+        # unbounded window). The reviewed default matches the dashboard view;
+        # users wanting older data set an explicit filter, which uses the path
+        # above and gets accurate pruning anyway.
         request_now = datetime.utcnow()
         if not start_date:
-            start_date = request_now - timedelta(days=30)
+            start_date = request_now - timedelta(
+                days=settings.ANALYTICS_DEFAULT_LOOKBACK_DAYS
+            )
         if not end_date:
             end_date = request_now
 

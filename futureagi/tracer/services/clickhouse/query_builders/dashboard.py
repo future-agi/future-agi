@@ -27,6 +27,11 @@ from tracer.services.clickhouse.eval_expressions import (
     eval_has_structured_score,
     sql_str_set,
 )
+from tracer.services.clickhouse.eval_logger_table import (
+    eval_logger_live_state_columns,
+    eval_logger_source,
+    eval_logger_version_column,
+)
 from tracer.services.clickhouse.query_builders.expressions import (
     annotation_numeric_value_expr,
 )
@@ -150,6 +155,14 @@ SYSTEM_METRICS: dict[str, tuple[str, str]] = {
     # Tags
     "tag": ("spans", "tags"),
 }
+
+# These are cataloged SYSTEM_METRIC *filters*, but they are not physical
+# columns on ``spans`` and therefore must not be added to ``SYSTEM_METRICS``.
+# Treating them as ordinary system metrics either dropped the predicate on
+# legacy widgets or rejected the current registry-bound payload.  They are
+# trace relations whose boolean value is compiled below as exact membership or
+# anti-membership over the authoritative eval/annotation stores.
+PRESENCE_SYSTEM_METRIC_FILTERS = frozenset({"has_eval", "has_annotation"})
 
 METRIC_UNITS: dict[str, str] = {
     "latency": "ms",
@@ -656,6 +669,86 @@ class DashboardQueryBuilder:
         self.metrics = query_config.get("metrics", [])
         self.global_filters = query_config.get("filters", [])
         self.breakdowns = query_config.get("breakdowns", [])
+        raw_annotation_labels = query_config.get("annotation_label_ids_by_project")
+        self.annotation_label_ids_by_project = (
+            {
+                str(project_id): tuple(
+                    dict.fromkeys(str(label_id) for label_id in label_ids)
+                )
+                for project_id, label_ids in raw_annotation_labels.items()
+            }
+            if isinstance(raw_annotation_labels, dict)
+            else None
+        )
+
+    def _resolve_eval_template_identity(
+        self, payload: dict, fallback_identifier: str
+    ) -> str:
+        """Resolve a registry eval definition to the usage-table template ID.
+
+        The public catalog distinguishes configured evals from templates. A
+        configured eval UUID is not a template UUID, even though both share
+        the same native dashboard metric family.
+        """
+
+        from tracer.utils.eval_helpers import resolve_eval_template_id
+
+        property_id = str(payload.get("property_id") or "")
+        if not property_id:
+            return resolve_eval_template_id(
+                fallback_identifier, organization_id=self.organization_id
+            )
+
+        from tracer.utils.property_registry import parse_property_registry_id
+
+        try:
+            decoded = parse_property_registry_id(property_id)
+        except ValueError as exc:
+            raise InvalidMetricCombinationError(
+                "Invalid eval property identity."
+            ) from exc
+
+        definition_id = decoded["metric_name"]
+        if decoded["property_kind"] == "eval_config":
+            from tracer.models.custom_eval_config import CustomEvalConfig
+
+            configs = CustomEvalConfig.objects.filter(
+                id=definition_id,
+                deleted=False,
+                eval_template__deleted=False,
+            )
+            if self.organization_id:
+                configs = configs.filter(project__organization_id=self.organization_id)
+            if self.workspace_id:
+                configs = configs.filter(project__workspace_id=self.workspace_id)
+            if self.project_ids:
+                configs = configs.filter(project_id__in=self.project_ids)
+            template_id = configs.values_list("eval_template_id", flat=True).first()
+        elif decoded["property_kind"] == "eval_template":
+            from model_hub.models.evals_metric import EvalTemplate
+
+            templates = EvalTemplate.no_workspace_objects.filter(
+                id=definition_id,
+                deleted=False,
+            )
+            if self.organization_id:
+                templates = templates.filter(organization_id=self.organization_id)
+            template_id = templates.values_list("id", flat=True).first()
+        elif decoded["property_kind"] == "eval":
+            # Read-only compatibility identities predate the config/template
+            # split. Preserve their legacy resolution without publishing them
+            # from new discovery responses.
+            template_id = resolve_eval_template_id(
+                definition_id, organization_id=self.organization_id
+            )
+        else:
+            template_id = None
+
+        if not template_id:
+            raise InvalidMetricCombinationError(
+                "The selected evaluation is not available in this workspace."
+            )
+        return str(template_id)
 
     # ------------------------------------------------------------------
     # Time range
@@ -718,6 +811,12 @@ class DashboardQueryBuilder:
             metric_name_lower = metric_name.lower() if metric_name else metric_name
             if metric_name_lower in SYSTEM_METRICS:
                 metric_name = metric_name_lower
+            else:
+                self._reject_unknown_cataloged_system_dimension(
+                    metric,
+                    metric_name,
+                    role="metric",
+                )
             return self._build_system_metric_query(
                 metric_name, aggregation, bucket_fn, per_metric_filters, params
             )
@@ -735,6 +834,273 @@ class DashboardQueryBuilder:
             )
         else:
             raise ValueError(f"Unknown metric type: {metric_type}")
+
+    @staticmethod
+    def _reject_unknown_cataloged_system_dimension(
+        payload: dict,
+        metric_name: str,
+        *,
+        role: str,
+    ) -> None:
+        """Fail closed for an unknown registry-backed system definition.
+
+        Historical widgets without ``property_id`` retain their compatibility
+        behavior: an unknown metric may be an old custom attribute and an
+        unknown dimension may be ignored. A current Property Registry identity
+        is an explicit definition binding, so silently dropping or
+        reinterpreting it would make the displayed query disagree with the
+        executed query.
+        """
+
+        if payload.get("property_id"):
+            raise InvalidMetricCombinationError(
+                f"Unsupported cataloged system {role}: {metric_name}"
+            )
+
+    @staticmethod
+    def _presence_filter_name(payload: dict) -> str:
+        if (payload.get("metric_type") or payload.get("type")) != "system_metric":
+            return ""
+        return str(
+            payload.get("metric_name") or payload.get("name") or payload.get("id") or ""
+        ).lower()
+
+    @classmethod
+    def _is_presence_filter(cls, payload: dict) -> bool:
+        return cls._presence_filter_name(payload) in PRESENCE_SYSTEM_METRIC_FILTERS
+
+    @staticmethod
+    def _presence_filter_value(payload: dict, metric_name: str) -> bool:
+        operation = str(payload.get("operator") or "")
+        if operation not in {"equal_to", "equals"}:
+            raise InvalidMetricCombinationError(
+                f"{metric_name} supports only the equals operation"
+            )
+        value = payload.get("value")
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
+            return value.strip().lower() == "true"
+        raise InvalidMetricCombinationError(f"{metric_name} requires a boolean value")
+
+    def _eval_presence_relation(self) -> str:
+        """Return exact project+trace identities with a latest-live eval row."""
+
+        table, _ = eval_logger_source()
+        version_column = eval_logger_version_column(table)
+        live_columns = eval_logger_live_state_columns(table)
+        _, live_predicate = eval_logger_source(
+            "latest_eval",
+            include_cdc_tombstone_guard=True,
+            table=table,
+        )
+        projection = ", ".join(f"eval_scan.{column}" for column in live_columns)
+        latest_evals = f"""
+            SELECT
+                eval_scan.id,
+                eval_scan.trace_id,
+                {projection}
+            FROM {table} AS eval_scan
+            WHERE eval_scan.trace_id IS NOT NULL
+              AND eval_scan.trace_id !=
+                  toUUID('00000000-0000-0000-0000-000000000000')
+            ORDER BY eval_scan.{version_column} DESC
+            LIMIT 1 BY eval_scan.id
+        """
+
+        if self._direct_trace_project_scope_available:
+            scoped_traces = latest_live_project_traces_sql()
+            return f"""
+                WITH dashboard_presence_traces AS ({scoped_traces})
+                SELECT DISTINCT tuple(
+                    toString(dashboard_presence_trace.project_id),
+                    toString(latest_eval.trace_id)
+                )
+                FROM ({latest_evals}) AS latest_eval
+                INNER JOIN dashboard_presence_traces AS dashboard_presence_trace
+                  ON dashboard_presence_trace.trace_id = latest_eval.trace_id
+                WHERE {live_predicate}
+            """
+
+        # The legacy dashboard retains the deployed trace dictionary.  The
+        # direct-write builder above deliberately avoids it because the locked
+        # production read role has no dictionary grants.
+        return f"""
+            SELECT DISTINCT tuple(
+                toString(dictGet('trace_dict', 'project_id', latest_eval.trace_id)),
+                toString(latest_eval.trace_id)
+            )
+            FROM ({latest_evals}) AS latest_eval
+            WHERE {live_predicate}
+              AND dictGet('trace_dict', 'project_id', latest_eval.trace_id)
+                  IN %(project_ids)s
+        """
+
+    def _annotation_presence_relation(self, params: dict[str, Any]) -> str:
+        """Return identities complete for every configured project label.
+
+        The authoritative label set is materialized from PostgreSQL after the
+        project scope is authorized and is part of the exact-snapshot cache
+        identity.  Missing metadata must fail closed; a simple Score-existence
+        relation would make dashboard F6 disagree with trace/span/session APIs.
+        """
+
+        label_map = self.annotation_label_ids_by_project
+        if label_map is None:
+            raise InvalidMetricCombinationError(
+                "Annotation completeness metadata is unavailable."
+            )
+
+        project_ids = tuple(dict.fromkeys(str(value) for value in self.project_ids))
+        if any(project_id not in label_map for project_id in project_ids):
+            raise InvalidMetricCombinationError(
+                "Annotation completeness metadata is incomplete."
+            )
+
+        branches: list[str] = []
+        empty_label_projects: list[str] = []
+        organization_clause = ""
+        if self.organization_id:
+            params["annotation_presence_organization"] = str(self.organization_id)
+            organization_clause = (
+                "AND annotation_presence.organization_id = "
+                "toUUID(%(annotation_presence_organization)s)"
+            )
+        for index, project_id in enumerate(project_ids):
+            label_ids = label_map[project_id]
+            if not label_ids:
+                empty_label_projects.append(project_id)
+                continue
+
+            project_param = f"annotation_presence_project_{index}"
+            project_scope_param = f"annotation_presence_project_scope_{index}"
+            labels_param = f"annotation_presence_labels_{index}"
+            label_count_param = f"annotation_presence_label_count_{index}"
+            params[project_param] = project_id
+            params[project_scope_param] = (project_id,)
+            params[labels_param] = label_ids
+            params[label_count_param] = len(label_ids)
+            live_project_traces = latest_live_project_traces_sql(
+                project_ids_param=project_scope_param
+            )
+            branches.append(
+                f"""
+                SELECT tuple(
+                    toString(annotation_presence.tracer_project_id),
+                    if(
+                        annotation_presence_trace.project_id =
+                            annotation_presence.tracer_project_id,
+                        toString(annotation_presence_trace.trace_id),
+                        annotation_presence_span.trace_id
+                    )
+                )
+                FROM model_hub_score AS annotation_presence FINAL
+                LEFT JOIN (
+                    {live_project_traces}
+                ) AS annotation_presence_trace
+                  ON annotation_presence_trace.project_id =
+                        annotation_presence.tracer_project_id
+                 AND annotation_presence_trace.trace_id =
+                        annotation_presence.trace_id
+                LEFT JOIN (
+                    SELECT project_id, id, trace_id
+                    FROM spans FINAL
+                    PREWHERE project_id = toUUID(%({project_param})s)
+                    WHERE _peerdb_is_deleted = 0
+                ) AS annotation_presence_span
+                  ON annotation_presence_span.project_id =
+                        annotation_presence.tracer_project_id
+                 AND annotation_presence_span.id =
+                        annotation_presence.observation_span_id
+                PREWHERE annotation_presence.tracer_project_id =
+                    toUUID(%({project_param})s)
+                WHERE annotation_presence._peerdb_is_deleted = 0
+                  AND annotation_presence.deleted = 0
+                  {organization_clause}
+                  AND annotation_presence.label_id IN %({labels_param})s
+                  AND (
+                        annotation_presence_trace.project_id =
+                            annotation_presence.tracer_project_id
+                        OR annotation_presence_span.trace_id != ''
+                  )
+                GROUP BY
+                    annotation_presence.tracer_project_id,
+                    if(
+                        annotation_presence_trace.project_id =
+                            annotation_presence.tracer_project_id,
+                        toString(annotation_presence_trace.trace_id),
+                        annotation_presence_span.trace_id
+                    )
+                HAVING uniqExact(annotation_presence.label_id) =
+                    %({label_count_param})s
+                """
+            )
+
+        if empty_label_projects:
+            empty_projects_param = "annotation_presence_empty_projects"
+            params[empty_projects_param] = tuple(empty_label_projects)
+            if self._direct_trace_project_scope_available:
+                live_traces = latest_live_project_traces_sql(
+                    project_ids_param=empty_projects_param
+                )
+                branches.append(
+                    f"""
+                    SELECT tuple(toString(project_id), toString(trace_id))
+                    FROM ({live_traces}) AS annotation_empty_label_traces
+                    """
+                )
+            else:
+                branches.append(
+                    f"""
+                    SELECT DISTINCT tuple(toString(project_id), trace_id)
+                    FROM spans FINAL
+                    PREWHERE project_id IN %({empty_projects_param})s
+                    WHERE _peerdb_is_deleted = 0
+                      AND trace_id != ''
+                    """
+                )
+
+        if not branches:
+            return "SELECT tuple('', '') WHERE 0"
+        return " UNION ALL ".join(branches)
+
+    def _build_presence_filter_predicates(
+        self,
+        filters: list[dict],
+        *,
+        outer_project_expr: str,
+        outer_trace_expr: str,
+        params: dict[str, Any],
+    ) -> list[str]:
+        """Compile every boolean relation leaf without silently dropping it."""
+
+        predicates: list[str] = []
+        for payload in filters:
+            if payload.get("source", "traces") not in (
+                "traces",
+                "",
+                "all",
+                "both",
+            ):
+                continue
+            metric_name = self._presence_filter_name(payload)
+            if metric_name not in PRESENCE_SYSTEM_METRIC_FILTERS:
+                continue
+            required = self._presence_filter_value(payload, metric_name)
+            relation = (
+                self._eval_presence_relation()
+                if metric_name == "has_eval"
+                else self._annotation_presence_relation(params)
+            )
+            membership = "IN" if required else "NOT IN"
+            predicates.append(
+                f"(notEmpty(toString({outer_trace_expr})) AND "
+                f"toString({outer_project_expr}) != "
+                "'00000000-0000-0000-0000-000000000000' AND "
+                f"tuple(toString({outer_project_expr}), "
+                f"toString({outer_trace_expr})) {membership} ({relation}))"
+            )
+        return predicates
 
     def _names_reference_id(self, *names: str | None) -> bool:
         return any(
@@ -1314,6 +1680,13 @@ class DashboardQueryBuilder:
 
         bd_infos = self._resolve_all_breakdowns(params)
         has_annotation_bd = any(b["type"] == "annotation" for b in bd_infos)
+        presence_filter_inputs = self.global_filters + per_metric_filters
+        flat_presence_predicates = self._build_presence_filter_predicates(
+            presence_filter_inputs,
+            outer_project_expr="spans.project_id",
+            outer_trace_expr="spans.trace_id",
+            params=params,
+        )
         # A custom-attribute breakdown has values only on rows that carry the
         # selected Map key. Without this predicate ClickHouse must materialize
         # the complete Map value column for every span in the window, and rows
@@ -1340,7 +1713,18 @@ class DashboardQueryBuilder:
 
             if has_annotation_bd:
                 agg_with_alias = self._qualify_span_expression(agg_expr, "s")
-                where_str = " AND ".join(_prefix_spans_columns(c) for c in all_where)
+                joined_presence_predicates = self._build_presence_filter_predicates(
+                    presence_filter_inputs,
+                    outer_project_expr="s.project_id",
+                    outer_trace_expr="s.trace_id",
+                    params=params,
+                )
+                where_str = " AND ".join(
+                    [
+                        *(_prefix_spans_columns(c) for c in all_where),
+                        *joined_presence_predicates,
+                    ]
+                )
                 join_str = "\n".join(join_clauses)
                 query = (
                     f"SELECT {bucket_fn}(s.start_time) AS time_bucket,\n"
@@ -1353,6 +1737,7 @@ class DashboardQueryBuilder:
                     f"ORDER BY time_bucket, breakdown_value"
                 )
             else:
+                flat_where = [*all_where, *flat_presence_predicates]
                 select_parts_with_bd = [
                     f"{bucket_fn}(start_time) AS time_bucket",
                     bd_select,
@@ -1361,15 +1746,16 @@ class DashboardQueryBuilder:
                 query = (
                     f"SELECT {', '.join(select_parts_with_bd)}\n"
                     f"FROM {spans_flat}\n"
-                    f"WHERE {' AND '.join(all_where)}\n"
+                    f"WHERE {' AND '.join(flat_where)}\n"
                     f"GROUP BY time_bucket, breakdown_value\n"
                     f"ORDER BY time_bucket, breakdown_value"
                 )
         else:
+            flat_where = [*all_where, *flat_presence_predicates]
             query = (
                 f"SELECT {', '.join(select_parts)}\n"
                 f"FROM {spans_flat}\n"
-                f"WHERE {' AND '.join(all_where)}\n"
+                f"WHERE {' AND '.join(flat_where)}\n"
                 f"GROUP BY {', '.join(group_parts)}\n"
                 f"ORDER BY {', '.join(order_parts)}"
             )
@@ -1402,10 +1788,8 @@ class DashboardQueryBuilder:
         eval_template_id = metric.get("config_id") or metric.get("name", "")
         output_type = (metric.get("output_type") or "SCORE").upper()
 
-        from tracer.utils.eval_helpers import resolve_eval_template_id
-
-        eval_template_id = resolve_eval_template_id(
-            eval_template_id, organization_id=self.organization_id
+        eval_template_id = self._resolve_eval_template_identity(
+            metric, eval_template_id
         )
 
         params["eval_template_id"] = eval_template_id
@@ -1591,9 +1975,7 @@ class DashboardQueryBuilder:
 
             elif bd_type == "eval_metric":
                 ev_tid = bd.get("config_id") or bd.get("label_id") or bd_name
-                ev_tid = resolve_eval_template_id(
-                    ev_tid, organization_id=self.organization_id
-                )
+                ev_tid = self._resolve_eval_template_identity(bd, ev_tid)
                 bd_output_type = (
                     bd.get("output_type") or bd.get("outputType") or ""
                 ).upper()
@@ -1641,6 +2023,14 @@ class DashboardQueryBuilder:
                 attr_key = _sanitize_attr_key(bd_name)
                 bd_expr = f"if(s.span_attr_str['{attr_key}'] != '', s.span_attr_str['{attr_key}'], '(not set)')"
 
+            elif bd_type == "system_metric":
+                self._reject_unknown_cataloged_system_dimension(
+                    bd,
+                    bd_name,
+                    role="breakdown",
+                )
+                bd_expr = "'(not set)'"
+
             else:
                 bd_expr = "'(not set)'"
 
@@ -1678,6 +2068,17 @@ class DashboardQueryBuilder:
                 params.update(predicate_params)
                 continue
 
+            if self._is_presence_filter(f):
+                where_parts.extend(
+                    self._build_presence_filter_predicates(
+                        [f],
+                        outer_project_expr="e.eval_project_id",
+                        outer_trace_expr="e.eval_trace_id",
+                        params=params,
+                    )
+                )
+                continue
+
             op_symbol = _get_operator_symbol(op)
             if not op_symbol:
                 continue
@@ -1701,11 +2102,16 @@ class DashboardQueryBuilder:
                     else _coerce_filter_value(val, op)
                 )
 
+            elif f_type == "system_metric":
+                self._reject_unknown_cataloged_system_dimension(
+                    f,
+                    f_name,
+                    role="filter",
+                )
+
             elif f_type == "eval_metric":
                 ev_tid = f_name
-                ev_tid = resolve_eval_template_id(
-                    ev_tid, organization_id=self.organization_id
-                )
+                ev_tid = self._resolve_eval_template_identity(f, ev_tid)
                 f_out_type = (f.get("output_type") or "SCORE").upper()
 
                 if ev_tid == eval_template_id:
@@ -2033,6 +2439,18 @@ class DashboardQueryBuilder:
             "if(a.trace_id IS NOT NULL, toString(a.trace_id), "
             "annotation_subject_span.trace_id)"
         )
+        if self._direct_trace_project_scope_available:
+            annotation_subject_project_id = (
+                "if(a.trace_id IS NOT NULL, "
+                "annotation_trace_project.project_id, "
+                "annotation_subject_span.project_id)"
+            )
+        else:
+            annotation_subject_project_id = (
+                "if(a.trace_id IS NOT NULL, "
+                "dictGet('trace_dict', 'project_id', a.trace_id), "
+                "annotation_subject_span.project_id)"
+            )
         annotation_subject_trace_candidates = f"""
             SELECT DISTINCT annotation_subject_candidate.trace_id AS trace_id
             FROM (
@@ -2074,11 +2492,15 @@ class DashboardQueryBuilder:
             for item in self.global_filters + per_metric_filters
             if item.get("source", "traces") in ("traces", "", "all", "both")
         ]
+        presence_filters = [
+            item for item in trace_filters if self._is_presence_filter(item)
+        ]
         span_filters = [
             item
             for item in trace_filters
             if (item.get("metric_type") or item.get("type"))
             in ("system_metric", "custom_attribute")
+            and not self._is_presence_filter(item)
         ]
         membership_filters = [
             item
@@ -2086,10 +2508,21 @@ class DashboardQueryBuilder:
             if (item.get("metric_type") or item.get("type"))
             in ("eval_metric", "annotation_metric")
         ]
-        if len(span_filters) + len(membership_filters) != len(trace_filters):
+        if len(presence_filters) + len(span_filters) + len(membership_filters) != len(
+            trace_filters
+        ):
             raise InvalidMetricCombinationError(
                 "Unsupported annotation dashboard trace filter"
             )
+
+        where_parts.extend(
+            self._build_presence_filter_predicates(
+                presence_filters,
+                outer_project_expr=annotation_subject_project_id,
+                outer_trace_expr=annotation_subject_trace_id,
+                params=params,
+            )
+        )
 
         joins = [trace_project_join, annotation_span_join]
         if span_filters:
@@ -2330,6 +2763,14 @@ class DashboardQueryBuilder:
         all_where = where_clauses
         if subquery_clauses[0]:
             all_where += subquery_clauses[0]
+        all_where.extend(
+            self._build_presence_filter_predicates(
+                self.global_filters + per_metric_filters,
+                outer_project_expr="spans.project_id",
+                outer_trace_expr="spans.trace_id",
+                params=params,
+            )
+        )
 
         spans_flat = self._spans_source(None, per_metric_filters, "spans")
 
@@ -2573,6 +3014,12 @@ class DashboardQueryBuilder:
                 elif bd_name in SYSTEM_METRICS:
                     col_expr = self._system_metric_expression(bd_name)
                     result.append({"type": "column", "expr": col_expr, "join": None})
+                else:
+                    self._reject_unknown_cataloged_system_dimension(
+                        bd,
+                        bd_name,
+                        role="breakdown",
+                    )
 
             elif bd_type == "custom_attribute":
                 safe_name = _sanitize_attr_key(bd_name)
@@ -2672,6 +3119,9 @@ class DashboardQueryBuilder:
 
             elif bd_type == "eval_metric":
                 eval_template_id = bd.get("config_id") or bd.get("label_id") or bd_name
+                eval_template_id = self._resolve_eval_template_identity(
+                    bd, eval_template_id
+                )
                 output_type = (
                     bd.get("output_type") or bd.get("outputType") or ""
                 ).upper()
@@ -2775,6 +3225,10 @@ class DashboardQueryBuilder:
             f_type = f.get("metric_type", "")
             if f_type == "system_metric":
                 f_name = (f.get("metric_name", "") or "").lower()
+                if f_name in PRESENCE_SYSTEM_METRIC_FILTERS:
+                    # Relational pseudo-columns are compiled by the caller
+                    # once its concrete outer project/trace aliases are known.
+                    continue
                 op = f.get("operator", "")
                 val = f.get("value")
                 # Use string-safe column for non-numeric metrics
@@ -2785,6 +3239,11 @@ class DashboardQueryBuilder:
                 elif f_name in SYSTEM_METRICS:
                     col = self._system_metric_expression(f_name)
                 else:
+                    self._reject_unknown_cataloged_system_dimension(
+                        f,
+                        f_name,
+                        role="filter",
+                    )
                     # Unknown filter metric — skip to prevent SQL injection
                     logger.warning("Skipping unknown filter metric: %s", f_name)
                     continue
@@ -2920,11 +3379,8 @@ class DashboardQueryBuilder:
                 eval_id_key = f"{prefix}eval_id_{idx}"
                 eval_template_id = f.get("metric_name", "")
 
-                # Resolve name to UUID if needed
-                from tracer.utils.eval_helpers import resolve_eval_template_id
-
-                eval_template_id = resolve_eval_template_id(
-                    eval_template_id, organization_id=self.organization_id
+                eval_template_id = self._resolve_eval_template_identity(
+                    f, eval_template_id
                 )
 
                 output_type = (f.get("output_type") or "SCORE").upper()

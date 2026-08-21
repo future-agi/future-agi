@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { generate } from "orval";
+import prettier from "prettier";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const frontendRoot = path.resolve(__dirname, "..");
@@ -135,6 +136,19 @@ function normalizeGeneratedFileEndings() {
     const filePath = path.join(outputDir, name);
     const content = fs.readFileSync(filePath, "utf8");
     fs.writeFileSync(filePath, content.replace(/\n+$/u, "\n"));
+  }
+}
+
+async function formatGeneratedFiles() {
+  if (!fs.existsSync(outputDir)) return;
+  for (const name of fs.readdirSync(outputDir)) {
+    if (!name.endsWith(".ts")) continue;
+    const filePath = path.join(outputDir, name);
+    const content = fs.readFileSync(filePath, "utf8");
+    fs.writeFileSync(
+      filePath,
+      await prettier.format(content, { filepath: filePath }),
+    );
   }
 }
 
@@ -480,6 +494,50 @@ export type ${jsonAlias} = JsonValueApi;`,
       }
     }
 
+    // Orval also drops Swagger 2.0 x-nullable for the exact continuation
+    // contracts. Null is the truthful terminal marker, while omission means
+    // the optional legacy metadata was not returned at all.
+    for (const [anchor, replacement] of [
+      ["next_page_index?: number;", "next_page_index?: number | null;"],
+      ["next_cursor?: string;", "next_cursor?: string | null;"],
+    ]) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        "export interface DatasetTableMetadataApi {",
+        anchor,
+        replacement,
+        `DatasetTableMetadataApi nullable ${anchor}`,
+      );
+    }
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export interface SimulationPreviewPageApi {",
+      "next_cursor: string;",
+      "next_cursor: string | null;",
+      "SimulationPreviewPageApi.next_cursor nullable",
+    );
+
+    for (const [typeName, fields] of [
+      ["DashboardFilterValuesResultApi", [["next_cursor", "string"]]],
+      [
+        "DashboardMetricsCatalogResultApi",
+        [
+          ["total", "number"],
+          ["next_cursor", "string"],
+        ],
+      ],
+    ]) {
+      for (const [field, valueType] of fields) {
+        schemas = assertReplaceInNamedBlock(
+          schemas,
+          `export interface ${typeName} {`,
+          `${field}?: ${valueType};`,
+          `${field}?: ${valueType} | null;`,
+          `${typeName}.${field} nullable`,
+        );
+      }
+    }
+
     for (const metadataType of [
       "SpanListMetadataApi",
       "TraceObserveListMetadataApi",
@@ -605,6 +663,38 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       "jsonValueSchema",
       "TracerTraceVoiceCallDetailResponse JSON cells → recursive JSON value",
     );
+
+    for (const responseName of [
+      "ModelHubDevelopsGetDatasetTableListResponse",
+      "ModelHubDevelopsGetExperimentDatasetTableListResponse",
+    ]) {
+      zod = assertReplaceInNamedBlock(
+        zod,
+        `export const ${responseName} = zod.object({`,
+        "zod.number().optional().describe('Next zero-based page index, or null at exact exhaustion.')",
+        "zod.number().nullish().describe('Next zero-based page index, or null at exact exhaustion.')",
+        `${responseName}.next_page_index nullable`,
+      );
+      zod = assertReplaceInNamedBlock(
+        zod,
+        `export const ${responseName} = zod.object({`,
+        "zod.string().min(1).optional().describe('Signed exact continuation cursor, or null at exhaustion.')",
+        "zod.string().min(1).nullish().describe('Signed exact continuation cursor, or null at exhaustion.')",
+        `${responseName}.next_cursor nullable`,
+      );
+    }
+    for (const responseName of [
+      "SimulateRunTestsPreviewExecutionsListResponse",
+      "SimulateTestExecutionsPreviewCallsListResponse",
+    ]) {
+      zod = assertReplaceInNamedBlock(
+        zod,
+        `export const ${responseName} = zod.object({`,
+        '"next_cursor": zod.string().min(1),',
+        '"next_cursor": zod.string().min(1).nullable(),',
+        `${responseName}.next_cursor nullable`,
+      );
+    }
 
     // As with the generated TypeScript model above, Orval ignores Swagger
     // 2.0 x-nullable. Keep the generated runtime parser aligned with the
@@ -868,6 +958,29 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       "TracerTraceListVoiceCallsResponse.next_cursor nullable",
     );
 
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const TracerDashboardFilterValuesResponse = zod.object({",
+      /("next_cursor": zod\.string\(\)\.min\(1\)(?:\.max\([^)]*\))?)\.optional\(\),/,
+      "$1.nullish(),",
+      "TracerDashboardFilterValuesResponse.next_cursor nullable",
+    );
+    for (const [field, pattern] of [
+      ["total", /("total": zod\.number\(\)(?:\.min\([^)]*\))?)\.optional\(\),/],
+      [
+        "next_cursor",
+        /("next_cursor": zod\.string\(\)\.min\(1\)(?:\.max\([^)]*\))?)\.optional\(\),/,
+      ],
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        "export const TracerDashboardMetricsResponse = zod.object({",
+        pattern,
+        "$1.nullish(),",
+        `TracerDashboardMetricsResponse.${field} nullable`,
+      );
+    }
+
     for (const fieldPrefix of ["Nodes", "Edges", "PathEdges"]) {
       zod = assertReplaceInNamedBlock(
         zod,
@@ -947,6 +1060,7 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
 
     fs.writeFileSync(zodOutputPath, zod);
   }
+  await formatGeneratedFiles();
   normalizeGeneratedFileEndings();
 }
 

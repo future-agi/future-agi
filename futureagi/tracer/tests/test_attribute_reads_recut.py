@@ -12382,7 +12382,7 @@ def test_span_attribute_workspace_project_read_sets_remaining_pg_timeout(
     ]
     assert cursor.execute.call_args_list == [
         mock_call("SET TRANSACTION READ ONLY"),
-        mock_call("SET LOCAL statement_timeout = %s", ["1234ms"]),
+        mock_call("SELECT set_config('statement_timeout', %s, true)", ["1234"]),
     ]
 
 

@@ -11,12 +11,14 @@ import FilterChips from "../../LLMTracing/FilterChips";
 import ColumnConfigureDropDown from "src/sections/project-detail/ColumnDropdown/ColumnConfigureDropDown";
 import { transformDateFilterToBackendFilters } from "../common";
 import { useCursorAttributeInventory } from "../../LLMTracing/useCursorAttributeInventory";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
 
 // Trace view embedded inside UserDetails — mounts TraceGrid pre-filtered
 // to the current user, with the full ObserveToolbar (filter, display,
 // custom columns).
 const UserTraceTabV2 = ({ dateFilter }) => {
   const { observeId, userId } = useParams();
+  const { currentWorkspaceId } = useWorkspace();
   const [selectedProjectId] = useUrlState("projectId", null);
   const projectId = observeId || selectedProjectId;
 
@@ -121,10 +123,12 @@ const UserTraceTabV2 = ({ dateFilter }) => {
   );
   const { attributes, inventoryControlProps } = useCursorAttributeInventory({
     projectId,
+    workspaceScope: !projectId,
+    workspaceScopeKey: currentWorkspaceId,
     discoveryMode: "eval_mapping",
     search: customAttributeSearch,
     preservedKeys: preservedCustomAttributeKeys,
-    enabled: Boolean(projectId),
+    enabled: openCustomColumn && Boolean(projectId || currentWorkspaceId),
   });
 
   const handleAddCustomColumns = (newCols) => {
@@ -162,6 +166,7 @@ const UserTraceTabV2 = ({ dateFilter }) => {
       <ObserveToolbar
         mode="traces"
         projectId={projectId}
+        allowWorkspaceScope={!projectId}
         // Filter
         hasActiveFilter={extraFilters.length > 0}
         isFilterOpen={isFilterOpen}

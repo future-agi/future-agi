@@ -32,6 +32,7 @@ import {
   buildApiFilterFromPanelRow,
   hydrateStoredFilterList,
 } from "src/api/contracts/filter-contract";
+import { INTERACTIVE_TABLE_PAGE_SIZE } from "src/config/runtime_limits";
 
 /**
  * Converts graph selections to filter format compatible with the backend API.
@@ -178,6 +179,8 @@ import {
 import TracingControls from "./TracingControls";
 import ObserveToolbar from "./ObserveToolbar";
 import {
+  combineGraphFilters,
+  resolveAgentGraphProjectScopes,
   selectPanelGraphFilters,
   singleProjectIdFromFilters,
 } from "./GraphSection/graphFilterUtils";
@@ -186,6 +189,7 @@ import SelectAllBanner from "./SelectAllBanner";
 import { getSelectionCountState } from "./listTotalMetadata";
 import { spanSourceIdsFromPhysicalRowIds } from "./spanPhysicalIdentity";
 import { normalizeVoiceCallSavedFilters } from "./voiceCallFilterFields";
+import { serializeTraceFiltersForPersistence } from "./filter_persistence";
 import useProjectFilterField from "../UsersView/useProjectFilterField";
 import FilterChips from "./FilterChips";
 import { useDashboardFilterValues } from "src/hooks/useDashboards";
@@ -228,6 +232,7 @@ import {
 } from "src/api/project/saved-views";
 import { getDefaultDateRangeForMode } from "../dateRangeDefaults";
 import { useCursorAttributeInventory } from "./useCursorAttributeInventory";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
 
 const USER_DETAIL_TAB_TYPE = "user_detail";
 
@@ -240,6 +245,7 @@ import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 // Lazy load graph components — only loaded when viewMode changes
 const PrimaryGraph = lazy(() => import("./GraphSection/PrimaryGraph"));
 const AgentGraph = lazy(() => import("./GraphSection/AgentGraph"));
+const AgentPath = lazy(() => import("./GraphSection/AgentPath"));
 
 // Lazy load conditionally rendered components (modals, drawers)
 const CallLogsGrid = lazy(
@@ -633,6 +639,7 @@ const slotKeyFromColumnState = (columnState, fallbackSlotKey) => {
 
 const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const isUserMode = mode === "user";
+  const { currentWorkspaceId } = useWorkspace();
   const { role } = useAuthContext();
   const navigate = useNavigate();
   const [selectedGraph, setSelectedGraph] = useUrlState(
@@ -722,6 +729,18 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   // In user mode there is no project context — observeId is null and all
   // grids/queries omit project_id so the backend scopes by org.
   const observeId = isUserMode ? null : routeObserveId;
+  const {
+    primaryProjectId: primaryAgentGraphProjectId,
+    compareProjectId: compareAgentGraphProjectId,
+  } = useMemo(
+    () =>
+      resolveAgentGraphProjectScopes({
+        routeProjectId: observeId,
+        primaryFilters: extraFilters,
+        compareFilters: compareExtraFilters,
+      }),
+    [compareExtraFilters, extraFilters, observeId],
+  );
   const toolbarProjectId = useMemo(() => {
     if (observeId) return observeId;
     if (!isUserMode) return null;
@@ -1077,6 +1096,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const effectiveViewMode = canonicalObserveViewMode({
     viewMode,
     isSimulator: projectSource === PROJECT_SOURCE.SIMULATOR,
+    agentGraphEnabled: Boolean(primaryAgentGraphProjectId),
   });
 
   // Canonicalize the Zustand/URL state as well as the first rendered frame so
@@ -1291,23 +1311,82 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     [userScopeFilter, compareSpansValidatedFiltersRaw],
   );
 
-  // Agent Graph is the only topology view. Legacy Agent Path URLs are mapped
-  // to Agent Graph above because hierarchy does not prove execution order.
-  // Disabled entirely in user mode (no project context to scope to).
+  // Every visualization must describe the same selected row set as its grid.
+  // Keep Basic/Query filters, Display toggles, eval-only mode, and the active
+  // date window in one normalized payload for Agent Graph and Agent Path.
+  const primaryAgentGraphFilters = useMemo(
+    () =>
+      toBackendFilters(
+        combineGraphFilters({
+          filters:
+            selectedTab === "trace"
+              ? primaryTraceValidatedFilters
+              : primarySpanValidatedFilters,
+          extraFilters: [...userScopeFilter, ...extraFilters],
+          metricFilters,
+          dateFilter:
+            selectedTab === "trace"
+              ? primaryTraceDateFilter
+              : primarySpanDateFilter,
+          hasEvalFilter,
+        }),
+      ),
+    [
+      extraFilters,
+      hasEvalFilter,
+      metricFilters,
+      primarySpanDateFilter,
+      primarySpanValidatedFilters,
+      primaryTraceDateFilter,
+      primaryTraceValidatedFilters,
+      selectedTab,
+      userScopeFilter,
+    ],
+  );
+  const compareAgentGraphFilters = useMemo(
+    () =>
+      toBackendFilters(
+        combineGraphFilters({
+          filters:
+            selectedTab === "trace"
+              ? compareTraceValidatedFilters
+              : compareSpansValidatedFilters,
+          extraFilters: [...userScopeFilter, ...compareExtraFilters],
+          metricFilters,
+          dateFilter:
+            selectedTab === "trace"
+              ? compareTraceDateFilter
+              : compareSpansDateFilter,
+          hasEvalFilter,
+        }),
+      ),
+    [
+      compareExtraFilters,
+      compareSpansDateFilter,
+      compareSpansValidatedFilters,
+      compareTraceDateFilter,
+      compareTraceValidatedFilters,
+      hasEvalFilter,
+      metricFilters,
+      selectedTab,
+      userScopeFilter,
+    ],
+  );
+
+  // Agent Graph and Agent Path share one exact aggregate payload.
+  // Cross-project user detail has no single topology identity. A Project
+  // filter supplies that identity; until then the Display panel keeps this
+  // mode disabled instead of rendering a misleading empty graph.
   const {
     data: agentGraphData,
     isLoading: isAgentGraphLoading,
     isError: isAgentGraphError,
     pollingPaused: isAgentGraphPollingPaused,
-  } = useAgentGraph(
-    observeId,
-    selectedTab === "trace"
-      ? primaryTraceValidatedFilters
-      : primarySpanValidatedFilters,
-    {
-      enabled: !isUserMode && effectiveViewMode === "agentGraph",
-    },
-  );
+  } = useAgentGraph(primaryAgentGraphProjectId, primaryAgentGraphFilters, {
+    enabled:
+      Boolean(primaryAgentGraphProjectId) &&
+      (effectiveViewMode === "agentGraph" || effectiveViewMode === "agentPath"),
+  });
 
   // Compare agent graph data — only fetched in compare mode
   const {
@@ -1315,15 +1394,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     isLoading: isCompareAgentGraphLoading,
     isError: isCompareAgentGraphError,
     pollingPaused: isCompareAgentGraphPollingPaused,
-  } = useAgentGraph(
-    observeId,
-    selectedTab === "trace"
-      ? compareTraceValidatedFilters
-      : compareSpansValidatedFilters,
-    {
-      enabled: !isUserMode && showCompare && effectiveViewMode === "agentGraph",
-    },
-  );
+  } = useAgentGraph(compareAgentGraphProjectId, compareAgentGraphFilters, {
+    enabled:
+      Boolean(compareAgentGraphProjectId) &&
+      showCompare &&
+      (effectiveViewMode === "agentGraph" || effectiveViewMode === "agentPath"),
+  });
 
   const [customAttributeSearch, setCustomAttributeSearch] = useState("");
   const preservedCustomAttributeKeys = useMemo(
@@ -1337,10 +1413,14 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   );
   const { attributes, inventoryControlProps } = useCursorAttributeInventory({
     projectId: observeId,
+    workspaceScope: isUserMode,
+    workspaceScopeKey: currentWorkspaceId,
     discoveryMode: "eval_mapping",
     search: customAttributeSearch,
     preservedKeys: preservedCustomAttributeKeys,
-    enabled: Boolean(observeId),
+    enabled:
+      openCustomColumn &&
+      Boolean(observeId || (isUserMode && currentWorkspaceId)),
   });
 
   const handleAgentNodeClick = useCallback(
@@ -1559,7 +1639,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     // Keep this in sync with the TraceFilterPanel ValuePicker source so
     // applying a freshly-picked annotator can reuse the same cached options.
     source: "traces",
-    pageSize: 10,
+    pageSize: INTERACTIVE_TABLE_PAGE_SIZE,
     enabled: hasAnnotatorFilter,
   });
   const annotatorFilterLabelMap = useMemo(() => {
@@ -2563,27 +2643,23 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           : primarySpanDateFilter,
       ...(columnState ? { columnState } : {}),
     };
-    const mapFilters = (filters) =>
-      (filters || []).map((f) => ({
-        column_id: f.column_id,
-        filter_config: f.filter_config,
-      }));
     const config = {
       display: currentDisplay,
-      filters: mapFilters(
+      filters: serializeTraceFiltersForPersistence(
         selectedTab === "trace" ? primaryTraceFilters : primarySpanFilters,
       ),
-      extra_filters: extraFilters || [],
+      extra_filters: serializeTraceFiltersForPersistence(extraFilters),
     };
     if (showCompare) {
-      config.compare_filters = mapFilters(
+      config.compare_filters = serializeTraceFiltersForPersistence(
         selectedTab === "trace" ? compareTraceFilters : compareSpansFilters,
       );
       config.compare_date_filter =
         selectedTab === "trace"
           ? compareTraceDateFilter
           : compareSpansDateFilter;
-      config.compare_extra_filters = compareExtraFilters || [];
+      config.compare_extra_filters =
+        serializeTraceFiltersForPersistence(compareExtraFilters);
     }
     return config;
   }, [
@@ -3342,21 +3418,17 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               });
             } else {
               try {
-                const mapFilters = (filters) =>
-                  (filters || []).map((f) => ({
-                    column_id: f.column_id,
-                    filter_config: f.filter_config,
-                  }));
                 localStorage.setItem(
                   filtersStorageKey,
                   JSON.stringify({
                     tabType: selectedTab,
-                    filters: mapFilters(
+                    filters: serializeTraceFiltersForPersistence(
                       selectedTab === "trace"
                         ? primaryTraceFilters
                         : primarySpanFilters,
                     ),
-                    extra_filters: extraFilters || [],
+                    extra_filters:
+                      serializeTraceFiltersForPersistence(extraFilters),
                   }),
                 );
               } catch {
@@ -3413,22 +3485,17 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   });
                 } else {
                   try {
-                    const mapFilters = (filters) =>
-                      (filters || []).map((f) => ({
-                        column_id: f.column_id,
-                        filter_config: f.filter_config,
-                      }));
                     localStorage.setItem(
                       filtersStorageKey,
                       JSON.stringify({
                         tabType: selectedTab,
                         showCompare: true,
-                        filters: mapFilters(
+                        filters: serializeTraceFiltersForPersistence(
                           selectedTab === "trace"
                             ? primaryTraceFilters
                             : primarySpanFilters,
                         ),
-                        compare_filters: mapFilters(
+                        compare_filters: serializeTraceFiltersForPersistence(
                           selectedTab === "trace"
                             ? compareTraceFilters
                             : compareSpansFilters,
@@ -3437,8 +3504,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                           selectedTab === "trace"
                             ? compareTraceDateFilter
                             : compareSpansDateFilter,
-                        extra_filters: extraFilters || [],
-                        compare_extra_filters: compareExtraFilters || [],
+                        extra_filters:
+                          serializeTraceFiltersForPersistence(extraFilters),
+                        compare_extra_filters:
+                          serializeTraceFiltersForPersistence(
+                            compareExtraFilters,
+                          ),
                       }),
                     );
                   } catch {
@@ -3498,6 +3569,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     : primarySpanValidatedFilters
                 }
                 extraFilters={extraFilters}
+                metricFilters={metricFilters}
                 dateFilter={
                   selectedTab === "trace"
                     ? primaryTraceDateFilter
@@ -3533,6 +3605,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       : compareSpansValidatedFilters
                   }
                   extraFilters={compareExtraFilters}
+                  metricFilters={metricFilters}
                   dateFilter={
                     selectedTab === "trace"
                       ? compareTraceDateFilter
@@ -3650,6 +3723,86 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       onNodeClick={handleAgentNodeClick}
                     />
                   </Box>
+                </Box>
+              )}
+            </>
+          )}
+
+          {/* Agent Path — path-style flow over exact recorded topology */}
+          {effectiveViewMode === "agentPath" && (
+            <>
+              <Box>
+                {showCompare && (
+                  <Box sx={{ mx: 2, mt: 1 }}>
+                    <CompareGraphHeader
+                      compareType="primary"
+                      dateFilter={
+                        selectedTab === "trace"
+                          ? primaryTraceDateFilter
+                          : primarySpanDateFilter
+                      }
+                      setDateFilter={
+                        selectedTab === "trace"
+                          ? setPrimaryTraceDateFilter
+                          : setPrimarySpanDateFilter
+                      }
+                      onFilterToggle={(e) =>
+                        handleCompareFilterToggle(e, "primary")
+                      }
+                      hasActiveFilter={extraFilters?.length > 0}
+                      extraFilters={extraFilters}
+                      fieldLabelMap={filterChipLabelMap}
+                      onRemoveFilter={(idx) =>
+                        setExtraFilters((prev) =>
+                          prev.filter((_, i) => i !== idx),
+                        )
+                      }
+                      onClearFilters={() => setExtraFilters([])}
+                    />
+                  </Box>
+                )}
+                <AgentPath
+                  data={agentGraphData}
+                  isLoading={isAgentGraphLoading}
+                  isError={isAgentGraphError}
+                  onNodeClick={handleAgentNodeClick}
+                />
+              </Box>
+              {showCompare && (
+                <Box>
+                  <Box sx={{ mx: 2, mt: 1 }}>
+                    <CompareGraphHeader
+                      compareType="compare"
+                      dateFilter={
+                        selectedTab === "trace"
+                          ? compareTraceDateFilter
+                          : compareSpansDateFilter
+                      }
+                      setDateFilter={
+                        selectedTab === "trace"
+                          ? setCompareTraceDateFilter
+                          : setCompareSpansDateFilter
+                      }
+                      onFilterToggle={(e) =>
+                        handleCompareFilterToggle(e, "compare")
+                      }
+                      hasActiveFilter={compareExtraFilters?.length > 0}
+                      extraFilters={compareExtraFilters}
+                      fieldLabelMap={filterChipLabelMap}
+                      onRemoveFilter={(idx) =>
+                        setCompareExtraFilters((prev) =>
+                          prev.filter((_, i) => i !== idx),
+                        )
+                      }
+                      onClearFilters={() => setCompareExtraFilters([])}
+                    />
+                  </Box>
+                  <AgentPath
+                    data={compareAgentGraphData}
+                    isLoading={isCompareAgentGraphLoading}
+                    isError={isCompareAgentGraphError}
+                    onNodeClick={handleAgentNodeClick}
+                  />
                 </Box>
               )}
             </>
@@ -3809,6 +3962,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               onResetView={handleResetView}
               onSetDefaultView={handleSetDefaultView}
               projectId={toolbarProjectId}
+              allowWorkspaceScope={isUserMode}
+              agentGraphEnabled={Boolean(primaryAgentGraphProjectId)}
               bulkActions={(() => {
                 if (projectSource === PROJECT_SOURCE.SIMULATOR) {
                   return [
@@ -4026,13 +4181,16 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   !activeFilterMode &&
                   actionId === "annotation-queue"
                 ) {
-                  // Header select-all is on, but the user hasn't opted in
-                  // via the banner yet. Defer the action until they do.
-                  enqueueSnackbar(
-                    "Use the 'Select all matching your filter' banner to add the full set, or deselect 'all' and pick specific rows.",
-                    { variant: "info" },
-                  );
-                  return;
+                  // Choosing the queue action is itself an explicit request
+                  // to operate on the header's inverted select-all set. Move
+                  // directly to the server-side filter contract instead of
+                  // requiring a second banner click (and appearing to do
+                  // nothing). `toggledNodes` remains the exclusion list.
+                  if (selectedTab === "trace") {
+                    setFilterSelectionMode(true);
+                  } else {
+                    setSpanFilterSelectionMode(true);
+                  }
                 }
                 switch (actionId) {
                   case "dataset":

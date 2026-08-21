@@ -92,6 +92,24 @@ describe("annotation queue API filter converters", () => {
     });
   });
 
+  it("preserves annotation registry identity through the edit round-trip", () => {
+    const saved = {
+      column_id: "quality_label",
+      property_id: "annotation:quality-label-id",
+      display_name: "Quality Label",
+      filter_config: {
+        filter_type: "categorical",
+        filter_op: "in",
+        filter_value: ["Passed"],
+        col_type: "ANNOTATION",
+      },
+    };
+
+    const panelFilter = apiFilterToPanel(saved);
+    expect(panelFilter.registryId).toBe("annotation:quality-label-id");
+    expect(panelFilterToApi(panelFilter)).toEqual(saved);
+  });
+
   it("hydrates boolean filters into the scalar value shape the panel select expects", () => {
     const panelFilter = apiFilterToPanel({
       column_id: "persona.multilingual",

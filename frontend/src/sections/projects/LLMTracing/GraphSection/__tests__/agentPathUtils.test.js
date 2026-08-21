@@ -45,7 +45,7 @@ describe("computeSankeyLayout Agent Path contract", () => {
     ]);
   });
 
-  it("does not fall back to hierarchy when an exact path is explicitly empty", () => {
+  it("renders exact hierarchy when the optional path projection is empty", () => {
     const layout = computeSankeyLayout({
       nodes,
       edges: [
@@ -54,11 +54,17 @@ describe("computeSankeyLayout Agent Path contract", () => {
       path_edges: [],
     });
 
-    expect(layout.flows).toEqual([]);
+    expect(layout.flows).toEqual([
+      expect.objectContaining({
+        source: "agent:root",
+        target: "tool:lookup",
+        count: 99,
+      }),
+    ]);
     expect(layout.columns.flatMap((column) => column.nodes)).toHaveLength(3);
   });
 
-  it("rejects a legacy or missing path projection", () => {
+  it("rejects a payload with neither path nor hierarchy edges", () => {
     expect(() =>
       computeSankeyLayout({
         nodes,
@@ -66,7 +72,7 @@ describe("computeSankeyLayout Agent Path contract", () => {
           { source: "agent:root", target: "llm:answer", transitionCount: 2 },
         ],
       }),
-    ).toThrow("missing canonical path_edges");
+    ).toThrow("missing exact topology edges");
   });
 
   it("rejects a path edge that references an unknown node", () => {

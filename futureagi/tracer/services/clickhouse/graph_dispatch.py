@@ -9,6 +9,8 @@ from time import monotonic
 from typing import Any
 from uuid import UUID
 
+from django.conf import settings
+
 from model_hub.models.choices import AnnotationTypeChoices
 from model_hub.models.develop_annotations import AnnotationsLabels
 from tracer.services.annotation_label_source import (
@@ -34,12 +36,12 @@ from tracer.services.exact_aggregation_cache import (
     read_or_schedule_exact_snapshot,
 )
 
-GRAPH_WALL_DEADLINE_MS = 30_000
-GRAPH_QUERY_TIMEOUT_MS = 30_000
-GRAPH_INTERACTIVE_QUERY_TIMEOUT_MS = 9_500
-GRAPH_DECORATION_TIMEOUT_MS = 30_000
-GRAPH_EVENT_LIMIT = 2_000
-GRAPH_RESULT_BYTES = 32 * 1024 * 1024
+GRAPH_WALL_DEADLINE_MS = settings.GRAPH_BACKGROUND_WALL_MS
+GRAPH_QUERY_TIMEOUT_MS = settings.GRAPH_BACKGROUND_WALL_MS
+GRAPH_INTERACTIVE_QUERY_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+GRAPH_DECORATION_TIMEOUT_MS = settings.GRAPH_BACKGROUND_WALL_MS
+GRAPH_EVENT_LIMIT = settings.GRAPH_EVENT_LIMIT
+GRAPH_RESULT_BYTES = settings.DASHBOARD_ROLLUP_MAX_RESULT_BYTES
 # Part of the cache identity, not a database schema version. Incrementing this
 # prevents a rolling deploy from serving a 30-day cached payload produced by
 # the retired hierarchy-as-path projection.
@@ -47,7 +49,7 @@ AGENT_GRAPH_PAYLOAD_VERSION = 5
 # A short-window selector may prove as many as 4,096 trace matches. Decoration
 # fans each trace set into child-span reads, so keep the same finite 40-trace
 # envelope used by the long-window sampler before any decoration query runs.
-GRAPH_TRACE_DECORATION_CANDIDATE_LIMIT = 40
+GRAPH_TRACE_DECORATION_CANDIDATE_LIMIT = settings.GRAPH_TRACE_DECORATION_CANDIDATE_LIMIT
 # Candidate discovery is already capped at forty trace IDs and 4,097 returned
 # physical identities. Keep it in one bounded statement to avoid rescanning the
 # same project/window once per five traces.
@@ -55,7 +57,7 @@ GRAPH_TRACE_ENTITY_BATCH_SIZE = GRAPH_TRACE_DECORATION_CANDIDATE_LIMIT
 # A 1,024-identity replay remains well below the 4,096 global sentinel while
 # removing the extra metric statement observed for the twelve-trace graph
 # sample. Additive sufficient statistics preserve exact cross-batch merges.
-GRAPH_SPAN_METRIC_BATCH_SIZE = 1_024
+GRAPH_SPAN_METRIC_BATCH_SIZE = settings.GRAPH_SPAN_METRIC_BATCH_SIZE
 _TRACE_ROLLUP_RESULT_COLUMNS = frozenset(
     {
         "time_bucket",
@@ -72,10 +74,10 @@ _GRAPH_BASE_READ_SETTINGS = {
     # The retained hourly rollup is already row-reduced. Four workers keep the
     # interactive scan parallel without leaving concurrency unbounded on the
     # largest Coletia/Whatfix projects.
-    "max_threads": 4,
-    "max_block_size": 8192,
-    "max_memory_usage": 36 * 1024 * 1024 * 1024,
-    "max_bytes_to_read": 36 * 1024 * 1024 * 1024,
+    "max_threads": settings.DASHBOARD_TRACE_READ_MAX_THREADS,
+    "max_block_size": settings.OBSERVABILITY_LIST_MAX_BLOCK_SIZE,
+    "max_memory_usage": settings.OBSERVABILITY_LIST_MAX_MEMORY_BYTES,
+    "max_bytes_to_read": settings.OBSERVABILITY_LIST_MAX_BYTES,
     "read_overflow_mode": "throw",
     "result_overflow_mode": "throw",
     "timeout_overflow_mode": "throw",
@@ -1196,12 +1198,18 @@ def fetch_user_system_metric_graph_ch(
     filters: list[dict[str, Any]],
     interval: str,
     metric_id: str,
+    timeout_ms: int = GRAPH_QUERY_TIMEOUT_MS,
     refresh: bool = False,
     organization_id: str | None = None,
     workspace_id: str | None = None,
 ) -> dict[str, Any]:
     """Read one complete exact user-grain graph snapshot."""
 
+    # Exact graph computation is out of band; the synchronous cache/dispatch
+    # boundary already has finite Redis and workflow-transport timeouts. Accept
+    # the caller's remaining wall for a uniform graph-action interface, while
+    # the view's final deadline check prevents late cache results from publishing.
+    del timeout_ms
     project_id = _validated_project_id(project_id)
     filters = list(filters or [])
     identity = {

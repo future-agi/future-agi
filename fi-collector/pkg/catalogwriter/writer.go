@@ -276,7 +276,12 @@ func (e *SubmissionGapError) Error() string {
 func (e *SubmissionGapError) Unwrap() error { return e.Err }
 
 type keyRow struct {
-	ProjectID     string `json:"project_id"`
+	ProjectID string `json:"project_id"`
+	// SourceKind is omitted only when decoding/replaying a pre-projection-v2
+	// durable spool entry. New staging always writes it explicitly. Keeping the
+	// legacy JSON shape byte-identical lets spool v2 checksum and encoded-byte
+	// validation remain valid across a rolling upgrade.
+	SourceKind    string `json:"source_kind,omitempty"`
 	AttributeKey  string `json:"attribute_key"`
 	KeyFolded     string `json:"key_folded"`
 	AttributeType string `json:"attribute_type"`
@@ -287,6 +292,7 @@ type keyRow struct {
 
 type valueRow struct {
 	ProjectID        string `json:"project_id"`
+	SourceKind       string `json:"source_kind,omitempty"`
 	AttributeKey     string `json:"attribute_key"`
 	AttributeType    string `json:"attribute_type"`
 	ValueFingerprint string `json:"value_fingerprint"`
@@ -298,13 +304,13 @@ type valueRow struct {
 }
 
 type keyIdentity struct {
-	projectID, attributeKey, attributeType string
-	epoch                                  uint16
+	projectID, sourceKind, attributeKey, attributeType string
+	epoch                                              uint16
 }
 
 type valueIdentity struct {
-	projectID, attributeKey, attributeType, fingerprint string
-	epoch                                               uint16
+	projectID, sourceKind, attributeKey, attributeType, fingerprint string
+	epoch                                                           uint16
 }
 
 // StageCanonicalSpans synchronously extracts only the four typed attribute
@@ -358,6 +364,14 @@ func (w *Writer) StageCanonicalSpans(rows []map[string]any) (Job, StageReport) {
 			gaps["invalid_canonical_attributes"] = struct{}{}
 			continue
 		}
+		systemAttrs, systemProjectionComplete, ok := extractCanonicalSystemAttributes(canonical)
+		if !ok {
+			report.RejectedSpans++
+			progress.metadata.RejectedSpans++
+			progress.gaps["invalid_canonical_system_attributes"] = struct{}{}
+			gaps["invalid_canonical_system_attributes"] = struct{}{}
+			continue
+		}
 		report.AcceptedSpans++
 		progress.metadata.AcceptedSpans++
 		built, err := attributecatalog.BuildRows(scope, attrs, w.cfg.BuildLimits)
@@ -372,6 +386,35 @@ func (w *Writer) StageCanonicalSpans(rows []map[string]any) (Job, StageReport) {
 			gaps["builder_error"] = struct{}{}
 			continue
 		}
+		if len(systemAttrs.Strings) != 0 {
+			systemBuilt, systemErr := attributecatalog.BuildRowsForSource(
+				scope, systemAttrs, w.cfg.BuildLimits,
+				attributecatalog.SourceKindSystemAttribute,
+			)
+			if systemErr != nil {
+				report.RejectedSpans++
+				report.AcceptedSpans--
+				progress.metadata.RejectedSpans++
+				progress.metadata.AcceptedSpans--
+				progress.gaps["system_builder_error"] = struct{}{}
+				gaps["system_builder_error"] = struct{}{}
+				continue
+			}
+			built.KeyRows = append(built.KeyRows, systemBuilt.KeyRows...)
+			built.ValueRows = append(built.ValueRows, systemBuilt.ValueRows...)
+			if !systemBuilt.Metadata.Complete {
+				built.Metadata.Complete = false
+				built.Metadata.GapReasons = sortedUnion(
+					built.Metadata.GapReasons, systemBuilt.Metadata.GapReasons,
+				)
+			}
+		}
+		if !systemProjectionComplete {
+			built.Metadata.Complete = false
+			built.Metadata.GapReasons = sortedUnion(
+				built.Metadata.GapReasons, []string{"system_value_projection"},
+			)
+		}
 		if !built.Metadata.Complete {
 			report.IncompleteSpans++
 			progress.metadata.IncompleteSpans++
@@ -384,7 +427,7 @@ func (w *Writer) StageCanonicalSpans(rows []map[string]any) (Job, StageReport) {
 		for _, source := range built.KeyRows {
 			compact := compactKeyRow(source)
 			identity := keyIdentity{
-				projectID: compact.ProjectID, attributeKey: compact.AttributeKey,
+				projectID: compact.ProjectID, sourceKind: compact.SourceKind, attributeKey: compact.AttributeKey,
 				attributeType: compact.AttributeType, epoch: compact.CatalogEpoch,
 			}
 			if index, duplicate := keys[identity]; duplicate {
@@ -411,7 +454,7 @@ func (w *Writer) StageCanonicalSpans(rows []map[string]any) (Job, StageReport) {
 		for _, source := range built.ValueRows {
 			compact := compactValueRow(source)
 			key := keyIdentity{
-				projectID: compact.ProjectID, attributeKey: compact.AttributeKey,
+				projectID: compact.ProjectID, sourceKind: compact.SourceKind, attributeKey: compact.AttributeKey,
 				attributeType: compact.AttributeType, epoch: compact.CatalogEpoch,
 			}
 			if _, keyRetained := keys[key]; !keyRetained {
@@ -426,7 +469,7 @@ func (w *Writer) StageCanonicalSpans(rows []map[string]any) (Job, StageReport) {
 				continue
 			}
 			identity := valueIdentity{
-				projectID: compact.ProjectID, attributeKey: compact.AttributeKey,
+				projectID: compact.ProjectID, sourceKind: compact.SourceKind, attributeKey: compact.AttributeKey,
 				attributeType: compact.AttributeType,
 				fingerprint:   compact.ValueFingerprint, epoch: compact.CatalogEpoch,
 			}
@@ -636,6 +679,37 @@ func extractCanonicalAttributes(row map[string]any) (attributecatalog.SpanAttrib
 	}, true
 }
 
+// extractCanonicalSystemAttributes projects only hot columns whose public
+// filter semantics are byte-identical to the canonical span row. Model is the
+// first projection-v2 field. Derived voice and dictionary-backed fields are
+// deliberately excluded until their final public values can be injected.
+const catalogSystemStringSuggestionMaxUTF8Bytes = 16 << 10
+
+const catalogSystemNilUUIDValue = "00000000-0000-0000-0000-000000000000"
+
+func extractCanonicalSystemAttributes(
+	row map[string]any,
+) (attributecatalog.SpanAttributeMaps, bool, bool) {
+	raw, present := row["model"]
+	if !present || raw == nil {
+		return attributecatalog.SpanAttributeMaps{}, true, true
+	}
+	model, ok := raw.(string)
+	if !ok {
+		return attributecatalog.SpanAttributeMaps{}, false, false
+	}
+	if model == "" || model == catalogSystemNilUUIDValue {
+		return attributecatalog.SpanAttributeMaps{}, true, true
+	}
+	// Go's len(string) and ClickHouse length(String) both count UTF-8 bytes.
+	// Apply the same public-suggestion cap in live staging and backfill so an
+	// oversized Model cannot be present only on one ingestion path.
+	if len(model) > catalogSystemStringSuggestionMaxUTF8Bytes {
+		return attributecatalog.SpanAttributeMaps{}, false, true
+	}
+	return attributecatalog.SpanAttributeMaps{Strings: map[string]string{"model": model}}, true, true
+}
+
 // typedMap treats a missing or explicit nil field as an empty typed map. A
 // present map with the wrong canonical Go type is rejected rather than coerced.
 func typedMap[T any](row map[string]any, key string) (map[string]T, bool) {
@@ -668,8 +742,9 @@ func parseCanonicalTime(raw any) (time.Time, bool) {
 func compactKeyRow(source attributecatalog.KeyRow) keyRow {
 	seen := source.FirstSeen.UTC().Format(dateTime64Layout)
 	return keyRow{
-		ProjectID: strings.Clone(source.ProjectID), AttributeKey: strings.Clone(source.AttributeKey),
-		KeyFolded: strings.Clone(source.KeyFolded), AttributeType: strings.Clone(source.AttributeType),
+		ProjectID: strings.Clone(source.ProjectID), SourceKind: strings.Clone(source.SourceKind),
+		AttributeKey: strings.Clone(source.AttributeKey),
+		KeyFolded:    strings.Clone(source.KeyFolded), AttributeType: strings.Clone(source.AttributeType),
 		FirstSeen: seen, LastSeen: seen, CatalogEpoch: source.CatalogEpoch,
 	}
 }
@@ -677,7 +752,8 @@ func compactKeyRow(source attributecatalog.KeyRow) keyRow {
 func compactValueRow(source attributecatalog.ValueRow) valueRow {
 	seen := source.FirstSeen.UTC().Format(dateTime64Layout)
 	return valueRow{
-		ProjectID: strings.Clone(source.ProjectID), AttributeKey: strings.Clone(source.AttributeKey),
+		ProjectID: strings.Clone(source.ProjectID), SourceKind: strings.Clone(source.SourceKind),
+		AttributeKey:     strings.Clone(source.AttributeKey),
 		AttributeType:    strings.Clone(source.AttributeType),
 		ValueFingerprint: strings.Clone(source.ValueFingerprint), ValueJSON: strings.Clone(source.ValueJSON),
 		ValueSearchText: strings.Clone(source.ValueSearchText),
@@ -709,6 +785,9 @@ func lessKeyRow(left, right keyRow) bool {
 	if left.CatalogEpoch != right.CatalogEpoch {
 		return left.CatalogEpoch < right.CatalogEpoch
 	}
+	if left.SourceKind != right.SourceKind {
+		return left.SourceKind < right.SourceKind
+	}
 	if left.KeyFolded != right.KeyFolded {
 		return left.KeyFolded < right.KeyFolded
 	}
@@ -724,6 +803,9 @@ func lessValueRow(left, right valueRow) bool {
 	}
 	if left.CatalogEpoch != right.CatalogEpoch {
 		return left.CatalogEpoch < right.CatalogEpoch
+	}
+	if left.SourceKind != right.SourceKind {
+		return left.SourceKind < right.SourceKind
 	}
 	if left.AttributeKey != right.AttributeKey {
 		return left.AttributeKey < right.AttributeKey
@@ -744,6 +826,17 @@ func sortedSet(values map[string]struct{}) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func sortedUnion(left, right []string) []string {
+	values := make(map[string]struct{}, len(left)+len(right))
+	for _, value := range left {
+		values[value] = struct{}{}
+	}
+	for _, value := range right {
+		values[value] = struct{}{}
+	}
+	return sortedSet(values)
 }
 
 // Submit durably spools a compact job and returns without making a network
@@ -1003,20 +1096,28 @@ func valueChunk(rows []valueRow, start, maxRows, maxBytes int) (int, []map[strin
 }
 
 func keyRowMap(row keyRow) map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"project_id": row.ProjectID, "attribute_key": row.AttributeKey,
 		"key_folded": row.KeyFolded, "attribute_type": row.AttributeType,
 		"first_seen": row.FirstSeen, "last_seen": row.LastSeen, "catalog_epoch": row.CatalogEpoch,
 	}
+	if row.SourceKind != "" {
+		out["source_kind"] = row.SourceKind
+	}
+	return out
 }
 
 func valueRowMap(row valueRow) map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"project_id": row.ProjectID, "attribute_key": row.AttributeKey,
 		"attribute_type": row.AttributeType, "value_fingerprint": row.ValueFingerprint,
 		"value_json": row.ValueJSON, "value_search_text": row.ValueSearchText,
 		"first_seen": row.FirstSeen, "last_seen": row.LastSeen, "catalog_epoch": row.CatalogEpoch,
 	}
+	if row.SourceKind != "" {
+		out["source_kind"] = row.SourceKind
+	}
+	return out
 }
 
 func (w *Writer) validateJob(job Job) error {
@@ -1031,6 +1132,11 @@ func (w *Writer) validateJob(job Job) error {
 		if row.CatalogEpoch != job.metadata.CatalogEpoch {
 			return errors.New("key row/job metadata epoch mismatch")
 		}
+		if row.SourceKind != "" &&
+			row.SourceKind != attributecatalog.SourceKindCustomAttribute &&
+			row.SourceKind != attributecatalog.SourceKindSystemAttribute {
+			return errors.New("key row has unsupported source kind")
+		}
 		size, err := wireSize(row)
 		if err != nil {
 			return err
@@ -1043,6 +1149,11 @@ func (w *Writer) validateJob(job Job) error {
 	for _, row := range job.valueRows {
 		if row.CatalogEpoch != job.metadata.CatalogEpoch {
 			return errors.New("value row/job metadata epoch mismatch")
+		}
+		if row.SourceKind != "" &&
+			row.SourceKind != attributecatalog.SourceKindCustomAttribute &&
+			row.SourceKind != attributecatalog.SourceKindSystemAttribute {
+			return errors.New("value row has unsupported source kind")
 		}
 		size, err := wireSize(row)
 		if err != nil {

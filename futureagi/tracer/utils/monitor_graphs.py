@@ -1,9 +1,12 @@
 import math
 from collections import deque
+from contextlib import contextmanager, nullcontext
 from datetime import datetime as dt_datetime
 from datetime import timedelta
 
 import structlog
+from django.conf import settings
+from django.db import DatabaseError, connection, transaction
 from django.db.models import (
     Avg,
     Case,
@@ -22,7 +25,6 @@ from django.db.models import (
 from django.db.models.functions import Extract
 from django.utils import timezone
 
-logger = structlog.get_logger(__name__)
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
 from tracer.models.monitor import (
     ComparisonOperatorChoices,
@@ -30,14 +32,83 @@ from tracer.models.monitor import (
     ThresholdCalculationMethodChoices,
 )
 from tracer.models.observation_span import EvalLogger, ObservationSpan
-from tracer.services.clickhouse.query_builders.monitor_metrics import (
-    MonitorMetricsQueryBuilder,
+from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.clickhouse.read_budget import (
+    ReadDeadline,
+    ReadDeadlineExceeded,
+    is_read_budget_error,
 )
-from tracer.services.clickhouse.query_service import AnalyticsQueryService, QueryType
 from tracer.utils.eval_tasks import parsing_monitor_filters
 
+logger = structlog.get_logger(__name__)
 
-def _build_monitor_graph_ch_builder(monitor):
+MONITOR_GRAPH_WALL_MS = settings.INTERACTIVE_READ_DEFAULT_WALL_MS
+MONITOR_GRAPH_CH_TIMEOUT_CAP_MS = settings.MONITOR_GRAPH_CH_TIMEOUT_CAP_MS
+MONITOR_GRAPH_METADATA_PG_TIMEOUT_CAP_MS = (
+    settings.MONITOR_GRAPH_METADATA_PG_TIMEOUT_CAP_MS
+)
+
+
+class MonitorGraphUnavailable(RuntimeError):
+    """A monitor graph could not be read exactly inside its request wall."""
+
+
+def start_monitor_graph_deadline():
+    """Create the single wall clock shared by one monitor-graph request."""
+
+    return ReadDeadline.start(MONITOR_GRAPH_WALL_MS)
+
+
+def _execute_monitor_graph_pg_query_with_deadline(
+    deadline, timeout_cap_ms, execute, sql, params, many, context
+):
+    """Shrink PostgreSQL's per-statement timeout against the request wall."""
+
+    timeout_ms = deadline.remaining_ms(timeout_cap_ms, floor_ms=1)
+    context["cursor"].cursor.execute(
+        "SELECT set_config('statement_timeout', %s, true)",
+        (str(timeout_ms),),
+    )
+    result = execute(sql, params, many, context)
+    deadline.remaining_ms(floor_ms=1)
+    return result
+
+
+@contextmanager
+def monitor_graph_postgres_budget(deadline, timeout_cap_ms=None):
+    """Bound every ORM statement by the remaining shared graph deadline."""
+
+    def execute_with_remaining_timeout(execute, sql, params, many, context):
+        return _execute_monitor_graph_pg_query_with_deadline(
+            deadline,
+            timeout_cap_ms,
+            execute,
+            sql,
+            params,
+            many,
+            context,
+        )
+
+    try:
+        transaction_context = (
+            transaction.atomic() if connection.vendor == "postgresql" else nullcontext()
+        )
+        with transaction_context:
+            if connection.vendor == "postgresql":
+                with connection.execute_wrapper(execute_with_remaining_timeout):
+                    yield
+            else:
+                yield
+        deadline.remaining_ms(floor_ms=1)
+    except MonitorGraphUnavailable:
+        raise
+    except (DatabaseError, ReadDeadlineExceeded) as exc:
+        raise MonitorGraphUnavailable(
+            "Monitor graph PostgreSQL read exceeded its request budget"
+        ) from exc
+
+
+def _build_monitor_graph_ch_builder(monitor, deadline):
     """Construct a MonitorMetricsQueryBuilder from a monitor instance."""
     eval_config_id = None
     eval_output_type = None
@@ -46,7 +117,13 @@ def _build_monitor_graph_ch_builder(monitor):
         and monitor.metric
     ):
         try:
-            custom_eval_config = CustomEvalConfig.objects.get(id=monitor.metric)
+            with monitor_graph_postgres_budget(
+                deadline,
+                timeout_cap_ms=MONITOR_GRAPH_METADATA_PG_TIMEOUT_CAP_MS,
+            ):
+                custom_eval_config = CustomEvalConfig.objects.select_related(
+                    "eval_template"
+                ).get(id=monitor.metric)
             eval_output_type = custom_eval_config.eval_template.config.get("output")
             eval_config_id = str(monitor.metric)
         except CustomEvalConfig.DoesNotExist:
@@ -108,16 +185,33 @@ def _get_frequency_seconds(monitor):
     return frequency_seconds
 
 
-def get_graph_data(monitor, time_window_start=None, time_window_end=None):
+def get_graph_data(
+    monitor, time_window_start=None, time_window_end=None, *, deadline=None
+):
     """
     Generates time-series data for a given monitor using a single, efficient
     database query.
     """
+    deadline = deadline or start_monitor_graph_deadline()
+    try:
+        deadline.remaining_ms(floor_ms=1)
+    except ReadDeadlineExceeded as exc:
+        raise MonitorGraphUnavailable(
+            "Monitor graph request deadline was exhausted"
+        ) from exc
     if monitor.threshold_type == ThresholdCalculationMethodChoices.STATIC:
-        return get_static_metric_graph_data(monitor, time_window_start, time_window_end)
+        return get_static_metric_graph_data(
+            monitor,
+            time_window_start,
+            time_window_end,
+            deadline=deadline,
+        )
     elif monitor.threshold_type == ThresholdCalculationMethodChoices.PERCENTAGE_CHANGE:
         return get_percentage_change_metric_graph_data(
-            monitor, time_window_start, time_window_end
+            monitor,
+            time_window_start,
+            time_window_end,
+            deadline=deadline,
         )
     # elif monitor.threshold_type == ThresholdCalculationMethodChoices.ANOMALY_DETECTION:
     #     return get_anomaly_detection_metric_graph_data(monitor, time_window_start, time_window_end)
@@ -125,7 +219,9 @@ def get_graph_data(monitor, time_window_start=None, time_window_end=None):
         raise ValueError(f"Unsupported threshold type: {monitor.threshold_type}")
 
 
-def get_static_metric_graph_data(monitor, time_window_start=None, time_window_end=None):
+def get_static_metric_graph_data(
+    monitor, time_window_start=None, time_window_end=None, *, deadline=None
+):
     """
     Generates time-series data for a given monitor using a single, efficient
     database query.
@@ -138,6 +234,8 @@ def get_static_metric_graph_data(monitor, time_window_start=None, time_window_en
         time_window_start: Optional start time for the data range. If None, gets all available data.
         time_window_end: Optional end time for the data range. If None, uses current time.
     """
+    deadline = deadline or start_monitor_graph_deadline()
+
     # --- ClickHouse dispatch ---
     analytics = AnalyticsQueryService()
     try:
@@ -148,23 +246,62 @@ def get_static_metric_graph_data(monitor, time_window_start=None, time_window_en
         effective_end = time_window_end or timezone.now()
         effective_start = time_window_start or (effective_end - timedelta(days=7))
 
-        builder = _build_monitor_graph_ch_builder(monitor)
+        builder = _build_monitor_graph_ch_builder(monitor, deadline)
         query, params = builder.build_time_series_query(
             monitor.metric_type,
             effective_start,
             effective_end,
             frequency_seconds,
         )
-        result = analytics.execute_ch_query(query, params, timeout_ms=10000)
-        return _format_ch_time_series(result.data)
-    except Exception as e:
+        result = analytics.execute_ch_query(
+            query,
+            params,
+            timeout_ms=deadline.remaining_ms(
+                MONITOR_GRAPH_CH_TIMEOUT_CAP_MS, floor_ms=1
+            ),
+        )
+        graph_data = _format_ch_time_series(result.data)
+        deadline.remaining_ms(floor_ms=1)
+        return graph_data
+    except MonitorGraphUnavailable:
+        raise
+    except Exception as exc:
+        if is_read_budget_error(exc):
+            raise MonitorGraphUnavailable(
+                "Monitor graph ClickHouse read exceeded its request budget"
+            ) from exc
+        try:
+            deadline.remaining_ms(floor_ms=1)
+        except ReadDeadlineExceeded as deadline_exc:
+            raise MonitorGraphUnavailable(
+                "Monitor graph request deadline was exhausted"
+            ) from deadline_exc
         logger.warning(
             "CH static graph data failed, falling back to PG",
-            error=str(e),
+            error=str(exc),
             monitor_id=str(monitor.id),
         )
 
-    # --- PostgreSQL fallback ---
+    try:
+        with monitor_graph_postgres_budget(deadline):
+            result = _get_static_metric_graph_data_pg(
+                monitor,
+                time_window_start,
+                time_window_end,
+            )
+        return result
+    except MonitorGraphUnavailable:
+        raise
+    except Exception as exc:
+        logger.error("Error generating graph data", error=str(exc), exc_info=True)
+        raise
+
+
+def _get_static_metric_graph_data_pg(
+    monitor, time_window_start=None, time_window_end=None
+):
+    """PostgreSQL fallback for non-timeout ClickHouse failures."""
+
     # CH25-TODO(blocked-on-reader-extension): the CH primary branch above
     # uses MonitorMetricsQueryBuilder.build_time_series_query which fully
     # supports span_attributes_filters (via FilterEngine v2),
@@ -176,74 +313,67 @@ def get_static_metric_graph_data(monitor, time_window_start=None, time_window_en
     # columns this graph path needs. Fallback intentionally left as ORM
     # for resilience; remove only when time_bucket_aggregate_with_filters
     # + group_by_*_window helpers exist on CHSpanReader.
-    try:
-        metric_type = monitor.metric_type
+    metric_type = monitor.metric_type
 
-        frequency_seconds = _get_frequency_seconds(monitor)
+    frequency_seconds = _get_frequency_seconds(monitor)
 
-        if not frequency_seconds:
-            logger.warning(
-                f"Monitor {monitor.id} has no alert_frequency. Cannot generate graph."
-            )
-            return []
-
-        # Handle evaluation metrics separately as they use a different model
-        if metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS:
-            return _get_eval_metric_graph_data(
-                monitor, time_window_start, time_window_end, frequency_seconds
-            )
-
-        # Handle group-based error-free rate metrics separately
-        if metric_type in [
-            MonitorMetricTypeChoices.ERROR_FREE_SESSION_RATES,
-            MonitorMetricTypeChoices.SERVICE_PROVIDER_ERROR_RATES,
-        ]:
-            return _get_group_error_free_rate_data(
-                monitor, time_window_start, time_window_end, frequency_seconds
-            )
-
-        filters = parsing_monitor_filters(monitor.filters)
-
-        base_queryset = ObservationSpan.objects.filter(project=monitor.project)
-
-        base_queryset = _apply_time_window_filter(
-            base_queryset, time_window_start, time_window_end
+    if not frequency_seconds:
+        logger.warning(
+            f"Monitor {monitor.id} has no alert_frequency. Cannot generate graph."
         )
-        base_queryset = base_queryset.filter(filters)
-
-        bucket_annotation = ToTimestamp(F("epoch") - (F("epoch") % frequency_seconds))
-        queryset = base_queryset.annotate(
-            epoch=Extract("created_at", "epoch")
-        ).annotate(timestamp=bucket_annotation)
-
-        # Get the correct aggregation expression for the metric type
-        aggregation, queryset = _get_aggregation_expression(metric_type, queryset)
-
-        if aggregation is None:
-            logger.warning(f"Graphing for metric type {metric_type} is not supported.")
-            return []
-
-        # Group by the calculated timestamp bucket and apply the aggregation
-        graph_queryset = (
-            queryset.values("timestamp")
-            .annotate(value=aggregation)
-            .values("timestamp", "value")
-            .order_by("timestamp")
-        )
-
-        result = [
-            {
-                "timestamp": item["timestamp"].isoformat(),
-                "value": item["value"] if item["value"] is not None else 0,
-            }
-            for item in graph_queryset
-        ]
-
-        return result
-
-    except Exception as e:
-        logger.error(f"Error generating graph data: {e}", exc_info=True)
         return []
+
+    # Handle evaluation metrics separately as they use a different model
+    if metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS:
+        return _get_eval_metric_graph_data(
+            monitor, time_window_start, time_window_end, frequency_seconds
+        )
+
+    # Handle group-based error-free rate metrics separately
+    if metric_type in [
+        MonitorMetricTypeChoices.ERROR_FREE_SESSION_RATES,
+        MonitorMetricTypeChoices.SERVICE_PROVIDER_ERROR_RATES,
+    ]:
+        return _get_group_error_free_rate_data(
+            monitor, time_window_start, time_window_end, frequency_seconds
+        )
+
+    filters = parsing_monitor_filters(monitor.filters)
+
+    base_queryset = ObservationSpan.objects.filter(project=monitor.project)
+
+    base_queryset = _apply_time_window_filter(
+        base_queryset, time_window_start, time_window_end
+    )
+    base_queryset = base_queryset.filter(filters)
+
+    bucket_annotation = ToTimestamp(F("epoch") - (F("epoch") % frequency_seconds))
+    queryset = base_queryset.annotate(epoch=Extract("created_at", "epoch")).annotate(
+        timestamp=bucket_annotation
+    )
+
+    # Get the correct aggregation expression for the metric type
+    aggregation, queryset = _get_aggregation_expression(metric_type, queryset)
+
+    if aggregation is None:
+        logger.warning(f"Graphing for metric type {metric_type} is not supported.")
+        return []
+
+    # Group by the calculated timestamp bucket and apply the aggregation
+    graph_queryset = (
+        queryset.values("timestamp")
+        .annotate(value=aggregation)
+        .values("timestamp", "value")
+        .order_by("timestamp")
+    )
+
+    return [
+        {
+            "timestamp": item["timestamp"].isoformat(),
+            "value": item["value"] if item["value"] is not None else 0,
+        }
+        for item in graph_queryset
+    ]
 
 
 def _get_aggregation_expression(metric_type, queryset):
@@ -741,7 +871,7 @@ def _process_percentage_change_buckets(
 
 
 def get_percentage_change_metric_graph_data(
-    monitor, time_window_start=None, time_window_end=None
+    monitor, time_window_start=None, time_window_end=None, *, deadline=None
 ):
     """
     Handles graph data generation for percentage change metrics.
@@ -749,6 +879,8 @@ def get_percentage_change_metric_graph_data(
     - 'graph_data': Data for the main metric line graph.
     - 'alert_bar_data': Data for the colored alert status bar.
     """
+    deadline = deadline or start_monitor_graph_deadline()
+
     # --- ClickHouse dispatch ---
     analytics = AnalyticsQueryService()
     try:
@@ -765,14 +897,21 @@ def get_percentage_change_metric_graph_data(
         if time_window_start:
             extended_start = time_window_start - auto_threshold_time_window
 
-        builder = _build_monitor_graph_ch_builder(monitor)
+        builder = _build_monitor_graph_ch_builder(monitor, deadline)
         query, params = builder.build_time_series_query(
             monitor.metric_type,
             extended_start or (effective_end - timedelta(days=30)),
             effective_end,
             frequency_seconds,
         )
-        result = analytics.execute_ch_query(query, params, timeout_ms=10000)
+        result = analytics.execute_ch_query(
+            query,
+            params,
+            timeout_ms=deadline.remaining_ms(
+                MONITOR_GRAPH_CH_TIMEOUT_CAP_MS, floor_ms=1
+            ),
+        )
+        deadline.remaining_ms(floor_ms=1)
 
         # Convert CH results to bucket format expected by _process_percentage_change_buckets
         all_buckets = []
@@ -793,58 +932,85 @@ def get_percentage_change_metric_graph_data(
             return {"graph_data": [], "alert_bar_data": []}
 
         frequency_delta = timedelta(seconds=frequency_seconds)
-        return _process_percentage_change_buckets(
+        graph_data = _process_percentage_change_buckets(
             all_buckets,
             monitor,
             time_window_start,
             frequency_delta,
             auto_threshold_time_window,
         )
-    except Exception as e:
+        deadline.remaining_ms(floor_ms=1)
+        return graph_data
+    except MonitorGraphUnavailable:
+        raise
+    except Exception as exc:
+        if is_read_budget_error(exc):
+            raise MonitorGraphUnavailable(
+                "Monitor graph ClickHouse read exceeded its request budget"
+            ) from exc
+        try:
+            deadline.remaining_ms(floor_ms=1)
+        except ReadDeadlineExceeded as deadline_exc:
+            raise MonitorGraphUnavailable(
+                "Monitor graph request deadline was exhausted"
+            ) from deadline_exc
         logger.warning(
             "CH percentage change graph data failed, falling back to PG",
-            error=str(e),
+            error=str(exc),
             monitor_id=str(monitor.id),
         )
 
-    # --- PostgreSQL fallback ---
     try:
-        frequency_seconds = _get_frequency_seconds(monitor)
-        if not frequency_seconds:
-            logger.warning(
-                f"Monitor {monitor.id} has no alert_frequency. Cannot generate graph."
+        with monitor_graph_postgres_budget(deadline):
+            result = _get_percentage_change_metric_graph_data_pg(
+                monitor,
+                time_window_start,
+                time_window_end,
             )
-            return {"graph_data": [], "alert_bar_data": []}
+        return result
+    except MonitorGraphUnavailable:
+        raise
+    except Exception as exc:
+        logger.error("Error generating graph data", error=str(exc), exc_info=True)
+        raise
 
-        auto_threshold_time_window = timedelta(
-            minutes=monitor.auto_threshold_time_window
+
+def _get_percentage_change_metric_graph_data_pg(
+    monitor, time_window_start=None, time_window_end=None
+):
+    """PostgreSQL fallback for non-timeout ClickHouse failures."""
+
+    frequency_seconds = _get_frequency_seconds(monitor)
+    if not frequency_seconds:
+        logger.warning(
+            f"Monitor {monitor.id} has no alert_frequency. Cannot generate graph."
         )
-        filters = parsing_monitor_filters(monitor.filters)
-
-        # Extend time window backwards for historical data
-        extended_start = None
-        if time_window_start:
-            extended_start = time_window_start - auto_threshold_time_window
-
-        all_buckets = _get_buckets_for_percentage_change(
-            monitor, extended_start, time_window_end, frequency_seconds, filters
-        )
-
-        if all_buckets is None:
-            return {"graph_data": [], "alert_bar_data": []}
-
-        frequency_delta = timedelta(seconds=frequency_seconds)
-
-        return _process_percentage_change_buckets(
-            all_buckets,
-            monitor,
-            time_window_start,
-            frequency_delta,
-            auto_threshold_time_window,
-        )
-    except Exception as e:
-        logger.error(f"Error generating graph data: {e}", exc_info=True)
         return {"graph_data": [], "alert_bar_data": []}
+
+    auto_threshold_time_window = timedelta(minutes=monitor.auto_threshold_time_window)
+    filters = parsing_monitor_filters(monitor.filters)
+
+    # Extend time window backwards for historical data
+    extended_start = None
+    if time_window_start:
+        extended_start = time_window_start - auto_threshold_time_window
+
+    all_buckets = _get_buckets_for_percentage_change(
+        monitor, extended_start, time_window_end, frequency_seconds, filters
+    )
+
+    if all_buckets is None:
+        return {"graph_data": [], "alert_bar_data": []}
+
+    frequency_delta = timedelta(seconds=frequency_seconds)
+
+    return _process_percentage_change_buckets(
+        all_buckets,
+        monitor,
+        time_window_start,
+        frequency_delta,
+        auto_threshold_time_window,
+    )
 
 
 def _compare(value, op, threshold):

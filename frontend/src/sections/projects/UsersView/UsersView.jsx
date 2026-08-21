@@ -52,6 +52,7 @@ import UsersEmptyScreen from "./UsersEmptyScreen";
 import { useShallow } from "zustand/react/shallow";
 import { filtersContentEqual } from "../saved-view-utils";
 import { useCursorAttributeInventory } from "../LLMTracing/useCursorAttributeInventory";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
 
 // ---------------------------------------------------------------------------
 // User filter fields for TraceFilterPanel
@@ -135,6 +136,7 @@ const UsersView = ({
   activeViewConfig: activeViewConfigProp,
 }) => {
   const { observeId } = useParams();
+  const { currentWorkspaceId } = useWorkspace();
   const location = useLocation();
   const navigate = useNavigate();
   const isObservePath = location.pathname.includes("observe");
@@ -202,10 +204,12 @@ const UsersView = ({
   );
   const { attributes, inventoryControlProps } = useCursorAttributeInventory({
     projectId: observeId,
+    workspaceScope: !observeId,
+    workspaceScopeKey: currentWorkspaceId,
     discoveryMode: "eval_mapping",
     search: customAttributeSearch,
     preservedKeys: preservedCustomAttributeKeys,
-    enabled: Boolean(observeId),
+    enabled: openCustomColumnDialog && Boolean(observeId || currentWorkspaceId),
   });
 
   // --- Observe header refresh wiring (TH-4023) ---
@@ -799,6 +803,8 @@ const UsersView = ({
       {/* ObserveToolbar — portals into tab bar */}
       <ObserveToolbar
         mode="users"
+        projectId={observeId}
+        allowWorkspaceScope={!observeId}
         // Date
         dateLabel={getDateLabel(dateFilter)}
         dateFilter={dateFilter}

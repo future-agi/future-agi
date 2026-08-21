@@ -38,4 +38,32 @@ describe("AgentPath failure state", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   });
+
+  it("renders the current exact hierarchy payload as a path-style flow", () => {
+    const { container } = render(
+      <AgentPath
+        data={{
+          nodes: [
+            { id: "agent:root", name: "root", type: "agent", span_count: 2 },
+            { id: "tool:lookup", name: "lookup", type: "tool", span_count: 1 },
+          ],
+          edges: [
+            {
+              source: "agent:root",
+              target: "tool:lookup",
+              transition_count: 1,
+            },
+          ],
+          path_edges: [],
+        }}
+        isLoading={false}
+        isError={false}
+      />,
+    );
+
+    expect(
+      screen.queryByText("No agent path data available for this time range"),
+    ).not.toBeInTheDocument();
+    expect(container.querySelector("svg")).toBeInTheDocument();
+  });
 });

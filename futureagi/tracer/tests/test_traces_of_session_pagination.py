@@ -10,7 +10,7 @@ This pins the handoff in ``TraceView._list_traces_of_session_clickhouse`` (the
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest import mock
 
@@ -168,6 +168,87 @@ class TestTracesOfSessionPagination:
             ).get("requested_attribute_keys")
             for call in analytics.execute_ch_query.call_args_list
         )
+
+    @pytest.mark.parametrize(
+        ("start_time", "expected"),
+        (
+            (
+                datetime(2026, 8, 15, 12, 34, 56, 789000, tzinfo=UTC),
+                "2026-08-15T12:34:56.789000Z",
+            ),
+            (
+                datetime(
+                    2026,
+                    8,
+                    15,
+                    18,
+                    4,
+                    56,
+                    789000,
+                    tzinfo=timezone(timedelta(hours=5, minutes=30)),
+                ),
+                "2026-08-15T12:34:56.789000Z",
+            ),
+            (
+                datetime(2026, 8, 15, 12, 34, 56, 789000),
+                "2026-08-15T12:34:56.789000Z",
+            ),
+        ),
+    )
+    def test_created_at_is_canonical_rfc3339_utc(self, start_time, expected):
+        view = self._make_view()
+        request = self._make_request(page_size=5)
+        project_id = str(uuid.uuid4())
+        trace_rows = [
+            {
+                "project_id": project_id,
+                "trace_id": str(uuid.uuid4()),
+                "start_time": start_time,
+            }
+        ]
+        analytics = self._routing_analytics(trace_rows=trace_rows)
+
+        with (
+            mock.patch("tracer.views.trace.CustomEvalConfig") as mock_cfg,
+            mock.patch(
+                "tracer.views.trace.get_annotation_labels_for_project",
+                return_value=[],
+            ),
+            mock.patch(
+                "tracer.views.trace._build_annotation_map_from_scores",
+                return_value={},
+            ),
+            mock.patch(
+                "tracer.selectors.trace_filter_reads.read_bounded_filter_page",
+                return_value=self._bounded_page(trace_rows, total=1),
+            ),
+        ):
+            mock_cfg.objects.filter.return_value.select_related.return_value = []
+            status_name, payload = view._list_traces_of_session_clickhouse(
+                request,
+                project_id=project_id,
+                validated_data={
+                    "filters": [],
+                    "page_number": 0,
+                    "page_size": 5,
+                    "allow_sampled": True,
+                },
+                analytics=analytics,
+                org_project_ids=None,
+                org=request.organization,
+            )
+
+        assert status_name == "ok"
+        created_at = payload["table"][0]["created_at"]
+        assert created_at == expected
+        assert created_at.count("Z") == 1
+        assert "+00:00Z" not in created_at
+
+    def test_created_at_invalid_type_remains_rejected(self):
+        from tracer.views.trace import _format_trace_list_created_at
+
+        with pytest.raises(AttributeError):
+            _format_trace_list_created_at("2026-08-15T12:34:56Z")
 
     def test_requested_filtered_custom_attribute_is_hydrated_exactly(self):
         view = self._make_view()

@@ -14,6 +14,7 @@ vi.mock("src/components/filter-value-label", () => ({
 vi.mock("react-apexcharts", () => ({ default: () => null }));
 
 import {
+  buildLinkedProjectFilter,
   buildWidgetFilterConfig,
   buildWidgetCursorAttributeOptions,
   FilterValuePickerPopup,
@@ -22,11 +23,206 @@ import {
   getWidgetMetricCatalogRequest,
   getWidgetMetricDataType,
   hasWidgetFilterValue,
+  isWidgetCatalogOptionAllowed,
   mergeWidgetCursorAttributeOptions,
   restoreWidgetFilterConfig,
+  WidgetCatalogPaginationControl,
 } from "../WidgetEditorView";
 
 describe("WidgetEditor filter-value picker", () => {
+  it("loads each property catalog page only through an explicit single-flight action", () => {
+    const fetchNextPage = vi.fn(() => new Promise(() => {}));
+    const { rerender } = render(
+      <WidgetCatalogPaginationControl
+        pickerCategory="all"
+        hasNextPage
+        isFetchingNextPage={false}
+        onLoadMore={fetchNextPage}
+      />,
+    );
+
+    const loadMore = screen.getByRole("button", {
+      name: "Load more",
+    });
+    fireEvent.click(loadMore);
+    fireEvent.click(loadMore);
+    expect(fetchNextPage).toHaveBeenCalledOnce();
+
+    rerender(
+      <WidgetCatalogPaginationControl
+        pickerCategory="all"
+        hasNextPage
+        isFetchingNextPage
+        onLoadMore={fetchNextPage}
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Loading more");
+  });
+
+  it("advances both All-category cursors through one single-flight action", () => {
+    const fetchNextPage = vi.fn(() => new Promise(() => {}));
+    const fetchNextAttributePage = vi.fn(() => new Promise(() => {}));
+    render(
+      <WidgetCatalogPaginationControl
+        pickerCategory="all"
+        hasNextPage
+        isFetchingNextPage={false}
+        onLoadMore={fetchNextPage}
+        attributeHasNextPage
+        isFetchingAttributeNextPage={false}
+        onLoadMoreAttributes={fetchNextAttributePage}
+      />,
+    );
+
+    const loadMore = screen.getByRole("button", { name: "Load more" });
+    expect(screen.getAllByRole("button", { name: "Load more" })).toHaveLength(
+      1,
+    );
+    fireEvent.click(loadMore);
+    fireEvent.click(loadMore);
+
+    expect(fetchNextPage).toHaveBeenCalledOnce();
+    expect(fetchNextAttributePage).toHaveBeenCalledOnce();
+    expect(screen.getByRole("status")).toHaveTextContent("Loading more");
+  });
+
+  it("advances the unified catalog cursor in the trace-attribute category", () => {
+    const fetchNextPage = vi.fn();
+    render(
+      <WidgetCatalogPaginationControl
+        pickerCategory="custom_attribute"
+        hasNextPage
+        isFetchingNextPage={false}
+        onLoadMore={fetchNextPage}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    expect(fetchNextPage).toHaveBeenCalledOnce();
+  });
+
+  it("offers only properties supported by the selected widget adapters", () => {
+    const datasetEval = {
+      name: "eval-config-id",
+      category: "eval_metric",
+      source: "all",
+      sources: ["all"],
+    };
+    const datasetColumn = {
+      name: "column-id",
+      category: "custom_column",
+      sources: ["datasets"],
+    };
+    const datasetDimension = {
+      name: "cell_status",
+      category: "system_metric",
+      source: "datasets",
+    };
+
+    for (const mode of ["filter", "metric_filter", "breakdown"]) {
+      const context =
+        mode === "metric_filter"
+          ? { targetMetricSource: "datasets" }
+          : { selectedMetricSources: ["datasets"] };
+      expect(isWidgetCatalogOptionAllowed(datasetEval, mode, context)).toBe(
+        false,
+      );
+      expect(isWidgetCatalogOptionAllowed(datasetColumn, mode, context)).toBe(
+        false,
+      );
+      expect(
+        isWidgetCatalogOptionAllowed(datasetDimension, mode, context),
+      ).toBe(true);
+    }
+    expect(
+      isWidgetCatalogOptionAllowed(datasetEval, "filter", {
+        selectedMetricSources: ["traces"],
+      }),
+    ).toBe(true);
+    expect(
+      isWidgetCatalogOptionAllowed(datasetEval, "metric_filter", {
+        targetMetricSource: "traces",
+      }),
+    ).toBe(true);
+    expect(
+      isWidgetCatalogOptionAllowed(datasetColumn, "metric_filter", {
+        targetMetricSource: "traces",
+      }),
+    ).toBe(false);
+    expect(
+      isWidgetCatalogOptionAllowed(datasetColumn, "filter", {
+        selectedMetricSources: ["traces"],
+      }),
+    ).toBe(false);
+    expect(
+      isWidgetCatalogOptionAllowed(
+        {
+          name: "customer.attr",
+          category: "custom_attribute",
+          source: "traces",
+        },
+        "filter",
+        { selectedMetricSources: ["datasets"] },
+      ),
+    ).toBe(false);
+    expect(isWidgetCatalogOptionAllowed(datasetEval, "metric")).toBe(true);
+
+    const simulationEval = {
+      name: "simulation-eval-config",
+      category: "eval_metric",
+      source: "simulation",
+    };
+    const simulationStatus = {
+      name: "status",
+      category: "system_metric",
+      source: "simulation",
+    };
+    const simulationDuration = {
+      name: "duration",
+      category: "system_metric",
+      source: "simulation",
+    };
+    expect(
+      isWidgetCatalogOptionAllowed(simulationEval, "filter", {
+        selectedMetricSources: ["simulation"],
+      }),
+    ).toBe(false);
+    expect(
+      isWidgetCatalogOptionAllowed(simulationEval, "metric_filter", {
+        targetMetricSource: "simulation",
+      }),
+    ).toBe(false);
+    expect(
+      isWidgetCatalogOptionAllowed(simulationStatus, "breakdown", {
+        selectedMetricSources: ["simulation"],
+      }),
+    ).toBe(true);
+    expect(
+      isWidgetCatalogOptionAllowed(simulationDuration, "filter", {
+        selectedMetricSources: ["simulation"],
+      }),
+    ).toBe(true);
+    expect(
+      isWidgetCatalogOptionAllowed(simulationDuration, "breakdown", {
+        selectedMetricSources: ["simulation"],
+      }),
+    ).toBe(false);
+    expect(isWidgetCatalogOptionAllowed(simulationEval, "metric")).toBe(true);
+  });
+
+  it("stamps auto-linked observability projects with registry identity", () => {
+    expect(buildLinkedProjectFilter(["project-1", "project-2"])).toEqual({
+      id: "project",
+      registryId: "system_attribute:traces:project",
+      name: "Project",
+      type: "system",
+      dataType: "string",
+      source: "traces",
+      operator: "contains",
+      value: ["project-1", "project-2"],
+    });
+  });
+
   it("offers a bounded fresh retry for a stopped cursor while retaining rows", () => {
     const retryFreshPage = vi.fn(() => Promise.resolve());
     useResolvedFilterOptionsMock.mockReturnValue({
@@ -225,6 +421,7 @@ describe("WidgetEditor filter-value picker", () => {
       { id: "latency", type: "system", source: "traces" },
       {
         id: "historical.after.cap",
+        registryId: "custom_attribute:historical.after.cap",
         name: "historical.after.cap",
         type: "custom_attribute",
         source: "traces",
@@ -234,6 +431,7 @@ describe("WidgetEditor filter-value picker", () => {
       },
       {
         id: "saved.string",
+        registryId: "custom_attribute:saved.string",
         name: "saved.string",
         type: "custom_attribute",
         source: "traces",
@@ -416,7 +614,7 @@ describe("WidgetEditor filter-value picker", () => {
     ).toBe(false);
   });
 
-  it("keeps every finite category off the capped custom-attribute catalog", () => {
+  it("uses one 20-item unified catalog for every property category", () => {
     expect(
       getWidgetMetricCatalogRequest({
         pickerCategory: "all",
@@ -427,6 +625,8 @@ describe("WidgetEditor filter-value picker", () => {
       expect.objectContaining({
         enabled: true,
         excludeCustomAttributes: true,
+        pageSize: 20,
+        role: "metric",
       }),
     );
     expect(
@@ -439,6 +639,8 @@ describe("WidgetEditor filter-value picker", () => {
       expect.objectContaining({
         enabled: true,
         excludeCustomAttributes: true,
+        pageSize: 20,
+        role: "metric",
       }),
     );
     expect(
@@ -449,9 +651,19 @@ describe("WidgetEditor filter-value picker", () => {
       }),
     ).toEqual(
       expect.objectContaining({
-        enabled: false,
+        enabled: true,
         excludeCustomAttributes: true,
+        pageSize: 20,
+        role: "metric",
       }),
     );
+    expect(
+      getWidgetMetricCatalogRequest({
+        pickerCategory: "all",
+        search: "model",
+        pickerOpen: true,
+        pickerMode: "filter",
+      }),
+    ).toEqual(expect.objectContaining({ role: "" }));
   });
 });

@@ -68,11 +68,26 @@ describe("ObserveToolbar status filter registry", () => {
     );
   });
 
-  it("uses trace-backed value catalogs for Users filters", () => {
+  it("forwards workspace property scope for cross-project user detail", () => {
+    renderToolbar({ allowWorkspaceScope: true });
+
+    expect(traceFilterPanelPropsMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        projectId: undefined,
+        allowWorkspaceScope: true,
+      }),
+    );
+  });
+
+  it("uses session-backed values and the Users property namespace", () => {
     renderToolbar({ mode: "users", projectId: "users-project" });
 
     expect(traceFilterPanelPropsMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ source: "traces", projectId: "users-project" }),
+      expect.objectContaining({
+        source: "sessions",
+        propertyNamespace: "users",
+        projectId: "users-project",
+      }),
     );
   });
 

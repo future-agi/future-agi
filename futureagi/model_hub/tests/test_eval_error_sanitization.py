@@ -87,7 +87,7 @@ def test_eval_logs_table_internal_error_is_sanitized(auth_client, monkeypatch):
     monkeypatch.setattr(separate_evals, "APICallLog", SimpleNamespace())
     monkeypatch.setattr(
         separate_evals,
-        "_get_accessible_eval_template",
+        "_get_accessible_eval_template_for_request",
         fail_access_check,
     )
 

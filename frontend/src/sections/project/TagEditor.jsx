@@ -1,5 +1,6 @@
 import {
   Box,
+  Button,
   Checkbox,
   Chip,
   Divider,
@@ -79,11 +80,17 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
   });
 
   // ── Fetch all known tags (for the dropdown list) — only when popover is open ──
-  const { data: allKnownTags = [] } = useQuery({
+  const {
+    data: allKnownTags = [],
+    isError: isKnownTagsError,
+    isFetching: isKnownTagsFetching,
+    refetch: refetchKnownTags,
+  } = useQuery({
     queryKey: ["all-known-tags"],
     queryFn: ({ signal }) => fetchAllKnownTags({ signal }),
     enabled: Boolean(anchorEl),
     staleTime: 60_000,
+    retry: false,
   });
 
   // ── Mutation ──
@@ -279,7 +286,31 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
               </Box>
             );
           })}
-          {availableTags.length === 0 && (
+          {isKnownTagsError && (
+            <Box
+              role="alert"
+              sx={{
+                px: 1,
+                py: 0.75,
+                fontSize: 11,
+                color: "warning.main",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 1,
+              }}
+            >
+              Tag suggestions unavailable.
+              <Button
+                size="small"
+                disabled={isKnownTagsFetching}
+                onClick={() => refetchKnownTags()}
+              >
+                Retry
+              </Button>
+            </Box>
+          )}
+          {availableTags.length === 0 && !isKnownTagsError && (
             <Typography
               sx={{
                 px: 1,

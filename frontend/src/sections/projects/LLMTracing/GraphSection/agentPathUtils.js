@@ -246,8 +246,12 @@ export const computeSankeyLayout = (graphData) => {
   if (!Array.isArray(graphData.nodes)) {
     throw new Error("Agent Path data is missing nodes");
   }
-  if (!Array.isArray(graphData.path_edges)) {
-    throw new Error("Agent Path data is missing canonical path_edges");
+  const graphEdges =
+    Array.isArray(graphData.path_edges) && graphData.path_edges.length > 0
+      ? graphData.path_edges
+      : graphData.edges;
+  if (!Array.isArray(graphEdges)) {
+    throw new Error("Agent Path data is missing exact topology edges");
   }
   graphData.nodes.forEach((node, index) => {
     if (
@@ -259,7 +263,7 @@ export const computeSankeyLayout = (graphData) => {
       throw new Error(`Agent Path node #${index} is malformed`);
     }
   });
-  graphData.path_edges.forEach((edge, index) => {
+  graphEdges.forEach((edge, index) => {
     if (
       typeof edge?.source !== "string" ||
       !edge.source ||
@@ -277,7 +281,7 @@ export const computeSankeyLayout = (graphData) => {
   if (allNodeIds.size !== graphData.nodes.length) {
     throw new Error("Agent Path contains duplicate node ids");
   }
-  graphData.path_edges.forEach((edge) => {
+  graphEdges.forEach((edge) => {
     if (!allNodeIds.has(edge.source) || !allNodeIds.has(edge.target)) {
       throw new Error(
         `Agent Path edge references an unknown node: ${edge.source}->${edge.target}`,
@@ -285,9 +289,10 @@ export const computeSankeyLayout = (graphData) => {
     }
   });
 
-  // Agent Path is the producer's exact recorded path projection rendered as a
-  // Sankey. Presentation never substitutes aggregate graph edges for it.
-  const graphEdges = graphData.path_edges;
+  // Agent Path is a path-style Sankey presentation. Prefer a producer-recorded
+  // execution projection when one exists; current telemetry publishes exact
+  // parent-child topology only, so retain the feature by rendering that exact
+  // hierarchy without inventing sibling order or chronological transitions.
 
   const nodeMap = new Map();
   graphData.nodes.forEach((n) => {

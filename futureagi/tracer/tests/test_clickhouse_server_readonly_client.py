@@ -43,7 +43,11 @@ def test_v2_config_explicit_false_overrides_legacy_server_locked_profile(
     assert get_v2_config()["server_enforced_readonly"] is False
 
 
-def _client(*, server_enforced_readonly: bool) -> ClickHouseClient:
+def _client(
+    *,
+    server_enforced_readonly: bool,
+    read_timeout_ceiling_ms: int | None = None,
+) -> ClickHouseClient:
     return ClickHouseClient(
         host="clickhouse.invalid",
         port=9000,
@@ -51,7 +55,53 @@ def _client(*, server_enforced_readonly: bool) -> ClickHouseClient:
         password="",
         database="futureagi",
         server_enforced_readonly=server_enforced_readonly,
+        read_timeout_ceiling_ms=read_timeout_ceiling_ms,
     )
+
+
+@pytest.mark.parametrize("server_enforced_readonly", [False, True])
+def test_default_read_timeout_ceiling_remains_9500(
+    monkeypatch, server_enforced_readonly
+):
+    native = Mock()
+    native.execute.return_value = ([], [])
+    client = _client(server_enforced_readonly=server_enforced_readonly)
+    execute = Mock(return_value=([], []))
+    monkeypatch.setattr(client, "_get_client", Mock(return_value=native))
+    monkeypatch.setattr(client, "_return_client", Mock())
+    monkeypatch.setattr(client, "_execute_native_read_with_remaining_timeout", execute)
+
+    client.execute_read("SELECT 1", timeout_ms=30_000)
+
+    assert execute.call_args.kwargs["timeout_ms"] == 9_500
+
+
+def test_reviewed_read_timeout_ceiling_allows_30000_for_dedicated_client(
+    monkeypatch,
+):
+    native = Mock()
+    native.execute.return_value = ([], [])
+    client = _client(
+        server_enforced_readonly=True,
+        read_timeout_ceiling_ms=30_000,
+    )
+    execute = Mock(return_value=([], []))
+    monkeypatch.setattr(client, "_get_client", Mock(return_value=native))
+    monkeypatch.setattr(client, "_return_client", Mock())
+    monkeypatch.setattr(client, "_execute_native_read_with_remaining_timeout", execute)
+
+    client.execute_read("SELECT 1", timeout_ms=30_000)
+
+    assert execute.call_args.kwargs["timeout_ms"] == 30_000
+
+
+@pytest.mark.parametrize("ceiling_ms", [True, 0, 30_001])
+def test_read_timeout_ceiling_rejects_unreviewed_values(ceiling_ms):
+    with pytest.raises(ValueError, match="ceiling"):
+        _client(
+            server_enforced_readonly=True,
+            read_timeout_ceiling_ms=ceiling_ms,
+        )
 
 
 def test_server_locked_client_sends_no_connection_settings(monkeypatch):

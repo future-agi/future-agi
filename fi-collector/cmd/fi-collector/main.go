@@ -37,17 +37,34 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/catalogwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/pricing"
+	"github.com/future-agi/future-agi/fi-collector/pkg/propertycatalog"
 	"github.com/future-agi/future-agi/fi-collector/pkg/server"
 	"github.com/redis/go-redis/v9"
 	"gopkg.in/yaml.v3"
 )
 
 type rootConfig struct {
-	Writer  chwriter.Config             `yaml:"writer"`
-	Server  server.Config               `yaml:"server"`
-	Auth    auth.Config                 `yaml:"auth"`
-	Catalog catalogwriter.RuntimeConfig `yaml:"catalog"`
+	Writer          chwriter.Config               `yaml:"writer"`
+	Server          server.Config                 `yaml:"server"`
+	Auth            auth.Config                   `yaml:"auth"`
+	Catalog         catalogwriter.RuntimeConfig   `yaml:"catalog"`
+	PropertyCatalog propertycatalog.RuntimeConfig `yaml:"property_catalog"`
 }
+
+const (
+	envPropertyCatalogReplayInterval         = "FI_PROPERTY_CATALOG_REPLAY_INTERVAL"
+	envPropertyCatalogShutdownTimeout        = "FI_PROPERTY_CATALOG_SHUTDOWN_TIMEOUT"
+	envPropertyCatalogQueueDepth             = "FI_PROPERTY_CATALOG_QUEUE_DEPTH"
+	envPropertyCatalogMaxSpansPerBatch       = "FI_PROPERTY_CATALOG_MAX_SPANS_PER_BATCH"
+	envPropertyCatalogMaxKeysPerSpan         = "FI_PROPERTY_CATALOG_MAX_KEYS_PER_SPAN"
+	envPropertyCatalogMaxArrayMembersPerSpan = "FI_PROPERTY_CATALOG_MAX_ARRAY_MEMBERS_PER_SPAN"
+	envPropertyCatalogMaxEncodedBytesPerSpan = "FI_PROPERTY_CATALOG_MAX_ENCODED_BYTES_PER_SPAN"
+	envPropertyCatalogMaxChunkRows           = "FI_PROPERTY_CATALOG_MAX_CHUNK_ROWS"
+	envPropertyCatalogMaxChunkBytes          = "FI_PROPERTY_CATALOG_MAX_CHUNK_BYTES"
+	envPropertyCatalogMaxSpoolFiles          = "FI_PROPERTY_CATALOG_MAX_SPOOL_FILES"
+	envPropertyCatalogMaxSpoolBytes          = "FI_PROPERTY_CATALOG_MAX_SPOOL_BYTES"
+	envPropertyCatalogKafkaDeliveryTimeout   = "FI_PROPERTY_CATALOG_KAFKA_DELIVERY_TIMEOUT"
+)
 
 func main() {
 	var configPath string
@@ -172,6 +189,47 @@ func main() {
 			Writer: catalogWAL, Submitter: catalogSubmitter,
 		}))
 	}
+
+	propertyMode, err := cfg.PropertyCatalog.SelectedMode()
+	if err != nil {
+		log.Error("property catalog mode validation failed", "err", err)
+		os.Exit(1)
+	}
+	var propertyRuntime *propertycatalog.HotRuntime
+	var propertyProducer *propertycatalog.Producer
+	var stopPropertyRuntime context.CancelFunc
+	if propertyMode == propertycatalog.RuntimeKafka {
+		revisions, providerErr := propertycatalog.NewFileRevisionProvider(cfg.PropertyCatalog.RevisionFenceFile)
+		if providerErr != nil {
+			log.Error("property catalog revision provider init failed", "err", providerErr)
+			os.Exit(1)
+		}
+		propertyProducer, err = propertycatalog.NewFranzProducer(propertycatalog.FranzProducerConfig{
+			Brokers:         cfg.PropertyCatalog.Kafka.Brokers,
+			Topic:           cfg.PropertyCatalog.Kafka.Topic,
+			DeliveryTimeout: cfg.PropertyCatalog.Kafka.DeliveryTimeout,
+		})
+		if err != nil {
+			log.Error("property catalog Kafka producer init failed", "err", err)
+			os.Exit(1)
+		}
+		propertyRuntime, err = propertycatalog.NewHotRuntime(cfg.PropertyCatalog, revisions, propertyProducer)
+		if err != nil {
+			propertyProducer.Close()
+			log.Error("property catalog runtime init failed", "err", err)
+			os.Exit(1)
+		}
+		propertyCtx, stopRuntime := context.WithCancel(context.Background())
+		stopPropertyRuntime = stopRuntime
+		if err := propertyRuntime.Start(propertyCtx); err != nil {
+			stopRuntime()
+			propertyProducer.Close()
+			log.Error("property catalog runtime start failed", "err", err)
+			os.Exit(1)
+		}
+		opts = append(opts, server.WithPropertyCatalogWriter(propertyRuntime))
+		go logPropertyCatalogGaps(propertyCtx, propertyRuntime, log)
+	}
 	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, opts...)
 	var catalogReplayDone chan struct{}
 	if catalogWAL != nil {
@@ -220,6 +278,20 @@ func main() {
 	}
 	if catalogReplayDone != nil {
 		<-catalogReplayDone
+	}
+	if propertyRuntime != nil {
+		shutdownCtx, stopShutdown := context.WithTimeout(
+			context.Background(),
+			cfg.PropertyCatalog.ShutdownTimeout,
+		)
+		if err := propertyRuntime.Shutdown(shutdownCtx); err != nil {
+			log.Error("property catalog runtime shutdown incomplete", "err", err)
+		}
+		stopShutdown()
+		stopPropertyRuntime()
+	}
+	if propertyProducer != nil {
+		propertyProducer.Close()
 	}
 	if kafkaProducer != nil {
 		kafkaProducer.Close()
@@ -272,6 +344,63 @@ func loadConfig(log *slog.Logger, path string) rootConfig {
 		os.Exit(1)
 	}
 	return cfg
+}
+
+type positiveIntEnvOverride struct {
+	name   string
+	target *int
+}
+
+func positiveIntOverride(name string, target *int) positiveIntEnvOverride {
+	return positiveIntEnvOverride{name: name, target: target}
+}
+
+func applyPositiveIntEnvOverrides(overrides ...positiveIntEnvOverride) error {
+	for _, override := range overrides {
+		rawValue := os.Getenv(override.name)
+		if rawValue == "" {
+			continue
+		}
+		value, err := strconv.Atoi(rawValue)
+		if err != nil || value <= 0 {
+			return fmt.Errorf("%s must be a positive integer", override.name)
+		}
+		*override.target = value
+	}
+	return nil
+}
+
+func applyPositiveInt64EnvOverride(name string, target *int64) error {
+	rawValue := os.Getenv(name)
+	if rawValue == "" {
+		return nil
+	}
+	value, err := strconv.ParseInt(rawValue, 10, 64)
+	if err != nil || value <= 0 {
+		return fmt.Errorf("%s must be a positive integer", name)
+	}
+	*target = value
+	return nil
+}
+
+func applyPositiveDurationEnvOverride(
+	name string,
+	target *time.Duration,
+	maximum time.Duration,
+) error {
+	rawValue := os.Getenv(name)
+	if rawValue == "" {
+		return nil
+	}
+	value, err := time.ParseDuration(rawValue)
+	if err != nil || value <= 0 {
+		return fmt.Errorf("%s must be a positive duration", name)
+	}
+	if maximum > 0 && value > maximum {
+		return fmt.Errorf("%s must not exceed %s", name, maximum)
+	}
+	*target = value
+	return nil
 }
 
 // applyEnvOverrides — surgical, only the fields ops most often need to
@@ -346,12 +475,12 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	if v := os.Getenv("FI_CATALOG_SPOOL_DIR"); v != "" {
 		c.Catalog.SpoolDir = v
 	}
-	if v := os.Getenv("FI_CATALOG_REPLAY_INTERVAL"); v != "" {
-		interval, err := time.ParseDuration(v)
-		if err != nil || interval <= 0 {
-			return fmt.Errorf("FI_CATALOG_REPLAY_INTERVAL must be a positive duration")
-		}
-		c.Catalog.ReplayInterval = interval
+	if err := applyPositiveDurationEnvOverride(
+		"FI_CATALOG_REPLAY_INTERVAL",
+		&c.Catalog.ReplayInterval,
+		0,
+	); err != nil {
+		return err
 	}
 	if v := os.Getenv("FI_CATALOG_CH_URL"); v != "" {
 		c.Catalog.ClickHouse.URL = v
@@ -371,7 +500,117 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	if v := os.Getenv("FI_CATALOG_KAFKA_TOPIC"); v != "" {
 		c.Catalog.Kafka.Topic = v
 	}
-	return c.Catalog.ValidateMode()
+	if v := os.Getenv("FI_PROPERTY_CATALOG_MODE"); v != "" {
+		c.PropertyCatalog.Mode = propertycatalog.RuntimeMode(v)
+	}
+	if v := os.Getenv("FI_PROPERTY_CATALOG_ENVIRONMENT"); v != "" {
+		c.PropertyCatalog.Environment = v
+	}
+	if v := os.Getenv("FI_PROPERTY_CATALOG_DEV_ACK"); v != "" {
+		c.PropertyCatalog.DevelopmentAcknowledgement = v
+	}
+	if v := os.Getenv("FI_PROPERTY_CATALOG_EPOCH"); v != "" {
+		epoch, err := strconv.ParseUint(v, 10, 16)
+		if err != nil || epoch == 0 {
+			return fmt.Errorf("FI_PROPERTY_CATALOG_EPOCH must be a non-zero UInt16")
+		}
+		c.PropertyCatalog.CatalogEpoch = uint16(epoch)
+	}
+	if v := os.Getenv("FI_PROPERTY_CATALOG_PROJECTION_VERSION"); v != "" {
+		projection, err := strconv.ParseUint(v, 10, 16)
+		if err != nil || projection == 0 {
+			return fmt.Errorf("FI_PROPERTY_CATALOG_PROJECTION_VERSION must be a non-zero UInt16")
+		}
+		c.PropertyCatalog.ProjectionVersion = uint16(projection)
+	}
+	if v := os.Getenv("FI_PROPERTY_CATALOG_PRODUCER_STREAM_ID"); v != "" {
+		c.PropertyCatalog.ProducerStreamID = v
+	}
+	if v := os.Getenv("FI_PROPERTY_CATALOG_WORKSPACE_ALLOWLIST"); v != "" {
+		c.PropertyCatalog.WorkspaceAllowlist = splitNonempty(v)
+	}
+	if v := os.Getenv("FI_PROPERTY_CATALOG_REVISION_FENCE_FILE"); v != "" {
+		c.PropertyCatalog.RevisionFenceFile = v
+	}
+	if v := os.Getenv("FI_PROPERTY_CATALOG_SPOOL_DIR"); v != "" {
+		c.PropertyCatalog.SpoolDirectory = v
+	}
+	if err := applyPositiveDurationEnvOverride(
+		envPropertyCatalogReplayInterval,
+		&c.PropertyCatalog.ReplayInterval,
+		0,
+	); err != nil {
+		return err
+	}
+	if err := applyPositiveDurationEnvOverride(
+		envPropertyCatalogShutdownTimeout,
+		&c.PropertyCatalog.ShutdownTimeout,
+		propertycatalog.MaxShutdownTimeout,
+	); err != nil {
+		return err
+	}
+	if err := applyPositiveIntEnvOverrides(
+		positiveIntOverride(envPropertyCatalogQueueDepth, &c.PropertyCatalog.QueueDepth),
+		positiveIntOverride(envPropertyCatalogMaxSpansPerBatch, &c.PropertyCatalog.MaxSpansPerBatch),
+		positiveIntOverride(envPropertyCatalogMaxKeysPerSpan, &c.PropertyCatalog.MaxKeysPerSpan),
+		positiveIntOverride(envPropertyCatalogMaxArrayMembersPerSpan, &c.PropertyCatalog.MaxArrayMembersPerSpan),
+		positiveIntOverride(envPropertyCatalogMaxEncodedBytesPerSpan, &c.PropertyCatalog.MaxEncodedBytesPerSpan),
+		positiveIntOverride(envPropertyCatalogMaxChunkRows, &c.PropertyCatalog.MaxChunkRows),
+		positiveIntOverride(envPropertyCatalogMaxChunkBytes, &c.PropertyCatalog.MaxChunkBytes),
+		positiveIntOverride(envPropertyCatalogMaxSpoolFiles, &c.PropertyCatalog.MaxSpoolFiles),
+	); err != nil {
+		return err
+	}
+	if err := applyPositiveInt64EnvOverride(
+		envPropertyCatalogMaxSpoolBytes,
+		&c.PropertyCatalog.MaxSpoolBytes,
+	); err != nil {
+		return err
+	}
+	if err := applyPositiveDurationEnvOverride(
+		envPropertyCatalogKafkaDeliveryTimeout,
+		&c.PropertyCatalog.Kafka.DeliveryTimeout,
+		propertycatalog.MaxDeliveryTimeout,
+	); err != nil {
+		return err
+	}
+	if v := os.Getenv("FI_PROPERTY_CATALOG_KAFKA_BROKERS"); v != "" {
+		c.PropertyCatalog.Kafka.Brokers = splitNonempty(v)
+	}
+	if v := os.Getenv("FI_PROPERTY_CATALOG_KAFKA_TOPIC"); v != "" {
+		c.PropertyCatalog.Kafka.Topic = v
+	}
+	if err := c.Catalog.ValidateMode(); err != nil {
+		return err
+	}
+	// Freeze one normalized snapshot so the producer and hot runtime consume
+	// exactly the same defaults and environment overrides.
+	c.PropertyCatalog = c.PropertyCatalog.WithDefaults()
+	propertyMode, err := c.PropertyCatalog.SelectedMode()
+	if err != nil {
+		return err
+	}
+	legacyMode, err := c.Catalog.SelectedMode()
+	if err != nil {
+		return err
+	}
+	if propertyMode != propertycatalog.RuntimeDisabled && legacyMode != catalogwriter.ModeDisabled {
+		return fmt.Errorf("legacy catalog and unified property catalog modes cannot both be enabled")
+	}
+	return nil
+}
+
+func logPropertyCatalogGaps(ctx context.Context, runtime *propertycatalog.HotRuntime, log *slog.Logger) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case err := <-runtime.Gaps():
+			if err != nil {
+				log.Warn("property catalog delivery gap", "err", err)
+			}
+		}
+	}
 }
 
 func splitNonempty(value string) []string {

@@ -40,3 +40,8 @@ export const getWidgetPreviewState = (result, mutation) => {
   }
   return "ready";
 };
+
+export const shouldBlockWidgetPreviewForFailure = ({
+  previewFailed,
+  hasExactPreview,
+}) => Boolean(previewFailed && !hasExactPreview);

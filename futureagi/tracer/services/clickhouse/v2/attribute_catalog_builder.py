@@ -20,6 +20,7 @@ from tracer.services.clickhouse.v2.attribute_catalog_codec import (
 )
 
 AttributeType = Literal["string", "number", "boolean", "array", "map", "json"]
+CatalogSourceKind = Literal["custom_attribute", "system_attribute"]
 
 GAP_MAX_KEYS = "max_keys"
 GAP_MAX_ARRAY_MEMBERS = "max_array_members"
@@ -54,6 +55,7 @@ class CatalogScope:
     project_id: str
     seen_at: datetime
     catalog_epoch: int
+    source_kind: CatalogSourceKind = "custom_attribute"
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +68,7 @@ class CatalogBuildLimits:
 @dataclass(frozen=True, slots=True)
 class CatalogKeyRow:
     project_id: str
+    source_kind: CatalogSourceKind
     attribute_key: str
     key_folded: str
     attribute_type: AttributeType
@@ -77,6 +80,7 @@ class CatalogKeyRow:
 @dataclass(frozen=True, slots=True)
 class CatalogValueRow:
     project_id: str
+    source_kind: CatalogSourceKind
     attribute_key: str
     attribute_type: AttributeType
     value_fingerprint: str
@@ -178,6 +182,8 @@ def build_catalog_rows(
         < 0
     ):
         raise ValueError("catalog build limits must be non-negative")
+    if scope.source_kind not in {"custom_attribute", "system_attribute"}:
+        raise ValueError("unsupported catalog source kind")
 
     selected, valid_keys, invalid_keys = _select_candidates(
         attrs_string,
@@ -235,6 +241,7 @@ def build_catalog_rows(
         value_rows.append(
             CatalogValueRow(
                 project_id=scope.project_id,
+                source_kind=scope.source_kind,
                 attribute_key=candidate.key,
                 attribute_type=candidate.attribute_type,
                 value_fingerprint=encoded.fingerprint,
@@ -256,6 +263,7 @@ def build_catalog_rows(
         key_rows.append(
             CatalogKeyRow(
                 project_id=scope.project_id,
+                source_kind=scope.source_kind,
                 attribute_key=candidate.key,
                 key_folded=_fold_attribute_key(candidate.key),
                 attribute_type=candidate.attribute_type,

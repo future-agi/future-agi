@@ -1,8 +1,11 @@
 import json
 import uuid
-from unittest.mock import patch
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
+from django.db import DatabaseError
 from django.http import QueryDict
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -24,6 +27,7 @@ from model_hub.serializers.develop_dataset_contracts import (
     DatasetTableResponseSerializer,
 )
 from model_hub.services.dataset_service import delete_datasets
+from model_hub.views.develop_dataset import GetDatasetTableView
 
 
 class _SuccessfulResourceCallLog:
@@ -111,6 +115,35 @@ def test_dataset_table_query_contract_matches_frontend_grid_params():
     assert serializer.validated_data["column_config_only"] is True
 
 
+def test_dataset_table_query_contract_preserves_legacy_oversized_page_clamp():
+    serializer = DatasetTableQuerySerializer(
+        data=_query_data(
+            {
+                "current_page_index": "0",
+                "page_size": "10000",
+            }
+        )
+    )
+
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data["page_size"] == 500
+
+
+def test_dataset_table_query_contract_rejects_oversized_exact_page():
+    serializer = DatasetTableQuerySerializer(
+        data=_query_data(
+            {
+                "current_page_index": "0",
+                "page_size": "10000",
+                "exact_snapshot": "true",
+            }
+        )
+    )
+
+    assert not serializer.is_valid()
+    assert "page_size" in serializer.errors
+
+
 def test_dataset_table_query_contract_rejects_legacy_camel_query_param_keys():
     serializer = DatasetTableQuerySerializer(
         data=_query_data(
@@ -154,6 +187,13 @@ def test_dataset_table_response_contract_accepts_metadata_status_object():
                     "dataset_name": "QA dataset",
                     "total_rows": 1,
                     "total_pages": 1,
+                    "page_size": 100,
+                    "current_page_index": 0,
+                    "has_more": False,
+                    "next_page_index": None,
+                    "next_cursor": None,
+                    "is_exact": True,
+                    "snapshot_bound": True,
                     "error_messages": [],
                     "status": {"dataset_status": "Completed"},
                 },
@@ -169,6 +209,183 @@ def test_dataset_table_response_contract_accepts_metadata_status_object():
     )
 
     assert serializer.is_valid(), serializer.errors
+
+
+def test_exact_dataset_database_timeout_is_a_typed_retryable_503():
+    request = SimpleNamespace(validated_query_data={"exact_snapshot": True})
+    view = GetDatasetTableView()
+
+    deadline = MagicMock()
+    with (
+        patch(
+            "model_hub.views.develop_dataset.DatasetTableReadDeadline.start",
+            return_value=deadline,
+        ),
+        patch(
+            "model_hub.views.develop_dataset.begin_repeatable_read_snapshot",
+            side_effect=DatabaseError("statement timeout"),
+        ),
+    ):
+        response = view._get_dataset_table(
+            request,
+            uuid.UUID("00000000-0000-0000-0000-000000000001"),
+        )
+
+    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert response.data == {
+        "status": False,
+        "code": "dataset_snapshot_unavailable",
+        "message": "Dataset rows could not be read within the deadline. Retry.",
+    }
+
+
+def test_dataset_table_legacy_read_does_not_open_an_atomic_transaction():
+    request = SimpleNamespace(validated_query_data={})
+    view = GetDatasetTableView()
+    response = object()
+    public_get = GetDatasetTableView.get
+    while hasattr(public_get, "__wrapped__"):
+        public_get = public_get.__wrapped__
+
+    with (
+        patch.object(view, "_get_dataset_table", return_value=response) as read,
+        patch("model_hub.views.develop_dataset.transaction.atomic") as atomic,
+    ):
+        assert public_get(view, request, uuid.uuid4()) is response
+
+    read.assert_called_once()
+    atomic.assert_not_called()
+
+
+def test_dataset_table_exact_read_opens_one_atomic_transaction():
+    request = SimpleNamespace(validated_query_data={"exact_snapshot": True})
+    view = GetDatasetTableView()
+    response = object()
+    public_get = GetDatasetTableView.get
+    while hasattr(public_get, "__wrapped__"):
+        public_get = public_get.__wrapped__
+
+    with (
+        patch.object(view, "_get_dataset_table", return_value=response) as read,
+        patch("model_hub.views.develop_dataset.transaction.atomic") as atomic,
+    ):
+        assert public_get(view, request, uuid.uuid4()) is response
+
+    read.assert_called_once()
+    atomic.assert_called_once_with()
+
+
+def test_exact_dataset_optimisation_evaluation_uses_column_status_without_enrichment():
+    source = Path(GetDatasetTableView.__module__.replace(".", "/") + ".py")
+    repository_root = Path(__file__).resolve().parents[2]
+    view_source = (repository_root / source).read_text()
+    branch_start = view_source.index(
+        "elif column.source == SourceChoices.OPTIMISATION_EVALUATION.value:"
+    )
+    branch_end = view_source.index("result = {", branch_start)
+    branch = view_source[branch_start:branch_end]
+
+    assert (
+        "if optimisation is not None:\n"
+        "                            status = optimisation.status"
+    ) in branch
+
+
+def test_exact_dataset_tolerates_nullable_or_non_object_column_metadata():
+    source = Path(GetDatasetTableView.__module__.replace(".", "/") + ".py")
+    repository_root = Path(__file__).resolve().parents[2]
+    view_source = (repository_root / source).read_text()
+    metadata_start = view_source.index('metadata = {"run_prompt": False')
+    metadata_end = view_source.index("eval_tag = []", metadata_start)
+    metadata_block = view_source[metadata_start:metadata_end]
+
+    assert "if isinstance(column_metadata, dict):" in metadata_block
+    assert "metadata.update(column_metadata)" in metadata_block
+
+
+def test_exact_dataset_tolerates_legacy_optimisation_source_id_shape():
+    source = Path(GetDatasetTableView.__module__.replace(".", "/") + ".py")
+    repository_root = Path(__file__).resolve().parents[2]
+    view_source = (repository_root / source).read_text()
+    branch_start = view_source.index(
+        "elif column.source == SourceChoices.OPTIMISATION_EVALUATION.value:"
+    )
+    branch_end = view_source.index("result = {", branch_start)
+    branch = view_source[branch_start:branch_end]
+
+    assert ').partition("-sourceid-")' in branch
+    assert "if column_config_only and separator and user_metric_id:" in branch
+    assert "if separator and optimisation_id and user_metric_id:" in view_source
+
+
+def test_exact_dataset_tolerates_nullable_or_non_object_dataset_config():
+    source = Path(GetDatasetTableView.__module__.replace(".", "/") + ".py")
+    repository_root = Path(__file__).resolve().parents[2]
+    view_source = (repository_root / source).read_text()
+
+    assert view_source.count("if isinstance(dataset.dataset_config, dict)") >= 3
+    assert '"dataset_config": dataset_config' in view_source
+
+
+def test_exact_dataset_tolerates_nullable_or_non_object_column_config():
+    source = Path(GetDatasetTableView.__module__.replace(".", "/") + ".py")
+    repository_root = Path(__file__).resolve().parents[2]
+    view_source = (repository_root / source).read_text()
+
+    assert "if isinstance(dataset.column_config, dict)" in view_source
+    assert "if isinstance(raw_column_display_config, dict)" in view_source
+    assert 'column_display_config.get("is_frozen", None)' in view_source
+    assert 'column_display_config.get("is_visible", True)' in view_source
+
+
+def test_legacy_dataset_sort_stays_database_native_before_pagination():
+    source = Path(GetDatasetTableView.__module__.replace(".", "/") + ".py")
+    repository_root = Path(__file__).resolve().parents[2]
+    view_source = (repository_root / source).read_text()
+    sort_start = view_source.index("    def _apply_sorting(")
+    sort_end = view_source.index("    def _apply_search(", sort_start)
+    sort_source = view_source[sort_start:sort_end]
+
+    assert 'row_id=OuterRef("pk")' in sort_source
+    assert "Subquery(value_subquery)" in sort_source
+    assert "Subquery(cell_id_subquery)" in sort_source
+    assert "list(cells.values_list" not in sort_source
+    assert "Case(" not in sort_source
+
+
+def test_exact_dataset_openapi_and_generated_client_expose_full_contract():
+    repository_root = Path(__file__).resolve().parents[3]
+    swagger = json.loads(
+        (repository_root / "api_contracts/openapi/swagger.json").read_text()
+    )
+    operation = swagger["paths"]["/model-hub/develops/{dataset_id}/get-dataset-table/"][
+        "get"
+    ]
+    assert {parameter["name"] for parameter in operation["parameters"]} >= {
+        "exact_snapshot",
+        "cursor",
+    }
+    assert "503" in operation["responses"]
+    assert set(swagger["definitions"]["DatasetTableMetadata"]["properties"]) >= {
+        "page_size",
+        "current_page_index",
+        "has_more",
+        "next_page_index",
+        "next_cursor",
+        "is_exact",
+        "snapshot_bound",
+    }
+
+    generated_types = (
+        repository_root / "frontend/src/generated/api-contracts/api.schemas.ts"
+    ).read_text()
+    type_start = generated_types.index(
+        "export type ModelHubDevelopsGetDatasetTableListParams = {"
+    )
+    type_end = generated_types.index("\n};", type_start)
+    generated_params = generated_types[type_start:type_end]
+    assert "exact_snapshot?: boolean;" in generated_params
+    assert "cursor?: string;" in generated_params
 
 
 def test_create_empty_dataset_request_validates_row_bounds():

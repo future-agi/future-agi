@@ -168,6 +168,46 @@ func TestClickHouseDeliveryHandlerWritesChunksThenExactLedger(t *testing.T) {
 	}
 }
 
+func TestSharedDirectAndKafkaHandlersDeliverSystemModelSourceKind(t *testing.T) {
+	key := testKeyRow(0)
+	key["source_kind"] = "system_attribute"
+	value := testValueRow()
+	value["source_kind"] = "system_attribute"
+	input := testEnvelopeInput(t)
+	input.Payload.ValueRows = 1
+	input.Payload.Chunks = []ChunkInput{
+		{Table: KeyTable, Index: 0, RowCount: 1, JSONEachRow: testRowBytes(t, key)},
+		{Table: ValueTable, Index: 1, RowCount: 1, JSONEachRow: testRowBytes(t, value)},
+	}
+	envelope := mustEnvelope(t, input)
+
+	kafkaSink := &recordingClickHouseDeliverySink{}
+	handler, err := NewClickHouseDeliveryHandler(kafkaSink, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.Deliver(context.Background(), Delivery{Envelope: envelope, Partition: 1, Offset: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if kafkaSink.calls[0].rows[0]["source_kind"] != "system_attribute" ||
+		kafkaSink.calls[1].rows[0]["source_kind"] != "system_attribute" {
+		t.Fatalf("Kafka handler dropped namespace: %+v", kafkaSink.calls)
+	}
+
+	directSink := &recordingClickHouseDeliverySink{}
+	publisher, err := NewDirectClickHouseEnvelopePublisher(directSink, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := publisher.Publish(context.Background(), envelope); err != nil {
+		t.Fatal(err)
+	}
+	if directSink.calls[0].rows[0]["source_kind"] != "system_attribute" ||
+		directSink.calls[1].rows[0]["source_kind"] != "system_attribute" {
+		t.Fatalf("direct handler dropped namespace: %+v", directSink.calls)
+	}
+}
+
 func TestClickHouseDeliveryHandlerBoundsTheWholeMultiChunkEnvelope(t *testing.T) {
 	const envelopeTimeout = 200 * time.Millisecond
 	sink := &cumulativeDelayClickHouseDeliverySink{firstDelay: 25 * time.Millisecond}
@@ -282,7 +322,7 @@ func TestClickHouseDeliveryHandlerPrevalidatesAllChunksBeforeWriting(t *testing.
 		t.Fatal(err)
 	}
 	err = handler.Deliver(context.Background(), Delivery{Envelope: envelope, Partition: 0, Offset: 0})
-	if err == nil || !strings.Contains(err.Error(), "forbidden column") {
+	if err == nil || !strings.Contains(err.Error(), "exact legacy or source-kind") {
 		t.Fatalf("error=%v", err)
 	}
 	if len(sink.calls) != 0 || sink.catalogCalls != 0 {

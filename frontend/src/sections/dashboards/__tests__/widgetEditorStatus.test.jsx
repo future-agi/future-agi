@@ -8,8 +8,29 @@ import {
 import {
   getWidgetEditorLoadState,
   getWidgetPreviewState,
+  shouldBlockWidgetPreviewForFailure,
   WIDGET_PREVIEW_MAX_WAIT_MS,
 } from "../widgetEditorState";
+
+describe("shouldBlockWidgetPreviewForFailure", () => {
+  it("keeps an existing exact preview visible when refresh fails", () => {
+    expect(
+      shouldBlockWidgetPreviewForFailure({
+        previewFailed: true,
+        hasExactPreview: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("blocks rendering when refresh fails without an exact preview", () => {
+    expect(
+      shouldBlockWidgetPreviewForFailure({
+        previewFailed: true,
+        hasExactPreview: false,
+      }),
+    ).toBe(true);
+  });
+});
 
 describe("widget editor terminal load states", () => {
   it("keeps the editor loading only while dashboard detail is in flight", () => {

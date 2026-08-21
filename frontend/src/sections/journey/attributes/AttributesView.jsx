@@ -11,6 +11,10 @@ import { LoadingScreen } from "src/components/loading-screen";
 import axios, { endpoints } from "src/utils/axios";
 import { useParams } from "react-router-dom";
 import { useDebounce } from "src/hooks/use-debounce";
+import {
+  isPropertyCatalogNotReadyError,
+  usePropertyCatalog,
+} from "src/hooks/useDashboards";
 import AttributeGroupList from "./AttributeGroupList";
 import AttributeKeyList from "./AttributeKeyList";
 import AttributeDetail from "./AttributeDetail";
@@ -22,13 +26,23 @@ import {
   isAttributeKeyCursorChainStopped,
   readAttributeKeyPage,
 } from "src/sections/projects/LLMTracing/attributeKeyCursorPagination";
+import {
+  ATTRIBUTE_INVENTORY_SEARCH_DEBOUNCE_MS,
+  PROPERTY_CATALOG_CACHE_TIME_MS,
+  PROPERTY_CATALOG_COMPACT_PAGE_SIZE,
+  PROPERTY_CATALOG_STALE_TIME_MS,
+} from "src/config/runtime_limits";
 
-const AttributesView = () => {
+/** Rollout-only retained span-key view selected by the typed not-ready 503. */
+export const LegacyAttributesView = () => {
   const { id: projectId } = useParams();
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [selectedKey, setSelectedKey] = useState(null);
   const [search, setSearch] = useState("");
-  const debouncedSearch = useDebounce(search.trim(), 350);
+  const debouncedSearch = useDebounce(
+    search.trim(),
+    ATTRIBUTE_INVENTORY_SEARCH_DEBOUNCE_MS,
+  );
   const queryClient = useQueryClient();
   const retainedQueryKey = ["span-attribute-keys", projectId, "retained"];
   const exactQueryKey = [
@@ -97,7 +111,7 @@ const AttributesView = () => {
     queryFn: ({ signal, pageParam }) =>
       readAttributeKeyPage({
         pageParam,
-        pageSize: 25,
+        pageSize: PROPERTY_CATALOG_COMPACT_PAGE_SIZE,
         publishedData: queryClient.getQueryData(retainedQueryKey),
         signal,
         requestPage: (cursor, requestSignal = signal) =>
@@ -107,7 +121,7 @@ const AttributesView = () => {
               timeout: ATTRIBUTE_KEY_REQUEST_TIMEOUT_MS,
               params: {
                 project_id: projectId,
-                page_size: 25,
+                page_size: PROPERTY_CATALOG_COMPACT_PAGE_SIZE,
                 ...(cursor ? { cursor } : {}),
               },
             })
@@ -117,8 +131,8 @@ const AttributesView = () => {
     getNextPageParam: getNextAttributeKeyPageParam,
     enabled: Boolean(projectId),
     retry: false,
-    staleTime: 60_000,
-    gcTime: 5 * 60_000,
+    staleTime: PROPERTY_CATALOG_STALE_TIME_MS,
+    gcTime: PROPERTY_CATALOG_CACHE_TIME_MS,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
     refetchOnReconnect: false,
@@ -140,7 +154,7 @@ const AttributesView = () => {
     queryFn: ({ signal, pageParam }) =>
       readAttributeKeyPage({
         pageParam,
-        pageSize: 25,
+        pageSize: PROPERTY_CATALOG_COMPACT_PAGE_SIZE,
         publishedData: queryClient.getQueryData(exactQueryKey),
         signal,
         requestPage: (cursor, requestSignal = signal) =>
@@ -150,7 +164,7 @@ const AttributesView = () => {
               timeout: ATTRIBUTE_KEY_REQUEST_TIMEOUT_MS,
               params: {
                 project_id: projectId,
-                page_size: 25,
+                page_size: PROPERTY_CATALOG_COMPACT_PAGE_SIZE,
                 q: debouncedSearch,
                 ...(cursor ? { cursor } : {}),
               },
@@ -161,8 +175,8 @@ const AttributesView = () => {
     getNextPageParam: getNextAttributeKeyPageParam,
     enabled: Boolean(projectId) && Boolean(debouncedSearch),
     retry: false,
-    staleTime: 60_000,
-    gcTime: 5 * 60_000,
+    staleTime: PROPERTY_CATALOG_STALE_TIME_MS,
+    gcTime: PROPERTY_CATALOG_CACHE_TIME_MS,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
     refetchOnReconnect: false,
@@ -224,7 +238,7 @@ const AttributesView = () => {
     try {
       const page = await readAttributeKeyPage({
         pageParam: null,
-        pageSize: 25,
+        pageSize: PROPERTY_CATALOG_COMPACT_PAGE_SIZE,
         publishedData: undefined,
         requestPage: (cursor, signal) =>
           axios
@@ -233,7 +247,7 @@ const AttributesView = () => {
               timeout: ATTRIBUTE_KEY_REQUEST_TIMEOUT_MS,
               params: {
                 project_id: projectId,
-                page_size: 25,
+                page_size: PROPERTY_CATALOG_COMPACT_PAGE_SIZE,
                 ...(exact ? { q: debouncedSearch } : {}),
                 ...(cursor ? { cursor } : {}),
               },
@@ -534,6 +548,235 @@ const AttributesView = () => {
           hasMore={hasNextPage}
           isLoadingMore={isFetchingNextPage}
           onLoadMore={fetchNextPage}
+          search={search}
+          onSearchChange={setSearch}
+        />
+        <AttributeDetail projectId={projectId} attributeKey={selectedKey} />
+      </Box>
+    </Box>
+  );
+};
+
+const AttributesView = () => {
+  const { id: projectId } = useParams();
+  const [selectedGroup, setSelectedGroup] = useState(null);
+  const [selectedKey, setSelectedKey] = useState(null);
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(
+    search.trim(),
+    ATTRIBUTE_INVENTORY_SEARCH_DEBOUNCE_MS,
+  );
+  const catalog = usePropertyCatalog({
+    category: "custom_attribute",
+    source: "traces",
+    search: debouncedSearch,
+    projectIds: projectId ? [projectId] : [],
+    pageSize: PROPERTY_CATALOG_COMPACT_PAGE_SIZE,
+    enabled: Boolean(projectId),
+    allowLegacyNotReadyFallback: true,
+    fallbackScopeKey: `journey-attribute-property-catalog:${projectId || ""}`,
+  });
+
+  const catalogNotReady = isPropertyCatalogNotReadyError(catalog.error);
+  const isLoading = catalog.isLoading || catalogNotReady;
+  const isError = Boolean(catalog.isError && !catalogNotReady);
+  const isFetching = catalog.isFetching;
+  const cursorStopped = catalog.cursorChainStopped;
+  const hasNextPage = Boolean(catalog.hasNextPage);
+  const isFetchingNextPage = catalog.isFetchingNextPage;
+  const attributeKeys = useMemo(
+    () =>
+      catalog.metrics.map((metric) => ({
+        key: metric.name,
+        property_id: metric.property_id,
+        type: metric.type || metric.data_type || "string",
+        count: null,
+        count_exact: false,
+      })),
+    [catalog.metrics],
+  );
+  const groups = useMemo(() => {
+    const grouped = {};
+    attributeKeys.forEach(({ key, type, count, count_exact: countExact }) => {
+      const parts = key.split(".");
+      const prefix = parts.length > 1 ? parts.slice(0, -1).join(".") : key;
+      if (!grouped[prefix]) grouped[prefix] = { keys: [], totalCount: 0 };
+      grouped[prefix].keys.push({ key, type, count, count_exact: countExact });
+      if (countExact && Number.isFinite(count)) {
+        grouped[prefix].totalCount += count;
+      }
+    });
+    return Object.entries(grouped)
+      .map(([prefix, data]) => ({ prefix, ...data }))
+      .sort(
+        (a, b) =>
+          b.totalCount - a.totalCount || a.prefix.localeCompare(b.prefix),
+      );
+  }, [attributeKeys]);
+  const filteredKeys = useMemo(() => {
+    if (debouncedSearch || !selectedGroup) return attributeKeys;
+    return groups.find((group) => group.prefix === selectedGroup)?.keys || [];
+  }, [attributeKeys, debouncedSearch, groups, selectedGroup]);
+
+  if (catalog.legacyFallbackRequired) return <LegacyAttributesView />;
+
+  if (isLoading) {
+    return <LoadingScreen sx={{ height: "calc(100vh - 180px)" }} />;
+  }
+
+  if (isError && attributeKeys.length === 0) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          height: "calc(100vh - 180px)",
+          p: 3,
+        }}
+      >
+        <Alert
+          severity="warning"
+          action={
+            <Button
+              size="small"
+              disabled={isFetching}
+              onClick={() => catalog.refetch()}
+            >
+              Retry
+            </Button>
+          }
+        >
+          Span attributes could not be loaded. Please retry.
+        </Alert>
+      </Box>
+    );
+  }
+
+  if (cursorStopped) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          height: "calc(100vh - 180px)",
+          p: 3,
+        }}
+      >
+        <Alert
+          severity="warning"
+          action={
+            <Button
+              size="small"
+              disabled={isFetching}
+              onClick={() => catalog.refetch()}
+            >
+              Retry pagination
+            </Button>
+          }
+        >
+          Attribute pagination stopped safely. Please retry.
+        </Alert>
+      </Box>
+    );
+  }
+
+  if (attributeKeys.length === 0 && hasNextPage) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          height: "calc(100vh - 180px)",
+          flexDirection: "column",
+          gap: 1,
+        }}
+      >
+        {isFetchingNextPage ? (
+          <CircularProgress size={24} />
+        ) : (
+          <Button variant="outlined" onClick={() => catalog.fetchNextPage()}>
+            Continue loading attributes
+          </Button>
+        )}
+        <Typography variant="body2" color="text.secondary">
+          Searching older traces for attributes…
+        </Typography>
+      </Box>
+    );
+  }
+
+  if (attributeKeys.length === 0) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          height: "calc(100vh - 180px)",
+          flexDirection: "column",
+          gap: 1,
+        }}
+      >
+        <Typography variant="h6" color="text.secondary">
+          No Span Attributes Found
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          Span attributes will appear here once trace data is ingested.
+        </Typography>
+      </Box>
+    );
+  }
+
+  return (
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        height: "calc(100vh - 180px)",
+        overflow: "hidden",
+      }}
+    >
+      {isError && (
+        <Alert
+          severity="warning"
+          action={
+            <Button
+              size="small"
+              disabled={isFetching}
+              onClick={() => catalog.refetch()}
+            >
+              Retry
+            </Button>
+          }
+          sx={{ m: 1, mb: 0, flexShrink: 0 }}
+        >
+          Span attributes could not be refreshed. Existing attributes are still
+          available.
+        </Alert>
+      )}
+      <Box
+        sx={{
+          display: "flex",
+          flex: 1,
+          minHeight: 0,
+          overflow: "hidden",
+        }}
+      >
+        <AttributeGroupList
+          groups={groups}
+          selectedGroup={selectedGroup}
+          onSelectGroup={setSelectedGroup}
+        />
+        <AttributeKeyList
+          keys={filteredKeys}
+          selectedKey={selectedKey}
+          onSelectKey={setSelectedKey}
+          hasMore={hasNextPage}
+          isLoadingMore={isFetchingNextPage}
+          onLoadMore={catalog.fetchNextPage}
           search={search}
           onSearchChange={setSearch}
         />

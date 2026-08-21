@@ -11,8 +11,14 @@ Tests cover:
 """
 
 import unittest
+import uuid
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
+from tracer.serializers.dashboard import DashboardQuerySerializer
+from tracer.services.clickhouse.query_builders.dashboard import (
+    InvalidMetricCombinationError,
+)
 from tracer.services.clickhouse.query_builders.simulation_dashboard import (
     SIMULATION_AGGREGATIONS,
     SIMULATION_BREAKDOWN_COLUMNS,
@@ -323,6 +329,33 @@ class TestSimulationQueryBuilderBreakdowns(unittest.TestCase):
         self.assertIn("breakdown_value", sql)
         self.assertIn("scenario_type", sql)
 
+    def test_unknown_simulation_breakdown_fails_closed(self):
+        builder = SimulationQueryBuilder(self._make_config("unknown_dimension"))
+
+        with self.assertRaisesRegex(
+            InvalidMetricCombinationError,
+            "Unsupported simulation breakdown dimension",
+        ):
+            builder.build_all_queries()
+
+    def test_non_system_simulation_breakdown_fails_closed(self):
+        config = self._make_config("quality")
+        config["breakdowns"][0].update({"type": "eval_metric", "source": "simulation"})
+
+        with self.assertRaisesRegex(
+            InvalidMetricCombinationError,
+            "Simulation breakdowns do not support this property type",
+        ):
+            SimulationQueryBuilder(config).build_all_queries()
+
+    def test_trace_breakdown_is_not_applied_to_simulation_metric(self):
+        config = self._make_config("status")
+        config["breakdowns"][0]["source"] = "traces"
+
+        sql, _, _ = SimulationQueryBuilder(config).build_all_queries()[0]
+
+        self.assertNotIn("breakdown_value", sql)
+
 
 class TestSimulationQueryBuilderFilters(unittest.TestCase):
     """Test filter application in queries."""
@@ -372,6 +405,61 @@ class TestSimulationQueryBuilderFilters(unittest.TestCase):
         self.assertIn("simulate_run_test_dict", sql)
         self.assertEqual(params["sf_0_val"], "Regression suite")
 
+    def test_non_system_simulation_filter_fails_closed(self):
+        config = self._make_config(
+            [
+                {
+                    "metric_type": "eval_metric",
+                    "metric_name": str(uuid.uuid4()),
+                    "operator": "equal_to",
+                    "value": "Passed",
+                    "source": "simulation",
+                }
+            ]
+        )
+
+        with self.assertRaisesRegex(
+            InvalidMetricCombinationError,
+            "Simulation filters do not support this property type",
+        ):
+            SimulationQueryBuilder(config).build_all_queries()
+
+    def test_unknown_simulation_filter_fails_closed(self):
+        config = self._make_config(
+            [
+                {
+                    "metric_type": "system_metric",
+                    "metric_name": "unknown_dimension",
+                    "operator": "equal_to",
+                    "value": "value",
+                    "source": "simulation",
+                }
+            ]
+        )
+
+        with self.assertRaisesRegex(
+            InvalidMetricCombinationError,
+            "Unsupported simulation filter dimension",
+        ):
+            SimulationQueryBuilder(config).build_all_queries()
+
+    def test_trace_filter_is_not_applied_to_simulation_metric(self):
+        config = self._make_config(
+            [
+                {
+                    "metric_type": "custom_attribute",
+                    "metric_name": "customer.attr",
+                    "operator": "equal_to",
+                    "value": "value",
+                    "source": "traces",
+                }
+            ]
+        )
+
+        sql, _, _ = SimulationQueryBuilder(config).build_all_queries()[0]
+
+        self.assertNotIn("customer.attr", sql)
+
     def test_call_type_filter(self):
         config = self._make_config(
             [
@@ -406,7 +494,7 @@ class TestSimulationQueryBuilderFilters(unittest.TestCase):
         self.assertIn("persona", sql)
         self.assertEqual(params["sf_0_val"], "Angry Customer")
 
-    def test_non_system_filter_skipped(self):
+    def test_non_system_filter_fails_closed(self):
         config = self._make_config(
             [
                 {
@@ -417,10 +505,11 @@ class TestSimulationQueryBuilderFilters(unittest.TestCase):
                 }
             ]
         )
-        builder = SimulationQueryBuilder(config)
-        queries = builder.build_all_queries()
-        sql, params, _ = queries[0]
-        self.assertNotIn("foo", sql)
+        with self.assertRaisesRegex(
+            InvalidMetricCombinationError,
+            "Simulation filters do not support this property type",
+        ):
+            SimulationQueryBuilder(config).build_all_queries()
 
     def test_empty_value_filter_skipped(self):
         config = self._make_config(
@@ -437,6 +526,90 @@ class TestSimulationQueryBuilderFilters(unittest.TestCase):
         queries = builder.build_all_queries()
         sql, params, _ = queries[0]
         self.assertNotIn("sf_0_val", params)
+
+
+class TestSimulationDashboardQueryValidation(unittest.TestCase):
+    @staticmethod
+    def _query_config(**overrides):
+        data = {
+            "workflow": "observability",
+            "time_range": {"preset": "7D"},
+            "granularity": "day",
+            "metrics": [
+                {
+                    "name": "duration",
+                    "type": "system_metric",
+                    "aggregation": "avg",
+                    "source": "simulation",
+                }
+            ],
+        }
+        data.update(overrides)
+        return data
+
+    def test_serializer_rejects_simulation_eval_filter(self):
+        eval_config_id = str(uuid.uuid4())
+        serializer = DashboardQuerySerializer(
+            data=self._query_config(
+                filters=[
+                    {
+                        "column_id": eval_config_id,
+                        "property_id": f"eval_config:{eval_config_id}",
+                        "source": "simulation",
+                        "filter_config": {
+                            "filter_type": "text",
+                            "filter_op": "in",
+                            "filter_value": ["Passed"],
+                            "col_type": "EVAL_METRIC",
+                        },
+                    }
+                ]
+            )
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn(
+            "Simulation filters support only cataloged system dimensions",
+            str(serializer.errors),
+        )
+
+    def test_serializer_rejects_simulation_eval_breakdown(self):
+        eval_config_id = str(uuid.uuid4())
+        serializer = DashboardQuerySerializer(
+            data=self._query_config(
+                breakdowns=[
+                    {
+                        "name": eval_config_id,
+                        "property_id": f"eval_config:{eval_config_id}",
+                        "type": "eval_metric",
+                        "source": "simulation",
+                        "config_id": eval_config_id,
+                    }
+                ]
+            )
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn(
+            "Simulation breakdowns support only cataloged system dimensions",
+            str(serializer.errors),
+        )
+
+    def test_serializer_accepts_simulation_system_breakdown(self):
+        serializer = DashboardQuerySerializer(
+            data=self._query_config(
+                breakdowns=[
+                    {
+                        "name": "status",
+                        "property_id": "system_attribute:simulation:status",
+                        "type": "system_metric",
+                        "source": "simulation",
+                    }
+                ]
+            )
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
 
 
 class TestSimulationQueryBuilderEvalMetric(unittest.TestCase):
@@ -485,6 +658,35 @@ class TestSimulationQueryBuilderEvalMetric(unittest.TestCase):
         queries = builder.build_all_queries()
         sql, _, _ = queries[0]
         self.assertIn("count()", sql)
+
+    def test_eval_config_registry_id_resolves_mapping_by_config_id(self):
+        config_id = "11111111-1111-4111-8111-111111111111"
+
+        class _ConfigQuery:
+            def __init__(self):
+                self.filters = []
+
+            def filter(self, **kwargs):
+                self.filters.append(kwargs)
+                return self
+
+            def values(self, *_args):
+                return [
+                    {
+                        "id": config_id,
+                        "mapping": {"key": "quality-eval"},
+                    }
+                ]
+
+        query = _ConfigQuery()
+        config = self._make_config(config_id=config_id)
+        config["metrics"][0]["property_id"] = f"eval_config:{config_id}"
+        with patch("simulate.models.eval_config.SimulateEvalConfig.objects", query):
+            sql, params, _ = SimulationQueryBuilder(config).build_all_queries()[0]
+
+        self.assertEqual(params["eval_config_id"], "quality-eval")
+        self.assertIn("quality-eval", sql)
+        self.assertTrue(any(row.get("id") == config_id for row in query.filters))
 
 
 class TestSimulationQueryBuilderTimeRange(unittest.TestCase):

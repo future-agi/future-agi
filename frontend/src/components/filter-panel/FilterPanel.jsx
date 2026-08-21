@@ -45,6 +45,7 @@ import React, {
   useState,
 } from "react";
 import Iconify from "src/components/iconify";
+import { buildPropertyRegistryId } from "src/hooks/useDashboards";
 import { useAIFilter } from "src/hooks/use-ai-filter";
 
 // ---------------------------------------------------------------------------
@@ -62,6 +63,28 @@ const ENUM_OPERATORS = [
   { value: "is", label: "Is" },
   { value: "is_not", label: "Is not" },
 ];
+
+function aiPropertyCategory(field) {
+  if (field.category) return field.category;
+  const kind = field.propertyKind || field.property_kind;
+  if (kind === "custom_attribute") return "attribute";
+  if (kind === "eval" || kind === "eval_config" || kind === "eval_template")
+    return "eval";
+  if (kind === "annotation") return "annotation";
+  if (kind === "dataset_column") return "dataset_column";
+  return "system";
+}
+
+function aiPropertyMetricType(field) {
+  if (field.metricType || field.metric_type)
+    return field.metricType || field.metric_type;
+  const category = aiPropertyCategory(field);
+  if (category === "attribute") return "custom_attribute";
+  if (category === "eval") return "eval_metric";
+  if (category === "annotation") return "annotation_metric";
+  if (category === "dataset_column") return "custom_column";
+  return "system_metric";
+}
 
 function getOperators(fieldDef) {
   const fieldType = typeof fieldDef === "string" ? fieldDef : fieldDef?.type;
@@ -1631,7 +1654,14 @@ const FilterPanel = ({
     () =>
       filterFields.map((f) => ({
         field: f.value,
+        property_id: buildPropertyRegistryId({
+          propertyId: f.registryId || f.property_id,
+          metricName: f.value,
+          metricType: aiPropertyMetricType(f),
+          source: f.propertySource || f.property_source || source,
+        }),
         label: f.label,
+        category: aiPropertyCategory(f),
         type: f.type,
         operators:
           f.type === "enum"
@@ -1645,7 +1675,7 @@ const FilterPanel = ({
         // canonical example.
         ...(f.choiceLabels ? { choice_labels: f.choiceLabels } : {}),
       })),
-    [filterFields],
+    [filterFields, source],
   );
 
   const {

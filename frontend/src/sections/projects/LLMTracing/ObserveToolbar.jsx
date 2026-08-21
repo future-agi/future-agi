@@ -33,6 +33,9 @@ const ObserveToolbar = ({
   // selected). TraceFilterPanel otherwise cannot load either its property
   // catalog or retained attribute-key catalog on those mounts.
   projectId,
+  // Cross-project user detail has no route project. Its unified catalog is
+  // authorized by the active workspace until a Project filter narrows it.
+  allowWorkspaceScope = false,
   // When true, always render inline (skip the #observe-toolbar-slot portal).
   // Used by pages that mount their own toolbar outside the main ObserveTabBar,
   // e.g., the User Detail Page.
@@ -70,6 +73,7 @@ const ObserveToolbar = ({
   // View mode (graph/agentGraph/agentPath)
   viewMode,
   onViewModeChange,
+  agentGraphEnabled = true,
   // Evals
   hasEvalFilter,
   onToggleEvalFilter,
@@ -123,6 +127,16 @@ const ObserveToolbar = ({
   // remains `trace`, but the visible rows and list endpoint use the canonical
   // voice-call field contract.
   const effectiveFilterTab = isSimulator ? "voiceCalls" : tab;
+  const propertyNamespace =
+    effectiveFilterTab === "voiceCalls"
+      ? "voice_calls"
+      : mode === "sessions"
+        ? "sessions"
+        : mode === "users"
+          ? "users"
+          : "traces";
+  const filterValueSource =
+    mode === "sessions" || mode === "users" ? "sessions" : "traces";
   const setFilterButtonNode = useCallback((node) => {
     filterButtonRef.current = node;
     setFilterButtonEl(node);
@@ -268,6 +282,7 @@ const ObserveToolbar = ({
       })();
       return {
         field: gf.column_id,
+        registryId: gf.property_id,
         fieldName:
           gf.display_name || (isGlobalAnnotatorFilter ? "Annotator" : null),
         fieldCategory: isDirectIdFilter
@@ -429,8 +444,10 @@ const ObserveToolbar = ({
             tab={effectiveFilterTab}
             isSimulator={isSimulator}
             isSpansView={isSpansView}
-            source={mode === "sessions" ? "sessions" : "traces"}
+            source={filterValueSource}
+            propertyNamespace={propertyNamespace}
             projectId={projectId}
+            allowWorkspaceScope={allowWorkspaceScope}
             onApply={(newFilters) => {
               setPanelFilters(newFilters);
               if (!newFilters || newFilters.length === 0) {
@@ -513,6 +530,7 @@ const ObserveToolbar = ({
             mode={mode}
             viewMode={viewMode}
             onViewModeChange={onViewModeChange}
+            agentGraphEnabled={agentGraphEnabled}
             columns={columns}
             onColumnVisibilityChange={onColumnVisibilityChange}
             onAutoSize={onAutoSize}
@@ -567,6 +585,7 @@ const ObserveToolbar = ({
 ObserveToolbar.propTypes = {
   mode: PropTypes.oneOf(["traces", "sessions", "users"]),
   projectId: PropTypes.string,
+  allowWorkspaceScope: PropTypes.bool,
   inline: PropTypes.bool,
   dateLabel: PropTypes.string,
   dateFilter: PropTypes.object,
@@ -590,6 +609,7 @@ ObserveToolbar.propTypes = {
   setCellHeight: PropTypes.func,
   viewMode: PropTypes.string,
   onViewModeChange: PropTypes.func,
+  agentGraphEnabled: PropTypes.bool,
   hasEvalFilter: PropTypes.bool,
   onToggleEvalFilter: PropTypes.func,
   showEvalToggle: PropTypes.bool,

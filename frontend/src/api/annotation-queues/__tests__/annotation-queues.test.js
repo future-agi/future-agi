@@ -1,6 +1,6 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
@@ -8,10 +8,13 @@ import axios from "src/utils/axios";
 import {
   annotationQueueEndpoints,
   annotationQueueKeys,
+  ADD_QUEUE_ITEMS_TIMEOUT_MS,
   queueItemKeys,
   annotateKeys,
   automationRuleKeys,
   extractErrorMessage,
+  postAddQueueItems,
+  useAddQueueItems,
   useCreateAutomationRule,
   useCreateAnnotationQueue,
   useEvaluateRule,
@@ -38,6 +41,7 @@ import {
   useToggleDiscussionReaction,
   useUpdateDiscussionComment,
 } from "../annotation-queues";
+import { INTERACTIVE_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
 
 vi.mock("src/utils/axios", () => ({
   default: {
@@ -81,6 +85,10 @@ function createQueryWrapper(queryClient = createTestQueryClient()) {
 describe("Annotation Queues API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe("queue endpoints", () => {
@@ -164,6 +172,152 @@ describe("Annotation Queues API", () => {
       ).toBe(
         "You've reached the 10 annotation queues limit across this organization",
       );
+    });
+  });
+
+  describe("useAddQueueItems", () => {
+    it("leaves enumerated adds on their existing transport contract", async () => {
+      axios.post.mockResolvedValueOnce({ data: { result: { added: 1 } } });
+      const items = [{ source_type: "trace", source_id: "trace-1" }];
+
+      await postAddQueueItems({ queueId: "queue-1", items });
+
+      expect(axios.post).toHaveBeenCalledWith(
+        "/model-hub/annotation-queues/queue-1/items/add-items/",
+        { items },
+      );
+    });
+
+    it("sends an AbortSignal and the configured transport ceiling", async () => {
+      axios.post.mockResolvedValueOnce({ data: { result: { added: 1 } } });
+
+      await postAddQueueItems({
+        queueId: "queue-1",
+        selection: {
+          mode: "filter",
+          source_type: "trace",
+          project_id: "project-1",
+        },
+      });
+
+      expect(axios.post).toHaveBeenCalledWith(
+        "/model-hub/annotation-queues/queue-1/items/add-items/",
+        {
+          selection: {
+            mode: "filter",
+            source_type: "trace",
+            project_id: "project-1",
+          },
+        },
+        {
+          signal: expect.any(AbortSignal),
+          timeout: ADD_QUEUE_ITEMS_TIMEOUT_MS,
+        },
+      );
+      expect(ADD_QUEUE_ITEMS_TIMEOUT_MS).toBe(INTERACTIVE_REQUEST_TIMEOUT_MS);
+    });
+
+    it("actively aborts a request at the transport ceiling", async () => {
+      vi.useFakeTimers();
+      let requestSignal;
+      axios.post.mockImplementationOnce((_url, _payload, config) => {
+        requestSignal = config.signal;
+        return new Promise((_resolve, reject) => {
+          requestSignal.addEventListener("abort", () => {
+            reject({ transportCode: "ERR_CANCELED" });
+          });
+        });
+      });
+
+      const pending = postAddQueueItems({
+        queueId: "queue-1",
+        selection: {
+          mode: "filter",
+          source_type: "trace",
+          project_id: "project-1",
+        },
+      });
+      const rejected = expect(pending).rejects.toMatchObject({
+        transportCode: "ERR_CANCELED",
+      });
+
+      await vi.advanceTimersByTimeAsync(ADD_QUEUE_ITEMS_TIMEOUT_MS);
+      await rejected;
+      expect(requestSignal.aborted).toBe(true);
+    });
+
+    it("shows an unknown-outcome warning instead of claiming rollback on abort", async () => {
+      axios.post.mockRejectedValueOnce({ transportCode: "ERR_CANCELED" });
+      const { result } = renderHook(() => useAddQueueItems(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate({
+        queueId: "queue-1",
+        selection: {
+          mode: "filter",
+          source_type: "trace",
+          project_id: "project-1",
+        },
+      });
+
+      await waitFor(() => {
+        expect(enqueueSnackbar).toHaveBeenCalledWith(
+          "We couldn't confirm whether the items were added. Refresh the queue and check before retrying.",
+          { variant: "error" },
+        );
+      });
+      expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
+    });
+
+    it("uses the same unknown-outcome warning for a network failure", async () => {
+      axios.post.mockRejectedValueOnce({ transportCode: "ERR_NETWORK" });
+      const { result } = renderHook(() => useAddQueueItems(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate({
+        queueId: "queue-1",
+        selection: {
+          mode: "filter",
+          source_type: "trace",
+          project_id: "project-1",
+        },
+      });
+
+      await waitFor(() => {
+        expect(enqueueSnackbar).toHaveBeenCalledWith(
+          "We couldn't confirm whether the items were added. Refresh the queue and check before retrying.",
+          { variant: "error" },
+        );
+      });
+      expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
+    });
+
+    it("claims no additions only for the backend rollback deadline code", async () => {
+      axios.post.mockRejectedValueOnce({
+        code: "add_items_deadline_exceeded",
+      });
+      const { result } = renderHook(() => useAddQueueItems(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate({
+        queueId: "queue-1",
+        selection: {
+          mode: "filter",
+          source_type: "trace",
+          project_id: "project-1",
+        },
+      });
+
+      await waitFor(() => {
+        expect(enqueueSnackbar).toHaveBeenCalledWith(
+          "Adding matching items took too long. Nothing was added. Please retry.",
+          { variant: "error" },
+        );
+      });
+      expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
     });
   });
 

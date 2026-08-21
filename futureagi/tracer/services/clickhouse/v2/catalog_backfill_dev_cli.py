@@ -84,6 +84,7 @@ def _load_runner_contract() -> dict[str, Any]:
 
 _CONTRACT = _load_runner_contract()
 CATALOG_BACKFILL_ACK: str = _CONTRACT["CATALOG_BACKFILL_ACK"]
+CATALOG_BACKFILL_CLOUD_DEPLOYMENT: str = _CONTRACT["CATALOG_BACKFILL_CLOUD_DEPLOYMENT"]
 CATALOG_BACKFILL_ENVIRONMENT: str = _CONTRACT["CATALOG_BACKFILL_ENVIRONMENT"]
 DEFAULT_MAX_RUNTIME_SECONDS: int = _CONTRACT["DEFAULT_MAX_RUNTIME_SECONDS"]
 DEFAULT_MAX_WINDOWS: int = _CONTRACT["DEFAULT_MAX_WINDOWS"]
@@ -100,6 +101,8 @@ parse_utc_hour = _CONTRACT["parse_utc_hour"]
 SOURCE_PASSWORD_ENV = "FI_CATALOG_BACKFILL_SOURCE_PASSWORD"
 CATALOG_PASSWORD_ENV = "FI_CATALOG_BACKFILL_CATALOG_PASSWORD"
 RUNTIME_ENVIRONMENT_ENV = "FI_CATALOG_BACKFILL_RUNTIME"
+RUNTIME_CLOUD_DEPLOYMENT_ENV = "CLOUD_DEPLOYMENT"
+DEV_ENDPOINT_IDENTITY_ENV = "FI_TH7247_DEV_ENDPOINT_IDENTITY"
 EXIT_OK = 0
 EXIT_RUNTIME_ERROR = 1
 EXIT_USAGE = 2
@@ -134,6 +137,8 @@ def build_parser() -> argparse.ArgumentParser:
         )
     )
     parser.add_argument("--environment", required=True)
+    parser.add_argument("--cloud-deployment", required=True)
+    parser.add_argument("--dev-identity", required=True)
     parser.add_argument("--ack", required=True)
     parser.add_argument("--project-id", required=True)
     parser.add_argument("--since", required=True)
@@ -190,6 +195,14 @@ def parse_config(
         raise CatalogBackfillError(
             f"{RUNTIME_ENVIRONMENT_ENV} must explicitly equal development"
         )
+    if env.get(RUNTIME_CLOUD_DEPLOYMENT_ENV) != CATALOG_BACKFILL_CLOUD_DEPLOYMENT:
+        raise CatalogBackfillError(
+            f"{RUNTIME_CLOUD_DEPLOYMENT_ENV} must explicitly equal DEV"
+        )
+    if env.get(DEV_ENDPOINT_IDENTITY_ENV) != args.dev_identity:
+        raise CatalogBackfillError(
+            f"{DEV_ENDPOINT_IDENTITY_ENV} must exactly match --dev-identity"
+        )
     source_password = _required_environment_password(env, SOURCE_PASSWORD_ENV)
     catalog_password = _required_environment_password(env, CATALOG_PASSWORD_ENV)
     source = _parse_endpoint(
@@ -211,6 +224,8 @@ def parse_config(
     worker_id = args.worker_id or f"{socket.gethostname()}:{os.getpid()}"
     backfill_config = CatalogBackfillConfig(
         environment=args.environment,
+        cloud_deployment=args.cloud_deployment,
+        dev_identity=args.dev_identity,
         acknowledgement=args.ack,
         project_id=args.project_id,
         since=parse_utc_hour(args.since, "since"),
@@ -280,6 +295,7 @@ def run(
                     catalog_client,
                     source_cancel_client,
                     catalog_cancel_client,
+                    target_database=config.backfill.target_database,
                 ),
                 config.backfill,
                 stop_requested=stop.is_set,

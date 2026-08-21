@@ -104,6 +104,7 @@ describe("AutocompleteTextValueSelector", () => {
         timeout: 4_800,
         params: expect.objectContaining({
           project_ids: "project-large",
+          property_id: "custom_attribute:call.status",
           metric_name: "call.status",
           metric_type: "custom_attribute",
           attribute_type: "string",

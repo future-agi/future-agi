@@ -38,6 +38,7 @@ from tracer.serializers.dashboard import (
     DashboardDetailSerializer,
     DashboardFilterValuesQuerySerializer,
     DashboardFilterValuesResponseSerializer,
+    DashboardMetricsCatalogQuerySerializer,
     DashboardMetricsCatalogResponseSerializer,
     DashboardPreviewQuerySerializer,
     DashboardQueryApiResponseSerializer,
@@ -47,7 +48,10 @@ from tracer.serializers.dashboard import (
     DashboardSerializer,
     DashboardWidgetSerializer,
 )
-from tracer.services.annotation_label_source import AnnotationScoreReadUnavailable
+from tracer.services.annotation_label_source import (
+    AnnotationLabelScoresProjectPG,
+    AnnotationScoreReadUnavailable,
+)
 from tracer.services.clickhouse.attribute_cursor_state import (
     AttributeCursorStateError,
     load_attribute_cursor_seen_state,
@@ -64,9 +68,15 @@ from tracer.services.clickhouse.client import (
     get_clickhouse_client,
     is_clickhouse_enabled,
 )
+from tracer.services.clickhouse.dashboard_action_deadline import (
+    DashboardActionUnavailable,
+    bounded_dashboard_action_request,
+    start_dashboard_action_deadline,
+)
 from tracer.services.clickhouse.filter_value_reads import (
     SYSTEM_FILTER_VALUE_METRICS,
     read_end_user_filter_value_cursor_page,
+    read_session_filter_value_cursor_page,
     read_span_system_filter_value_cursor_page,
     read_span_system_filter_values,
 )
@@ -102,9 +112,11 @@ from tracer.services.clickhouse.read_budget import (
     is_read_budget_error,
 )
 from tracer.services.clickhouse.v2.attribute_catalog_cutover import (
+    CATALOG_SYSTEM_VALUE_METRICS,
     CATALOG_VALUE_CURSOR_MARKER,
     catalog_value_rows,
     mark_catalog_response,
+    try_catalog_system_value_page,
     try_catalog_value_page,
     value_checkpoint_from_state,
     value_checkpoint_state,
@@ -119,14 +131,47 @@ from tracer.services.clickhouse.v2.attribute_catalog_snapshot import (
     catalog_snapshot_metadata,
     mark_catalog_snapshot_response,
 )
+from tracer.services.clickhouse.v2.property_catalog.connection import (
+    PropertyCatalogReadExecutor,
+)
+from tracer.services.clickhouse.v2.property_catalog.cursor import (
+    PropertyCatalogCursorError,
+)
+from tracer.services.clickhouse.v2.property_catalog.reader import (
+    PropertyCatalogReader,
+    PropertyCatalogUnavailable,
+)
+from tracer.services.clickhouse.v2.property_catalog.source_adapters import (
+    system_property_value_adapter,
+)
+from tracer.services.clickhouse.v2.property_catalog.value_cursor import (
+    PropertyCatalogValueCursorError,
+)
+from tracer.services.clickhouse.v2.property_catalog.value_reader import (
+    PROPERTY_CATALOG_VALUE_ADAPTER,
+    PROPERTY_CATALOG_VALUE_MAX_PROJECTS,
+    PropertyCatalogValueNotReady,
+    PropertyCatalogValueReader,
+    PropertyCatalogValueUnavailable,
+)
 from tracer.services.clickhouse.v2.query_builders.dashboard import (
     DashboardQueryBuilderV2,
 )
 from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
-from tracer.services.dashboard_metrics_catalog import get_cached_metrics_catalog
+from tracer.services.configured_value_options import configured_value_options
+from tracer.services.dashboard_metrics_catalog import (
+    METRICS_CATALOG_TIMEOUT_MS,
+    MetricsCatalogUnavailable,
+    build_metrics_catalog_page,
+    get_cached_metrics_catalog,
+    resolve_property_catalog_agent_scope,
+    resolve_property_catalog_project_scope,
+)
 from tracer.services.exact_aggregation_cache import (
     read_or_schedule_exact_snapshot,
 )
+from tracer.utils.helper import get_annotation_labels_by_project
+from tracer.utils.property_registry import parse_property_registry_id
 from tracer.utils.workspace_scope import (
     project_queryset_for_request,
     project_workspace_scope_q,
@@ -137,6 +182,117 @@ from tracer.views.span_attributes import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+def _property_catalog_read_enabled_for_workspace(workspace) -> bool:
+    if getattr(settings, "PROPERTY_CATALOG_READ_MODE", "off") != "read":
+        return False
+    workspace_id = getattr(workspace, "id", None)
+    return workspace_id is not None and str(workspace_id) in set(
+        getattr(settings, "PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST", ())
+    )
+
+
+class _PropertyCatalogValueRequestError(ValueError):
+    """A catalog value request failed authorization/input binding."""
+
+
+def _read_property_catalog_value_page(request, query_params, *, deadline):
+    """Authorize and execute the activated hot span-value adapter.
+
+    Raising ``PropertyCatalogValueNotReady`` is the only path that permits the
+    caller to enter the legacy/native routing tree.  All qualified catalog
+    failures remain fail-closed and must not silently read the old span tables.
+    """
+
+    property_id = query_params.get("property_id")
+    property_kind = query_params.get("_property_kind")
+    page_size = query_params.get("page_size")
+    if (
+        not property_id
+        or property_kind not in {"custom_attribute", "system_attribute"}
+        or page_size is None
+    ):
+        raise PropertyCatalogValueNotReady("native_value_adapter")
+
+    if property_kind == "system_attribute":
+        try:
+            decoded_property = parse_property_registry_id(property_id)
+        except ValueError as exc:
+            raise _PropertyCatalogValueRequestError("invalid property_id") from exc
+        value_adapter = system_property_value_adapter(
+            decoded_property["definition_source"],
+            decoded_property["metric_name"],
+        )
+        if (
+            value_adapter is not None
+            and value_adapter != PROPERTY_CATALOG_VALUE_ADAPTER
+        ):
+            raise PropertyCatalogValueNotReady("native_value_adapter")
+
+    raw_project_ids = query_params.get("project_ids", [])
+    if len(raw_project_ids) > PROPERTY_CATALOG_VALUE_MAX_PROJECTS:
+        raise PropertyCatalogValueNotReady("project_scope_too_large")
+    try:
+        project_ids = resolve_property_catalog_project_scope(
+            request.workspace,
+            raw_project_ids,
+            deadline=deadline,
+        )
+    except ValueError as exc:
+        raise _PropertyCatalogValueRequestError(str(exc)) from exc
+
+    cursor_scope = cursor_scope_for_request(request, project_ids=project_ids)
+    cursor_scope.update({"agent_definition_id": "", "dataset_id": ""})
+    cursor_query = {
+        "property_id": property_id,
+        "source": query_params.get("source", "traces"),
+        "attribute_type": query_params.get("attribute_type", ""),
+        "search": query_params.get("search", ""),
+    }
+    reader = PropertyCatalogValueReader(
+        PropertyCatalogReadExecutor(
+            max_wall_ms=deadline.remaining_ms(floor_ms=1),
+        ),
+        catalog_database=settings.PROPERTY_CATALOG_DATABASE,
+    )
+    read_args = {
+        "scope": cursor_scope,
+        "query": cursor_query,
+        "page_size": page_size,
+        "cursor_token": query_params.get("cursor"),
+    }
+    if not query_params.get("cursor"):
+        window_end = datetime.now(UTC)
+        # The seven-day compatibility bound exists to protect scans of the
+        # large span fact table. This adapter reads the compact activated value
+        # catalog, and cursor-mode value discovery promises the full retained
+        # inventory. Applying the fact-table lookback here silently hides
+        # valid older text/array suggestions even though they are present in
+        # the pinned activation.
+        window_start = _FILTER_VALUE_RETAINED_START
+        read_args.update(
+            {
+                "window_start": window_start,
+                "window_end": window_end,
+            }
+        )
+    try:
+        page = reader.read_page(**read_args)
+    except PropertyCatalogValueCursorError as exc:
+        # A system definition can deliberately retain its established native
+        # value adapter.  Its first cursor page is then emitted by the native
+        # reader below, but the next request still reaches this additive
+        # catalog probe first.  The two cursor families use different signing
+        # salts, so an otherwise valid native cursor is ``invalid_cursor`` to
+        # the catalog decoder.  Preserve real catalog scope/query mismatches,
+        # while allowing only a foreign cursor family to reach the native
+        # decoder that owns it.
+        if query_params.get("cursor") and exc.code == "invalid_cursor":
+            raise PropertyCatalogValueNotReady("native_cursor_adapter") from exc
+        raise
+    deadline.remaining_ms(floor_ms=1)
+    return page
 
 
 def _run_catalog_value_shadow_fail_open(**kwargs) -> None:
@@ -263,17 +419,19 @@ def _materialize_dashboard_query_scope(
 # concurrency instead so a read either completes or fails closed without
 # monopolising the shared cluster.
 _DASHBOARD_TRACE_READ_SETTINGS = {
-    "max_threads": 4,
-    "max_bytes_to_read": 36 * 1024 * 1024 * 1024,
-    "max_memory_usage": 36 * 1024 * 1024 * 1024,
+    "max_threads": settings.DASHBOARD_TRACE_READ_MAX_THREADS,
+    "max_bytes_to_read": settings.DASHBOARD_TRACE_READ_MAX_BYTES,
+    "max_memory_usage": settings.DASHBOARD_TRACE_READ_MAX_MEMORY_BYTES,
     "read_overflow_mode": "throw",
-    "max_result_rows": 250_000,
-    "max_result_bytes": 64 * 1024 * 1024,
+    "max_result_rows": settings.DASHBOARD_TRACE_READ_MAX_RESULT_ROWS,
+    "max_result_bytes": settings.DASHBOARD_TRACE_READ_MAX_RESULT_BYTES,
     "result_overflow_mode": "throw",
     "timeout_overflow_mode": "throw",
 }
-_DASHBOARD_TRACE_MAX_CONCURRENT_METRICS = 2
-_DASHBOARD_EXACT_QUERY_TIMEOUT_MS = 9_500
+_DASHBOARD_TRACE_MAX_CONCURRENT_METRICS = (
+    settings.DASHBOARD_TRACE_MAX_CONCURRENT_METRICS
+)
+_DASHBOARD_EXACT_QUERY_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 
 # Property/value pickers have a stricter five-second interaction contract than
 # the general analytics surface. Begin the request-owned wall before project
@@ -281,10 +439,15 @@ _DASHBOARD_EXACT_QUERY_TIMEOUT_MS = 9_500
 # transport. Exhaustion returns an advancing cursor over the same unconsumed
 # interval, so the smaller wall changes page density, never exactness or
 # retained-history reachability.
-_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS = 4_000
+_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS = settings.DASHBOARD_FILTER_VALUE_WALL_MS
 _FILTER_VALUE_BATCH_CURSOR_RESOURCE = "dashboard_filter_value_project_batches"
 _FILTER_VALUE_BATCH_CURSOR_MARKER = "project_batches_v1"
 _FILTER_VALUE_RETAINED_START = datetime(1970, 1, 1, tzinfo=UTC)
+_FINITE_NATIVE_FILTER_VALUE_MAX = settings.DASHBOARD_FILTER_VALUE_FINITE_MAX
+_LEGACY_NATIVE_FILTER_VALUE_MAX = settings.DASHBOARD_FILTER_VALUE_LEGACY_MAX
+_FINITE_NATIVE_FILTER_VALUE_MAX_RESULT_BYTES = (
+    settings.DASHBOARD_FILTER_VALUE_MAX_RESULT_BYTES
+)
 
 
 def _run_filter_value_pg_read(deadline, read):
@@ -292,7 +455,7 @@ def _run_filter_value_pg_read(deadline, read):
 
     The process-wide middleware allows PostgreSQL statements to run for thirty
     seconds, which is longer than the entire property-picker interaction SLA.
-    Each authoritative ORM phase therefore consumes the same four-second wall
+    Each authoritative ORM phase therefore consumes the same configured wall
     as ClickHouse. The transaction is explicitly read-only and never retries;
     expiry fails closed at the public boundary instead of publishing an empty
     vocabulary.
@@ -302,6 +465,7 @@ def _run_filter_value_pg_read(deadline, read):
     if connection.vendor != "postgresql":
         return read()
     already_in_atomic_block = connection.in_atomic_block
+    previous_statement_timeout = None
     try:
         # A SELECT-only production qualifier and a normal request can both
         # already own the outer transaction.  Opening another atomic block in
@@ -320,15 +484,65 @@ def _run_filter_value_pg_read(deadline, read):
                 # this helper owns the outer transaction.
                 if not already_in_atomic_block:
                     cursor.execute("SET TRANSACTION READ ONLY")
+                else:
+                    # ``set_config(..., true)`` lasts until the surrounding
+                    # transaction ends. Django's TestCase and a few composed
+                    # request paths already own that transaction, so preserve
+                    # their timeout instead of leaking this picker's short SLA
+                    # into later SQL on the same connection.
+                    cursor.execute("SELECT current_setting('statement_timeout')")
+                    previous_statement_timeout = str(cursor.fetchone()[0])
                 cursor.execute(
-                    "SET LOCAL statement_timeout = %s",
-                    [f"{timeout_ms}ms"],
+                    "SELECT set_config('statement_timeout', %s, true)",
+                    [str(timeout_ms)],
                 )
-            return read()
+            try:
+                return read()
+            finally:
+                if previous_statement_timeout is not None and not getattr(
+                    connection, "needs_rollback", False
+                ):
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            "SELECT set_config('statement_timeout', %s, true)",
+                            [previous_statement_timeout],
+                        )
     except DatabaseError as exc:
         raise ReadDeadlineExceeded(
             "Filter-value PostgreSQL read exceeded its request deadline"
         ) from exc
+
+
+def _session_overlay_filter_value_ids(
+    *,
+    project_ids,
+    search: str,
+    value_after: str | None,
+    limit: int,
+    deadline,
+) -> tuple[str, ...]:
+    """Return a bounded keyset of session ids matching editable UI labels."""
+
+    if not search:
+        return ()
+    from tracer.models.trace_session import TraceSessionOverlay
+
+    def read_overlay_ids():
+        queryset = TraceSessionOverlay.objects.filter(
+            project_id__in=project_ids,
+            display_name__icontains=search,
+        )
+        if value_after is not None:
+            queryset = queryset.filter(trace_session_id__gt=value_after)
+        return list(
+            queryset.order_by("trace_session_id").values_list(
+                "trace_session_id", flat=True
+            )[:limit]
+        )
+
+    return tuple(
+        str(value) for value in _run_filter_value_pg_read(deadline, read_overlay_ids)
+    )
 
 
 def _filter_value_digest(value: str) -> str:
@@ -869,114 +1083,8 @@ def _filter_value_options_for_search(values, search):
     ]
 
 
-def _configured_filter_value_identity(value):
-    """Return a stable, type-aware identity for an arbitrary JSON value."""
-
-    return (
-        type(value).__name__,
-        json.dumps(
-            value,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-            allow_nan=False,
-        ),
-    )
-
-
-def _append_configured_filter_value_option(options, seen, choice):
-    """Append one configured option without coercing its JSON value."""
-
-    raw_value = choice
-    raw_label = choice
-    if isinstance(choice, dict):
-        raw_value = choice.get("value")
-        if raw_value is None or raw_value == "":
-            raw_value = choice.get("label")
-        if raw_value is None or raw_value == "":
-            raw_value = choice.get("name")
-
-        raw_label = choice.get("label")
-        if raw_label is None or raw_label == "":
-            raw_label = choice.get("name")
-        if raw_label is None or raw_label == "":
-            raw_label = raw_value
-
-    if raw_value is None or raw_value == "":
-        return
-    identity = _configured_filter_value_identity(raw_value)
-    if identity in seen:
-        return
-    seen.add(identity)
-    options.append({"value": raw_value, "label": str(raw_label)})
-
-
-def _annotation_categorical_filter_value_options(configured_options, stored_values):
-    """Build one deterministic union of configured and exhaustive Score values."""
-
-    options = []
-    configured_seen_values = set()
-    for option in configured_options or ():
-        _append_configured_filter_value_option(
-            options,
-            configured_seen_values,
-            option,
-        )
-
-    # Historic Score payloads have used scalar, list, and wrapper-object shapes.
-    # Preserve the established string-valued filter contract while sorting the
-    # stored-only suffix so an unchanged exhaustive read has a stable cursor
-    # content identity even though PostgreSQL intentionally performs no sort.
-    stored_only_values = set()
-    configured_strings = {str(option["value"]) for option in options}
-    for payload_value in stored_values or ():
-        try:
-            payload = json.loads(payload_value)
-        except (TypeError, ValueError):
-            payload = payload_value
-        raw_values = []
-        if isinstance(payload, dict):
-            selected = payload.get("selected")
-            if isinstance(selected, list):
-                raw_values.extend(selected)
-            elif selected not in (None, ""):
-                raw_values.append(selected)
-            for key in ("value", "label", "text"):
-                value = payload.get(key)
-                if value not in (None, ""):
-                    raw_values.append(value)
-        elif isinstance(payload, list):
-            raw_values.extend(payload)
-        elif payload not in (None, ""):
-            raw_values.append(payload)
-
-        for raw_value in raw_values:
-            if raw_value in (None, ""):
-                continue
-            value = str(raw_value)
-            if value and value not in configured_strings:
-                stored_only_values.add(value)
-
-    options.extend(
-        {"value": value, "label": value}
-        for value in sorted(
-            stored_only_values, key=lambda value: (value.casefold(), value)
-        )
-    )
-    return options
-
-
-def _annotation_filter_value_option_digest(option) -> str:
-    """Return a type-aware digest used to deduplicate project-batch values."""
-
-    identity = _configured_filter_value_identity(option["value"])
-    return _filter_value_digest(
-        json.dumps(identity, separators=(",", ":"), ensure_ascii=False)
-    )
-
-
-def _annotation_filter_value_content_digest(values) -> str:
-    """Bind an ordinal continuation to the complete current batch vocabulary."""
+def _filter_value_content_digest(values) -> str:
+    """Bind an ordinal continuation to its complete exact vocabulary."""
 
     return _filter_value_digest(
         json.dumps(
@@ -989,84 +1097,6 @@ def _annotation_filter_value_content_digest(values) -> str:
     )
 
 
-def _batched_exact_annotation_filter_value_page(
-    cursor: _BatchedFilterValueCursor,
-    *,
-    page_size: int,
-    lane: str,
-    window_start: datetime,
-    window_end: datetime,
-    values: list[dict],
-    search: str,
-) -> dict:
-    """Page an exhaustive Score vocabulary across bounded project batches.
-
-    Each physical batch is reread exhaustively.  Its digest is carried in the
-    signed cursor, so a Score/config change invalidates an ordinal continuation
-    instead of silently skipping or repeating a value.  Server-side seen state
-    removes values already returned by earlier project batches.
-    """
-
-    filtered_values = _filter_value_options_for_search(values, search)
-    content_digest = _annotation_filter_value_content_digest(values)
-    physical_order = cursor.physical_order
-    if cursor.new_project_batch:
-        offset = 0
-    elif (
-        len(physical_order) != 2
-        or physical_order[0] != content_digest
-        or not isinstance(physical_order[1], int)
-        or physical_order[1] < 0
-        or physical_order[1] > len(filtered_values)
-    ):
-        raise ListCursorError(
-            "cursor_mismatch",
-            "The continuation cursor no longer matches the annotation values.",
-        )
-    else:
-        offset = physical_order[1]
-
-    seen_state, state_binding = _load_batched_filter_value_seen_state(
-        cursor,
-        page_size=page_size,
-        window_start=window_start,
-        window_end=window_end,
-    )
-    page_values = []
-    appended_digests = []
-    next_offset = offset
-    while next_offset < len(filtered_values) and len(page_values) < page_size:
-        option = filtered_values[next_offset]
-        next_offset += 1
-        digest = _annotation_filter_value_option_digest(option)
-        if seen_state.contains(digest):
-            continue
-        page_values.append(option)
-        appended_digests.append(digest)
-
-    physical_has_more = next_offset < len(filtered_values)
-    has_more, browse_status, next_cursor = _encode_batched_filter_value_cursor(
-        cursor,
-        page_size=page_size,
-        window_start=window_start,
-        window_end=window_end,
-        seen_state=seen_state,
-        state_binding=state_binding,
-        appended_digests=appended_digests,
-        lane=lane,
-        physical_order=(content_digest, next_offset),
-        physical_has_more=physical_has_more,
-    )
-    return {
-        "values": page_values,
-        "query_complete": True,
-        "query_status": "complete",
-        "has_more": has_more,
-        "browse_status": browse_status,
-        "next_cursor": next_cursor,
-    }
-
-
 def _finite_filter_value_cursor_page(
     request,
     *,
@@ -1077,6 +1107,7 @@ def _finite_filter_value_cursor_page(
     page_size,
     cursor_token,
     query_complete=True,
+    content_identity=None,
 ):
     """Return an exact signed ordinal page over a finite server-held vocabulary.
 
@@ -1090,7 +1121,9 @@ def _finite_filter_value_cursor_page(
     cursor_query = {
         **query,
         "search": search,
-        "content_identity": list(values),
+        "content_identity": (
+            list(values) if content_identity is None else content_identity
+        ),
     }
     cursor_resource = "dashboard_configured_filter_values"
     if cursor_token:
@@ -1158,16 +1191,16 @@ def _finite_filter_value_cursor_page(
 # the interactive analytics surface. The rollup route issues at most two
 # statements (span states plus the independently keyed trace-count states),
 # and both consume one request-owned deadline.
-_DASHBOARD_INTERACTIVE_TIMEOUT_MS = 9_500
-_DASHBOARD_ROLLUP_MAX_QUERIES = 2
-_DASHBOARD_ROLLUP_MAX_POINTS = 10_000
+_DASHBOARD_INTERACTIVE_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+_DASHBOARD_ROLLUP_MAX_QUERIES = settings.DASHBOARD_ROLLUP_MAX_QUERIES
+_DASHBOARD_ROLLUP_MAX_POINTS = settings.DASHBOARD_ROLLUP_MAX_POINTS
 _DASHBOARD_ROLLUP_READ_SETTINGS = {
-    "max_threads": 4,
-    "max_bytes_to_read": 36 * 1024 * 1024 * 1024,
-    "max_memory_usage": 36 * 1024 * 1024 * 1024,
+    "max_threads": settings.DASHBOARD_TRACE_READ_MAX_THREADS,
+    "max_bytes_to_read": settings.DASHBOARD_TRACE_READ_MAX_BYTES,
+    "max_memory_usage": settings.DASHBOARD_TRACE_READ_MAX_MEMORY_BYTES,
     "read_overflow_mode": "throw",
     "max_result_rows": _DASHBOARD_ROLLUP_MAX_POINTS + 1,
-    "max_result_bytes": 32 * 1024 * 1024,
+    "max_result_bytes": settings.DASHBOARD_ROLLUP_MAX_RESULT_BYTES,
     "result_overflow_mode": "throw",
     "timeout_overflow_mode": "throw",
 }
@@ -1836,6 +1869,7 @@ DASHBOARD_METRIC_TYPE_TO_FILTER_COL_TYPE = {
 
 _DASHBOARD_CANONICAL_FILTER_KEYS = {
     "column_id",
+    "property_id",
     "display_name",
     "source",
     "output_type",
@@ -1942,7 +1976,7 @@ def _canonicalize_persisted_dashboard_filter_for_read(filter_item):
         "column_id": column_id,
         "filter_config": canonical_config,
     }
-    for key in ("display_name", "source", "output_type"):
+    for key in ("property_id", "display_name", "source", "output_type"):
         if filter_item.get(key) is not None:
             restored[key] = filter_item[key]
     return restored
@@ -2059,6 +2093,8 @@ def _dashboard_filter_to_internal(filter_item):
         # fields above.
         "canonical_filter": filter_item,
     }
+    if filter_item.get("property_id"):
+        internal["property_id"] = filter_item["property_id"]
     if filter_item.get("output_type"):
         internal["output_type"] = filter_item["output_type"]
     if metric_type == "custom_attribute":
@@ -2083,6 +2119,64 @@ def _normalize_dashboard_query_filters(query_config):
         metrics.append(metric_copy)
     query_config["metrics"] = metrics
     return query_config
+
+
+def _dashboard_requires_annotation_completeness(query_config) -> bool:
+    filters = list(query_config.get("filters") or [])
+    for metric in query_config.get("metrics") or []:
+        filters.extend(metric.get("filters") or [])
+    return any(
+        (item.get("metric_type") or item.get("type")) == "system_metric"
+        and (item.get("metric_name") or item.get("name") or item.get("id"))
+        == "has_annotation"
+        for item in filters
+    )
+
+
+def _bind_dashboard_annotation_completeness(
+    query_config,
+    workspace,
+    *,
+    deadline,
+    allow_metadata_read,
+):
+    """Bind authoritative per-project label sets into the snapshot identity."""
+
+    if not _dashboard_requires_annotation_completeness(query_config):
+        return query_config
+
+    project_ids = tuple(str(value) for value in query_config.get("project_ids") or ())
+    existing = query_config.get("annotation_label_ids_by_project")
+    if isinstance(existing, dict):
+        normalized = {
+            str(project_id): sorted(
+                dict.fromkeys(str(label_id) for label_id in label_ids)
+            )
+            for project_id, label_ids in existing.items()
+        }
+        if any(project_id not in normalized for project_id in project_ids):
+            raise DashboardExactReadError(
+                "annotation completeness metadata is incomplete"
+            )
+        return {**query_config, "annotation_label_ids_by_project": normalized}
+
+    if not allow_metadata_read:
+        raise DashboardExactReadError("annotation completeness metadata is unavailable")
+
+    labels_by_project = _run_filter_value_pg_read(
+        deadline,
+        lambda: get_annotation_labels_by_project(
+            list(project_ids),
+            organization=workspace.organization,
+        ),
+    )
+    normalized = {
+        project_id: sorted(
+            str(label.id) for label in labels_by_project.get(project_id, ())
+        )
+        for project_id in project_ids
+    }
+    return {**query_config, "annotation_label_ids_by_project": normalized}
 
 
 class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
@@ -2111,7 +2205,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         source,
         fetch_rows,
         *,
-        max_workers=4,
+        max_workers=None,
         prepared_queries=None,
     ):
         """Build + execute each metric in parallel; return [(metric_info, rows)].
@@ -2127,6 +2221,13 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         )
         if not work_items:
             return []
+        worker_limit = (
+            _DASHBOARD_TRACE_MAX_CONCURRENT_METRICS
+            if max_workers is None
+            else int(max_workers)
+        )
+        if worker_limit < 1:
+            raise ValueError("max_workers must be positive")
 
         def _exec_one(work_item):
             metric, prepared_sql, prepared_params = work_item
@@ -2176,7 +2277,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         if len(work_items) == 1:
             return [_exec_one(work_items[0])]
 
-        with ThreadPoolExecutor(max_workers=min(len(work_items), max_workers)) as pool:
+        with ThreadPoolExecutor(max_workers=min(len(work_items), worker_limit)) as pool:
             futures = [pool.submit(_exec_one, item) for item in work_items]
         return [f.result() for f in futures]
 
@@ -2231,7 +2332,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             builder,
             "simulation",
             lambda sql, params: (
-                analytics.execute_ch_query(sql, params, timeout_ms=10000).data
+                analytics.execute_ch_query(
+                    sql,
+                    params,
+                    timeout_ms=_DASHBOARD_EXACT_QUERY_TIMEOUT_MS,
+                ).data
             ),
         )
 
@@ -2357,6 +2462,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
     # Query endpoint — routes each metric to the right builder by source
     # ------------------------------------------------------------------
 
+    @bounded_dashboard_action_request(resource="dashboard_query")
     @validated_request(
         request_serializer=DashboardReadQuerySerializer,
         query_serializer=DashboardRefreshQuerySerializer,
@@ -2369,7 +2475,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         reject_unknown_fields=True,
     )
     @action(detail=False, methods=["post"])
-    def query(self, request):
+    def query(self, request, *args, **kwargs):
         """Execute a widget query and return chart data.
 
         Each metric carries a ``source`` field ("traces" or "datasets").
@@ -2379,6 +2485,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         Each metric is validated against the canonical query contract before
         it reaches any query builder.
         """
+        read_deadline = kwargs.pop("_dashboard_action_deadline", None)
+        read_deadline = read_deadline or start_dashboard_action_deadline()
         query_config = _normalize_dashboard_query_filters(request.validated_data)
         # Kept in the request schema for older clients, but aggregation never
         # takes a sampled execution path.
@@ -2411,6 +2519,20 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         except DashboardQueryScopeError as exc:
             return self._gm.bad_request(str(exc))
 
+        try:
+            query_config = _bind_dashboard_annotation_completeness(
+                query_config,
+                request.workspace,
+                deadline=read_deadline,
+                allow_metadata_read=True,
+            )
+        except (AnnotationScoreReadUnavailable, DatabaseError, ReadDeadlineExceeded):
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Dashboard annotation metadata is temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
+
         refresh = request.validated_query_data["refresh"]
         cache_identity = {
             "workspace_id": str(request.workspace.id),
@@ -2421,6 +2543,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 query_config,
                 cache_identity=cache_identity,
                 refresh=refresh,
+                deadline=read_deadline,
             )
         )
 
@@ -2429,104 +2552,254 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
     # ------------------------------------------------------------------
 
     @validated_request(
+        query_serializer=DashboardMetricsCatalogQuerySerializer,
         responses={
             200: DashboardMetricsCatalogResponseSerializer,
             400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+            503: ApiErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
-    @action(detail=False, methods=["get"])
+    @action(detail=False, methods=["get"], pagination_class=None)
     def metrics(self, request):
         """Return all available metrics across traces and datasets.
 
         Backward compat: if ``workflow`` param is provided, return only
         that source's metrics in the old grouped format.
         """
-        workflow = request.query_params.get("workflow", "")
+        query_params = request.validated_query_data
+        workflow = query_params.get("workflow", "")
         workspace = request.workspace
+        read_deadline = ReadDeadline.start(METRICS_CATALOG_TIMEOUT_MS)
 
-        # Backward compat — old clients pass workflow
-        if workflow == "dataset":
-            return self._metrics_dataset_legacy(request)
-
-        # --- Unified: collect from all sources ---
-        try:
-            metrics = get_cached_metrics_catalog(
-                workspace,
-                project_ids_param=request.query_params.get("project_ids", ""),
-                agent_definition_id=(
-                    request.query_params.get("agent_definition_id", "") or ""
-                ),
-                per_eval_config=(request.query_params.get("per_eval_config") == "true"),
-                include_custom_attributes=(
-                    request.query_params.get("exclude_custom_attributes") != "true"
-                ),
-            )
-
-            # --- Optional server-side filtering & pagination ---
-            search = request.query_params.get("search", "").strip()
-            category = request.query_params.get("category", "").strip()
-            source = request.query_params.get("source", "").strip()
-            page = request.query_params.get("page", "")
-            page_size = request.query_params.get("page_size", "")
-
-            # If no pagination params, return all (backward compat)
-            if (
-                not page
-                and not page_size
-                and not search
-                and not category
-                and not source
-            ):
-                return self._gm.success_response({"metrics": metrics})
-
-            # Filter by category
-            if category:
-                metrics = [m for m in metrics if m.get("category") == category]
-
-            # Filter by source (eval metrics with source="all" only show
-            # in the Evals tab, not in every source tab)
-            if source:
-                metrics = [
-                    m
-                    for m in metrics
-                    if m.get("source") == source or source in (m.get("sources") or [])
-                ]
-
-            # Filter by search (case-insensitive contains on display_name and name)
-            if search:
-                q = search.lower()
-                metrics = [
-                    m
-                    for m in metrics
-                    if q in (m.get("display_name") or "").lower()
-                    or q in (m.get("name") or "").lower()
-                ]
-
-            total = len(metrics)
+        if query_params.get("cursor_mode", False):
+            if not _property_catalog_read_enabled_for_workspace(workspace):
+                workspace_id = getattr(workspace, "id", None)
+                logger.warning(
+                    "property_catalog_gate_closed",
+                    configured_mode=getattr(
+                        settings, "PROPERTY_CATALOG_READ_MODE", "off"
+                    ),
+                    workspace_id=str(workspace_id) if workspace_id else None,
+                    workspace_allowlisted=(
+                        workspace_id is not None
+                        and str(workspace_id)
+                        in set(
+                            getattr(
+                                settings,
+                                "PROPERTY_CATALOG_DEV_WORKSPACE_ALLOWLIST",
+                                (),
+                            )
+                        )
+                    ),
+                )
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "The unified property catalog is not ready for this workspace.",
+                    code="property_catalog_not_ready",
+                )
             try:
-                page = max(int(page) if page else 1, 1)
-                page_size = min(max(int(page_size) if page_size else 50, 1), 200)
-            except (ValueError, TypeError):
-                page = 1
-                page_size = 50
-            start = (page - 1) * page_size
-            end = start + page_size
-            page_metrics = metrics[start:end]
+                project_ids = resolve_property_catalog_project_scope(
+                    workspace,
+                    query_params.get("project_ids", []),
+                    deadline=read_deadline,
+                )
+                agent_definition_id = resolve_property_catalog_agent_scope(
+                    workspace,
+                    str(query_params.get("agent_definition_id", "") or ""),
+                    deadline=read_deadline,
+                )
+            except (
+                ValueError,
+                DatabaseError,
+                MetricsCatalogUnavailable,
+                ReadDeadlineExceeded,
+            ) as exc:
+                if not isinstance(exc, ValueError):
+                    logger.warning(
+                        "property_catalog_scope_unavailable",
+                        family=getattr(exc, "family", "scope"),
+                        error_type=type(exc).__name__,
+                        cause_type=(
+                            type(exc.__cause__).__name__
+                            if exc.__cause__ is not None
+                            else None
+                        ),
+                        workspace_id=str(workspace.id),
+                    )
+                    return self._gm.custom_error_response(
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "Dashboard properties are temporarily unavailable. Please retry.",
+                        code="service_unavailable",
+                    )
+                return self._gm.bad_request(str(exc))
 
+            cursor_scope = cursor_scope_for_request(
+                request,
+                project_ids=project_ids,
+            )
+            cursor_scope.update(
+                {
+                    "agent_definition_id": agent_definition_id,
+                    "dataset_id": "",
+                }
+            )
+            cursor_query = {
+                "category": query_params.get("category", ""),
+                "source": query_params.get("source", ""),
+                "property_kind": "",
+                "role": query_params.get("role", ""),
+                "per_eval_config": query_params.get("per_eval_config", False),
+                "search": query_params.get("search", ""),
+            }
+            try:
+                catalog_page = PropertyCatalogReader(
+                    PropertyCatalogReadExecutor(
+                        max_wall_ms=read_deadline.remaining_ms(floor_ms=1),
+                    ),
+                    catalog_database=settings.PROPERTY_CATALOG_DATABASE,
+                ).read_page(
+                    scope=cursor_scope,
+                    query=cursor_query,
+                    page_size=query_params["page_size"],
+                    cursor_token=query_params.get("cursor"),
+                )
+                read_deadline.remaining_ms(floor_ms=1)
+            except PropertyCatalogCursorError as exc:
+                return self._gm.custom_error_response(
+                    status.HTTP_400_BAD_REQUEST,
+                    str(exc),
+                    code=exc.code,
+                )
+            except (PropertyCatalogUnavailable, ReadDeadlineExceeded) as exc:
+                logger.warning(
+                    "property_catalog_read_unavailable",
+                    reason=getattr(exc, "reason", "deadline_exceeded"),
+                    workspace_id=str(workspace.id),
+                )
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Dashboard properties are temporarily unavailable. Please retry.",
+                    code="service_unavailable",
+                )
+            except Exception as exc:
+                logger.exception(
+                    "property_catalog_read_failed",
+                    error_type=type(exc).__name__,
+                    workspace_id=str(workspace.id),
+                )
+                return self._gm.custom_error_response(
+                    status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    "Dashboard properties could not be loaded.",
+                    code="server_error",
+                )
             return self._gm.success_response(
                 {
-                    "metrics": page_metrics,
-                    "total": total,
-                    "page": page,
-                    "page_size": page_size,
-                    "has_more": end < total,
+                    "metrics": list(catalog_page.metrics),
+                    "total": None,
+                    "total_is_exact": False,
+                    "category_counts": catalog_page.category_counts,
+                    "category_counts_exact": catalog_page.category_counts_exact,
+                    "page_size": query_params["page_size"],
+                    "has_more": catalog_page.has_more,
+                    "next_cursor": catalog_page.next_cursor,
+                    "catalog_epoch": catalog_page.catalog_epoch,
+                    "catalog_revision": catalog_page.catalog_revision,
+                    "activation_fingerprint": (catalog_page.activation_fingerprint),
+                    "query_complete": True,
+                    "query_exact": True,
+                    "query_status": "complete",
+                    "query_provenance": "activated_property_catalog",
                 }
             )
 
-        except Exception as e:
-            logger.error("fetch_metrics_failed", error=str(e))
-            return self._gm.bad_request(
-                "Failed to fetch metrics. Please try again later."
+        # Backward compat — old clients pass workflow
+        if workflow == "dataset":
+            return self._metrics_dataset_legacy(request, deadline=read_deadline)
+
+        # --- Unified: collect from all sources ---
+        try:
+            search = query_params.get("search", "").strip()
+            category = query_params.get("category", "").strip()
+            source = query_params.get("source", "").strip()
+            project_ids = query_params.get("project_ids", [])
+            bounded_shape_requested = any(
+                key in request.query_params
+                for key in ("page", "page_size", "search", "category", "source")
+            )
+            common_catalog_args = {
+                "project_ids_param": ",".join(project_ids),
+                "agent_definition_id": str(
+                    query_params.get("agent_definition_id", "") or ""
+                ),
+                "per_eval_config": query_params.get("per_eval_config", False),
+                "include_custom_attributes": not query_params.get(
+                    "exclude_custom_attributes", False
+                ),
+                "category": category,
+                "source": source,
+                "deadline": read_deadline,
+            }
+
+            # First-party callers always select this explicit bounded shape.
+            # Count each ordered family, then fetch only the family slices that
+            # overlap the requested page; do not assemble a workspace-wide
+            # definition list merely to slice it in Python.
+            if bounded_shape_requested:
+                page = query_params.get("page", 1)
+                page_size = query_params.get(
+                    "page_size",
+                    settings.DASHBOARD_METRICS_CATALOG_DEFAULT_PAGE_SIZE,
+                )
+                metrics, total, has_more = build_metrics_catalog_page(
+                    workspace,
+                    page=page,
+                    page_size=page_size,
+                    search=search,
+                    **common_catalog_args,
+                )
+                return self._gm.success_response(
+                    {
+                        "metrics": metrics,
+                        "total": total,
+                        "page": page,
+                        "page_size": page_size,
+                        "has_more": has_more,
+                    }
+                )
+
+            # Deprecated compatibility shape for clients that send no paging
+            # or filtering fields. It remains protected by the same 8.5s wall.
+            metrics = get_cached_metrics_catalog(
+                workspace,
+                **common_catalog_args,
+            )
+            read_deadline.remaining_ms(floor_ms=1)
+            response = self._gm.success_response({"metrics": metrics})
+            response["Deprecation"] = "true"
+            return response
+
+        except (MetricsCatalogUnavailable, ReadDeadlineExceeded) as exc:
+            logger.warning(
+                "dashboard_metrics_catalog_unavailable",
+                family=getattr(exc, "family", "deadline"),
+                error_type=type(exc).__name__,
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Dashboard properties are temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
+        except Exception as exc:
+            logger.exception(
+                "fetch_metrics_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "Dashboard properties could not be loaded.",
+                code="server_error",
             )
 
     # ------------------------------------------------------------------
@@ -2669,7 +2942,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             }
         )
 
-    def _metrics_dataset_legacy(self, request):
+    def _metrics_dataset_legacy(self, request, *, deadline):
         """Return dataset metrics in the old grouped format."""
         try:
             workspace = request.workspace
@@ -2713,88 +2986,93 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 },
             ]
 
-            eval_metrics = []
-            try:
-                from model_hub.models.evals_metric import UserEvalMetric
+            from model_hub.models.develop_annotations import AnnotationsLabels
+            from model_hub.models.develop_dataset import Column
+            from model_hub.models.evals_metric import UserEvalMetric
 
-                user_eval_metrics = (
+            user_eval_metrics = _run_filter_value_pg_read(
+                deadline,
+                lambda: list(
                     UserEvalMetric.no_workspace_objects.filter(
                         dataset__workspace=workspace,
                     )
                     .select_related("template")
+                    .order_by("template__name", "template__id")
                     .values("template__id", "template__name", "template__config")
                     .distinct()
+                ),
+            )
+            eval_metrics = []
+            seen_templates = set()
+            for user_eval_metric in user_eval_metrics:
+                template_id = str(user_eval_metric["template__id"])
+                if template_id in seen_templates:
+                    continue
+                seen_templates.add(template_id)
+                config = user_eval_metric["template__config"] or {}
+                output_type = "SCORE"
+                if isinstance(config, dict):
+                    configured_output_type = config.get("output_type", "").upper()
+                    if configured_output_type in ("PASS_FAIL", "CHOICE", "SCORE"):
+                        output_type = configured_output_type
+                eval_metrics.append(
+                    {
+                        "name": template_id,
+                        "display_name": user_eval_metric["template__name"],
+                        "output_type": output_type,
+                    }
                 )
-                seen_templates = set()
-                for uem in user_eval_metrics:
-                    tid = str(uem["template__id"])
-                    if tid in seen_templates:
-                        continue
-                    seen_templates.add(tid)
-                    config = uem["template__config"] or {}
-                    output_type = "SCORE"
-                    if isinstance(config, dict):
-                        ot = config.get("output_type", "").upper()
-                        if ot in ("PASS_FAIL", "CHOICE", "SCORE"):
-                            output_type = ot
-                    eval_metrics.append(
-                        {
-                            "name": tid,
-                            "display_name": uem["template__name"],
-                            "output_type": output_type,
-                        }
+
+            labels = _run_filter_value_pg_read(
+                deadline,
+                lambda: list(
+                    AnnotationsLabels.no_workspace_objects.filter(
+                        workspace=workspace,
                     )
-            except (ImportError, Exception) as e:
-                logger.warning(f"Failed to load eval metrics for dataset: {e}")
+                    .order_by("name", "id")
+                    .values("id", "name", "type")
+                ),
+            )
+            annotation_metrics = [
+                {
+                    "name": str(label["id"]),
+                    "display_name": label["name"],
+                    "output_type": label.get("type", "numeric"),
+                }
+                for label in labels
+            ]
 
-            annotation_metrics = []
-            try:
-                from model_hub.models.develop_annotations import AnnotationsLabels
-
-                labels = AnnotationsLabels.no_workspace_objects.filter(
-                    workspace=workspace,
-                ).values("id", "name", "type")
-                for label in labels:
-                    annotation_metrics.append(
-                        {
-                            "name": str(label["id"]),
-                            "display_name": label["name"],
-                            "output_type": label.get("type", "numeric"),
-                        }
-                    )
-            except (ImportError, Exception):
-                pass
-
-            custom_columns = []
-            try:
-                from model_hub.models.develop_dataset import Column
-
-                cols = (
+            columns = _run_filter_value_pg_read(
+                deadline,
+                lambda: list(
                     Column.no_workspace_objects.filter(
                         dataset__workspace=workspace,
                         dataset__deleted=False,
                         data_type__in=["float", "integer", "boolean"],
                     )
+                    .order_by("name", "id")
                     .values("id", "name", "data_type")
                     .distinct()
+                ),
+            )
+            custom_columns = []
+            seen_names = set()
+            for column in columns:
+                if column["name"] in seen_names:
+                    continue
+                seen_names.add(column["name"])
+                custom_columns.append(
+                    {
+                        "name": str(column["id"]),
+                        "display_name": column["name"],
+                        "type": (
+                            "number" if column["data_type"] != "boolean" else "boolean"
+                        ),
+                        "data_type": column["data_type"],
+                    }
                 )
-                seen_names = set()
-                for col in cols:
-                    if col["name"] in seen_names:
-                        continue
-                    seen_names.add(col["name"])
-                    custom_columns.append(
-                        {
-                            "name": str(col["id"]),
-                            "display_name": col["name"],
-                            "type": (
-                                "number" if col["data_type"] != "boolean" else "boolean"
-                            ),
-                            "data_type": col["data_type"],
-                        }
-                    )
-            except (ImportError, Exception):
-                pass
+
+            deadline.remaining_ms(floor_ms=1)
 
             return self._gm.success_response(
                 {
@@ -2804,10 +3082,25 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "custom_columns": custom_columns,
                 }
             )
-        except Exception as e:
-            logger.error("fetch_dataset_metrics_failed", error=str(e))
-            return self._gm.bad_request(
-                "Failed to fetch dataset metrics. Please try again later."
+        except (ReadDeadlineExceeded, DatabaseError) as exc:
+            logger.warning(
+                "legacy_dataset_metrics_unavailable",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Dashboard properties are temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
+        except Exception as exc:
+            logger.exception(
+                "legacy_dataset_metrics_unavailable",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Dashboard properties are temporarily unavailable. Please retry.",
+                code="service_unavailable",
             )
 
     # ------------------------------------------------------------------
@@ -2825,23 +3118,173 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         responses={
             200: DashboardFilterValuesResponseSerializer,
             400: ApiErrorResponseSerializer,
+            422: ApiErrorResponseSerializer,
             500: ApiErrorResponseSerializer,
             503: ApiErrorResponseSerializer,
         },
     )
-    @action(detail=False, methods=["get"])
+    @action(detail=False, methods=["get"], pagination_class=None)
     def filter_values(self, request):
         """Return distinct values for a given metric/attribute, for filter value picker."""
         query_params = request.validated_query_data
         metric_name = query_params["metric_name"]
         metric_type = query_params["metric_type"]
+        property_id = query_params.get("property_id")
+        property_kind = query_params.get("_property_kind")
         source = query_params["source"]
         raw_project_ids = query_params.get("project_ids", [])
         search = query_params.get("search", "").strip()
+        # Every adapter, including native dataset/simulation readers, shares
+        # one request-owned wall. Starting this after metadata authorization
+        # lets a slow PostgreSQL lookup consume the interaction SLA before the
+        # bounded ClickHouse statement begins.
+        filter_value_deadline = ReadDeadline.start(
+            _FILTER_VALUES_INTERACTIVE_TIMEOUT_MS
+        )
+
+        if _property_catalog_read_enabled_for_workspace(
+            getattr(request, "workspace", None)
+        ):
+            try:
+                catalog_page = _read_property_catalog_value_page(
+                    request,
+                    query_params,
+                    deadline=filter_value_deadline,
+                )
+            except PropertyCatalogValueNotReady:
+                # The active definition explicitly names another native value
+                # adapter (or this legacy request has no stable property/page
+                # identity).  This typed signal is the sole compatibility path
+                # into the established source-specific readers below.
+                pass
+            except _PropertyCatalogValueRequestError as exc:
+                return self._gm.bad_request(str(exc))
+            except PropertyCatalogValueCursorError as exc:
+                return self._gm.custom_error_response(
+                    status.HTTP_400_BAD_REQUEST,
+                    str(exc),
+                    code=exc.code,
+                )
+            except (PropertyCatalogValueUnavailable, ReadDeadlineExceeded) as exc:
+                logger.warning(
+                    "property_catalog_value_read_unavailable",
+                    reason=getattr(exc, "reason", "deadline_exceeded"),
+                    workspace_id=str(request.workspace.id),
+                    property_id=property_id,
+                )
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Filter values are temporarily unavailable. Please retry.",
+                    code="service_unavailable",
+                )
+            except Exception as exc:
+                logger.exception(
+                    "property_catalog_value_read_failed",
+                    error_type=type(exc).__name__,
+                    workspace_id=str(request.workspace.id),
+                    property_id=property_id,
+                )
+                return self._gm.custom_error_response(
+                    status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    "Filter values could not be loaded",
+                    code="server_error",
+                )
+            else:
+                values = [
+                    {
+                        "value": row.value,
+                        "type": row.attribute_type,
+                        "label": (
+                            "true"
+                            if row.value is True
+                            else "false"
+                            if row.value is False
+                            else str(row.value)
+                        ),
+                    }
+                    for row in catalog_page.values
+                ]
+                return self._gm.success_response(
+                    {
+                        "values": values,
+                        "query_complete": True,
+                        "query_status": "complete",
+                        # The cursor freezes the retained-range membership, but
+                        # first/last observation bounds do not prove exact
+                        # occurrence in every arbitrary sub-window. Deliberately
+                        # do not publish query_exact=true here.
+                        "query_window_start": catalog_page.window_start,
+                        "query_window_end": catalog_page.window_end,
+                        "query_count": catalog_page.query_count,
+                        "has_more": catalog_page.has_more,
+                        "browse_status": (
+                            "continuation" if catalog_page.has_more else "exhausted"
+                        ),
+                        "next_cursor": catalog_page.next_cursor,
+                        "catalog_epoch": catalog_page.catalog_epoch,
+                        "catalog_revision": catalog_page.catalog_revision,
+                        "activation_fingerprint": (catalog_page.activation_fingerprint),
+                        "attribute_types": list(catalog_page.attribute_types),
+                        "attribute_types_exact": True,
+                        "query_provenance": "activated_property_catalog",
+                        **(
+                            {"attribute_type": query_params["attribute_type"]}
+                            if query_params.get("attribute_type")
+                            else {}
+                        ),
+                    }
+                )
 
         # Route by source
+        if metric_type == "custom_column" and source in {
+            "datasets",
+            "dataset_column",
+        }:
+            # Catalog entries are workspace-scoped and keep ``source=datasets``
+            # for metric execution. Value discovery is a different native
+            # adapter: bind the stable column UUID to its authorized dataset
+            # before entering the exact per-column vocabulary reader.
+            from model_hub.models.develop_dataset import Column
+
+            dataset_id = query_params.get("dataset_id")
+            if dataset_id is None:
+                try:
+                    dataset_id = _run_filter_value_pg_read(
+                        filter_value_deadline,
+                        lambda: (
+                            Column.objects.filter(
+                                id=metric_name,
+                                dataset__workspace=request.workspace,
+                                dataset__deleted=False,
+                                deleted=False,
+                            )
+                            .values_list("dataset_id", flat=True)
+                            .first()
+                        ),
+                    )
+                except ReadDeadlineExceeded:
+                    return self._gm.custom_error_response(
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "Filter values are temporarily unavailable. Please retry.",
+                        code="service_unavailable",
+                    )
+            if dataset_id is None:
+                return self._gm.success_response({"values": []})
+            return self._filter_values_dataset_column(
+                request,
+                dataset_id=str(dataset_id),
+                column_id=metric_name,
+                query_params=query_params,
+                deadline=filter_value_deadline,
+            )
         if source == "datasets":
-            return self._filter_values_dataset(request, metric_name, metric_type)
+            return self._filter_values_dataset(
+                request,
+                metric_name,
+                metric_type,
+                query_params=query_params,
+                deadline=filter_value_deadline,
+            )
         if source == "dataset_column":
             # Per-column suggestions for the dataset detail filter panel.
             # `metric_name` carries the column_id (UUID) in this flow so the
@@ -2850,17 +3293,17 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 request,
                 dataset_id=str(query_params.get("dataset_id") or ""),
                 column_id=metric_name,
+                query_params=query_params,
+                deadline=filter_value_deadline,
             )
         if source == "simulation":
-            return self._filter_values_simulation(request, metric_name, metric_type)
-
-        # One wall owns every PG/CH phase, including project authorization and
-        # post-query label hydration. Starting only inside the system selector
-        # let a slow metadata read consume the five-second interaction contract
-        # before the bounded ClickHouse statement even began.
-        filter_value_deadline = ReadDeadline.start(
-            _FILTER_VALUES_INTERACTIVE_TIMEOUT_MS
-        )
+            return self._filter_values_simulation(
+                request,
+                metric_name,
+                metric_type,
+                query_params=query_params,
+                deadline=filter_value_deadline,
+            )
 
         # Traces source (default). A fixed explicit scope keeps the existing
         # cursor contract. Workspace and large explicit scopes resolve only one
@@ -2884,9 +3327,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         try:
             if metric_type == "annotation_metric" and metric_name == "annotator":
                 from accounts.models.user import User
-                from tracer.services.annotation_label_source import (
-                    AnnotationLabelScoresProjectPG,
-                )
 
                 # Annotation Scores remain authoritative in PostgreSQL.  Pin
                 # this read to their denormalized tracer project key: the
@@ -3240,27 +3680,46 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         else options
                     )
 
-                # Session/project labels are hydrated after their raw ids are
-                # read. Searching the ids in CH would make a displayed-name
-                # match permanently unreachable.
-                storage_search = "" if label_backed_system_metric else search
+                # Project labels exist only in PostgreSQL and must still be
+                # filtered after hydration. Session external labels live in
+                # the curated CH dimension; its dedicated cursor also accepts
+                # the bounded PostgreSQL display-name matches.
+                storage_search = "" if metric_name == "project" else search
 
                 page_size = query_params.get("page_size")
                 cursor_token = query_params.get("cursor")
                 if page_size is not None:
                     page_size = int(page_size)
                     if project_scope.batched:
+                        configured_snapshot_window = (
+                            catalog_dev_snapshot_window()
+                            if metric_name in CATALOG_SYSTEM_VALUE_METRICS
+                            else None
+                        )
+                        cursor_window_mode = None
+                        if configured_snapshot_window is not None or (
+                            cursor_token
+                            and metric_name in CATALOG_SYSTEM_VALUE_METRICS
+                            and catalog_dev_snapshot_enabled()
+                        ):
+                            cursor_window_mode = CATALOG_SNAPSHOT_MODE
                         batch_query = {
                             "metric_name": metric_name,
                             "metric_type": metric_type,
                             "source": source,
                             "search": search,
+                            **(
+                                {"query_window_mode": cursor_window_mode}
+                                if cursor_window_mode is not None
+                                else {}
+                            ),
                         }
-                        batch_lane = (
-                            "end_user"
-                            if metric_name in enduser_string_cols
-                            else "span_system"
-                        )
+                        if metric_name == "session":
+                            batch_lane = "session"
+                        elif metric_name in enduser_string_cols:
+                            batch_lane = "end_user"
+                        else:
+                            batch_lane = "span_system"
                         batched_cursor = _batched_filter_value_cursor(
                             request,
                             project_scope,
@@ -3273,16 +3732,14 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         project_scope = batched_cursor.scope
                         project_ids = list(project_scope.project_ids)
                         cursor_state = batched_cursor.cursor_state
-                        window_start = (
-                            cursor_state.window_start
-                            if cursor_state is not None
-                            else _FILTER_VALUE_RETAINED_START
-                        )
-                        window_end = (
-                            cursor_state.window_end
-                            if cursor_state is not None
-                            else datetime.now(UTC)
-                        )
+                        if cursor_state is not None:
+                            window_start = cursor_state.window_start
+                            window_end = cursor_state.window_end
+                        elif configured_snapshot_window is not None:
+                            window_start, window_end = configured_snapshot_window
+                        else:
+                            window_start = _FILTER_VALUE_RETAINED_START
+                            window_end = datetime.now(UTC)
                         if not project_ids:
                             return self._gm.success_response(
                                 _empty_batched_filter_value_payload(
@@ -3302,7 +3759,10 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             )
                         )
 
-                        if metric_name in enduser_string_cols:
+                        if (
+                            metric_name in enduser_string_cols
+                            or metric_name == "session"
+                        ):
                             physical_order = batched_cursor.physical_order
                             if batched_cursor.new_project_batch:
                                 value_after = None
@@ -3315,15 +3775,33 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                                 )
                             else:
                                 value_after = physical_order[0] or None
-                            page_read = read_end_user_filter_value_cursor_page(
-                                analytics,
-                                project_ids=project_ids,
-                                source_column=enduser_string_cols[metric_name],
-                                page_size=page_size,
-                                search=search,
-                                value_after=value_after,
-                                deadline=filter_value_deadline,
-                            )
+                            if metric_name == "session":
+                                overlay_session_ids = _session_overlay_filter_value_ids(
+                                    project_ids=project_ids,
+                                    search=search,
+                                    value_after=value_after,
+                                    limit=page_size + 1,
+                                    deadline=filter_value_deadline,
+                                )
+                                page_read = read_session_filter_value_cursor_page(
+                                    analytics,
+                                    project_ids=project_ids,
+                                    page_size=page_size,
+                                    search=search,
+                                    value_after=value_after,
+                                    overlay_session_ids=overlay_session_ids,
+                                    deadline=filter_value_deadline,
+                                )
+                            else:
+                                page_read = read_end_user_filter_value_cursor_page(
+                                    analytics,
+                                    project_ids=project_ids,
+                                    source_column=enduser_string_cols[metric_name],
+                                    page_size=page_size,
+                                    search=search,
+                                    value_after=value_after,
+                                    deadline=filter_value_deadline,
+                                )
                             values = tuple(
                                 value
                                 for value in page_read.values
@@ -3372,7 +3850,26 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             )
 
                         physical_order = batched_cursor.physical_order
+                        catalog_after = None
+                        catalog_cursor = False
                         if batched_cursor.new_project_batch:
+                            segment_end = window_end
+                            segment_start = None
+                            value_after = None
+                        elif (
+                            len(physical_order) == 2
+                            and physical_order[0] == CATALOG_VALUE_CURSOR_MARKER
+                        ):
+                            try:
+                                catalog_after = value_checkpoint_from_state(
+                                    physical_order[1]
+                                )
+                            except (TypeError, ValueError) as exc:
+                                raise ListCursorError(
+                                    "invalid_cursor",
+                                    "The continuation cursor is invalid.",
+                                ) from exc
+                            catalog_cursor = True
                             segment_end = window_end
                             segment_start = None
                             value_after = None
@@ -3393,6 +3890,109 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             segment_end = physical_order[0]
                             segment_start = physical_order[1]
                             value_after = physical_order[2] or None
+                        catalog_attempt = (
+                            try_catalog_system_value_page(
+                                project_ids=project_ids,
+                                metric_name=metric_name,
+                                window_start=window_start,
+                                window_end=window_end,
+                                page_size=page_size,
+                                search=storage_search,
+                                after=(catalog_after if catalog_cursor else None),
+                                request_deadline=filter_value_deadline,
+                            )
+                            if batched_cursor.new_project_batch or catalog_cursor
+                            else None
+                        )
+                        if (
+                            catalog_attempt is not None
+                            and catalog_attempt.page is not None
+                        ):
+                            catalog_page = catalog_attempt.page
+                            raw_values = []
+                            appended_digests = []
+                            for row in catalog_value_rows(catalog_page):
+                                if not isinstance(row.value, str):
+                                    error_response = self._gm.custom_error_response(
+                                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                                        "Filter values are temporarily unavailable. Please retry.",
+                                        code="service_unavailable",
+                                    )
+                                    return mark_catalog_snapshot_response(
+                                        mark_catalog_response(
+                                            error_response,
+                                            catalog_attempt,
+                                        ),
+                                        window_start=window_start,
+                                        window_end=window_end,
+                                        cursor_window_mode=cursor_window_mode,
+                                    )
+                                digest = _filter_value_digest(row.value)
+                                if seen_state.contains(digest):
+                                    continue
+                                raw_values.append(row.value)
+                                appended_digests.append(digest)
+                            has_more, browse_status, next_cursor = (
+                                _encode_batched_filter_value_cursor(
+                                    batched_cursor,
+                                    page_size=page_size,
+                                    window_start=window_start,
+                                    window_end=window_end,
+                                    seen_state=seen_state,
+                                    state_binding=state_binding,
+                                    appended_digests=tuple(appended_digests),
+                                    lane=batch_lane,
+                                    physical_order=(
+                                        CATALOG_VALUE_CURSOR_MARKER,
+                                        value_checkpoint_state(
+                                            catalog_page.next_checkpoint
+                                        ),
+                                    ),
+                                    physical_has_more=catalog_page.has_more,
+                                )
+                            )
+                            payload = {
+                                "values": search_hydrated_system_options(
+                                    system_value_options(tuple(raw_values))
+                                ),
+                                "query_complete": True,
+                                "query_status": "complete",
+                                "query_window_start": window_start.isoformat(),
+                                "query_window_end": window_end.isoformat(),
+                                "query_count": catalog_page.query_count,
+                                **catalog_snapshot_metadata(
+                                    window_start=window_start,
+                                    window_end=window_end,
+                                    cursor_window_mode=cursor_window_mode,
+                                ),
+                                "has_more": has_more,
+                                "browse_status": browse_status,
+                                "next_cursor": next_cursor,
+                            }
+                            return mark_catalog_snapshot_response(
+                                mark_catalog_response(
+                                    self._gm.success_response(payload),
+                                    catalog_attempt,
+                                ),
+                                window_start=window_start,
+                                window_end=window_end,
+                                cursor_window_mode=cursor_window_mode,
+                            )
+                        if catalog_cursor and catalog_attempt is not None:
+                            error_response = self._gm.custom_error_response(
+                                status.HTTP_503_SERVICE_UNAVAILABLE,
+                                "Filter values are temporarily unavailable. Please retry.",
+                                code="service_unavailable",
+                            )
+                            return mark_catalog_snapshot_response(
+                                mark_catalog_response(
+                                    error_response,
+                                    catalog_attempt,
+                                ),
+                                window_start=window_start,
+                                window_end=window_end,
+                                cursor_window_mode=cursor_window_mode,
+                            )
                         page_read = read_span_system_filter_value_cursor_page(
                             analytics,
                             project_ids=project_ids,
@@ -3431,16 +4031,29 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                                 physical_has_more=page_read.has_more,
                             )
                         )
-                        return self._gm.success_response(
+                        response = self._gm.success_response(
                             {
                                 "values": search_hydrated_system_options(
                                     system_value_options(page_read.values)
                                 ),
                                 **page_read.metadata(),
+                                **catalog_snapshot_metadata(
+                                    window_start=window_start,
+                                    window_end=window_end,
+                                    cursor_window_mode=cursor_window_mode,
+                                ),
                                 "has_more": has_more,
                                 "browse_status": browse_status,
                                 "next_cursor": next_cursor,
                             }
+                        )
+                        if catalog_attempt is None:
+                            return response
+                        return mark_catalog_snapshot_response(
+                            mark_catalog_response(response, catalog_attempt),
+                            window_start=window_start,
+                            window_end=window_end,
+                            cursor_window_mode=cursor_window_mode,
                         )
 
                     cursor_scope = cursor_scope_for_request(
@@ -3454,8 +4067,21 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         "project_ids": sorted(str(value) for value in project_ids),
                         "search": search,
                     }
+                    configured_snapshot_window = (
+                        catalog_dev_snapshot_window()
+                        if metric_name in CATALOG_SYSTEM_VALUE_METRICS
+                        else None
+                    )
+                    cursor_window_mode = None
+                    if configured_snapshot_window is not None or (
+                        cursor_token
+                        and metric_name in CATALOG_SYSTEM_VALUE_METRICS
+                        and catalog_dev_snapshot_enabled()
+                    ):
+                        cursor_window_mode = CATALOG_SNAPSHOT_MODE
+                        cursor_query["query_window_mode"] = cursor_window_mode
                     cursor_resource = "dashboard_system_filter_values"
-                    if metric_name in enduser_string_cols:
+                    if metric_name in enduser_string_cols or metric_name == "session":
                         if cursor_token:
                             cursor_state = decode_list_cursor(
                                 cursor_token,
@@ -3480,15 +4106,33 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             value_after = None
                             window_start = datetime(1970, 1, 1, tzinfo=UTC)
                             window_end = datetime.now(UTC)
-                        page_read = read_end_user_filter_value_cursor_page(
-                            analytics,
-                            project_ids=project_ids,
-                            source_column=enduser_string_cols[metric_name],
-                            page_size=page_size,
-                            search=search,
-                            value_after=value_after,
-                            deadline=filter_value_deadline,
-                        )
+                        if metric_name == "session":
+                            overlay_session_ids = _session_overlay_filter_value_ids(
+                                project_ids=project_ids,
+                                search=search,
+                                value_after=value_after,
+                                limit=page_size + 1,
+                                deadline=filter_value_deadline,
+                            )
+                            page_read = read_session_filter_value_cursor_page(
+                                analytics,
+                                project_ids=project_ids,
+                                page_size=page_size,
+                                search=search,
+                                value_after=value_after,
+                                overlay_session_ids=overlay_session_ids,
+                                deadline=filter_value_deadline,
+                            )
+                        else:
+                            page_read = read_end_user_filter_value_cursor_page(
+                                analytics,
+                                project_ids=project_ids,
+                                source_column=enduser_string_cols[metric_name],
+                                page_size=page_size,
+                                search=search,
+                                value_after=value_after,
+                                deadline=filter_value_deadline,
+                            )
                         next_cursor = None
                         if page_read.has_more:
                             next_cursor = encode_list_cursor(
@@ -3526,13 +4170,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             }
                         )
 
-                    selector = AttributeReadSelector(
-                        typed_only=True,
-                        json_attribute_mode="arrays",
-                        wall_timeout_ms=filter_value_deadline.remaining_ms(
-                            ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS
-                        ),
-                    )
+                    selector = None
+                    catalog_after = None
+                    catalog_cursor = False
                     if cursor_token:
                         cursor_state = decode_list_cursor(
                             cursor_token,
@@ -3542,6 +4182,26 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             page_size=page_size,
                         )
                         if (
+                            len(cursor_state.order) == 2
+                            and cursor_state.order[0] == CATALOG_VALUE_CURSOR_MARKER
+                        ):
+                            try:
+                                catalog_after = value_checkpoint_from_state(
+                                    cursor_state.order[1]
+                                )
+                            except (TypeError, ValueError) as exc:
+                                raise ListCursorError(
+                                    "invalid_cursor",
+                                    "The continuation cursor is invalid.",
+                                ) from exc
+                            catalog_cursor = True
+                            segment_end = cursor_state.window_end
+                            segment_start = None
+                            value_after = None
+                            seen_reference = ()
+                            window_start = cursor_state.window_start
+                            window_end = cursor_state.window_end
+                        elif (
                             len(cursor_state.order) != 4
                             or not isinstance(cursor_state.order[0], datetime)
                             or not isinstance(cursor_state.order[1], datetime)
@@ -3552,26 +4212,135 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                                 "invalid_cursor",
                                 "The continuation cursor is invalid.",
                             )
-                        segment_end = cursor_state.order[0]
-                        segment_start = cursor_state.order[1]
-                        value_after = cursor_state.order[2] or None
-                        seen_reference = cursor_state.order[3]
-                        window_start = cursor_state.window_start
-                        window_end = cursor_state.window_end
+                        else:
+                            segment_end = cursor_state.order[0]
+                            segment_start = cursor_state.order[1]
+                            value_after = cursor_state.order[2] or None
+                            seen_reference = cursor_state.order[3]
+                            window_start = cursor_state.window_start
+                            window_end = cursor_state.window_end
                     else:
-                        window_end = datetime.now(UTC)
-                        retained_start = selector.retained_window_start(
-                            project_ids,
-                            window_end=window_end,
-                        )
-                        window_start = retained_attribute_window_start(
-                            retained_start,
-                            window_end=window_end,
-                        )
+                        if configured_snapshot_window is not None:
+                            window_start, window_end = configured_snapshot_window
+                        else:
+                            selector = AttributeReadSelector(
+                                typed_only=True,
+                                json_attribute_mode="arrays",
+                                wall_timeout_ms=(
+                                    filter_value_deadline.remaining_ms(
+                                        ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS
+                                    )
+                                ),
+                            )
+                            window_end = datetime.now(UTC)
+                            retained_start = selector.retained_window_start(
+                                project_ids,
+                                window_end=window_end,
+                            )
+                            window_start = retained_attribute_window_start(
+                                retained_start,
+                                window_end=window_end,
+                            )
                         segment_end = window_end
                         segment_start = None
                         value_after = None
                         seen_reference = ()
+
+                    catalog_attempt = (
+                        try_catalog_system_value_page(
+                            project_ids=project_ids,
+                            metric_name=metric_name,
+                            window_start=window_start,
+                            window_end=window_end,
+                            page_size=page_size,
+                            search=storage_search,
+                            after=(catalog_after if catalog_cursor else None),
+                            request_deadline=filter_value_deadline,
+                        )
+                        if not cursor_token or catalog_cursor
+                        else None
+                    )
+                    if catalog_attempt is not None and catalog_attempt.page is not None:
+                        catalog_page = catalog_attempt.page
+                        raw_values = []
+                        for row in catalog_value_rows(catalog_page):
+                            if not isinstance(row.value, str):
+                                error_response = self._gm.custom_error_response(
+                                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                                    "Filter values are temporarily unavailable. Please retry.",
+                                    code="service_unavailable",
+                                )
+                                return mark_catalog_snapshot_response(
+                                    mark_catalog_response(
+                                        error_response,
+                                        catalog_attempt,
+                                    ),
+                                    window_start=window_start,
+                                    window_end=window_end,
+                                    cursor_window_mode=cursor_window_mode,
+                                )
+                            raw_values.append(row.value)
+                        next_cursor = None
+                        if catalog_page.has_more:
+                            next_cursor = encode_list_cursor(
+                                resource=cursor_resource,
+                                scope=cursor_scope,
+                                query=cursor_query,
+                                page_size=page_size,
+                                window_start=window_start,
+                                window_end=window_end,
+                                order=(
+                                    CATALOG_VALUE_CURSOR_MARKER,
+                                    value_checkpoint_state(
+                                        catalog_page.next_checkpoint
+                                    ),
+                                ),
+                                seen_rows=0,
+                            )
+                        payload = {
+                            "values": search_hydrated_system_options(
+                                system_value_options(tuple(raw_values))
+                            ),
+                            "query_complete": True,
+                            "query_status": "complete",
+                            "query_window_start": window_start.isoformat(),
+                            "query_window_end": window_end.isoformat(),
+                            "query_count": catalog_page.query_count,
+                            **catalog_snapshot_metadata(
+                                window_start=window_start,
+                                window_end=window_end,
+                                cursor_window_mode=cursor_window_mode,
+                            ),
+                            "has_more": catalog_page.has_more,
+                            "browse_status": (
+                                "continuation" if catalog_page.has_more else "exhausted"
+                            ),
+                            "next_cursor": next_cursor,
+                        }
+                        return mark_catalog_snapshot_response(
+                            mark_catalog_response(
+                                self._gm.success_response(payload),
+                                catalog_attempt,
+                            ),
+                            window_start=window_start,
+                            window_end=window_end,
+                            cursor_window_mode=cursor_window_mode,
+                        )
+                    if catalog_cursor and catalog_attempt is not None:
+                        error_response = self._gm.custom_error_response(
+                            status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "Filter values are temporarily unavailable. Please retry.",
+                            code="service_unavailable",
+                        )
+                        return mark_catalog_snapshot_response(
+                            mark_catalog_response(
+                                error_response,
+                                catalog_attempt,
+                            ),
+                            window_start=window_start,
+                            window_end=window_end,
+                            cursor_window_mode=cursor_window_mode,
+                        )
 
                     state_binding = {
                         "scope": cursor_scope,
@@ -3643,16 +4412,29 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             ),
                             seen_rows=(seen_state.seen_count + len(appended_digests)),
                         )
-                    return self._gm.success_response(
+                    response = self._gm.success_response(
                         {
                             "values": search_hydrated_system_options(
                                 system_value_options(page_read.values)
                             ),
                             **page_read.metadata(),
+                            **catalog_snapshot_metadata(
+                                window_start=window_start,
+                                window_end=window_end,
+                                cursor_window_mode=cursor_window_mode,
+                            ),
                             "has_more": page_read.has_more,
                             "browse_status": page_read.browse_status,
                             "next_cursor": next_cursor,
                         }
+                    )
+                    if catalog_attempt is None:
+                        return response
+                    return mark_catalog_snapshot_response(
+                        mark_catalog_response(response, catalog_attempt),
+                        window_start=window_start,
+                        window_end=window_end,
+                        cursor_window_mode=cursor_window_mode,
                     )
 
                 if metric_name in enduser_string_cols:
@@ -3723,7 +4505,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         # 20 unrelated ids. Cursor callers above own displayed-
                         # label search.
                         search=search,
-                        limit=20 if search else 500,
+                        limit=(
+                            settings.DASHBOARD_FILTER_VALUE_SEARCH_PAGE_SIZE
+                            if search
+                            else _LEGACY_NATIVE_FILTER_VALUE_MAX
+                        ),
                         lookback_days=int(
                             getattr(
                                 settings,
@@ -3780,6 +4566,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "metric_name": metric_name,
                     "metric_type": metric_type,
                     "source": source,
+                    **({"property_id": property_id} if property_id else {}),
                     **(
                         {"project_scope": project_scope.cursor_identity()}
                         if project_scope.batched
@@ -3824,11 +4611,22 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             return None
                         return config
 
-                    eval_config = _run_filter_value_pg_read(
-                        filter_value_deadline,
-                        read_eval_config,
-                    )
-                    if eval_config is None and project_scope.mode == "workspace":
+                    # Canonical registry identities route deterministically.
+                    # UUID lookup order is retained only for property-id-free
+                    # compatibility requests and explicit legacy ``eval:``
+                    # identities.
+                    eval_config = None
+                    if property_kind != "eval_template":
+                        eval_config = _run_filter_value_pg_read(
+                            filter_value_deadline,
+                            read_eval_config,
+                        )
+                    allow_template_lookup = property_kind != "eval_config"
+                    if (
+                        eval_config is None
+                        and allow_template_lookup
+                        and project_scope.mode == "workspace"
+                    ):
                         eval_config = _run_filter_value_pg_read(
                             filter_value_deadline,
                             lambda: (
@@ -3838,7 +4636,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                                 .first()
                             ),
                         )
-                    elif eval_config is None and project_scope.mode == "fixed":
+                    elif (
+                        eval_config is None
+                        and allow_template_lookup
+                        and project_scope.mode == "fixed"
+                    ):
                         eval_config = _run_filter_value_pg_read(
                             filter_value_deadline,
                             lambda: (
@@ -3851,7 +4653,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                                 .first()
                             ),
                         )
-                    elif eval_config is None:
+                    elif eval_config is None and allow_template_lookup:
                         batched_eval_cursor = _batched_filter_value_cursor(
                             request,
                             project_scope,
@@ -3863,6 +4665,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                                 "metric_name": metric_name,
                                 "metric_type": metric_type,
                                 "source": source,
+                                **({"property_id": property_id} if property_id else {}),
                                 "search": search,
                             },
                         )
@@ -3951,14 +4754,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         {"value": "Failed", "label": "Failed"},
                     ]
                 elif output_type in {"CHOICE", "CHOICES"}:
-                    values = []
-                    seen_values = set()
-                    for choice in eval_template.choices or []:
-                        _append_configured_filter_value_option(
-                            values,
-                            seen_values,
-                            choice,
-                        )
+                    values = list(configured_value_options(eval_template.choices))
                 else:
                     # Score evals use numeric entry rather than a misleading
                     # categorical vocabulary.
@@ -3991,12 +4787,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 values = _filter_value_options_for_search(values, search)
 
             elif metric_type == "annotation_metric":
-                # Annotation filter values are derived from the label
-                # definition (settings) and, for categorical annotations, from
-                # stored scores. Older imported/backfilled labels can have
-                # real choices in Score.value without settings.options; relying
-                # only on settings makes the value dropdown empty even though
-                # the annotation metric itself is available.
+                # Annotation filter values are finite label configuration, not
+                # a historical Score vocabulary scan.
                 from django.core.exceptions import ValidationError
                 from django.db.models import Q
 
@@ -4050,6 +4842,21 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             not in project_scope.requested_project_ids
                         ):
                             return None
+                        if (
+                            label is not None
+                            and label.project_id is None
+                            and project_scope.mode == "fixed"
+                            and not AnnotationLabelScoresProjectPG().label_has_scores_for_projects(
+                                label.id,
+                                list(project_scope.project_ids),
+                            )
+                        ):
+                            # Project-scoped catalog reads deliberately exclude
+                            # workspace defaults unless a Score creates an exact
+                            # project visibility binding.  Apply the same rule
+                            # before publishing configured values so callers
+                            # cannot query an unrelated label by stable id.
+                            return None
                         return label
 
                     label = _run_filter_value_pg_read(
@@ -4077,10 +4884,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 label_settings = label.settings or {}
                 batched_annotation_cursor = None
                 batched_annotation_lane = "annotation_categorical_values"
-                annotation_window_start = _FILTER_VALUE_RETAINED_START
-                annotation_window_end = datetime.now(UTC)
 
                 if label_type == "categorical":
+                    values = list(
+                        configured_value_options(label_settings.get("options", []))
+                    )
                     if page_size is not None and project_scope.batched:
                         batched_annotation_cursor = _batched_filter_value_cursor(
                             request,
@@ -4094,54 +4902,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                                 "metric_type": metric_type,
                                 "source": source,
                                 "search": search,
+                                "configured_values": values,
                             },
                         )
                         project_scope = batched_annotation_cursor.scope
                         project_ids = list(project_scope.project_ids)
-                        cursor_state = batched_annotation_cursor.cursor_state
-                        annotation_window_start = (
-                            cursor_state.window_start
-                            if cursor_state is not None
-                            else annotation_window_start
-                        )
-                        annotation_window_end = (
-                            cursor_state.window_end
-                            if cursor_state is not None
-                            else annotation_window_end
-                        )
-                        if not project_ids:
-                            return self._gm.success_response(
-                                _empty_batched_filter_value_payload(
-                                    batched_annotation_cursor,
-                                    page_size=int(page_size),
-                                    lane=batched_annotation_lane,
-                                    window_start=annotation_window_start,
-                                    window_end=annotation_window_end,
-                                )
-                            )
-
-                    # Stored categorical choices are read from authoritative
-                    # Score rows via tracer_project_id.  This avoids a cross-
-                    # cluster legacy-score/direct-span subquery. The source
-                    # returns only after its limit+1 sentinel proves that this
-                    # batch was exhausted; oversized histories fail closed.
-
-                    from tracer.services.annotation_label_source import (
-                        AnnotationLabelScoresProjectPG,
-                    )
-
-                    stored_values = _run_filter_value_pg_read(
-                        filter_value_deadline,
-                        lambda: (
-                            AnnotationLabelScoresProjectPG().categorical_values_for_label(
-                                label.id, project_ids
-                            )
-                        ),
-                    )
-                    values = _annotation_categorical_filter_value_options(
-                        label_settings.get("options", []),
-                        stored_values,
-                    )
                 elif label_type == "star":
                     no_of_stars = label_settings.get("no_of_stars", 5)
                     values = [
@@ -4158,14 +4923,26 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     values = []
 
                 if page_size is not None:
-                    if batched_annotation_cursor is not None:
+                    if (
+                        label_type == "categorical"
+                        and batched_annotation_cursor is not None
+                    ):
+                        cursor_state = batched_annotation_cursor.cursor_state
                         return self._gm.success_response(
-                            _batched_exact_annotation_filter_value_page(
+                            _batched_configured_filter_value_page(
                                 batched_annotation_cursor,
                                 page_size=int(page_size),
                                 lane=batched_annotation_lane,
-                                window_start=annotation_window_start,
-                                window_end=annotation_window_end,
+                                window_start=(
+                                    cursor_state.window_start
+                                    if cursor_state is not None
+                                    else _FILTER_VALUE_RETAINED_START
+                                ),
+                                window_end=(
+                                    cursor_state.window_end
+                                    if cursor_state is not None
+                                    else datetime.now(UTC)
+                                ),
                                 values=values,
                                 search=search,
                             )
@@ -4183,12 +4960,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     )
                 values = _filter_value_options_for_search(values, search)
                 if label_type == "categorical":
-                    return self._gm.success_response(
-                        _legacy_filter_value_scope_metadata(
-                            {"values": values},
-                            project_scope,
-                        )
-                    )
+                    return self._gm.success_response({"values": values})
 
             elif metric_type == "custom_attribute":
                 # metric_name is an exact key request. It must not depend on
@@ -5005,14 +5777,18 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
                     compatibility_window_end = datetime.now(UTC)
                     compatibility_window_start = compatibility_window_end - timedelta(
-                        days=365
+                        days=settings.DASHBOARD_FILTER_VALUE_COMPAT_LOOKBACK_DAYS
                     )
                     catalog_attempt = try_catalog_value_page(
                         project_ids=project_ids,
                         attribute_key=metric_name,
                         window_start=compatibility_window_start,
                         window_end=compatibility_window_end,
-                        page_size=20 if search else 50,
+                        page_size=(
+                            settings.DASHBOARD_FILTER_VALUE_SEARCH_PAGE_SIZE
+                            if search
+                            else settings.PROPERTY_CATALOG_MAX_PAGE_SIZE
+                        ),
                         attribute_types=((attribute_type,) if attribute_type else None),
                         search=search,
                         after=None,
@@ -5220,19 +5996,103 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 code="server_error",
             )
 
-    def _filter_values_dataset(self, request, metric_name, metric_type):
-        """Return distinct filter values for dataset source."""
+    def _finite_native_filter_values_response(
+        self,
+        request,
+        *,
+        query_params,
+        values,
+        query,
+    ):
+        """Publish an exact finite vocabulary or refuse an oversized one.
+
+        Dataset and simulation adapters do not yet have an immutable epoch
+        like the span catalog. Each continuation therefore recomputes one
+        bounded, deterministically ordered vocabulary and binds its digest to
+        the signed cursor. A changing source invalidates the cursor instead of
+        mixing snapshots, and an inventory over the hard cap is never exposed
+        as sampled success.
+        """
+
+        page_size = query_params.get("page_size")
+        max_values = (
+            _FINITE_NATIVE_FILTER_VALUE_MAX
+            if page_size is not None
+            else _LEGACY_NATIVE_FILTER_VALUE_MAX
+        )
+        if len(values) > max_values:
+            return self._gm.custom_error_response(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Too many values to browse exactly. Enter a more specific search.",
+                code="filter_value_inventory_too_broad",
+            )
+        if page_size is None:
+            return self._gm.success_response(
+                {
+                    "values": values,
+                    "query_complete": True,
+                    "query_status": "complete",
+                    "has_more": False,
+                    "browse_status": "exhausted",
+                    "next_cursor": None,
+                }
+            )
+
+        try:
+            payload = _finite_filter_value_cursor_page(
+                request,
+                project_ids=[],
+                query=query,
+                values=values,
+                search=query_params.get("search", ""),
+                page_size=int(page_size),
+                cursor_token=query_params.get("cursor"),
+                content_identity={
+                    "digest": _filter_value_content_digest(values),
+                    "count": len(values),
+                },
+            )
+        except ListCursorError as exc:
+            return self._gm.custom_error_response(
+                status.HTTP_400_BAD_REQUEST,
+                str(exc),
+                code=exc.code,
+            )
+        return self._gm.success_response(payload)
+
+    def _filter_values_dataset(
+        self,
+        request,
+        metric_name,
+        metric_type,
+        *,
+        query_params,
+        deadline,
+    ):
+        """Return an exact finite value page for a dataset system property."""
         try:
             if not is_clickhouse_enabled():
-                return self._gm.success_response({"values": []})
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Filter values are temporarily unavailable. Please retry.",
+                    code="service_unavailable",
+                )
 
             analytics = AnalyticsQueryService()
             workspace_id = str(request.workspace.id)
+            search = query_params.get("search", "")
+            result_limit = (
+                _FINITE_NATIVE_FILTER_VALUE_MAX
+                if query_params.get("page_size") is not None
+                else _LEGACY_NATIVE_FILTER_VALUE_MAX
+            ) + 1
 
             if metric_type == "system_metric":
                 col_expr = DATASET_FILTER_COLUMNS.get(metric_name)
                 if not col_expr:
-                    return self._gm.success_response({"values": []})
+                    return self._gm.bad_request(
+                        "Unsupported dataset filter-value property."
+                    )
 
                 if metric_name == "dataset":
                     sql = (
@@ -5242,8 +6102,10 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         "AND deleted = 0 "
                         "AND workspace_id = toUUID(%(workspace_id)s) "
                         "AND name != '' "
+                        "AND (%(search)s = '' OR "
+                        "positionCaseInsensitiveUTF8(toString(name), %(search)s) > 0) "
                         "ORDER BY val "
-                        "LIMIT 500"
+                        "LIMIT %(result_limit)s"
                     )
                 else:
                     sql = (
@@ -5257,27 +6119,79 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         f"AND workspace_id = toUUID(%(workspace_id)s)"
                         f") "
                         f"AND {col_expr} != '' "
+                        f"AND (%(search)s = '' OR "
+                        f"positionCaseInsensitiveUTF8(toString({col_expr}), "
+                        f"%(search)s) > 0) "
                         f"ORDER BY val "
-                        f"LIMIT 500"
+                        f"LIMIT %(result_limit)s"
                     )
 
                 result = analytics.execute_ch_query(
-                    sql, {"workspace_id": workspace_id}, timeout_ms=5000
+                    sql,
+                    {
+                        "workspace_id": workspace_id,
+                        "search": search,
+                        "result_limit": result_limit,
+                    },
+                    timeout_ms=deadline.remaining_ms(
+                        _FILTER_VALUES_INTERACTIVE_TIMEOUT_MS
+                    ),
+                    settings={
+                        "max_result_rows": result_limit,
+                        "max_result_bytes": (
+                            _FINITE_NATIVE_FILTER_VALUE_MAX_RESULT_BYTES
+                        ),
+                        "result_overflow_mode": "throw",
+                    },
                 )
                 values = [
                     {"value": row["val"], "label": row["val"]} for row in result.data
                 ]
             else:
-                values = []
+                return self._gm.bad_request(
+                    "Unsupported dataset filter-value property."
+                )
 
-            return self._gm.success_response({"values": values})
-        except Exception as e:
-            logger.error("fetch_dataset_filter_values_failed", error=str(e))
-            return self._gm.bad_request(
-                "Failed to fetch filter values. Please try again later."
+            return self._finite_native_filter_values_response(
+                request,
+                query_params=query_params,
+                values=values,
+                query={
+                    "source": "datasets",
+                    "metric_name": metric_name,
+                    "metric_type": metric_type,
+                },
+            )
+        except Exception as exc:
+            if is_clickhouse_api_read_unavailable_error(exc):
+                logger.warning(
+                    "fetch_dataset_filter_values_unavailable",
+                    error_type=type(exc).__name__,
+                )
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Filter values are temporarily unavailable. Please retry.",
+                    code="service_unavailable",
+                )
+            logger.exception(
+                "fetch_dataset_filter_values_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "Filter values could not be loaded",
+                code="server_error",
             )
 
-    def _filter_values_dataset_column(self, request, dataset_id, column_id):
+    def _filter_values_dataset_column(
+        self,
+        request,
+        dataset_id,
+        column_id,
+        *,
+        query_params,
+        deadline,
+    ):
         """Return distinct non-empty cell values for a single (dataset, column).
 
         Powers the dataset detail filter panel's value dropdown and the
@@ -5304,19 +6218,39 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         # --- Ownership check via PG (cheap, definitive) ------------------
         try:
-            column = Column.objects.select_related("dataset").get(
-                id=column_id,
-                dataset_id=dataset_id,
-                dataset__workspace=request.workspace,
-                deleted=False,
+            column = _run_filter_value_pg_read(
+                deadline,
+                lambda: Column.objects.select_related("dataset").get(
+                    id=column_id,
+                    dataset_id=dataset_id,
+                    dataset__workspace=request.workspace,
+                    deleted=False,
+                ),
             )
         except Column.DoesNotExist:
             return self._gm.success_response({"values": []})
+        except ReadDeadlineExceeded:
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Filter values are temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
 
         if not is_clickhouse_enabled():
-            return self._gm.success_response({"values": []})
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Filter values are temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
 
         analytics = AnalyticsQueryService()
+        search = query_params.get("search", "")
+        max_values = (
+            _FINITE_NATIVE_FILTER_VALUE_MAX
+            if query_params.get("page_size") is not None
+            else _LEGACY_NATIVE_FILTER_VALUE_MAX
+        )
+        result_limit = max_values + 1
         try:
             sql = (
                 "SELECT DISTINCT value AS val "
@@ -5325,23 +6259,58 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 "AND dataset_id = toUUID(%(dataset_id)s) "
                 "AND column_id = toUUID(%(column_id)s) "
                 "AND value != '' "
+                "AND (%(search)s = '' OR "
+                "positionCaseInsensitiveUTF8(value, %(search)s) > 0) "
                 "ORDER BY val "
-                "LIMIT 500"
+                "LIMIT %(result_limit)s"
             )
             result = analytics.execute_ch_query(
                 sql,
-                {"dataset_id": str(dataset_id), "column_id": str(column_id)},
-                timeout_ms=5000,
+                {
+                    "dataset_id": str(dataset_id),
+                    "column_id": str(column_id),
+                    "search": search,
+                    "result_limit": result_limit,
+                },
+                timeout_ms=deadline.remaining_ms(_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS),
+                settings={
+                    "max_result_rows": result_limit,
+                    "max_result_bytes": _FINITE_NATIVE_FILTER_VALUE_MAX_RESULT_BYTES,
+                    "result_overflow_mode": "throw",
+                },
             )
             raw = [row["val"] for row in result.data if row.get("val")]
-        except Exception as e:
-            logger.warning(
+        except Exception as exc:
+            if is_clickhouse_api_read_unavailable_error(exc):
+                logger.warning(
+                    "dataset_column_filter_values_query_unavailable",
+                    dataset_id=str(dataset_id),
+                    column_id=str(column_id),
+                    error_type=type(exc).__name__,
+                )
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Filter values are temporarily unavailable. Please retry.",
+                    code="service_unavailable",
+                )
+            logger.exception(
                 "dataset_column_filter_values_query_failed",
                 dataset_id=str(dataset_id),
                 column_id=str(column_id),
-                error=str(e)[:200],
+                error_type=type(exc).__name__,
             )
-            return self._gm.success_response({"values": []})
+            return self._gm.custom_error_response(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "Filter values could not be loaded",
+                code="server_error",
+            )
+
+        if len(raw) >= result_limit:
+            return self._gm.custom_error_response(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Too many values to browse exactly. Enter a more specific search.",
+                code="filter_value_inventory_too_broad",
+            )
 
         # Flatten list / dict cells to their elements so the dropdown
         # suggests "English" instead of '["English","French"]'. Fall back
@@ -5380,33 +6349,72 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         seen = set()
         values = []
-        for raw_val in raw:
-            for v in _expand(raw_val):
-                if v not in seen:
-                    seen.add(v)
-                    values.append(v)
-                if len(values) >= 500:
-                    break
-            if len(values) >= 500:
-                break
+        try:
+            for raw_val in raw:
+                deadline.remaining_ms(_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS)
+                for v in _expand(raw_val):
+                    if v not in seen:
+                        seen.add(v)
+                        values.append(v)
+                    if len(values) > max_values:
+                        return self._gm.custom_error_response(
+                            status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Too many values to browse exactly. Enter a more specific search.",
+                            code="filter_value_inventory_too_broad",
+                        )
+        except ReadDeadlineExceeded:
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Filter values are temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
         values.sort(key=lambda s: s.lower())
-        return self._gm.success_response(
-            {"values": [{"value": v, "label": v} for v in values]}
+        return self._finite_native_filter_values_response(
+            request,
+            query_params=query_params,
+            values=[{"value": v, "label": v} for v in values],
+            query={
+                "source": "dataset_column",
+                "metric_name": str(column_id),
+                "metric_type": "custom_column",
+                "dataset_id": str(dataset_id),
+                "attribute_type": column.data_type,
+            },
         )
 
-    def _filter_values_simulation(self, request, metric_name, metric_type):
-        """Return distinct filter values for simulation source."""
+    def _filter_values_simulation(
+        self,
+        request,
+        metric_name,
+        metric_type,
+        *,
+        query_params,
+        deadline,
+    ):
+        """Return an exact finite value page for a simulation property."""
         try:
             if not is_clickhouse_enabled():
-                return self._gm.success_response({"values": []})
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Filter values are temporarily unavailable. Please retry.",
+                    code="service_unavailable",
+                )
 
             analytics = AnalyticsQueryService()
             workspace_id = str(request.workspace.id)
+            search = query_params.get("search", "")
+            result_limit = (
+                _FINITE_NATIVE_FILTER_VALUE_MAX
+                if query_params.get("page_size") is not None
+                else _LEGACY_NATIVE_FILTER_VALUE_MAX
+            ) + 1
 
             if metric_type == "system_metric":
                 col_expr = SIMULATION_FILTER_COLUMNS.get(metric_name)
                 if not col_expr:
-                    return self._gm.success_response({"values": []})
+                    return self._gm.bad_request(
+                        "Unsupported simulation filter-value property."
+                    )
 
                 sql = (
                     f"SELECT DISTINCT {col_expr} AS val "
@@ -5416,23 +6424,67 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     f"AND dictGetOrDefault('simulate_scenario_dict', 'workspace_id', "
                     f"c.scenario_id, NULL) = toUUID(%(workspace_id)s) "
                     f"AND {self._simulation_filter_value_presence_expr(metric_name, col_expr)} "
+                    f"AND (%(search)s = '' OR "
+                    f"positionCaseInsensitiveUTF8(toString({col_expr}), "
+                    f"%(search)s) > 0) "
                     f"ORDER BY val "
-                    f"LIMIT 500"
+                    f"LIMIT %(result_limit)s"
                 )
                 result = analytics.execute_ch_query(
-                    sql, {"workspace_id": workspace_id}, timeout_ms=5000
+                    sql,
+                    {
+                        "workspace_id": workspace_id,
+                        "search": search,
+                        "result_limit": result_limit,
+                    },
+                    timeout_ms=deadline.remaining_ms(
+                        _FILTER_VALUES_INTERACTIVE_TIMEOUT_MS
+                    ),
+                    settings={
+                        "max_result_rows": result_limit,
+                        "max_result_bytes": (
+                            _FINITE_NATIVE_FILTER_VALUE_MAX_RESULT_BYTES
+                        ),
+                        "result_overflow_mode": "throw",
+                    },
                 )
                 values = [
                     {"value": row["val"], "label": row["val"]} for row in result.data
                 ]
             else:
-                values = []
+                return self._gm.bad_request(
+                    "Unsupported simulation filter-value property."
+                )
 
-            return self._gm.success_response({"values": values})
-        except Exception as e:
-            logger.error("fetch_simulation_filter_values_failed", error=str(e))
-            return self._gm.bad_request(
-                "Failed to fetch filter values. Please try again later."
+            return self._finite_native_filter_values_response(
+                request,
+                query_params=query_params,
+                values=values,
+                query={
+                    "source": "simulation",
+                    "metric_name": metric_name,
+                    "metric_type": metric_type,
+                },
+            )
+        except Exception as exc:
+            if is_clickhouse_api_read_unavailable_error(exc):
+                logger.warning(
+                    "fetch_simulation_filter_values_unavailable",
+                    error_type=type(exc).__name__,
+                )
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Filter values are temporarily unavailable. Please retry.",
+                    code="service_unavailable",
+                )
+            logger.exception(
+                "fetch_simulation_filter_values_failed",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                "Filter values could not be loaded",
+                code="server_error",
             )
 
     def _simulation_filter_value_presence_expr(self, metric_name, col_expr):
@@ -5663,12 +6715,16 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             query_config
         )
         frozen_dataset_ids = serializers.empty
+        frozen_annotation_label_ids_by_project = serializers.empty
         if _exact_worker and cache_identity_override is not None:
             # ``dataset_ids`` is internal cache-identity state, not part of the
             # public query contract. Remove it for strict public-shape
             # validation, then restore it before scope reauthorization.
             read_query_config = dict(read_query_config)
             frozen_dataset_ids = read_query_config.pop("dataset_ids", serializers.empty)
+            frozen_annotation_label_ids_by_project = read_query_config.pop(
+                "annotation_label_ids_by_project", serializers.empty
+            )
         serializer = DashboardQuerySerializer(data=read_query_config)
         if not serializer.is_valid():
             logger.warning(
@@ -5679,6 +6735,10 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
         query_config = _normalize_dashboard_query_filters(serializer.validated_data)
         if frozen_dataset_ids is not serializers.empty:
             query_config["dataset_ids"] = frozen_dataset_ids
+        if frozen_annotation_label_ids_by_project is not serializers.empty:
+            query_config["annotation_label_ids_by_project"] = (
+                frozen_annotation_label_ids_by_project
+            )
         query_config["allow_sampled"] = False
 
         query_config["metrics"] = self._normalize_metric_sources(
@@ -5709,6 +6769,20 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             )
         except DashboardQueryScopeError as exc:
             return self._gm.bad_request(str(exc))
+
+        try:
+            query_config = _bind_dashboard_annotation_completeness(
+                query_config,
+                workspace,
+                deadline=read_deadline,
+                allow_metadata_read=not _exact_worker,
+            )
+        except (AnnotationScoreReadUnavailable, DatabaseError, ReadDeadlineExceeded):
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Dashboard annotation metadata is temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
 
         cache_identity = (
             deepcopy(cache_identity_override)
@@ -6025,6 +7099,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             )
             return self._gm.bad_request("Dashboard query could not be completed")
 
+    @bounded_dashboard_action_request(resource="dashboard_widget_preview")
     @validated_request(
         request_serializer=DashboardPreviewQuerySerializer,
         query_serializer=DashboardRefreshQuerySerializer,
@@ -6039,6 +7114,8 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
     @action(detail=False, methods=["post"], url_path="preview")
     def preview_query(self, request, *args, **kwargs):
         """Execute an ad-hoc query_config without saving, for live preview."""
+        read_deadline = kwargs.pop("_dashboard_action_deadline", None)
+        read_deadline = read_deadline or start_dashboard_action_deadline()
         try:
             if not is_clickhouse_enabled():
                 return self._gm.bad_request("ClickHouse is not enabled.")
@@ -6053,7 +7130,10 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                 query_config,
                 request.workspace,
                 refresh=refresh,
+                _read_deadline=read_deadline,
             )
+        except DashboardActionUnavailable:
+            raise
         except Exception as exc:
             if is_read_budget_error(exc) or is_clickhouse_query_error(exc):
                 logger.warning(

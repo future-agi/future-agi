@@ -10,6 +10,8 @@ from math import ceil
 from time import monotonic
 from typing import Any, Protocol
 
+from django.conf import settings
+
 from tracer.services.clickhouse.query_service import QueryResult
 from tracer.services.clickhouse.read_budget import is_read_budget_error
 
@@ -32,12 +34,16 @@ _WORKFLOW_MAX_DEADLINE_MS = 170 * 60 * 1000
 _SELECTIVE_ANCHOR_SENTINEL = 513
 _MAX_OPTIONAL_ANCHOR_STRATA = 4
 # Keep one slow-but-bounded statement within the client deadline so the next
-# seed/classifier can run. Production showed successful reads
-# at 0.79-1.26 s under load; the caller's wall deadline, query count, rows,
-# bytes, memory, and single-thread settings remain the authoritative envelope.
-_QUERY_TIMEOUT_MS = 1_500
-_MAX_OPT_IN_QUERY_TIMEOUT_MS = 3_000
-_MAX_BUILDER_RECOMMENDED_QUERY_TIMEOUT_MS = 30_000
+# seed/classifier can run. Production showed successful reads at 0.79-1.26 s
+# under load, while constrained local qualification observed a valid 1.54 s
+# read. The caller's wall deadline, query count, rows, bytes, memory, and
+# single-thread settings remain the authoritative envelope. These aliases are
+# retained for test and builder compatibility; Django settings own the values.
+_QUERY_TIMEOUT_MS = settings.FILTER_SELECTOR_QUERY_TIMEOUT_MS
+_MAX_OPT_IN_QUERY_TIMEOUT_MS = settings.FILTER_SELECTOR_MAX_OPT_IN_QUERY_TIMEOUT_MS
+_MAX_BUILDER_RECOMMENDED_QUERY_TIMEOUT_MS = (
+    settings.FILTER_SELECTOR_MAX_BUILDER_QUERY_TIMEOUT_MS
+)
 # Do not launch a resumable cursor statement with less than its full bounded
 # statement envelope. A short-token final batch can time out even though an
 # exact signed checkpoint already exists. Returning that checkpoint is
@@ -59,12 +65,12 @@ _EXACT_ZERO_FALLBACK_RESERVE_MS = 1_000
 # margin; 5,000 is also the existing server-side result ceiling used by those
 # endpoints.  Keeping one public ceiling makes numbered-page work finite for
 # filtered selectors, unfiltered top-K reads, and session OFFSET reads alike.
-MAX_NUMBERED_PAGE_WORK_ROWS = 5_000
+MAX_NUMBERED_PAGE_WORK_ROWS = settings.FILTER_SELECTOR_MAX_NUMBERED_PAGE_WORK_ROWS
 _READ_SETTINGS = {
-    "max_threads": 1,
-    "max_block_size": 8192,
-    "max_memory_usage": 36 * 1024 * 1024 * 1024,
-    "max_bytes_to_read": 36 * 1024 * 1024 * 1024,
+    "max_threads": settings.FILTER_SELECTOR_MAX_THREADS,
+    "max_block_size": settings.OBSERVABILITY_LIST_MAX_BLOCK_SIZE,
+    "max_memory_usage": settings.OBSERVABILITY_LIST_MAX_MEMORY_BYTES,
+    "max_bytes_to_read": settings.OBSERVABILITY_LIST_MAX_BYTES,
     "read_overflow_mode": "throw",
     "max_result_rows": _MAX_CANDIDATES,
     "result_overflow_mode": "throw",
@@ -936,7 +942,6 @@ def read_bounded_filter_page(
     )
     if (
         bounded_continuation
-        and candidate_seed_can_run
         and callable(cursor_seed_batch_recommendation)
         and cursor_seed_batch_recommendation() is not None
     ):
@@ -1036,6 +1041,15 @@ def read_bounded_filter_page(
         repeated_eager_flush_builder()
         if callable(repeated_eager_flush_builder)
         else False
+    )
+    cursor_slice_fill_builder = getattr(
+        builder, "fill_bounded_cursor_page_across_slices", None
+    )
+    fill_bounded_cursor_page_across_slices = bool(
+        bounded_continuation
+        and identity_only_classification
+        and callable(cursor_slice_fill_builder)
+        and cursor_slice_fill_builder()
     )
     # A builder may expose a finite raw-witness query only when it is a
     # complete superset of exact latest-state membership. Run that cheap,
@@ -2589,6 +2603,7 @@ def read_bounded_filter_page(
                     and seed_proves_result_order
                     and matched_by_id
                     and len(matched_by_id) < prefix_needed
+                    and not fill_bounded_cursor_page_across_slices
                 ):
                     # Every root in this half-open slice has crossed the exact
                     # latest-state classifier. Its matches are therefore a

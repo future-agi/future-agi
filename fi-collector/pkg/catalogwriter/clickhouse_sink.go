@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -189,14 +188,19 @@ func (s *ClickHouseSink) InsertDelivery(ctx context.Context, rows []map[string]a
 }
 
 type catalogInsertSpec struct {
-	table   string
-	columns map[string]struct{}
+	table         string
+	columns       map[string]struct{}
+	legacyColumns map[string]struct{}
 }
 
 var catalogDataInsertSpecs = map[Table]catalogInsertSpec{
 	KeyTable: {
 		table: string(KeyTable),
 		columns: columnSet(
+			"project_id", "source_kind", "attribute_key", "key_folded", "attribute_type",
+			"first_seen", "last_seen", "catalog_epoch",
+		),
+		legacyColumns: columnSet(
 			"project_id", "attribute_key", "key_folded", "attribute_type",
 			"first_seen", "last_seen", "catalog_epoch",
 		),
@@ -204,6 +208,10 @@ var catalogDataInsertSpecs = map[Table]catalogInsertSpec{
 	ValueTable: {
 		table: string(ValueTable),
 		columns: columnSet(
+			"project_id", "source_kind", "attribute_key", "attribute_type", "value_fingerprint",
+			"value_json", "value_search_text", "first_seen", "last_seen", "catalog_epoch",
+		),
+		legacyColumns: columnSet(
 			"project_id", "attribute_key", "attribute_type", "value_fingerprint",
 			"value_json", "value_search_text", "first_seen", "last_seen", "catalog_epoch",
 		),
@@ -285,35 +293,62 @@ func (s *ClickHouseSink) insert(ctx context.Context, spec catalogInsertSpec, row
 }
 
 func validateCatalogColumns(spec catalogInsertSpec, rows []map[string]any) error {
+	var selected map[string]struct{}
 	for index, row := range rows {
-		if len(row) != len(spec.columns) {
+		rowColumns, ok := exactCatalogColumnShape(row, spec.columns, spec.legacyColumns)
+		if !ok {
+			allowed := []int{len(spec.columns)}
+			if spec.legacyColumns != nil {
+				allowed = append(allowed, len(spec.legacyColumns))
+			}
 			return fmt.Errorf(
-				"catalogwriter: %s row %d has %d columns, require exactly %d",
-				spec.table, index, len(row), len(spec.columns),
+				"catalogwriter: %s row %d has a non-catalog column shape (%d columns; allowed %v)",
+				spec.table, index, len(row), allowed,
 			)
 		}
-		unknown := make([]string, 0)
-		for column := range row {
-			if _, ok := spec.columns[column]; !ok {
-				unknown = append(unknown, column)
-			}
-		}
-		if len(unknown) != 0 {
-			sort.Strings(unknown)
-			return fmt.Errorf("catalogwriter: %s row %d contains non-catalog columns %q", spec.table, index, unknown)
-		}
-		missing := make([]string, 0)
-		for column := range spec.columns {
-			if _, ok := row[column]; !ok {
-				missing = append(missing, column)
-			}
-		}
-		if len(missing) != 0 {
-			sort.Strings(missing)
-			return fmt.Errorf("catalogwriter: %s row %d omits required columns %q", spec.table, index, missing)
+		if selected == nil {
+			selected = rowColumns
+		} else if !sameColumnSet(selected, rowColumns) {
+			return fmt.Errorf(
+				"catalogwriter: %s row %d mixes legacy and source-kind catalog shapes",
+				spec.table, index,
+			)
 		}
 	}
 	return nil
+}
+
+func exactCatalogColumnShape(
+	row map[string]any, shapes ...map[string]struct{},
+) (map[string]struct{}, bool) {
+	for _, shape := range shapes {
+		if shape == nil || len(row) != len(shape) {
+			continue
+		}
+		exact := true
+		for column := range row {
+			if _, exists := shape[column]; !exists {
+				exact = false
+				break
+			}
+		}
+		if exact {
+			return shape, true
+		}
+	}
+	return nil, false
+}
+
+func sameColumnSet(left, right map[string]struct{}) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for column := range left {
+		if _, exists := right[column]; !exists {
+			return false
+		}
+	}
+	return true
 }
 
 var errCatalogRequestTooLarge = errors.New("catalog request exceeds encoded byte limit")

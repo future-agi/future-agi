@@ -2,19 +2,31 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
+from tracer.serializers.filters import ObserveGraphDataResponseSerializer
 from tracer.serializers.observation_span import (
+    SpanListMetadataSerializer,
     SpanObserveListResponseSerializer,
     SpanPrototypeListResponseSerializer,
 )
 from tracer.serializers.trace import (
     TraceAgentGraphResponseSerializer,
+    TraceObserveListMetadataSerializer,
     TracePrototypeListResponseSerializer,
     TraceVoiceCallListResponseSerializer,
 )
-from tracer.utils.helper import get_default_span_config, get_default_trace_config
+from tracer.utils.helper import (
+    ensure_project_session_property_identities,
+    get_default_project_session_config,
+    get_default_span_config,
+    get_default_trace_config,
+    update_column_config_based_on_eval_config,
+)
+from tracer.utils.property_registry import canonical_system_attribute_name
 
 
 def _repo_root():
@@ -30,6 +42,14 @@ def _wire_format(value):
     return json.loads(json.dumps(value, default=str))
 
 
+def _filter_evidence():
+    return {
+        "query_applied_filter_version": "canonical-json-sha256-v1",
+        "query_applied_filter_sha256": "a" * 64,
+        "query_applied_filter_count": 1,
+    }
+
+
 def _list_payload(*, config_key, config):
     return {
         "status": True,
@@ -41,6 +61,7 @@ def _list_payload(*, config_key, config):
                 "has_more": False,
                 "query_complete": True,
                 "query_status": "complete",
+                **_filter_evidence(),
             },
             "table": [
                 {
@@ -56,6 +77,114 @@ def _list_payload(*, config_key, config):
             ],
         },
     }
+
+
+def test_default_trace_and_span_columns_have_stable_registry_identities():
+    trace_config = get_default_trace_config()
+    span_config = get_default_span_config()
+    session_config = get_default_project_session_config()
+
+    assert all(
+        item["property_id"]
+        == "system_attribute:traces:"
+        + canonical_system_attribute_name("traces", item["id"])
+        and item["property_kind"] == "system_attribute"
+        and item["property_source"] == "traces"
+        for item in trace_config
+    )
+    assert all(
+        item["property_id"]
+        == "system_attribute:spans:"
+        + canonical_system_attribute_name("spans", item["id"])
+        and item["property_kind"] == "system_attribute"
+        and item["property_source"] == "traces"
+        for item in span_config
+    )
+    assert all(
+        item["property_id"]
+        == "system_attribute:sessions:"
+        + canonical_system_attribute_name("sessions", item["id"])
+        and item["property_kind"] == "system_attribute"
+        and item["property_source"] == "sessions"
+        for item in session_config
+    )
+
+
+def test_observe_span_columns_include_user_fields_once_with_stable_identities():
+    span_config = get_default_span_config(include_user_fields=True)
+    field_ids = [item["id"] for item in span_config]
+
+    assert {"user_id", "user_id_type", "user_id_hash"}.issubset(field_ids)
+    assert len(field_ids) == len(set(field_ids))
+    assert all(
+        item["property_id"]
+        == "system_attribute:spans:"
+        + canonical_system_attribute_name("spans", item["id"])
+        and item["property_kind"] == "system_attribute"
+        and item["property_source"] == "traces"
+        for item in span_config
+    )
+
+
+def test_legacy_saved_session_columns_gain_identities_without_mutating_storage():
+    saved_config = [
+        {"id": "session_id", "name": "Session Id", "is_visible": True},
+        {
+            "id": "annotation-label-1",
+            "property_id": "annotation:annotation-label-1",
+            "property_kind": "annotation",
+            "property_source": "sessions",
+        },
+    ]
+
+    config = ensure_project_session_property_identities(saved_config)
+
+    assert "property_id" not in saved_config[0]
+    assert config[0]["property_id"] == "system_attribute:sessions:session"
+    assert config[0]["property_source"] == "sessions"
+    assert config[1]["property_id"] == "annotation:annotation-label-1"
+
+
+def test_voice_eval_columns_keep_trace_transport_without_average_prefix():
+    eval_config = SimpleNamespace(
+        id="eval-config-1",
+        name="Quality",
+        eval_template=SimpleNamespace(
+            id="eval-template-1",
+            config={"output": "score"},
+            choices=None,
+        ),
+    )
+
+    config = update_column_config_based_on_eval_config(
+        [],
+        [eval_config],
+        is_simulator=True,
+        property_source="traces",
+    )
+
+    assert config[0]["name"] == "Quality"
+    assert config[0]["property_id"] == "eval_config:eval-config-1"
+    assert config[0]["property_kind"] == "eval_config"
+    assert config[0]["property_source"] == "traces"
+
+
+def test_session_annotation_columns_have_stable_registry_identities():
+    from tracer.views.trace_session import TraceSessionView
+
+    label = SimpleNamespace(
+        id="annotation-label-1",
+        name="Correctness",
+        type="numeric",
+        settings={},
+    )
+    with patch("tracer.views.trace_session.Score.objects.filter") as filter_scores:
+        filter_scores.return_value.values.return_value.distinct.return_value = []
+        config = TraceSessionView._build_score_column_config([label])
+
+    assert config[0]["property_id"] == "annotation:annotation-label-1"
+    assert config[0]["property_kind"] == "annotation"
+    assert config[0]["property_source"] == "sessions"
 
 
 @pytest.mark.parametrize(
@@ -185,10 +314,69 @@ def test_voice_list_response_accepts_mixed_json_rows_and_typed_config():
             "has_more": False,
             "query_complete": True,
             "query_status": "complete",
+            **_filter_evidence(),
         }
     )
 
     assert serializer.is_valid(), serializer.errors
+
+
+def test_list_and_graph_serializers_publish_typed_filter_evidence_and_window():
+    for serializer_class in (
+        TraceObserveListMetadataSerializer,
+        SpanListMetadataSerializer,
+    ):
+        serializer = serializer_class(
+            data={
+                "total_rows": 1,
+                **_filter_evidence(),
+            }
+        )
+        assert serializer.is_valid(), serializer.errors
+
+    graph = ObserveGraphDataResponseSerializer(
+        data={
+            "status": True,
+            "result": {
+                "metric_name": "latency",
+                "data": [],
+                "query_complete": True,
+                "query_exact": True,
+                "query_status": "complete",
+                "query_sampled": False,
+                "query_window_start": "2026-01-01T00:00:00Z",
+                "query_window_end": "2026-02-01T00:00:00Z",
+                **_filter_evidence(),
+            },
+        }
+    )
+    assert graph.is_valid(), graph.errors
+
+
+def test_filter_evidence_serializers_reject_malformed_digest():
+    serializer = TraceObserveListMetadataSerializer(
+        data={
+            "total_rows": 1,
+            **{**_filter_evidence(), "query_applied_filter_sha256": "not-a-digest"},
+        }
+    )
+
+    assert not serializer.is_valid()
+    assert "query_applied_filter_sha256" in serializer.errors
+
+
+def test_public_list_and_graph_views_attach_evidence_at_the_response_boundary():
+    root = _repo_root() / "futureagi" / "tracer" / "views"
+    trace_source = (root / "trace.py").read_text()
+    span_source = (root / "observation_span.py").read_text()
+    session_source = (root / "trace_session.py").read_text()
+
+    assert 'observe_type="trace"' in trace_source
+    assert 'observe_type="voice"' in trace_source
+    assert '"project_id": str(row.get("project_id") or project_id)' in trace_source
+    assert 'observe_type="span"' in span_source
+    assert 'observe_type="session"' in session_source
+    assert 'entry["project_id"] = entry_project_id' in session_source
 
 
 @pytest.mark.parametrize(
@@ -231,3 +419,22 @@ def test_swagger_list_rows_are_recursive_json_values(response_definition, config
     assert result["properties"][config_key]["items"]["$ref"].startswith(
         "#/definitions/"
     )
+
+
+@pytest.mark.parametrize(
+    "definition",
+    [
+        "ObserveGraphDataResult",
+        "TraceObserveListMetadata",
+        "TraceVoiceCallListResponse",
+        "SpanListMetadata",
+    ],
+)
+def test_swagger_publishes_typed_filter_attestation(definition):
+    properties = _swagger()["definitions"][definition]["properties"]
+
+    assert properties["query_applied_filter_version"]["enum"] == [
+        "canonical-json-sha256-v1"
+    ]
+    assert properties["query_applied_filter_sha256"]["pattern"] == r"^[0-9a-f]{64}$"
+    assert properties["query_applied_filter_count"]["minimum"] == 0

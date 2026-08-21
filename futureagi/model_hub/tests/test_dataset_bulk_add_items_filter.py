@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from django.utils import timezone
@@ -19,9 +20,8 @@ from structlog.testing import capture_logs
 from model_hub.models.ai_model import AIModel
 from model_hub.models.annotation_queues import AnnotationQueue, QueueItem
 from tracer.models.observation_span import ObservationSpan
-from tracer.models.project import Project, ProjectSourceChoices
+from tracer.models.project import Project
 from tracer.models.trace import Trace
-from tracer.models.trace_session import TraceSession
 from tracer.tests._ch_seed import seed_ch_span
 
 # --------------------------------------------------------------------------
@@ -371,9 +371,7 @@ class TestAddItemsFilterMode:
     ):
         """Filter-mode add stamps project_id from the selection too, so every path
         that fills a queue leaves items scope-able by the render read."""
-        _seed_ch_trace_root(
-            Trace.objects.create(project=observe_project, name="t-fp")
-        )
+        _seed_ch_trace_root(Trace.objects.create(project=observe_project, name="t-fp"))
         resp = auth_client.post(
             _add_items_url(active_queue.id),
             {
@@ -544,6 +542,55 @@ class TestAddItemsFilterMode:
         assert resp.status_code == 503, resp.data
         assert resp.data.get("code") == "source_resolve_unavailable"
 
+    def test_filter_mode_deadline_rolls_back_every_created_item(
+        self, auth_client, active_queue, observe_project, monkeypatch
+    ):
+        import model_hub.views.annotation_queues as views_mod
+        from model_hub.services.bulk_selection import ResolveResult
+        from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
+
+        trace = Trace.objects.create(project=observe_project, name="deadline-trace")
+        seen_deadlines = []
+
+        def resolve(**kwargs):
+            seen_deadlines.append(kwargs["deadline"])
+            return ResolveResult(
+                ids=[str(trace.id)],
+                total_matching=1,
+                truncated=False,
+            )
+
+        def create_then_expire(queue, items_to_create, *, deadline=None):
+            QueueItem.objects.bulk_create(items_to_create)
+            raise ReadDeadlineExceeded("expired after insert")
+
+        monkeypatch.setitem(views_mod.FILTER_MODE_RESOLVERS, "trace", resolve)
+        monkeypatch.setattr(
+            views_mod,
+            "filter_available_source_ids_for_annotation",
+            lambda *_args, **_kwargs: ([str(trace.id)], 0, None, {}),
+        )
+        monkeypatch.setattr(views_mod, "_finalize_bulk_add", create_then_expire)
+
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": "trace",
+                    "project_id": str(observe_project.id),
+                }
+            },
+            format="json",
+        )
+
+        assert resp.status_code == 503, resp.data
+        assert resp.data.get("code") == "add_items_deadline_exceeded"
+        assert "Nothing was added" in str(resp.data)
+        assert seen_deadlines[0].total_ms == views_mod.ADD_ITEMS_FILTER_MODE_WALL_MS
+        assert views_mod.ADD_ITEMS_FILTER_MODE_WALL_MS <= 9_500
+        assert not QueueItem.objects.filter(queue=active_queue, trace=trace).exists()
+
     def test_filter_mode_queue_item_count_matches_added(
         self, auth_client, active_queue, observe_project
     ):
@@ -572,6 +619,209 @@ class TestAddItemsFilterMode:
         )
         assert list_resp.status_code == 200, list_resp.data
         assert list_resp.data["count"] == 4
+
+
+def test_bounded_bulk_selector_receives_only_the_request_remainder(monkeypatch):
+    import tracer.selectors.trace_filter_reads as trace_filter_reads
+    from model_hub.services import bulk_selection
+
+    calls = []
+
+    class Deadline:
+        def remaining_ms(self, *, floor_ms):
+            calls.append(("remaining", floor_ms))
+            return 4_321 if len(calls) == 1 else 4_000
+
+    class Builder:
+        @staticmethod
+        def bounded_filter_degraded_error_code():
+            return None
+
+        @staticmethod
+        def supports_bounded_filter_scan():
+            return True
+
+    def read_page(**kwargs):
+        calls.append(("selector", kwargs["deadline_ms"]))
+        return SimpleNamespace(complete=True, error_code=None, rows=[], has_more=False)
+
+    monkeypatch.setattr(trace_filter_reads, "read_bounded_filter_page", read_page)
+    page = bulk_selection._read_bounded_bulk_page(
+        builder=Builder(),
+        analytics=object(),
+        filters=[],
+        key_field="trace_id",
+        cap=1,
+        deadline=Deadline(),
+    )
+
+    assert page.complete is True
+    assert calls == [
+        ("remaining", 1),
+        ("selector", 4_321),
+        ("remaining", 1),
+    ]
+
+
+def test_filter_mode_pg_statements_receive_shrinking_timeouts(monkeypatch):
+    from contextlib import contextmanager
+
+    import model_hub.views.annotation_queues as views_mod
+
+    remaining = iter((8_000, 7_900, 5_000, 4_900, 4_800))
+
+    class Deadline:
+        @staticmethod
+        def remaining_ms(*, floor_ms):
+            assert floor_ms == 1
+            return next(remaining)
+
+    class RawCursor:
+        def __init__(self):
+            self.timeouts = []
+
+        def execute(self, sql, params):
+            assert sql == "SELECT set_config('statement_timeout', %s, true)"
+            self.timeouts.append(params[0])
+
+    class Connection:
+        vendor = "postgresql"
+        wrapper = None
+
+        @contextmanager
+        def execute_wrapper(self, wrapper):
+            self.wrapper = wrapper
+            yield
+
+    fake_connection = Connection()
+    raw_cursor = RawCursor()
+    executed = []
+
+    def execute(sql, params, many, context):
+        executed.append((sql, params, many, context))
+        return sql
+
+    monkeypatch.setattr(views_mod, "connection", fake_connection)
+    context = {"cursor": SimpleNamespace(cursor=raw_cursor)}
+    with views_mod._bounded_add_items_postgres(Deadline()):
+        assert fake_connection.wrapper(execute, "SELECT one", (), False, context) == (
+            "SELECT one"
+        )
+        assert fake_connection.wrapper(execute, "SELECT two", (), False, context) == (
+            "SELECT two"
+        )
+
+    assert raw_cursor.timeouts == ["8000", "5000"]
+    assert [row[0] for row in executed] == ["SELECT one", "SELECT two"]
+
+
+def test_filter_mode_assignment_materialization_observes_shared_deadline(monkeypatch):
+    import model_hub.models.annotation_queues as queue_models
+    from model_hub.utils.annotation_queue_helpers import (
+        assign_items_to_all_annotators,
+    )
+    from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
+
+    constructed = []
+    writes = []
+
+    class AssignmentManager:
+        @staticmethod
+        def bulk_create(assignments, **kwargs):
+            writes.append((list(assignments), kwargs))
+
+    class Assignment:
+        objects = AssignmentManager()
+
+        def __init__(self, **kwargs):
+            constructed.append(kwargs)
+
+    class Annotators:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def values_list(self, *args, **kwargs):
+            return self
+
+        @staticmethod
+        def distinct():
+            return ["annotator-1"]
+
+    checks = 0
+
+    def expire_during_assignment_build():
+        nonlocal checks
+        checks += 1
+        # Three entry/query checkpoints run before materialization. The fourth
+        # is the 128th assignment checkpoint and must interrupt the build.
+        if checks == 4:
+            raise ReadDeadlineExceeded("shared request wall exhausted")
+
+    monkeypatch.setattr(queue_models, "QueueItemAssignment", Assignment)
+    monkeypatch.setattr(queue_models, "annotation_queue_role_q", lambda *_: object())
+
+    queue = SimpleNamespace(queue_annotators=Annotators())
+    with pytest.raises(ReadDeadlineExceeded, match="shared request wall"):
+        assign_items_to_all_annotators(
+            queue,
+            [object() for _ in range(200)],
+            deadline_check=expire_during_assignment_build,
+        )
+
+    assert len(constructed) == 127
+    assert writes == []
+
+
+def test_filter_deadline_wraps_validation_and_invalid_shape_never_reads_db(
+    monkeypatch,
+):
+    from rest_framework.parsers import JSONParser
+    from rest_framework.request import Request
+    from rest_framework.test import APIRequestFactory
+
+    import model_hub.views.annotation_queues as views_mod
+    import tfc.utils.api_contracts as api_contracts
+
+    events = []
+
+    class FakeReadDeadline:
+        @staticmethod
+        def start(total_ms):
+            events.append(("deadline", total_ms))
+            return SimpleNamespace(total_ms=total_ms)
+
+    original_validate = api_contracts._validate_serializer
+
+    def tracked_validate(*args, **kwargs):
+        events.append(("validate", args[0]))
+        return original_validate(*args, **kwargs)
+
+    def unexpected_db_read(*args, **kwargs):
+        raise AssertionError("invalid selection must return before queue DB access")
+
+    monkeypatch.setattr(views_mod, "ReadDeadline", FakeReadDeadline)
+    monkeypatch.setattr(api_contracts, "_validate_serializer", tracked_validate)
+    monkeypatch.setattr(views_mod.AnnotationQueue.objects, "get", unexpected_db_read)
+
+    raw_request = APIRequestFactory().post(
+        "/model-hub/annotation-queues/queue-1/items/add-items/",
+        {"selection": {"mode": "filter"}},
+        format="json",
+    )
+    request = Request(raw_request, parsers=[JSONParser()])
+    response = views_mod.QueueItemViewSet().add_items(request, queue_id="queue-1")
+
+    assert response.status_code == 400
+    assert events[0] == ("deadline", views_mod.ADD_ITEMS_FILTER_MODE_WALL_MS)
+    assert events[1][0] == "validate"
+
+    # The outer deadline wrapper must keep both routing and generated-contract
+    # metadata copied from @action / @validated_request.
+    add_items_action = views_mod.QueueItemViewSet.add_items
+    assert add_items_action.mapping["post"] == "add_items"
+    assert add_items_action.detail is False
+    assert add_items_action.url_path == "add-items"
+    assert getattr(add_items_action, "_swagger_auto_schema", None)
 
 
 # --------------------------------------------------------------------------

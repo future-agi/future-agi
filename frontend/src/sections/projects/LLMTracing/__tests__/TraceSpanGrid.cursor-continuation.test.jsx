@@ -414,6 +414,133 @@ describe.each(["trace", "span"])("%s grid loading lifecycle", (kind) => {
       );
     }
   });
+
+  it("lets a replacement datasource own semantic filter refreshes", async () => {
+    getMock.mockResolvedValueOnce(listResponse());
+
+    const ref = React.createRef();
+    const props = baseProps();
+    const renderSubject = (filters) =>
+      kind === "trace" ? (
+        <TraceGrid
+          ref={ref}
+          {...props}
+          filters={filters}
+          projectId="project-1"
+        />
+      ) : (
+        <SpanGrid ref={ref} {...props} filters={filters} />
+      );
+    const view = render(renderSubject(props.filters));
+    await waitFor(() => expect(gridState.props).not.toBeNull());
+
+    const initialDataSource = gridState.props.serverSideDatasource;
+    const params = makeParams();
+    gridState.api = params.api;
+    view.rerender(
+      renderSubject([
+        {
+          column_id: "created_at",
+          filter_config: { filter_op: "between", filter_value: [1, 2] },
+        },
+      ]),
+    );
+
+    await waitFor(() =>
+      expect(gridState.props.serverSideDatasource).not.toBe(initialDataSource),
+    );
+    expect(params.api.refreshServerSide).not.toHaveBeenCalled();
+
+    await getRows(params);
+
+    await waitFor(() => expect(gridState.props.loading).toBe(false));
+    expect(params.success).toHaveBeenCalledWith({ rowData: [], rowCount: 0 });
+    expect(params.fail).not.toHaveBeenCalled();
+  });
+
+  it("settles a superseded latest read until its replacement starts", async () => {
+    let resolveResponse;
+    getMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveResponse = resolve;
+        }),
+    );
+
+    renderGrid(kind);
+    await waitFor(() => expect(gridState.props).not.toBeNull());
+
+    const params = makeParams();
+    gridState.api = params.api;
+    let pendingRead;
+    act(() => {
+      pendingRead = gridState.props.serverSideDatasource.getRows(params);
+    });
+    await waitFor(() => expect(resolveResponse).toBeTypeOf("function"));
+
+    act(() => window.dispatchEvent(new Event("observe-refresh")));
+    expect(params.api.refreshServerSide).toHaveBeenCalledWith({ purge: false });
+
+    await act(async () => {
+      resolveResponse(listResponse());
+      await pendingRead;
+    });
+
+    expect(params.fail).toHaveBeenCalledOnce();
+    expect(params.success).not.toHaveBeenCalled();
+    await waitFor(() => expect(gridState.props.loading).toBe(false));
+  });
+
+  it("shows replacement loading only after AG Grid starts that read", async () => {
+    let resolveReplacement;
+    getMock.mockResolvedValueOnce(listResponse()).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveReplacement = resolve;
+        }),
+    );
+
+    const ref = React.createRef();
+    const props = baseProps();
+    const renderSubject = (filters) =>
+      kind === "trace" ? (
+        <TraceGrid
+          ref={ref}
+          {...props}
+          filters={filters}
+          projectId="project-1"
+        />
+      ) : (
+        <SpanGrid ref={ref} {...props} filters={filters} />
+      );
+    const view = render(renderSubject(props.filters));
+    await waitFor(() => expect(gridState.props).not.toBeNull());
+
+    await getRows(makeParams());
+    await waitFor(() => expect(gridState.props.loading).toBe(false));
+
+    const initialDataSource = gridState.props.serverSideDatasource;
+    view.rerender(renderSubject([{ column_id: "status" }]));
+    await waitFor(() =>
+      expect(gridState.props.serverSideDatasource).not.toBe(initialDataSource),
+    );
+    expect(gridState.props.loading).toBe(false);
+
+    const replacementParams = makeParams();
+    let replacementRead;
+    act(() => {
+      replacementRead =
+        gridState.props.serverSideDatasource.getRows(replacementParams);
+    });
+    await waitFor(() => expect(resolveReplacement).toBeTypeOf("function"));
+    expect(gridState.props.loading).toBe(true);
+
+    await act(async () => {
+      resolveReplacement(listResponse());
+      await replacementRead;
+    });
+    await waitFor(() => expect(gridState.props.loading).toBe(false));
+  });
 });
 
 describe("trace custom-property request pagination", () => {

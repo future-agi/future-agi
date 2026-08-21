@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+
 from tfc.management.commands.start_temporal_worker import (
     _generic_all_queues,
     _workflow_cache_kwargs,
@@ -8,8 +9,14 @@ from tfc.management.commands.start_temporal_worker import (
 
 
 @pytest.mark.unit
-def test_generic_all_queue_worker_excludes_dedicated_exact_queue():
-    registered = ["default", "tasks_xl", "exact_aggregation", "trace_ingestion"]
+def test_generic_all_queue_worker_excludes_dedicated_queues():
+    registered = [
+        "default",
+        "tasks_xl",
+        "exact_aggregation",
+        "property_catalog_dev_sidecar",
+        "trace_ingestion",
+    ]
 
     assert _generic_all_queues(registered) == [
         "default",

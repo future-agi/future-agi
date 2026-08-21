@@ -175,6 +175,34 @@ describe("create rule Observe filter serialization", () => {
     expect(filters[0].id).toBeTruthy();
   });
 
+  it("preserves annotation property identity when a saved rule is edited", () => {
+    const savedFilter = {
+      column_id: "quality_label",
+      property_id: "annotation:quality-label-id",
+      display_name: "Quality Label",
+      filter_config: {
+        filter_type: "categorical",
+        filter_op: "in",
+        filter_value: ["Passed"],
+        col_type: "ANNOTATION",
+      },
+    };
+
+    const [editableFilter] = ruleConditionsToFilters({
+      source_type: "trace",
+      conditions: { filter: [savedFilter] },
+    });
+    expect(editableFilter.property_id).toBe("annotation:quality-label-id");
+
+    const conditions = buildConditionsForRule(
+      "trace",
+      [editableFilter],
+      { project_id: "project-1" },
+      {},
+    );
+    expect(conditions.filter).toEqual([savedFilter]);
+  });
+
   it("round-trips mixed typed attribute values without changing their storage family", () => {
     const savedFilter = {
       column_id: "mixed_attribute",

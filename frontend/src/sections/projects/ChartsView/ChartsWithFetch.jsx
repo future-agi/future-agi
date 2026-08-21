@@ -4,14 +4,19 @@ import React, { useMemo } from "react";
 import ChartsGenerator from "./ChartsGenerator";
 import axios, { endpoints } from "src/utils/axios";
 import { transformEvaluationPayload } from "./common";
-import { Box, Skeleton, Typography } from "@mui/material";
+import { Box, Button, Skeleton, Typography } from "@mui/material";
 import { useChartsViewContext } from "./ChartsViewProvider/ChartsViewContext";
 import { getStorage } from "src/hooks/use-local-storage";
 import { normalizeTimestamp } from "./ChartsViewProvider/common";
 import {
   AGGREGATION_PREPARING_MESSAGE,
+  awaitAggregationRequestWithDeadline,
   getExactAggregationReadState,
+  QUERY_FAILED_RETRY_MESSAGE,
 } from "src/utils/queryReadState";
+import { INTERACTIVE_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
+
+const EVAL_CHART_REQUEST_TIMEOUT_MS = INTERACTIVE_REQUEST_TIMEOUT_MS;
 
 export default function ChartWithFetch({ evaluation, observeId, inView }) {
   const autoRefresh = getStorage("autoRefresh") ?? false;
@@ -27,9 +32,9 @@ export default function ChartWithFetch({ evaluation, observeId, inView }) {
     JSON.stringify(filters),
   ];
 
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey,
-    queryFn: () => {
+    queryFn: ({ signal }) => {
       const payload = {
         project_id: observeId,
         property: "average",
@@ -38,9 +43,15 @@ export default function ChartWithFetch({ evaluation, observeId, inView }) {
         ...transformEvaluationPayload(evaluation),
       };
 
-      return axios.get(endpoints.project.getEvalGraph, {
-        params: { ...payload },
-      });
+      return awaitAggregationRequestWithDeadline(
+        (requestSignal) =>
+          axios.get(endpoints.project.getEvalGraph, {
+            params: { ...payload },
+            signal: requestSignal,
+            timeout: EVAL_CHART_REQUEST_TIMEOUT_MS,
+          }),
+        { timeoutMs: EVAL_CHART_REQUEST_TIMEOUT_MS, signal },
+      );
     },
     refetchInterval: autoRefresh && inView ? 10000 : false,
     staleTime: Infinity,
@@ -49,9 +60,18 @@ export default function ChartWithFetch({ evaluation, observeId, inView }) {
   });
 
   const result = data?.data?.result;
-  const queryReadState = getExactAggregationReadState(result, { isError });
-  const queryReadMessage =
-    queryReadState === "complete" ? null : AGGREGATION_PREPARING_MESSAGE;
+  const retainedReadState = getExactAggregationReadState(result, {
+    isError: false,
+  });
+  const queryReadState =
+    retainedReadState === "complete"
+      ? "complete"
+      : getExactAggregationReadState(result, { isError });
+  const queryReadMessage = isError
+    ? QUERY_FAILED_RETRY_MESSAGE
+    : queryReadState === "complete"
+      ? null
+      : AGGREGATION_PREPARING_MESSAGE;
 
   const evalsChartData = useMemo(() => {
     const baseChart = {
@@ -85,14 +105,27 @@ export default function ChartWithFetch({ evaluation, observeId, inView }) {
   return (
     <Box>
       {queryReadMessage && (
-        <Typography
-          role="status"
-          variant="caption"
-          color="text.secondary"
-          sx={{ display: "block", mb: 1 }}
+        <Box
+          role={isError ? "alert" : "status"}
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            mb: 1,
+          }}
         >
-          {queryReadMessage}
-        </Typography>
+          <Typography
+            variant="caption"
+            color={isError ? "warning.main" : "text.secondary"}
+          >
+            {queryReadMessage}
+          </Typography>
+          {isError && (
+            <Button size="small" onClick={() => refetch()}>
+              Retry
+            </Button>
+          )}
+        </Box>
       )}
       <ChartsGenerator {...evalsChartData} onZoom={handleZoomChange} />
     </Box>

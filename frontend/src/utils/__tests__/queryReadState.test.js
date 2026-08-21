@@ -3,6 +3,7 @@ import {
   AGGREGATION_POLL_MAX_ATTEMPTS,
   AGGREGATION_POLL_MAX_CONSECUTIVE_FAILURES,
   AGGREGATION_POLL_TIMEOUT_MS,
+  AGGREGATION_REQUEST_TIMEOUT_MS,
   awaitAggregationRequestWithDeadline,
   createAggregationPollController,
   failServerSideGridRead,
@@ -155,6 +156,8 @@ describe("queryReadState", () => {
   });
 
   it("bounds exact aggregation polling by both attempts and elapsed time", () => {
+    expect(AGGREGATION_POLL_TIMEOUT_MS).toBeLessThan(10_000);
+    expect(AGGREGATION_REQUEST_TIMEOUT_MS).toBeLessThan(10_000);
     expect(
       isAggregationPollBudgetExhausted({
         attempt: AGGREGATION_POLL_MAX_ATTEMPTS - 1,
@@ -176,6 +179,35 @@ describe("queryReadState", () => {
         now: 1000 + AGGREGATION_POLL_TIMEOUT_MS,
       }),
     ).toBe(true);
+  });
+
+  it("charges pending polls to the first visible action and resets only for retry", () => {
+    let now = 1_000;
+    const controller = createAggregationPollController({ now: () => now });
+
+    expect(controller.start()).toBe(true);
+    expect(controller.recordAttempt()).toBe(true);
+    expect(controller.remainingMs(AGGREGATION_REQUEST_TIMEOUT_MS)).toBe(
+      AGGREGATION_POLL_TIMEOUT_MS,
+    );
+    now += 1_000;
+    expect(controller.remainingMs(AGGREGATION_REQUEST_TIMEOUT_MS)).toBe(
+      AGGREGATION_POLL_TIMEOUT_MS - 1_000,
+    );
+    now += AGGREGATION_POLL_TIMEOUT_MS - 1_500;
+
+    // Even the shortest poll delay would cross the action wall.
+    expect(controller.nextDelay()).toBe(false);
+    expect(controller.isExhausted()).toBe(true);
+    expect(controller.start()).toBe(false);
+
+    // The user-facing Refresh/Retry action owns a fresh wall.
+    controller.reset();
+    expect(controller.start()).toBe(true);
+    expect(controller.remainingMs(AGGREGATION_REQUEST_TIMEOUT_MS)).toBe(
+      AGGREGATION_POLL_TIMEOUT_MS,
+    );
+    expect(controller.nextDelay()).toBe(1_000);
   });
 
   it("uses one finite polling lifecycle until an explicit reset", () => {

@@ -85,6 +85,21 @@ _JSON_MAP_ALLOWED_OPS = frozenset(
         "is_not_null",
     }
 )
+_POSITIVE_RAW_WITNESS_OPS = frozenset(
+    {
+        "equals",
+        "in",
+        "contains",
+        "starts_with",
+        "ends_with",
+        "between",
+        "greater_than",
+        "greater_than_or_equal",
+        "less_than",
+        "less_than_or_equal",
+        "is_not_null",
+    }
+)
 _TRACE_ROOT_COLUMNS = {
     "trace_id": ("trace_id", "text", False),
     "project_id": ("project_id", "text", False),
@@ -404,19 +419,6 @@ def _attribute_plan(
             index_predicate = f"hasAny({numeric_values}, [{', '.join(placeholders)}])"
         seed_predicate = f"({seed_predicate}) AND {index_predicate}"
 
-    positive_witness_operations = {
-        "equals",
-        "in",
-        "contains",
-        "starts_with",
-        "ends_with",
-        "between",
-        "greater_than",
-        "greater_than_or_equal",
-        "less_than",
-        "less_than_or_equal",
-        "is_not_null",
-    }
     key_witness_predicate = (
         f"(indexHint(has(mapKeys({map_column}), {bound_key})) AND "
         f"has({map_column}.keys, {bound_key}))"
@@ -425,10 +427,10 @@ def _attribute_plan(
     # reach this compiler. Keep the graph key probe limited to positive value
     # shapes (including is-not-null) for which key presence is a superset.
     raw_key_witness_predicate = (
-        key_witness_predicate if operation in positive_witness_operations else None
+        key_witness_predicate if operation in _POSITIVE_RAW_WITNESS_OPS else None
     )
     raw_witness_predicate = None
-    if operation in positive_witness_operations:
+    if operation in _POSITIVE_RAW_WITNESS_OPS:
         raw_witness_predicate = key_witness_predicate
         if operation in {"equals", "in"}:
             # Positive scalar equality is safe to apply to raw physical rows:
@@ -456,7 +458,7 @@ def _attribute_plan(
         raw_key_witness_predicate=raw_key_witness_predicate,
         raw_witness_rank=(
             {"equals": 0, "in": 0}.get(operation, 10)
-            if operation in positive_witness_operations
+            if operation in _POSITIVE_RAW_WITNESS_OPS
             else None
         ),
     )
@@ -522,6 +524,7 @@ def _mixed_typed_attribute_plan(
     seed_exists: list[str] = []
     seed_matches: list[str] = []
     key_witnesses: list[str] = []
+    typed_raw_witnesses: list[str] = []
     storage_metadata: dict[str, tuple[str, Callable[[object], object], bool]] = {
         "string": ("span_attr_str", _strict_text, True),
         "number": ("span_attr_num", _strict_finite_number, False),
@@ -568,6 +571,9 @@ def _mixed_typed_attribute_plan(
             f"(indexHint(has(mapKeys({map_column}), {bound_key})) "
             f"AND has({map_column}.keys, {bound_key}))"
         )
+        typed_raw_witnesses.append(
+            f"(({key_witnesses[-1]}) AND ({seed_matches[-1]}))"
+        )
 
     if not latest_matches:
         raise UnsupportedFilterShapeError(
@@ -579,7 +585,14 @@ def _mixed_typed_attribute_plan(
     if operation == "in":
         predicate = f"({latest_positive})"
         seed_predicate = f"({seed_positive})"
-        raw_witness_predicate = f"({seed_positive})"
+        # Keep the exact typed key/value comparison while also carrying the
+        # deployed Map-key bloom witness.  Without this companion, a typed
+        # filter with one selected storage type was treated as unindexed and
+        # the public span cursor seeded every row (`WHERE 1 = 1`) before
+        # classification.  The witness is a redundant positive superset, so it
+        # changes only physical pruning and never the filter's Unicode/value
+        # semantics.
+        raw_witness_predicate = f"({' OR '.join(typed_raw_witnesses)})"
         raw_key_witness_predicate = f"({' OR '.join(key_witnesses)})"
         raw_witness_rank = 0
     else:
@@ -1218,6 +1231,14 @@ def _column_plan(
         seed_predicate=seed_predicate,
         params=params,
         scope=scope,
+        raw_witness_predicate=(
+            seed_predicate if operation in _POSITIVE_RAW_WITNESS_OPS else None
+        ),
+        raw_witness_rank=(
+            {"equals": 0, "in": 0}.get(operation, 10)
+            if operation in _POSITIVE_RAW_WITNESS_OPS
+            else None
+        ),
     )
 
 
@@ -1259,6 +1280,9 @@ def _expression_plan(
     )
     if seed_params != params:
         raise AssertionError("latest and seed predicates must share bound values")
+    operation = normalize_filter_op(
+        str(config.get("filter_op") or config.get("filterOp") or "")
+    )
     aggregate_value = f"tuple({expression})" if nullable else expression
     suffix = ".1" if nullable else ""
     return LatestFilterPredicate(
@@ -1267,6 +1291,14 @@ def _expression_plan(
         seed_predicate=seed_predicate,
         params=params,
         scope=scope,
+        raw_witness_predicate=(
+            seed_predicate if operation in _POSITIVE_RAW_WITNESS_OPS else None
+        ),
+        raw_witness_rank=(
+            {"equals": 0, "in": 0}.get(operation, 10)
+            if operation in _POSITIVE_RAW_WITNESS_OPS
+            else None
+        ),
     )
 
 

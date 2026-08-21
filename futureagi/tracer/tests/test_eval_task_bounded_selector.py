@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from django.conf import settings as django_settings
 
 from tracer.models.eval_task import RowType, RunType
 from tracer.selectors.eval_tasks import row_resolver
@@ -2780,7 +2781,7 @@ def test_shared_candidate_reader_proves_large_eval_prefix_within_query_cap(
 
     class SyntheticAnalytics:
         def execute_ch_query(self, query, params, *, timeout_ms, settings):
-            assert timeout_ms <= 1_500
+            assert timeout_ms <= django_settings.FILTER_SELECTOR_QUERY_TIMEOUT_MS
             if query == "classify":
                 assert settings["max_result_rows"] == 200
                 result_rows = list(params["candidate_rows"])
@@ -2897,8 +2898,10 @@ def test_workflow_reader_proves_exact_100k_same_timestamp_prefix() -> None:
 
         def execute_ch_query(self, query, params, *, timeout_ms, settings):
             self.calls += 1
-            assert timeout_ms <= 1_500
-            assert settings["max_threads"] == 1
+            assert timeout_ms <= django_settings.FILTER_SELECTOR_QUERY_TIMEOUT_MS
+            assert (
+                settings["max_threads"] == django_settings.FILTER_SELECTOR_MAX_THREADS
+            )
             assert settings["max_result_rows"] <= 512
             if query == "classify":
                 return QueryResult(

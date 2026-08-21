@@ -2,7 +2,9 @@ import json
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+from contextlib import ExitStack, contextmanager
 from dataclasses import asdict
+from functools import wraps
 
 try:
     import orjson
@@ -12,7 +14,8 @@ except ImportError:
     _json_loads = json.loads
 
 import structlog
-from django.db import OperationalError, models, transaction
+from django.conf import settings
+from django.db import OperationalError, connection, models, transaction
 from django.db.models import (
     Count,
     DurationField,
@@ -84,6 +87,13 @@ from tracer.services.clickhouse.bounded_graph_reads import BoundedGraphReadError
 from tracer.services.clickhouse.filter_value_reads import (
     read_session_message_filter_values,
 )
+from tracer.services.clickhouse.graph_action_deadline import (
+    GraphActionUnavailable,
+    finish_graph_action_response,
+    graph_action_postgres_budget,
+    graph_action_remaining_ms,
+    start_graph_action_deadline,
+)
 from tracer.services.clickhouse.graph_dispatch import (
     degraded_graph_response,
     enforce_exact_graph_data_contract,
@@ -120,6 +130,11 @@ from tracer.services.clickhouse.v2.query_builders.session_list import (
     SessionListQueryBuilderV2,
 )
 from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
+from tracer.services.filter_attestation import (
+    applied_filter_attestation,
+    graph_execution_filters,
+    graph_query_evidence,
+)
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
@@ -131,12 +146,14 @@ from tracer.utils.bounded_csv import (
 from tracer.utils.filters import FilterEngine, apply_created_at_filters
 from tracer.utils.helper import (
     FieldConfig,
+    ensure_project_session_property_identities,
     format_datetime_fields_to_iso,
     format_datetime_to_iso,
     get_annotation_labels_by_project,
     get_annotation_labels_for_project,
     get_default_project_session_config,
 )
+from tracer.utils.property_registry import validate_property_graph_namespace
 from tracer.utils.session import get_session_navigation
 
 # Module loggers — declared AFTER all imports (E402). Both are the same
@@ -148,22 +165,23 @@ session_logger = structlog.get_logger(__name__)
 # All interactive session-list reads share one 9.5-second wall deadline.
 # Individual phases receive only the request's remaining time, so concurrent
 # finite enrichments cannot extend the endpoint beyond that ceiling.
-SESSION_LIST_WALL_DEADLINE_MS = 9_500
-SESSION_LIST_QUERY_TIMEOUT_MS = 9_500
-SESSION_LIST_ENRICHMENT_TIMEOUT_MS = 9_500
-SESSION_LIST_FILTER_MAX_CANDIDATES = 200
-SESSION_LIST_FILTER_MAX_SEED_ATTEMPTS = 24
-SESSION_LIST_FILTER_MAX_QUERIES = 48
+SESSION_LIST_WALL_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+SESSION_LIST_QUERY_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+SESSION_LIST_ENRICHMENT_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+SESSION_FILTER_VALUE_WALL_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+SESSION_LIST_FILTER_MAX_CANDIDATES = settings.SESSION_LIST_FILTER_MAX_CANDIDATES
+SESSION_LIST_FILTER_MAX_SEED_ATTEMPTS = settings.SESSION_LIST_FILTER_MAX_SEED_ATTEMPTS
+SESSION_LIST_FILTER_MAX_QUERIES = settings.SESSION_LIST_FILTER_MAX_QUERIES
 SESSION_LIST_READ_SETTINGS = {
-    "max_threads": 2,
-    "max_block_size": 8192,
+    "max_threads": settings.SESSION_LIST_READ_MAX_THREADS,
+    "max_block_size": settings.OBSERVABILITY_LIST_MAX_BLOCK_SIZE,
     "read_overflow_mode": "throw",
-    "max_bytes_to_read": 36 * 1024 * 1024 * 1024,
-    "max_memory_usage": 36 * 1024 * 1024 * 1024,
+    "max_bytes_to_read": settings.OBSERVABILITY_LIST_MAX_BYTES,
+    "max_memory_usage": settings.OBSERVABILITY_LIST_MAX_MEMORY_BYTES,
     "timeout_overflow_mode": "throw",
 }
-SESSION_LIST_RESULT_BYTES = 32 * 1024 * 1024
-SESSION_LIST_ATTRIBUTE_RESULT_ROWS = 50_000
+SESSION_LIST_RESULT_BYTES = settings.SESSION_LIST_MAX_RESULT_BYTES
+SESSION_LIST_ATTRIBUTE_RESULT_ROWS = settings.SESSION_LIST_ATTRIBUTE_MAX_RESULT_ROWS
 SESSION_GRAPH_RETRYABLE_ERROR_CODES = {
     "deadline_exceeded",
     "read_budget_exceeded",
@@ -182,6 +200,163 @@ def _session_read_settings(*, max_result_rows: int) -> dict[str, int | str]:
         "max_result_bytes": SESSION_LIST_RESULT_BYTES,
         "result_overflow_mode": "throw",
     }
+
+
+def _read_session_filter_project_in_scope(*, request, project_id, deadline) -> bool:
+    """Authorize one picker project inside the shared request deadline.
+
+    PostgreSQL's timeout is per statement, so derive it from the same
+    monotonic deadline later passed to ClickHouse and session-label hydration.
+    The post-read check also enforces the wall on non-PostgreSQL test lanes.
+    """
+
+    try:
+        if connection.vendor == "postgresql":
+            with transaction.atomic():
+                timeout_ms = deadline.remaining_ms(floor_ms=1)
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT set_config('statement_timeout', %s, true)",
+                        [str(timeout_ms)],
+                    )
+                in_scope = (
+                    _project_queryset_for_request(request)
+                    .filter(id=project_id)
+                    .exists()
+                )
+        else:
+            in_scope = (
+                _project_queryset_for_request(request).filter(id=project_id).exists()
+            )
+        deadline.remaining_ms(floor_ms=1)
+        return in_scope
+    except ReadDeadlineExceeded:
+        raise
+    except OperationalError as exc:
+        raise ReadDeadlineExceeded(
+            "Session filter project authorization exceeded its request deadline"
+        ) from exc
+
+
+def _execute_session_list_query_with_deadline(
+    deadline, execute, sql, params, many, context
+):
+    """Execute one PostgreSQL statement inside the session request wall."""
+
+    remaining_ms = deadline.remaining_ms(floor_ms=1)
+    try:
+        context["cursor"].cursor.execute(
+            "SELECT set_config('statement_timeout', %s, true)",
+            (str(remaining_ms),),
+        )
+        result = execute(sql, params, many, context)
+    except OperationalError as exc:
+        raise ReadDeadlineExceeded(
+            "Session list PostgreSQL read exceeded its request deadline"
+        ) from exc
+    deadline.remaining_ms(floor_ms=1)
+    return result
+
+
+@contextmanager
+def _bounded_session_list_postgres_reads(deadline):
+    """Give every session-list PostgreSQL statement the shrinking wall."""
+
+    transaction_started = False
+
+    def execute_with_remaining_timeout(execute, sql, params, many, context):
+        nonlocal transaction_started
+        if not connection.in_atomic_block and not transaction_started:
+            stack.enter_context(transaction.atomic())
+            transaction_started = True
+        return _execute_session_list_query_with_deadline(
+            deadline, execute, sql, params, many, context
+        )
+
+    if connection.vendor != "postgresql":
+        yield
+        deadline.remaining_ms(floor_ms=1)
+        return
+
+    # Installing an execute wrapper is connection-lazy. Start the transaction
+    # only when the first real ORM statement arrives, so pure/mocked early exits
+    # do not open a database socket while production statements still receive
+    # transaction-local shrinking timeouts.
+    with ExitStack() as stack:
+        stack.enter_context(connection.execute_wrapper(execute_with_remaining_timeout))
+        yield
+        deadline.remaining_ms(floor_ms=1)
+
+
+def _bounded_session_list_request(view_method):
+    """Own one wall across session scope, overlay, ClickHouse, and formatting."""
+
+    @wraps(view_method)
+    def wrapped(view, request, *args, **kwargs):
+        deadline = ReadDeadline.start(SESSION_LIST_WALL_DEADLINE_MS)
+        try:
+            with _bounded_session_list_postgres_reads(deadline):
+                response = view_method(
+                    view,
+                    request,
+                    *args,
+                    _session_list_read_deadline=deadline,
+                    **kwargs,
+                )
+                deadline.remaining_ms(floor_ms=1)
+                return response
+        except (ReadDeadlineExceeded, OperationalError) as exc:
+            session_logger.warning(
+                "session_list_request_deadline_exceeded",
+                error_type=type(exc).__name__,
+            )
+            return view._gm.custom_error_response(
+                drf_status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Session data is temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
+
+    # Several focused unit boundaries intentionally use the historical
+    # one-level ``.__wrapped__`` escape hatch to supply already-validated data.
+    # The runtime closure still invokes ``view_method`` (the validated wrapper),
+    # while introspection reaches the original action and its fallback deadline.
+    wrapped.__wrapped__ = getattr(view_method, "__wrapped__", view_method)
+    return wrapped
+
+
+def _bounded_session_graph_request(view_method):
+    """Start the session-graph wall before runtime request validation."""
+
+    @wraps(view_method)
+    def wrapped(view, request, *args, **kwargs):
+        deadline = start_graph_action_deadline()
+        kwargs.pop("_graph_action_deadline", None)
+        try:
+            response = view_method(
+                view,
+                request,
+                *args,
+                _graph_action_deadline=deadline,
+                **kwargs,
+            )
+            return finish_graph_action_response(deadline, response)
+        except GraphActionUnavailable:
+            session_logger.warning(
+                "session_graph_action_deadline_exceeded",
+                project_id=str(
+                    getattr(request, "validated_data", {}).get("project_id", "")
+                ),
+            )
+            return view._gm.custom_error_response(
+                drf_status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Session graph data is temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
+
+    # Preserve the established direct unit boundary while the runtime closure
+    # continues to execute the validated wrapper copied above.
+    wrapped.__wrapped__ = getattr(view_method, "__wrapped__", view_method)
+    return wrapped
 
 
 def _session_list_cursor_order_for_partial_page(*, rows, bounded_page, cursor_state):
@@ -518,7 +693,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             {
                 "metadata": {"total_rows": 0},
                 "table": [],
-                "config": (
+                "config": ensure_project_session_property_identities(
                     (project.session_config if project else None)
                     or get_default_project_session_config()
                 ),
@@ -1067,6 +1242,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             page: page number (0-based), default 0
             page_size: default 50
         """
+        read_deadline = ReadDeadline.start(SESSION_FILTER_VALUE_WALL_DEADLINE_MS)
         try:
             query_serializer = TraceSessionFilterValuesQuerySerializer(
                 data=request.query_params
@@ -1076,10 +1252,10 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
             query_params = query_serializer.validated_data
             project_id = str(query_params["project_id"])
-            if (
-                not _project_queryset_for_request(request)
-                .filter(id=project_id)
-                .exists()
+            if not _read_session_filter_project_in_scope(
+                request=request,
+                project_id=project_id,
+                deadline=read_deadline,
             ):
                 return self._gm.bad_request("Project not found")
             column = query_params["column"]
@@ -1150,27 +1326,34 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     query,
                     {
                         "project_id": project_id,
-                        "limit": page_size,
+                        "limit": page_size + 1,
                         "offset": page * page_size,
                         **({"search": f"%{search}%"} if search else {}),
                     },
-                    timeout_ms=SESSION_LIST_QUERY_TIMEOUT_MS,
+                    timeout_ms=read_deadline.remaining_ms(
+                        SESSION_LIST_QUERY_TIMEOUT_MS
+                    ),
                     settings={
-                        **_session_read_settings(max_result_rows=page_size),
+                        **_session_read_settings(max_result_rows=page_size + 1),
                         "max_bytes_to_read": 36 * 1024 * 1024 * 1024,
                         "max_memory_usage": 36 * 1024 * 1024 * 1024,
                     },
                 )
-                session_ids = [str(row["val"]) for row in result.data]
+                read_deadline.remaining_ms(floor_ms=1)
+                has_more = len(result.data) > page_size
+                page_rows = result.data[:page_size]
+                session_ids = [str(row["val"]) for row in page_rows]
                 from tracer.services.clickhouse.v2.trace_session_dict_reader import (
                     resolve_session_fields,
                 )
 
                 session_fields = resolve_session_fields(
-                    session_ids, project_id=project_id
+                    session_ids,
+                    project_id=project_id,
+                    deadline=read_deadline,
                 )
                 values = []
-                for row in result.data:
+                for row in page_rows:
                     value = str(row["val"])
                     fields = session_fields.get(value, {})
                     label = (
@@ -1180,7 +1363,8 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                         or value
                     )
                     values.append({"value": value, "label": str(label)})
-                return self._gm.success_response({"values": values})
+                read_deadline.remaining_ms(floor_ms=1)
+                return self._gm.success_response({"values": values, "next": has_more})
 
             if ch_column in ("first_message", "last_message"):
                 try:
@@ -1246,7 +1430,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 """
             params = {
                 "project_id": project_id,
-                "limit": page_size,
+                "limit": page_size + 1,
                 "offset": page * page_size,
             }
             if search:
@@ -1255,21 +1439,35 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             result = analytics.execute_ch_query(
                 query,
                 params,
-                timeout_ms=SESSION_LIST_QUERY_TIMEOUT_MS,
+                timeout_ms=read_deadline.remaining_ms(SESSION_LIST_QUERY_TIMEOUT_MS),
                 settings={
-                    **_session_read_settings(max_result_rows=page_size),
+                    **_session_read_settings(max_result_rows=page_size + 1),
                     "max_bytes_to_read": 36 * 1024 * 1024 * 1024,
                     "max_memory_usage": 36 * 1024 * 1024 * 1024,
                 },
             )
+            read_deadline.remaining_ms(floor_ms=1)
+            has_more = len(result.data) > page_size
+            page_rows = result.data[:page_size]
             values = [
                 str(row.get("val", "") if isinstance(row, dict) else row[0])
-                for row in result.data
+                for row in page_rows
                 if (row.get("val") if isinstance(row, dict) else row[0])
             ]
-            return self._gm.success_response({"values": values})
+            read_deadline.remaining_ms(floor_ms=1)
+            return self._gm.success_response({"values": values, "next": has_more})
 
         except Exception as exc:
+            if is_read_budget_error(exc):
+                session_logger.warning(
+                    "session_filter_values_deadline_exceeded",
+                    error_type=type(exc).__name__,
+                )
+                return self._gm.custom_error_response(
+                    drf_status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Session filter values are temporarily unavailable. Please retry.",
+                    code="read_budget_exceeded",
+                )
             if is_clickhouse_api_read_unavailable_error(exc):
                 session_logger.warning(
                     "session_filter_values_query_unavailable",
@@ -1290,6 +1488,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 code="server_error",
             )
 
+    @_bounded_session_graph_request
     @validated_request(
         query_serializer=ObserveGraphDataQuerySerializer,
         request_serializer=TraceSessionGraphDataRequestSerializer,
@@ -1313,52 +1512,81 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
         Response shape matches trace graph: {metric_name, data: [{timestamp, value, primary_traffic}]}
         """
+        deadline = kwargs.pop("_graph_action_deadline", None)
+        deadline_injected = deadline is not None
+        if deadline is None:
+            deadline = start_graph_action_deadline()
+
+        def finish(response):
+            if deadline_injected:
+                return response
+            return finish_graph_action_response(deadline, response)
+
         try:
             body = request.validated_data
             allow_sampled = request.validated_query_data["allow_sampled"]
             refresh = request.validated_query_data.get("refresh", False)
             project_id = str(body["project_id"])
-            project = _project_queryset_for_request(request).get(id=project_id)
+            with graph_action_postgres_budget(deadline):
+                project = _project_queryset_for_request(request).get(id=project_id)
             req_data_config = body["req_data_config"]
+            try:
+                validate_property_graph_namespace(
+                    req_data_config.get("property_id"),
+                    expected_definition_source="sessions",
+                )
+            except ValueError:
+                return finish(
+                    self._gm.bad_request(
+                        "property_id is not valid for this graph endpoint"
+                    )
+                )
             metric_type = req_data_config.get("type")
             metric_id = str(req_data_config.get("id") or "session_count")
             if project.trace_type != "observe":
-                return self._gm.bad_request(
-                    "Project id is required and project should be of type observe"
+                return finish(
+                    self._gm.bad_request(
+                        "Project id is required and project should be of type observe"
+                    )
                 )
             if metric_type not in {"SYSTEM_METRIC", "EVAL", "ANNOTATION"}:
-                return self._gm.bad_request("Filter property type is not valid")
+                return finish(self._gm.bad_request("Filter property type is not valid"))
             if (
                 metric_type == "SYSTEM_METRIC"
                 and metric_id not in SESSION_SYSTEM_METRICS
             ):
-                return self._gm.bad_request("Session graph metric is not valid")
+                return finish(self._gm.bad_request("Session graph metric is not valid"))
             # PostgreSQL remains authoritative only for this small config ownership
             # record. Session, trace, span, eval-result, and annotation telemetry
             # below are read exclusively from direct-write CH25.
-            if (
-                metric_type == "EVAL"
-                and not CustomEvalConfig.objects.filter(
-                    id=metric_id,
-                    project_id=project_id,
-                    deleted=False,
-                ).exists()
-            ):
-                return self._gm.bad_request(
-                    "Evaluation config is not available for this project"
-                )
+            if metric_type == "EVAL":
+                with graph_action_postgres_budget(deadline):
+                    eval_config_available = CustomEvalConfig.objects.filter(
+                        id=metric_id,
+                        project_id=project_id,
+                        deleted=False,
+                    ).exists()
+                if not eval_config_available:
+                    return finish(
+                        self._gm.bad_request(
+                            "Evaluation config is not available for this project"
+                        )
+                    )
 
+            filters = bind_request_my_annotations_principal(
+                request,
+                body["filters"],
+            )
+            filters = graph_execution_filters(filters)
             try:
                 graph = fetch_session_graph_ch(
                     analytics=V2AnalyticsQueryService(),
                     project_id=project_id,
-                    filters=bind_request_my_annotations_principal(
-                        request,
-                        body["filters"],
-                    ),
+                    filters=filters,
                     interval=body["interval"],
                     req_data_config=req_data_config,
                     refresh=refresh,
+                    wall_deadline_ms=graph_action_remaining_ms(deadline),
                     organization_id=str(project.organization_id),
                     workspace_id=(
                         str(request.workspace.id)
@@ -1388,6 +1616,13 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 )
                 graph = degraded_graph_response(metric_id, exc)
 
+            graph.update(
+                graph_query_evidence(
+                    project_id=project_id,
+                    observe_type="session",
+                    filters=filters,
+                )
+            )
             graph = enforce_exact_graph_data_contract(graph)
 
             # A fully executed, explicitly labelled sample is a usable bounded
@@ -1407,12 +1642,28 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                         "Session graph data is temporarily unavailable. Please retry."
                     ),
                 }
-                return self._gm.custom_error_response(
-                    drf_status.HTTP_503_SERVICE_UNAVAILABLE,
-                    graph,
-                    code="service_unavailable",
+                return finish(
+                    self._gm.custom_error_response(
+                        drf_status.HTTP_503_SERVICE_UNAVAILABLE,
+                        graph,
+                        code="service_unavailable",
+                    )
                 )
-            return self._gm.success_response(graph)
+            return finish(self._gm.success_response(graph))
+        except GraphActionUnavailable:
+            if deadline_injected:
+                raise
+            session_logger.warning(
+                "session_graph_action_deadline_exceeded",
+                project_id=str(
+                    getattr(request, "validated_data", {}).get("project_id", "")
+                ),
+            )
+            return self._gm.custom_error_response(
+                drf_status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Session graph data is temporarily unavailable. Please retry.",
+                code="service_unavailable",
+            )
         except Project.DoesNotExist:
             return self._gm.bad_request("Project not found")
         except UnsupportedFilterShapeError:
@@ -1443,6 +1694,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 code="server_error",
             )
 
+    @_bounded_session_list_request
     @validated_request(
         query_serializer=TraceSessionListQuerySerializer,
         responses={
@@ -1459,6 +1711,14 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         List traces filtered by project ID and project version ID with optimized queries.
         """
         try:
+            read_deadline = kwargs.pop("_session_list_read_deadline", None)
+            if read_deadline is None:
+                # ``inspect.unwrap``-based unit boundaries intentionally call
+                # this original method without its public wrapper. Preserve a
+                # finite CH/enrichment budget for that path instead of raising
+                # KeyError; real HTTP calls always receive the outer wrapper's
+                # earlier deadline and PostgreSQL execute wrapper.
+                read_deadline = ReadDeadline.start(SESSION_LIST_WALL_DEADLINE_MS)
             validated_data = dict(request.validated_query_data)
             if kwargs.get("bounded_export"):
                 validated_data.update(
@@ -1564,7 +1824,6 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             # its bookmark-remap read to the matching service explicitly; the
             # legacy CDC builder/service is not a fallback or routing option.
             analytics = V2AnalyticsQueryService()
-            read_deadline = ReadDeadline.start(SESSION_LIST_WALL_DEADLINE_MS)
             bookmarked = validated_data.get("bookmarked")
 
             # CH-derived-dimensions cutover (DESIGN §5.2): the ``bookmarked``
@@ -1929,9 +2188,9 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             )
 
             default_session_config = get_default_project_session_config()
-            config = (
-                project.session_config if project else None
-            ) or default_session_config
+            config = ensure_project_session_property_identities(
+                (project.session_config if project else None) or default_session_config
+            )
 
             # Append score columns to config
             if annotation_labels:
@@ -2485,6 +2744,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         # by the user_id → end_user_id resolution below.
         org = _get_request_organization(request)
         filters = list(validated_data.get("filters", []) or [])
+        attested_filters = list(filters)
         sort_params = validated_data.get("sort_params", [])
         page_number = validated_data.get("page_number", 0)
         page_size = validated_data.get("page_size", 30)
@@ -3087,12 +3347,39 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             [(list(row.values())) for row in actual_data],
             list(actual_data[0].keys()) if actual_data else [],
         )
+        fallback_row_project_id = str(
+            project_id
+            or (
+                org_project_ids[0]
+                if org_project_ids is not None and len(org_project_ids) == 1
+                else ""
+            )
+        )
+        project_id_by_session = {
+            str(row.get("session_id") or ""): str(
+                row.get("project_id") or fallback_row_project_id
+            )
+            for row in page_candidates
+            if row.get("session_id")
+        }
         name_map = completed.get("names") or {}
         end_user_map = completed.get("end_users") or {}
         attr_result = completed.get("attributes")
         attr_result_data = attr_result.data if attr_result is not None else []
         for entry in formatted:
             session_id = str(entry.get("session_id", ""))
+            entry_project_id = project_id_by_session.get(session_id, "")
+            if not entry_project_id:
+                session_logger.warning(
+                    "session_list_project_evidence_missing",
+                    session_id=session_id,
+                )
+                return self._gm.custom_error_response(
+                    drf_status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Session data is temporarily unavailable. Please retry.",
+                    code="service_unavailable",
+                )
+            entry["project_id"] = entry_project_id
             entry["session_name"] = name_map.get(session_id)
             entry["created_at"] = entry.get("start_time")
             end_user = end_user_map.get(session_id, {})
@@ -3160,9 +3447,10 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                             entry[key] = values
 
         # Build config with annotation metric columns (mirrors the PG path)
-        config = (
-            project.session_config if project else None
-        ) or get_default_project_session_config()
+        config = ensure_project_session_property_identities(
+            (project.session_config if project else None)
+            or get_default_project_session_config()
+        )
         _pid = project_id or (project.id if project else None)
         annotation_labels = (
             list(AnnotationsLabels.objects.filter(project_id=_pid, deleted=False))
@@ -3350,6 +3638,14 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 "Session data is temporarily unavailable. Please retry.",
                 code="service_unavailable",
             )
+        if project_id:
+            filter_evidence = applied_filter_attestation(
+                project_id=project_id,
+                observe_type="session",
+                filters=attested_filters,
+            )
+            if filter_evidence["query_applied_filter_count"]:
+                metadata.update(filter_evidence)
 
         return self._gm.success_response(
             {
@@ -3517,22 +3813,28 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     opt["label"] for opt in (label.settings or {}).get("options", [])
                 ]
 
-            configs.append(
-                asdict(
-                    FieldConfig(
-                        id=str(label.id),
-                        name=label.name,
-                        group_by="Annotation Metrics",
-                        is_visible=True,
-                        output_type=output_type,
-                        reverse_output=False,
-                        annotation_label_type=label_type,
-                        choices=choices if choices else None,
-                        settings=label.settings,
-                        annotators=label_annotators_map.get(str(label.id)),
-                    )
+            config = asdict(
+                FieldConfig(
+                    id=str(label.id),
+                    name=label.name,
+                    group_by="Annotation Metrics",
+                    is_visible=True,
+                    output_type=output_type,
+                    reverse_output=False,
+                    annotation_label_type=label_type,
+                    choices=choices if choices else None,
+                    settings=label.settings,
+                    annotators=label_annotators_map.get(str(label.id)),
                 )
             )
+            config.update(
+                {
+                    "property_id": f"annotation:{label.id}",
+                    "property_kind": "annotation",
+                    "property_source": "sessions",
+                }
+            )
+            configs.append(config)
         return configs
 
     @validated_request(

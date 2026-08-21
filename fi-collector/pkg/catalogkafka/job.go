@@ -72,14 +72,29 @@ func chunkWireJob(
 	}
 	chunks := make([]ChunkInput, 0)
 	totalBytes := 0
-	appendRows := func(table Table, rows []map[string]any, columns map[string]struct{}) error {
+	var sourceKindShape *bool
+	appendRows := func(
+		table Table,
+		rows []map[string]any,
+		columns map[string]struct{},
+		legacyColumns map[string]struct{},
+	) error {
 		for start := 0; start < len(rows); {
 			var body bytes.Buffer
 			count := 0
 			for start+count < len(rows) && count < maxChunkRows {
 				row := rows[start+count]
-				if err := validateWireRow(row, columns, projectID, epoch); err != nil {
+				withSourceKind, err := validateWireRow(
+					row, columns, legacyColumns, projectID, epoch,
+				)
+				if err != nil {
 					return fmt.Errorf("%s row %d: %w", table, start+count, err)
+				}
+				if sourceKindShape == nil {
+					shape := withSourceKind
+					sourceKindShape = &shape
+				} else if *sourceKindShape != withSourceKind {
+					return errors.New("catalogkafka: WireJob mixes legacy and source-kind row shapes")
 				}
 				encoded, err := encodeWireRow(row)
 				if err != nil {
@@ -106,21 +121,31 @@ func chunkWireJob(
 		}
 		return nil
 	}
-	if err := appendRows(KeyTable, job.KeyRows, keyWireColumns); err != nil {
+	if err := appendRows(KeyTable, job.KeyRows, keyWireColumns, legacyKeyWireColumns); err != nil {
 		return nil, 0, err
 	}
-	if err := appendRows(ValueTable, job.ValueRows, valueWireColumns); err != nil {
+	if err := appendRows(ValueTable, job.ValueRows, valueWireColumns, legacyValueWireColumns); err != nil {
 		return nil, 0, err
 	}
 	return chunks, totalBytes, nil
 }
 
 var keyWireColumns = columnNames(
-	"project_id", "attribute_key", "key_folded", "attribute_type",
+	"project_id", "source_kind", "attribute_key", "key_folded", "attribute_type",
 	"first_seen", "last_seen", "catalog_epoch",
 )
 
 var valueWireColumns = columnNames(
+	"project_id", "source_kind", "attribute_key", "attribute_type", "value_fingerprint",
+	"value_json", "value_search_text", "first_seen", "last_seen", "catalog_epoch",
+)
+
+var legacyKeyWireColumns = columnNames(
+	"project_id", "attribute_key", "key_folded", "attribute_type",
+	"first_seen", "last_seen", "catalog_epoch",
+)
+
+var legacyValueWireColumns = columnNames(
 	"project_id", "attribute_key", "attribute_type", "value_fingerprint",
 	"value_json", "value_search_text", "first_seen", "last_seen", "catalog_epoch",
 )
@@ -133,40 +158,69 @@ func columnNames(names ...string) map[string]struct{} {
 	return out
 }
 
-func validateWireRow(row map[string]any, columns map[string]struct{}, projectID string, epoch uint16) error {
-	if len(row) != len(columns) {
-		return errors.New("row does not have the exact catalog column count")
+func validateWireRow(
+	row map[string]any,
+	columns map[string]struct{},
+	legacyColumns map[string]struct{},
+	projectID string,
+	epoch uint16,
+) (bool, error) {
+	withSourceKind, ok := exactWireColumnShape(row, columns, legacyColumns)
+	if !ok {
+		return false, errors.New("row does not have an exact legacy or source-kind catalog shape")
 	}
-	for column := range row {
-		if _, exists := columns[column]; !exists {
-			return fmt.Errorf("forbidden column %q", column)
-		}
-	}
-	for column := range columns {
-		if _, exists := row[column]; !exists {
-			return fmt.Errorf("missing column %q", column)
+	if withSourceKind {
+		sourceKind, ok := row["source_kind"].(string)
+		if !ok || (sourceKind != "custom_attribute" && sourceKind != "system_attribute") {
+			return false, errors.New("row source_kind is unsupported")
 		}
 	}
 	if row["project_id"] != projectID {
-		return errors.New("row project does not match envelope project")
+		return false, errors.New("row project does not match envelope project")
 	}
 	switch value := row["catalog_epoch"].(type) {
 	case uint16:
 		if value != epoch {
-			return errors.New("row epoch does not match envelope epoch")
+			return false, errors.New("row epoch does not match envelope epoch")
 		}
 	case int:
 		if value != int(epoch) {
-			return errors.New("row epoch does not match envelope epoch")
+			return false, errors.New("row epoch does not match envelope epoch")
 		}
 	case float64:
 		if value != float64(epoch) {
-			return errors.New("row epoch does not match envelope epoch")
+			return false, errors.New("row epoch does not match envelope epoch")
 		}
 	default:
-		return errors.New("row epoch has an unsupported type")
+		return false, errors.New("row epoch has an unsupported type")
 	}
-	return nil
+	return withSourceKind, nil
+}
+
+func exactWireColumnShape(
+	row map[string]any,
+	columns map[string]struct{},
+	legacyColumns map[string]struct{},
+) (bool, bool) {
+	for _, shape := range []struct {
+		columns        map[string]struct{}
+		withSourceKind bool
+	}{{columns, true}, {legacyColumns, false}} {
+		if len(row) != len(shape.columns) {
+			continue
+		}
+		exact := true
+		for column := range row {
+			if _, exists := shape.columns[column]; !exists {
+				exact = false
+				break
+			}
+		}
+		if exact {
+			return shape.withSourceKind, true
+		}
+	}
+	return false, false
 }
 
 func encodeWireRow(row map[string]any) ([]byte, error) {

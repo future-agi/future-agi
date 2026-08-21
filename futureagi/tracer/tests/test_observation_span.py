@@ -163,7 +163,6 @@ class TestObservationSpanWorkspaceScopeAPI:
     ):
         """API-key requests without a workspace cannot see another tenant."""
         from accounts.models.organization import Organization
-
         from tracer.views.observation_span import _project_workspace_scope_q
 
         foreign_organization = Organization.objects.create(
@@ -640,8 +639,11 @@ class TestObservationSpanListSpansAPI:
             project_version,
             supplied_analytics,
             validated_data,
+            *,
+            read_deadline=None,
         ):
             captured["analytics"] = supplied_analytics
+            captured["read_deadline"] = read_deadline
             return view._gm.success_response(
                 {"metadata": {"total_rows": 0}, "table": [], "column_config": []}
             )
@@ -676,6 +678,7 @@ class TestObservationSpanListSpansAPI:
 
         assert response.status_code == status.HTTP_200_OK
         assert captured["analytics"] is analytics
+        assert captured["read_deadline"] is not None
         v2_service.assert_called_once_with()
         legacy_service.assert_not_called()
         dispatch.assert_not_called()

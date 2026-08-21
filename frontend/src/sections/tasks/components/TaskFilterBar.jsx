@@ -150,6 +150,9 @@ export function convertNewToOld(newFilters, { rowType } = {}) {
     const base = {
       property: isAttribute ? "attributes" : canonicalField,
       propertyId: canonicalField,
+      ...(f.registryId || f.property_id
+        ? { registryId: f.registryId || f.property_id }
+        : {}),
       fieldCategory: fieldCategory || "system",
       fieldLabel:
         voiceField?.label || f.fieldName || f.fieldLabel || canonicalField,
@@ -280,6 +283,7 @@ export function convertOldToNew(oldFilters, { rowType } = {}) {
         ? getVoiceCallFilterField(persistedField)
         : undefined;
     const field = voiceField?.value || persistedField;
+    const registryId = f.registryId || f.property_id;
 
     const rawOp = f?.filterConfig?.filterOp || "equals";
     const category =
@@ -302,11 +306,12 @@ export function convertOldToNew(oldFilters, { rowType } = {}) {
 
     let entry;
     if (isMultiValueOp) {
-      const key = `${field}|${op}|${category}`;
+      const key = `${registryId || "legacy"}|${field}|${op}|${category}`;
       entry = groups.get(key);
       if (!entry) {
         entry = {
           field,
+          ...(registryId ? { registryId } : {}),
           fieldLabel: voiceField?.label || f.fieldLabel || field,
           fieldType,
           fieldCategory: category,
@@ -326,6 +331,7 @@ export function convertOldToNew(oldFilters, { rowType } = {}) {
     } else {
       entry = {
         field,
+        ...(registryId ? { registryId } : {}),
         fieldLabel: voiceField?.label || f.fieldLabel || field,
         fieldType,
         fieldCategory: category,

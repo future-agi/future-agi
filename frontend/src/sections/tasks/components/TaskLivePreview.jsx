@@ -47,6 +47,7 @@ import {
   isRecordingObjectKey,
 } from "src/components/inline-audio/audio-detection";
 import { ID_ONLY_FIELDS } from "src/sections/projects/LLMTracing/idFields";
+import { serializeFilterForApi } from "src/api/contracts/filter-contract";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { isTaskPreviewProjectKindReady } from "../taskProjectKind";
 import {
@@ -57,12 +58,9 @@ import {
   requestListWithLegacyCursorFallback,
 } from "src/sections/projects/LLMTracing/listCursorPagination";
 import {
-  ANNOTATION_COLUMN_IDS,
-  FIELD_CATEGORY_TO_COL_TYPE,
-  RANGE_OPS,
-  LIST_OPS,
-  NO_VALUE_OPS,
-} from "src/sections/common/EvalsTasks/common";
+  serializeTaskFilterRowsForApi,
+  taskFilterColumnId,
+} from "src/sections/common/EvalsTasks/task_filter_serialization";
 import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
 import {
   parseAxiosResult,
@@ -79,70 +77,27 @@ import {
 // within a single multi-value `in`/`not_in` row.
 // eslint-disable-next-line react-refresh/only-export-components
 export function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
-  const userFilters = (oldFormatFilters || [])
-    .map((f) => {
-      const isAttribute = f.property === "attributes";
-      const columnId = isAttribute ? f.propertyId : f.property;
-      if (!columnId) return null;
-      const op = f?.filterConfig?.filterOp || "equals";
-      const filterType = f?.filterConfig?.filterType || "text";
-      const v = f?.filterConfig?.filterValue;
-      const isIdColumn = ID_ONLY_FIELDS.has(columnId);
-      // apiColType is source of truth; fieldCategory/isAttribute are UI hints.
-      const colType = ANNOTATION_COLUMN_IDS.has(columnId)
-        ? "ANNOTATION"
-        : f.apiColType ||
-          FIELD_CATEGORY_TO_COL_TYPE[f.fieldCategory] ||
-          (isAttribute ? "SPAN_ATTRIBUTE" : "SYSTEM_METRIC");
-      let filterValue;
-      if (NO_VALUE_OPS.has(op)) {
-        filterValue = "";
-      } else if (RANGE_OPS.has(op)) {
-        if (Array.isArray(v) && v.length > 0) filterValue = v;
-      } else if (LIST_OPS.has(op)) {
-        const arr = Array.isArray(v) ? v : v != null && v !== "" ? [v] : [];
-        if (arr.length > 0) filterValue = arr;
-      } else if (v !== undefined && v !== null && v !== "") {
-        filterValue = v;
-      }
-      return {
-        column_id: columnId,
-        filter_config: {
-          filter_type: filterType,
-          filter_op: op,
-          ...(filterValue !== undefined && { filter_value: filterValue }),
-          ...(!isIdColumn && { col_type: colType }),
-          ...(colType === "SPAN_ATTRIBUTE" &&
-            LIST_OPS.has(op) &&
-            Array.isArray(filterValue) &&
-            Array.isArray(f?.filterConfig?.attributeValueTypes) &&
-            f.filterConfig.attributeValueTypes.length ===
-              filterValue.length && {
-              attribute_value_types: f.filterConfig.attributeValueTypes,
-            }),
-        },
-      };
-    })
-    // Drop value-less in/not_in (legacy/hand-edited)
-    .filter(
-      (entry) =>
-        entry &&
-        (!LIST_OPS.has(entry.filter_config.filter_op) ||
-          entry.filter_config.filter_value !== undefined),
-    );
+  const userFilters = serializeTaskFilterRowsForApi(
+    oldFormatFilters,
+    (row) => ({
+      omitColumnType: ID_ONLY_FIELDS.has(taskFilterColumnId(row)),
+    }),
+  );
 
   if (startDate && endDate) {
-    userFilters.push({
-      column_id: "created_at",
-      filter_config: {
-        filter_type: "datetime",
-        filter_op: "between",
-        filter_value: [
-          new Date(startDate).toISOString(),
-          new Date(endDate).toISOString(),
-        ],
-      },
-    });
+    userFilters.push(
+      serializeFilterForApi({
+        column_id: "created_at",
+        filter_config: {
+          filter_type: "datetime",
+          filter_op: "between",
+          filter_value: [
+            new Date(startDate).toISOString(),
+            new Date(endDate).toISOString(),
+          ],
+        },
+      }),
+    );
   }
 
   return userFilters;

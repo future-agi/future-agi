@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { getComplexFilterValidation } from "../common";
+import {
+  avoidDuplicateFilterSet,
+  filterDefinitionMatchesSelection,
+  getComplexFilterValidation,
+  getFilterDefinitionIdentity,
+  getFilterDefinitionSelectionValue,
+  getFilterUsageCounts,
+  isFilterDefinitionAtMaxUsage,
+  stripUiFilterKeys,
+} from "../common";
 import { AdvanceNumberFilterOperators } from "src/utils/constants";
 import {
   FILTER_COLUMN_TYPES,
@@ -9,6 +18,145 @@ import {
 } from "src/api/contracts/filter-contract.generated";
 
 describe("ComplexFilter contract wiring", () => {
+  it("keeps registry identity separate from the native filter column", () => {
+    expect(
+      getFilterDefinitionIdentity({
+        propertyId: "model",
+        registryId: "custom_attribute:model",
+      }),
+    ).toEqual({
+      column_id: "model",
+      registryId: "custom_attribute:model",
+    });
+
+    const parsed = getComplexFilterValidation().parse({
+      column_id: "model",
+      registryId: "custom_attribute:model",
+      filter_config: {
+        col_type: "SPAN_ATTRIBUTE",
+        filter_type: "text",
+        filter_op: "equals",
+        filter_value: "gpt-4o",
+      },
+    });
+    expect(parsed).toMatchObject({
+      column_id: "model",
+      property_id: "custom_attribute:model",
+    });
+    expect(stripUiFilterKeys([{ ...parsed, registryId: "ignored" }])).toEqual([
+      parsed,
+    ]);
+  });
+
+  it("uses registry identity for selection and keeps a legacy fallback", () => {
+    const systemModel = {
+      propertyId: "model",
+      registryId: "system_attribute:traces:model",
+      propertyName: "Model",
+    };
+    const customModel = {
+      propertyId: "model",
+      registryId: "custom_attribute:model",
+      propertyName: "Model attribute",
+    };
+
+    expect(getFilterDefinitionSelectionValue(systemModel)).not.toBe(
+      getFilterDefinitionSelectionValue(customModel),
+    );
+    expect(
+      filterDefinitionMatchesSelection(
+        customModel,
+        "system_attribute:traces:model",
+      ),
+    ).toBe(false);
+    expect(filterDefinitionMatchesSelection(customModel, "model")).toBe(true);
+  });
+
+  it("keeps choices of one registry property independently selectable", () => {
+    const approved = {
+      propertyId: "review-label**approved",
+      registryId: "annotation:review-label",
+      propertyName: "Approved",
+    };
+    const rejected = {
+      propertyId: "review-label**rejected",
+      registryId: "annotation:review-label",
+      propertyName: "Rejected",
+    };
+
+    const approvedSelection = getFilterDefinitionSelectionValue(approved);
+    const rejectedSelection = getFilterDefinitionSelectionValue(rejected);
+    expect(approvedSelection).not.toBe(rejectedSelection);
+    expect(filterDefinitionMatchesSelection(approved, approvedSelection)).toBe(
+      true,
+    );
+    expect(filterDefinitionMatchesSelection(rejected, approvedSelection)).toBe(
+      false,
+    );
+  });
+
+  it("applies maxUsage per registry identity for same-name properties", () => {
+    const systemModel = {
+      propertyId: "model",
+      registryId: "system_attribute:traces:model",
+      maxUsage: 1,
+    };
+    const customModel = {
+      propertyId: "model",
+      registryId: "custom_attribute:model",
+      maxUsage: 1,
+    };
+    const selectedSystem = {
+      column_id: "model",
+      registryId: "system_attribute:traces:model",
+    };
+    const counts = getFilterUsageCounts([selectedSystem]);
+
+    expect(
+      isFilterDefinitionAtMaxUsage(systemModel, counts, { column_id: "" }),
+    ).toBe(true);
+    expect(
+      isFilterDefinitionAtMaxUsage(customModel, counts, { column_id: "" }),
+    ).toBe(false);
+    expect(
+      isFilterDefinitionAtMaxUsage(systemModel, counts, selectedSystem),
+    ).toBe(false);
+  });
+
+  it("deduplicates by registry identity with native-column legacy fallback", () => {
+    const systemModel = {
+      column_id: "model",
+      property_id: "system_attribute:traces:model",
+      filter_config: { filter_value: "gpt-4.1" },
+    };
+    const customModel = {
+      column_id: "model",
+      property_id: "custom_attribute:model",
+      filter_config: { filter_value: "customer-model" },
+    };
+
+    expect(avoidDuplicateFilterSet([systemModel], customModel)).toEqual([
+      systemModel,
+      customModel,
+    ]);
+
+    const updatedSystem = {
+      ...systemModel,
+      filter_config: { filter_value: "gpt-4o" },
+    };
+    expect(
+      avoidDuplicateFilterSet([systemModel, customModel], updatedSystem),
+    ).toEqual([updatedSystem, customModel]);
+
+    const legacyModel = {
+      column_id: "model",
+      filter_config: { filter_value: "legacy" },
+    };
+    expect(avoidDuplicateFilterSet([legacyModel], updatedSystem)).toEqual([
+      updatedSystem,
+    ]);
+  });
+
   it("uses canonical not_between for numeric range filters", () => {
     expect(AdvanceNumberFilterOperators).toContainEqual({
       label: "Not Between",

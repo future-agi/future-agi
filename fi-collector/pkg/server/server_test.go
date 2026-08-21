@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -19,6 +20,7 @@ import (
 	chexp "github.com/future-agi/future-agi/fi-collector/exporter/clickhouse25exporter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/catalogwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
+	"github.com/future-agi/future-agi/fi-collector/pkg/propertycatalog"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
@@ -139,6 +141,18 @@ type catalogWriterStub struct {
 	eventsMu    *sync.Mutex
 }
 
+type propertyCatalogWriterStub struct {
+	rows  []propertycatalog.ScopedSpan
+	calls int
+	err   error
+}
+
+func (s *propertyCatalogWriterStub) EnqueueCanonicalSpans(rows []propertycatalog.ScopedSpan) error {
+	s.calls++
+	s.rows = append(s.rows, rows...)
+	return s.err
+}
+
 func (s *catalogWriterStub) record(event string) {
 	if s.events == nil {
 		return
@@ -193,6 +207,129 @@ func TestAttributeCatalogWriterOptionIsNilByDefault(t *testing.T) {
 	with := New(Config{}, nil, nil, nil, nil, WithAttributeCatalogWriter(stub))
 	if with.catalog != stub {
 		t.Fatal("catalog writer option was not installed")
+	}
+}
+
+func TestPropertyCatalogSidecarIsDefaultOffAndNeverChangesCanonicalSpanBytes(t *testing.T) {
+	var spanBody string
+	chServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if insertTable(r) == "spans" {
+			spanBody = string(body)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer chServer.Close()
+
+	writer := newSpanTestWriter(t, chServer.URL, t.TempDir()+"/spans.jsonl")
+	without := New(Config{}, writer, nil, nil, nil)
+	if without.propertyCatalog != nil {
+		t.Fatal("unified property catalog must be nil unless explicitly installed")
+	}
+	row := map[string]any{
+		"id": "span-1", "org_id": "11111111-1111-4111-8111-111111111111",
+		"project_id":     "33333333-3333-4333-8333-333333333333",
+		"resource_attrs": map[string]any{"existing": "unchanged", "fi.org_id": "11111111-1111-4111-8111-111111111111"},
+	}
+	var expected bytes.Buffer
+	encoder := json.NewEncoder(&expected)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(row); err != nil {
+		t.Fatal(err)
+	}
+	without.enqueue([]map[string]any{row}, nil)
+	without.drainNow(context.Background())
+	if spanBody != expected.String() || strings.Contains(spanBody, "fi.workspace_id") {
+		t.Fatalf("disabled path changed canonical bytes: got=%q want=%q", spanBody, expected.String())
+	}
+
+	stub := &propertyCatalogWriterStub{}
+	with := New(Config{}, writer, nil, nil, nil, WithPropertyCatalogWriter(stub))
+	with.enqueueScoped(
+		[]map[string]any{row}, nil,
+		"11111111-1111-4111-8111-111111111111",
+		"22222222-2222-4222-8222-222222222222",
+		map[string]struct{}{"33333333-3333-4333-8333-333333333333": {}},
+	)
+	with.drainNow(context.Background())
+	if spanBody != expected.String() || strings.Contains(spanBody, "fi.workspace_id") {
+		t.Fatalf("enabled sidecar changed canonical bytes: got=%q want=%q", spanBody, expected.String())
+	}
+	if stub.calls != 1 || len(stub.rows) != 1 ||
+		stub.rows[0].WorkspaceID != "22222222-2222-4222-8222-222222222222" ||
+		stub.rows[0].Row["id"] != "span-1" {
+		t.Fatalf("property sidecar=%+v calls=%d", stub.rows, stub.calls)
+	}
+}
+
+func TestPropertyCatalogRunsOnlyAfterSpanSuccessAndCannotChangeSpanHealth(t *testing.T) {
+	statusCode := http.StatusBadRequest
+	chServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(statusCode)
+	}))
+	defer chServer.Close()
+
+	writer := newSpanTestWriter(t, chServer.URL, t.TempDir()+"/spans.jsonl")
+	stub := &propertyCatalogWriterStub{err: errors.New("catalog queue unavailable")}
+	var logs bytes.Buffer
+	server := New(
+		Config{}, writer, nil, nil, nil,
+		WithLogger(slog.New(slog.NewTextHandler(&logs, nil))),
+		WithPropertyCatalogWriter(stub),
+	)
+	enqueue := func(id string) {
+		server.enqueueScoped(
+			[]map[string]any{{"id": id}}, nil,
+			"11111111-1111-4111-8111-111111111111",
+			"22222222-2222-4222-8222-222222222222",
+			map[string]struct{}{"": {}},
+		)
+		server.drainNow(context.Background())
+	}
+	enqueue("dead-lettered")
+	if stub.calls != 0 {
+		t.Fatal("dead-lettered canonical span reached property catalog")
+	}
+	statusCode = http.StatusOK
+	enqueue("committed")
+	stats := writer.Snapshot()
+	if stub.calls != 1 || stats.BatchesInserted != 1 || stats.BatchesFailed != 1 ||
+		stats.RowsDeadLettered != 1 || !strings.Contains(logs.String(), "property catalog enqueue failed") {
+		t.Fatalf("calls=%d stats=%+v logs=%q", stub.calls, stats, logs.String())
+	}
+}
+
+func TestPropertyCatalogSidecarMarksForeignWorkspaceProjectAsDurableGapInput(t *testing.T) {
+	var spanBody string
+	chServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if insertTable(r) == "spans" {
+			spanBody = string(body)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer chServer.Close()
+	writer := newSpanTestWriter(t, chServer.URL, t.TempDir()+"/spans.jsonl")
+	stub := &propertyCatalogWriterStub{}
+	server := New(Config{}, writer, nil, nil, nil, WithPropertyCatalogWriter(stub))
+	row := map[string]any{
+		"id": "span-foreign", "org_id": "11111111-1111-4111-8111-111111111111",
+		"project_id": "33333333-3333-4333-8333-333333333333",
+	}
+	server.enqueueScoped(
+		[]map[string]any{row}, nil,
+		"11111111-1111-4111-8111-111111111111",
+		"22222222-2222-4222-8222-222222222222",
+		map[string]struct{}{"66666666-6666-4666-8666-666666666666": {}},
+	)
+	server.drainNow(context.Background())
+	if stub.calls != 1 || len(stub.rows) != 1 || stub.rows[0].ScopeError != "project_workspace_mismatch" {
+		t.Fatalf("foreign workspace project sidecar=%+v calls=%d", stub.rows, stub.calls)
+	}
+	if !strings.Contains(spanBody, `"project_id":"33333333-3333-4333-8333-333333333333"`) ||
+		strings.Contains(spanBody, "ScopeError") || strings.Contains(spanBody, "scope_error") {
+		t.Fatalf("canonical span was changed by sidecar proof: %q", spanBody)
 	}
 }
 

@@ -15,6 +15,7 @@ export default function useProjectFilterField({ enabled = true } = {}) {
     enabled,
     queryFn: ({ signal }) => fetchAllObserveProjects({ signal }),
     staleTime: 5 * 60_000,
+    retry: false,
   });
 
   return useMemo(() => {

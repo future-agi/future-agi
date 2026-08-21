@@ -1,5 +1,6 @@
 """Failure-semantics guards for tracing list, graph, and detail boundaries."""
 
+from contextlib import nullcontext
 from inspect import unwrap
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -388,6 +389,14 @@ def _graph_call(monkeypatch, view_kind, outcome, *, allow_sampled=False):
         view_cls = graph_view.ObservationSpanView
 
     monkeypatch.setattr(graph_view, "V2AnalyticsQueryService", MagicMock)
+    # This helper replaces every ORM manager with a pure mock and deliberately
+    # runs without pytest-django database access. Deadline/statement-timeout
+    # behavior is covered by test_graph_action_request_deadline.py.
+    monkeypatch.setattr(
+        graph_view,
+        "graph_action_postgres_budget",
+        lambda _deadline: nullcontext(),
+    )
     graph_fetch = (
         _raise(outcome)
         if isinstance(outcome, BaseException)

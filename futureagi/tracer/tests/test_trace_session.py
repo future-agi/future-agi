@@ -1536,10 +1536,106 @@ class TestTraceSessionWorkspaceScopeAPI:
         assert response.status_code == status.HTTP_200_OK
         v2_service.assert_called_once_with()
         legacy_service.assert_not_called()
-        assert get_result(response)["values"] == ["alice", "bob"]
+        payload = get_result(response)
+        assert payload["values"] == ["alice", "bob"]
+        assert payload["next"] is False
         query = analytics.execute_ch_query.call_args.args[0]
         assert "FROM end_users FINAL" in query
         assert "user_id AS val" in query
+        call = analytics.execute_ch_query.call_args
+        assert call.args[1]["limit"] == 51
+        assert 0 < call.kwargs["timeout_ms"] <= 9_500
+        assert call.kwargs["settings"]["max_result_rows"] == 51
+
+    @pytest.mark.parametrize("column", ["user_id", "session_id"])
+    def test_identity_filter_values_share_one_deadline_and_publish_exact_read_more(
+        self, auth_client, observe_project, column
+    ):
+        if column == "session_id":
+            raw_values = [str(uuid.uuid4()) for _index in range(51)]
+        else:
+            raw_values = [f"user-{index:03d}" for index in range(51)]
+        analytics = mock.Mock()
+        analytics.execute_ch_query.return_value = mock.Mock(
+            data=[{"val": value, "label": value} for value in raw_values]
+        )
+        request_deadline = mock.Mock()
+        request_deadline.remaining_ms.return_value = 8_250
+
+        with (
+            mock.patch(
+                "tracer.views.trace_session.ReadDeadline.start",
+                return_value=request_deadline,
+            ) as start_deadline,
+            mock.patch(
+                "tracer.views.trace_session.V2AnalyticsQueryService",
+                return_value=analytics,
+            ),
+            mock.patch(
+                "tracer.services.clickhouse.v2.trace_session_dict_reader."
+                "resolve_session_fields",
+                return_value={},
+            ) as resolve_session_fields,
+        ):
+            response = auth_client.get(
+                "/tracer/trace-session/get_session_filter_values/",
+                {
+                    "project_id": str(observe_project.id),
+                    "column": column,
+                    "page": 2,
+                    "page_size": 50,
+                },
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        payload = get_result(response)
+        assert len(payload["values"]) == 50
+        assert payload["next"] is True
+        start_deadline.assert_called_once_with(9_500)
+        call = analytics.execute_ch_query.call_args
+        assert call.args[1]["limit"] == 51
+        assert call.args[1]["offset"] == 100
+        assert call.kwargs["timeout_ms"] == 8_250
+        assert call.kwargs["settings"]["max_result_rows"] == 51
+        if column == "session_id":
+            assert (
+                resolve_session_fields.call_args.kwargs["deadline"] is request_deadline
+            )
+            assert resolve_session_fields.call_args.args[0] == raw_values[:50]
+        else:
+            resolve_session_fields.assert_not_called()
+
+    def test_identity_filter_deadline_exhaustion_is_a_typed_sanitized_503(
+        self, auth_client, observe_project
+    ):
+        analytics = mock.Mock()
+        request_deadline = mock.Mock()
+
+        def remaining_ms(cap_ms=None, *, floor_ms=25):
+            if cap_ms == 9_500:
+                raise ReadDeadlineExceeded("private request timing")
+            return 8_000
+
+        request_deadline.remaining_ms.side_effect = remaining_ms
+        with (
+            mock.patch(
+                "tracer.views.trace_session.ReadDeadline.start",
+                return_value=request_deadline,
+            ),
+            mock.patch(
+                "tracer.views.trace_session.V2AnalyticsQueryService",
+                return_value=analytics,
+            ),
+        ):
+            response = auth_client.get(
+                "/tracer/trace-session/get_session_filter_values/",
+                {"project_id": str(observe_project.id), "column": "user_id"},
+            )
+
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert response.json()["code"] == "read_budget_exceeded"
+        assert "private request timing" not in str(response.data)
+        analytics.execute_ch_query.assert_not_called()
 
     @pytest.mark.parametrize(
         ("column", "expected_aggregate"),
@@ -1772,12 +1868,12 @@ class TestTraceSessionWorkspaceScopeAPI:
         assert "secret-internal-query" not in payload
         assert "DB::Exception" not in payload
         call = analytics.execute_ch_query.call_args
-        assert call.kwargs["timeout_ms"] == 9_500
+        assert 0 < call.kwargs["timeout_ms"] <= 9_500
         settings = call.kwargs["settings"]
         assert "max_rows_to_read" not in settings
         assert settings["max_bytes_to_read"] == 36 * 1024 * 1024 * 1024
         assert settings["max_memory_usage"] == 36 * 1024 * 1024 * 1024
-        assert settings["max_result_rows"] == 50
+        assert settings["max_result_rows"] == 51
         assert settings["max_result_bytes"] == 32 * 1024 * 1024
         assert settings["max_threads"] == 2
         assert settings["timeout_overflow_mode"] == "throw"
@@ -1995,11 +2091,12 @@ class TestTraceSessionWorkspaceScopeAPI:
         assert get_result(response)["values"] == [
             {"value": session_id, "label": "session-alpha"}
         ]
+        assert get_result(response)["next"] is False
         call = analytics.execute_ch_query.call_args
-        assert call.kwargs["timeout_ms"] == 9_500
+        assert 0 < call.kwargs["timeout_ms"] <= 9_500
         settings = call.kwargs["settings"]
         assert "max_rows_to_read" not in settings
-        assert settings["max_result_rows"] == 50
+        assert settings["max_result_rows"] == 51
         assert settings["max_bytes_to_read"] == 36 * 1024 * 1024 * 1024
         assert settings["max_memory_usage"] == 36 * 1024 * 1024 * 1024
         assert settings["max_threads"] == 2

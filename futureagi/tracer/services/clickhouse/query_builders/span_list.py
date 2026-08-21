@@ -373,13 +373,17 @@ class SpanListQueryBuilder(BaseQueryBuilder):
     def allow_filter_anchor_probe_for_initial_continuation(self) -> bool:
         """Allow only the first signed cursor request to run the sparse probe."""
 
-        return self._supports_time_only_cursor_sparse_probe()
+        return bool(
+            self._supports_time_only_cursor_sparse_probe()
+            or self._selective_error_status_anchor_plan() is not None
+        )
 
     def supports_filter_anchor_probe(self) -> bool:
         """Whether an indexed span leaf can seed a sparse graph sentinel."""
 
         return bool(
             self._supports_time_only_cursor_sparse_probe()
+            or self._selective_error_status_anchor_plan() is not None
             or (
                 self._filter_anchor_plans()
                 and (
@@ -490,11 +494,14 @@ class SpanListQueryBuilder(BaseQueryBuilder):
 
     def _filter_anchor_plans(self) -> list[Any]:
         plans, _ = partition_span_filter_plans(self.filters)
+        error_status_plan = self._selective_error_status_anchor_plan()
         candidates = [
             (index, plan)
             for index, plan in enumerate(plans)
             if self._plan_uses_indexed_anchor(plan)
         ]
+        if error_status_plan is not None:
+            candidates.append((-1, error_status_plan))
         candidates.sort(
             key=lambda item: (
                 item[1].raw_witness_rank is None,
@@ -555,6 +562,56 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 return plan
         return None
 
+    def _selective_error_status_anchor_plan(self) -> Any | None:
+        """Return the indexed positive error-status witness used by Display.
+
+        A year-long ``status = ERROR`` request is commonly empty. Walking it
+        five minutes at a time creates dozens of honest-but-empty public
+        continuations. The deployed status bloom can instead prove the finite
+        raw error superset under the existing sentinel and latest-state replay.
+        Other status values retain the conservative temporal scanner because
+        completed spans are usually dense.
+        """
+
+        for item_index, item in enumerate(self._active_non_time_filters()):
+            key = str(item.get("column_id") or item.get("columnId") or "")
+            if key != "status":
+                continue
+            config = item.get("filter_config") or item.get("filterConfig") or {}
+            operation = normalize_filter_op(
+                str(config.get("filter_op") or config.get("filterOp") or "")
+            )
+            raw_value = config.get("filter_value", config.get("filterValue"))
+            values = raw_value if isinstance(raw_value, list) else [raw_value]
+            normalized_values = {
+                str(value).strip().upper() for value in values if value is not None
+            }
+            if (
+                operation in {"equals", "in"}
+                and normalized_values
+                and normalized_values <= {"ERROR", "ERRORED", "FAILED"}
+            ):
+                item_plans, residual = partition_span_filter_plans([item])
+                if residual or len(item_plans) != 1:
+                    return None
+                plan = item_plans[0]
+                anchor_param = f"span_error_status_anchor_values_{item_index}"
+                return type(plan)(
+                    aggregates=plan.aggregates,
+                    predicate=plan.predicate,
+                    seed_predicate=plan.seed_predicate,
+                    params={
+                        **plan.params,
+                        anchor_param: tuple(sorted(normalized_values)),
+                    },
+                    scope=plan.scope,
+                    raw_witness_predicate=f"status IN %({anchor_param})s",
+                    raw_key_witness_predicate=plan.raw_key_witness_predicate,
+                    raw_witness_rank=0,
+                    source_metric=plan.source_metric,
+                )
+        return None
+
     def recommended_filter_anchor_probe_limit(self) -> int | None:
         """Recommend only value-indexed or time-only cursor sentinels.
 
@@ -575,7 +632,10 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         if (
             not self._bounded_anchor_probe
             and request_end - request_start > timedelta(hours=1)
-            and self._selective_typed_map_anchor_plan() is not None
+            and (
+                self._selective_typed_map_anchor_plan() is not None
+                or self._selective_error_status_anchor_plan() is not None
+            )
         ):
             return _LONG_WINDOW_VALUE_ANCHOR_SENTINEL
         return None
@@ -918,7 +978,20 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 if self._bounded_anchor_probe
                 else self._plan_uses_indexed_anchor
             )
-            seed_plans = [plan for plan in plans if seed_plan_is_usable(plan)]
+            indexed_seed_plans = [plan for plan in plans if seed_plan_is_usable(plan)]
+            # Every span filter applies to the same physical row. Once one
+            # positive indexed witness bounds acquisition, conjoin every other
+            # positive raw witness as well. This is especially important for a
+            # typed attribute + Model filter: seeding on the attribute alone
+            # can produce thousands of candidates that the latest-state
+            # classifier rejects, yielding a long chain of empty cursor pages.
+            # Trace builders cannot make this optimization because separate
+            # child spans may satisfy separate any-span leaves.
+            seed_plans = (
+                [plan for plan in plans if plan.raw_witness_predicate is not None]
+                if indexed_seed_plans and not self._bounded_anchor_probe
+                else indexed_seed_plans
+            )
             seed_predicates = [
                 plan.raw_witness_predicate or plan.seed_predicate for plan in seed_plans
             ]

@@ -12,13 +12,34 @@ vi.mock("src/hooks/use-ai-filter", () => ({
   useAIFilter: () => ({ parseQuery: vi.fn(), loading: false, error: null }),
 }));
 
-vi.mock("src/hooks/useDashboards", () => ({
-  useDashboardFilterValues: () => ({
-    data: [],
-    isLoading: false,
-    isError: false,
-  }),
-}));
+vi.mock("src/hooks/useDashboards", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useDashboardFilterValues: () => ({
+      data: [],
+      isLoading: false,
+      isError: false,
+    }),
+    usePropertyCatalog: () => ({
+      metrics: [],
+      legacyFallbackRequired: false,
+      queryReadState: "complete",
+      isFetching: false,
+      isLoading: false,
+      isError: false,
+      isSuccess: true,
+      error: null,
+      hasNextPage: false,
+      fetchNextPage: vi.fn(),
+      refetch: vi.fn(),
+      isFetchingNextPage: false,
+      isFetchNextPageError: false,
+      cursorChainStopped: false,
+      data: { pages: [] },
+    }),
+  };
+});
 
 // ---------------------------------------------------------------------------
 // hasIncompleteNumericRow — the gate that holds auto-apply while a numeric row
@@ -208,6 +229,54 @@ describe("TraceFilterPanel auto-apply behavior", () => {
 
     expect(onApply).toHaveBeenCalledTimes(1);
     expect(serializeFilterSet(onApply.mock.calls[0][0])).toContain("7");
+  });
+
+  it("keeps the debounce alive when the parent recreates onApply", () => {
+    const applied = vi.fn();
+    const anchorEl = document.createElement("button");
+    document.body.appendChild(anchorEl);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const panel = (renderTick) => (
+      <QueryClientProvider client={queryClient}>
+        <TraceFilterPanel
+          anchorEl={anchorEl}
+          open
+          onClose={vi.fn()}
+          // ObserveToolbar creates this adapter inline. Query/graph progress
+          // can therefore give it a fresh identity while the picker is open.
+          onApply={(filters) => applied(renderTick, filters)}
+          currentFilters={[
+            {
+              field: "latency",
+              fieldType: "number",
+              operator: "greater_than",
+              value: "5",
+            },
+          ]}
+          properties={[NUMERIC_PROP]}
+          showQueryTab={false}
+        />
+      </QueryClientProvider>
+    );
+    const utils = render(panel(0));
+
+    fireEvent.change(utils.getByDisplayValue("5"), {
+      target: { value: "7" },
+    });
+    // Simulate progress renders arriving faster than the debounce. They must
+    // not postpone a committed filter change indefinitely.
+    for (let renderTick = 1; renderTick <= 4; renderTick += 1) {
+      act(() => {
+        vi.advanceTimersByTime(100);
+        utils.rerender(panel(renderTick));
+      });
+    }
+
+    expect(applied).toHaveBeenCalledTimes(1);
+    expect(serializeFilterSet(applied.mock.calls[0][1])).toContain("7");
+    document.body.removeChild(anchorEl);
   });
 
   it("seeds last-applied on open so existing filters do not refire", () => {

@@ -1,3 +1,8 @@
+import {
+  ANALYTICS_REQUEST_TIMEOUT_MS,
+  CURSOR_MAX_EMPTY_CONTINUATIONS,
+} from "src/config/runtime_limits";
+
 const CURSOR_MODE = "cursor";
 const NUMBERED_MODE = "numbered";
 const UNKNOWN_MODE = "unknown";
@@ -7,8 +12,8 @@ export const LIST_CURSOR_CONTINUATION_LIMIT_ERROR_CODE =
   "LIST_CURSOR_CONTINUATION_LIMIT";
 export const LIST_CURSOR_CONTINUATION_NOTICE =
   "Preparing exact results. Refresh or retry to continue.";
-const DEFAULT_MAX_EMPTY_CONTINUATIONS = 12;
-const DEFAULT_EMPTY_CONTINUATION_DEADLINE_MS = 9_500;
+const DEFAULT_MAX_EMPTY_CONTINUATIONS = CURSOR_MAX_EMPTY_CONTINUATIONS;
+const DEFAULT_EMPTY_CONTINUATION_DEADLINE_MS = ANALYTICS_REQUEST_TIMEOUT_MS;
 
 const requestWithinDeadline = async ({
   request,

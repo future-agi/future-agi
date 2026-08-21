@@ -1,12 +1,6 @@
 import { getNumberValidation } from "src/utils/validation";
 import { z } from "zod";
-import {
-  ANNOTATION_COLUMN_IDS,
-  FIELD_CATEGORY_TO_COL_TYPE,
-  RANGE_OPS,
-  LIST_OPS,
-  NO_VALUE_OPS,
-} from "src/sections/common/EvalsTasks/common";
+import { serializeTaskFilterRowsForApi } from "src/sections/common/EvalsTasks/task_filter_serialization";
 
 const TASK_FILTER_PROPERTY_TO_API = {
   span_kind: "observation_type",
@@ -32,76 +26,16 @@ const TOP_LEVEL_SIBLING_KEY_BY_PROPERTY = {
 // into "in [A, B]" and invert intent. OR is expressed within a single multi-
 // value `in`/`not_in` row, not across rows.
 export const extractAttributeFilters = (filters) => {
-  return (
-    (filters || [])
-      .filter((f) => {
-        if (!f) return false;
-        // Sibling keys are emitted separately by getNewTaskFilters.
-        if (f.property in TOP_LEVEL_SIBLING_KEY_BY_PROPERTY) return false;
-        // Legacy rows with neither apiColType nor propertyId are BE no-ops.
-        if (!f.propertyId && f.property !== "attributes") return false;
-        return true;
-      })
-      .map((f) => {
-        const columnId = f.propertyId || f.property;
-        const op = f?.filterConfig?.filterOp || "equals";
-        const filterType = f?.filterConfig?.filterType || "text";
-        const v = f?.filterConfig?.filterValue;
+  const attributeRows = (filters || []).filter((f) => {
+    if (!f) return false;
+    // Sibling keys are emitted separately by getNewTaskFilters.
+    if (f.property in TOP_LEVEL_SIBLING_KEY_BY_PROPERTY) return false;
+    // Legacy rows with neither apiColType nor propertyId are BE no-ops.
+    if (!f.propertyId && f.property !== "attributes") return false;
+    return true;
+  });
 
-        // Resolution: pinned ANNOTATION ids → row.apiColType (canonical) →
-        // fieldCategory fallback → SPAN_ATTRIBUTE default.
-        let apiColType;
-        if (ANNOTATION_COLUMN_IDS.has(columnId)) {
-          apiColType = "ANNOTATION";
-        } else if (f?.apiColType) {
-          apiColType = f.apiColType;
-        } else if (FIELD_CATEGORY_TO_COL_TYPE[f?.fieldCategory]) {
-          apiColType = FIELD_CATEGORY_TO_COL_TYPE[f.fieldCategory];
-        } else {
-          apiColType = "SPAN_ATTRIBUTE";
-        }
-
-        let filterValue;
-        if (NO_VALUE_OPS.has(op)) {
-          filterValue = "";
-        } else if (RANGE_OPS.has(op)) {
-          if (Array.isArray(v) && v.length > 0) filterValue = v;
-        } else if (LIST_OPS.has(op)) {
-          const arr = Array.isArray(v)
-            ? v
-            : v !== undefined && v !== null && v !== ""
-              ? [v]
-              : [];
-          if (arr.length > 0) filterValue = arr;
-        } else if (v !== undefined && v !== null && v !== "") {
-          filterValue = v;
-        }
-
-        return {
-          column_id: columnId,
-          filter_config: {
-            filter_type: filterType,
-            filter_op: op,
-            col_type: apiColType,
-            ...(filterValue !== undefined && { filter_value: filterValue }),
-            ...(apiColType === "SPAN_ATTRIBUTE" &&
-              LIST_OPS.has(op) &&
-              Array.isArray(filterValue) &&
-              Array.isArray(f?.filterConfig?.attributeValueTypes) &&
-              f.filterConfig.attributeValueTypes.length ===
-                filterValue.length && {
-                attribute_value_types: f.filterConfig.attributeValueTypes,
-              }),
-          },
-        };
-      })
-      // Drop value-less in/not_in (legacy/hand-edited)
-      .filter(
-        (entry) =>
-          !LIST_OPS.has(entry.filter_config.filter_op) ||
-          entry.filter_config.filter_value !== undefined,
-      )
-  );
+  return serializeTaskFilterRowsForApi(attributeRows);
 };
 
 // Sibling-key extraction: rows whose property maps to a top-level BE key
@@ -180,6 +114,8 @@ export const NewTaskValidationSchema = () =>
           z.object({
             id: z.string().optional(),
             propertyId: z.string().optional(),
+            registryId: z.string().optional(),
+            property_id: z.string().optional(),
             property: z.string().optional(),
             fieldCategory: z.string().optional(),
             fieldLabel: z.string().optional(),

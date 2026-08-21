@@ -13,6 +13,11 @@ import { selectContractedList } from "src/api/contract-validation";
 import { ModelHubAnnotationQueuesForSourceResponse } from "src/generated/api-contracts/api.zod";
 import { paramsSerializer } from "src/utils/utils";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import { INTERACTIVE_REQUEST_TIMEOUT_MS } from "src/config/runtime_limits";
+import {
+  AUTOMATION_RULE_LIST_PAGE_SIZE,
+  readAutomationRulePage,
+} from "./automation-rule-list-read";
 
 const QUEUE_ENTRY_CONSUMED_FIELDS = [
   "queue",
@@ -428,16 +433,49 @@ export const useQueueItems = (queueId, filters = {}, options = {}) => {
   });
 };
 
+export const ADD_QUEUE_ITEMS_TIMEOUT_MS = INTERACTIVE_REQUEST_TIMEOUT_MS;
+
+const ADD_QUEUE_ITEMS_UNKNOWN_OUTCOME_TRANSPORT_CODES = new Set([
+  "ERR_CANCELED",
+  "ECONNABORTED",
+  "ETIMEDOUT",
+  "ERR_NETWORK",
+  "ECONNRESET",
+]);
+
+export const postAddQueueItems = async ({
+  queueId,
+  items,
+  selection,
+  project_id,
+}) => {
+  const endpoint = annotationQueueEndpoints.addItems(queueId);
+  const payload = selection
+    ? { selection }
+    : { items, ...(project_id ? { project_id } : {}) };
+  if (!selection) {
+    return axios.post(endpoint, payload);
+  }
+
+  const controller = new AbortController();
+  const timeoutId = globalThis.setTimeout(
+    () => controller.abort(),
+    ADD_QUEUE_ITEMS_TIMEOUT_MS,
+  );
+  try {
+    return await axios.post(endpoint, payload, {
+      signal: controller.signal,
+      timeout: ADD_QUEUE_ITEMS_TIMEOUT_MS,
+    });
+  } finally {
+    globalThis.clearTimeout(timeoutId);
+  }
+};
+
 export const useAddQueueItems = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ queueId, items, selection, project_id }) =>
-      axios.post(
-        annotationQueueEndpoints.addItems(queueId),
-        selection
-          ? { selection }
-          : { items, ...(project_id ? { project_id } : {}) },
-      ),
+    mutationFn: postAddQueueItems,
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries({
         queryKey: queueItemKeys.all(variables.queueId),
@@ -447,6 +485,26 @@ export const useAddQueueItems = () => {
       });
     },
     onError: (error) => {
+      const semanticCode = error?.response?.data?.code || error?.code;
+      if (semanticCode === "add_items_deadline_exceeded") {
+        enqueueSnackbar(
+          extractErrorMessage(
+            error,
+            "Adding matching items took too long. Nothing was added. Please retry.",
+          ),
+          { variant: "error" },
+        );
+        return;
+      }
+
+      const transportCode = error?.transportCode || error?.code;
+      if (ADD_QUEUE_ITEMS_UNKNOWN_OUTCOME_TRANSPORT_CODES.has(transportCode)) {
+        enqueueSnackbar(
+          "We couldn't confirm whether the items were added. Refresh the queue and check before retrying.",
+          { variant: "error" },
+        );
+        return;
+      }
       // Filter-mode bulk add can exceed the backend cap; surface the
       // structured error so the user sees the exact count and limit.
       const structured = error?.error || error?.response?.data?.error;
@@ -1277,12 +1335,46 @@ export const automationRuleKeys = {
 };
 
 export const useAutomationRules = (queueId, options = {}) => {
-  return useQuery({
-    queryKey: automationRuleKeys.list(queueId),
-    queryFn: () => axios.get(annotationQueueEndpoints.automationRules(queueId)),
-    select: (d) => extractData(d),
-    enabled: !!queueId,
+  const enabled = !!queueId && (options.enabled ?? true);
+  return useInfiniteQuery({
     ...options,
+    queryKey: automationRuleKeys.list(queueId),
+    queryFn: ({ pageParam = 1, signal }) =>
+      readAutomationRulePage(
+        ({ signal: requestSignal, timeout }) =>
+          axios.get(annotationQueueEndpoints.automationRules(queueId), {
+            signal: requestSignal,
+            timeout,
+            params: {
+              page: pageParam,
+              limit: AUTOMATION_RULE_LIST_PAGE_SIZE,
+            },
+          }),
+        signal,
+      ),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) =>
+      lastPage.currentPage < lastPage.totalPages
+        ? lastPage.currentPage + 1
+        : undefined,
+    select: (data) => {
+      const seen = new Set();
+      const results = data.pages.flatMap((page) =>
+        page.results.filter((rule) => {
+          const key = String(rule.id);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }),
+      );
+      const lastPage = data.pages[data.pages.length - 1];
+      return {
+        results,
+        count: lastPage.count,
+      };
+    },
+    enabled,
+    retry: false,
   });
 };
 

@@ -40,6 +40,30 @@ class FieldConfig:
     parent_eval_id: str | None = None
 
 
+def _attach_system_property_identity(
+    config: list[dict], *, definition_source: str, property_source: str = "traces"
+) -> list[dict]:
+    """Stamp list-column definitions with their stable registry identity."""
+
+    # Import locally: this helper is imported while Django app modules are
+    # initializing, whereas the registry itself is deliberately framework-free.
+    from tracer.utils.property_registry import canonical_system_attribute_name
+
+    for item in config:
+        field_id = str(item.get("id") or "")
+        if not field_id:
+            continue
+        if item.get("property_id"):
+            continue
+        canonical_name = canonical_system_attribute_name(definition_source, field_id)
+        item["property_id"] = f"system_attribute:{definition_source}:{canonical_name}"
+        item["property_kind"] = "system_attribute"
+        # The logical namespace remains in the ID while property_source names
+        # the physical value/filter transport (for example spans use traces).
+        item["property_source"] = property_source
+    return config
+
+
 def get_sort_query(sort_by, sort_order="desc"):
     """
     Returns sort query based on sort_by parameter and sort order
@@ -102,10 +126,10 @@ def get_default_trace_config():
     ]
 
     parsed_config = list(map(asdict, config))
-    return parsed_config
+    return _attach_system_property_identity(parsed_config, definition_source="traces")
 
 
-def get_default_span_config():
+def get_default_span_config(*, include_user_fields: bool = False):
     config = [
         FieldConfig(id="span_name", name="Span Name", is_visible=True, group_by=None),
         FieldConfig(id="status", name="Status", is_visible=True, group_by=None),
@@ -131,8 +155,29 @@ def get_default_span_config():
         FieldConfig(id="provider", name="Provider", is_visible=False, group_by=None),
     ]
 
+    if include_user_fields:
+        config.extend(
+            [
+                FieldConfig(
+                    id="user_id", name="User Id", is_visible=True, group_by=None
+                ),
+                FieldConfig(
+                    id="user_id_type",
+                    name="User Id Type",
+                    is_visible=False,
+                    group_by=None,
+                ),
+                FieldConfig(
+                    id="user_id_hash",
+                    name="User Id Hash",
+                    is_visible=False,
+                    group_by=None,
+                ),
+            ]
+        )
+
     parsed_config = list(map(asdict, config))
-    return parsed_config
+    return _attach_system_property_identity(parsed_config, definition_source="spans")
 
 
 def get_default_project_version_config():
@@ -183,7 +228,27 @@ def get_default_project_session_config():
     ]
 
     parsed_config = list(map(asdict, config))
-    return parsed_config
+    return _attach_system_property_identity(
+        parsed_config,
+        definition_source="sessions",
+        property_source="sessions",
+    )
+
+
+def ensure_project_session_property_identities(config: list[dict]) -> list[dict]:
+    """Return a response-safe copy of saved session columns with stable IDs.
+
+    Existing projects may still carry session configs written before registry
+    identities were added. Preserve any explicit non-system identity and stamp
+    only legacy entries that do not have one.
+    """
+
+    copied_config = [dict(item) for item in config]
+    return _attach_system_property_identity(
+        copied_config,
+        definition_source="sessions",
+        property_source="sessions",
+    )
 
 
 def get_default_eval_task_config(is_project_name_visible=True):
@@ -268,9 +333,14 @@ def update_column_config_based_on_eval_config(
     custom_eval_configs: list[CustomEvalConfig],
     skip_choices: bool | None = False,
     is_simulator: bool = False,
+    property_source: str | None = None,
 ):
     if not column_config:
         column_config = []
+
+    resolved_property_source = property_source or (
+        "simulation" if is_simulator else "traces"
+    )
 
     for item in custom_eval_configs:
         eval_template_config = item.eval_template.config or {}
@@ -298,6 +368,13 @@ def update_column_config_based_on_eval_config(
                     eval_template_id=eval_template_id,
                 )
                 present_config = asdict(present_config)
+                present_config.update(
+                    {
+                        "property_id": f"eval_config:{item.id}",
+                        "property_kind": "eval_config",
+                        "property_source": resolved_property_source,
+                    }
+                )
                 if not any(
                     config["id"] == present_config["id"] for config in column_config
                 ):
@@ -315,6 +392,13 @@ def update_column_config_based_on_eval_config(
                 eval_template_id=eval_template_id,
             )
             present_config = asdict(present_config)
+            present_config.update(
+                {
+                    "property_id": f"eval_config:{item.id}",
+                    "property_kind": "eval_config",
+                    "property_source": resolved_property_source,
+                }
+            )
             if not any(
                 config["id"] == present_config["id"] for config in column_config
             ):
@@ -646,6 +730,7 @@ def get_annotation_labels_by_project(
     """
 
     from django.db.models import Q
+
     from tracer.services.annotation_label_source import AnnotationLabelScoresProjectPG
 
     normalized = tuple(dict.fromkeys(str(value) for value in project_ids if value))
@@ -742,6 +827,13 @@ def update_span_column_config_based_on_annotations(
             annotators=label_annotators_map.get(str(label.id)),
         )
         present_config = asdict(present_config)
+        present_config.update(
+            {
+                "property_id": f"annotation:{label.id}",
+                "property_kind": "annotation",
+                "property_source": "traces",
+            }
+        )
         if not any(config["id"] == present_config["id"] for config in column_config):
             column_config.append(present_config)
 
@@ -772,6 +864,13 @@ def update_run_column_config_based_on_annotations(
                     settings=label.settings,
                 )
                 present_config = asdict(present_config)
+                present_config.update(
+                    {
+                        "property_id": f"annotation:{label.id}",
+                        "property_kind": "annotation",
+                        "property_source": "traces",
+                    }
+                )
                 if not any(
                     config["id"] == present_config["id"] for config in column_config
                 ):
@@ -787,6 +886,13 @@ def update_run_column_config_based_on_annotations(
                 settings=label.settings,
             )
             present_config = asdict(present_config)
+            present_config.update(
+                {
+                    "property_id": f"annotation:{label.id}",
+                    "property_kind": "annotation",
+                    "property_source": "traces",
+                }
+            )
             if not any(
                 config["id"] == present_config["id"] for config in column_config
             ):

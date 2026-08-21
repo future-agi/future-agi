@@ -541,6 +541,8 @@ describe("OpenAPI runtime contract", () => {
             metrics: [
               {
                 name: "eval-template-id",
+                property_id: "eval_template:eval-template-id",
+                property_kind: "eval_template",
                 display_name: "Choices eval",
                 category: "eval_metric",
                 source: "all",

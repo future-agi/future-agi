@@ -184,22 +184,12 @@ const TraceGrid = React.forwardRef(
         enabled,
       ],
     );
-    const previousFilterRequestKeyRef = useRef(filterRequestKey);
-
-    useEffect(() => {
-      if (previousFilterRequestKeyRef.current === filterRequestKey) return;
-      previousFilterRequestKeyRef.current = filterRequestKey;
-      setGridLoading(enabled);
-      prefetchCache.current.clear();
-      cursorPagination.current.reset();
-      refreshGrid(true);
-    }, [enabled, filterRequestKey, refreshGrid]);
-
     // Listen for refresh events from the header reload button
     useEffect(() => {
       // A same-query manual refresh keeps the last exact rows visible until
-      // their replacement is complete. Filter/range changes still purge so
-      // rows from a different query are never presented as current.
+      // their replacement is complete. Filter/range changes replace the
+      // datasource so rows from a different query are never presented as
+      // current.
       const handler = () => refreshGrid(false);
       window.addEventListener("observe-refresh", handler);
       return () => window.removeEventListener("observe-refresh", handler);
@@ -220,10 +210,6 @@ const TraceGrid = React.forwardRef(
       return () =>
         window.removeEventListener("observe-reset-selection", handler);
     }, [gridRef]);
-
-    useEffect(() => {
-      gridRef?.current?.api?.hideOverlay?.();
-    }, [filters, extraFilters, hasEvalFilter, metricFilters, gridRef]);
 
     const defaultColDef = useMemo(
       () => ({
@@ -287,7 +273,6 @@ const TraceGrid = React.forwardRef(
             let continuationPending = false;
             try {
               setLoading(true);
-              params.api?.hideOverlay();
               const { request } = params;
               requestGeneration = cursorPagination.current.generation();
 
@@ -501,9 +486,15 @@ const TraceGrid = React.forwardRef(
               if (
                 !continuationPending &&
                 firstPageRequestId !== null &&
-                firstPageRequestId === firstPageRequestRef.current &&
-                cursorPagination.current.isCurrent(requestGeneration)
+                firstPageRequestId === firstPageRequestRef.current
               ) {
+                // Loading ownership follows the newest first-page request, not
+                // the cursor generation. A datasource/filter transition may
+                // invalidate this request before AG Grid starts its replacement;
+                // keeping the old generation guard leaves the controlled overlay
+                // stuck forever. A replacement getRows call increments the id and
+                // sets loading again, so an older request cannot settle a newer
+                // in-flight page.
                 setGridLoading(false);
               }
               if (!continuationPending) setLoading(false);
@@ -686,8 +677,11 @@ const TraceGrid = React.forwardRef(
         validatedSteps[currentStep - 1]
       );
     }, [openReplaySessionDrawer, currentStep, validatedSteps]);
-    const isGridReadPending =
-      gridLoading || previousFilterRequestKeyRef.current !== filterRequestKey;
+    // Controlled loading starts only when AG Grid actually asks this
+    // datasource for page zero. URL/config hydration can replace a datasource
+    // before AG Grid starts its request; deriving loading from the request key
+    // leaves the overlay stuck when no replacement call follows.
+    const isGridReadPending = gridLoading;
 
     return (
       <Box

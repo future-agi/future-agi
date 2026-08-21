@@ -22,14 +22,26 @@ from tracer.services.clickhouse.server_readonly import (
 logger = structlog.get_logger(__name__)
 
 _TOO_MANY_SIMULTANEOUS_QUERIES_CODE = 202
-_READ_ADMISSION_RETRY_DELAYS_SECONDS = (0.025, 0.075, 0.150)
-_APPLICATION_READ_TIMEOUT_MS = 9_500
-_APPLICATION_READ_MAX_MEMORY_USAGE = 36 * 1024 * 1024 * 1024
-_APPLICATION_READ_MAX_BYTES_TO_READ = 36 * 1024 * 1024 * 1024
-_APPLICATION_READ_DEFAULT_THREADS = 4
-_APPLICATION_READ_MAX_THREADS = 8
-_APPLICATION_READ_MAX_RESULT_ROWS = 1_000_000
-_APPLICATION_READ_MAX_RESULT_BYTES = 512 * 1024 * 1024
+_READ_ADMISSION_RETRY_DELAYS_SECONDS = tuple(
+    delay_ms / 1_000
+    for delay_ms in (
+        settings.CLICKHOUSE_READ_ADMISSION_RETRY_FIRST_MS,
+        settings.CLICKHOUSE_READ_ADMISSION_RETRY_SECOND_MS,
+        settings.CLICKHOUSE_READ_ADMISSION_RETRY_THIRD_MS,
+    )
+)
+_APPLICATION_READ_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+_REVIEWED_READ_TIMEOUT_CEILING_MS = settings.CLICKHOUSE_REVIEWED_READ_TIMEOUT_CEILING_MS
+_APPLICATION_READ_MAX_MEMORY_USAGE = (
+    settings.CLICKHOUSE_APPLICATION_READ_MAX_MEMORY_BYTES
+)
+_APPLICATION_READ_MAX_BYTES_TO_READ = settings.CLICKHOUSE_APPLICATION_READ_MAX_BYTES
+_APPLICATION_READ_DEFAULT_THREADS = settings.CLICKHOUSE_APPLICATION_READ_DEFAULT_THREADS
+_APPLICATION_READ_MAX_THREADS = settings.CLICKHOUSE_APPLICATION_READ_MAX_THREADS
+_APPLICATION_READ_MAX_RESULT_ROWS = settings.CLICKHOUSE_APPLICATION_READ_MAX_RESULT_ROWS
+_APPLICATION_READ_MAX_RESULT_BYTES = (
+    settings.CLICKHOUSE_APPLICATION_READ_MAX_RESULT_BYTES
+)
 
 # Try to import clickhouse-driver, gracefully handle if not installed
 try:
@@ -43,12 +55,23 @@ except ImportError:
     CLICKHOUSE_AVAILABLE = False
 
 
-def _bounded_read_timeout_ms(timeout_ms: int | None) -> int:
+def _bounded_read_timeout_ms(
+    timeout_ms: int | None,
+    *,
+    ceiling_ms: int = _APPLICATION_READ_TIMEOUT_MS,
+) -> int:
+    if type(ceiling_ms) is not int or not (
+        1 <= ceiling_ms <= _REVIEWED_READ_TIMEOUT_CEILING_MS
+    ):
+        raise ValueError(
+            "ClickHouse read timeout ceiling is outside [1, "
+            f"{_REVIEWED_READ_TIMEOUT_CEILING_MS}] ms"
+        )
     return max(
         1,
         min(
-            int(_APPLICATION_READ_TIMEOUT_MS if timeout_ms is None else timeout_ms),
-            _APPLICATION_READ_TIMEOUT_MS,
+            int(ceiling_ms if timeout_ms is None else timeout_ms),
+            ceiling_ms,
         ),
     )
 
@@ -253,6 +276,7 @@ class ClickHouseClient:
         send_timeout: float | None = None,
         receive_timeout: float | None = None,
         pool_size: int | None = None,
+        read_timeout_ceiling_ms: int | None = None,
     ):
         """
         Initialize ClickHouse client with connection settings.
@@ -292,6 +316,11 @@ class ClickHouseClient:
             if receive_timeout is None
             else float(receive_timeout)
         )
+        self.read_timeout_ceiling_ms = (
+            _APPLICATION_READ_TIMEOUT_MS
+            if read_timeout_ceiling_ms is None
+            else read_timeout_ceiling_ms
+        )
 
         # Thread-safe connection pool
         self._pool_size = int(
@@ -304,6 +333,10 @@ class ClickHouseClient:
             or self._pool_size <= 0
         ):
             raise ValueError("ClickHouse transport bounds must be positive")
+        _bounded_read_timeout_ms(
+            self.read_timeout_ceiling_ms,
+            ceiling_ms=self.read_timeout_ceiling_ms,
+        )
         self._pool: queue.Queue = queue.Queue(maxsize=self._pool_size)
         self._pool_lock = threading.Lock()
         self._pool_initialized = False
@@ -535,7 +568,10 @@ class ClickHouseClient:
             Tuple of (rows, column_types, query_time_ms), optionally followed
             by native read_rows and read_bytes progress.
         """
-        timeout_ms = _bounded_read_timeout_ms(timeout_ms)
+        timeout_ms = _bounded_read_timeout_ms(
+            timeout_ms,
+            ceiling_ms=self.read_timeout_ceiling_ms,
+        )
         query_settings: dict[str, Any] | None
         if self.server_enforced_readonly:
             # A ClickHouse profile locked at readonly=1 rejects *all* client
@@ -806,7 +842,10 @@ class ClickHouseClient:
             self,
             query,
             params or {},
-            timeout_ms=_bounded_read_timeout_ms(timeout_ms),
+            timeout_ms=_bounded_read_timeout_ms(
+                timeout_ms,
+                ceiling_ms=self.read_timeout_ceiling_ms,
+            ),
             block_size=block_size,
         )
 

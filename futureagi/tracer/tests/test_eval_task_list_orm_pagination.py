@@ -52,6 +52,29 @@ def _list_params(path, project, **overrides):
     return params
 
 
+def _assert_bounded_compatibility_task_reads(captured):
+    """Prove compatibility filtering preflights JSON before row hydration."""
+
+    task_reads = [
+        query["sql"]
+        for query in captured.captured_queries
+        if 'FROM "tracer_eval_task"' in query["sql"]
+    ]
+    assert len(task_reads) == 2
+    assert all("COUNT(*)" not in statement for statement in task_reads)
+
+    preflight_reads = [
+        statement for statement in task_reads if "_compat_filter_chars" in statement
+    ]
+    assert len(preflight_reads) == 1
+    assert "LIMIT" in preflight_reads[0]
+
+    hydration_reads = [
+        statement for statement in task_reads if "_compat_filter_chars" not in statement
+    ]
+    assert len(hydration_reads) == 1
+
+
 @pytest.mark.integration
 @pytest.mark.api
 @pytest.mark.parametrize(
@@ -247,14 +270,8 @@ def test_unicode_text_filters_keep_filter_engine_semantics(
     assert data["metadata"]["total_rows"] == 1
     assert [row["name"] for row in data["table"]] == [composed]
 
-    task_reads = [
-        query["sql"]
-        for query in captured.captured_queries
-        if 'FROM "tracer_eval_task"' in query["sql"]
-    ]
-    assert len(task_reads) == 1
-    assert "COUNT(*)" not in task_reads[0]
-    assert "UPPER(" not in task_reads[0]
+    _assert_bounded_compatibility_task_reads(captured)
+    assert all("UPPER(" not in query["sql"] for query in captured.captured_queries)
 
 
 @pytest.mark.integration
@@ -293,14 +310,14 @@ def test_unicode_text_sort_keeps_python_ordering(
     assert data["metadata"]["total_rows"] == len(names)
     assert [row["name"] for row in data["table"]] == sorted(names)
 
-    task_reads = [
+    _assert_bounded_compatibility_task_reads(captured)
+    hydration_read = next(
         query["sql"]
         for query in captured.captured_queries
         if 'FROM "tracer_eval_task"' in query["sql"]
-    ]
-    assert len(task_reads) == 1
-    assert "COUNT(*)" not in task_reads[0]
-    order_by = task_reads[0].rpartition("ORDER BY")[2]
+        and "_compat_filter_chars" not in query["sql"]
+    )
+    order_by = hydration_read.rpartition("ORDER BY")[2]
     assert '"tracer_eval_task"."name"' not in order_by
 
 

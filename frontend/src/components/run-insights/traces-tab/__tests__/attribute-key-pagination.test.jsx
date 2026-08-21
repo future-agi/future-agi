@@ -15,7 +15,7 @@ vi.mock("src/utils/axios", () => ({
   },
 }));
 
-import { useRunInsightAttributeKeys } from "../useRunInsightAttributeKeys";
+import { useLegacyRunInsightAttributeKeys as useRunInsightAttributeKeys } from "../useRunInsightAttributeKeys";
 import { generateTraceFilterDefinition } from "../common";
 
 function createWrapper() {

@@ -1,6 +1,12 @@
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import axios, { endpoints } from "src/utils/axios";
+import { useCursorAttributeInventory } from "src/sections/projects/LLMTracing/useCursorAttributeInventory";
+import {
+  PROPERTY_CATALOG_CACHE_TIME_MS,
+  PROPERTY_CATALOG_PAGE_SIZE,
+  PROPERTY_CATALOG_STALE_TIME_MS,
+} from "src/config/runtime_limits";
 import {
   ATTRIBUTE_KEY_REQUEST_TIMEOUT_MS,
   compactAttributeKeyRetryPage,
@@ -9,7 +15,8 @@ import {
   readAttributeKeyPage,
 } from "src/sections/projects/LLMTracing/attributeKeyCursorPagination";
 
-export const useRunInsightAttributeKeys = (projectId) => {
+/** Rollout-only retained span-key adapter kept for compatibility coverage. */
+export const useLegacyRunInsightAttributeKeys = (projectId) => {
   const queryClient = useQueryClient();
   const queryKey = ["run-insights-span-attribute-keys", projectId];
   const queryIdentity = JSON.stringify(queryKey);
@@ -22,7 +29,7 @@ export const useRunInsightAttributeKeys = (projectId) => {
         timeout: ATTRIBUTE_KEY_REQUEST_TIMEOUT_MS,
         params: {
           project_id: projectId,
-          page_size: 50,
+          page_size: PROPERTY_CATALOG_PAGE_SIZE,
           ...(cursor ? { cursor } : {}),
         },
       })
@@ -32,7 +39,7 @@ export const useRunInsightAttributeKeys = (projectId) => {
     queryFn: ({ signal, pageParam }) =>
       readAttributeKeyPage({
         pageParam,
-        pageSize: 50,
+        pageSize: PROPERTY_CATALOG_PAGE_SIZE,
         publishedData: queryClient.getQueryData(queryKey),
         signal,
         requestPage: (cursor, requestSignal = signal) =>
@@ -42,8 +49,8 @@ export const useRunInsightAttributeKeys = (projectId) => {
     getNextPageParam: getNextAttributeKeyPageParam,
     enabled: Boolean(projectId),
     retry: false,
-    staleTime: 60_000,
-    gcTime: 5 * 60_000,
+    staleTime: PROPERTY_CATALOG_STALE_TIME_MS,
+    gcTime: PROPERTY_CATALOG_CACHE_TIME_MS,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
     refetchOnReconnect: false,
@@ -73,7 +80,7 @@ export const useRunInsightAttributeKeys = (projectId) => {
       const previousData = queryClient.getQueryData(queryKey);
       const freshPage = await readAttributeKeyPage({
         pageParam: null,
-        pageSize: 50,
+        pageSize: PROPERTY_CATALOG_PAGE_SIZE,
         publishedData: undefined,
         signal: controller.signal,
         requestPage: (cursor, signal = controller.signal) =>
@@ -123,5 +130,23 @@ export const useRunInsightAttributeKeys = (projectId) => {
     cursorChainStopped,
     retryCursorChain,
     isRetryingCursorChain: freshChainRetrying,
+  };
+};
+
+export const useRunInsightAttributeKeys = (projectId) => {
+  const inventory = useCursorAttributeInventory({
+    projectId,
+    rowType: "spans",
+    discoveryMode: "filter",
+    enabled: Boolean(projectId),
+    pageSize: PROPERTY_CATALOG_PAGE_SIZE,
+  });
+
+  return {
+    ...inventory,
+    attributeKeys: inventory.rawAttributes,
+    cursorChainStopped: inventory.cursorRetryExhausted,
+    retryCursorChain: inventory.inventoryControlProps.onRetry,
+    isRetryingCursorChain: inventory.isFetchingNextPage,
   };
 };

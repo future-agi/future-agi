@@ -1,8 +1,34 @@
 import { describe, expect, it } from "vitest";
 
 import { getNewTaskFilters, NewTaskValidationSchema } from "../validation";
+import { formatTaskFilters } from "../../common";
 
 describe("eval task filter payload contract", () => {
+  it("hydrates property_id into registryId without replacing propertyId", () => {
+    expect(
+      formatTaskFilters({
+        filters: [
+          {
+            column_id: "model",
+            property_id: "custom_attribute:model",
+            filter_config: {
+              col_type: "SPAN_ATTRIBUTE",
+              filter_type: "text",
+              filter_op: "equals",
+              filter_value: "tenant-model",
+            },
+          },
+        ],
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        property: "attributes",
+        propertyId: "model",
+        registryId: "custom_attribute:model",
+      }),
+    ]);
+  });
+
   it("maps task panel span kind to the backend observation_type key", () => {
     const { filters } = getNewTaskFilters(
       {
@@ -37,6 +63,7 @@ describe("eval task filter payload contract", () => {
           {
             property: "attributes",
             propertyId: "customer_tier",
+            registryId: "custom_attribute:customer_tier",
             filterConfig: {
               filterType: "text",
               filterOp: "in",
@@ -52,6 +79,7 @@ describe("eval task filter payload contract", () => {
     expect(attributeFilters).toEqual([
       {
         column_id: "customer_tier",
+        property_id: "custom_attribute:customer_tier",
         filter_config: {
           col_type: "SPAN_ATTRIBUTE",
           filter_type: "text",
@@ -134,6 +162,7 @@ describe("eval task filter payload contract", () => {
         {
           property: "attributes",
           propertyId: "attempt",
+          property_id: "custom_attribute:attempt",
           apiColType: "SPAN_ATTRIBUTE",
           filterConfig: {
             filterType: "text",
@@ -148,6 +177,7 @@ describe("eval task filter payload contract", () => {
     expect(result.filters.filters).toEqual([
       {
         column_id: "attempt",
+        property_id: "custom_attribute:attempt",
         filter_config: {
           filter_type: "text",
           filter_op: "in",
@@ -328,7 +358,7 @@ describe("eval task filter payload contract", () => {
     ]);
   });
 
-  it("emits an empty-string filter_value for null-ops", () => {
+  it("emits the canonical null filter_value for null-ops", () => {
     const { attributeFilters } = getNewTaskFilters(
       {
         runType: "continuous",
@@ -345,6 +375,6 @@ describe("eval task filter payload contract", () => {
     );
 
     expect(attributeFilters[0].filter_config.filter_op).toBe("is_null");
-    expect(attributeFilters[0].filter_config.filter_value).toBe("");
+    expect(attributeFilters[0].filter_config.filter_value).toBeNull();
   });
 });

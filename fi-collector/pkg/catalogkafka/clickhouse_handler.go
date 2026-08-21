@@ -250,17 +250,18 @@ func (h *ClickHouseDeliveryHandler) deliverEnvelope(
 
 func decodeDeliveryChunks(ctx context.Context, snapshot EnvelopeSnapshot) ([]decodedCatalogChunk, error) {
 	chunks := make([]decodedCatalogChunk, 0, len(snapshot.Payload.Chunks))
+	var sourceKindShape *bool
 	for _, chunk := range snapshot.Payload.Chunks {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		var table catalogwriter.Table
-		var columns map[string]struct{}
+		var columns, legacyColumns map[string]struct{}
 		switch chunk.Table {
 		case KeyTable:
-			table, columns = catalogwriter.KeyTable, keyWireColumns
+			table, columns, legacyColumns = catalogwriter.KeyTable, keyWireColumns, legacyKeyWireColumns
 		case ValueTable:
-			table, columns = catalogwriter.ValueTable, valueWireColumns
+			table, columns, legacyColumns = catalogwriter.ValueTable, valueWireColumns, legacyValueWireColumns
 		default:
 			return nil, fmt.Errorf("catalogkafka: delivery chunk %d targets forbidden table %q", chunk.Index, chunk.Table)
 		}
@@ -269,9 +270,21 @@ func decodeDeliveryChunks(ctx context.Context, snapshot EnvelopeSnapshot) ([]dec
 			return nil, fmt.Errorf("catalogkafka: decode delivery chunk %d: %w", chunk.Index, err)
 		}
 		for rowIndex, row := range rows {
-			if err := validateDecodedCatalogRow(row, columns, snapshot.ProjectID, snapshot.CatalogEpoch); err != nil {
+			withSourceKind, validationErr := validateDecodedCatalogRow(
+				row, columns, legacyColumns, snapshot.ProjectID, snapshot.CatalogEpoch,
+			)
+			if validationErr != nil {
 				return nil, fmt.Errorf(
-					"catalogkafka: delivery chunk %d row %d: %w", chunk.Index, rowIndex, err,
+					"catalogkafka: delivery chunk %d row %d: %w", chunk.Index, rowIndex, validationErr,
+				)
+			}
+			if sourceKindShape == nil {
+				shape := withSourceKind
+				sourceKindShape = &shape
+			} else if *sourceKindShape != withSourceKind {
+				return nil, fmt.Errorf(
+					"catalogkafka: delivery chunk %d row %d mixes legacy and source-kind row shapes",
+					chunk.Index, rowIndex,
 				)
 			}
 		}
@@ -313,32 +326,33 @@ func decodeJSONEachRows(
 }
 
 func validateDecodedCatalogRow(
-	row map[string]any, columns map[string]struct{}, projectID string, epoch uint16,
-) error {
-	if len(row) != len(columns) {
-		return fmt.Errorf("row has %d columns, require exactly %d", len(row), len(columns))
+	row map[string]any,
+	columns map[string]struct{},
+	legacyColumns map[string]struct{},
+	projectID string,
+	epoch uint16,
+) (bool, error) {
+	withSourceKind, ok := exactWireColumnShape(row, columns, legacyColumns)
+	if !ok {
+		return false, errors.New("row does not have an exact legacy or source-kind catalog shape")
 	}
-	for column := range row {
-		if _, exists := columns[column]; !exists {
-			return fmt.Errorf("row contains forbidden column %q", column)
-		}
-	}
-	for column := range columns {
-		if _, exists := row[column]; !exists {
-			return fmt.Errorf("row omits required column %q", column)
+	if withSourceKind {
+		sourceKind, ok := row["source_kind"].(string)
+		if !ok || (sourceKind != "custom_attribute" && sourceKind != "system_attribute") {
+			return false, errors.New("row source_kind is unsupported")
 		}
 	}
 	rowProject, ok := row["project_id"].(string)
 	if !ok || rowProject != projectID {
-		return errors.New("row project does not match envelope project")
+		return false, errors.New("row project does not match envelope project")
 	}
 	rowEpoch, ok := row["catalog_epoch"].(json.Number)
 	if !ok {
-		return errors.New("row epoch is not an integer JSON number")
+		return false, errors.New("row epoch is not an integer JSON number")
 	}
 	parsedEpoch, err := strconv.ParseUint(string(rowEpoch), 10, 16)
 	if err != nil || uint16(parsedEpoch) != epoch {
-		return errors.New("row epoch does not match envelope epoch")
+		return false, errors.New("row epoch does not match envelope epoch")
 	}
-	return nil
+	return withSourceKind, nil
 }

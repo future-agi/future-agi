@@ -2,23 +2,252 @@
 
 HTTP-free layer between the request boundary and the response: assembles the
 unified list of system / eval / annotation / custom-attribute / custom-column
-metrics for a workspace, wraps the assembly in a short-TTL cache so
-search-bar keystrokes on the frontend don't re-scan ClickHouse per
-keystroke (TH-6519). ``DashboardViewSet.metrics`` keeps only auth, param
-extraction, filter/paginate, and response building.
+metrics for a workspace, and uses a short-TTL process-local cache when one is
+configured. ``DashboardViewSet.metrics`` keeps only auth, param extraction,
+filter/paginate, and response building.
 """
 
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable
+from concurrent.futures import (
+    ThreadPoolExecutor,
+)
+from concurrent.futures import (
+    TimeoutError as FutureTimeoutError,
+)
+from contextlib import nullcontext
+from dataclasses import dataclass
 
 import structlog
-from django.core.cache import cache
+from django.conf import settings
+from django.core.cache import cache, caches
+from django.core.cache.backends.locmem import LocMemCache
+from django.db import DatabaseError, connection, transaction
 
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project, ProjectSourceChoices
 from tracer.services.annotation_label_source import AnnotationLabelScoresProjectPG
+from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
 
 logger = structlog.get_logger(__name__)
+
+
+METRICS_CATALOG_TIMEOUT_MS = settings.INTERACTIVE_READ_DEFAULT_WALL_MS
+METRICS_CATALOG_EVAL_USAGE_QUERY_TIMEOUT_MS = (
+    settings.DASHBOARD_METRICS_EVAL_USAGE_QUERY_TIMEOUT_MS
+)
+METRICS_CATALOG_EVAL_USAGE_LOOKBACK_DAYS = (
+    settings.DASHBOARD_METRICS_EVAL_USAGE_LOOKBACK_DAYS
+)
+
+
+class MetricsCatalogUnavailable(RuntimeError):
+    """A requested catalog family could not be read completely."""
+
+    def __init__(self, family: str):
+        super().__init__(f"dashboard metrics catalog family unavailable: {family}")
+        self.family = family
+
+
+@dataclass(frozen=True)
+class _CatalogPageFamily:
+    """One already-ordered, independently countable catalog segment.
+
+    Families are arranged in the same order as ``_metric_catalog_sort_key``.
+    ``count_rows`` must not materialize row payloads and ``read_rows`` must
+    apply the requested database offset/limit before evaluation.
+    """
+
+    name: str
+    count_rows: Callable[[], int]
+    read_rows: Callable[[int, int], list[dict]]
+
+
+def _execute_metrics_catalog_pg_query_with_deadline(
+    deadline: ReadDeadline,
+    execute,
+    sql,
+    params,
+    many,
+    context,
+):
+    """Shrink PostgreSQL's timeout before every catalog SQL statement."""
+
+    remaining_ms = deadline.remaining_ms(floor_ms=1)
+    # Bypass Django's wrapper stack for the control statement so this helper
+    # does not recursively wrap its own timeout-control query.
+    context["cursor"].cursor.execute(
+        "SELECT set_config('statement_timeout', %s, true)",
+        (str(remaining_ms),),
+    )
+    result = execute(sql, params, many, context)
+    deadline.remaining_ms(floor_ms=1)
+    return result
+
+
+def _run_metrics_catalog_pg_read(deadline: ReadDeadline, family: str, read):
+    """Materialize one PostgreSQL phase inside the request-owned deadline."""
+
+    deadline.remaining_ms(METRICS_CATALOG_TIMEOUT_MS)
+    if connection.vendor != "postgresql":
+        try:
+            result = read()
+            deadline.remaining_ms(floor_ms=1)
+            return result
+        except ReadDeadlineExceeded:
+            raise
+        except MetricsCatalogUnavailable:
+            raise
+        except Exception as exc:
+            raise MetricsCatalogUnavailable(family) from exc
+
+    already_in_atomic_block = connection.in_atomic_block
+    transaction_context = (
+        nullcontext() if already_in_atomic_block else transaction.atomic()
+    )
+
+    def execute_with_remaining_timeout(execute, sql, params, many, context):
+        return _execute_metrics_catalog_pg_query_with_deadline(
+            deadline,
+            execute,
+            sql,
+            params,
+            many,
+            context,
+        )
+
+    try:
+        with transaction_context:
+            with connection.execute_wrapper(execute_with_remaining_timeout):
+                if not already_in_atomic_block:
+                    with connection.cursor() as cursor:
+                        cursor.execute("SET TRANSACTION READ ONLY")
+                result = read()
+                deadline.remaining_ms(floor_ms=1)
+        deadline.remaining_ms(floor_ms=1)
+        return result
+    except ReadDeadlineExceeded:
+        raise
+    except MetricsCatalogUnavailable:
+        raise
+    except DatabaseError as exc:
+        raise MetricsCatalogUnavailable(family) from exc
+    except Exception as exc:
+        raise MetricsCatalogUnavailable(family) from exc
+
+
+def _run_metrics_catalog_pg_snapshot(deadline: ReadDeadline, read):
+    """Keep definition-family counts and slices on one stable PG snapshot."""
+
+    deadline.remaining_ms(METRICS_CATALOG_TIMEOUT_MS)
+    if connection.vendor != "postgresql" or connection.in_atomic_block:
+        result = read()
+        deadline.remaining_ms(floor_ms=1)
+        return result
+
+    try:
+        with transaction.atomic():
+            # This must be the transaction's first statement. Individual
+            # family reads subsequently install the shrinking statement wall.
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+                )
+            result = read()
+            deadline.remaining_ms(floor_ms=1)
+        deadline.remaining_ms(floor_ms=1)
+        return result
+    except (MetricsCatalogUnavailable, ReadDeadlineExceeded):
+        raise
+    except DatabaseError as exc:
+        raise MetricsCatalogUnavailable("catalog_page") from exc
+    except Exception as exc:
+        raise MetricsCatalogUnavailable("catalog_page") from exc
+
+
+def _can_use_metrics_catalog_cache() -> bool:
+    """Only use the non-blocking, process-local cache on this request path.
+
+    Production's remote cache can spend an unbounded socket wait outside the
+    PostgreSQL statement deadline. Skipping it preserves the single 8.5-second
+    interactive wall; the catalog remains correct and cache failure is
+    intentionally degradable. Cache I/O is also skipped when a caller already
+    owns a database transaction so no cache wait can hold that transaction.
+    """
+
+    try:
+        return not connection.in_atomic_block and isinstance(
+            caches["default"], LocMemCache
+        )
+    except Exception:
+        logger.warning("metrics_catalog_cache_backend_check_failed", exc_info=True)
+        return False
+
+
+def _metric_matches_scope(metric: dict, *, category: str, source: str) -> bool:
+    if category and metric.get("category") != category:
+        return False
+    if not source:
+        return True
+    return metric.get("source") == source or source in (metric.get("sources") or ())
+
+
+_METRIC_CATEGORY_ORDER = {
+    "system_metric": 0,
+    "eval_metric": 1,
+    "annotation_metric": 2,
+    "custom_attribute": 3,
+    "custom_column": 4,
+}
+
+
+def _metric_catalog_sort_key(metric: dict) -> tuple:
+    return (
+        _METRIC_CATEGORY_ORDER.get(str(metric.get("category") or ""), 99),
+        str(metric.get("source") or ""),
+        str(metric.get("display_name") or metric.get("name") or "").casefold(),
+        str(metric.get("name") or ""),
+        str(metric.get("property_id") or ""),
+    )
+
+
+_PROPERTY_KIND_BY_CATEGORY = {
+    "system_metric": "system_attribute",
+    "custom_attribute": "custom_attribute",
+    # The default dashboard catalog is template-based. Per-project Observe
+    # discovery overrides this with eval_config below.
+    "eval_metric": "eval_template",
+    "annotation_metric": "annotation",
+    "custom_column": "dataset_column",
+}
+
+
+def _annotate_property_registry_identity(metrics: list[dict]) -> list[dict]:
+    """Attach the stable logical identity shared by every property consumer.
+
+    The legacy ``name``/``category`` pair remains the native filter compiler
+    contract.  ``property_id`` prevents a system property and a customer
+    attribute with the same display key (for example ``model``) from being
+    treated as the same definition by pickers, saved-value hydration, AI
+    grounding, or dashboard/widget builders.
+    """
+
+    for metric in metrics:
+        category = str(metric.get("category") or "")
+        property_kind = metric.pop(
+            "_property_kind", None
+        ) or _PROPERTY_KIND_BY_CATEGORY.get(category)
+        name = str(metric.get("name") or "")
+        if not property_kind or not name:
+            continue
+        if property_kind == "system_attribute":
+            namespace = str(metric.get("source") or "all")
+            property_id = f"{property_kind}:{namespace}:{name}"
+        else:
+            property_id = f"{property_kind}:{name}"
+        metric["property_id"] = property_id
+        metric["property_kind"] = property_kind
+    return metrics
 
 
 def _customer_attribute_metric_aliases():
@@ -66,7 +295,103 @@ def _normalize_eval_output_type(template_config):
     )
 
 
-def build_eval_metric_entries(eval_templates, project_ids, workspace, per_eval_config):
+def _eval_template_metric_entry(template: dict) -> dict:
+    output_type = _normalize_eval_output_type(template.get("config") or {})
+    entry = {
+        "name": str(template["id"]),
+        "display_name": template["name"],
+        "category": "eval_metric",
+        "source": "all",
+        "sources": ["all"],
+        "output_type": output_type,
+        "_property_kind": "eval_template",
+    }
+    choices = template.get("choices") or []
+    if output_type in ("CHOICE", "CHOICES") and choices:
+        entry["choices"] = choices
+    elif output_type == "PASS_FAIL":
+        entry["choices"] = ["Passed", "Failed"]
+    return entry
+
+
+def _eval_config_metric_entry(config: dict, *, source: str = "all") -> dict:
+    template_config = config.get("eval_template__config") or {}
+    output_type = _normalize_eval_output_type(template_config)
+    entry = {
+        "name": str(config["id"]),
+        "display_name": config.get("_catalog_display_name")
+        or config.get("name")
+        or config.get("eval_template__name")
+        or "",
+        "category": "eval_metric",
+        "source": source,
+        "sources": [source],
+        "output_type": output_type,
+        "eval_template_id": str(config["eval_template_id"]),
+        "_property_kind": "eval_config",
+    }
+    choices = config.get("eval_template__choices") or []
+    if output_type in ("CHOICE", "CHOICES") and choices:
+        entry["choices"] = choices
+    elif output_type == "PASS_FAIL":
+        entry["choices"] = ["Passed", "Failed"]
+    return entry
+
+
+def _annotation_label_metric_entry(annotation_label: dict) -> dict:
+    label_type = annotation_label.get("type", "numeric")
+    label_settings = annotation_label.get("settings") or {}
+    metric_entry = {
+        "name": str(annotation_label["id"]),
+        "display_name": annotation_label["name"],
+        "category": "annotation_metric",
+        "source": "both",
+        "sources": ["datasets", "traces"],
+        "output_type": label_type,
+    }
+    if label_type == "categorical":
+        legacy_choices = []
+        choice_options = []
+        for option in label_settings.get("options", []):
+            if not isinstance(option, dict):
+                continue
+            raw_value = option.get("value")
+            if raw_value in (None, ""):
+                raw_value = option.get("label") or option.get("name")
+            if raw_value in (None, ""):
+                continue
+            raw_label = option.get("label") or option.get("name")
+            label = str(raw_label if raw_label not in (None, "") else raw_value)
+            if raw_label not in (None, ""):
+                legacy_choices.append(label)
+            choice_options.append({"value": raw_value, "label": label})
+        metric_entry["choices"] = legacy_choices
+        metric_entry["choice_options"] = choice_options
+    elif label_type == "thumbs_up_down":
+        metric_entry["choices"] = ["Thumbs Up", "Thumbs Down"]
+    return metric_entry
+
+
+def _custom_column_metric_entry(column: dict) -> dict:
+    return {
+        "name": str(column["id"]),
+        "display_name": column["name"],
+        "category": "custom_column",
+        "source": "datasets",
+        "type": "number" if column["data_type"] != "boolean" else "boolean",
+        "data_type": column["data_type"],
+    }
+
+
+def build_eval_metric_entries(
+    eval_templates,
+    project_ids,
+    workspace,
+    per_eval_config,
+    *,
+    deadline: ReadDeadline,
+    filter_by_project: bool = False,
+):
     """Build eval metric entries per template or per configured eval."""
     entries = []
 
@@ -74,52 +399,45 @@ def build_eval_metric_entries(eval_templates, project_ids, workspace, per_eval_c
         eval_cfg_qs = CustomEvalConfig.objects.filter(deleted=False).select_related(
             "eval_template"
         )
-        if project_ids:
+        if filter_by_project:
             eval_cfg_qs = eval_cfg_qs.filter(project_id__in=project_ids)
         else:
             eval_cfg_qs = eval_cfg_qs.filter(project__workspace=workspace)
 
-        for cfg in eval_cfg_qs:
+        eval_configs = _run_metrics_catalog_pg_read(
+            deadline,
+            "eval_metrics",
+            lambda: list(eval_cfg_qs.order_by("name", "id")),
+        )
+        for cfg in eval_configs:
             tmpl = cfg.eval_template
             if not tmpl or getattr(tmpl, "deleted", False):
                 continue
-            output_type = _normalize_eval_output_type(tmpl.config or {})
-            entry = {
-                "name": str(cfg.id),
-                "display_name": cfg.name or tmpl.name,
-                "category": "eval_metric",
-                "source": "all",
-                "sources": ["all"],
-                "output_type": output_type,
-                "eval_template_id": str(tmpl.id),
-            }
-            if output_type in ("CHOICE", "CHOICES") and tmpl.choices:
-                entry["choices"] = tmpl.choices
-            elif output_type == "PASS_FAIL":
-                entry["choices"] = ["Passed", "Failed"]
-            entries.append(entry)
+            entries.append(
+                _eval_config_metric_entry(
+                    {
+                        "id": cfg.id,
+                        "name": cfg.name,
+                        "eval_template_id": tmpl.id,
+                        "eval_template__name": tmpl.name,
+                        "eval_template__config": tmpl.config,
+                        "eval_template__choices": tmpl.choices,
+                    }
+                )
+            )
         return entries
 
     for et in eval_templates:
-        output_type = _normalize_eval_output_type(et["config"] or {})
-        entry = {
-            "name": str(et["id"]),
-            "display_name": et["name"],
-            "category": "eval_metric",
-            "source": "all",
-            "sources": ["all"],
-            "output_type": output_type,
-        }
-        choices = et.get("choices") or []
-        if output_type in ("CHOICE", "CHOICES") and choices:
-            entry["choices"] = choices
-        elif output_type == "PASS_FAIL":
-            entry["choices"] = ["Passed", "Failed"]
-        entries.append(entry)
+        entries.append(_eval_template_metric_entry(et))
     return entries
 
 
-def build_simulation_eval_metric_entries(agent_definition_id, workspace):
+def build_simulation_eval_metric_entries(
+    agent_definition_id,
+    workspace,
+    *,
+    deadline: ReadDeadline,
+):
     """Build simulation eval filter entries scoped to an agent definition."""
     if not agent_definition_id:
         return []
@@ -127,39 +445,162 @@ def build_simulation_eval_metric_entries(agent_definition_id, workspace):
     from simulate.models import SimulateEvalConfig
 
     entries = []
-    eval_configs = (
-        SimulateEvalConfig.objects.filter(
-            run_test__agent_definition_id=agent_definition_id,
-            run_test__organization=workspace.organization,
-            run_test__workspace=workspace,
-            run_test__deleted=False,
-            deleted=False,
-        )
-        .select_related("eval_template")
-        .order_by("name", "eval_template__name", "id")
-        .distinct()
+    eval_configs = _run_metrics_catalog_pg_read(
+        deadline,
+        "simulation_eval_metrics",
+        lambda: list(
+            SimulateEvalConfig.objects.filter(
+                run_test__agent_definition_id=agent_definition_id,
+                run_test__organization=workspace.organization,
+                run_test__workspace=workspace,
+                run_test__deleted=False,
+                deleted=False,
+            )
+            .select_related("eval_template")
+            .order_by("name", "eval_template__name", "id")
+            .distinct()
+        ),
     )
 
     for cfg in eval_configs:
         tmpl = cfg.eval_template
         if not tmpl or getattr(tmpl, "deleted", False):
             continue
-        output_type = _normalize_eval_output_type(tmpl.config or {})
-        entry = {
-            "name": str(cfg.id),
-            "display_name": cfg.name or tmpl.name,
-            "category": "eval_metric",
-            "source": "simulation",
-            "sources": ["simulation"],
-            "output_type": output_type,
-            "eval_template_id": str(tmpl.id),
-        }
-        if output_type in ("CHOICE", "CHOICES") and tmpl.choices:
-            entry["choices"] = tmpl.choices
-        elif output_type == "PASS_FAIL":
-            entry["choices"] = ["Passed", "Failed"]
-        entries.append(entry)
+        entries.append(
+            _eval_config_metric_entry(
+                {
+                    "id": cfg.id,
+                    "name": cfg.name,
+                    "eval_template_id": tmpl.id,
+                    "eval_template__name": tmpl.name,
+                    "eval_template__config": tmpl.config,
+                    "eval_template__choices": tmpl.choices,
+                },
+                source="simulation",
+            )
+        )
     return entries
+
+
+def _resolve_metrics_catalog_project_scope(
+    workspace,
+    project_ids_param: str,
+    *,
+    include_workspace_projects: bool,
+    deadline: ReadDeadline,
+) -> tuple[list[str], bool]:
+    """Resolve explicit project ids once without widening an empty match.
+
+    The boolean records whether the caller supplied an explicit scope.  It is
+    deliberately independent from the number of authorized matches so an
+    all-foreign request cannot fall through to workspace-wide definitions.
+    """
+
+    requested_project_ids = [
+        value.strip() for value in project_ids_param.split(",") if value.strip()
+    ]
+    if requested_project_ids:
+        workspace_project_ids = set(
+            _run_metrics_catalog_pg_read(
+                deadline,
+                "project_scope",
+                lambda: [
+                    str(project_id)
+                    for project_id in Project.no_workspace_objects.filter(
+                        workspace=workspace,
+                        id__in=requested_project_ids,
+                    )
+                    .order_by("id")
+                    .values_list("id", flat=True)
+                ],
+            )
+        )
+        return (
+            [
+                project_id
+                for project_id in requested_project_ids
+                if project_id in workspace_project_ids
+            ],
+            True,
+        )
+
+    if include_workspace_projects:
+        return (
+            _run_metrics_catalog_pg_read(
+                deadline,
+                "project_scope",
+                lambda: [
+                    str(project_id)
+                    for project_id in Project.no_workspace_objects.filter(
+                        workspace=workspace
+                    )
+                    .order_by("id")
+                    .values_list("id", flat=True)
+                ],
+            ),
+            False,
+        )
+    return [], False
+
+
+def resolve_property_catalog_project_scope(
+    workspace,
+    project_ids: list[str] | tuple[str, ...],
+    *,
+    deadline: ReadDeadline,
+) -> list[str]:
+    """Authorize an explicit unified-catalog project scope without widening.
+
+    The ClickHouse definition reader owns no authorization logic. Every UUID
+    carried into its visibility predicate must first be proven to belong to
+    the already-authorized workspace. Unlike the legacy catalog builder, a
+    mixed valid/foreign scope is rejected instead of silently narrowed.
+    """
+
+    requested = list(dict.fromkeys(str(project_id) for project_id in project_ids))
+    if not requested:
+        return []
+    resolved, explicit = _resolve_metrics_catalog_project_scope(
+        workspace,
+        ",".join(requested),
+        include_workspace_projects=False,
+        deadline=deadline,
+    )
+    if not explicit or set(resolved) != set(requested):
+        raise ValueError("Some project_ids are invalid")
+    return sorted(resolved)
+
+
+def resolve_property_catalog_agent_scope(
+    workspace,
+    agent_definition_id: str,
+    *,
+    deadline: ReadDeadline,
+) -> str:
+    """Authorize one simulation-agent visibility ID before ClickHouse use."""
+
+    if not agent_definition_id:
+        return ""
+
+    from simulate.models import AgentDefinition
+
+    resolved = _run_metrics_catalog_pg_read(
+        deadline,
+        "agent_definition_scope",
+        lambda: list(
+            AgentDefinition.objects.filter(
+                id=agent_definition_id,
+                organization=workspace.organization,
+                workspace=workspace,
+                deleted=False,
+            )
+            .order_by("id")
+            .values_list("id", flat=True)[:1]
+        ),
+    )
+    if len(resolved) != 1 or str(resolved[0]) != str(agent_definition_id):
+        raise ValueError("agent_definition_id is invalid")
+    return str(resolved[0])
 
 
 def build_metrics_catalog(
@@ -168,15 +609,48 @@ def build_metrics_catalog(
     agent_definition_id: str = "",
     per_eval_config: bool = False,
     include_custom_attributes: bool = True,
+    category: str = "",
+    source: str = "",
+    deadline: ReadDeadline | None = None,
+    _resolved_project_scope: tuple[list[str], bool] | None = None,
 ):
     """Assemble the full unified metrics catalog for the workspace.
 
-    Extracted from ``metrics()`` so the endpoint can wrap this call in a
-    short-TTL Django cache — search-bar keystrokes and pagination reuse
-    the cached list instead of re-scanning ClickHouse for span attribute
-    keys, eval templates, annotation labels, and custom columns on every
-    request (TH-6519).
+    Retained for the deprecated unpaged compatibility response and for the
+    bounded custom-attribute compatibility segment. Explicit finite-definition
+    pages use ``build_metrics_catalog_page`` and never assemble these dynamic
+    families before slicing.
     """
+
+    deadline = deadline or ReadDeadline.start(METRICS_CATALOG_TIMEOUT_MS)
+    deadline.remaining_ms(METRICS_CATALOG_TIMEOUT_MS)
+    category = str(category or "")
+    source = str(source or "")
+
+    def category_matches(value: str) -> bool:
+        return not category or category == value
+
+    def source_matches(*values: str) -> bool:
+        return not source or source in values
+
+    want_trace_system_metrics = category_matches("system_metric") and source_matches(
+        "traces"
+    )
+    want_eval_metrics = category_matches("eval_metric") and source_matches("all")
+    want_simulation_eval_metrics = category_matches("eval_metric") and source_matches(
+        "simulation"
+    )
+    want_annotation_metrics = category_matches("annotation_metric") and source_matches(
+        "traces", "datasets", "both"
+    )
+    want_custom_attributes = (
+        include_custom_attributes
+        and category_matches("custom_attribute")
+        and source_matches("traces")
+    )
+    want_custom_columns = category_matches("custom_column") and source_matches(
+        "datasets"
+    )
 
     metrics = []
 
@@ -378,6 +852,27 @@ def build_metrics_catalog(
                 "type": "string",
                 "unit": "",
             },
+            # Relational boolean pseudo-columns. They are filter-only
+            # dimensions: the dashboard compiler resolves them against the
+            # authoritative eval/annotation stores rather than a spans field.
+            {
+                "name": "has_eval",
+                "display_name": "Has Evaluation",
+                "category": "system_metric",
+                "source": "traces",
+                "type": "boolean",
+                "unit": "",
+                "role": "dimension",
+            },
+            {
+                "name": "has_annotation",
+                "display_name": "Has Annotation",
+                "category": "system_metric",
+                "source": "traces",
+                "type": "boolean",
+                "unit": "",
+                "role": "dimension",
+            },
         ]
     )
 
@@ -505,308 +1000,303 @@ def build_metrics_catalog(
         ]
     )
 
-    # Project IDs for trace-scoped metrics (custom attrs, evals, annotations)
-    # If caller passes project_ids, scope to those; otherwise all workspace projects.
-    req_project_ids_str = project_ids_param
-    req_project_ids = [
-        pid.strip() for pid in req_project_ids_str.split(",") if pid.strip()
-    ]
-
-    if req_project_ids:
-        workspace_project_ids = {
-            str(pid)
-            for pid in Project.objects.filter(
-                workspace=workspace,
-                id__in=req_project_ids,
-            ).values_list("id", flat=True)
-        }
-        project_ids = [pid for pid in req_project_ids if pid in workspace_project_ids]
-    elif include_custom_attributes:
-        project_ids = [
-            str(pid)
-            for pid in Project.objects.filter(workspace=workspace).values_list(
-                "id", flat=True
-            )
-        ]
+    # Resolve the request scope before loading dynamic families. An explicit
+    # project scope remains explicit even when every id is unauthorized: it
+    # must never fall through to workspace-wide definitions.
+    if _resolved_project_scope is None:
+        project_ids, filter_by_project = _resolve_metrics_catalog_project_scope(
+            workspace,
+            project_ids_param,
+            include_workspace_projects=want_custom_attributes,
+            deadline=deadline,
+        )
     else:
-        # Workspace-wide evals, annotations, and dataset columns already use
-        # their native workspace predicates below. The cursor-backed editor
-        # obtains trace attributes separately, so do not materialize every
-        # project id merely to discard a capped ClickHouse attribute catalog.
-        project_ids = []
-
-    filter_by_project = bool(req_project_ids and project_ids)
-
-    if (
-        filter_by_project
-        and not Project.objects.filter(
-            id__in=project_ids,
+        project_ids, filter_by_project = _resolved_project_scope
+    if want_trace_system_metrics and filter_by_project and project_ids:
+        has_non_simulator_project = _run_metrics_catalog_pg_read(
+            deadline,
+            "project_scope",
+            lambda: (
+                Project.objects.filter(id__in=project_ids)
+                .exclude(source=ProjectSourceChoices.SIMULATOR.value)
+                .exists()
+            ),
         )
-        .exclude(
-            source=ProjectSourceChoices.SIMULATOR.value,
-        )
-        .exists()
-    ):
-        metrics.append(
-            {
-                "name": "agent_talk_percentage",
-                "display_name": "Agent Talk %",
-                "category": "system_metric",
-                "source": "traces",
-                "type": "number",
-                "unit": "%",
-            }
-        )
-
-    # 3-6: Eval metrics, annotations, and span attributes are independent.
-    # Span attribute discovery (CH) runs concurrently with the PG lookups.
-    def _discover_span_attributes():
-        attrs = []
-        try:
-            if project_ids:
-                analytics = V2AnalyticsQueryService()
-                rows = analytics.get_span_attribute_keys_ch_for_projects(
-                    project_ids,
-                    recent_days=None,
-                    outer_limit=2000,
-                )
-                for r in rows:
-                    k = r.get("key", "")
-                    t = r.get("type", "string")
-                    if k:
-                        attrs.append({"key": k, "type": t})
-        except Exception as exc:
-            logger.warning(
-                "dashboard_span_attribute_discovery_failed",
-                error=str(exc)[:200],
-            )
-        return attrs
-
-    if include_custom_attributes:
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            f_attrs = pool.submit(_discover_span_attributes)
-    else:
-        f_attrs = None
-
-    # 3. Eval metrics (PG-heavy chain, runs in main thread)
-    try:
-        from model_hub.models.evals_metric import EvalTemplate
-
-        used_template_ids = []
-        if filter_by_project:
-            # Resolve the candidate config ids from the authoritative project
-            # metadata first.  The direct-write eval table is sorted by
-            # ``custom_eval_config_id``; candidate-scoped discovery therefore
-            # prunes by its leading key and never needs the legacy trace
-            # dictionary or CDC eval table.
-            candidate_config_ids = list(
-                CustomEvalConfig.objects.filter(
-                    project_id__in=project_ids,
-                    deleted=False,
-                ).values_list("id", flat=True)
-            )
-            if candidate_config_ids:
-                try:
-                    analytics = V2AnalyticsQueryService()
-                    used_template_ids = analytics.get_eval_config_ids_for_candidates_ch(
-                        [str(value) for value in candidate_config_ids],
-                        timeout_ms=5000,
-                        window_days=90,
-                    )
-                except Exception:
-                    # Metric discovery is availability-sensitive: a transient
-                    # CH timeout must not make every configured evaluation
-                    # disappear from the settings/task picker.  Falling back
-                    # to the already tenant-scoped config metadata preserves
-                    # the selectable fields without exposing the DB failure.
-                    logger.warning(
-                        "dashboard_eval_usage_discovery_failed",
-                        exc_info=True,
-                    )
-                    used_template_ids = []
-
-        if not used_template_ids and filter_by_project:
-            used_template_ids = list(
-                CustomEvalConfig.objects.filter(
-                    project_id__in=project_ids,
-                    deleted=False,
-                )
-                .values_list("eval_template_id", flat=True)
-                .distinct()
-            )
-        elif used_template_ids and filter_by_project:
-            used_template_ids = list(
-                CustomEvalConfig.objects.filter(
-                    id__in=used_template_ids,
-                ).values_list("eval_template_id", flat=True)
-            )
-
-        if used_template_ids:
-            eval_templates = EvalTemplate.no_workspace_objects.filter(
-                id__in=used_template_ids,
-                deleted=False,
-            ).values("id", "name", "config", "choices")
-        elif filter_by_project:
-            eval_templates = EvalTemplate.objects.none().values(
-                "id", "name", "config", "choices"
-            )
-        else:
-            eval_templates = EvalTemplate.objects.filter(
-                organization=workspace.organization,
-                deleted=False,
-            ).values("id", "name", "config", "choices")
-
-        per_eval_config = per_eval_config
-        metrics.extend(
-            build_eval_metric_entries(
-                eval_templates=eval_templates,
-                project_ids=project_ids if filter_by_project else [],
-                workspace=workspace,
-                per_eval_config=per_eval_config,
-            )
-        )
-    except (ImportError, Exception) as e:
-        logger.warning(f"Failed to load eval templates: {e}")
-
-    # 3b. Simulation eval metrics
-    agent_definition_id = agent_definition_id or None
-    if agent_definition_id:
-        try:
-            metrics.extend(
-                build_simulation_eval_metric_entries(
-                    agent_definition_id,
-                    workspace,
-                )
-            )
-        except (ImportError, Exception) as e:
-            logger.warning(f"Failed to load simulation eval configs: {e}")
-
-    # 4. Annotation metrics
-    try:
-        from django.db.models import Q
-
-        from model_hub.models.develop_annotations import AnnotationsLabels
-
-        if filter_by_project:
-            # Pin the post-direct-write source.  It scopes the score metadata
-            # by the denormalized tracer project id and never joins the removed
-            # Postgres span table; routing flags cannot send this endpoint back
-            # to the legacy span-join implementation.
-            source = AnnotationLabelScoresProjectPG()
-            used_label_ids: set = set()
-            for pid in project_ids:
-                used_label_ids.update(source.label_ids_for_project(pid))
-            # A project-scoped label is a valid filter before its first Score is
-            # written.  Union those configured labels with the authoritative
-            # Score-backed ids so a newly created annotation property cannot
-            # disappear from the picker.  Global legacy labels (project=NULL)
-            # remain usage-gated; otherwise every workspace label would leak
-            # into every project inventory.
-            annotation_labels = (
-                AnnotationsLabels.no_workspace_objects.filter(
-                    Q(organization=workspace.organization),
-                    Q(workspace__isnull=True) | Q(workspace=workspace),
-                )
-                .filter(
-                    Q(id__in=used_label_ids) | Q(project_id__in=project_ids),
-                )
-                .distinct()
-                .values("id", "name", "type", "settings")
-            )
-        else:
-            annotation_labels = AnnotationsLabels.no_workspace_objects.filter(
-                Q(organization=workspace.organization),
-                Q(workspace__isnull=True) | Q(workspace=workspace),
-            ).values("id", "name", "type", "settings")
-
-        for al in annotation_labels:
-            label_type = al.get("type", "numeric")
-            settings = al.get("settings") or {}
-
-            metric_entry = {
-                "name": str(al["id"]),
-                "display_name": al["name"],
-                "category": "annotation_metric",
-                "source": "both",
-                "sources": ["datasets", "traces"],
-                "output_type": label_type,
-            }
-
-            if label_type == "categorical":
-                options = settings.get("options", [])
-                legacy_choices = []
-                choice_options = []
-                for option in options:
-                    if not isinstance(option, dict):
-                        continue
-                    raw_value = option.get("value")
-                    if raw_value is None or raw_value == "":
-                        raw_value = option.get("label") or option.get("name")
-                    if raw_value is None or raw_value == "":
-                        continue
-                    raw_label = option.get("label") or option.get("name")
-                    label = str(raw_label if raw_label not in (None, "") else raw_value)
-                    if raw_label not in (None, ""):
-                        legacy_choices.append(label)
-                    choice_options.append({"value": raw_value, "label": label})
-                metric_entry["choices"] = legacy_choices
-                # Keep the legacy label-only list for older consumers, while
-                # exposing the real stored value separately. A category whose
-                # value differs from its display label must never serialize a
-                # filter using the label by accident.
-                metric_entry["choice_options"] = choice_options
-            elif label_type == "thumbs_up_down":
-                metric_entry["choices"] = ["Thumbs Up", "Thumbs Down"]
-
-            metrics.append(metric_entry)
-    except Exception:
-        logger.exception("annotation_metrics_failed")
-
-    # Collect span attributes from background thread
-    custom_attributes = f_attrs.result() if f_attrs is not None else []
-    for attr in custom_attributes:
-        k = attr["key"] if isinstance(attr, dict) else attr
-        t = attr.get("type", "string") if isinstance(attr, dict) else "string"
-        metrics.append(
-            {
-                "name": k,
-                "display_name": k,
-                "category": "custom_attribute",
-                "source": "traces",
-                "type": t,
-            }
-        )
-
-    # 7. Custom columns (datasets only)
-    try:
-        from model_hub.models.develop_dataset import Column
-
-        cols = (
-            Column.no_workspace_objects.filter(
-                dataset__workspace=workspace,
-                dataset__deleted=False,
-                data_type__in=["float", "integer", "boolean"],
-            )
-            .values("id", "name", "data_type")
-            .distinct()
-        )
-        seen_names = set()
-        for col in cols:
-            if col["name"] in seen_names:
-                continue
-            seen_names.add(col["name"])
+        if not has_non_simulator_project:
             metrics.append(
                 {
-                    "name": str(col["id"]),
-                    "display_name": col["name"],
-                    "category": "custom_column",
-                    "source": "datasets",
-                    "type": ("number" if col["data_type"] != "boolean" else "boolean"),
-                    "data_type": col["data_type"],
+                    "name": "agent_talk_percentage",
+                    "display_name": "Agent Talk %",
+                    "category": "system_metric",
+                    "source": "traces",
+                    "type": "number",
+                    "unit": "%",
                 }
             )
-    except (ImportError, Exception):
-        pass
+
+    # Span attributes are independent of the definition families, so retain
+    # their concurrency while binding both the CH timeout and Future wait to
+    # this same request-owned wall.
+    def _discover_span_attributes():
+        analytics = V2AnalyticsQueryService()
+        rows = analytics.get_span_attribute_keys_ch_for_projects(
+            project_ids,
+            recent_days=None,
+            timeout_ms=deadline.remaining_ms(METRICS_CATALOG_TIMEOUT_MS),
+            outer_limit=settings.DASHBOARD_METRICS_ATTRIBUTE_KEY_LIMIT,
+        )
+        attrs = []
+        for row in rows:
+            key = row.get("key", "")
+            if key:
+                attrs.append({"key": key, "type": row.get("type", "string")})
+        deadline.remaining_ms(floor_ms=1)
+        return sorted(attrs, key=lambda item: (item["key"], item["type"]))
+
+    attribute_executor = None
+    attribute_future = None
+    if want_custom_attributes and project_ids:
+        try:
+            attribute_executor = ThreadPoolExecutor(
+                max_workers=settings.DASHBOARD_METRICS_ATTRIBUTE_WORKERS
+            )
+            attribute_future = attribute_executor.submit(_discover_span_attributes)
+        except Exception as exc:
+            if attribute_executor is not None:
+                attribute_executor.shutdown(wait=False, cancel_futures=True)
+            raise MetricsCatalogUnavailable("custom_attributes") from exc
+
+    try:
+        # Eval definitions. Usage discovery is only an optimization: a failure
+        # is observable but falls back to the complete configured definition
+        # set, subject to the same remaining wall.
+        if want_eval_metrics:
+            try:
+                from model_hub.models.evals_metric import EvalTemplate
+
+                used_template_ids = []
+                if filter_by_project and not per_eval_config:
+                    candidate_config_ids = _run_metrics_catalog_pg_read(
+                        deadline,
+                        "eval_metrics",
+                        lambda: list(
+                            CustomEvalConfig.objects.filter(
+                                project_id__in=project_ids,
+                                deleted=False,
+                            )
+                            .order_by("id")
+                            .values_list("id", flat=True)
+                        ),
+                    )
+                    if candidate_config_ids:
+                        try:
+                            analytics = V2AnalyticsQueryService()
+                            used_template_ids = analytics.get_eval_config_ids_for_candidates_ch(
+                                [str(value) for value in candidate_config_ids],
+                                timeout_ms=deadline.remaining_ms(
+                                    METRICS_CATALOG_EVAL_USAGE_QUERY_TIMEOUT_MS
+                                ),
+                                window_days=METRICS_CATALOG_EVAL_USAGE_LOOKBACK_DAYS,
+                            )
+                            deadline.remaining_ms(floor_ms=1)
+                        except Exception as exc:
+                            logger.warning(
+                                "dashboard_metrics_catalog_optimization_fallback",
+                                optimization="eval_usage",
+                                fallback="configured_eval_definitions",
+                                error_type=type(exc).__name__,
+                            )
+                            used_template_ids = []
+
+                if not per_eval_config:
+                    if not used_template_ids and filter_by_project:
+                        used_template_ids = _run_metrics_catalog_pg_read(
+                            deadline,
+                            "eval_metrics",
+                            lambda: list(
+                                CustomEvalConfig.objects.filter(
+                                    project_id__in=project_ids,
+                                    deleted=False,
+                                )
+                                .order_by("eval_template_id")
+                                .values_list("eval_template_id", flat=True)
+                                .distinct()
+                            ),
+                        )
+                    elif used_template_ids and filter_by_project:
+                        used_template_ids = _run_metrics_catalog_pg_read(
+                            deadline,
+                            "eval_metrics",
+                            lambda: list(
+                                CustomEvalConfig.objects.filter(
+                                    id__in=used_template_ids,
+                                    deleted=False,
+                                )
+                                .order_by("eval_template_id")
+                                .values_list("eval_template_id", flat=True)
+                                .distinct()
+                            ),
+                        )
+
+                    if used_template_ids:
+                        eval_template_query = (
+                            EvalTemplate.no_workspace_objects.filter(
+                                id__in=used_template_ids,
+                                deleted=False,
+                            )
+                            .order_by("name", "id")
+                            .values("id", "name", "config", "choices")
+                        )
+                    elif filter_by_project:
+                        eval_template_query = EvalTemplate.objects.none().values(
+                            "id", "name", "config", "choices"
+                        )
+                    else:
+                        eval_template_query = (
+                            EvalTemplate.objects.filter(
+                                organization=workspace.organization,
+                                deleted=False,
+                            )
+                            .order_by("name", "id")
+                            .values("id", "name", "config", "choices")
+                        )
+                    eval_templates = _run_metrics_catalog_pg_read(
+                        deadline,
+                        "eval_metrics",
+                        lambda: list(eval_template_query),
+                    )
+                else:
+                    eval_templates = []
+
+                metrics.extend(
+                    build_eval_metric_entries(
+                        eval_templates=eval_templates,
+                        project_ids=project_ids,
+                        workspace=workspace,
+                        per_eval_config=per_eval_config,
+                        deadline=deadline,
+                        filter_by_project=filter_by_project,
+                    )
+                )
+            except (MetricsCatalogUnavailable, ReadDeadlineExceeded):
+                raise
+            except Exception as exc:
+                raise MetricsCatalogUnavailable("eval_metrics") from exc
+
+        if want_simulation_eval_metrics and agent_definition_id:
+            try:
+                metrics.extend(
+                    build_simulation_eval_metric_entries(
+                        agent_definition_id,
+                        workspace,
+                        deadline=deadline,
+                    )
+                )
+            except (MetricsCatalogUnavailable, ReadDeadlineExceeded):
+                raise
+            except Exception as exc:
+                raise MetricsCatalogUnavailable("simulation_eval_metrics") from exc
+
+        if want_annotation_metrics:
+            try:
+                from django.db.models import Q
+
+                from model_hub.models.develop_annotations import AnnotationsLabels
+
+                if filter_by_project:
+                    label_source = AnnotationLabelScoresProjectPG()
+                    used_label_ids: set = set()
+                    for project_id in project_ids:
+                        used_label_ids.update(
+                            _run_metrics_catalog_pg_read(
+                                deadline,
+                                "annotation_metrics",
+                                lambda project_id=project_id: list(
+                                    label_source.label_ids_for_project(project_id)
+                                ),
+                            )
+                        )
+                    annotation_label_query = (
+                        AnnotationsLabels.no_workspace_objects.filter(
+                            Q(organization=workspace.organization),
+                            Q(workspace__isnull=True) | Q(workspace=workspace),
+                        )
+                        .filter(
+                            Q(id__in=used_label_ids) | Q(project_id__in=project_ids),
+                        )
+                        .distinct()
+                        .order_by("name", "id")
+                        .values("id", "name", "type", "settings")
+                    )
+                else:
+                    annotation_label_query = (
+                        AnnotationsLabels.no_workspace_objects.filter(
+                            Q(organization=workspace.organization),
+                            Q(workspace__isnull=True) | Q(workspace=workspace),
+                        )
+                        .order_by("name", "id")
+                        .values("id", "name", "type", "settings")
+                    )
+                annotation_labels = _run_metrics_catalog_pg_read(
+                    deadline,
+                    "annotation_metrics",
+                    lambda: list(annotation_label_query),
+                )
+
+                for annotation_label in annotation_labels:
+                    metrics.append(_annotation_label_metric_entry(annotation_label))
+            except (MetricsCatalogUnavailable, ReadDeadlineExceeded):
+                raise
+            except Exception as exc:
+                raise MetricsCatalogUnavailable("annotation_metrics") from exc
+
+        if attribute_future is not None:
+            try:
+                custom_attributes = attribute_future.result(
+                    timeout=deadline.remaining_ms(METRICS_CATALOG_TIMEOUT_MS) / 1_000
+                )
+            except (FutureTimeoutError, ReadDeadlineExceeded) as exc:
+                raise MetricsCatalogUnavailable("custom_attributes") from exc
+            except Exception as exc:
+                raise MetricsCatalogUnavailable("custom_attributes") from exc
+            for attribute in custom_attributes:
+                metrics.append(
+                    {
+                        "name": attribute["key"],
+                        "display_name": attribute["key"],
+                        "category": "custom_attribute",
+                        "source": "traces",
+                        "type": attribute.get("type", "string"),
+                    }
+                )
+
+        if want_custom_columns:
+            try:
+                from model_hub.models.develop_dataset import Column
+
+                columns = _run_metrics_catalog_pg_read(
+                    deadline,
+                    "custom_columns",
+                    lambda: list(
+                        Column.no_workspace_objects.filter(
+                            dataset__workspace=workspace,
+                            dataset__deleted=False,
+                            data_type__in=["float", "integer", "boolean"],
+                        )
+                        .order_by("name", "id")
+                        .values("id", "name", "data_type")
+                        .distinct()
+                    ),
+                )
+                for column in columns:
+                    metrics.append(_custom_column_metric_entry(column))
+            except (MetricsCatalogUnavailable, ReadDeadlineExceeded):
+                raise
+            except Exception as exc:
+                raise MetricsCatalogUnavailable("custom_columns") from exc
+    finally:
+        if attribute_executor is not None:
+            attribute_executor.shutdown(wait=False, cancel_futures=True)
 
     # 8. Simulation system metrics (numeric — for aggregation)
     metrics.extend(
@@ -1182,6 +1672,14 @@ def build_metrics_catalog(
 
     metrics = _suppress_customer_attribute_metric_aliases(metrics)
     metrics = _annotate_metric_roles(metrics)
+    metrics = _annotate_property_registry_identity(metrics)
+    metrics = [
+        metric
+        for metric in metrics
+        if _metric_matches_scope(metric, category=category, source=source)
+    ]
+    metrics.sort(key=_metric_catalog_sort_key)
+    deadline.remaining_ms(floor_ms=1)
 
     return metrics
 
@@ -1202,8 +1700,9 @@ def _annotate_metric_roles(metrics: list[dict]) -> list[dict]:
     ``dimension`` — string-typed breakdown/filter target, hidden from the
                     metric picker.
 
-    Derived from ``type`` (not a name whitelist) so a new string-typed
-    dimension added later can't silently become a selectable Y-axis metric.
+    Derived from ``type`` (not a name whitelist) unless an entry explicitly
+    declares a role. This keeps relational boolean filter-only definitions out
+    of the Y-axis picker without pretending they are strings.
     Entries without ``type`` (eval / annotation / custom_column) default to
     ``metric`` — they are all numeric aggregatable today.
 
@@ -1215,8 +1714,495 @@ def _annotate_metric_roles(metrics: list[dict]) -> list[dict]:
         name = m.get("name", "")
         if name in _COUNT_METRIC_RENAMES:
             m["display_name"] = _COUNT_METRIC_RENAMES[name]
-        m["role"] = "dimension" if m.get("type") == "string" else "metric"
+        m["role"] = m.get("role") or (
+            "dimension" if m.get("type") == "string" else "metric"
+        )
     return metrics
+
+
+def _catalog_family_requested(
+    *,
+    category: str,
+    source: str,
+    family_category: str,
+    family_source: str,
+    family_sources: tuple[str, ...] = (),
+) -> bool:
+    """Apply the public category/source semantics before building a family."""
+
+    return _metric_matches_scope(
+        {
+            "category": family_category,
+            "source": family_source,
+            "sources": family_sources,
+        },
+        category=category,
+        source=source,
+    )
+
+
+def _queryset_catalog_family(
+    *,
+    name: str,
+    queryset,
+    fields: tuple[str, ...],
+    convert: Callable[[dict], dict],
+    deadline: ReadDeadline,
+) -> _CatalogPageFamily:
+    """Adapt an ordered queryset without evaluating it before pagination."""
+
+    row_queryset = queryset.values(*fields)
+
+    def count_rows() -> int:
+        return int(
+            _run_metrics_catalog_pg_read(
+                deadline,
+                name,
+                queryset.count,
+            )
+        )
+
+    def read_rows(offset: int, limit: int) -> list[dict]:
+        if limit <= 0:
+            return []
+        rows = _run_metrics_catalog_pg_read(
+            deadline,
+            name,
+            lambda: list(row_queryset[offset : offset + limit]),
+        )
+        return [convert(row) for row in rows]
+
+    return _CatalogPageFamily(
+        name=name,
+        count_rows=count_rows,
+        read_rows=read_rows,
+    )
+
+
+def _in_memory_catalog_family(name: str, rows: list[dict]) -> _CatalogPageFamily:
+    """Adapt the finite hard-coded system segment (and legacy attributes)."""
+
+    return _CatalogPageFamily(
+        name=name,
+        count_rows=lambda: len(rows),
+        read_rows=lambda offset, limit: rows[offset : offset + limit],
+    )
+
+
+def _paginate_catalog_families(
+    families: list[_CatalogPageFamily],
+    *,
+    page: int,
+    page_size: int,
+    deadline: ReadDeadline,
+) -> tuple[list[dict], int, bool]:
+    """Count every requested family, then read only page-overlapping slices.
+
+    Counting all families before fetching any payload preserves strict failure
+    semantics: the API never returns a plausible partial page when a required
+    family cannot prove its exact total.  Family ordering is the leading
+    ``category, source`` portion of ``_metric_catalog_sort_key``; every family
+    supplies its remaining name/id ordering at the database boundary.
+    """
+
+    if page < 1 or page_size < 1:
+        raise ValueError("page and page_size must be positive")
+
+    counts: list[int] = []
+    for family in families:
+        deadline.remaining_ms(floor_ms=1)
+        try:
+            count = int(family.count_rows())
+        except (MetricsCatalogUnavailable, ReadDeadlineExceeded):
+            raise
+        except Exception as exc:
+            raise MetricsCatalogUnavailable(family.name) from exc
+        if count < 0:
+            raise MetricsCatalogUnavailable(family.name)
+        counts.append(count)
+
+    total = sum(counts)
+    page_start = (page - 1) * page_size
+    page_end = min(page_start + page_size, total)
+    if page_start >= total:
+        deadline.remaining_ms(floor_ms=1)
+        return [], total, False
+
+    page_rows: list[dict] = []
+    family_start = 0
+    for family, count in zip(families, counts, strict=True):
+        family_end = family_start + count
+        overlap_start = max(page_start, family_start)
+        overlap_end = min(page_end, family_end)
+        if overlap_start < overlap_end:
+            offset = overlap_start - family_start
+            limit = overlap_end - overlap_start
+            deadline.remaining_ms(floor_ms=1)
+            try:
+                rows = family.read_rows(offset, limit)
+            except (MetricsCatalogUnavailable, ReadDeadlineExceeded):
+                raise
+            except Exception as exc:
+                raise MetricsCatalogUnavailable(family.name) from exc
+            # Definitions can change between COUNT and SELECT under the
+            # default transaction isolation. Never label a short page exact.
+            if len(rows) != limit:
+                raise MetricsCatalogUnavailable(family.name)
+            page_rows.extend(rows)
+        family_start = family_end
+
+    deadline.remaining_ms(floor_ms=1)
+    return page_rows, total, page_end < total
+
+
+def _catalog_search_and_order(queryset, *, display_name, search: str):
+    """Attach the shared display/id keys used for SQL count and page slices."""
+
+    from django.db.models import CharField, Q
+    from django.db.models.functions import Cast, Lower
+
+    queryset = queryset.annotate(
+        _catalog_display_name=display_name,
+        _catalog_name_text=Cast("id", output_field=CharField()),
+    )
+    if search:
+        queryset = queryset.filter(
+            Q(_catalog_display_name__icontains=search)
+            | Q(_catalog_name_text__icontains=search)
+        )
+    return queryset.order_by(Lower("_catalog_display_name"), "id")
+
+
+def build_metrics_catalog_page(
+    workspace,
+    *,
+    page: int,
+    page_size: int,
+    project_ids_param: str = "",
+    agent_definition_id: str = "",
+    per_eval_config: bool = False,
+    include_custom_attributes: bool = True,
+    search: str = "",
+    category: str = "",
+    source: str = "",
+    deadline: ReadDeadline | None = None,
+) -> tuple[list[dict], int, bool]:
+    """Build one exact finite-definition page without preloading all rows.
+
+    The hard-coded system segment is small and remains in memory. Eval
+    templates/configs, simulation evals, annotation labels, and dataset
+    columns contribute an exact ``COUNT(*)`` but only issue a payload SELECT
+    when their globally ordered segment overlaps the requested page. Active
+    first-party callers exclude custom attributes because those are served by
+    the signed cursor inventory; the compatibility path for callers that still
+    request them retains the legacy bounded ClickHouse inventory.
+    """
+
+    from django.db.models import CharField, Exists, F, OuterRef, Q, Value
+    from django.db.models.functions import Coalesce, NullIf
+
+    deadline = deadline or ReadDeadline.start(METRICS_CATALOG_TIMEOUT_MS)
+    deadline.remaining_ms(METRICS_CATALOG_TIMEOUT_MS)
+    search = str(search or "").strip()
+    category = str(category or "")
+    source = str(source or "")
+
+    want_system = _catalog_family_requested(
+        category=category,
+        source="",
+        family_category="system_metric",
+        family_source="",
+    )
+    want_eval = _catalog_family_requested(
+        category=category,
+        source=source,
+        family_category="eval_metric",
+        family_source="all",
+        family_sources=("all",),
+    )
+    want_simulation_eval = _catalog_family_requested(
+        category=category,
+        source=source,
+        family_category="eval_metric",
+        family_source="simulation",
+        family_sources=("simulation",),
+    )
+    want_annotations = _catalog_family_requested(
+        category=category,
+        source=source,
+        family_category="annotation_metric",
+        family_source="both",
+        family_sources=("datasets", "traces"),
+    )
+    want_custom_attributes = include_custom_attributes and _catalog_family_requested(
+        category=category,
+        source=source,
+        family_category="custom_attribute",
+        family_source="traces",
+    )
+    want_custom_columns = _catalog_family_requested(
+        category=category,
+        source=source,
+        family_category="custom_column",
+        family_source="datasets",
+    )
+
+    project_ids, filter_by_project = _resolve_metrics_catalog_project_scope(
+        workspace,
+        project_ids_param,
+        include_workspace_projects=want_custom_attributes,
+        deadline=deadline,
+    )
+
+    families: list[_CatalogPageFamily] = []
+
+    # Category 0: bounded hard-coded system definitions. ``build_metrics_catalog``
+    # is deliberately scoped to this category, so it cannot evaluate any
+    # definition queryset or ClickHouse attribute inventory.
+    if want_system:
+        system_metrics = build_metrics_catalog(
+            workspace,
+            project_ids_param=project_ids_param,
+            agent_definition_id=agent_definition_id,
+            per_eval_config=per_eval_config,
+            include_custom_attributes=False,
+            category="system_metric",
+            source=source,
+            deadline=deadline,
+            _resolved_project_scope=(project_ids, filter_by_project),
+        )
+        if search:
+            folded_search = search.casefold()
+            system_metrics = [
+                metric
+                for metric in system_metrics
+                if folded_search in str(metric.get("display_name") or "").casefold()
+                or folded_search in str(metric.get("name") or "").casefold()
+            ]
+        families.append(_in_memory_catalog_family("system_metrics", system_metrics))
+
+    # Category 1, source "all": configured eval identities. The page-first
+    # endpoint intentionally uses authoritative PG definitions, including
+    # definitions ready before their first historical result; it does not
+    # materialize config ids merely to run the legacy CH usage optimization.
+    if want_eval:
+        if per_eval_config:
+            eval_queryset = CustomEvalConfig.objects.filter(
+                deleted=False,
+                eval_template__deleted=False,
+            )
+            if filter_by_project:
+                eval_queryset = eval_queryset.filter(project_id__in=project_ids)
+            else:
+                eval_queryset = eval_queryset.filter(project__workspace=workspace)
+            display_name = Coalesce(
+                NullIf("name", Value("")),
+                "eval_template__name",
+                output_field=CharField(),
+            )
+            eval_queryset = _catalog_search_and_order(
+                eval_queryset,
+                display_name=display_name,
+                search=search,
+            )
+            families.append(
+                _queryset_catalog_family(
+                    name="eval_metrics",
+                    queryset=eval_queryset,
+                    fields=(
+                        "id",
+                        "name",
+                        "eval_template_id",
+                        "eval_template__name",
+                        "eval_template__config",
+                        "eval_template__choices",
+                        "_catalog_display_name",
+                    ),
+                    convert=_eval_config_metric_entry,
+                    deadline=deadline,
+                )
+            )
+        else:
+            from model_hub.models.evals_metric import EvalTemplate
+
+            if filter_by_project:
+                configured_template = CustomEvalConfig.objects.filter(
+                    project_id__in=project_ids,
+                    deleted=False,
+                    eval_template_id=OuterRef("pk"),
+                )
+                # System templates can be organization-null. The configured
+                # project is the tenant boundary here, matching the legacy
+                # no-workspace template lookup without an id materialization.
+                eval_queryset = EvalTemplate.no_workspace_objects.filter(
+                    Exists(configured_template)
+                )
+            else:
+                eval_queryset = EvalTemplate.objects.filter(
+                    organization=workspace.organization,
+                    deleted=False,
+                )
+            eval_queryset = _catalog_search_and_order(
+                eval_queryset,
+                display_name=F("name"),
+                search=search,
+            )
+            families.append(
+                _queryset_catalog_family(
+                    name="eval_metrics",
+                    queryset=eval_queryset,
+                    fields=("id", "name", "config", "choices"),
+                    convert=_eval_template_metric_entry,
+                    deadline=deadline,
+                )
+            )
+
+    # Category 1, source "simulation" follows source="all" globally.
+    if want_simulation_eval and agent_definition_id:
+        from simulate.models import SimulateEvalConfig
+
+        simulation_queryset = SimulateEvalConfig.objects.filter(
+            run_test__agent_definition_id=agent_definition_id,
+            run_test__organization=workspace.organization,
+            run_test__workspace=workspace,
+            run_test__deleted=False,
+            deleted=False,
+            eval_template__deleted=False,
+        )
+        simulation_queryset = _catalog_search_and_order(
+            simulation_queryset,
+            display_name=Coalesce(
+                NullIf("name", Value("")),
+                "eval_template__name",
+                output_field=CharField(),
+            ),
+            search=search,
+        )
+        families.append(
+            _queryset_catalog_family(
+                name="simulation_eval_metrics",
+                queryset=simulation_queryset,
+                fields=(
+                    "id",
+                    "name",
+                    "eval_template_id",
+                    "eval_template__name",
+                    "eval_template__config",
+                    "eval_template__choices",
+                    "_catalog_display_name",
+                ),
+                convert=lambda row: _eval_config_metric_entry(
+                    row,
+                    source="simulation",
+                ),
+                deadline=deadline,
+            )
+        )
+
+    # Category 2: label definitions. Project usage is expressed as an EXISTS
+    # subquery against authoritative Score.project instead of materializing a
+    # label-id set for every requested project.
+    if want_annotations:
+        from model_hub.models.develop_annotations import AnnotationsLabels
+
+        annotation_queryset = AnnotationsLabels.no_workspace_objects.filter(
+            Q(organization=workspace.organization),
+            Q(workspace__isnull=True) | Q(workspace=workspace),
+        )
+        if filter_by_project:
+            from model_hub.models.score import Score
+
+            matching_score = Score.no_workspace_objects.filter(
+                AnnotationLabelScoresProjectPG._trace_span_scope(),
+                tracer_project_id__in=project_ids,
+                label_id=OuterRef("pk"),
+            )
+            annotation_queryset = annotation_queryset.filter(
+                Q(project_id__in=project_ids) | Exists(matching_score)
+            )
+        annotation_queryset = _catalog_search_and_order(
+            annotation_queryset,
+            display_name=F("name"),
+            search=search,
+        )
+        families.append(
+            _queryset_catalog_family(
+                name="annotation_metrics",
+                queryset=annotation_queryset,
+                fields=("id", "name", "type", "settings"),
+                convert=_annotation_label_metric_entry,
+                deadline=deadline,
+            )
+        )
+
+    # Category 3: compatibility only. First-party callers set
+    # exclude_custom_attributes=true and use the exact signed cursor API.
+    if want_custom_attributes:
+        attribute_metrics = build_metrics_catalog(
+            workspace,
+            project_ids_param=project_ids_param,
+            include_custom_attributes=True,
+            category="custom_attribute",
+            source="traces",
+            deadline=deadline,
+            _resolved_project_scope=(project_ids, filter_by_project),
+        )
+        if search:
+            folded_search = search.casefold()
+            attribute_metrics = [
+                metric
+                for metric in attribute_metrics
+                if folded_search in str(metric.get("display_name") or "").casefold()
+                or folded_search in str(metric.get("name") or "").casefold()
+            ]
+        families.append(
+            _in_memory_catalog_family("custom_attributes", attribute_metrics)
+        )
+
+    # Category 4: numeric/boolean dataset columns.
+    if want_custom_columns:
+        from model_hub.models.develop_dataset import Column
+
+        column_queryset = Column.no_workspace_objects.filter(
+            dataset__workspace=workspace,
+            dataset__deleted=False,
+            data_type__in=["float", "integer", "boolean"],
+        )
+        column_queryset = _catalog_search_and_order(
+            column_queryset,
+            display_name=F("name"),
+            search=search,
+        )
+        families.append(
+            _queryset_catalog_family(
+                name="custom_columns",
+                queryset=column_queryset,
+                fields=("id", "name", "data_type"),
+                convert=_custom_column_metric_entry,
+                deadline=deadline,
+            )
+        )
+
+    metrics, total, has_more = _run_metrics_catalog_pg_snapshot(
+        deadline,
+        lambda: _paginate_catalog_families(
+            families,
+            page=page,
+            page_size=page_size,
+            deadline=deadline,
+        ),
+    )
+    # Query-backed page rows have not passed through the legacy finalization
+    # tail. These operations are idempotent for the already-finalized system
+    # and compatibility-attribute rows.
+    metrics = _annotate_metric_roles(metrics)
+    metrics = _annotate_property_registry_identity(metrics)
+    # Preserve the authoritative pre-slice family/SQL order. Re-sorting only
+    # this page with Python ``casefold`` can disagree with PostgreSQL
+    # ``Lower``/collation (for example, ``ss`` versus ``ß``), making the
+    # concatenated result depend on page size.
+    deadline.remaining_ms(floor_ms=1)
+    return metrics, total, has_more
 
 
 def get_cached_metrics_catalog(
@@ -1225,30 +2211,37 @@ def get_cached_metrics_catalog(
     agent_definition_id: str = "",
     per_eval_config: bool = False,
     include_custom_attributes: bool = True,
+    category: str = "",
+    source: str = "",
+    deadline: ReadDeadline | None = None,
     ttl: int = 60,
 ):
-    """Return the metrics catalog, using a short-TTL Django cache.
+    """Return the metrics catalog, using a short-TTL process-local cache.
 
     The catalog derives from workspace-scoped data (projects, eval templates,
     annotation labels, dataset columns, CH span-attribute keys) that evolves
-    on the order of minutes, not seconds. A 60s TTL keeps search-bar
-    keystrokes near-instant (~2-10 ms warm vs ~1.7 s cold) while still
-    surfacing newly-added evals / labels / projects quickly enough for the
-    metric picker.
+    on the order of minutes, not seconds. Remote cache backends are skipped on
+    this strict-deadline request path because their socket wait is outside the
+    database statement budget.
     """
+    deadline = deadline or ReadDeadline.start(METRICS_CATALOG_TIMEOUT_MS)
+    deadline.remaining_ms(METRICS_CATALOG_TIMEOUT_MS)
     pids_key = ",".join(
         sorted(p.strip() for p in project_ids_param.split(",") if p.strip())
     )
     cache_key = (
-        f"dashboard:metrics_catalog:v2:{workspace.id}:"
+        f"dashboard:metrics_catalog:v6:{workspace.id}:"
         f"{pids_key}:{agent_definition_id}:{int(per_eval_config)}:"
-        f"{int(include_custom_attributes)}"
+        f"{int(include_custom_attributes)}:{category}:{source}"
     )
-    try:
-        metrics = cache.get(cache_key)
-    except Exception:
-        logger.warning("metrics_catalog_cache_get_failed", exc_info=True)
-        metrics = None
+    use_cache = _can_use_metrics_catalog_cache()
+    metrics = None
+    if use_cache:
+        try:
+            metrics = cache.get(cache_key)
+        except Exception:
+            logger.warning("metrics_catalog_cache_get_failed", exc_info=True)
+    deadline.remaining_ms(floor_ms=1)
     if metrics is None:
         metrics = build_metrics_catalog(
             workspace,
@@ -1256,9 +2249,17 @@ def get_cached_metrics_catalog(
             agent_definition_id=agent_definition_id,
             per_eval_config=per_eval_config,
             include_custom_attributes=include_custom_attributes,
+            category=category,
+            source=source,
+            deadline=deadline,
         )
-        try:
-            cache.set(cache_key, metrics, timeout=ttl)
-        except Exception:
-            logger.warning("metrics_catalog_cache_set_failed", exc_info=True)
+        # ``build_metrics_catalog`` has no partial-success return path. Only a
+        # complete, deadline-proven catalog reaches this best-effort cache set.
+        deadline.remaining_ms(floor_ms=1)
+        if use_cache:
+            try:
+                cache.set(cache_key, metrics, timeout=ttl)
+            except Exception:
+                logger.warning("metrics_catalog_cache_set_failed", exc_info=True)
+    deadline.remaining_ms(floor_ms=1)
     return metrics

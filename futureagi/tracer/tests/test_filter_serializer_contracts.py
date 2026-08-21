@@ -759,6 +759,84 @@ class TestFilterSerializerContracts:
         assert serializer.validated_data["page"] == 2
         assert serializer.validated_data["remove_simulation_calls"] is True
 
+    @pytest.mark.parametrize(
+        "filter_config",
+        [
+            {
+                "col_type": "SPAN_ATTRIBUTE",
+                "filter_type": "text",
+                "filter_op": "in",
+                "filter_value": ["alpha"],
+                "attribute_value_types": ["string"],
+            },
+            {
+                "col_type": "SPAN_ATTRIBUTE",
+                "filter_type": "number",
+                "filter_op": "equals",
+                "filter_value": 7.5,
+            },
+            {
+                "col_type": "SPAN_ATTRIBUTE",
+                "filter_type": "boolean",
+                "filter_op": "equals",
+                "filter_value": False,
+            },
+        ],
+    )
+    def test_trace_voice_call_query_accepts_qualifier_scalar_filter_shapes(
+        self, filter_config
+    ):
+        serializer = TraceVoiceCallListQuerySerializer(
+            data={
+                "project_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "filters": json.dumps(
+                    [{"column_id": "customer.scalar", "filter_config": filter_config}]
+                ),
+                "attribute_keys": json.dumps(["customer.scalar"]),
+                "cursor_mode": "true",
+                "page_size": "5",
+            }
+        )
+
+        assert serializer.is_valid(), serializer.errors
+
+    @pytest.mark.parametrize(
+        "filter_config",
+        [
+            {
+                "col_type": "SPAN_ATTRIBUTE",
+                "filter_type": "number",
+                "filter_op": "in",
+                "filter_value": [7.5],
+                "attribute_value_types": ["number"],
+            },
+            {
+                "col_type": "SPAN_ATTRIBUTE",
+                "filter_type": "boolean",
+                "filter_op": "in",
+                "filter_value": [False],
+                "attribute_value_types": ["boolean"],
+            },
+        ],
+    )
+    def test_trace_voice_call_query_rejects_legacy_scalar_membership_shapes(
+        self, filter_config
+    ):
+        serializer = TraceVoiceCallListQuerySerializer(
+            data={
+                "project_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "filters": json.dumps(
+                    [{"column_id": "customer.scalar", "filter_config": filter_config}]
+                ),
+                "attribute_keys": json.dumps(["customer.scalar"]),
+                "cursor_mode": "true",
+                "page_size": "5",
+            }
+        )
+
+        assert not serializer.is_valid()
+        assert "filters" in serializer.errors
+
     def test_trace_index_queries_reject_camel_case_aliases(self):
         trace_index = TraceIndexQuerySerializer(
             data={

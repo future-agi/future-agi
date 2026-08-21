@@ -1,7 +1,7 @@
 // LinkedTracesContent.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import "src/styles/clean-data-table.css";
-import { Box, Skeleton } from "@mui/material";
+import { Box, Button, Skeleton } from "@mui/material";
 import MetricsHeaderSection from "../MetricsHeaderSection";
 import { AgGridReact } from "ag-grid-react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
@@ -21,6 +21,8 @@ import {
 import { getRandomId } from "src/utils/utils";
 import MetricEmptyState from "../MetricEmptyState";
 import { getZeroBasedGridPage } from "src/utils/agGridPagination";
+import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
+import { readPromptMetricsGridPage } from "../prompt_metrics_grid_read";
 
 const LoadingHeader = () => {
   return <Skeleton variant="text" width={100} height={20} />;
@@ -44,6 +46,7 @@ const LinkedTracesContent = () => {
   const debouncedSearchQuery = useDebounce(searchQuery.trim(), 500);
   const [hasInitialLoad, setHasInitialLoad] = useState(false);
   const [showEmptyState, setShowEmptyState] = useState(false);
+  const [readError, setReadError] = useState(null);
 
   const hasActiveFiltersOrSearch = useMemo(() => {
     const hasFilters = filters?.some((f) => f.column_id);
@@ -186,9 +189,10 @@ const LinkedTracesContent = () => {
           }, []);
 
           // --- API Request ---
-          const response = await axios.get(
-            endpoints.develop.runPrompt.getPromptSpanMetrics(),
-            {
+          const page = await readPromptMetricsGridPage(({ signal, timeout }) =>
+            axios.get(endpoints.develop.runPrompt.getPromptSpanMetrics(), {
+              signal,
+              timeout,
               params: {
                 prompt_template_id: id,
                 search_term: debouncedSearchQuery,
@@ -198,34 +202,26 @@ const LinkedTracesContent = () => {
                   ? { filters: JSON.stringify(normalizeFilters(validFilters)) }
                   : {}),
               },
-            },
+            }),
           );
-
-          // --- Response Handling ---
-          const res = response?.data?.result || {};
-          const cols = res?.config?.map((o) => ({
+          const cols = page.columns.map((o) => ({
             ...o,
           }));
           setColumns(cols);
-          // Return data to AG Grid
-          const rowData = res?.table || [];
-          const totalRows = res?.metadata?.total_rows || 0;
+          const { rowData, totalRows } = page;
 
           // Update hasData based on response
           setHasData(totalRows > 0);
           setHasInitialLoad(true);
+          setReadError(null);
           // Return data to AG Grid
           params.success({
             rowData,
             rowCount: totalRows,
           });
-        } catch (error) {
-          setHasData(false);
-          setHasInitialLoad(true);
-          params.success({
-            rowData: [],
-            rowCount: 0,
-          });
+        } catch {
+          setReadError(QUERY_FAILED_RETRY_MESSAGE);
+          params.fail();
         } finally {
           setIsLoading(false);
         }
@@ -255,6 +251,34 @@ const LinkedTracesContent = () => {
   return (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <MetricsHeaderSection />
+      {readError && (
+        <Box
+          role="alert"
+          sx={{
+            px: 1.5,
+            py: 0.75,
+            fontSize: 12,
+            color: "warning.main",
+            bgcolor: "warning.lighter",
+            borderBottom: "1px solid",
+            borderColor: "warning.light",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          {readError}
+          <Button
+            size="small"
+            onClick={() => {
+              setReadError(null);
+              gridApiRef.current?.api?.refreshServerSide({ purge: false });
+            }}
+          >
+            Retry
+          </Button>
+        </Box>
+      )}
       <Box sx={{ flex: 1, minHeight: 0 }}>
         <AgGridReact
           className="clean-data-table"

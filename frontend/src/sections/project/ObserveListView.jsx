@@ -11,7 +11,6 @@ import React, {
 import { useNavigate } from "react-router";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useDebounce } from "src/hooks/use-debounce";
-import axios, { endpoints } from "src/utils/axios";
 import PropTypes from "prop-types";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import VolumeBarChart from "./VolumeBarChart";
@@ -19,6 +18,7 @@ import TagEditor from "./TagEditor";
 import { buildProjectListApiFilters } from "./common";
 import { toValidDate } from "src/utils/format-time";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
+import { readObserveProjectPage } from "src/api/project/observe-project-list";
 
 // ── Helpers ──
 
@@ -41,13 +41,6 @@ function getHealthColor(lastActive, theme) {
 }
 
 // ── API ──
-
-const fetchObserveProjects = async (params) => {
-  const { data } = await axios.get(endpoints.project.projectObserveList, {
-    params,
-  });
-  return data;
-};
 
 // ── Component ──
 
@@ -103,22 +96,25 @@ const ObserveListView = forwardRef(
           apiFilters,
         },
       ],
-      queryFn: () =>
-        fetchObserveProjects({
-          name: debouncedSearch || null,
-          page_number: page,
-          page_size: pageSize,
-          sort_by: sortBy,
-          sort_direction: sortOrder,
-          project_type: "observe",
-          ...(apiFilters && { filters: apiFilters }),
+      queryFn: ({ signal }) =>
+        readObserveProjectPage({
+          signal,
+          params: {
+            name: debouncedSearch || null,
+            page_number: page,
+            page_size: pageSize,
+            sort_by: sortBy,
+            sort_direction: sortOrder,
+            ...(apiFilters && { filters: apiFilters }),
+          },
         }),
+      retry: false,
       placeholderData: keepPreviousData,
       staleTime: 30_000,
     });
 
-    const items = apiData?.result?.table || [];
-    const total = apiData?.result?.metadata?.total_rows || 0;
+    const items = apiData?.rows || [];
+    const total = apiData?.totalRows ?? 0;
 
     const handleRowSelectionChange = useCallback(
       (sel) => {

@@ -8,6 +8,10 @@ logger = structlog.get_logger(__name__)
 
 STARTUP_SAFE_MANAGEMENT_COMMANDS = frozenset(
     {
+        # Retired zero-I/O tombstones remain runnable so stale jobs receive
+        # their explicit unified-command replacement error.
+        "ch25_activate_attribute_catalog",
+        "ch25_backfill_attribute_catalog",
         "check",
         "collectstatic",
         "generate_swagger",
@@ -25,9 +29,10 @@ HOSTED_DEPLOYMENTS = frozenset({"US", "EU", "DEV"})
 # mutation hooks during AppConfig initialization.
 OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
     {
-        "ch25_activate_attribute_catalog",
         "ch25_apply_schema",
+        "ch25_property_catalog_dev_rollout",
         "ch25_remove_pg",
+        "backfill_score_tracer_project",
         "createcachetable",
         "drop_legacy_observation_span",
         "migrate",

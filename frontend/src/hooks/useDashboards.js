@@ -8,18 +8,31 @@ import { useEffect, useRef, useState } from "react";
 import axios, { endpoints } from "src/utils/axios";
 import { getFilterValueReadState } from "src/utils/queryReadState";
 import { accumulateUniqueListContinuations } from "src/sections/projects/LLMTracing/listCursorPagination";
+import {
+  ANALYTICS_REQUEST_TIMEOUT_MS,
+  CURSOR_MAX_EMPTY_CONTINUATIONS,
+  FILTER_VALUE_MIN_VISIBLE_RESULTS,
+  FILTER_VALUE_PAGE_SIZE,
+  FILTER_VALUE_CACHE_TIME_MS,
+  FILTER_VALUE_REQUEST_TIMEOUT_MS as CONFIGURED_FILTER_VALUE_REQUEST_TIMEOUT_MS,
+  FILTER_VALUE_STALE_TIME_MS,
+  INTERACTIVE_REQUEST_TIMEOUT_MS,
+  PROPERTY_CATALOG_CACHE_TIME_MS,
+  PROPERTY_CATALOG_PAGE_SIZE,
+  PROPERTY_CATALOG_STALE_TIME_MS,
+} from "src/config/runtime_limits";
 
 const DASHBOARD_KEYS = {
   all: ["dashboards"],
   list: () => [...DASHBOARD_KEYS.all, "list"],
   detail: (id) => [...DASHBOARD_KEYS.all, "detail", id],
-  metrics: (projectIds, workflow) => [
-    ...DASHBOARD_KEYS.all,
-    "metrics",
-    projectIds,
-    workflow,
-  ],
-  metricsPaginated: (category, search, source, excludeCustomAttributes) => [
+  metricsPaginated: (
+    category,
+    search,
+    source,
+    excludeCustomAttributes,
+    pageSize,
+  ) => [
     ...DASHBOARD_KEYS.all,
     "metrics",
     "paginated",
@@ -27,8 +40,158 @@ const DASHBOARD_KEYS = {
     search,
     source,
     excludeCustomAttributes,
+    pageSize,
+  ],
+  propertyCatalog: (
+    category,
+    search,
+    source,
+    projectIds,
+    agentDefinitionId,
+    perEvalConfig,
+    role,
+    pageSize,
+    cacheScopeKey,
+  ) => [
+    ...DASHBOARD_KEYS.all,
+    "property-catalog",
+    category,
+    search,
+    source,
+    [...(projectIds || [])].map(String).sort(),
+    agentDefinitionId || "",
+    Boolean(perEvalConfig),
+    role || "",
+    pageSize,
+    cacheScopeKey || "",
   ],
 };
+
+const PROPERTY_CATALOG_CURSOR_STOPPED_KEY = "__propertyCatalogCursorStopped";
+const PROPERTY_CATALOG_COUNT_KEYS = [
+  "all",
+  "system_metric",
+  "eval_metric",
+  "annotation_metric",
+  "custom_attribute",
+  "custom_column",
+];
+
+const validPropertyCatalogCategoryCounts = (page) => {
+  const hasCounts = Object.prototype.hasOwnProperty.call(
+    page || {},
+    "category_counts",
+  );
+  const hasExactFlag = Object.prototype.hasOwnProperty.call(
+    page || {},
+    "category_counts_exact",
+  );
+  // Keep rolling deploys safe: an older activated-catalog response has
+  // neither field. Once either field is present, require the complete exact
+  // contract so a partial response cannot masquerade as trustworthy counts.
+  if (!hasCounts && !hasExactFlag) return true;
+  if (!hasCounts || !hasExactFlag) return false;
+  const counts = page?.category_counts;
+  if (
+    page?.category_counts_exact !== true ||
+    !counts ||
+    typeof counts !== "object" ||
+    Array.isArray(counts) ||
+    Object.keys(counts).length !== PROPERTY_CATALOG_COUNT_KEYS.length ||
+    !PROPERTY_CATALOG_COUNT_KEYS.every(
+      (key) => Number.isSafeInteger(counts[key]) && counts[key] >= 0,
+    )
+  ) {
+    return false;
+  }
+  return (
+    counts.all ===
+    PROPERTY_CATALOG_COUNT_KEYS.slice(1).reduce(
+      (total, key) => total + counts[key],
+      0,
+    )
+  );
+};
+
+/**
+ * The legacy definition readers are a rollout compatibility path, not a
+ * generic error fallback. Only the server's explicit DEV/rollout readiness
+ * response may select them; auth, validation, cursor, and catalog-integrity
+ * failures stay visible and fail closed.
+ */
+export const isPropertyCatalogNotReadyError = (error) => {
+  // `src/utils/axios` deliberately flattens API failures before callers see
+  // them. Keep the raw Axios shape for tests/alternate clients, but recognize
+  // the application shape used by every live picker as well. Without this,
+  // the rollout-only legacy reader never opens for a non-activated workspace.
+  const status = error?.response?.status ?? error?.statusCode;
+  const code = error?.response?.data?.code ?? error?.code;
+  return status === 503 && code === "property_catalog_not_ready";
+};
+
+const canonicalizePropertyDefinition = (value) => {
+  if (Array.isArray(value)) return value.map(canonicalizePropertyDefinition);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalizePropertyDefinition(value[key])]),
+    );
+  }
+  return value;
+};
+
+const serializedPropertyDefinition = (metric) =>
+  JSON.stringify(canonicalizePropertyDefinition(metric));
+
+const samePropertyCatalogActivation = (page, baseline) =>
+  page?.catalog_epoch === baseline?.catalog_epoch &&
+  page?.catalog_revision === baseline?.catalog_revision &&
+  page?.activation_fingerprint === baseline?.activation_fingerprint;
+
+const stopPropertyCatalogCursor = (page, reason) => ({
+  ...(page || {}),
+  [PROPERTY_CATALOG_CURSOR_STOPPED_KEY]: reason,
+});
+
+export const validatePropertyCatalogPage = (
+  page,
+  consumedCursors = new Set(),
+) => {
+  if (
+    !page ||
+    page.query_complete !== true ||
+    page.query_exact !== true ||
+    page.query_status !== "complete" ||
+    page.query_provenance !== "activated_property_catalog" ||
+    !Number.isSafeInteger(page.catalog_epoch) ||
+    page.catalog_epoch < 1 ||
+    !Number.isSafeInteger(page.catalog_revision) ||
+    page.catalog_revision < 1 ||
+    !/^[0-9a-f]{64}$/.test(page.activation_fingerprint || "") ||
+    !Array.isArray(page.metrics) ||
+    page.total !== null ||
+    page.total_is_exact !== false ||
+    !validPropertyCatalogCategoryCounts(page)
+  ) {
+    return stopPropertyCatalogCursor(page, "malformed_page");
+  }
+  if (page.has_more === true) {
+    if (
+      typeof page.next_cursor !== "string" ||
+      page.next_cursor.length === 0 ||
+      consumedCursors.has(page.next_cursor)
+    ) {
+      return stopPropertyCatalogCursor(page, "malformed_cursor");
+    }
+    return page;
+  }
+  if (page.has_more === false && page.next_cursor == null) return page;
+  return stopPropertyCatalogCursor(page, "malformed_cursor");
+};
+
+const isPropertyCatalogCursorStopped = (page) =>
+  typeof page?.[PROPERTY_CATALOG_CURSOR_STOPPED_KEY] === "string";
 
 // A bounded value walk may report `limit_reached` together with an advancing
 // signed cursor. That is a resumable checkpoint; only `exhausted` is terminal.
@@ -36,6 +199,11 @@ const FILTER_VALUE_TERMINAL_BROWSE_STATUSES = new Set(["exhausted"]);
 const FILTER_VALUE_FOLLOWED_CURSORS_KEY = "__filterValueFollowedCursors";
 const FILTER_VALUE_CURSOR_STOPPED_KEY = "__filterValueCursorStopped";
 const DASHBOARD_QUERY_REFRESH_PARAMS = Object.freeze({ refresh: true });
+
+// Keep the browser deadline independently configurable so it also bounds a
+// stalled proxy or a response that never reaches the application server.
+export const PROPERTY_CATALOG_REQUEST_TIMEOUT_MS =
+  INTERACTIVE_REQUEST_TIMEOUT_MS;
 
 const hasOwn = (value, key) =>
   Object.prototype.hasOwnProperty.call(value || {}, key);
@@ -82,17 +250,19 @@ const validateFilterValueCursor = (page, consumedCursors = new Set()) => {
   return stopFilterValueCursor(normalized, "malformed_cursor");
 };
 
-// The server owns a four-second request wall. Keep the whole browser gesture
-// below five seconds as well, including a stalled proxy. One gesture performs
-// one physical request; a signed cursor remains available for the next
-// explicit action, so this latency guard never becomes a vocabulary cap.
-export const FILTER_VALUE_REQUEST_TIMEOUT_MS = 4_800;
-// Sparse system dimensions (for example Model) can legitimately have no
-// value inside the server's first recent-time checkpoint.  One bounded
-// follow-up still keeps the complete property-selection gesture below the
-// product's ten-second SLA while avoiding an empty picker that requires a
-// manual "Continue" click.
-const SYSTEM_FILTER_VALUE_INITIAL_FOLLOW_DEADLINE_MS = 9_500;
+// Each physical request has its own configurable browser deadline, including a
+// stalled proxy. Sparse system pages use the separately bounded page-fill wall
+// below. A signed cursor always keeps the vocabulary resumable.
+export const FILTER_VALUE_REQUEST_TIMEOUT_MS =
+  CONFIGURED_FILTER_VALUE_REQUEST_TIMEOUT_MS;
+// Sparse system dimensions (for example Model) are walked in exact physical
+// time-slice checkpoints. Follow checkpoint-only pages until the first useful
+// result, publish it immediately, and leave every later signed checkpoint for
+// the picker's explicit Load more action. This keeps a slow later slice from
+// hiding values that the API already returned inside the configured action wall.
+const SYSTEM_FILTER_VALUE_PAGE_FILL_DEADLINE_MS = ANALYTICS_REQUEST_TIMEOUT_MS;
+const SYSTEM_FILTER_VALUE_PAGE_FILL_MAX_CONTINUATIONS =
+  CURSOR_MAX_EMPTY_CONTINUATIONS;
 
 const getFilterValueIdentity = (option) => {
   const value =
@@ -228,25 +398,11 @@ export function useDeleteDashboard() {
   });
 }
 
-export function useDashboardMetrics(projectIds, workflow) {
-  return useQuery({
-    queryKey: DASHBOARD_KEYS.metrics(projectIds, workflow),
-    queryFn: () =>
-      axios.get(endpoints.dashboard.metrics, {
-        params: {
-          project_ids: (projectIds || []).join(","),
-          ...(workflow ? { workflow } : {}),
-        },
-      }),
-    select: (res) => res.data?.result || {},
-  });
-}
-
-export function useDashboardMetricsPaginated({
+export function useLegacyDashboardMetricsPaginated({
   category = "",
   source = "",
   search = "",
-  pageSize = 50,
+  pageSize = PROPERTY_CATALOG_PAGE_SIZE,
   excludeCustomAttributes = false,
   enabled = true,
 } = {}) {
@@ -256,9 +412,12 @@ export function useDashboardMetricsPaginated({
       search,
       source,
       excludeCustomAttributes,
+      pageSize,
     ),
-    queryFn: ({ pageParam = 1 }) =>
+    queryFn: ({ pageParam = 1, signal }) =>
       axios.get(endpoints.dashboard.metrics, {
+        signal,
+        timeout: PROPERTY_CATALOG_REQUEST_TIMEOUT_MS,
         params: {
           ...(category ? { category } : {}),
           ...(source ? { source } : {}),
@@ -291,6 +450,197 @@ export function useDashboardMetricsPaginated({
     ...query,
     metrics,
     total,
+  };
+}
+
+// Backward-compatible export for callers outside the migrated first-party
+// surfaces. New definition readers must use `usePropertyCatalog` and may
+// enable this page-number reader only after the typed rollout not-ready 503.
+export const useDashboardMetricsPaginated = useLegacyDashboardMetricsPaginated;
+
+export function usePropertyCatalog({
+  category = "",
+  source = "",
+  search = "",
+  projectIds = [],
+  agentDefinitionId = "",
+  perEvalConfig = false,
+  role = "",
+  pageSize = PROPERTY_CATALOG_PAGE_SIZE,
+  enabled = true,
+  allowLegacyNotReadyFallback = false,
+  fallbackScopeKey = "",
+  cacheScopeKey = "",
+} = {}) {
+  const canonicalProjectIds = [
+    ...new Set((projectIds || []).map(String)),
+  ].sort();
+  const [legacyFallbackScopeKey, setLegacyFallbackScopeKey] = useState(null);
+  const legacyFallbackRequired = Boolean(
+    allowLegacyNotReadyFallback &&
+      fallbackScopeKey &&
+      legacyFallbackScopeKey === fallbackScopeKey,
+  );
+  const query = useInfiniteQuery({
+    queryKey: DASHBOARD_KEYS.propertyCatalog(
+      category,
+      search,
+      source,
+      canonicalProjectIds,
+      agentDefinitionId,
+      perEvalConfig,
+      role,
+      pageSize,
+      cacheScopeKey,
+    ),
+    queryFn: ({ pageParam, signal }) =>
+      axios
+        .get(endpoints.dashboard.metrics, {
+          signal,
+          timeout: PROPERTY_CATALOG_REQUEST_TIMEOUT_MS,
+          params: {
+            cursor_mode: true,
+            page_size: pageSize,
+            ...(category ? { category } : {}),
+            ...(source ? { source } : {}),
+            ...(search ? { search } : {}),
+            ...(canonicalProjectIds.length
+              ? { project_ids: canonicalProjectIds.join(",") }
+              : {}),
+            ...(agentDefinitionId
+              ? { agent_definition_id: agentDefinitionId }
+              : {}),
+            ...(perEvalConfig ? { per_eval_config: true } : {}),
+            ...(role ? { role } : {}),
+            ...(pageParam ? { cursor: pageParam } : {}),
+          },
+        })
+        .then(({ data }) => data?.result || {}),
+    initialPageParam: null,
+    getNextPageParam: (lastPage, allPages) => {
+      const consumed = new Set(
+        allPages
+          .slice(0, -1)
+          .flatMap((page) =>
+            typeof page?.next_cursor === "string" ? [page.next_cursor] : [],
+          ),
+      );
+      const checked = validatePropertyCatalogPage(lastPage, consumed);
+      const firstPage = validatePropertyCatalogPage(allPages[0]);
+      return isPropertyCatalogCursorStopped(checked) ||
+        isPropertyCatalogCursorStopped(firstPage) ||
+        !samePropertyCatalogActivation(checked, firstPage) ||
+        !checked.has_more
+        ? undefined
+        : checked.next_cursor;
+    },
+    enabled: enabled && !legacyFallbackRequired,
+    retry: false,
+    staleTime: PROPERTY_CATALOG_STALE_TIME_MS,
+    gcTime: PROPERTY_CATALOG_CACHE_TIME_MS,
+    refetchOnWindowFocus: false,
+    meta: { errorHandled: true },
+  });
+
+  useEffect(() => {
+    if (
+      allowLegacyNotReadyFallback &&
+      enabled &&
+      fallbackScopeKey &&
+      isPropertyCatalogNotReadyError(query.error) &&
+      legacyFallbackScopeKey !== fallbackScopeKey
+    ) {
+      setLegacyFallbackScopeKey(fallbackScopeKey);
+    }
+  }, [
+    allowLegacyNotReadyFallback,
+    enabled,
+    fallbackScopeKey,
+    legacyFallbackScopeKey,
+    query.error,
+  ]);
+
+  const rawPages = query.data?.pages || [];
+  let chainFailureReason = null;
+  const checkedPages = rawPages.map((page, index) => {
+    const consumed = new Set(
+      rawPages
+        .slice(0, index)
+        .flatMap((earlier) =>
+          typeof earlier?.next_cursor === "string" ? [earlier.next_cursor] : [],
+        ),
+    );
+    const checked = validatePropertyCatalogPage(page, consumed);
+    if (isPropertyCatalogCursorStopped(checked)) {
+      chainFailureReason ||= checked[PROPERTY_CATALOG_CURSOR_STOPPED_KEY];
+    }
+    return checked;
+  });
+  const baselinePage = checkedPages[0];
+  if (
+    baselinePage &&
+    checkedPages.some(
+      (page) => !samePropertyCatalogActivation(page, baselinePage),
+    )
+  ) {
+    chainFailureReason ||= "activation_mismatch";
+  }
+  if (
+    baselinePage &&
+    checkedPages.some(
+      (page) =>
+        JSON.stringify(page.category_counts) !==
+        JSON.stringify(baselinePage.category_counts),
+    )
+  ) {
+    chainFailureReason ||= "category_count_mismatch";
+  }
+  let duplicateProperty = false;
+  let definitionConflict = false;
+  const definitionsById = new Map();
+  const candidateMetrics = checkedPages.flatMap((page) =>
+    (page.metrics || []).filter((metric) => {
+      const propertyId = metric?.property_id;
+      if (typeof propertyId !== "string" || propertyId.length === 0) {
+        definitionConflict = true;
+        return false;
+      }
+      const serialized = serializedPropertyDefinition(metric);
+      if (definitionsById.has(propertyId)) {
+        duplicateProperty = true;
+        if (definitionsById.get(propertyId) !== serialized) {
+          definitionConflict = true;
+        }
+        return false;
+      }
+      definitionsById.set(propertyId, serialized);
+      return true;
+    }),
+  );
+  if (definitionConflict) {
+    chainFailureReason ||= "definition_conflict";
+  } else if (duplicateProperty) {
+    chainFailureReason ||= "duplicate_property";
+  }
+  const cursorChainStopped = chainFailureReason !== null;
+  const metrics = cursorChainStopped ? [] : candidateMetrics;
+
+  return {
+    ...query,
+    hasNextPage: cursorChainStopped ? false : query.hasNextPage,
+    metrics,
+    total: null,
+    totalIsExact: false,
+    categoryCounts: cursorChainStopped
+      ? null
+      : baselinePage?.category_counts || null,
+    categoryCountsExact:
+      !cursorChainStopped && baselinePage?.category_counts_exact === true,
+    cursorChainStopped,
+    cursorStopReason: chainFailureReason,
+    legacyFallbackRequired,
+    queryReadState:
+      query.isError || cursorChainStopped ? "degraded" : "complete",
   };
 }
 
@@ -419,16 +769,36 @@ export function useDashboardQuery() {
   });
 }
 
+export function buildPropertyRegistryId({
+  propertyId,
+  metricName,
+  metricType = "system_metric",
+  source = "traces",
+}) {
+  if (propertyId) return propertyId;
+  if (!metricName) return "";
+  if (metricType === "custom_attribute")
+    return `custom_attribute:${metricName}`;
+  if (metricType === "eval_metric") return `eval:${metricName}`;
+  if (metricType === "annotation_metric") return `annotation:${metricName}`;
+  if (metricType === "custom_column" || source === "dataset_column") {
+    return `dataset_column:${metricName}`;
+  }
+  return `system_attribute:${source}:${metricName}`;
+}
+
 export function useDashboardFilterValues({
+  propertyId,
   metricName,
   metricType,
   projectIds,
+  datasetId,
   source = "traces",
   workflow,
   enabled = true,
   search = "",
   searchGesture = search,
-  pageSize,
+  pageSize = FILTER_VALUE_PAGE_SIZE,
   attributeType,
 }) {
   const queryClient = useQueryClient();
@@ -440,12 +810,20 @@ export function useDashboardFilterValues({
   });
   const freshChainRetryRef = useRef(null);
   const [freshChainRetryIdentity, setFreshChainRetryIdentity] = useState(null);
+  const resolvedPropertyId = buildPropertyRegistryId({
+    propertyId,
+    metricName,
+    metricType,
+    source,
+  });
   const queryKey = [
     ...DASHBOARD_KEYS.all,
     "filterValues",
     metricName,
+    resolvedPropertyId,
     metricType,
     projectIds,
+    datasetId,
     source,
     workflow,
     search,
@@ -459,9 +837,11 @@ export function useDashboardFilterValues({
         signal,
         timeout: FILTER_VALUE_REQUEST_TIMEOUT_MS,
         params: {
+          ...(resolvedPropertyId ? { property_id: resolvedPropertyId } : {}),
           metric_name: metricName,
           metric_type: metricType,
           project_ids: (projectIds || []).join(","),
+          ...(datasetId ? { dataset_id: datasetId } : {}),
           source,
           ...(workflow ? { workflow } : {}),
           ...(search ? { search } : {}),
@@ -505,7 +885,12 @@ export function useDashboardFilterValues({
       rowsFromResponse: (response) => response?.values || [],
       identityFromRow: getFilterValueIdentity,
       knownIdentities: knownValueIdentities,
-      targetRowCount: isFreshChainRead ? 1 : pageSize || 10,
+      targetRowCount:
+        metricType === "system_metric"
+          ? FILTER_VALUE_MIN_VISIBLE_RESULTS
+          : isFreshChainRead
+            ? FILTER_VALUE_MIN_VISIBLE_RESULTS
+            : pageSize || FILTER_VALUE_PAGE_SIZE,
       // A private marker records a protocol stop for the picker. Project it
       // as terminal only for this bounded follower so no malformed/repeated
       // cursor is requested and the published response remains retryable.
@@ -523,14 +908,17 @@ export function useDashboardFilterValues({
       isCurrent: () => !signal?.aborted,
       cancellationSignal: signal,
       startedAt: actionStartedAt,
-      // System dimensions may be sparse at the newest retained-data frontier.
-      // Follow exactly one empty checkpoint on the initial gesture; later
-      // pages and every other metric family remain one-request actions.
+      // A system gesture may cross empty exact time slices, but stops as soon
+      // as one non-empty slice is available. The public signed cursor keeps
+      // the remaining vocabulary explicitly pageable. Other metric families
+      // retain their one-request behavior.
       maxContinuations:
-        isFreshChainRead && metricType === "system_metric" ? 1 : 0,
+        metricType === "system_metric"
+          ? SYSTEM_FILTER_VALUE_PAGE_FILL_MAX_CONTINUATIONS
+          : 0,
       maxElapsedMs:
-        isFreshChainRead && metricType === "system_metric"
-          ? SYSTEM_FILTER_VALUE_INITIAL_FOLLOW_DEADLINE_MS
+        metricType === "system_metric"
+          ? SYSTEM_FILTER_VALUE_PAGE_FILL_DEADLINE_MS
           : FILTER_VALUE_REQUEST_TIMEOUT_MS,
     });
     const checkedPage = checkedMetadata(page);
@@ -568,8 +956,8 @@ export function useDashboardFilterValues({
     },
     enabled: enabled && Boolean(metricName),
     retry: false,
-    staleTime: 5 * 60 * 1000,
-    gcTime: 15 * 60 * 1000,
+    staleTime: FILTER_VALUE_STALE_TIME_MS,
+    gcTime: FILTER_VALUE_CACHE_TIME_MS,
     refetchOnWindowFocus: false,
     refetchOnMount: false,
     refetchOnReconnect: false,
@@ -759,39 +1147,26 @@ export function useDatasetColumnValues({
   // Backs the dataset filter panel's Basic-tab value dropdown and seeds
   // the AI-filter smart-mode value grounding indirectly (smart mode
   // fetches server-side; this hook is strictly for the manual picker).
-  return useQuery({
-    queryKey: [
-      ...DASHBOARD_KEYS.all,
-      "datasetColumnValues",
-      datasetId,
-      columnId,
-    ],
-    queryFn: async () => {
-      try {
-        const res = await axios.get(endpoints.dashboard.filterValues, {
-          params: {
-            metric_name: columnId,
-            metric_type: "system_metric",
-            source: "dataset_column",
-            dataset_id: datasetId,
-          },
-        });
-        return res;
-      } catch {
-        return { data: { result: { values: [] } } };
-      }
-    },
-    select: (res) => {
-      const raw = res.data?.result?.values || [];
-      // Normalize both string[] and {value,label}[] shapes to string[].
-      return raw
-        .map((v) => (typeof v === "string" ? v : v?.value))
-        .filter((v) => typeof v === "string" && v.length > 0);
-    },
+  const query = useDashboardFilterValues({
+    propertyId: columnId ? `dataset_column:${columnId}` : "",
+    metricName: columnId,
+    metricType: "custom_column",
+    datasetId,
+    source: "dataset_column",
+    pageSize: FILTER_VALUE_PAGE_SIZE,
     enabled: enabled && Boolean(datasetId) && Boolean(columnId),
-    retry: false,
-    staleTime: 60_000,
   });
+  const raw = query.isError ? undefined : query.data;
+  // Normalize both string[] and {value,label}[] shapes to string[] while
+  // retaining the infinite-query controls. Dataset vocabularies can exceed a
+  // single exact page, so the picker must expose the signed continuation.
+  const values =
+    raw === undefined
+      ? undefined
+      : raw
+          .map((value) => (typeof value === "string" ? value : value?.value))
+          .filter((value) => typeof value === "string" && value.length > 0);
+  return { ...query, data: values };
 }
 
 export function useSimulationAgents() {

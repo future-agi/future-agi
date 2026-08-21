@@ -20,9 +20,11 @@ from typing import Any, Literal, Protocol
 
 CATALOG_ACTIVATION_ENVIRONMENT = "development"
 CATALOG_ACTIVATION_ACK = "TH7247_DEV_ACTIVATE_FROZEN_CATALOG_EPOCH"
+CATALOG_ACTIVATION_SUPERSESSION_ACK = "TH7247_DEV_SUPERSEDE_FROZEN_CATALOG_V1_WITH_V2"
 CATALOG_ACTIVATION_MAX_HOURS = 366 * 24
 CATALOG_ACTIVATION_MAX_RESULT_ROWS = CATALOG_ACTIVATION_MAX_HOURS + 1
 CATALOG_ACTIVATION_QUERY_TIMEOUT_MS = 8_000
+CATALOG_PROJECTION_VERSION = 2
 
 SOURCE_STREAM_TABLE = "span_attribute_catalog_source_streams"
 ACTIVATION_TABLE = "span_attribute_catalog_activations"
@@ -59,6 +61,7 @@ SELECT
     tupleElement(state, 6) AS value_rows,
     tupleElement(state, 7) AS gap_count,
     tupleElement(state, 8) AS gap_reasons,
+    tupleElement(state, 9) AS projection_version,
     state_version,
     latest_state_variants
 FROM
@@ -75,7 +78,8 @@ FROM
                 key_rows,
                 value_rows,
                 gap_count,
-                gap_reasons
+                gap_reasons,
+                projection_version
             ),
             _version
         ) AS state,
@@ -89,7 +93,8 @@ FROM
                 key_rows,
                 value_rows,
                 gap_count,
-                gap_reasons
+                gap_reasons,
+                projection_version
             ),
             _version = latest_version
         ) AS latest_state_variants
@@ -220,10 +225,11 @@ WITH activation_rows AS
 )
 SELECT
     tupleElement(state, 1) AS catalog_epoch,
-    tupleElement(state, 2) AS handoff_start,
-    tupleElement(state, 3) AS handoff_end,
-    tupleElement(state, 4) AS writer_watermark,
-    toString(tupleElement(state, 5)) AS status,
+    tupleElement(state, 2) AS projection_version,
+    tupleElement(state, 3) AS handoff_start,
+    tupleElement(state, 4) AS handoff_end,
+    tupleElement(state, 5) AS writer_watermark,
+    toString(tupleElement(state, 6)) AS status,
     state_version,
     latest_state_variants
 FROM
@@ -232,6 +238,7 @@ FROM
         argMax(
             tuple(
                 catalog_epoch,
+                projection_version,
                 handoff_start,
                 handoff_end,
                 writer_watermark,
@@ -243,6 +250,7 @@ FROM
         uniqExactIf(
             tuple(
                 catalog_epoch,
+                projection_version,
                 handoff_start,
                 handoff_end,
                 writer_watermark,
@@ -290,6 +298,8 @@ class CatalogActivationConfig:
     until: datetime
     target_database: str
     dry_run: bool = False
+    allow_projection_supersession: bool = False
+    supersession_acknowledgement: str = ""
 
     def validated(self) -> CatalogActivationConfig:
         if self.environment != CATALOG_ACTIVATION_ENVIRONMENT:
@@ -318,6 +328,19 @@ class CatalogActivationConfig:
         if hours > CATALOG_ACTIVATION_MAX_HOURS:
             raise CatalogActivationError("activation range exceeds 12 months")
         _database(self.target_database)
+        if type(self.allow_projection_supersession) is not bool:
+            raise CatalogActivationError(
+                "allow_projection_supersession must be an explicit boolean"
+            )
+        if self.allow_projection_supersession:
+            if self.supersession_acknowledgement != CATALOG_ACTIVATION_SUPERSESSION_ACK:
+                raise CatalogActivationError(
+                    "explicit projection supersession acknowledgement missing"
+                )
+        elif self.supersession_acknowledgement:
+            raise CatalogActivationError(
+                "projection supersession acknowledgement requires its explicit flag"
+            )
         return self
 
 
@@ -335,7 +358,15 @@ class CatalogActivationSummary:
     source_fence_digest: str
     dry_run: bool
     already_active: bool
+    superseded_epoch: int | None
     rows_written: int
+
+
+@dataclass(frozen=True, slots=True)
+class _ActivationDecision:
+    already_active: bool
+    prior_state_version: int
+    superseded_epoch: int | None
 
 
 class CatalogFrozenEpochActivator:
@@ -458,12 +489,11 @@ class CatalogFrozenEpochActivator:
             common,
             settings=_read_settings(2),
         )
-        activation_exists = _validate_existing_activation(
+        activation_decision = _validate_existing_activation(
             activation_rows,
-            epoch=config.catalog_epoch,
-            since=config.since,
-            until=config.until,
+            config=config,
         )
+        activation_exists = activation_decision.already_active
 
         totals = {
             name: sum(_strict_uint(row[name], name) for row in checkpoints)
@@ -518,6 +548,10 @@ class CatalogFrozenEpochActivator:
                 )
                 rows_written += 1
             if not activation_exists:
+                activation_version = max(
+                    version + 1,
+                    activation_decision.prior_state_version + 1,
+                )
                 self.io.insert(
                     _qualified(config.target_database, ACTIVATION_TABLE),
                     [
@@ -530,7 +564,8 @@ class CatalogFrozenEpochActivator:
                             "active",
                             now,
                             now,
-                            version + 1,
+                            activation_version,
+                            CATALOG_PROJECTION_VERSION,
                         )
                     ],
                     (
@@ -543,6 +578,7 @@ class CatalogFrozenEpochActivator:
                         "qualified_at",
                         "updated_at",
                         "_version",
+                        "projection_version",
                     ),
                     settings=_write_settings("activation"),
                 )
@@ -561,6 +597,7 @@ class CatalogFrozenEpochActivator:
             source_fence_digest=source_fence_digest,
             dry_run=config.dry_run,
             already_active=stream_exists and activation_exists,
+            superseded_epoch=activation_decision.superseded_epoch,
             rows_written=rows_written,
         )
 
@@ -589,6 +626,14 @@ def _validate_checkpoints(rows, *, since, until):
             raise CatalogActivationError("checkpoint source/processed rows disagree")
         if _strict_uint(row.get("source_version_fence"), "source_version_fence") <= 0:
             raise CatalogActivationError("checkpoint source fence is missing")
+        if (
+            _strict_uint(
+                row.get("projection_version"),
+                "projection_version",
+            )
+            != CATALOG_PROJECTION_VERSION
+        ):
+            raise CatalogActivationError("checkpoint projection is incompatible")
         if _strict_uint(row.get("state_version"), "state_version") <= 0:
             raise CatalogActivationError("checkpoint state version is missing")
         if _strict_uint(row.get("latest_state_variants"), "latest_state_variants") != 1:
@@ -653,31 +698,60 @@ def _validate_existing_streams(rows, expected: Mapping[str, Any]) -> bool:
     return True
 
 
-def _validate_existing_activation(rows, *, epoch, since, until) -> bool:
+def _validate_existing_activation(
+    rows,
+    *,
+    config: CatalogActivationConfig,
+) -> _ActivationDecision:
     if not isinstance(rows, list) or len(rows) > 1:
         raise CatalogActivationError("activation state is ambiguous")
     if not rows:
-        return False
+        return _ActivationDecision(False, 0, None)
     row = rows[0]
+    if not isinstance(row, dict):
+        raise CatalogActivationError("activation state is invalid")
     if _strict_uint(row.get("latest_state_variants"), "latest_state_variants") != 1:
         raise CatalogActivationError("activation latest state conflicts")
+    prior_state_version = _strict_uint(row.get("state_version"), "state_version")
+    if prior_state_version <= 0:
+        raise CatalogActivationError("activation state version is missing")
     expected = (
-        epoch,
-        since,
-        until,
-        until,
+        config.catalog_epoch,
+        CATALOG_PROJECTION_VERSION,
+        config.since,
+        config.until,
+        config.until,
         "active",
     )
     actual = (
         _strict_uint(row.get("catalog_epoch"), "catalog_epoch"),
+        _strict_uint(row.get("projection_version"), "projection_version"),
         _aware_utc(row.get("handoff_start"), "handoff_start"),
         _aware_utc(row.get("handoff_end"), "handoff_end"),
         _aware_utc(row.get("writer_watermark"), "writer_watermark"),
         row.get("status"),
     )
-    if actual != expected:
+    if actual == expected:
+        return _ActivationDecision(True, prior_state_version, None)
+
+    prior_epoch, prior_projection, prior_since, prior_until, prior_watermark, status = (
+        actual
+    )
+    if not config.allow_projection_supersession:
         raise CatalogActivationError("project already has a different activation")
-    return True
+    if (
+        prior_projection != 1
+        or CATALOG_PROJECTION_VERSION != 2
+        or config.catalog_epoch <= prior_epoch
+        or prior_since != config.since
+        or prior_until != config.until
+        or prior_watermark != config.until
+        or status != "active"
+    ):
+        raise CatalogActivationError(
+            "existing activation is not an exact v1 snapshot eligible for v2 supersession"
+        )
+    return _ActivationDecision(False, prior_state_version, prior_epoch)
 
 
 def _checkpoint_digest(config, checkpoints) -> str:
@@ -696,6 +770,10 @@ def _checkpoint_digest(config, checkpoints) -> str:
                 ),
                 "source_version_fence": _strict_uint(
                     row["source_version_fence"], "source_version_fence"
+                ),
+                "projection_version": _strict_uint(
+                    row.get("projection_version"),
+                    "projection_version",
                 ),
                 "source_rows": _strict_uint(row["source_rows"], "source_rows"),
                 "processed_rows": _strict_uint(row["processed_rows"], "processed_rows"),

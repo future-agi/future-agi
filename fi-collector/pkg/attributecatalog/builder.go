@@ -20,6 +20,11 @@ const (
 )
 
 const (
+	SourceKindCustomAttribute = "custom_attribute"
+	SourceKindSystemAttribute = "system_attribute"
+)
+
+const (
 	GapMaxKeys             = "max_keys"
 	GapMaxArrayMembers     = "max_array_members"
 	GapMaxEncodedBytes     = "max_encoded_bytes"
@@ -66,6 +71,7 @@ type BuildLimits struct {
 // KeyRow mirrors span_attribute_key_catalog's insertable columns.
 type KeyRow struct {
 	ProjectID     string
+	SourceKind    string
 	AttributeKey  string
 	KeyFolded     string
 	AttributeType string
@@ -77,6 +83,7 @@ type KeyRow struct {
 // ValueRow mirrors span_attribute_value_catalog's insertable columns.
 type ValueRow struct {
 	ProjectID        string
+	SourceKind       string
 	AttributeKey     string
 	AttributeType    string
 	ValueFingerprint string
@@ -174,8 +181,22 @@ func BuildRows(
 	attrs SpanAttributeMaps,
 	limits BuildLimits,
 ) (BuildResult, error) {
+	return BuildRowsForSource(scope, attrs, limits, SourceKindCustomAttribute)
+}
+
+// BuildRowsForSource keeps custom and code-owned system properties in the
+// same catalog tables without allowing equal names to share an identity.
+func BuildRowsForSource(
+	scope Scope,
+	attrs SpanAttributeMaps,
+	limits BuildLimits,
+	sourceKind string,
+) (BuildResult, error) {
 	if limits.MaxKeys < 0 || limits.MaxArrayMembers < 0 || limits.MaxEncodedBytes < 0 {
 		return BuildResult{}, fmt.Errorf("catalog build limits must be non-negative")
+	}
+	if sourceKind != SourceKindCustomAttribute && sourceKind != SourceKindSystemAttribute {
+		return BuildResult{}, fmt.Errorf("unsupported catalog source kind")
 	}
 
 	selected, validKeys, invalidKeys := selectCandidates(attrs, limits.MaxKeys)
@@ -214,6 +235,7 @@ candidateLoop:
 
 		result.KeyRows = append(result.KeyRows, KeyRow{
 			ProjectID:     scope.ProjectID,
+			SourceKind:    sourceKind,
 			AttributeKey:  candidate.key,
 			KeyFolded:     foldAttributeKey(candidate.key),
 			AttributeType: candidate.attributeType,
@@ -239,6 +261,7 @@ candidateLoop:
 				&metadata,
 				seenValues,
 				scope,
+				sourceKind,
 				candidate,
 				encodedBoolean == 1,
 				limits.MaxEncodedBytes,
@@ -265,6 +288,7 @@ candidateLoop:
 					&metadata,
 					seenValues,
 					scope,
+					sourceKind,
 					candidate,
 					member,
 					limits.MaxEncodedBytes,
@@ -284,6 +308,7 @@ candidateLoop:
 				&metadata,
 				seenValues,
 				scope,
+				sourceKind,
 				candidate,
 				candidate.value,
 				limits.MaxEncodedBytes,
@@ -401,6 +426,7 @@ func appendScalarValue(
 	metadata *BuildMetadata,
 	seen map[valueIdentity]struct{},
 	scope Scope,
+	sourceKind string,
 	candidate attributeCandidate,
 	value any,
 	maxEncodedBytes int,
@@ -433,6 +459,7 @@ func appendScalarValue(
 	seen[identity] = struct{}{}
 	result.ValueRows = append(result.ValueRows, ValueRow{
 		ProjectID:        scope.ProjectID,
+		SourceKind:       sourceKind,
 		AttributeKey:     candidate.key,
 		AttributeType:    candidate.attributeType,
 		ValueFingerprint: encoded.Fingerprint,

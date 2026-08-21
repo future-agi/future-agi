@@ -5,17 +5,25 @@ import math
 import os
 import re
 import traceback
+from contextlib import ExitStack, contextmanager
 from datetime import timedelta
+from functools import wraps
 from urllib.parse import urlencode
 
 import structlog
-from django.db import connection, models, transaction
-from django.db.models import Avg, Count, Max, Prefetch, Q
+from django.db import DatabaseError, connection, models, transaction
+from django.db.models import Avg, Count, Max, OuterRef, Prefetch, Q, Subquery
 from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
+from rest_framework import status
+from rest_framework.exceptions import NotFound
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
 from model_hub.models.api_key import ApiKey
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.evals_metric import EvalTemplate
@@ -23,11 +31,6 @@ from model_hub.utils.function_eval_params import (
     normalize_eval_runtime_config,
     params_with_defaults_for_response,
 )
-from rest_framework import status
-from rest_framework.exceptions import NotFound
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
-from rest_framework.views import APIView
 from simulate.models import (
     AgentDefinition,
     CallExecution,
@@ -100,6 +103,7 @@ from simulate.serializers.response.test_execution import (
     RerunCallsResponseSerializer,
 )
 from simulate.serializers.run_test import (
+    RunTestListSummarySerializer,
     RunTestSerializer,
 )
 from simulate.serializers.test_execution import (
@@ -182,12 +186,248 @@ from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.models.replay_session import ReplaySession, ReplaySessionStep
 from tracer.models.trace import Trace
+from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.clickhouse.span_attribute_lookups import (
     spans_by_eval_attribute_call_execution_ids,
 )
 
 logger = structlog.get_logger(__name__)
 _gm = GeneralMethods()
+
+_RUN_TEST_LIST_WALL_MS = app_settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+_RUN_TEST_READ_MAX_RESPONSE_UNITS = (
+    app_settings.INTERACTIVE_READ_DEFAULT_MAX_RESPONSE_UNITS
+)
+
+
+class RunTestReadLimitExceeded(RuntimeError):
+    """A finite simulation response is still too large to render interactively."""
+
+
+class RunTestReadUnavailable(RuntimeError):
+    """An inner compatibility view converted a read failure to HTTP 500."""
+
+
+def _ensure_run_test_response_bounded(value):
+    """Conservatively cap response-renderer work without encoding a second copy."""
+
+    remaining = _RUN_TEST_READ_MAX_RESPONSE_UNITS
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if item is None or isinstance(item, bool):
+            remaining -= 4
+        elif isinstance(item, str):
+            remaining -= 4 * len(item) + 2
+        elif isinstance(item, int | float):
+            remaining -= 32
+        elif isinstance(item, dict):
+            remaining -= 2 + 2 * len(item)
+            for key, child in item.items():
+                remaining -= 4 * len(str(key)) + 2
+                stack.append(child)
+        elif isinstance(item, list | tuple):
+            remaining -= 2 + len(item)
+            stack.extend(item)
+        else:
+            remaining -= 4 * len(str(item)) + 2
+        if remaining < 0:
+            raise RunTestReadLimitExceeded
+
+
+def _run_test_read_queryset(queryset):
+    """Attach every relation used by ``RunTestSerializer`` in bounded batches.
+
+    The nested scenario serializer otherwise performs a row count, column
+    lookup, and active-graph lookup for every scenario.  The nested agent
+    serializer also asks for active/latest versions repeatedly.  A list page
+    or one wide detail row must not turn those helpers into an N+1 request.
+    """
+
+    row_count_subquery = (
+        Row.objects.filter(dataset=OuterRef("dataset"), deleted=False)
+        .values("dataset")
+        .annotate(count=Count("id"))
+        .values("count")
+    )
+    scenario_queryset = (
+        Scenarios.objects.select_related(
+            "dataset",
+            "simulator_agent",
+            "agent_definition",
+            "prompt_template",
+            "prompt_version",
+        )
+        .annotate(_dataset_row_count=Subquery(row_count_subquery))
+        .prefetch_related(
+            Prefetch(
+                "graphs",
+                queryset=ScenarioGraph.objects.filter(is_active=True).order_by(
+                    "-created_at"
+                ),
+                to_attr="_active_graphs",
+            ),
+            Prefetch(
+                "dataset__column_set",
+                queryset=Column.objects.filter(deleted=False).only(
+                    "id", "dataset_id", "name", "data_type"
+                ),
+                to_attr="_run_test_columns",
+            ),
+        )
+    )
+    version_queryset = AgentVersion.objects.select_related("credentials").order_by(
+        "-version_number"
+    )
+    eval_config_queryset = SimulateEvalConfig.objects.select_related(
+        "eval_group", "eval_template"
+    )
+    return queryset.select_related(
+        "agent_definition",
+        "agent_version",
+        "agent_version__credentials",
+        "simulator_agent",
+        "prompt_template",
+        "prompt_version",
+    ).prefetch_related(
+        Prefetch("scenarios", queryset=scenario_queryset),
+        Prefetch("simulate_eval_configs", queryset=eval_config_queryset),
+        Prefetch(
+            "agent_definition__versions",
+            queryset=version_queryset,
+            to_attr="_prefetched_versions",
+        ),
+    )
+
+
+def _run_test_summary_queryset(queryset):
+    """Load only relations and columns rendered by run-test list cards."""
+
+    row_count_subquery = (
+        Row.objects.filter(dataset=OuterRef("dataset"), deleted=False)
+        .values("dataset")
+        .annotate(count=Count("id"))
+        .values("count")
+    )
+    scenario_queryset = Scenarios.objects.annotate(
+        _dataset_row_count=Subquery(row_count_subquery)
+    ).only(
+        "id",
+        "name",
+        "description",
+        "scenario_type",
+        "dataset_id",
+    )
+    eval_config_queryset = SimulateEvalConfig.objects.select_related("eval_group").only(
+        "id",
+        "run_test_id",
+        "name",
+        "model",
+        "status",
+        "eval_group_id",
+        "eval_group__name",
+    )
+    return (
+        queryset.select_related("agent_definition")
+        .only(
+            "id",
+            "name",
+            "source_type",
+            "agent_definition_id",
+            "created_at",
+            "agent_definition__id",
+            "agent_definition__agent_name",
+            "agent_definition__agent_type",
+            "agent_definition__provider",
+            "agent_definition__contact_number",
+        )
+        .prefetch_related(
+            Prefetch("scenarios", queryset=scenario_queryset),
+            Prefetch("simulate_eval_configs", queryset=eval_config_queryset),
+        )
+    )
+
+
+def _execute_run_test_list_query_with_deadline(
+    deadline, execute, sql, params, many, context
+):
+    """Execute one PostgreSQL query under the shrinking request wall."""
+
+    remaining_ms = deadline.remaining_ms(floor_ms=1)
+    context["cursor"].cursor.execute(
+        "SELECT set_config('statement_timeout', %s, true)",
+        (f"{remaining_ms}ms",),
+    )
+    result = execute(sql, params, many, context)
+    deadline.remaining_ms(floor_ms=1)
+    return result
+
+
+@contextmanager
+def _bounded_run_test_list_transaction(deadline):
+    """Apply one wall deadline to pagination, prefetch, and serialization."""
+
+    transaction_started = False
+
+    def execute_with_remaining_timeout(execute, sql, params, many, context):
+        nonlocal transaction_started
+        if not connection.in_atomic_block and not transaction_started:
+            stack.enter_context(transaction.atomic())
+            transaction_started = True
+        return _execute_run_test_list_query_with_deadline(
+            deadline, execute, sql, params, many, context
+        )
+
+    if connection.vendor != "postgresql":
+        yield
+        deadline.remaining_ms(floor_ms=1)
+        return
+
+    # Keep validation-only failures connection-free. The first real ORM query
+    # opens the transaction, then every statement gets a shrinking SET LOCAL
+    # timeout from the same action-owned deadline.
+    with ExitStack() as stack:
+        stack.enter_context(connection.execute_wrapper(execute_with_remaining_timeout))
+        yield
+        deadline.remaining_ms(floor_ms=1)
+
+
+def _bounded_run_test_list_read(view_method):
+    """Bound an entire run-test list action, including tenant scope reads."""
+
+    @wraps(view_method)
+    def wrapped(view, request, *args, **kwargs):
+        deadline = ReadDeadline.start(_RUN_TEST_LIST_WALL_MS)
+        try:
+            with _bounded_run_test_list_transaction(deadline):
+                response = view_method(view, request, *args, **kwargs)
+                response_status = getattr(response, "status_code", 500)
+                if response_status >= 500:
+                    # Several retained views catch broad exceptions internally.
+                    # Never let a swallowed PostgreSQL timeout or its private
+                    # diagnostic escape as an untyped 500 from a bounded read.
+                    raise RunTestReadUnavailable
+                if response_status < 400:
+                    _ensure_run_test_response_bounded(response.data)
+            deadline.remaining_ms(floor_ms=1)
+            return response
+        except (
+            ReadDeadlineExceeded,
+            DatabaseError,
+            RunTestReadLimitExceeded,
+            RunTestReadUnavailable,
+        ) as exc:
+            logger.warning(
+                "simulation.run_test_list_unavailable",
+                error_type=type(exc).__name__,
+            )
+            return _gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Simulations are temporarily unavailable. Please retry.",
+                code="simulation_list_unavailable",
+            )
+
+    return wrapped
 
 
 def _empty_call_log_summary(reason: str) -> dict:
@@ -282,10 +522,12 @@ class RunTestListView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @_bounded_run_test_list_read
     @validated_request(
         query_serializer=RunTestFilterSerializer,
         responses={
             200: RunTestResponseSerializer(many=True),
+            503: RunTestErrorResponseSerializer,
             500: RunTestErrorResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -301,6 +543,7 @@ class RunTestListView(APIView):
             'agent_definition' or 'prompt')
         - prompt_template_id: filter by prompt template ID (used when
             simulation_type is 'prompt')
+        - summary: return the bounded list-card representation
         """
         try:
             # Get the organization of the logged-in user
@@ -315,41 +558,19 @@ class RunTestListView(APIView):
             search_query = query_data.get("search", "").strip()
             simulation_type = query_data.get("simulation_type", "").strip()
             prompt_template_id = query_data.get("prompt_template_id")
+            summary = query_data.get("summary", False)
 
             # Filter run tests by organization (only non-deleted)
             # Prefetch simulate_eval_configs to avoid N+1 in serializer's to_representation
             # Prefetch agent_definition__versions for latest_version lookup (ordered by version_number desc)
-            latest_version_prefetch = Prefetch(
-                "agent_definition__versions",
-                queryset=AgentVersion.objects.order_by("-version_number"),
-                to_attr="_prefetched_versions",
-            )
-            # Prefetch scenarios with their FK relations so the nested
-            # ScenarioResponseSerializer's get_dataset_* / get_agent / get_agent_type
-            # do not issue per-scenario FK lookups (model_hub_dataset, simulator_agents,
-            # simulate_agent_definition). Fixes CORE-BACKEND-Z49.
-            scenarios_prefetch = Prefetch(
-                "scenarios",
-                queryset=Scenarios.objects.select_related(
-                    "dataset",
-                    "simulator_agent",
-                    "agent_definition",
-                    "prompt_template",
-                    "prompt_version",
-                ),
+            run_tests = RunTest.objects.filter(
+                organization=user_organization,
+                deleted=False,
             )
             run_tests = (
-                RunTest.objects.filter(organization=user_organization, deleted=False)
-                .prefetch_related(
-                    scenarios_prefetch, "simulate_eval_configs", latest_version_prefetch
-                )
-                .select_related(
-                    "agent_definition",
-                    "agent_version",
-                    "simulator_agent",
-                    "prompt_template",
-                    "prompt_version",
-                )
+                _run_test_summary_queryset(run_tests)
+                if summary
+                else _run_test_read_queryset(run_tests)
             )
 
             # Apply simulation_type filter using RunTest.SourceTypes enum
@@ -383,11 +604,16 @@ class RunTestListView(APIView):
             result_page = paginator.paginate_queryset(run_tests, request)
 
             # Serialize the data
-            serializer = RunTestSerializer(result_page, many=True)
+            serializer_class = (
+                RunTestListSummarySerializer if summary else RunTestSerializer
+            )
+            serializer = serializer_class(result_page, many=True)
 
             # Return paginated response
             return paginator.get_paginated_response(serializer.data)
 
+        except (ReadDeadlineExceeded, DatabaseError):
+            raise
         except Exception as e:
             return self.gm.internal_server_error_response(
                 f"Failed to retrieve run tests: {str(e)}"
@@ -565,9 +791,11 @@ class RunTestDetailView(APIView):
         responses={
             200: RunTestResponseSerializer,
             404: RunTestErrorResponseSerializer,
+            503: RunTestErrorResponseSerializer,
             500: RunTestErrorResponseSerializer,
         },
     )
+    @_bounded_run_test_list_read
     def get(self, request, run_test_id, *args, **kwargs):
         """Retrieve a specific RunTest"""
         try:
@@ -576,7 +804,10 @@ class RunTestDetailView(APIView):
             )
 
             run_test = get_object_or_404(
-                RunTest, id=run_test_id, organization=user_organization, deleted=False
+                _run_test_read_queryset(RunTest.objects),
+                id=run_test_id,
+                organization=user_organization,
+                deleted=False,
             )
 
             serializer = RunTestSerializer(run_test)
@@ -1162,11 +1393,13 @@ class RunTestAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @_bounded_run_test_list_read
     @validated_request(
         query_serializer=RunTestFilterSerializer,
         responses={
             200: RunTestResponseSerializer(many=True),
             404: RunTestErrorResponseSerializer,
+            503: RunTestErrorResponseSerializer,
             500: RunTestErrorResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -1178,6 +1411,7 @@ class RunTestAPIView(APIView):
         - search: search string to filter run tests by name
         - limit: number of items per page (default: 10)
         - page: page number (default: 1)
+        - summary: return the bounded list-card representation
         """
         try:
             # Get the organization of the logged-in user
@@ -1188,16 +1422,19 @@ class RunTestAPIView(APIView):
             if not user_organization:
                 return _gm.not_found("Organization not found for the user.")
 
-            search_query = request.validated_query_data.get("search", "").strip()
+            query_data = request.validated_query_data
+            search_query = query_data.get("search", "").strip()
+            summary = query_data.get("summary", False)
 
             # Filter run tests by organization (only non-deleted)
+            run_tests = RunTest.objects.filter(
+                organization=user_organization,
+                deleted=False,
+            )
             run_tests = (
-                RunTest.objects.filter(organization=user_organization, deleted=False)
-                .prefetch_related("scenarios")
-                .select_related(
-                    "agent_definition",
-                    "simulator_agent",
-                )
+                _run_test_summary_queryset(run_tests)
+                if summary
+                else _run_test_read_queryset(run_tests)
             )
 
             # Apply search filter if search query is provided
@@ -1209,6 +1446,11 @@ class RunTestAPIView(APIView):
                     | models.Q(agent_definition__agent_name__regex=pattern)
                 )
 
+            if summary:
+                run_tests = run_tests.annotate(
+                    last_run_at=Max("executions__created_at")
+                )
+
             # Order by creation date (newest first)
             run_tests = run_tests.order_by("-created_at")
 
@@ -1217,12 +1459,17 @@ class RunTestAPIView(APIView):
             result_page = paginator.paginate_queryset(run_tests, request)
 
             # Serialize the data
-            serializer = RunTestSerializer(result_page, many=True)
+            serializer_class = (
+                RunTestListSummarySerializer if summary else RunTestSerializer
+            )
+            serializer = serializer_class(result_page, many=True)
 
             # Return paginated response
             return paginator.get_paginated_response(serializer.data)
 
         except NotFound:
+            raise
+        except (ReadDeadlineExceeded, DatabaseError):
             raise
         except Exception as e:
             return _gm.internal_server_error_response(
@@ -2599,9 +2846,9 @@ class PerformanceSummaryView(APIView):
 
                 # Get overall score if available
                 if call_execution.overall_score is not None:
-                    scenario_performance[scenario_id][
-                        "total_score"
-                    ] += call_execution.overall_score
+                    scenario_performance[scenario_id]["total_score"] += (
+                        call_execution.overall_score
+                    )
                     scenario_performance[scenario_id]["scores"].append(
                         call_execution.overall_score
                     )

@@ -44,6 +44,8 @@ CATALOG_DEV_READ_ACK = "I_ACKNOWLEDGE_DEV_ONLY_ATTRIBUTE_CATALOG_READS"
 CATALOG_KEY_CURSOR_MARKER = "span-attribute-catalog-key-v1"
 CATALOG_VALUE_CURSOR_MARKER = "span-attribute-catalog-value-v1"
 CATALOG_PUBLIC_READ_MAX_WALL_MS = 2_000
+CATALOG_SYSTEM_PROJECTION_VERSION = 2
+CATALOG_SYSTEM_VALUE_METRICS = frozenset({"model"})
 
 _SAFE_REASON_RE = re.compile(r"\A[a-z][a-z0-9_]{0,63}\Z")
 _TYPE_RANK: dict[AttributeType, int] = {
@@ -164,6 +166,8 @@ def try_catalog_key_page(
             attribute_key=None,
             attribute_types=attribute_types,
             request_deadline=request_deadline,
+            source_kind="custom_attribute",
+            required_projection_version=1,
         ),
     )
 
@@ -193,6 +197,47 @@ def try_catalog_value_page(
             attribute_key=attribute_key,
             attribute_types=attribute_types,
             request_deadline=request_deadline,
+            source_kind="custom_attribute",
+            required_projection_version=1,
+        ),
+    )
+
+
+def try_catalog_system_value_page(
+    *,
+    project_ids: Iterable[str],
+    metric_name: str,
+    window_start: datetime,
+    window_end: datetime,
+    page_size: int,
+    search: str | None,
+    after: CatalogValueCheckpoint | None,
+    request_deadline: ReadDeadline | None,
+) -> CatalogReadAttempt[CatalogValuePage]:
+    """Read one exact system-property page from a projection-v2 epoch.
+
+    Only code-owned hot columns explicitly injected by both historical and
+    live ingestion are admitted. Derived voice/dictionary fields continue to
+    use their authoritative readers until they receive their own projection.
+    """
+
+    if metric_name not in CATALOG_SYSTEM_VALUE_METRICS:
+        return CatalogReadAttempt(False, None)
+    return cast(
+        CatalogReadAttempt[CatalogValuePage],
+        _try_catalog_page(
+            kind="value",
+            project_ids=project_ids,
+            window_start=window_start,
+            window_end=window_end,
+            page_size=page_size,
+            search=search,
+            after=after,
+            attribute_key=metric_name,
+            attribute_types=("string",),
+            request_deadline=request_deadline,
+            source_kind="system_attribute",
+            required_projection_version=CATALOG_SYSTEM_PROJECTION_VERSION,
         ),
     )
 
@@ -209,6 +254,8 @@ def _try_catalog_page(
     attribute_key: str | None,
     attribute_types: Iterable[AttributeType] | None,
     request_deadline: ReadDeadline | None,
+    source_kind: Literal["custom_attribute", "system_attribute"],
+    required_projection_version: int,
 ) -> CatalogReadAttempt:
     if catalog_read_mode() != "read":
         return CatalogReadAttempt(False, None)
@@ -251,14 +298,16 @@ def _try_catalog_page(
             deadline=deadline,
             request_deadline=request_deadline,
         )
-        reader = _new_reader(
-            executor,
-            project_ids=projects,
-            catalog_epoch=_catalog_epoch(),
-            window_start=window_start,
-            window_end=window_end,
-            catalog_database=_catalog_database(),
-        )
+        reader_kwargs = {
+            "project_ids": projects,
+            "catalog_epoch": _catalog_epoch(),
+            "window_start": window_start,
+            "window_end": window_end,
+            "catalog_database": _catalog_database(),
+        }
+        if required_projection_version != 1:
+            reader_kwargs["required_projection_version"] = required_projection_version
+        reader = _new_reader(executor, **reader_kwargs)
         if kind == "key":
             page = reader.read_key_candidates(
                 page_size=page_size,
@@ -275,6 +324,7 @@ def _try_catalog_page(
                 attribute_types=attribute_types,
                 search=search,
                 after=cast(CatalogValueCheckpoint | None, after),
+                source_kind=source_kind,
             )
         if isinstance(page, CatalogUnavailable):
             return _fallback(kind, page.reason)
@@ -426,6 +476,7 @@ __all__ = [
     "CATALOG_DEV_READ_ACK",
     "CATALOG_KEY_CURSOR_MARKER",
     "CATALOG_VALUE_CURSOR_MARKER",
+    "CATALOG_SYSTEM_VALUE_METRICS",
     "CatalogReadAttempt",
     "catalog_dev_read_enabled",
     "catalog_key_rows",
@@ -436,6 +487,7 @@ __all__ = [
     "mark_catalog_response",
     "try_catalog_key_page",
     "try_catalog_value_page",
+    "try_catalog_system_value_page",
     "value_checkpoint_from_state",
     "value_checkpoint_state",
 ]

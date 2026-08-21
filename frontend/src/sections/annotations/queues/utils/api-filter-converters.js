@@ -116,6 +116,9 @@ export function apiFilterToPanel(
 
   return {
     field: api.column_id,
+    ...((api.property_id || property?.registryId) && {
+      registryId: api.property_id || property?.registryId,
+    }),
     fieldName: api.display_name || property?.name,
     fieldCategory:
       COL_TYPE_TO_PANEL_CAT[rawColType] ||

@@ -13,7 +13,7 @@ import (
 
 func sinkKeyRow() map[string]any {
 	return map[string]any{
-		"project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "attribute_key": "user.name",
+		"project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "source_kind": "custom_attribute", "attribute_key": "user.name",
 		"key_folded": "user.name", "attribute_type": "string",
 		"first_seen": "2026-08-13 12:00:00.000001", "last_seen": "2026-08-13 12:00:00.000001",
 		"catalog_epoch": uint16(1),
@@ -22,7 +22,7 @@ func sinkKeyRow() map[string]any {
 
 func sinkValueRow() map[string]any {
 	return map[string]any{
-		"project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "attribute_key": "user.name",
+		"project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "source_kind": "custom_attribute", "attribute_key": "user.name",
 		"attribute_type": "string", "value_fingerprint": strings.Repeat("a", 64),
 		"value_json": `"alice"`, "value_search_text": "alice",
 		"first_seen": "2026-08-13 12:00:00.000001", "last_seen": "2026-08-13 12:00:00.000001",
@@ -135,7 +135,7 @@ func TestClickHouseSinkAllowlistAuthAndSettings(t *testing.T) {
 	malformed := sinkKeyRow()
 	delete(malformed, "catalog_epoch")
 	malformed["id"] = "span-id"
-	if err := sink.InsertCatalog(context.Background(), KeyTable, []map[string]any{malformed}); err == nil || !strings.Contains(err.Error(), "non-catalog columns") {
+	if err := sink.InsertCatalog(context.Background(), KeyTable, []map[string]any{malformed}); err == nil || !strings.Contains(err.Error(), "non-catalog column shape") {
 		t.Fatalf("column allowlist error=%v", err)
 	}
 	if calls.Load() != 0 {
@@ -159,6 +159,38 @@ func TestClickHouseSinkAllowlistAuthAndSettings(t *testing.T) {
 		if queries[index] != wantQueries[index] {
 			t.Errorf("query %d=%q want %q", index, queries[index], wantQueries[index])
 		}
+	}
+}
+
+func TestClickHouseSinkAcceptsExactLegacyCatalogRowsOnlyAsUniformBatches(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		calls.Add(1)
+		body, _ := io.ReadAll(request.Body)
+		if strings.Contains(string(body), "source_kind") {
+			t.Fatalf("legacy replay was rewritten: %s", body)
+		}
+		response.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	sink := testSink(t, server.URL, nil)
+	legacyKey := sinkKeyRow()
+	delete(legacyKey, "source_kind")
+	legacyValue := sinkValueRow()
+	delete(legacyValue, "source_kind")
+	if err := sink.InsertCatalog(context.Background(), KeyTable, []map[string]any{legacyKey}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.InsertCatalog(context.Background(), ValueTable, []map[string]any{legacyValue}); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("legacy rows did not reach sink: %d", calls.Load())
+	}
+	if err := sink.InsertCatalog(
+		context.Background(), KeyTable, []map[string]any{legacyKey, sinkKeyRow()},
+	); err == nil || !strings.Contains(err.Error(), "mixes legacy") {
+		t.Fatalf("mixed-shape batch error=%v", err)
 	}
 }
 

@@ -2,9 +2,11 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import _ from "lodash";
 import {
+  Alert,
   Box,
   Button,
   Chip,
+  CircularProgress,
   Drawer,
   FormHelperText,
   IconButton,
@@ -52,6 +54,7 @@ import TaskConfirmDialog from "./TaskConfirmBox";
 import TaskLogsView from "../TaskLogsView";
 import { EvalPickerDrawer, serializeEvalConfig } from "../../EvalPicker";
 import { useTaskEvalAttributeInventory } from "../use_task_eval_attribute_inventory";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 
 // ── Configured Eval Card ──
 
@@ -708,7 +711,14 @@ const EditTaskDrawerV2 = ({
   const theme = useTheme();
   const taskId = selectedRow?.id;
 
-  const { data: taskDetails } = useGetTaskData(taskId, {
+  const {
+    data: taskDetails,
+    isLoading,
+    isFetching,
+    isError,
+    error,
+    refetch,
+  } = useGetTaskData(taskId, {
     enabled: !!taskId && open,
   });
 
@@ -735,6 +745,40 @@ const EditTaskDrawerV2 = ({
         BackdropProps: { style: { backgroundColor: "rgba(0, 0, 0, 0.3)" } },
       }}
     >
+      {isLoading && !taskDetails && (
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            height: "100%",
+          }}
+        >
+          <CircularProgress size={28} />
+        </Box>
+      )}
+      {isError && (
+        <Alert
+          severity="error"
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => refetch()}
+              disabled={isFetching}
+            >
+              Retry
+            </Button>
+          }
+          sx={{ m: 2, flexShrink: 0 }}
+        >
+          {getSafeActionErrorMessage(
+            error,
+            "Task details could not be loaded.",
+          )}
+          {taskDetails ? " Existing task details are still shown." : ""}
+        </Alert>
+      )}
       {taskDetails && (
         <EditTaskDrawerV2Content
           selectedRow={selectedRow}
