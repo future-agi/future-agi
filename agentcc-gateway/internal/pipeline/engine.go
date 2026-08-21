@@ -71,10 +71,15 @@ func NewEngine(plugins ...Plugin) *Engine {
 
 // Process executes the plugin pipeline: pre-plugins → provider call → post-plugins.
 func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, providerCall ProviderFunc) error {
+	// Make the authoritative request context available to plugins without
+	// copying correlation fields into client-visible metadata or changing the
+	// context passed to the provider.
+	pluginCtx := models.WithRequestContext(ctx, rc)
+
 	// Pre-plugins (always sequential — order matters for security gates).
 	for _, p := range e.plugins {
 		start := time.Now()
-		result := p.ProcessRequest(ctx, rc)
+		result := p.ProcessRequest(pluginCtx, rc)
 		elapsed := time.Since(start)
 		rc.RecordTiming("pre_"+p.Name(), elapsed)
 
@@ -145,6 +150,10 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 // Exported so that streaming handlers can call it after the stream completes,
 // when rc.Response and usage data are populated.
 func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) {
+	// Streaming handlers can invoke RunPostPlugins directly after Process returns,
+	// so reattach RequestContext here as well.
+	ctx = models.WithRequestContext(ctx, rc)
+
 	isCacheHit := rc.Flags.ShortCircuited && rc.Metadata["cache_status"] == "hit_exact"
 
 	// Phase 1: Sequential post-plugins (e.g., cost → credits dependency chain).
