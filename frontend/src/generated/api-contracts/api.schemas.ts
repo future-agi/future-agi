@@ -19476,6 +19476,25 @@ export interface ObserveDatasetApi {
   readonly user?: string;
 }
 
+/**
+ * Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.
+ */
+export type EvalTaskApiFiltersDatePreset = typeof EvalTaskApiFiltersDatePreset[keyof typeof EvalTaskApiFiltersDatePreset];
+
+
+export const EvalTaskApiFiltersDatePreset = {
+  '30m': '30m',
+  '6h': '6h',
+  today: 'today',
+  yesterday: 'yesterday',
+  '7d': '7d',
+  '30d': '30d',
+  '3m': '3m',
+  '6m': '6m',
+  '12m': '12m',
+  custom: 'custom',
+} as const;
+
 export type EvalTaskApiFiltersFiltersItemFilterConfig = {
   /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array. */
   filter_type: string;
@@ -19531,6 +19550,8 @@ export type EvalTaskApiFilters = {
      * @maxItems 2
      */
   date_range?: string[];
+  /** Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced. */
+  date_preset?: EvalTaskApiFiltersDatePreset;
   /** Lower-bound ISO timestamp for legacy task filters. */
   created_at?: string;
   /** Trace session id(s) to constrain the task. */
@@ -19635,6 +19656,25 @@ export interface EvalTaskMessageResponseApi {
   result: EvalTaskMessageResultApi;
 }
 
+/**
+ * Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.
+ */
+export type EvalTaskUpdateRequestApiFiltersDatePreset = typeof EvalTaskUpdateRequestApiFiltersDatePreset[keyof typeof EvalTaskUpdateRequestApiFiltersDatePreset];
+
+
+export const EvalTaskUpdateRequestApiFiltersDatePreset = {
+  '30m': '30m',
+  '6h': '6h',
+  today: 'today',
+  yesterday: 'yesterday',
+  '7d': '7d',
+  '30d': '30d',
+  '3m': '3m',
+  '6m': '6m',
+  '12m': '12m',
+  custom: 'custom',
+} as const;
+
 export type EvalTaskUpdateRequestApiFiltersFiltersItemFilterConfig = {
   /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array. */
   filter_type: string;
@@ -19690,6 +19730,8 @@ export type EvalTaskUpdateRequestApiFilters = {
      * @maxItems 2
      */
   date_range?: string[];
+  /** Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced. */
+  date_preset?: EvalTaskUpdateRequestApiFiltersDatePreset;
   /** Lower-bound ISO timestamp for legacy task filters. */
   created_at?: string;
   /** Trace session id(s) to constrain the task. */

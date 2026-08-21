@@ -1,4 +1,6 @@
 import { endOfToday, sub } from "date-fns";
+import { tokenToPreset } from "src/sections/projects/timeWindowPresets";
+import { inferPreset } from "src/sections/projects/legacyPresetInference";
 import EvalsAndTasksCustomTooltip from "./Renderers/EvalsAndTasksCustomToolTip";
 import FilterChipsRenderer from "./Renderers/FilterChipsRenderer";
 import RunningStatusRenderer from "./Renderers/RunningStatusRenderer";
@@ -208,6 +210,7 @@ export const ANNOTATION_COLUMN_IDS = new Set(["annotator", "my_annotations"]);
 const RESERVED_FILTER_KEYS = new Set([
   "project_id",
   "date_range",
+  "date_preset",
   "start_date",
   "end_date",
   "filters",
@@ -301,6 +304,14 @@ export const getDefaultTaskValues = (data, observeId) => {
       }
     }
 
+    // Without a stored key the task predates the field, so infer — except
+    // Today/Yesterday, which stop being identifiable once their day passes.
+    const storedPreset = tokenToPreset(data?.filters_applied?.date_preset);
+    const inferred = inferPreset(values.startDate, values.endDate);
+    values.datePreset =
+      storedPreset ||
+      (inferred === "Today" || inferred === "Yesterday" ? "Custom" : inferred);
+
     return values;
   } else {
     return {
@@ -317,6 +328,7 @@ export const getDefaultTaskValues = (data, observeId) => {
         }),
       ),
       endDate: formatDate(endOfToday()),
+      datePreset: "Custom",
       runType: "",
     };
   }

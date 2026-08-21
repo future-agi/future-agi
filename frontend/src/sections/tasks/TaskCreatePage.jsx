@@ -5,6 +5,7 @@ import { useForm, useWatch } from "react-hook-form";
 import { useMutation } from "@tanstack/react-query";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { endOfToday, sub } from "date-fns";
+import { inferPreset } from "src/sections/projects/legacyPresetInference";
 import { useNavigate } from "react-router";
 import { useSearchParams } from "react-router-dom";
 import axios, { endpoints } from "src/utils/axios";
@@ -79,13 +80,25 @@ const TaskCreatePage = () => {
     startDate:
       preselectedStartDate || formatDate(sub(new Date(), { months: 12 })),
     endDate: preselectedEndDate || formatDate(endOfToday()),
+    // The default range above is twelve months; a preselected one isn't ours.
+    datePreset: preselectedStartDate || preselectedEndDate ? "Custom" : "12M",
     runType: "historical",
   };
+
+  // Drafts predating datePreset would inherit the 12M default from the spread
+  // below, re-anchoring a hand-picked range. Drafts expire after 7 days.
+  const draft =
+    draftValues && !draftValues.datePreset
+      ? {
+          ...draftValues,
+          datePreset: inferPreset(draftValues.startDate, draftValues.endDate),
+        }
+      : draftValues || {};
 
   const { control, handleSubmit, getValues, setValue, watch } = useForm({
     // Spread saved draft values OVER the defaults so any new fields
     // we add later still get their defaults when an old draft loads.
-    defaultValues: { ...baseDefaults, ...(draftValues || {}) },
+    defaultValues: { ...baseDefaults, ...draft },
     resolver: zodResolver(NewTaskValidationSchema()),
   });
 
