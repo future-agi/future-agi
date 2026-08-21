@@ -197,6 +197,11 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 10,  # Number of objects per page.
     "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.URLPathVersioning",
     "EXCEPTION_HANDLER": "accounts.authentication.custom_exception_handler",
+    "DEFAULT_THROTTLE_RATES": {
+        # This dict fully replaces settings.py's REST_FRAMEWORK rather than
+        # extending it, so the harness_hook rate has to be repeated here too.
+        "harness_hook": os.getenv("HARNESS_HOOK_THROTTLE_RATE", "240/min"),
+    },
 }
 
 

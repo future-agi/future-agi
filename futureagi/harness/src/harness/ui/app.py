@@ -19,6 +19,7 @@ Then open http://localhost:8777
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import os
 from dataclasses import asdict
@@ -49,16 +50,53 @@ from harness.world.snapshot import saved as world_saved  # noqa: E402
 
 app = FastAPI(title="harness")
 
-# A separate front end is expected, so a development server on another port has to be able
-# to reach it. Open because this binds to loopback and holds no credentials of its own; anything
-# exposed beyond localhost needs a real answer here first.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+def _cors_origins() -> list[str]:
+    raw = os.environ.get("HARNESS_CORS_ORIGINS", "")
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
+@app.middleware("http")
+async def _require_internal_auth(request, call_next):
+    if request.url.path.rstrip("/") == "/healthz":
+        return await call_next(request)
+    secret = os.environ.get("INTERNAL_API_SECRET", "").strip()
+    if not secret:
+        if os.environ.get("HARNESS_AUTH_DISABLED") == "1":
+            return await call_next(request)
+        return JSONResponse({"error": "INTERNAL_API_SECRET is not configured"}, status_code=503)
+    # split() (not a fixed "Bearer " prefix) tolerates repeated whitespace and a
+    # differently-cased scheme, matching what the backend side actually sends.
+    parts = request.headers.get("authorization", "").split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return JSONResponse({"error": "unauthenticated"}, status_code=401)
+    token = parts[1]
+    # compare_digest raises TypeError on non-ASCII str input; a malformed header
+    # must 401, not 500.
+    if not token.isascii() or not hmac.compare_digest(token, secret):
+        return JSONResponse({"error": "unauthenticated"}, status_code=401)
+    return await call_next(request)
+
+
+# Registered after the auth middleware so it wraps outside it (Starlette makes the
+# most-recently-added middleware outermost) and can answer a CORS preflight itself
+# rather than the preflight's bare OPTIONS request hitting auth and getting a 401.
+# Backend-proxied traffic never needs this at all — only a standalone dev front end
+# calling this service directly from a browser does — so it is skipped when unset.
+_origins = _cors_origins()
+if _origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_origins,
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"ok": True}
 
 # Where agents live. Almost never inside this repo: the harness is in one place and the agent
 # being tested is somewhere else on disk nearly every time.
@@ -223,9 +261,20 @@ async def _stream_turn(coro_factory):
     yield f"data: {json.dumps({'kind': 'status', 'detail': _status()}, default=str)}\n\n"
 
 
+def _assert_auth_configured() -> None:
+    if not os.environ.get("INTERNAL_API_SECRET", "").strip() and os.environ.get(
+        "HARNESS_AUTH_DISABLED"
+    ) != "1":
+        raise RuntimeError(
+            "INTERNAL_API_SECRET is not set. Set it (the backend sends it as a bearer token), "
+            "or set HARNESS_AUTH_DISABLED=1 for a standalone dev run."
+        )
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     """Come back to whichever session was last open."""
+    _assert_auth_configured()
     SESSIONS.mkdir(parents=True, exist_ok=True)
     wanted = OPEN.read_text(encoding="utf-8").strip() if OPEN.exists() else ""
     session = sessions.load(wanted, SESSIONS) if wanted else None

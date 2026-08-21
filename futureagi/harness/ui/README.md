@@ -14,8 +14,12 @@ backend proxy at `/simulate/harness/<path>` → this server's `/api/<path>`.
     pip install -e ".[ui,postgres]"
     python ui/server.py            # HARNESS_HOST / HARNESS_PORT to bind elsewhere
 
+A standalone run needs `HARNESS_AUTH_DISABLED=1` or an `INTERNAL_API_SECRET`
+matching the backend's, or startup refuses to boot.
+
 In the platform stack it runs as the `harness` service in
-`docker-compose.dev.yml`; the backend is the only thing that talks to it.
+`docker-compose.dev.yml`; the backend is the only thing that talks to it, and
+the compose file sets `INTERNAL_API_SECRET` for both.
 
 ## Test it
 

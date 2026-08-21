@@ -23,6 +23,18 @@ jobs:
     defaults:
       run:
         working-directory: futureagi/harness
+    services:
+      harness-store:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: harness
+          POSTGRES_PASSWORD: harness
+          POSTGRES_DB: harness
+        ports:
+          - 15433:5432
+        options: >-
+          --health-cmd "pg_isready -U harness -d harness"
+          --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -39,4 +51,6 @@ jobs:
         run: ruff check src ui tests
 
       - name: Test
+        env:
+          HARNESS_STORE_DSN: postgresql://harness:harness@localhost:15433/harness
         run: python -m pytest -q

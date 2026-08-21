@@ -11,6 +11,7 @@ x-dev-worker: &dev-worker
   environment:
     FAST_STARTUP: "true"
     HARNESS_INTERNAL_URL: http://harness:8777
+    INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-dev-internal-secret}
     GOOGLE_APPLICATION_CREDENTIALS: /etc/vertex/creds.json
 
 services:
@@ -47,6 +48,7 @@ services:
     environment:
       FAST_STARTUP: "true"
       HARNESS_INTERNAL_URL: http://harness:8777
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-dev-internal-secret}
       GOOGLE_APPLICATION_CREDENTIALS: /etc/vertex/creds.json
       HARNESS_LINKS_DIR: /app/harness-artifacts/platform-links
 
@@ -96,7 +98,12 @@ services:
     environment:
       FAST_STARTUP: "true"
       PYTHONUNBUFFERED: "1"
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-dev-internal-secret}
     profiles: !reset []
+
+  serving:
+    environment:
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-dev-internal-secret}
 
   postgres:
     ports: !override
@@ -192,6 +199,7 @@ services:
       HARNESS_WEBHOOK_PORT: 8787
       # Reachable by name inside the network, so no cloudflared tunnel starts.
       HARNESS_WEBHOOK_URL: http://harness:8787
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-dev-internal-secret}
       DOCKER_HOST: tcp://docker-proxy:2375
       # Store containers the harness starts join this network and are
       # addressed by container name instead of loopback.
@@ -222,6 +230,7 @@ services:
       # nothing in here. Mounted below at a fixed location and repointed, or every stage fails
       # at its first model call.
       GOOGLE_APPLICATION_CREDENTIALS: /etc/harness/vertex.json
+      HARNESS_STORE_DSN: postgresql://harness:harness@harness-store:5432/harness
     volumes:
       # Source of truth for every session, world and recording — not a cache.
       - harness-artifacts:/app/artifacts
@@ -229,8 +238,33 @@ services:
       - ./futureagi/harness:/app
       - ${HARNESS_VERTEX_CREDENTIALS:-./Vertex_AI_Creds.json}:/etc/harness/vertex.json:ro
     depends_on:
-      - docker-proxy
+      docker-proxy:
+        condition: service_started
+      harness-store:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8777/healthz')\""]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  # The long-lived harness-store server: masters and their per-scenario clones. Internal-only,
+  # same as the harness itself.
+  harness-store:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: harness
+      POSTGRES_PASSWORD: harness
+      POSTGRES_DB: harness
+    volumes:
+      - harness-store-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U harness -d harness"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   harness-artifacts:
+  harness-store-data:

@@ -11,6 +11,14 @@ from .component_evaluation import ComponentEvaluation
 from .eval_config import SimulateEvalConfig
 from .persona import Persona
 from .prompt_trial import PromptTrial
+from .rl_environment import (
+    RLContract,
+    RLEnvironment,
+    RLEnvironmentMessage,
+    RLScenario,
+    RLWorld,
+    RLWorldCopy,
+)
 from .run_test import RunTest
 from .scenario_graph import NodeType, ScenarioGraph
 from .scenarios import Scenarios
@@ -51,4 +59,10 @@ __all__ = [
     "ChatSimulatorAssistant",
     "ChatSimulatorSession",
     "TrialItemResult",
+    "RLEnvironment",
+    "RLContract",
+    "RLEnvironmentMessage",
+    "RLWorld",
+    "RLScenario",
+    "RLWorldCopy",
 ]

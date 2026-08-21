@@ -111,6 +111,23 @@ class RunTest(BaseModel):
         default=False, help_text="Enable automatic tool evaluation for this test run"
     )
 
+    rl_environment = models.ForeignKey(
+        "simulate.RLEnvironment",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="run_tests",
+        help_text="RL environment this run test was launched from",
+    )
+    rl_world = models.ForeignKey(
+        "simulate.RLWorld",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="run_tests",
+        help_text="RL world this run test was launched from",
+    )
+
     class Meta:
         db_table = "simulate_run_test"
         verbose_name = "Run Test"

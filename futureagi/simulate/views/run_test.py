@@ -427,6 +427,39 @@ class CreateRunTestView(APIView):
                 if forbidden is not None:
                     return forbidden
 
+            # The eval config name is now unique per run test at the DB level, so a
+            # payload with two entries resolving to the same name would otherwise
+            # 500 partway through the loop below, after the RunTest already exists.
+            # Only entries whose template actually resolves reach that loop (an
+            # unresolved template_id is silently skipped there), so the duplicate
+            # check below must skip unresolved entries too or it 400s on names
+            # that would never have collided.
+            evaluations_config = validated_data.get("evaluations_config", [])
+            requested_template_ids = {
+                eval_config_data.get("template_id")
+                for eval_config_data in evaluations_config
+                if eval_config_data.get("template_id")
+            }
+            resolvable_template_ids = set(
+                EvalTemplate.no_workspace_objects.filter(
+                    id__in=requested_template_ids
+                )
+                .filter(Q(organization=user_organization) | Q(organization__isnull=True))
+                .values_list("id", flat=True)
+            )
+
+            seen_eval_names = set()
+            for eval_config_data in evaluations_config:
+                template_id = eval_config_data.get("template_id")
+                if template_id not in resolvable_template_ids:
+                    continue
+                eval_name = eval_config_data.get("name", f"Eval-{template_id}")
+                if eval_name in seen_eval_names:
+                    return self.gm.bad_request(
+                        f"An evaluation config with the name '{eval_name}' already exists in this run test. Please use a different name."
+                    )
+                seen_eval_names.add(eval_name)
+
             # Create the RunTest
             with transaction.atomic():
                 agent_version = validated_data.get("agent_version")

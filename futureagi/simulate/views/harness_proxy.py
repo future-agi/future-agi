@@ -1,20 +1,35 @@
 import asyncio
 import json
+import re
+import uuid
 
 import httpx
 from asgiref.sync import sync_to_async
+from django.core.exceptions import ImproperlyConfigured
 from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 from rest_framework.negotiation import BaseContentNegotiation
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from simulate.models import RLEnvironment
 from simulate.services import harness_links
-from simulate.services.harness_client import NON_STREAMING_TIMEOUT, resolve_harness_internal_url
+from simulate.services.harness_client import (
+    NON_STREAMING_TIMEOUT,
+    internal_headers,
+    resolve_harness_internal_url,
+)
+from tracer.utils.workspace_scope import get_request_organization
 
 # SSE responses; everything else is JSON (or a recording, passed through as-is).
 STREAMING_PATHS = frozenset({"say", "run"})
 # Well under the shortest idle timeout of any hop in front of this response.
 HEARTBEAT_SECONDS = 15
+# Canonical form only (8-4-4-4-12 hex). Not uuid.UUID() itself: it also accepts
+# braces/urn/dashless forms the harness's own router would never match, and that
+# parser divergence is bypass surface for the ownership guard below.
+_ENVIRONMENT_ID = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE
+)
 
 
 class _PassthroughNegotiation(BaseContentNegotiation):
@@ -53,18 +68,31 @@ class HarnessProxyView(APIView):
         path = path.strip("/")
         if not path or ".." in path or "%" in path:
             return JsonResponse({"error": "unknown harness path"}, status=404)
+        segments = path.split("/")
+        guarded = self._environment_guard(request, segments)
+        if guarded is not None:
+            return guarded
+        try:
+            headers = internal_headers()
+        except ImproperlyConfigured:
+            return JsonResponse({"error": "INTERNAL_API_SECRET is not configured"}, status=503)
         url = f"{resolve_harness_internal_url()}/api/{path}"
         body, links = self._body_and_links(request, path)
-        if path in STREAMING_PATHS:
+        leaf = segments[-1]
+        # Restricted to the top-level route and the environment-scoped route: a
+        # recording whose scenario happens to be named "say" or "run" is not a
+        # stream, and must not be turned into a 405.
+        if leaf in STREAMING_PATHS and (len(segments) == 1 or segments[0] == "environments"):
             if request.method != "POST":
                 return JsonResponse({"error": "method not allowed"}, status=405)
-            return self._stream(url, body)
+            return self._stream(url, body, headers)
         try:
             answered = httpx.request(
                 request.method,
                 url,
                 params=request.GET.dict(),
                 json=body,
+                headers=headers,
                 timeout=NON_STREAMING_TIMEOUT,
             )
         except httpx.HTTPError:
@@ -78,8 +106,34 @@ class HarnessProxyView(APIView):
         payload = answered.json()
         if answered.status_code < 400:
             self._remember_links(path, links, payload)
-            self._enrich(path, payload)
+            self._enrich(leaf, payload)
         return JsonResponse(payload, status=answered.status_code, safe=False)
+
+    def _environment_guard(self, request, segments):
+        if segments[0] != "environments":
+            return None
+        if "" in segments:
+            # e.g. "environments//<id>/say" — an empty segment must not read as
+            # "second segment isn't a UUID, so no id here to guard".
+            return JsonResponse({"error": "unknown harness path"}, status=404)
+        if len(segments) < 2:
+            return None
+        candidate = segments[1]
+        if not _ENVIRONMENT_ID.match(candidate):
+            # The harness's v0 router has no environments/<x> sub-routes, so anything
+            # shaped like an id that isn't a canonical UUID can only be a probe.
+            return JsonResponse({"error": "unknown harness path"}, status=404)
+        organization = get_request_organization(request)
+        if organization is None:
+            return JsonResponse({"error": "unknown harness path"}, status=404)
+        exists = RLEnvironment.no_workspace_objects.filter(
+            id=uuid.UUID(candidate), organization=organization
+        ).exists()
+        if not exists:
+            # Matches the unknown-path body so a foreign org learns nothing about
+            # whether the id exists.
+            return JsonResponse({"error": "unknown harness path"}, status=404)
+        return None
 
     def _body_and_links(self, request, path):
         """The forwardable body, with platform ids stripped out of session creation."""
@@ -106,15 +160,15 @@ class HarnessProxyView(APIView):
                 session["id"], links.get("run_test_id"), links.get("execution_id")
             )
 
-    def _enrich(self, path, payload):
+    def _enrich(self, leaf, payload):
         if not isinstance(payload, dict):
             return
         if "session" in payload:
             session = payload.get("session") or {}
             self._attach(payload, session.get("id"))
-        elif path == "sessions":
+        elif leaf == "sessions":
             self._attach_all(payload.get("sessions") or [], "id")
-        elif path == "environments":
+        elif leaf == "environments":
             self._attach_all(payload.get("environments") or [], "session_id")
 
     def _attach_all(self, rows, key):
@@ -133,10 +187,10 @@ class HarnessProxyView(APIView):
             else:
                 target.setdefault(field, None)
 
-    def _stream(self, url, body):
+    def _stream(self, url, body, headers):
         # No read timeout: a stage or a suite legitimately streams for minutes.
         client = httpx.Client(timeout=httpx.Timeout(10.0, read=None))
-        stream = client.stream("POST", url, json=body)
+        stream = client.stream("POST", url, json=body, headers=headers)
         try:
             upstream = stream.__enter__()
         except httpx.HTTPError:

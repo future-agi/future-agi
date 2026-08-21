@@ -28,5 +28,19 @@ else
   "$VENV/bin/pip" install -q -e "$HARNESS_DIR[ui,postgres,dev]"
 fi
 
+# Unset stays a skip when nothing is listening -- test_store_manager.py's own skipif handles
+# that. This only saves a developer who already has `bin/test up` running from typing the DSN
+# by hand; it must never turn a genuinely absent store into a connection failure instead.
+if [ -z "${HARNESS_STORE_DSN:-}" ]; then
+  if "$VENV/bin/python" - <<'PY' >/dev/null 2>&1
+import socket
+with socket.create_connection(("127.0.0.1", 15433), timeout=1):
+    pass
+PY
+  then
+    export HARNESS_STORE_DSN="postgresql://harness:harness@localhost:15433/harness"
+  fi
+fi
+
 cd "$HARNESS_DIR"
 exec "$VENV/bin/python" -m pytest "$@"
