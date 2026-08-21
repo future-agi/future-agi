@@ -21,6 +21,11 @@ logger = structlog.get_logger(__name__)
 # Eval types that need preprocessing
 PREPROCESSORS = {}
 
+# Per-eval `_`-prefixed kwargs a successful preprocessor run leaves behind, used
+# to warn when the eval body is about to run without them. In-place resolvers
+# rewrite existing keys instead of adding new ones and declare nothing.
+PREPROCESSOR_OUTPUTS = {}
+
 # Browser-like UA so public hosts that block default `python-requests/X.X`
 # (Wikipedia, many CDNs) return 200 instead of 403.
 _BROWSER_UA = (
@@ -150,14 +155,44 @@ def _resolve_fid_input(value):
     return resolved
 
 
-def register_preprocessor(eval_name):
-    """Decorator to register a preprocessor for an eval type."""
+def register_preprocessor(eval_name, produces=()):
+    """Decorator to register a preprocessor for an eval type.
+
+    ``produces`` lists the `_`-prefixed kwargs the eval body reads back. When
+    it is set, a run that yields none of them and reports no `_..._error` is
+    logged as incomplete.
+    """
 
     def decorator(func):
         PREPROCESSORS[eval_name] = func
+        PREPROCESSOR_OUTPUTS[eval_name] = tuple(produces)
         return func
 
     return decorator
+
+
+def _warn_if_preprocessing_incomplete(eval_name, inputs):
+    """Log when an eval is about to run without the kwargs preprocessing owes it.
+
+    Preprocessors can no-op on missing inputs or swallow a failure, and the eval
+    body then falls back to whatever it does without those kwargs. Without this
+    the only symptom is a wrong score.
+    """
+    expected = PREPROCESSOR_OUTPUTS.get(eval_name)
+    if not expected or not isinstance(inputs, dict):
+        return
+    if any(key in inputs for key in expected):
+        return
+    if any(
+        key.startswith("_") and key.endswith("_error") and inputs[key] for key in inputs
+    ):
+        return
+
+    logger.warning(
+        "preprocessing_incomplete",
+        eval_name=eval_name,
+        missing_keys=list(expected),
+    )
 
 
 def preprocess_inputs(eval_name, inputs):
@@ -170,13 +205,16 @@ def preprocess_inputs(eval_name, inputs):
         return inputs
 
     try:
-        return preprocessor(inputs)
+        result = preprocessor(inputs)
     except Exception as e:
         logger.warning(f"Preprocessing failed for {eval_name}: {e}")
-        return inputs
+        result = inputs
+
+    _warn_if_preprocessing_incomplete(eval_name, result)
+    return result
 
 
-@register_preprocessor("clip_score")
+@register_preprocessor("clip_score", produces=("_image_embeddings", "_text_embeddings"))
 def _preprocess_clip(inputs):
     """
     Pre-compute CLIP embeddings for images and text.
@@ -253,7 +291,7 @@ def _preprocess_clip(inputs):
     return inputs
 
 
-@register_preprocessor("fid_score")
+@register_preprocessor("fid_score", produces=("_fid_precomputed_score",))
 def _preprocess_fid(inputs):
     """
     Pre-compute Inception features for FID.
@@ -353,7 +391,9 @@ def _preprocess_ssim(inputs):
     return inputs
 
 
-@register_preprocessor("dead_air_detection")
+@register_preprocessor(
+    "dead_air_detection", produces=("_dead_air_percentage", "_dead_air_max_gap_ms")
+)
 def _preprocess_dead_air_detection(inputs):
     """Compute silence statistics on the backend so the sandbox stays audio-free.
 
@@ -451,7 +491,7 @@ def _preprocess_dead_air_detection(inputs):
     return inputs
 
 
-@register_preprocessor("meteor_score")
+@register_preprocessor("meteor_score", produces=("_meteor_precomputed_score",))
 def _preprocess_meteor(inputs):
     """Compute METEOR via NLTK on the backend, inject the score as a kwarg.
 
