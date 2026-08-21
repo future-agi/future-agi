@@ -176,9 +176,13 @@ dev = [
     "grpcio",
     "grpcio-tools",
     "pre-commit",
-    "mypy>=1.8.0",
-    "django-stubs>=4.2.7",
-    "djangorestframework-stubs>=3.14.5",
+    # Kept on compatible-release pins: mypy-baseline.txt is a literal diff of
+    # mypy's output, so a checker or stub upgrade rewrites thousands of lines and
+    # bin/check_mypy.sh reports every one as a "new error". Bump these and
+    # regenerate the baseline in the same commit.
+    "mypy~=2.3.0",
+    "django-stubs~=6.0.7",
+    "djangorestframework-stubs~=3.17.1",
     "types-requests",
     "types-redis",
     "types-pyyaml",
@@ -260,6 +264,20 @@ plugins = [
     "mypy_drf_plugin.main",
 ]
 
+# Anchor module resolution at the project root.
+#
+# Most packages here are namespace packages (no __init__.py), so without an
+# explicit base mypy infers each file's module name from the nearest ancestor
+# that has one. That makes agent_playground/utils/graph.py and
+# agent_playground/serializers/graph.py both resolve to a bare "graph", and a
+# duplicate-module clash is a *fatal* error: mypy aborts before type-checking
+# anything ("errors prevented further checking"). The baseline then recorded
+# that abort rather than a backlog, so `make mypy` passed while analysing zero
+# files. Roughly 25 directories are affected; anchoring resolution here fixes
+# all of them without adding __init__.py to each one.
+explicit_package_bases = true
+mypy_path = "."
+
 # Strict settings
 strict_optional = true
 no_implicit_optional = true
@@ -282,7 +300,14 @@ exclude = [
 ]
 
 [tool.django-stubs]
-django_settings_module = "tfc.settings"
+# Must be the settings *module*, not the package. tfc/settings/__init__.py is a
+# one-line stub, so pointing at "tfc.settings" gave django-stubs an empty
+# settings object: it could not resolve model managers and reported 5,073
+# spurious "Access to generic instance variables via class is ambiguous" errors
+# on ordinary Model.objects access, plus "'Settings' object has no attribute
+# 'APP_URL'" and friends. manage.py, asgi.py, wsgi.py and celery.py all already
+# use tfc.settings.settings.
+django_settings_module = "tfc.settings.settings"
 
 [dependency-groups]
 dev = [
