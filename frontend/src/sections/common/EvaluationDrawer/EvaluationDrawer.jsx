@@ -648,6 +648,65 @@ const EvaluationDrawerChild = ({
           // shape than the dataset/task/experiment endpoints.
           let payload;
           if ((module || "dataset") === "workbench") {
+            // Version creation — same as experiment wizard.
+            let resolvedVersionId = evalConfig.versionId || null;
+            if (evalConfig.isDirty && evalConfig.templateId) {
+              try {
+                if (isComposite) {
+                  const patchPayload = {};
+                  if (evalConfig.composite_weight_overrides) {
+                    const weights = {};
+                    for (const [childId, w] of Object.entries(evalConfig.composite_weight_overrides)) {
+                      if (w != null) weights[childId] = w;
+                    }
+                    if (Object.keys(weights).length) patchPayload.child_weights = weights;
+                  }
+                  await axios.patch(
+                    endpoints.develop.eval.getCompositeDetail(evalConfig.templateId),
+                    patchPayload,
+                  );
+                  const { data: versionsData } = await axios.get(
+                    endpoints.develop.eval.getEvalVersions(evalConfig.templateId),
+                  );
+                  const latest = versionsData?.result?.versions?.[0];
+                  if (latest?.id) resolvedVersionId = latest.id;
+                } else {
+                  const isCodeEval = evalConfig.evalType === "code";
+                  const updatePayload = Object.fromEntries(
+                    Object.entries({
+                      instructions: isCodeEval ? undefined : evalConfig.instructions,
+                      code: isCodeEval ? evalConfig.instructions : undefined,
+                      code_language: isCodeEval ? (evalConfig.codeLanguage || "python") : undefined,
+                      model: evalConfig.model,
+                      pass_threshold: evalConfig.pass_threshold,
+                      choice_scores: evalConfig.choice_scores,
+                      multi_choice: evalConfig.multi_choice,
+                      messages: evalConfig.messages,
+                      mode: evalConfig.agent_mode,
+                      check_internet: evalConfig.check_internet,
+                      summary: evalConfig.summary,
+                      tools: evalConfig.tools,
+                      knowledge_bases: evalConfig.knowledge_bases,
+                      data_injection: evalConfig.data_injection,
+                      error_localizer_enabled: evalConfig.error_localizer_enabled,
+                    }).filter(([, v]) => v !== undefined),
+                  );
+                  await axios.put(
+                    endpoints.develop.eval.updateEvalTemplate(evalConfig.templateId),
+                    updatePayload,
+                  );
+                  const { data: versionData } = await axios.post(
+                    endpoints.develop.eval.createEvalVersion(evalConfig.templateId),
+                    {},
+                  );
+                  if (versionData?.result?.id) resolvedVersionId = versionData.result.id;
+                }
+                queryClient.invalidateQueries({ queryKey: ["evals", "versions", evalConfig.templateId] });
+                queryClient.invalidateQueries({ queryKey: ["evals", "composite", evalConfig.templateId] });
+              } catch {
+                // Fall back to the version the user selected in the picker.
+              }
+            }
             payload = {
               id: evalConfig.templateId,
               name: evalConfig.name,
@@ -662,6 +721,7 @@ const EvaluationDrawerChild = ({
               error_localizer: runConfig.error_localizer_enabled || false,
               is_run: true,
               version_to_run: workbenchVersions || [],
+              ...(resolvedVersionId ? { pinned_version_id: resolvedVersionId } : {}),
             };
           } else {
             payload = {
@@ -770,6 +830,11 @@ const EvaluationDrawerChild = ({
           // await so errors propagate to EvalPickerDrawer's handleSaveEval
           // catch block — keeps the drawer open on failure.
           await handleRun(payload, () => {
+            if (evalConfig.templateId) {
+              queryClient.invalidateQueries({
+                queryKey: ["evals", "versions", evalConfig.templateId],
+              });
+            }
             setEvalPickerOpen(false);
             setVisibleSection("list");
           });
