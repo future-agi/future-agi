@@ -32,7 +32,8 @@ def resolve_gateway_internal_url():
 
 # Default gateway address — set via env vars in docker-compose / .env
 AGENTCC_GATEWAY_URL = resolve_gateway_public_url()
-# Internal URL for container-to-container communication (e.g. http://agentcc-gateway:8090)
+# Internal URL for container-to-container communication — the gateway
+# CONTAINER port (e.g. http://agentcc-gateway:8080), not the host-published one.
 AGENTCC_GATEWAY_INTERNAL_URL = resolve_gateway_internal_url()
 AGENTCC_ADMIN_TOKEN = os.environ.get("AGENTCC_ADMIN_TOKEN", "")
 if not AGENTCC_ADMIN_TOKEN:
