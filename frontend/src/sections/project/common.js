@@ -63,6 +63,25 @@ export const PROJECT_FILTER_DEFAULT_ROW = {
   value: [],
 };
 
+// These screens have no create form; the project row is made at ingest by
+// get_or_create_project, so every surface says that instead of promising one.
+const PROJECT_CREATED_AT_INGEST =
+  "Your project is created automatically when the first trace arrives.";
+
+export const PROJECT_FTUX_COPY = {
+  observe: {
+    title: "Welcome to Observe",
+    description: `${PROJECT_CREATED_AT_INGEST} Run the snippet below to send one.`,
+  },
+  experiment: {
+    title: "Welcome to Prototype",
+    description: `${PROJECT_CREATED_AT_INGEST} Run the snippet below to send one.`,
+  },
+};
+
+// The populated list renders no snippet of its own; Add Project opens it.
+export const PROJECT_LIST_SUBTITLE = `${PROJECT_CREATED_AT_INGEST} Add Project opens the snippet.`;
+
 // Operators apply_project_list_filters can honor; hides the rest from the panel.
 const PROJECT_FILTER_SUPPORTED_OPS = new Set([
   "in",

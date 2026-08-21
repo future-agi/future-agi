@@ -5,6 +5,7 @@ import { useLocation } from "react-router-dom";
 
 import NewExperiment from "./NewProject/NewExperiment";
 import NewObserve from "./NewProject/NewObserve";
+import { PROJECT_FTUX_COPY } from "./common";
 
 const ProjectFtux = () => {
   const location = useLocation();
@@ -15,6 +16,10 @@ const ProjectFtux = () => {
     const isObserve = currentPath.includes("observe");
     setIsObserve(isObserve);
   }, [currentPath]);
+
+  const copy = isObserve
+    ? PROJECT_FTUX_COPY.observe
+    : PROJECT_FTUX_COPY.experiment;
 
   return (
     <Box
@@ -38,11 +43,11 @@ const ProjectFtux = () => {
         />
         <Box sx={{ height: "10px" }} />
         <Typography fontSize="20px" fontWeight={700} color="text.primary">
-          Welcome to {isObserve ? `Observe` : `Prototype`}
+          {copy.title}
         </Typography>
         <Box sx={{ height: "5px" }} />
         <Typography fontSize="14px" color="text.secondary">
-          Create a project to experiment on your model
+          {copy.description}
         </Typography>
         <Box sx={{ height: "20px" }} />
       </Box>

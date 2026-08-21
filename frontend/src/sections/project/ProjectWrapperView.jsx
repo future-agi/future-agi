@@ -32,6 +32,7 @@ import {
   PROJECT_FILTER_PROPERTIES,
   PROJECT_FILTER_DEFAULT_OPERATORS,
   PROJECT_FILTER_DEFAULT_ROW,
+  PROJECT_LIST_SUBTITLE,
   projectOperatorFilter,
 } from "./common";
 
@@ -211,7 +212,7 @@ const ProjectWrapperView = () => {
                 color="text.primary"
                 fontWeight={"fontWeightRegular"}
               >
-                Create a project to experiment on your model
+                {PROJECT_LIST_SUBTITLE}
               </Typography>
             </Box>
           </Box>

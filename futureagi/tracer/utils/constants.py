@@ -1,7 +1,11 @@
+from enum import Enum
+
 from tracer.utils.filter_operators import (
     LIST_FILTER_OPS,
     NO_VALUE_FILTER_OPS,
     RANGE_FILTER_OPS,
+)
+from tracer.utils.filter_operators import (
     SPAN_ATTR_ALLOWED_OPS as CONTRACT_SPAN_ATTR_ALLOWED_OPS,
 )
 
@@ -30,9 +34,9 @@ trace_provider = register(
 import { register, ProjectType } from "@traceai/fi-core";
 
 const tracerProvider = register({
-    project_type: ProjectType.EXPERIMENT,
-    project_name: "FUTURE_AGI",
-    project_version_name: "openai-exp",
+    projectType: ProjectType.EXPERIMENT,
+    projectName: "FUTURE_AGI",
+    projectVersionName: "openai-exp",
 });
 """,
 }
@@ -53,8 +57,8 @@ trace_provider = register(
 import { register, ProjectType } from "@traceai/fi-core";
 
 const tracerProvider = register({
-    project_type: ProjectType.OBSERVE,
-    project_name: "openai_project",
+    projectType: ProjectType.OBSERVE,
+    projectName: "openai_project",
 });
 """,
 }
@@ -379,9 +383,6 @@ PortkeyInstrumentor().instrument(tracer_provider=tracer_provider)
         },
     },
 }
-
-
-from enum import Enum
 
 
 class FilterType(Enum):
