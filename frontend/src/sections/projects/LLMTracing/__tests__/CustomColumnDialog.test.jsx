@@ -83,3 +83,51 @@ describe("CustomColumnDialog — TH-4139", () => {
     expect(onAddColumns).not.toHaveBeenCalled();
   });
 });
+
+describe("CustomColumnDialog — span attribute source (#1380)", () => {
+  // The picker is sourced from the span-attribute-keys endpoint, which returns
+  // objects shaped { key, type, count } — not the plain strings the earlier
+  // tests cover, and not the eval-attributes list it was wired to before the
+  // fix. Feeding that object shape must render each attribute's key as a
+  // selectable row.
+  it("renders span-attribute-keys objects ({ key, type, count }) as selectable columns", () => {
+    renderWithProviders(
+      <CustomColumnDialog
+        open
+        onClose={vi.fn()}
+        attributes={[
+          { key: "llm.model_name", type: "string", count: 12 },
+          { key: "test_string", type: "string", count: 3 },
+        ]}
+        existingColumns={[]}
+        onAddColumns={vi.fn()}
+        onRemoveColumns={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("llm.model_name")).toBeInTheDocument();
+    expect(screen.getByText("test_string")).toBeInTheDocument();
+  });
+
+  it("shows the empty state when the source returns no attributes", () => {
+    // Before #1380 the dialog was fed the eval-attributes list, which was
+    // empty for any project without configured evals — leaving the picker
+    // permanently blank. An empty source must surface the explicit empty
+    // state, and (post-fix) a project whose spans carry attributes no longer
+    // hits this path.
+    renderWithProviders(
+      <CustomColumnDialog
+        open
+        onClose={vi.fn()}
+        attributes={[]}
+        existingColumns={[]}
+        onAddColumns={vi.fn()}
+        onRemoveColumns={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByText("No attributes found for this project"),
+    ).toBeInTheDocument();
+  });
+});

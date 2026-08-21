@@ -189,19 +189,20 @@ const UsersView = ({
     }
   }, [gridApi, autoSizeAllCols]);
 
-  // --- Eval attributes for custom column dialog (mirrors LLMTracingView) ---
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", observeId],
+  // --- Span attributes for the custom column dialog (mirrors LLMTracingView).
+  // The dialog promotes span attributes to columns, so it must be sourced from
+  // span-attribute-keys — not the eval-attributes list, which is empty for any
+  // project without configured evals and left the picker blank (issue #1380).
+  const { data: spanAttributes } = useQuery({
+    queryKey: ["span-attribute-keys", observeId],
     queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          filters: JSON.stringify({ project_id: observeId }),
-        },
+      axios.get(endpoints.project.spanAttributeKeys(), {
+        params: { project_id: observeId },
       }),
-    select: (data) => data.data?.result,
+    select: (data) => data.data?.result || [],
     enabled: Boolean(observeId),
   });
-  const attributes = useMemo(() => evalAttributes || [], [evalAttributes]);
+  const attributes = useMemo(() => spanAttributes || [], [spanAttributes]);
 
   // --- Observe header refresh wiring (TH-4023) ---
   // Expose a refresh callback to the shared ObserveHeader so the refresh
