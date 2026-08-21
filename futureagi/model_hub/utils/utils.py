@@ -674,8 +674,8 @@ def load_hf_dataset_with_retries(
         organization_id=organization_id, provider="huggingface"
     ).first()
     hf_token = (
-        auth_token._actual_key
-        if auth_token and auth_token._actual_key
+        auth_token.actual_key
+        if auth_token and auth_token.actual_key
         else HUGGINGFACE_API_TOKEN
     )
     for attempt in range(max_reties):
