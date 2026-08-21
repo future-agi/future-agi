@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { getLlmData } from "../getSpanData";
+import { getLlmData, parseRetrieveDocs } from "../getSpanData";
 
 // Characterization tests pinning current getLlmData output. A snapshot change is a
 // real behaviour change to review, not something to blindly update.
@@ -131,9 +131,11 @@ describe("getLlmData / extractMessages (characterization)", () => {
       input({
         "llm.input_messages.0.message.role": "user",
         "llm.input_messages.0.message.contents.0.message_content.type": "text",
-        "llm.input_messages.0.message.contents.0.message_content.text": "part one",
+        "llm.input_messages.0.message.contents.0.message_content.text":
+          "part one",
         "llm.input_messages.0.message.contents.1.message_content.type": "text",
-        "llm.input_messages.0.message.contents.1.message_content.text": "part two",
+        "llm.input_messages.0.message.contents.1.message_content.text":
+          "part two",
       }).inputMessage,
     ).toMatchInlineSnapshot(`
       [
@@ -193,7 +195,9 @@ describe("getLlmData / extractMessages (characterization)", () => {
   });
 
   it("returns an empty list when no message attributes are present", () => {
-    expect(input({ "some.other.attr": "x" }).inputMessage).toMatchInlineSnapshot(`[]`);
+    expect(
+      input({ "some.other.attr": "x" }).inputMessage,
+    ).toMatchInlineSnapshot(`[]`);
   });
 
   it("keeps a flat content string when a message also has structured parts (no crash)", () => {
@@ -222,5 +226,69 @@ describe("getLlmData / extractMessages (characterization)", () => {
         },
       ]
     `);
+  });
+});
+
+// =============================================================================
+// parseRetrieveDocs — regression tests for #1240
+// =============================================================================
+
+const retrieve = (attrs) => parseRetrieveDocs({ span_attributes: attrs });
+
+describe("parseRetrieveDocs", () => {
+  it("returns empty object when no retrieval attributes exist", () => {
+    expect(retrieve({ "some.other.attr": "x" })).toEqual({});
+  });
+
+  it("parses a single retrieved document", () => {
+    const result = retrieve({
+      "retrieval.documents.0.document.content": "Doc content here",
+      "retrieval.documents.0.document.id": "doc-abc",
+      "retrieval.documents.0.document.score": 0.83,
+    });
+
+    expect(Object.keys(result)).toHaveLength(1);
+    expect(result.doc1).toEqual({
+      id: "doc-abc",
+      value: "Doc content here",
+      score: 0.83,
+      hasScore: true,
+    });
+  });
+
+  it("parses multiple retrieved documents", () => {
+    const result = retrieve({
+      "retrieval.documents.0.document.content": "First doc",
+      "retrieval.documents.0.document.id": "doc-1",
+      "retrieval.documents.0.document.score": 0.9,
+      "retrieval.documents.1.document.content": "Second doc",
+      "retrieval.documents.1.document.id": "doc-2",
+      "retrieval.documents.1.document.score": 0.7,
+    });
+
+    expect(Object.keys(result)).toHaveLength(2);
+    expect(result.doc1.value).toBe("First doc");
+    expect(result.doc2.value).toBe("Second doc");
+  });
+
+  it("handles document without id or score", () => {
+    const result = retrieve({
+      "retrieval.documents.0.document.content": "Content only",
+    });
+
+    expect(result.doc1).toEqual({
+      id: undefined,
+      value: "Content only",
+      score: undefined,
+      hasScore: false,
+    });
+  });
+
+  it("ignores non-retrieval document content attributes", () => {
+    const result = retrieve({
+      "llm.output_messages.0.message.content": "not a retrieval doc",
+    });
+
+    expect(result).toEqual({});
   });
 });
