@@ -6,6 +6,22 @@ on:
     paths:
       - 'frontend/**'
       - '.github/workflows/frontend-feature.yml'
+  pull_request:
+    # A push workflow is skipped when the newest commit only changes the
+    # backend, even if the pull request still contains frontend changes.
+    # Validate the complete diff for both normal and stacked pull requests.
+    branches:
+      - dev
+      - main
+      - 'feat/**'
+      - 'fix/**'
+      - 'chore/**'
+      - 'refactor/**'
+      - 'test/**'
+      - 'perf/**'
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend-feature.yml'
 
 jobs:
   # Branch name validation
@@ -70,52 +86,6 @@ jobs:
         run: yarn build
         env:
           NODE_OPTIONS: --max-old-space-size=8192
-
-  # Extract branch info and add PR comment
-  branch-info:
-    runs-on: ubuntu-latest
-    needs: [validate-branch-name, essential-tests]
-    if: github.event_name == 'pull_request'
-    steps:
-      - name: Extract branch info and comment
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const branchName = '${{ github.head_ref }}';
-            const [type, description] = branchName.split('/');
-
-            const typeEmojis = {
-              'feature': '✨',
-              'bugfix': '🐛',
-              'hotfix': '🚨',
-              'refactor': '♻️',
-              'docs': '📚',
-              'test': '🧪',
-              'chore': '🔧',
-              'release': '🚀'
-            };
-
-            const emoji = typeEmojis[type] || '📝';
-
-            const comment = `## ${emoji} Feature Branch Validation Passed
-
-            **Branch Name:** \`${branchName}\`
-            **Type:** ${type}
-            **Description:** ${description}
-
-            ✅ Branch naming convention: PASSED
-            ✅ Type checking: PASSED
-            ✅ Unit tests: PASSED
-            ✅ Build check: PASSED
-
-            Ready for review! 🎉`;
-
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
-            });
 
   # Feature branch summary
   feature-summary:

@@ -504,15 +504,21 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         return item
 
     def _positive_relational_seed_filter(self) -> dict[str, Any] | None:
-        """Return the sole positive boolean relation eligible for root seeding.
+        """Return one positive relation that is necessary for every match.
 
-        ``has_eval`` and ``has_annotation`` have a positive row witness.  For a
-        one-project, unsorted request whose only public membership predicate is
-        one of those booleans, the exact relation can narrow root discovery
-        before the ordinary finite latest-state classifier runs.  Negative
-        predicates and conjunctions remain classifier-only: absence has no
-        positive witness, and combining this optimization with another leaf
-        would need a separate ordered-prefix proof.
+        A project-scoped eval value, a positive annotator selection, and the
+        existing ``has_eval=true`` / ``has_annotation=true`` relations all
+        have a physical positive witness.  Any one of them can therefore
+        narrow root discovery even when the request has additional ``AND``
+        predicates: the ordinary finite latest-state classifier still repeats
+        *every* public filter before publishing a row.  Prefer annotator and
+        eval-value witnesses over the broader boolean existence relations.
+
+        Negative-existence predicates remain classifier-only because absence
+        has no positive row with which to seed candidates.  Eval value
+        ``not_in``/``not_equals`` are different: their compiler still selects
+        a positive eval row whose value satisfies the negated comparison, so
+        they remain safe necessary seeds.
 
         Voice calls delegate to this trace builder with one private conversation
         root invariant.  That marker is structural, not a public filter, so it
@@ -526,40 +532,96 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             for item in self._active_non_time_filters()
             if not item.get("_eval_task_trace_root")
         ]
-        if len(active_filters) != 1:
+        candidates: list[tuple[int, int, dict[str, Any]]] = []
+        positive_eval_operations = {
+            "equals",
+            "not_equals",
+            "in",
+            "not_in",
+            "greater_than",
+            "greater_than_or_equal",
+            "less_than",
+            "less_than_or_equal",
+            "between",
+            "not_between",
+            "contains",
+            "not_contains",
+            "starts_with",
+            "ends_with",
+            "is_not_null",
+        }
+        for index, item in enumerate(active_filters):
+            key = item.get("column_id") or item.get("columnId")
+            config = item.get("filter_config") or item.get("filterConfig") or {}
+            if not key or not isinstance(config, dict):
+                continue
+            col_type = str(
+                config.get("col_type") or config.get("colType") or ""
+            ).upper()
+            filter_type = str(
+                config.get("filter_type") or config.get("filterType") or ""
+            ).lower()
+            operation = normalize_filter_op(
+                config.get("filter_op") or config.get("filterOp")
+            )
+            value = config.get("filter_value", config.get("filterValue"))
+
+            if key == "annotator":
+                # ``annotator`` is a Score relation independent of col_type,
+                # except that an explicit SPAN_ATTRIBUTE means the caller
+                # intentionally selected a raw customer attribute with the
+                # same name.
+                if col_type not in {"", "NORMAL", "SYSTEM_METRIC", "ANNOTATION"}:
+                    continue
+                if filter_type not in {"", "text", "annotator"}:
+                    continue
+                values = value if isinstance(value, (list, tuple)) else [value]
+                if (
+                    operation in {"equals", "in"}
+                    and values
+                    and all(isinstance(member, str) and member for member in values)
+                ):
+                    candidates.append((0, index, item))
+                continue
+
+            if col_type == "EVAL_METRIC" and key not in {
+                "annotator",
+                "has_annotation",
+                "has_eval",
+                "my_annotations",
+            }:
+                # Every supported value comparison except ``is_null`` is
+                # compiled as trace_id IN (matching latest live eval rows).
+                # Config/template resolution is project-scoped by the filter
+                # compiler used below.
+                if isinstance(key, str) and operation in positive_eval_operations:
+                    candidates.append((1, index, item))
+                continue
+
+            if key not in {"has_eval", "has_annotation"}:
+                continue
+            if key == "has_eval" and not self._eval_config_ids_known:
+                # The eval table has no project id. Candidate-first membership
+                # is safe only when the endpoint supplied its authoritative
+                # active project config set.
+                continue
+            if (
+                key == "has_annotation"
+                and self._annotation_label_set_known
+                and not self.annotation_label_ids
+            ):
+                # Completeness across a known empty label set is vacuously
+                # true; there is no positive Score witness for root seeding.
+                continue
+            wants_relation = value is True or (
+                isinstance(value, str) and value.strip().lower() == "true"
+            )
+            if operation == "equals" and wants_relation:
+                candidates.append((2, index, item))
+
+        if not candidates:
             return None
-        item = active_filters[0]
-        key = item.get("column_id") or item.get("columnId")
-        if key not in {"has_eval", "has_annotation"}:
-            return None
-        if key == "has_eval" and not self._eval_config_ids_known:
-            # The eval table has no project id. Candidate-first membership is
-            # safe only when the endpoint supplied its authoritative active
-            # project config set; legacy/direct builders keep their established
-            # candidate-scoped classifier instead of admitting a colliding
-            # trace id from another project.
-            return None
-        if (
-            key == "has_annotation"
-            and self._annotation_label_set_known
-            and not self.annotation_label_ids
-        ):
-            # Completeness across a known empty label set is vacuously true;
-            # there is no positive Score witness with which to narrow roots.
-            return None
-        config = item.get("filter_config") or item.get("filterConfig") or {}
-        if not isinstance(config, dict):
-            return None
-        operation = normalize_filter_op(
-            config.get("filter_op") or config.get("filterOp")
-        )
-        value = config.get("filter_value", config.get("filterValue"))
-        wants_relation = value is True or (
-            isinstance(value, str) and value.strip().lower() == "true"
-        )
-        if operation != "equals" or not wants_relation:
-            return None
-        return item
+        return min(candidates, key=lambda candidate: candidate[:2])[2]
 
     def _positive_relational_seed(self) -> tuple[str, dict[str, Any]]:
         """Compile the exact project-scoped relation used by root discovery.
@@ -588,6 +650,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 self.eval_config_ids if self._eval_config_ids_known else None
             ),
             annotation_label_set_known=self._annotation_label_set_known,
+            eval_filter_metadata=self.eval_filter_metadata,
         )
         predicate, params = filter_builder.translate([filter_item])
         return predicate or "", params

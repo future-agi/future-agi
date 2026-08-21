@@ -2,7 +2,18 @@ name: Backend CI
 
 on:
   pull_request:
-    branches: [dev, main]
+    # Run the same backend gate for stacked pull requests. Without the
+    # feature-branch patterns, a feature -> feature PR can merge without any
+    # backend test result on its current SHA.
+    branches:
+      - dev
+      - main
+      - 'feat/**'
+      - 'fix/**'
+      - 'chore/**'
+      - 'refactor/**'
+      - 'test/**'
+      - 'perf/**'
   push:
     branches: [dev, main]
   merge_group:

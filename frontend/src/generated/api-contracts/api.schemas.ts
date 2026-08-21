@@ -4180,6 +4180,8 @@ export interface SpanAttributeKeyApi {
 
 export interface SpanAttributeKeysResponseApi {
   result: SpanAttributeKeyApi[];
+  /** @minimum 0 */
+  total_count?: number;
   query_complete: boolean;
   query_status: SpanAttributeKeysResponseApiQueryStatus;
   query_error_code?: SpanAttributeKeysResponseApiQueryErrorCode;

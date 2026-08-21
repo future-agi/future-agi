@@ -22,15 +22,19 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
+	"github.com/future-agi/future-agi/fi-collector/pkg/catalogkafka"
+	"github.com/future-agi/future-agi/fi-collector/pkg/catalogwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/pricing"
 	"github.com/future-agi/future-agi/fi-collector/pkg/server"
@@ -39,9 +43,10 @@ import (
 )
 
 type rootConfig struct {
-	Writer chwriter.Config `yaml:"writer"`
-	Server server.Config   `yaml:"server"`
-	Auth   auth.Config     `yaml:"auth"`
+	Writer  chwriter.Config             `yaml:"writer"`
+	Server  server.Config               `yaml:"server"`
+	Auth    auth.Config                 `yaml:"auth"`
+	Catalog catalogwriter.RuntimeConfig `yaml:"catalog"`
 }
 
 func main() {
@@ -52,7 +57,10 @@ func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	cfg := loadConfig(log, configPath)
-	applyEnvOverrides(log, &cfg)
+	if err := applyEnvOverrides(log, &cfg); err != nil {
+		log.Error("invalid environment override", "err", err)
+		os.Exit(1)
+	}
 
 	writer, err := chwriter.New(cfg.Writer)
 	if err != nil {
@@ -98,17 +106,94 @@ func main() {
 		pricer = pricing.New(priceTable, custom)
 	}
 
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
 	opts := []server.Option{server.WithLogger(log)}
 	if pricer != nil {
 		opts = append(opts, server.WithPricer(pricer))
 	}
+	mode, err := cfg.Catalog.SelectedMode()
+	if err != nil {
+		log.Error("catalog mode validation failed", "err", err)
+		os.Exit(1)
+	}
+	var catalogWAL *catalogwriter.Writer
+	var catalogSubmitter *catalogwriter.AsyncSubmitter
+	var stopCatalogSubmit context.CancelFunc
+	var catalogPublisher *catalogkafka.SpoolPublisher
+	var kafkaProducer *catalogkafka.Producer
+	if mode == catalogwriter.ModeDirect && sameClickHouseIdentity(
+		cfg.Writer.Username, cfg.Catalog.ClickHouse.Username,
+	) {
+		log.Error("catalog ClickHouse user must be separate from canonical span writer")
+		os.Exit(1)
+	}
+	switch mode {
+	case catalogwriter.ModeDisabled:
+	case catalogwriter.ModeDirect:
+		catalogWAL, catalogPublisher, err = newDirectCatalogWriter(cfg.Catalog)
+		if err != nil {
+			log.Error("direct catalog writer init failed", "err", err)
+			os.Exit(1)
+		}
+	case catalogwriter.ModeKafka:
+		kafkaProducer, err = catalogkafka.NewFranzProducer(catalogkafka.FranzProducerConfig{
+			Brokers: cfg.Catalog.Kafka.Brokers,
+			Topic:   cfg.Catalog.Kafka.Topic,
+		})
+		if err != nil {
+			log.Error("Kafka catalog producer init failed", "err", err)
+			os.Exit(1)
+		}
+		catalogWAL, catalogPublisher, err = newKafkaCatalogWriter(cfg.Catalog, kafkaProducer)
+		if err != nil {
+			kafkaProducer.Close()
+			log.Error("Kafka catalog writer init failed", "err", err)
+			os.Exit(1)
+		}
+	}
+	if catalogWAL != nil {
+		catalogSubmitter, err = catalogwriter.NewAsyncSubmitter(catalogWAL, 64, 64)
+		if err != nil {
+			if kafkaProducer != nil {
+				kafkaProducer.Close()
+			}
+			log.Error("catalog submitter init failed", "mode", mode, "err", err)
+			os.Exit(1)
+		}
+		// The signal context reaches Server.Run first. Keep WAL ownership alive
+		// until Server.shutdown has performed its final canonical-span drain;
+		// otherwise that final batch could race a stopped submitter.
+		catalogSubmitCtx, stopSubmit := context.WithCancel(context.Background())
+		stopCatalogSubmit = stopSubmit
+		catalogSubmitter.Run(catalogSubmitCtx)
+		opts = append(opts, server.WithAttributeCatalogWriter(&catalogwriter.AttributeCatalogWriter{
+			Writer: catalogWAL, Submitter: catalogSubmitter,
+		}))
+	}
 	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, opts...)
+	var catalogReplayDone chan struct{}
+	if catalogWAL != nil {
+		catalogReplayDone = make(chan struct{})
+		go func() {
+			defer close(catalogReplayDone)
+			switch mode {
+			case catalogwriter.ModeDirect:
+				runDirectCatalogReplay(
+					ctx, catalogWAL, catalogPublisher, cfg.Catalog.ReplayInterval, log,
+				)
+			case catalogwriter.ModeKafka:
+				runKafkaCatalogReplay(
+					ctx, catalogWAL, catalogPublisher, cfg.Catalog.ReplayInterval, log,
+				)
+			}
+		}()
+		go logCatalogSubmissionGaps(ctx, catalogSubmitter, log)
+	}
 
 	// Admin HTTP server — internal only, health check endpoint.
 	go runAdmin(":9464", writer, log)
-
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
 
 	go authenticator.WatchRevocations(ctx)
 
@@ -117,11 +202,32 @@ func main() {
 		"http_addr", cfg.Server.HTTPAddr,
 		"ch_url", cfg.Writer.URL,
 	)
-	if err := srv.Run(ctx); err != nil && ctx.Err() == nil {
-		log.Error("server exited with error", "err", err)
-		os.Exit(1)
+	runErr := srv.Run(ctx)
+	unexpectedExit := runErr != nil && ctx.Err() == nil
+	if unexpectedExit {
+		log.Error("server exited with error; draining catalog lifecycle", "err", runErr)
+	}
+	if catalogSubmitter != nil {
+		stopCatalogSubmit()
+		catalogSubmitter.Wait()
+		drainCatalogSubmissionGaps(catalogSubmitter, log)
+	}
+	// A listener/runtime error is not driven by the signal context. Cancel only
+	// after the final server drain has transferred every accepted job to the
+	// durable WAL, then stop the replay worker before closing its destination.
+	if unexpectedExit {
+		cancel()
+	}
+	if catalogReplayDone != nil {
+		<-catalogReplayDone
+	}
+	if kafkaProducer != nil {
+		kafkaProducer.Close()
 	}
 	log.Info("shutdown complete", "stats", writer.Snapshot())
+	if unexpectedExit {
+		os.Exit(1)
+	}
 }
 
 // loadPriceTable resolves the token-pricing table. FI_PRICING_JSON is
@@ -170,7 +276,7 @@ func loadConfig(log *slog.Logger, path string) rootConfig {
 
 // applyEnvOverrides — surgical, only the fields ops most often need to
 // override at runtime without baking a new image.
-func applyEnvOverrides(log *slog.Logger, c *rootConfig) {
+func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	if v := os.Getenv("FI_CH_URL"); v != "" {
 		c.Writer.URL = v
 	}
@@ -221,6 +327,72 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) {
 	if v := os.Getenv("FI_AUTH_REDIS_ADDR"); v != "" {
 		c.Auth.RedisAddr = v
 	}
+	if v := os.Getenv("FI_CATALOG_MODE"); v != "" {
+		c.Catalog.Mode = catalogwriter.Mode(v)
+	}
+	if v := os.Getenv("FI_CATALOG_ENVIRONMENT"); v != "" {
+		c.Catalog.Environment = v
+	}
+	if v := os.Getenv("FI_CATALOG_EPOCH"); v != "" {
+		epoch, err := strconv.ParseUint(v, 10, 16)
+		if err != nil || epoch == 0 {
+			return fmt.Errorf("FI_CATALOG_EPOCH must be a non-zero UInt16")
+		}
+		c.Catalog.CatalogEpoch = uint16(epoch)
+	}
+	if v := os.Getenv("FI_CATALOG_PRODUCER_STREAM_ID"); v != "" {
+		c.Catalog.ProducerStream = v
+	}
+	if v := os.Getenv("FI_CATALOG_SPOOL_DIR"); v != "" {
+		c.Catalog.SpoolDir = v
+	}
+	if v := os.Getenv("FI_CATALOG_REPLAY_INTERVAL"); v != "" {
+		interval, err := time.ParseDuration(v)
+		if err != nil || interval <= 0 {
+			return fmt.Errorf("FI_CATALOG_REPLAY_INTERVAL must be a positive duration")
+		}
+		c.Catalog.ReplayInterval = interval
+	}
+	if v := os.Getenv("FI_CATALOG_CH_URL"); v != "" {
+		c.Catalog.ClickHouse.URL = v
+	}
+	if v := os.Getenv("FI_CATALOG_CH_DATABASE"); v != "" {
+		c.Catalog.ClickHouse.Database = v
+	}
+	if v := os.Getenv("FI_CATALOG_CH_USERNAME"); v != "" {
+		c.Catalog.ClickHouse.Username = v
+	}
+	if v := os.Getenv("FI_CATALOG_CH_PASSWORD"); v != "" {
+		c.Catalog.ClickHouse.Password = v
+	}
+	if v := os.Getenv("FI_CATALOG_KAFKA_BROKERS"); v != "" {
+		c.Catalog.Kafka.Brokers = splitNonempty(v)
+	}
+	if v := os.Getenv("FI_CATALOG_KAFKA_TOPIC"); v != "" {
+		c.Catalog.Kafka.Topic = v
+	}
+	return c.Catalog.ValidateMode()
+}
+
+func splitNonempty(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+func sameClickHouseIdentity(canonical, catalog string) bool {
+	if canonical == "" {
+		canonical = "default"
+	}
+	if catalog == "" {
+		catalog = "default"
+	}
+	return canonical == catalog
 }
 
 // runAdmin serves /healthz for container health checks.

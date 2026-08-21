@@ -47,6 +47,12 @@ def _clickhouse_host() -> str:
     return "localhost" if host == "clickhouse" else host
 
 
+def _unix_microseconds(value: datetime) -> int:
+    epoch = datetime(1970, 1, 1, tzinfo=UTC)
+    delta = value - epoch
+    return delta.days * 86_400_000_000 + delta.seconds * 1_000_000 + delta.microseconds
+
+
 def _insert_row(client: Any, table: str, row: dict[str, Any]) -> None:
     client.insert(table, [list(row.values())], column_names=list(row))
 
@@ -215,8 +221,8 @@ def test_all_catalog_reader_statements_execute_with_production_driver(
     common = {
         "catalog_project_ids": project_ids,
         "catalog_epoch": catalog_database.epoch,
-        "catalog_window_start": catalog_database.window_start,
-        "catalog_window_end": catalog_database.window_end,
+        "catalog_window_start_us": _unix_microseconds(catalog_database.window_start),
+        "catalog_window_end_us": _unix_microseconds(catalog_database.window_end),
     }
 
     activation_rows = _execute(
@@ -280,6 +286,7 @@ def test_all_catalog_reader_statements_execute_with_production_driver(
         _KEY_PAGE_SQL,
         {
             **common,
+            "catalog_key_attribute_types": ("string",),
             "catalog_key_search_pattern": "%",
             "catalog_after_key_folded": "",
             "catalog_after_key": "",
@@ -296,11 +303,13 @@ def test_all_catalog_reader_statements_execute_with_production_driver(
         "attribute_type_rank",
         "first_seen",
         "last_seen",
+        "total_count",
     }
     assert key["key_folded"] == "model"
     assert key["attribute_key"] == "model"
     assert key["attribute_type"] == "string"
     assert key["attribute_type_rank"] == 1
+    assert key["total_count"] == 1
 
     value_rows = _execute(
         catalog_database,

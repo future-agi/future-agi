@@ -696,16 +696,23 @@ def build_metrics_catalog(
             used_label_ids: set = set()
             for pid in project_ids:
                 used_label_ids.update(source.label_ids_for_project(pid))
-            if used_label_ids:
-                annotation_labels = AnnotationsLabels.no_workspace_objects.filter(
-                    id__in=used_label_ids,
-                ).values("id", "name", "type", "settings")
-            else:
-                annotation_labels = (
-                    AnnotationsLabels.no_workspace_objects.none().values(
-                        "id", "name", "type", "settings"
-                    )
+            # A project-scoped label is a valid filter before its first Score is
+            # written.  Union those configured labels with the authoritative
+            # Score-backed ids so a newly created annotation property cannot
+            # disappear from the picker.  Global legacy labels (project=NULL)
+            # remain usage-gated; otherwise every workspace label would leak
+            # into every project inventory.
+            annotation_labels = (
+                AnnotationsLabels.no_workspace_objects.filter(
+                    Q(organization=workspace.organization),
+                    Q(workspace__isnull=True) | Q(workspace=workspace),
                 )
+                .filter(
+                    Q(id__in=used_label_ids) | Q(project_id__in=project_ids),
+                )
+                .distinct()
+                .values("id", "name", "type", "settings")
+            )
         else:
             annotation_labels = AnnotationsLabels.no_workspace_objects.filter(
                 Q(organization=workspace.organization),

@@ -121,6 +121,7 @@ class _Candidate:
     attribute_type: AttributeType
     value: Any = None
     array: list[Any] | None = None
+    key_only: bool = False
 
     @property
     def sort_key(self) -> tuple[str, int]:
@@ -145,14 +146,17 @@ def build_catalog_rows(
     attrs_bool: Mapping[str, int],
     attributes_extra: Mapping[str, Any],
     limits: CatalogBuildLimits,
+    key_only_attributes: frozenset[tuple[str, AttributeType]] = frozenset(),
 ) -> CatalogBuildResult:
     """Build key/value rows for one span under explicit hard ceilings.
 
     Keys are a deterministic bounded top-K by ``(key, type)``. Arrays preserve
     source order and share one global inspection budget. Maps and all other
-    JSON overflow shapes are key-only. Every limit or malformed scalar is
-    returned as fixed-order gap metadata; no omission is silently reported as
-    complete.
+    JSON overflow shapes are key-only. Callers may also explicitly mark a
+    projected scalar or array key-only when its source value exceeded the
+    projection policy; the key remains complete and no value row is invented.
+    Every builder limit or malformed scalar is returned as fixed-order gap
+    metadata; no unmarked omission is silently reported as complete.
 
     Deterministic top-K selection visits every supplied map entry but retains
     at most ``max_keys`` references. The canonical-map producer is responsible
@@ -181,6 +185,7 @@ def build_catalog_rows(
         attrs_bool,
         attributes_extra,
         limits.max_keys,
+        key_only_attributes,
     )
     candidate_keys = (
         len(attrs_string) + len(attrs_number) + len(attrs_bool) + len(attributes_extra)
@@ -261,7 +266,7 @@ def build_catalog_rows(
         )
         encoded_bytes += key_cost
 
-        if candidate.attribute_type in ("map", "json"):
+        if candidate.key_only or candidate.attribute_type in ("map", "json"):
             continue
         if candidate.attribute_type == "boolean":
             if type(candidate.value) is not int or candidate.value not in (0, 1):
@@ -339,6 +344,7 @@ def _select_candidates(
     attrs_bool: Mapping[str, int],
     attributes_extra: Mapping[str, Any],
     max_keys: int,
+    key_only_attributes: frozenset[tuple[str, AttributeType]],
 ) -> tuple[list[_Candidate], int, int]:
     selected: list[_ReverseCandidate] = []
     valid_keys = 0
@@ -359,18 +365,58 @@ def _select_candidates(
             heapq.heapreplace(selected, wrapped)
 
     for key, value in attrs_string.items():
-        consider(_Candidate(key, "string", value=value))
+        consider(
+            _Candidate(
+                key,
+                "string",
+                value=value,
+                key_only=(key, "string") in key_only_attributes,
+            )
+        )
     for key, value in attrs_number.items():
-        consider(_Candidate(key, "number", value=value))
+        consider(
+            _Candidate(
+                key,
+                "number",
+                value=value,
+                key_only=(key, "number") in key_only_attributes,
+            )
+        )
     for key, value in attrs_bool.items():
-        consider(_Candidate(key, "boolean", value=value))
+        consider(
+            _Candidate(
+                key,
+                "boolean",
+                value=value,
+                key_only=(key, "boolean") in key_only_attributes,
+            )
+        )
     for key, value in attributes_extra.items():
         if isinstance(value, list):
-            consider(_Candidate(key, "array", array=value))
+            consider(
+                _Candidate(
+                    key,
+                    "array",
+                    array=value,
+                    key_only=(key, "array") in key_only_attributes,
+                )
+            )
         elif isinstance(value, dict):
-            consider(_Candidate(key, "map"))
+            consider(
+                _Candidate(
+                    key,
+                    "map",
+                    key_only=(key, "map") in key_only_attributes,
+                )
+            )
         else:
-            consider(_Candidate(key, "json"))
+            consider(
+                _Candidate(
+                    key,
+                    "json",
+                    key_only=(key, "json") in key_only_attributes,
+                )
+            )
 
     return (
         sorted(

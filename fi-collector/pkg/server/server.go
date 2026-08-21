@@ -562,21 +562,24 @@ func (s *Server) drainNow(ctx context.Context) {
 	// returns a non-nil error and is intentionally skipped here; its later
 	// canonical replay/backfill owns reconciliation. Catalog staging and its
 	// catalog-only spool are isolated from span health: any gap is logged, never
-	// returned, and never changes span writer stats. This seam remains unwired in
-	// main until local staging/fsync is moved or latency-qualified.
+	// returned, and never changes span writer stats. Project-scoped jobs preserve
+	// the version-3 stream invariant; invalid/unscoped input remains an explicit
+	// gap job instead of being attached to another tenant.
 	if spanErr == nil && s.catalog != nil {
-		job, report := s.catalog.StageCanonicalSpans(batch)
-		if report.RejectedSpans > 0 || report.IncompleteSpans > 0 || report.GlobalTruncated {
-			s.log.Warn(
-				"attribute catalog staging incomplete",
-				"rejected_spans", report.RejectedSpans,
-				"incomplete_spans", report.IncompleteSpans,
-				"rows_omitted", report.RowsOmitted,
-				"gap_reasons", report.BuildGapReasons,
-			)
-		}
-		if err := s.catalog.Submit(ctx, job); err != nil {
-			s.log.Warn("attribute catalog spool failed", "err", err)
+		for _, staged := range s.catalog.StageCanonicalSpansByProject(batch) {
+			report := staged.Report
+			if report.RejectedSpans > 0 || report.IncompleteSpans > 0 || report.GlobalTruncated {
+				s.log.Warn(
+					"attribute catalog staging incomplete",
+					"rejected_spans", report.RejectedSpans,
+					"incomplete_spans", report.IncompleteSpans,
+					"rows_omitted", report.RowsOmitted,
+					"gap_reasons", report.BuildGapReasons,
+				)
+			}
+			if err := s.catalog.Enqueue(staged.Job); err != nil {
+				s.log.Warn("attribute catalog enqueue failed", "err", err)
+			}
 		}
 	}
 

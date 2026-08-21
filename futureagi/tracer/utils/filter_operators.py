@@ -13,6 +13,10 @@ import unicodedata
 from functools import lru_cache
 from pathlib import Path
 
+from tracer.utils.attribute_suggestion_contract import (
+    TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES as TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES,
+)
+
 
 @lru_cache(maxsize=1)
 def load_filter_contract() -> dict:

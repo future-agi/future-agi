@@ -494,6 +494,33 @@ class TestProjectPGDiscovery:
             {"selected": ["included"]}
         ]
 
+    def test_filter_values_fail_closed_when_exact_row_cap_is_exceeded(
+        self, organization, workspace, project, trace, user
+    ):
+        from tracer.services.annotation_label_source import (
+            AnnotationLabelScoresProjectPG,
+            AnnotationScoreReadUnavailable,
+        )
+
+        label = _make_label(organization, workspace, project)
+        for value in ("first", "second"):
+            score = _make_span_score(
+                label=label,
+                span=_make_span(project, trace),
+                organization=organization,
+                workspace=workspace,
+                user=user,
+                project=project,
+            )
+            score.value = {"selected": [value]}
+            score.save(update_fields=["value"])
+
+        source = AnnotationLabelScoresProjectPG()
+        source.FILTER_VALUE_LIMIT = 1
+
+        with pytest.raises(AnnotationScoreReadUnavailable):
+            source.categorical_values_for_label(label.id, [str(project.id)])
+
     def test_candidate_rows_require_exact_project_and_trace_span_pair(
         self, organization, workspace, project, user
     ):
@@ -612,10 +639,10 @@ class TestBackfillTracerProject:
         )
         assert score.tracer_project_id is None
 
-        res = backfill_tracer_project_ids()
+        res = backfill_tracer_project_ids(only_project=str(project.id))
         score.refresh_from_db()
         assert score.tracer_project_id == project.id
         assert res["updated"] >= 1
 
         # Idempotent second run.
-        assert backfill_tracer_project_ids()["updated"] == 0
+        assert backfill_tracer_project_ids(only_project=str(project.id))["updated"] == 0

@@ -115,8 +115,20 @@ type Writer struct {
 // New constructs a disabled no-op writer for zero Config. Enabling validates
 // every bound and creates only the dedicated catalog spool directory.
 func New(cfg Config, inserter Inserter) (*Writer, error) {
+	return newWriter(cfg, inserter, cfg.ProgressSink, true)
+}
+
+// NewTransportWriter constructs a writer whose durable spool is drained only
+// through ReplayTo. It intentionally has no Inserter or ProgressSink, so Kafka
+// and other transports do not need dummy direct-delivery dependencies.
+func NewTransportWriter(cfg Config) (*Writer, error) {
+	cfg.ProgressSink = nil
+	return newWriter(cfg, nil, nil, false)
+}
+
+func newWriter(cfg Config, inserter Inserter, progress ProgressSink, requireDirect bool) (*Writer, error) {
 	w := &Writer{
-		cfg: cfg, inserter: inserter, progress: cfg.ProgressSink,
+		cfg: cfg, inserter: inserter, progress: progress,
 		spool:     spool{dir: cfg.SpoolDir},
 		admission: make(chan struct{}, 1),
 	}
@@ -124,10 +136,10 @@ func New(cfg Config, inserter Inserter) (*Writer, error) {
 	if !cfg.Enabled {
 		return w, nil
 	}
-	if inserter == nil {
+	if requireDirect && inserter == nil {
 		return nil, errors.New("catalogwriter: enabled writer requires an Inserter")
 	}
-	if cfg.ProgressSink == nil {
+	if requireDirect && progress == nil {
 		return nil, errors.New("catalogwriter: enabled writer requires a progress sink")
 	}
 	if cfg.CatalogEpoch == 0 {
@@ -835,6 +847,9 @@ type ReplayResult struct {
 func (w *Writer) Replay(ctx context.Context) (ReplayResult, error) {
 	if w == nil || !w.cfg.Enabled {
 		return ReplayResult{}, nil
+	}
+	if w.inserter == nil || w.progress == nil {
+		return ReplayResult{}, errors.New("catalogwriter: direct Replay unavailable on a transport writer; use ReplayTo")
 	}
 	w.replayMu.Lock()
 	defer w.replayMu.Unlock()

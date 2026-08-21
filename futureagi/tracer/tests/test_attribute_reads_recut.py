@@ -108,6 +108,9 @@ from tracer.services.clickhouse.list_cursor import (
     encode_list_cursor,
 )
 from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
+from tracer.utils.attribute_suggestion_contract import (
+    TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES,
+)
 from tracer.utils.filter_operators import (
     JSON_ARRAY_FILTER_MAX_STRING_UTF8_BYTES,
     JSON_ARRAY_FILTER_MAX_TOTAL_STRING_UTF8_BYTES,
@@ -2359,6 +2362,61 @@ def test_native_value_precedence_is_string_then_number_then_boolean_then_json():
     assert AttributeReadSelector._decode_target_value(row) == (
         "string",
         "native-string",
+    )
+
+
+def test_typed_string_suggestion_cap_retains_key_and_exact_raw_value() -> None:
+    at_limit = "é" * (TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES // 2)
+    oversized = "z" * (TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES + 1)
+    candidate_time = NOW - timedelta(minutes=30)
+    candidates = [
+        _candidate(PROJECT_A, "at-limit", start_time=candidate_time),
+        _candidate(PROJECT_A, "oversized", start_time=candidate_time),
+    ]
+    latest = [
+        _target_row(
+            PROJECT_A,
+            "at-limit",
+            start_time=candidate_time,
+            string=at_limit,
+        ),
+        _target_row(
+            PROJECT_A,
+            "oversized",
+            start_time=candidate_time,
+            string=oversized,
+        ),
+    ]
+
+    def respond(call, _):
+        if "segment_start" in call.params:
+            return candidates
+        return latest
+
+    key_read = AttributeReadSelector(
+        RecordingExecutor(respond), now=NOW, typed_only=True
+    ).discover_keys(
+        [PROJECT_A],
+        exact_key="payload",
+        window_start=NOW - timedelta(hours=1),
+        window_end=NOW,
+    )
+    value_read = AttributeReadSelector(
+        RecordingExecutor(respond), now=NOW, typed_only=True
+    ).read_values(
+        [PROJECT_A],
+        "payload",
+        window_start=NOW - timedelta(hours=1),
+        window_end=NOW,
+    )
+
+    assert key_read.rows == (AttributeKeyRow("payload", "string", 2),)
+    assert value_read.rows == (AttributeValueRow(at_limit, "string", 1),)
+    # The raw typed-map value remains intact for exact user-entered filtering;
+    # only the property suggestion consumer applies the size policy.
+    assert AttributeReadSelector._decode_target_value(latest[1]) == (
+        "string",
+        oversized,
     )
 
 
@@ -8514,6 +8572,7 @@ def test_span_attribute_keys_contract_accepts_exact_probe_and_read_state():
         "query_error_code",
         "query_window_start",
         "query_window_end",
+        "total_count",
         "has_more",
         "next_cursor",
         "browse_mode",
@@ -10349,6 +10408,23 @@ def test_attribute_cursor_continues_retained_bound_operation_budget():
     assert page.has_more is False
     assert page.metadata.query_count == len(executor.calls)
     assert page.metadata.query_count >= 2
+
+
+def test_value_cursor_continue_without_prior_metadata_starts_operation_budget():
+    executor = RecordingExecutor()
+
+    page = AttributeReadSelector(executor, now=NOW).read_value_cursor_page(
+        [PROJECT_A],
+        "model",
+        page_size=10,
+        window_start=NOW - timedelta(microseconds=1),
+        window_end=NOW,
+        continue_operation=True,
+    )
+
+    assert page.has_more is False
+    assert page.metadata.query_complete is True
+    assert page.metadata.query_count == len(executor.calls)
 
 
 def test_attribute_retained_bound_budget_falls_back_without_starving_cursor(

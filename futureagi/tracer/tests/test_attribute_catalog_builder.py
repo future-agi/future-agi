@@ -102,6 +102,31 @@ def test_python_builder_huge_limits_do_not_preallocate() -> None:
     assert len(result.value_rows) == 1
 
 
+def test_python_builder_emits_declared_key_only_attributes_without_value_gap() -> None:
+    result = build_catalog_rows(
+        scope=CatalogScope("00000000-0000-0000-0000-000000000000", datetime.min, 0),
+        attrs_string={"oversize": ""},
+        attrs_number={"latency": 1.5},
+        attrs_bool={},
+        attributes_extra={"oversize_array": []},
+        limits=CatalogBuildLimits(10, 10, 1_000),
+        key_only_attributes=frozenset(
+            (("oversize", "string"), ("oversize_array", "array"))
+        ),
+    )
+
+    assert result.metadata.complete
+    assert result.metadata.gap_reasons == ()
+    assert [(row.attribute_key, row.attribute_type) for row in result.key_rows] == [
+        ("latency", "number"),
+        ("oversize", "string"),
+        ("oversize_array", "array"),
+    ]
+    assert [(row.attribute_key, row.attribute_type) for row in result.value_rows] == [
+        ("latency", "number")
+    ]
+
+
 @pytest.mark.parametrize(
     ("strings", "numbers", "booleans", "reason"),
     [

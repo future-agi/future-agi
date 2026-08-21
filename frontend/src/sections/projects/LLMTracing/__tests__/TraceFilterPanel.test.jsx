@@ -53,6 +53,7 @@ beforeEach(() => {
     isFetchNextPageError: false,
     queryReadState: "complete",
     browseStatus: "exhausted",
+    totalCount: 0,
     pageCount: 1,
     exactSearchMatched: false,
     cursorRetryExhausted: false,
@@ -290,6 +291,30 @@ describe("TraceFilterPanel AI apply: additive, empty, single-call", () => {
     expect(onApply).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     expect(aiInput.value).toBe("gibberish");
+
+    document.body.removeChild(anchorEl);
+  });
+
+  it("does not apply an ungrounded fallback when smart grounding rejects", async () => {
+    parseQueryMock.mockRejectedValue(
+      new Error("AI value grounding needs a more specific value."),
+    );
+    const { anchorEl, onApply, onClose } = renderPanel({
+      properties,
+      projectId: "00000000-0000-4000-8000-000000000001",
+    });
+
+    const aiInput = screen.getByPlaceholderText(/Ask AI/i);
+    fireEvent.change(aiInput, { target: { value: "model gpt" } });
+    fireEvent.keyDown(aiInput, { key: "Enter" });
+
+    await waitFor(() => expect(parseQueryMock).toHaveBeenCalledTimes(1));
+    expect(onApply).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(aiInput.value).toBe("model gpt");
+    expect(
+      screen.queryByText(/Could not derive filters from that query/i),
+    ).not.toBeInTheDocument();
 
     document.body.removeChild(anchorEl);
   });
@@ -741,6 +766,7 @@ describe("voice-call property search aliases", () => {
         exactSearchError: null,
         queryReadState: "complete",
         browseStatus: hasNextPage ? "continuation" : "exhausted",
+        totalCount: 3,
         pageCount: hasNextPage ? 1 : 2,
         exactSearchMatched: search === "foo",
         cursorRetryExhausted: false,
@@ -768,6 +794,12 @@ describe("voice-call property search aliases", () => {
           document.querySelectorAll("[data-filter-property-option]"),
         ).map((option) => option.dataset.filterPropertyOption),
       ).toEqual(["foo", "foo_archive"]);
+      expect(
+        screen.getByLabelText("Attributes property count"),
+      ).toHaveTextContent("3");
+      const exactAllCount =
+        screen.getByLabelText("All property count").textContent;
+      expect(Number(exactAllCount)).toBeGreaterThanOrEqual(3);
       expect(exactAttributePropertiesMock).toHaveBeenCalledWith(
         expect.objectContaining({
           projectId: `project-${surface}`,
@@ -799,11 +831,101 @@ describe("voice-call property search aliases", () => {
         ).map((option) => option.dataset.filterPropertyOption),
       ).toEqual(["foo", "foo_archive", "foo.bar"]);
       expect(
+        screen.getByLabelText("Attributes property count"),
+      ).toHaveTextContent("3");
+      expect(screen.getByLabelText("All property count")).toHaveTextContent(
+        exactAllCount,
+      );
+      expect(
         screen.queryByRole("button", { name: "Load more attributes" }),
       ).not.toBeInTheDocument();
       document.body.removeChild(anchorEl);
     },
   );
+
+  it("shows an unknown attribute total instead of a growing loaded-page count", () => {
+    let data = [
+      {
+        id: "recent.attribute",
+        name: "recent.attribute",
+        category: "attribute",
+        type: "string",
+        apiColType: "SPAN_ATTRIBUTE",
+      },
+    ];
+    exactAttributePropertiesMock.mockImplementation(() => ({
+      data,
+      isFetching: false,
+      fetchNextPage: vi.fn(),
+      hasNextPage: true,
+      isFetchingNextPage: false,
+      fetchNextExactPage: vi.fn(),
+      hasNextExactPage: false,
+      isFetchingExactSearch: false,
+      isFetchingNextExactPage: false,
+      isFetchNextPageError: false,
+      exactSearchError: null,
+      queryReadState: "complete",
+      browseStatus: "continuation",
+      totalCount: null,
+      pageCount: data.length,
+      exactSearchMatched: false,
+      cursorRetryExhausted: false,
+      debouncedSearch: "",
+      refetch: vi.fn(),
+    }));
+
+    const { anchorEl, rerenderPanel } = renderPanel({
+      properties: getTraceFilterFields("trace").map((field) =>
+        toStaticFilterProperty(field),
+      ),
+      projectId: "project-count-unknown",
+      source: "traces",
+      tab: "trace",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Property" }));
+    expect(
+      screen.getByLabelText("Attributes property count unavailable"),
+    ).toHaveTextContent("…");
+    expect(
+      screen.getByLabelText("All property count unavailable"),
+    ).toHaveTextContent("…");
+
+    data = [
+      ...data,
+      {
+        id: "older.attribute",
+        name: "older.attribute",
+        category: "attribute",
+        type: "string",
+        apiColType: "SPAN_ATTRIBUTE",
+      },
+    ];
+    rerenderPanel();
+
+    expect(
+      screen.getByLabelText("Attributes property count unavailable"),
+    ).toHaveTextContent("…");
+    document.body.removeChild(anchorEl);
+  });
+
+  it("renders an exact zero attribute total", () => {
+    const { anchorEl } = renderPanel({
+      properties: getTraceFilterFields("trace").map((field) =>
+        toStaticFilterProperty(field),
+      ),
+      projectId: "project-zero-attributes",
+      source: "traces",
+      tab: "trace",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Property" }));
+    expect(
+      screen.getByLabelText("Attributes property count"),
+    ).toHaveTextContent("0");
+    document.body.removeChild(anchorEl);
+  });
 
   it("resets a browsed category when property search starts", () => {
     const { anchorEl } = renderPanel({

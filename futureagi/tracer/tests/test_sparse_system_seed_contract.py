@@ -78,8 +78,18 @@ def test_saved_annotation_alias_accepts_list_and_tuple_values_in_classifier(
         ],
     )
 
-    assert builder.supports_filter_candidate_seed_page() is False
-    sql, params = builder.build_filter_match_query(["trace-a"])
-    assert "FROM model_hub_score AS s FINAL" in sql
-    assert "s.annotator_id IN" in sql
-    assert PROJECT_ID in params.values()
+    assert builder.supports_filter_candidate_seed_page() is True
+    seed_sql, seed_params = builder.build_filter_candidate_seed_page(
+        slice_start=END - timedelta(minutes=5),
+        slice_end=END,
+        limit=26,
+    )
+    match_sql, match_params = builder.build_filter_match_query(["trace-a"])
+
+    for sql, params in (
+        (seed_sql, seed_params),
+        (match_sql, match_params),
+    ):
+        assert "FROM model_hub_score AS s FINAL" in sql
+        assert "s.annotator_id IN" in sql
+        assert PROJECT_ID in params.values()

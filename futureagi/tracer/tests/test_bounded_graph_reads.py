@@ -3600,6 +3600,7 @@ def test_locked_trace_temporal_candidates_use_resource_safe_union_batches() -> N
 @pytest.mark.parametrize(
     ("fetch_name", "namespace"),
     [
+        ("fetch_system_metric_graph_ch", "observe-system-graph"),
         ("fetch_all_system_metrics_ch", "observe-all-system-graphs"),
         ("fetch_eval_graph_ch", "observe-eval-graph"),
         ("fetch_eval_chart_series_ch", "observe-eval-chart-series"),

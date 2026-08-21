@@ -1,6 +1,8 @@
 import { useCallback, useState } from "react";
 import axios, { endpoints } from "src/utils/axios";
 
+export const SMART_AI_FILTER_TIMEOUT_MS = 9500;
+
 /**
  * Reusable AI filter hook.
  *
@@ -34,8 +36,12 @@ export function useAIFilter(schema) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  const callBackend = useCallback(async (payload) => {
-    const { data } = await axios.post(endpoints.develop.eval.aiFilter, payload);
+  const callBackend = useCallback(async (payload, config) => {
+    const { data } = await axios.post(
+      endpoints.develop.eval.aiFilter,
+      payload,
+      config,
+    );
     return data;
   }, []);
 
@@ -50,18 +56,25 @@ export function useAIFilter(schema) {
         const trimmed = query.trim();
 
         // Smart flow: backend runs an agentic tool-use loop. One round trip.
-        // If the caller asked for smart mode but didn't supply a projectId
-        // (e.g. trace drawer opened on a route that doesn't carry observeId),
-        // silently fall back to the legacy build_filters path so the user
-        // still gets *some* answer.
-        if (smart && projectId) {
-          const data = await callBackend({
-            query: trimmed,
-            schema,
-            mode: "smart",
-            project_id: projectId,
-            source: source || "traces",
-          });
+        // A requested smart flow must stay smart. Falling back to the legacy
+        // parser would turn an unavailable/incomplete vocabulary into an
+        // ungrounded literal while still looking like an AI-grounded result.
+        if (smart) {
+          if (!projectId) {
+            throw new Error(
+              "Select a project before using AI value grounding.",
+            );
+          }
+          const data = await callBackend(
+            {
+              query: trimmed,
+              schema,
+              mode: "smart",
+              project_id: projectId,
+              source: source || "traces",
+            },
+            { timeout: SMART_AI_FILTER_TIMEOUT_MS },
+          );
           return data?.result?.filters || [];
         }
 
@@ -128,6 +141,7 @@ export function useAIFilter(schema) {
         setError(
           typeof message === "string" ? message : JSON.stringify(message),
         );
+        if (smart) throw err;
         return [];
       } finally {
         setLoading(false);

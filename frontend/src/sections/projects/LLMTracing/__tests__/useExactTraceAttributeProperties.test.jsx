@@ -60,6 +60,7 @@ describe("useExactTraceAttributeProperties", () => {
           browse_mode: "recent_suggestions",
           browse_status: "continuation",
           browse_limit: 224,
+          total_count: 73,
           has_more: true,
           next_cursor: "signed-page-2",
         },
@@ -75,6 +76,7 @@ describe("useExactTraceAttributeProperties", () => {
           browse_mode: "recent_suggestions",
           browse_status: "exhausted",
           browse_limit: 224,
+          total_count: 73,
           has_more: false,
           next_cursor: null,
         },
@@ -91,6 +93,7 @@ describe("useExactTraceAttributeProperties", () => {
     );
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.totalCount).toBe(73);
     expect(mocks.get).toHaveBeenNthCalledWith(
       1,
       "/api/traces/span-attribute-keys/",
@@ -126,6 +129,7 @@ describe("useExactTraceAttributeProperties", () => {
     expect(result.current.browseStatus).toBe("exhausted");
     expect(result.current.browseLimit).toBe(224);
     expect(result.current.browseLimitReached).toBe(false);
+    expect(result.current.totalCount).toBe(73);
   });
 
   it("continues a resumable limit_reached catalog into its next batch", async () => {

@@ -248,13 +248,14 @@ class AnnotationLabelScoresProjectPG:
     def categorical_values_for_label(
         self, label_id, project_ids: list[str]
     ) -> list[Any]:
-        """Return the legacy bounded sample of stored Score JSON values.
+        """Return stored Score JSON values only when the bounded read exhausts.
 
-        This method is intentionally *not* an exhaustive cursor.  The deployed
-        Score index is ``(tracer_project_id, label_id)`` and has no stable row
-        key after the label, so exact keyset traversal would sort/rescan the
-        entire label history.  Callers must expose this fallback as sampled
-        until a later schema change adds the required composite key.
+        The deployed ``(tracer_project_id, label_id)`` index can stop an
+        unordered scan after ``FILTER_VALUE_LIMIT + 1`` rows, but it cannot
+        support an exact value cursor.  Reading one sentinel row lets callers
+        distinguish a small, exhaustive vocabulary source from a truncated
+        sample.  Large histories fail closed instead of being presented as a
+        successful sampled picker response.
         """
 
         if not project_ids:
@@ -263,8 +264,9 @@ class AnnotationLabelScoresProjectPG:
         from model_hub.models.score import Score
 
         # The picker deduplicates categorical choices, so ordering millions of
-        # Score rows by updated_at adds work without changing this compatibility
-        # sample. The indexed project+label scan stops at the legacy row cap.
+        # Score rows adds work without helping completeness.  The sentinel read
+        # stays index-bounded and proves exhaustion when it returns at most the
+        # configured cap.
         rows = _materialize_score_rows(
             Score.no_workspace_objects.filter(
                 self._trace_span_scope(),
@@ -272,8 +274,12 @@ class AnnotationLabelScoresProjectPG:
                 label_id=label_id,
             )
             .order_by()
-            .values_list("value", flat=True)[: self.FILTER_VALUE_LIMIT]
+            .values_list("value", flat=True)[: self.FILTER_VALUE_LIMIT + 1]
         )
+        if len(rows) > self.FILTER_VALUE_LIMIT:
+            raise AnnotationScoreReadUnavailable(
+                "Annotation score vocabulary exceeds the bounded exact-read limit"
+            )
         return [value for value in rows if value not in (None, "")]
 
     def annotation_rows_for_candidates(

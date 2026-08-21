@@ -133,6 +133,7 @@ type catalogWriterStub struct {
 	submitCalls int
 	stagedRows  []map[string]any
 	report      catalogwriter.StageReport
+	stagedJobs  []catalogwriter.StagedProjectJob
 	submitErr   error
 	events      *[]string
 	eventsMu    *sync.Mutex
@@ -149,14 +150,17 @@ func (s *catalogWriterStub) record(event string) {
 	*s.events = append(*s.events, event)
 }
 
-func (s *catalogWriterStub) StageCanonicalSpans(rows []map[string]any) (catalogwriter.Job, catalogwriter.StageReport) {
+func (s *catalogWriterStub) StageCanonicalSpansByProject(rows []map[string]any) []catalogwriter.StagedProjectJob {
 	s.stageCalls++
 	s.stagedRows = rows
 	s.record("stage")
-	return catalogwriter.Job{}, s.report
+	if s.stagedJobs != nil {
+		return s.stagedJobs
+	}
+	return []catalogwriter.StagedProjectJob{{Job: catalogwriter.Job{}, Report: s.report}}
 }
 
-func (s *catalogWriterStub) Submit(context.Context, catalogwriter.Job) error {
+func (s *catalogWriterStub) Enqueue(catalogwriter.Job) error {
 	s.submitCalls++
 	s.record("submit")
 	return s.submitErr
@@ -224,6 +228,32 @@ func TestDrainStagesCatalogOnlyAfterCanonicalSpanSuccess(t *testing.T) {
 	}
 }
 
+func TestDrainEnqueuesEveryProjectScopedCatalogJob(t *testing.T) {
+	chServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer chServer.Close()
+
+	writer := newSpanTestWriter(t, chServer.URL, t.TempDir()+"/spans.jsonl")
+	stub := &catalogWriterStub{stagedJobs: []catalogwriter.StagedProjectJob{
+		{},
+		{Report: catalogwriter.StageReport{RejectedSpans: 1}},
+		{},
+	}}
+	server := New(Config{}, writer, nil, nil, nil, WithAttributeCatalogWriter(stub))
+	server.enqueue([]map[string]any{
+		{"id": "span-a", "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"},
+		{"id": "span-b", "project_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"},
+		{"id": "span-unscoped"},
+	}, nil)
+	server.drainNow(context.Background())
+
+	if stub.stageCalls != 1 || stub.submitCalls != 3 {
+		t.Fatalf("project staging calls=%d enqueue calls=%d", stub.stageCalls, stub.submitCalls)
+	}
+}
+
 func TestDrainSkipsCatalogWhenCanonicalSpanIsDeadLettered(t *testing.T) {
 	chServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
@@ -279,7 +309,7 @@ func TestCatalogSubmitFailureCannotFailCanonicalSpanDrain(t *testing.T) {
 	if stats.BatchesInserted != 2 || stats.RowsInserted != 2 || stats.BatchesFailed != 0 || stats.RowsDeadLettered != 0 {
 		t.Fatalf("catalog failure changed span health: %+v", stats)
 	}
-	if !strings.Contains(logs.String(), "attribute catalog spool failed") {
+	if !strings.Contains(logs.String(), "attribute catalog enqueue failed") {
 		t.Fatalf("catalog failure was not observable: %q", logs.String())
 	}
 }

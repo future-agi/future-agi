@@ -262,6 +262,23 @@ export function useExactTraceAttributeProperties({
           ? "sampled"
           : "complete";
   const retainedLastPage = retainedPages.at(-1);
+  const publishedRetainedTotals = retainedPages
+    .map((page) => page?.total_count)
+    .filter((value) => Number.isSafeInteger(value) && Number(value) >= 0);
+  const invariantPublishedTotal =
+    publishedRetainedTotals.length > 0 &&
+    publishedRetainedTotals.every(
+      (value) => value === publishedRetainedTotals[0],
+    )
+      ? publishedRetainedTotals[0]
+      : null;
+  const retainedKeys = new Set(
+    retainedPages.flatMap((page) =>
+      (Array.isArray(page?.result) ? page.result : [])
+        .map(({ key }) => key)
+        .filter(Boolean),
+    ),
+  );
   const exactSearchMatched = Boolean(
     debouncedSearch &&
       exactPages.some(
@@ -272,6 +289,11 @@ export function useExactTraceAttributeProperties({
       ),
   );
   const browseStatus = retainedLastPage?.browse_status;
+  const totalCount =
+    invariantPublishedTotal ??
+    (browseStatus === "exhausted" && queryReadState === "complete"
+      ? retainedKeys.size
+      : null);
   const retainedHasNextPage =
     retainedQuery.hasNextPage || retainedStoppedRetryAvailable;
   const exactContinuationFailed = Boolean(
@@ -463,6 +485,10 @@ export function useExactTraceAttributeProperties({
     data: properties,
     queryReadState,
     browseStatus,
+    // The frozen catalog publishes this invariant before keyset pagination.
+    // Legacy cursor reads expose a number only after exact exhaustion; a
+    // partially loaded key count is never mislabeled as the project total.
+    totalCount,
     browseLimit: retainedLastPage?.browse_limit,
     browseLimitReached: browseStatus === "limit_reached" && !hasNextPage,
     // This is intentionally raw-key/backend identity, not the picker's fuzzy

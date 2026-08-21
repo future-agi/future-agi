@@ -108,3 +108,92 @@ func TestLoadPriceTable_SkippedEntriesWarns(t *testing.T) {
 		t.Error("want a WARN log reporting the skipped-entry count")
 	}
 }
+
+func TestCatalogEnvironmentOverridesAreFailClosedAndExclusive(t *testing.T) {
+	t.Setenv("FI_CATALOG_MODE", "direct")
+	t.Setenv("FI_CATALOG_ENVIRONMENT", "development")
+	t.Setenv("FI_CATALOG_EPOCH", "101")
+	t.Setenv("FI_CATALOG_PRODUCER_STREAM_ID", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+	t.Setenv("FI_CATALOG_SPOOL_DIR", t.TempDir())
+	t.Setenv("FI_CATALOG_CH_URL", "http://clickhouse:8123")
+	t.Setenv("FI_CATALOG_CH_DATABASE", "th7247_catalog_dev")
+	t.Setenv("FI_CATALOG_CH_USERNAME", "catalog_dev")
+	var cfg rootConfig
+	if err := applyEnvOverrides(slog.Default(), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Catalog.Mode != "direct" || cfg.Catalog.CatalogEpoch != 101 ||
+		cfg.Catalog.ClickHouse.Username != "catalog_dev" {
+		t.Fatalf("catalog overrides=%+v", cfg.Catalog)
+	}
+
+	cfg.Writer.Username = "catalog_dev"
+	if !sameClickHouseIdentity(cfg.Writer.Username, cfg.Catalog.ClickHouse.Username) {
+		t.Fatal("shared canonical/catalog identity was not detected")
+	}
+	if !sameClickHouseIdentity("", "default") {
+		t.Fatal("implicit canonical default identity was not detected")
+	}
+}
+
+func TestCatalogEnvironmentRejectsInvalidEpochAndMixedModes(t *testing.T) {
+	t.Setenv("FI_CATALOG_MODE", "direct")
+	t.Setenv("FI_CATALOG_EPOCH", "not-a-number")
+	if err := applyEnvOverrides(slog.Default(), &rootConfig{}); err == nil ||
+		!strings.Contains(err.Error(), "FI_CATALOG_EPOCH") {
+		t.Fatalf("epoch error=%v", err)
+	}
+
+	t.Setenv("FI_CATALOG_EPOCH", "101")
+	t.Setenv("FI_CATALOG_ENVIRONMENT", "development")
+	t.Setenv("FI_CATALOG_PRODUCER_STREAM_ID", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+	t.Setenv("FI_CATALOG_SPOOL_DIR", t.TempDir())
+	t.Setenv("FI_CATALOG_CH_URL", "http://clickhouse:8123")
+	t.Setenv("FI_CATALOG_CH_DATABASE", "th7247_catalog_dev")
+	t.Setenv("FI_CATALOG_CH_USERNAME", "catalog_dev")
+	t.Setenv("FI_CATALOG_KAFKA_BROKERS", "kafka-a:9092,kafka-b:9092")
+	t.Setenv("FI_CATALOG_KAFKA_TOPIC", "catalog")
+	if err := applyEnvOverrides(slog.Default(), &rootConfig{}); err == nil ||
+		!strings.Contains(err.Error(), "rejects Kafka") {
+		t.Fatalf("mixed-mode error=%v", err)
+	}
+}
+
+func TestKafkaCatalogEnvironmentRequiresOnlyProducerSettings(t *testing.T) {
+	t.Setenv("FI_CATALOG_MODE", "kafka")
+	t.Setenv("FI_CATALOG_ENVIRONMENT", "development")
+	t.Setenv("FI_CATALOG_EPOCH", "102")
+	t.Setenv("FI_CATALOG_PRODUCER_STREAM_ID", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+	t.Setenv("FI_CATALOG_SPOOL_DIR", t.TempDir())
+	t.Setenv("FI_CATALOG_KAFKA_BROKERS", " kafka-a:9092, kafka-b:9092 ")
+	t.Setenv("FI_CATALOG_KAFKA_TOPIC", "span-attribute-catalog-dev")
+	// Consumer group is owned by the standalone consumer and ignored here.
+	t.Setenv("FI_CATALOG_KAFKA_CONSUMER_GROUP", "catalog-consumer")
+	var cfg rootConfig
+	if err := applyEnvOverrides(slog.Default(), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Catalog.Mode != "kafka" || cfg.Catalog.CatalogEpoch != 102 ||
+		len(cfg.Catalog.Kafka.Brokers) != 2 || cfg.Catalog.Kafka.Brokers[0] != "kafka-a:9092" ||
+		cfg.Catalog.Kafka.Topic != "span-attribute-catalog-dev" {
+		t.Fatalf("Kafka catalog overrides=%+v", cfg.Catalog)
+	}
+	if cfg.Catalog.ClickHouse.URL != "" || cfg.Catalog.ClickHouse.Username != "" {
+		t.Fatalf("Kafka producer carried ClickHouse access: %+v", cfg.Catalog.ClickHouse)
+	}
+}
+
+func TestKafkaCatalogEnvironmentRejectsClickHouseAccess(t *testing.T) {
+	t.Setenv("FI_CATALOG_MODE", "kafka")
+	t.Setenv("FI_CATALOG_ENVIRONMENT", "development")
+	t.Setenv("FI_CATALOG_EPOCH", "102")
+	t.Setenv("FI_CATALOG_PRODUCER_STREAM_ID", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+	t.Setenv("FI_CATALOG_SPOOL_DIR", t.TempDir())
+	t.Setenv("FI_CATALOG_KAFKA_BROKERS", "kafka:9092")
+	t.Setenv("FI_CATALOG_KAFKA_TOPIC", "span-attribute-catalog-dev")
+	t.Setenv("FI_CATALOG_CH_URL", "http://forbidden:8123")
+	if err := applyEnvOverrides(slog.Default(), &rootConfig{}); err == nil ||
+		!strings.Contains(err.Error(), "rejects ClickHouse settings") {
+		t.Fatalf("Kafka ClickHouse-access error=%v", err)
+	}
+}

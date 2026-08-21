@@ -1063,3 +1063,61 @@ def test_workspace_legacy_categorical_annotation_reports_sampled_scope(monkeypat
     assert result["browse_status"] == "limit_reached"
     assert result["next_cursor"] is None
     assert [len(batch) for batch in observed_batches] == [64]
+
+
+@pytest.mark.unit
+def test_workspace_categorical_annotation_cursor_walks_exact_score_batches(
+    monkeypatch,
+):
+    from model_hub.models.develop_annotations import AnnotationsLabels
+
+    project_ids = [_uuid(index) for index in range(1, 66)]
+    slice_limits = []
+    projects = _ProjectQuery(project_ids, slice_limits)
+    _install_scope_and_seen_state(monkeypatch, projects)
+    label = SimpleNamespace(
+        id=_uuid(34_001),
+        project_id=project_ids[-1],
+        type="categorical",
+        settings={"options": ["Configured"]},
+    )
+    monkeypatch.setattr(
+        AnnotationsLabels,
+        "no_workspace_objects",
+        _FirstQuery(label),
+    )
+    observed_batches = []
+
+    def stored_values(_self, _label_id, batch):
+        observed_batches.append(tuple(batch))
+        values = [{"selected": ["Shared"]}]
+        if project_ids[-1] in batch:
+            values.append({"selected": ["Later only"]})
+        return values
+
+    monkeypatch.setattr(
+        AnnotationLabelScoresProjectPG,
+        "categorical_values_for_label",
+        stored_values,
+    )
+    params = {
+        "metric_name": str(label.id),
+        "metric_type": "annotation_metric",
+        "source": "traces",
+        "project_ids": [],
+        "search": "",
+        "page_size": 10,
+    }
+
+    first = _result(_invoke(params))
+    second = _result(_invoke({**params, "cursor": first["next_cursor"]}))
+
+    assert [item["value"] for item in first["values"]] == ["Configured", "Shared"]
+    assert [item["value"] for item in second["values"]] == ["Later only"]
+    assert first["query_complete"] is True
+    assert first["query_status"] == "complete"
+    assert "query_error_code" not in first
+    assert first["browse_status"] == "continuation"
+    assert second["browse_status"] == "exhausted"
+    assert [len(batch) for batch in observed_batches] == [64, 1]
+    assert all(limit <= ATTRIBUTE_READ_MAX_PROJECTS + 1 for limit in slice_limits)

@@ -27,8 +27,8 @@ type Metering interface {
 // span insert; a separate worker owns catalog delivery. With no option supplied
 // (the production default in this change), the path is completely dormant.
 type AttributeCatalogWriter interface {
-	StageCanonicalSpans([]map[string]any) (catalogwriter.Job, catalogwriter.StageReport)
-	Submit(context.Context, catalogwriter.Job) error
+	StageCanonicalSpansByProject([]map[string]any) []catalogwriter.StagedProjectJob
+	Enqueue(catalogwriter.Job) error
 }
 
 // NoopUsageEmitter is used when Redis is not configured — all calls are silent no-ops.

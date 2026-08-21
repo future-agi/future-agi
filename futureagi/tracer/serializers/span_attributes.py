@@ -111,6 +111,10 @@ class SpanAttributeKeySerializer(serializers.Serializer):
 
 class SpanAttributeKeysResponseSerializer(serializers.Serializer):
     result = SpanAttributeKeySerializer(many=True)
+    # Present only when the catalog proves the exact distinct-key cardinality
+    # for the frozen, unsearched scope. Callers must treat omission as unknown
+    # rather than deriving a misleading total from the loaded cursor pages.
+    total_count = serializers.IntegerField(required=False, min_value=0)
     query_complete = serializers.BooleanField()
     query_status = serializers.ChoiceField(choices=["complete", "sampled", "degraded"])
     query_error_code = serializers.ChoiceField(
@@ -119,6 +123,11 @@ class SpanAttributeKeysResponseSerializer(serializers.Serializer):
     )
     query_window_start = serializers.DateTimeField()
     query_window_end = serializers.DateTimeField()
+    query_window_mode = serializers.ChoiceField(
+        choices=["frozen_snapshot"],
+        required=False,
+    )
+    query_count = serializers.IntegerField(required=False, min_value=0)
     has_more = serializers.BooleanField(required=False)
     next_cursor = serializers.CharField(
         required=False,

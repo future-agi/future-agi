@@ -1094,6 +1094,7 @@ function PropertyPicker({
     exactSearchError: exactAttributeSearchError,
     queryReadState: exactAttributeReadState,
     browseStatus: exactAttributeBrowseStatus,
+    totalCount: exactAttributeTotalCount = null,
     pageCount: exactAttributePageCount,
     exactSearchMatched: exactAttributeSearchMatched = false,
     cursorRetryExhausted: exactAttributeCursorRetryExhausted = false,
@@ -1181,8 +1182,32 @@ function PropertyPicker({
     const c = { all: propertiesWithExactAttribute.length };
     for (const p of propertiesWithExactAttribute)
       c[p.category] = (c[p.category] || 0) + 1;
+    const exactLookupOwnsAttributeInventory =
+      enableExactAttributeLookup && (source === "traces" || source === "spans");
+    if (exactLookupOwnsAttributeInventory) {
+      const loadedAttributeCount = c.attribute || 0;
+      const nonAttributeCount = c.all - loadedAttributeCount;
+      if (
+        Number.isSafeInteger(exactAttributeTotalCount) &&
+        exactAttributeTotalCount >= 0
+      ) {
+        c.attribute = exactAttributeTotalCount;
+        c.all = nonAttributeCount + exactAttributeTotalCount;
+      } else {
+        // A growing loaded-page count looks exact but changes on every scroll.
+        // Keep both affected categories explicitly unknown until the backend
+        // publishes an invariant total or the retained cursor exhausts.
+        c.attribute = null;
+        c.all = null;
+      }
+    }
     return c;
-  }, [propertiesWithExactAttribute]);
+  }, [
+    enableExactAttributeLookup,
+    exactAttributeTotalCount,
+    propertiesWithExactAttribute,
+    source,
+  ]);
   const visibleProperties = filtered.slice(0, visiblePropertyLimit);
   const hiddenCount = Math.max(filtered.length - visiblePropertyLimit, 0);
   // A successful exact probe stops only that supplemental chain. The retained
@@ -1499,9 +1524,22 @@ function PropertyPicker({
                     >
                       {cat.label}
                     </Typography>
-                    {counts[cat.key] > 0 && (
-                      <Typography sx={{ fontSize: 10, color: "text.disabled" }}>
-                        {counts[cat.key]}
+                    {(counts[cat.key] === null ||
+                      Number.isSafeInteger(counts[cat.key])) && (
+                      <Typography
+                        aria-label={
+                          counts[cat.key] === null
+                            ? `${cat.label} property count unavailable`
+                            : `${cat.label} property count`
+                        }
+                        title={
+                          counts[cat.key] === null
+                            ? "Exact count is still loading"
+                            : undefined
+                        }
+                        sx={{ fontSize: 10, color: "text.disabled" }}
+                      >
+                        {counts[cat.key] === null ? "…" : counts[cat.key]}
                       </Typography>
                     )}
                   </Box>
@@ -3131,13 +3169,21 @@ const TraceFilterPanel = ({
     () =>
       properties
         .filter((p) => p.category !== "attribute")
-        .map((p) => ({
-          field: p.id,
-          label: p.name,
-          category: p.category,
-          type: p.type || "string",
-          operators: getOperators(p.type).map((o) => o.value),
-        })),
+        .map((p) => {
+          const type = ["number", "integer", "float"].includes(p.type)
+            ? "number"
+            : "string";
+          return {
+            field: p.id,
+            label: p.name,
+            category: p.category,
+            type,
+            operators: getOperators(p.type).map((o) => o.value),
+            ...(Array.isArray(p.choices) && p.choices.length
+              ? { choices: p.choices }
+              : {}),
+          };
+        }),
     [properties],
   );
   const {
@@ -3608,11 +3654,16 @@ const TraceFilterPanel = ({
   const handleAiFilter = useCallback(async () => {
     if (!aiQuery.trim()) return;
     setAiEmpty(false);
-    const aiFilters = await aiParseQuery(aiQuery, {
-      smart: true,
-      projectId: observeId,
-      source,
-    });
+    let aiFilters;
+    try {
+      aiFilters = await aiParseQuery(aiQuery, {
+        smart: true,
+        projectId: observeId,
+        source,
+      });
+    } catch {
+      return;
+    }
     if (aiFilters.length > 0) {
       const aiRows = aiFilters.map((f) => {
         // Attribute fields are intentionally excluded from aiFilterSchema;

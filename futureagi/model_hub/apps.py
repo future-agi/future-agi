@@ -25,6 +25,7 @@ HOSTED_DEPLOYMENTS = frozenset({"US", "EU", "DEV"})
 # mutation hooks during AppConfig initialization.
 OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
     {
+        "ch25_activate_attribute_catalog",
         "ch25_apply_schema",
         "ch25_remove_pg",
         "createcachetable",

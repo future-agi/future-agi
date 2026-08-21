@@ -9619,6 +9619,8 @@ export const ApiTracesSpanAttributeKeysListQueryParams = zod.object({
 })
 
 
+export const apiTracesSpanAttributeKeysListResponseTotalCountMin = 0;
+
 export const apiTracesSpanAttributeKeysListResponseNextCursorMax = 8192;
 
 
@@ -9632,6 +9634,7 @@ export const ApiTracesSpanAttributeKeysListResponse = zod.object({
   "count_exact": zod.boolean().optional(),
   "types": zod.array(zod.enum(['string', 'number', 'boolean', 'array', 'map', 'json'])).optional()
 })),
+  "total_count": zod.number().min(apiTracesSpanAttributeKeysListResponseTotalCountMin).optional(),
   "query_complete": zod.boolean(),
   "query_status": zod.enum(['complete', 'sampled', 'degraded']),
   "query_error_code": zod.enum(['sample_limit', 'read_budget_exceeded', 'query_failed']).optional(),

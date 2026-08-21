@@ -409,6 +409,78 @@ describe("useDashboardFilterValues bounded-read state", () => {
     );
   });
 
+  it("follows one empty initial system-metric checkpoint to load Model values", async () => {
+    mocks.get
+      .mockResolvedValueOnce({
+        data: {
+          result: {
+            values: [],
+            query_complete: true,
+            query_status: "complete",
+            browse_status: "continuation",
+            has_more: true,
+            next_cursor: "older-model-window",
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          result: {
+            values: [{ value: "gpt-4.1", label: "gpt-4.1" }],
+            query_complete: true,
+            query_status: "complete",
+            browse_status: "exhausted",
+            has_more: false,
+            next_cursor: null,
+          },
+        },
+      });
+
+    const { result } = renderValues({
+      metricName: "model",
+      metricType: "system_metric",
+      search: "",
+      pageSize: 10,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual([
+      { value: "gpt-4.1", label: "gpt-4.1" },
+    ]);
+    expect(mocks.get).toHaveBeenCalledTimes(2);
+    expect(mocks.get.mock.calls[1][1].params.cursor).toBe("older-model-window");
+    expect(result.current.hasNextPage).toBe(false);
+  });
+
+  it("bounds an empty initial system-metric follow-up to one continuation", async () => {
+    for (const cursor of ["older-model-window", "oldest-model-window"]) {
+      mocks.get.mockResolvedValueOnce({
+        data: {
+          result: {
+            values: [],
+            query_complete: true,
+            query_status: "complete",
+            browse_status: "continuation",
+            has_more: true,
+            next_cursor: cursor,
+          },
+        },
+      });
+    }
+
+    const { result } = renderValues({
+      metricName: "model",
+      metricType: "system_metric",
+      search: "",
+      pageSize: 10,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mocks.get).toHaveBeenCalledTimes(2);
+    expect(result.current.data).toEqual([]);
+    expect(result.current.hasNextPage).toBe(true);
+  });
+
   it("stops after an exact empty terminal page", async () => {
     mocks.get
       .mockResolvedValueOnce({

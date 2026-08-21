@@ -248,6 +248,11 @@ class ClickHouseClient:
         password: str | None = None,
         database: str | None = None,
         server_enforced_readonly: bool | None = None,
+        *,
+        connect_timeout: float | None = None,
+        send_timeout: float | None = None,
+        receive_timeout: float | None = None,
+        pool_size: int | None = None,
     ):
         """
         Initialize ClickHouse client with connection settings.
@@ -272,12 +277,33 @@ class ClickHouseClient:
         )
 
         # Connection settings
-        self.connect_timeout = ch_settings.get("CH_CONNECT_TIMEOUT", 10)
-        self.send_timeout = ch_settings.get("CH_SEND_TIMEOUT", 300)
-        self.receive_timeout = ch_settings.get("CH_RECEIVE_TIMEOUT", 300)
+        self.connect_timeout = (
+            ch_settings.get("CH_CONNECT_TIMEOUT", 10)
+            if connect_timeout is None
+            else float(connect_timeout)
+        )
+        self.send_timeout = (
+            ch_settings.get("CH_SEND_TIMEOUT", 300)
+            if send_timeout is None
+            else float(send_timeout)
+        )
+        self.receive_timeout = (
+            ch_settings.get("CH_RECEIVE_TIMEOUT", 300)
+            if receive_timeout is None
+            else float(receive_timeout)
+        )
 
         # Thread-safe connection pool
-        self._pool_size = int(ch_settings.get("CH_POOL_SIZE", 10))
+        self._pool_size = int(
+            ch_settings.get("CH_POOL_SIZE", 10) if pool_size is None else pool_size
+        )
+        if (
+            self.connect_timeout <= 0
+            or self.send_timeout <= 0
+            or self.receive_timeout <= 0
+            or self._pool_size <= 0
+        ):
+            raise ValueError("ClickHouse transport bounds must be positive")
         self._pool: queue.Queue = queue.Queue(maxsize=self._pool_size)
         self._pool_lock = threading.Lock()
         self._pool_initialized = False

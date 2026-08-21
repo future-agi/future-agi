@@ -80,11 +80,13 @@ def test_catalog_schema_pins_scale_and_identity_invariants() -> None:
         rewritten = rewrite_for_replicated(
             statement,
             table_name=table,
-            cluster="default",
-            zk_prefix="/clickhouse/tables",
+            cluster="cluster",
+            zk_prefix="/clickhouse/tables/ch25",
         )
         assert "Replicated" in rewritten
-        assert "ON CLUSTER 'default'" in rewritten
+        assert "ON CLUSTER 'cluster'" in rewritten
+        assert f"'/clickhouse/tables/ch25/{{shard}}/{table}'" in rewritten
+        assert "'{replica}'" in rewritten
 
 
 def test_catalog_checkpoint_contract_is_restartable_and_gap_explicit() -> None:

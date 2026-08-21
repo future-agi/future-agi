@@ -1834,6 +1834,53 @@ class TestMetricsEndpoint:
         assert str(label.id) in metric_names
 
     @pytest.mark.django_db
+    def test_metrics_includes_configured_project_annotation_before_first_score(
+        self,
+        auth_client,
+        project,
+        organization,
+        workspace,
+    ):
+        from model_hub.models.choices import AnnotationTypeChoices
+        from model_hub.models.develop_annotations import AnnotationsLabels
+
+        label = AnnotationsLabels.objects.create(
+            name="Ready Before First Score",
+            type=AnnotationTypeChoices.CATEGORICAL.value,
+            organization=organization,
+            workspace=workspace,
+            project=project,
+            settings={
+                "options": [
+                    {"value": "ready", "label": "Ready"},
+                    {"value": "blocked", "label": "Blocked"},
+                ],
+                "strategy": None,
+                "auto_annotate": False,
+                "multi_choice": False,
+                "rule_prompt": "",
+            },
+        )
+
+        response = _get_metrics_with_annotation_labels(
+            auth_client,
+            project.id,
+            [],
+        )
+
+        assert response.status_code == 200
+        metric = next(
+            entry
+            for entry in response.json()["result"]["metrics"]
+            if entry["name"] == str(label.id)
+        )
+        assert metric["category"] == "annotation_metric"
+        assert metric["choice_options"] == [
+            {"value": "ready", "label": "Ready"},
+            {"value": "blocked", "label": "Blocked"},
+        ]
+
+    @pytest.mark.django_db
     @patch("tracer.services.dashboard_metrics_catalog.V2AnalyticsQueryService")
     def test_metrics_suppresses_customer_attribute_aliases_when_canonical_metric_exists(
         self,

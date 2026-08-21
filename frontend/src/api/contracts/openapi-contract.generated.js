@@ -71386,6 +71386,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/SpanAttributeKey"
           }
         },
+        "total_count": {
+          "title": "Total count",
+          "type": "integer",
+          "minimum": 0
+        },
         "query_complete": {
           "title": "Query complete",
           "type": "boolean"

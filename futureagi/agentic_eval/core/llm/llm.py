@@ -425,9 +425,21 @@ class LLM:
         return DeploymentMode.is_ee() and is_managed_model(model or self.model_name)
 
     def _try_gateway_completion(
-        self, payload: dict, tools: Optional[list] = None
+        self,
+        payload: dict,
+        tools: Optional[list] = None,
+        deadline_monotonic: Optional[float] = None,
     ) -> Optional[Any]:
         """Attempt completion via the Agentcc gateway. Returns response or None on failure."""
+        if deadline_monotonic is not None and self._requires_managed_transport(
+            payload.get("model")
+        ):
+            # The managed transport currently owns a separate 300s request
+            # timeout. A bounded caller must get an explicit refusal instead
+            # of entering that path under a wall it cannot enforce.
+            raise TimeoutError(
+                "bounded tool completion is unavailable for managed transport"
+            )
         managed_response = self._try_managed_ai_completion(payload, tools=tools)
         if managed_response is not None:
             return managed_response
@@ -449,7 +461,22 @@ class LLM:
 
         for attempt in range(self.GATEWAY_MAX_ATTEMPTS):
             try:
-                return self._gateway_client.chat.completions.create(**kwargs)
+                gateway_client = self._gateway_client
+                if deadline_monotonic is not None:
+                    remaining = deadline_monotonic - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("tool completion deadline exceeded")
+                    # The shared deadline is more important than the gateway
+                    # client's default retry policy. Keep retries in this loop,
+                    # where every attempt is charged against the same wall.
+                    if callable(getattr(gateway_client, "with_options", None)):
+                        gateway_client = gateway_client.with_options(
+                            timeout=remaining,
+                            max_retries=0,
+                        )
+                    else:
+                        kwargs["timeout"] = remaining
+                return gateway_client.chat.completions.create(**kwargs)
             except Exception as gw_err:
                 logger.warning(
                     "gateway_attempt_failed",
@@ -459,7 +486,15 @@ class LLM:
                     max_attempts=self.GATEWAY_MAX_ATTEMPTS,
                 )
                 if attempt < self.GATEWAY_MAX_ATTEMPTS - 1:
-                    time.sleep(self.GATEWAY_RETRY_BACKOFF[attempt])
+                    delay = self.GATEWAY_RETRY_BACKOFF[attempt]
+                    if deadline_monotonic is not None:
+                        remaining = deadline_monotonic - time.monotonic()
+                        if remaining <= 0:
+                            raise TimeoutError(
+                                "tool completion deadline exceeded"
+                            ) from gw_err
+                        delay = min(delay, remaining)
+                    time.sleep(delay)
         return None
 
     def _try_managed_ai_completion(
@@ -821,6 +856,7 @@ class LLM:
         model: Optional[str] = None,
         tool_choice: Optional[Any] = None,
         drop_params: Optional[bool] = None,
+        timeout_ms: Optional[int] = None,
     ) -> Any:
         """
         Get completion with tool calling support. Returns the full response.
@@ -834,6 +870,8 @@ class LLM:
             tools: List of tool definitions (OpenAI function calling format).
             model: Optional model override.
             drop_params: Whether to drop unsupported params.
+            timeout_ms: Optional shared wall-clock budget for gateway/litellm
+                attempts and retry sleeps.
 
         Returns:
             The full litellm ModelResponse object.
@@ -850,9 +888,25 @@ class LLM:
         payload["tools"] = tools
         if tool_choice is not None:
             payload["tool_choice"] = tool_choice
+        if timeout_ms is not None and timeout_ms <= 0:
+            raise ValueError("timeout_ms must be positive")
+        deadline_monotonic = (
+            time.monotonic() + (timeout_ms / 1000)
+            if timeout_ms is not None
+            else None
+        )
+
+        def remaining_timeout() -> Optional[float]:
+            if deadline_monotonic is None:
+                return None
+            remaining = deadline_monotonic - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("tool completion deadline exceeded")
+            return remaining
 
         for attempt in range(MAX_RETRIES):
             try:
+                remaining = remaining_timeout()
                 if self.provider == "vertex_ai":
                     payload.pop("max_tokens", None)
 
@@ -870,7 +924,11 @@ class LLM:
                         payload["messages"], self.provider
                     )
 
-                gw_response = self._try_gateway_completion(payload, tools=tools)
+                gw_response = self._try_gateway_completion(
+                    payload,
+                    tools=tools,
+                    deadline_monotonic=deadline_monotonic,
+                )
                 if gw_response is not None:
                     self._set_last_finish_reason_from_response(gw_response)
                     self._update_token_usage(gw_response)
@@ -879,9 +937,11 @@ class LLM:
                         raise ValueError("Empty response from gateway")
                     return gw_response
 
+                remaining = remaining_timeout()
                 response = litellm.completion(
                     **payload,
-                    num_retries=LITELLM_NUM_RETRIES,
+                    **({"timeout": remaining} if remaining is not None else {}),
+                    num_retries=(0 if remaining is not None else LITELLM_NUM_RETRIES),
                     retry_strategy=LITELLM_RETRY_STRATEGY,
                 )
 
@@ -895,6 +955,8 @@ class LLM:
                 return response
 
             except Exception as e:
+                if deadline_monotonic is not None and isinstance(e, TimeoutError):
+                    raise
                 logger.exception(
                     f"{self.provider} API error (tool completion): {str(e)}",
                     attempt=attempt,
@@ -904,7 +966,11 @@ class LLM:
                 if attempt == MAX_RETRIES - 1:
                     raise
 
-                time.sleep(RETRY_DELAY)
+                delay = RETRY_DELAY
+                if deadline_monotonic is not None:
+                    remaining = remaining_timeout()
+                    delay = min(delay, remaining)
+                time.sleep(delay)
 
         raise ValueError("FAILED_TO_PROCESS_TOOL_COMPLETION")
 

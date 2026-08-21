@@ -226,8 +226,9 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         Public voice pages delegate through an internal trace selector solely
         to inject the canonical conversation-root invariant.  Keep historical
         and identity-only readers on their established chronological scan;
-        only an interactive request with one positive relational leaf may use
-        this candidate-first acquisition path.
+        only an interactive request with a positive-witness relational leaf
+        may use this candidate-first acquisition path. Additional ``AND``
+        leaves stay authoritative in the finite candidate classifier.
         """
 
         return bool(

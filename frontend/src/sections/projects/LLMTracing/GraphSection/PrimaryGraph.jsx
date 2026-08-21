@@ -106,8 +106,6 @@ const EXCLUDED = new Set([
 ]);
 
 const CHART_HEIGHT = 140;
-const GRAPH_SAMPLED_MESSAGE =
-  "Showing sampled estimates across the selected time range.";
 
 const COMPARE_DATE_OPTIONS = [
   { key: "Today", label: "Today" },
@@ -454,7 +452,7 @@ const PrimaryGraph = ({
               },
               {
                 params: {
-                  allow_sampled: true,
+                  allow_sampled: false,
                   ...(refresh ? { refresh: true } : {}),
                 },
                 signal: requestSignal,
@@ -661,18 +659,7 @@ const PrimaryGraph = ({
   const retainedExactSnapshot =
     currentExactSnapshot ||
     (lastExactSnapshot?.key === snapshotKey ? lastExactSnapshot : null);
-  const currentSampleSnapshot =
-    graphData && graphReadState === "sampled"
-      ? {
-          key: snapshotKey,
-          data: graphData,
-          updatedAt: getQueryCompletedAt(graphData),
-        }
-      : null;
-  // A retained exact snapshot remains preferable during a manual refresh;
-  // otherwise a fully covered bounded sample is immediately usable and is
-  // labelled below rather than being converted into the generic error state.
-  const displaySnapshot = retainedExactSnapshot || currentSampleSnapshot;
+  const displaySnapshot = retainedExactSnapshot;
   const displayGraphData = displaySnapshot?.data;
   const graphRefreshState = getAggregationRefreshState(graphData);
   const graphReadFailed =
@@ -680,7 +667,6 @@ const PrimaryGraph = ({
     graphRefreshState.refreshFailed ||
     (Boolean(graphData) &&
       graphReadState !== "complete" &&
-      graphReadState !== "sampled" &&
       graphReadState !== "pending");
   const graphStatusMessage = graphReadFailed
     ? QUERY_FAILED_RETRY_MESSAGE
@@ -693,10 +679,6 @@ const PrimaryGraph = ({
             !graphData)
         ? GRAPH_LOADING_MESSAGE
         : null;
-  const graphSampleMessage =
-    graphReadState === "sampled" && displayGraphData === graphData
-      ? GRAPH_SAMPLED_MESSAGE
-      : null;
   // A cold exact aggregation can move from the transport request into a
   // server-side pending state. Keep the same skeleton throughout that phase
   // so the loader does not visibly change mid-request. Retained snapshots are
@@ -1204,12 +1186,12 @@ const PrimaryGraph = ({
       </Box>
 
       {/* Chart */}
-      {(graphStatusMessage || graphSampleMessage) && displaySnapshot ? (
+      {graphStatusMessage && displaySnapshot ? (
         <Typography
           role="status"
           sx={{ px: 1, fontSize: 11, color: "text.secondary" }}
         >
-          {graphStatusMessage || graphSampleMessage}
+          {graphStatusMessage}
         </Typography>
       ) : null}
       {hasData ? (
@@ -1231,9 +1213,7 @@ const PrimaryGraph = ({
           }}
         >
           <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
-            {graphStatusMessage ||
-              graphSampleMessage ||
-              "No data available for this time range"}
+            {graphStatusMessage || "No data available for this time range"}
           </Typography>
         </Box>
       )}

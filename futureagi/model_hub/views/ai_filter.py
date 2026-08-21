@@ -25,6 +25,7 @@ import json
 import traceback
 
 import structlog
+from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -41,8 +42,48 @@ logger = structlog.get_logger(__name__)
 
 ERROR_RESPONSES = {
     400: ApiTextErrorResponseSerializer,
+    422: ApiTextErrorResponseSerializer,
+    503: ApiTextErrorResponseSerializer,
     500: ApiTextErrorResponseSerializer,
 }
+
+SMART_FILTER_REQUEST_WALL_MS = 9_000
+SMART_FILTER_VALUE_READ_WALL_MS = 4_000
+SMART_FILTER_VALUE_LIMIT = 100
+SMART_FILTER_SEARCH_MAX_BYTES = 256
+
+
+class SmartFilterGroundingError(Exception):
+    """Sanitized exact-grounding refusal returned at the HTTP boundary."""
+
+    def __init__(self, *, status_code: int, code: str, public_message: str):
+        super().__init__(public_message)
+        self.status_code = status_code
+        self.code = code
+        self.public_message = public_message
+
+
+def _grounding_too_broad() -> SmartFilterGroundingError:
+    return SmartFilterGroundingError(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        code="ai_filter_grounding_too_broad",
+        public_message=(
+            "AI value grounding needs a more specific value. Refine the query "
+            "and retry."
+        ),
+    )
+
+
+def _grounding_unavailable() -> SmartFilterGroundingError:
+    return SmartFilterGroundingError(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code="ai_filter_grounding_unavailable",
+        public_message=(
+            "AI value grounding is temporarily unavailable. Retry or add the "
+            "filter manually."
+        ),
+    )
+
 
 SYSTEM_PROMPT = """You are a filter assistant. Given a user's natural language query and a schema of available filter fields, return a JSON array of filter conditions.
 
@@ -118,10 +159,10 @@ SMART_AGENT_PROMPT = """You are a filter-building assistant for an LLM observabi
 
 You will be given a user's natural language query and a list of filter fields available for the current project. Your job is to translate the query into a structured filter that the application can apply.
 
-Each field in the schema may already have its real values inlined as a `v` array — in that case, pick straight from that list, do NOT call any tool. Only when a field is marked `v_searchable: true` (high-cardinality) do you need to fetch values, and you must pass a `search_query` to fuzzy-rank the values.
+Each field in the schema may already have its complete configured values inlined as a `v` array — in that case, pick straight from that list and do NOT call any tool. A string field marked `v_searchable: true` requires exact server grounding before you may use it. Call the value tool with a specific `search_query`; never invent a value or fall back to the user's literal text for such a field.
 
 You have two tools:
-1. get_field_values(field_id, search_query?) — fetches real values for a field. SKIP this entirely for fields whose `v` is already inlined. For fields with `v_searchable: true`, you MUST pass a search_query — the backend will rank values by exact > prefix > substring > token overlap > fuzzy n-gram and return the top 20 matches. Example: get_field_values("model", search_query="gpt-4") on a project with 200 model strings will return only the gpt-4 family.
+1. get_field_values(field_id, search_query) — performs an exact bounded search of real values for a field. SKIP this entirely for fields whose `v` is already inlined. For fields with `v_searchable: true`, you MUST pass a specific search_query. The request fails rather than returning sampled or incomplete values. The backend ranks the complete matching result by exact > prefix > substring > token overlap > fuzzy n-gram and returns the top matches. Example: get_field_values("model", search_query="gpt-4") returns exact stored values from the gpt-4 family.
 2. submit_filter(filters) — your final answer. `filters` is a JSON array of filter conditions. Each condition has `field`, `operator`, and `value`. The operator must come from the type-appropriate operator list (see the legend above the field schema). For string fields, you may use any of: is, is_not, contains, not_contains.
 
 VALUE-GROUNDING RULES (most important):
@@ -144,7 +185,7 @@ d. **Substring fallback.** If no exact value matches but the user clearly named 
 
 e. **Partial-result rule.** If you can ground SOME but not ALL fields the user mentioned, STILL return the filters for the fields you grounded successfully. Never throw away the whole answer because one field couldn't be matched. An incomplete filter is better than no filter.
 
-f. **Empty-field fallback.** If a field is marked `v_empty: true`, use the user's literal value with operator `is` (or `contains` for partial matches). The user's intent is more important than whether the result set will be empty.
+f. **No literal fallback for searchable fields.** If exact grounding returns no values, omit that condition. Never substitute the user's literal phrase for a `v_searchable` field. A broad, incomplete, or unavailable grounding read is rejected by the server instead of being shown to you as an empty or sampled result.
 
 For numeric/date fields:
 - Don't call get_field_values — those are continuous values.
@@ -164,67 +205,87 @@ When to give up:
 # ---------------------------------------------------------------------------
 
 
-def _fetch_trace_field_values(project_ids, metric_name, metric_type):
-    """Return bounded latest-state values from the direct-write CH25 source.
+def _normalize_grounding_search(search_query):
+    value = str(search_query or "").strip()
+    if not value or len(value.encode("utf-8")) > SMART_FILTER_SEARCH_MAX_BYTES:
+        raise _grounding_too_broad()
+    return value
 
-    The smart-filter endpoint deliberately keeps its historical ``list[str]``
-    contract: an unsupported, degraded, or unavailable picker returns an empty
-    list and lets the agent use its literal-value fallback. The actual reads are
-    shared with the public filter-value APIs so custom attributes (including
-    ``final_status``), tags, UUID remaps, tombstones, and row-version replay do
-    not drift into a second raw-SQL implementation.
+
+def _fetch_trace_field_values(
+    project_ids,
+    metric_name,
+    metric_type,
+    *,
+    search_query,
+    deadline=None,
+):
+    """Return an exact query-scoped value vocabulary from direct-write CH25.
+
+    A finite result is usable only when the underlying selector proves the
+    entire searched 12-month window complete. A cap, timeout, or replay gap is
+    a typed refusal; it is never converted to an empty list that lets the LLM
+    invent a literal value.
     """
     from tracer.services.clickhouse.attribute_reads import AttributeReadSelector
     from tracer.services.clickhouse.filter_value_reads import (
         SYSTEM_FILTER_VALUE_METRICS,
         read_span_system_filter_values,
     )
+    from tracer.services.clickhouse.read_budget import ReadDeadline
     from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
 
     if not project_ids:
         return []
+    search = _normalize_grounding_search(search_query)
+    deadline = deadline or ReadDeadline.start(SMART_FILTER_VALUE_READ_WALL_MS)
 
     try:
         if metric_type == "system_metric":
             if metric_name not in SYSTEM_FILTER_VALUE_METRICS:
-                return []
+                raise _grounding_too_broad()
             read = read_span_system_filter_values(
                 V2AnalyticsQueryService(),
                 project_ids=[str(project_id) for project_id in project_ids],
                 metric_name=metric_name,
-                limit=100,
+                search=search,
+                limit=SMART_FILTER_VALUE_LIMIT,
                 lookback_days=365,
+                deadline=deadline,
             )
-            if not read.query_complete and read.query_error_code != "sample_limit":
+            if not read.query_complete:
                 logger.warning(
-                    "smart_filter_values_degraded",
+                    "smart_filter_values_incomplete",
                     metric_name=metric_name,
                     metric_type=metric_type,
                     error_code=read.query_error_code,
                 )
-                return []
+                if read.query_error_code == "sample_limit":
+                    raise _grounding_too_broad()
+                raise _grounding_unavailable()
             return list(read.values)
         elif metric_type == "custom_attribute":
             read = AttributeReadSelector(
                 typed_only=True,
                 json_attribute_mode="arrays",
+                wall_timeout_ms=deadline.remaining_ms(SMART_FILTER_VALUE_READ_WALL_MS),
             ).read_values(
                 project_ids,
                 metric_name,
-                max_values=100,
+                search=search,
+                max_values=SMART_FILTER_VALUE_LIMIT,
                 horizon_days=365,
             )
-            if (
-                not read.metadata.query_complete
-                and read.metadata.query_error_code != "sample_limit"
-            ):
+            if not read.metadata.query_complete:
                 logger.warning(
-                    "smart_filter_values_degraded",
+                    "smart_filter_values_incomplete",
                     metric_name=metric_name,
                     metric_type=metric_type,
                     error_code=read.metadata.query_error_code,
                 )
-                return []
+                if read.metadata.query_error_code == "sample_limit":
+                    raise _grounding_too_broad()
+                raise _grounding_unavailable()
 
             values = []
             seen = set()
@@ -241,9 +302,13 @@ def _fetch_trace_field_values(project_ids, metric_name, metric_type):
                     if value and value not in seen:
                         seen.add(value)
                         values.append(value)
-            return values[:100]
+            if len(values) > SMART_FILTER_VALUE_LIMIT:
+                raise _grounding_too_broad()
+            return values
         else:
-            return []
+            raise _grounding_too_broad()
+    except SmartFilterGroundingError:
+        raise
     except Exception as exc:
         logger.warning(
             "smart_filter_values_failed",
@@ -251,26 +316,12 @@ def _fetch_trace_field_values(project_ids, metric_name, metric_type):
             metric_type=metric_type,
             error_type=type(exc).__name__,
         )
-        return []
+        raise _grounding_unavailable() from exc
 
 
-# Fields where the value list can grow into the thousands (user ids,
-# free-form tags, model strings, span/service names). We never inline
-# their values in the initial prompt — too many tokens. Instead the LLM
-# can call `get_field_values` with a `search_query` to fuzzy-match.
-_HIGH_CARDINALITY_FIELDS = {
-    "user",
-    "session",
-    "tag",
-    "model",
-    "service_name",
-    "prompt_name",
-    "prompt_version",
-    "prompt_label",
-}
-
-# Cap on values we inline per field. Larger lists get withheld and the
-# LLM must use the search tool to retrieve relevant slices.
+# Configured choice lists are exact metadata, so small ones may be inlined.
+# Dynamic trace/dataset values are never pre-fetched or sampled; the model must
+# issue one query-scoped exact tool call for the field it actually selected.
 _INLINE_VALUE_CAP = 30
 
 
@@ -479,13 +530,18 @@ def _char_ngrams(s, n):
     return {s[i : i + n] for i in range(len(s) - n + 1)}
 
 
-def _fetch_dataset_column_values(dataset_id, column_id):
-    """Distinct cell values for a (dataset, column) pair from ClickHouse.
+def _fetch_dataset_column_values(
+    dataset_id,
+    column_id,
+    *,
+    search_query,
+    deadline=None,
+):
+    """Exact searched cell values for a (dataset, column) pair.
 
-    Mirrors `_fetch_trace_field_values` but reads `model_hub_cell`. For
-    array / json columns the raw cell blob is parsed and its elements
-    are emitted so the LLM can ground against e.g. "English" instead of
-    '["English","French"]'. Returns up to 100 strings.
+    The LIMIT includes a sentinel. Filling it is a typed ``too broad`` refusal,
+    never a sampled vocabulary. Array/JSON blobs are flattened only after the
+    complete searched raw-value set has been proven finite.
 
     NOTE: ownership is validated by the caller (which resolves the
     dataset against the workspace before calling this).
@@ -496,9 +552,14 @@ def _fetch_dataset_column_values(dataset_id, column_id):
     from tracer.services.clickhouse.query_service import (
         AnalyticsQueryService,
     )
+    from tracer.services.clickhouse.read_budget import ReadDeadline
 
-    if not is_clickhouse_enabled() or not dataset_id or not column_id:
-        return []
+    if not dataset_id or not column_id:
+        raise _grounding_too_broad()
+    if not is_clickhouse_enabled():
+        raise _grounding_unavailable()
+    search = _normalize_grounding_search(search_query)
+    deadline = deadline or ReadDeadline.start(SMART_FILTER_VALUE_READ_WALL_MS)
 
     # Look up the column's data_type so we know whether to flatten.
     try:
@@ -508,8 +569,8 @@ def _fetch_dataset_column_values(dataset_id, column_id):
             id=column_id, dataset_id=dataset_id, deleted=False
         )
         data_type = column.data_type
-    except Exception:
-        data_type = "text"
+    except Exception as exc:
+        raise _grounding_too_broad() from exc
 
     analytics = AnalyticsQueryService()
     try:
@@ -520,26 +581,41 @@ def _fetch_dataset_column_values(dataset_id, column_id):
             "AND dataset_id = toUUID(%(dataset_id)s) "
             "AND column_id = toUUID(%(column_id)s) "
             "AND value != '' "
+            "AND positionCaseInsensitiveUTF8(value, %(search)s) > 0 "
             "ORDER BY val "
-            "LIMIT 200"
+            "LIMIT %(result_limit)s"
         )
         result = analytics.execute_ch_query(
             sql,
-            {"dataset_id": str(dataset_id), "column_id": str(column_id)},
-            timeout_ms=5000,
+            {
+                "dataset_id": str(dataset_id),
+                "column_id": str(column_id),
+                "search": search,
+                "result_limit": SMART_FILTER_VALUE_LIMIT + 1,
+            },
+            timeout_ms=deadline.remaining_ms(SMART_FILTER_VALUE_READ_WALL_MS),
+            settings={
+                "max_result_rows": SMART_FILTER_VALUE_LIMIT + 1,
+                "result_overflow_mode": "throw",
+                "timeout_overflow_mode": "throw",
+            },
         )
         raw = [row["val"] for row in result.data if row.get("val")]
-    except Exception as e:
+        if len(raw) > SMART_FILTER_VALUE_LIMIT:
+            raise _grounding_too_broad()
+    except SmartFilterGroundingError:
+        raise
+    except Exception as exc:
         logger.warning(
             "dataset_column_values_query_failed",
             dataset_id=str(dataset_id),
             column_id=str(column_id),
-            error=str(e)[:200],
+            error_type=type(exc).__name__,
         )
-        return []
+        raise _grounding_unavailable() from exc
 
     if data_type not in ("array", "json"):
-        return raw[:100]
+        return raw
 
     # Flatten list / dict blobs into their elements for better LLM grounding.
     seen = set()
@@ -566,13 +642,11 @@ def _fetch_dataset_column_values(dataset_id, column_id):
             candidates.append(blob)
         for c in candidates:
             s = c.strip()
-            if s and s not in seen:
+            if search.casefold() in s.casefold() and s and s not in seen:
                 seen.add(s)
                 out.append(s)
-            if len(out) >= 100:
-                break
-        if len(out) >= 100:
-            break
+                if len(out) > SMART_FILTER_VALUE_LIMIT:
+                    raise _grounding_too_broad()
     return out
 
 
@@ -630,15 +704,17 @@ _NUMBER_OPS_ALWAYS_ALLOWED = {
     "not_between",
 }
 
+_NUMERIC_FIELD_TYPES = {"number", "integer", "float"}
 
-def _validate_smart_filters(parsed_filters, schema):
+
+def _validate_smart_filters(parsed_filters, schema, grounded_values_by_field):
     """Apply field/operator/choice validation for smart-mode output.
 
     The smart-mode prompt drops per-field operator lists from the LLM
     payload (the operator legend is in the system prompt by type), so
     validation here checks against the type-default operator set rather
-    than each field's declared list. Field choices, when supplied, still
-    constrain the value with case-insensitive matching.
+    than each field's declared list. Every non-numeric value must also be
+    witnessed by configured choices or an exact tool result from this request.
     """
     if not isinstance(parsed_filters, list):
         return []
@@ -654,32 +730,42 @@ def _validate_smart_filters(parsed_filters, schema):
             continue
         field_schema = field_map[field]
         ftype = field_schema.get("type") or "string"
-        if ftype == "number":
+        if ftype in _NUMERIC_FIELD_TYPES:
             if operator not in _NUMBER_OPS_ALWAYS_ALLOWED:
                 continue
         else:
             if operator not in _STRING_OPS_ALWAYS_ALLOWED:
                 continue
-        choices = field_schema.get("choices") or []
-        if choices and value not in choices:
-            match = next(
-                (c for c in choices if str(c).lower() == str(value).lower()),
+        if ftype not in _NUMERIC_FIELD_TYPES:
+            grounded_values = tuple(grounded_values_by_field.get(field, ()))
+            normalized_value = str(value or "").casefold()
+            if not grounded_values or not normalized_value:
+                raise _grounding_too_broad()
+            exact_match = next(
+                (
+                    candidate
+                    for candidate in grounded_values
+                    if str(candidate).casefold() == normalized_value
+                ),
                 None,
             )
-            if match is not None:
-                value = match
-            # Note: for smart mode we do NOT drop the filter when the
-            # value is missing from choices — the LLM may have been told
-            # by `get_field_values` what the real values look like, and
-            # is using `contains` or a substring on purpose.
+            if operator in {"is", "is_not"}:
+                if exact_match is None:
+                    raise _grounding_too_broad()
+                value = exact_match
+            elif not any(
+                normalized_value in str(candidate).casefold()
+                for candidate in grounded_values
+            ):
+                raise _grounding_too_broad()
         out.append({"field": field, "operator": operator, "value": value})
     return out
 
 
-def _run_smart_agent(query, schema, fetch_values):
+def _run_smart_agent(query, schema, fetch_values, *, deadline=None):
     """Run the Haiku tool-use loop. Returns a list of validated filters.
 
-    `fetch_values(field_id) -> list[str]` is the source-specific value
+    `fetch_values(field_id, search_query=...) -> list[str]` is the source-specific value
     lookup. Traces pass a closure over `_fetch_trace_field_values`;
     datasets pass one over `_fetch_dataset_column_values`. The agent
     loop itself is shared and source-agnostic.
@@ -690,6 +776,18 @@ def _run_smart_agent(query, schema, fetch_values):
     """
     from agentic_eval.core.llm.llm import LLM
     from agentic_eval.core.utils.model_config import ModelConfigs
+    from tracer.services.clickhouse.read_budget import (
+        ReadDeadline,
+        ReadDeadlineExceeded,
+    )
+
+    deadline = deadline or ReadDeadline.start(SMART_FILTER_REQUEST_WALL_MS)
+
+    def remaining_request_ms():
+        try:
+            return deadline.remaining_ms(SMART_FILTER_REQUEST_WALL_MS)
+        except ReadDeadlineExceeded as exc:
+            raise _grounding_unavailable() from exc
 
     cfg = ModelConfigs.VERTEX_GEMINI_2_5_FLASH
     llm = LLM(
@@ -723,41 +821,29 @@ def _run_smart_agent(query, schema, fetch_values):
         s["field"]: s for s in schema if isinstance(s, dict) and s.get("field")
     }
 
-    # ------------------------------------------------------------------
-    # Pre-fetch values for low-cardinality string fields and inline them
-    # in the field schema. The LLM sees real values upfront and usually
-    # doesn't need to call get_field_values at all.
-    #
-    # We skip:
-    #   - non-string fields (numerics don't have enumerable values)
-    #   - high-cardinality string fields (free-form id/tag/model namespaces
-    #     where the value list can grow unboundedly)
-    # ------------------------------------------------------------------
-    inlined_value_count = 0
+    # Configured choices are exact metadata and can be inlined. Dynamic values
+    # are never pre-fetched: only a field the model actually selects may issue
+    # one query-scoped exact search. This avoids serially sampling every string
+    # dimension before the first model turn.
+    grounded_values_by_field = {}
+    static_choices_by_field = {}
     for entry in compact_fields:
         fid = entry["f"]
-        if entry["t"] != "string":
+        configured = schema_by_id[fid].get("choices") or []
+        if configured:
+            values = []
+            for configured_value in configured:
+                if configured_value not in values:
+                    values.append(configured_value)
+            static_choices_by_field[fid] = values
+            grounded_values_by_field[fid] = tuple(values)
+            if len(values) <= _INLINE_VALUE_CAP:
+                entry["v"] = values
+            else:
+                entry["v_count"] = len(values)
+                entry["v_searchable"] = True
             continue
-        if fid in _HIGH_CARDINALITY_FIELDS:
-            continue
-        try:
-            vals = fetch_values(fid)
-        except Exception:
-            vals = []
-        if not vals:
-            # The field exists in the schema but has no rows in CH yet.
-            # Tell the LLM explicitly so it can still emit a literal-value
-            # filter (the user's intent matters even when the result set
-            # would be empty — e.g. "show voicemails" on a fresh project).
-            entry["v_empty"] = True
-            continue
-        if len(vals) <= _INLINE_VALUE_CAP:
-            entry["v"] = vals
-            inlined_value_count += len(vals)
-        else:
-            # Too many to inline — flag it so the LLM knows to use the
-            # search tool for this field instead of guessing.
-            entry["v_count"] = len(vals)
+        if entry["t"] not in _NUMERIC_FIELD_TYPES:
             entry["v_searchable"] = True
 
     tools = [
@@ -766,15 +852,11 @@ def _run_smart_agent(query, schema, fetch_values):
             "function": {
                 "name": "get_field_values",
                 "description": (
-                    "Return the distinct real values for a field in the project. "
-                    "USE THIS when you need to ground a value against real data "
-                    "and the field schema doesn't already inline its values "
-                    "(check the `v` array on each field — if present, the field's "
-                    "real values are already there and you don't need to call "
-                    "this tool). For high-cardinality fields (those with "
-                    "v_searchable: true), pass a search_query so the backend can "
-                    "fuzzy-rank the values for you and return only the relevant "
-                    "ones — never request the full list, it can be thousands."
+                    "Return the complete bounded set of stored values matching "
+                    "one specific search for a field. Use this when the field "
+                    "schema has `v_searchable: true`; fields with an inline `v` "
+                    "array are already grounded. The request refuses broad or "
+                    "incomplete results instead of returning a sample."
                 ),
                 "parameters": {
                     "type": "object",
@@ -786,15 +868,16 @@ def _run_smart_agent(query, schema, fetch_values):
                         "search_query": {
                             "type": "string",
                             "description": (
-                                "Optional substring/keyword to rank values by. "
-                                "Required for high-cardinality fields. The "
+                                "Specific substring/keyword used by the exact "
+                                "bounded value query. Required for every "
+                                "searchable field. The "
                                 "backend ranks by exact > prefix > substring > "
                                 "token overlap > char n-gram fuzzy. Returns at "
                                 "most 20 ranked results."
                             ),
                         },
                     },
-                    "required": ["field_id"],
+                    "required": ["field_id", "search_query"],
                 },
             },
         },
@@ -845,12 +928,10 @@ def _run_smart_agent(query, schema, fetch_values):
         "c=category (omitted when 'system'), "
         "v=array of all real distinct values for this field "
         "(already pre-fetched — pick straight from this list, no tool call needed), "
-        "v_count=total distinct value count for high-cardinality fields, "
-        "v_searchable=true means the value list is too big to inline, "
-        "call get_field_values(field_id, search_query) to fuzzy-search it, "
-        "v_empty=true means no rows exist yet for this field — you may "
-        "still emit a literal-value filter from the user's wording (the "
-        "result will be empty but the intent is preserved)."
+        "v_count=exact configured choice count, "
+        "v_searchable=true means you must call "
+        "get_field_values(field_id, search_query) before using the field. "
+        "Never invent or substitute a literal value for a searchable field."
     )
     user_payload = (
         f"{operator_legend}\n\n"
@@ -868,7 +949,15 @@ def _run_smart_agent(query, schema, fetch_values):
         # _get_completion_with_tools handles gateway routing, retries, and
         # litellm fallback internally. It uses the temperature/max_tokens
         # configured on the LLM instance.
-        response = llm._get_completion_with_tools(messages, tools)
+        try:
+            response = llm._get_completion_with_tools(
+                messages,
+                tools,
+                timeout_ms=remaining_request_ms(),
+            )
+        except TimeoutError as exc:
+            raise _grounding_unavailable() from exc
+        remaining_request_ms()
         msg = response.choices[0].message
         tool_calls = getattr(msg, "tool_calls", None) or []
 
@@ -906,29 +995,22 @@ def _run_smart_agent(query, schema, fetch_values):
                 fid = args.get("field_id")
                 search_query = args.get("search_query")
                 if fid in schema_by_id:
-                    try:
-                        vals = fetch_values(fid)
-                    except Exception:
-                        vals = []
+                    search_query = _normalize_grounding_search(search_query)
+                    if fid in static_choices_by_field:
+                        vals = static_choices_by_field[fid]
+                    else:
+                        vals = fetch_values(fid, search_query=search_query)
                 else:
-                    vals = []
-                if search_query and vals:
-                    ranked = _smart_search_values(vals, search_query, limit=20)
-                    tool_result = {
-                        "field_id": fid,
-                        "search_query": search_query,
-                        "total_distinct": len(vals),
-                        "values": ranked,
-                    }
-                else:
-                    # No search query: return up to 50 values to keep the
-                    # tool result small. Anything bigger should have been
-                    # inlined upfront or queried with a search_query.
-                    tool_result = {
-                        "field_id": fid,
-                        "total_distinct": len(vals),
-                        "values": vals[:50],
-                    }
+                    raise _grounding_too_broad()
+                ranked = _smart_search_values(vals, search_query, limit=20)
+                grounded_values_by_field[fid] = tuple(vals)
+                tool_result = {
+                    "field_id": fid,
+                    "search_query": search_query,
+                    "query_complete": True,
+                    "total_distinct": len(vals),
+                    "values": ranked,
+                }
                 messages.append(
                     {
                         "role": "tool",
@@ -961,7 +1043,7 @@ def _run_smart_agent(query, schema, fetch_values):
 
     if submitted is None:
         return []
-    return _validate_smart_filters(submitted, schema)
+    return _validate_smart_filters(submitted, schema, grounded_values_by_field)
 
 
 class AIFilterView(APIView):
@@ -1022,6 +1104,9 @@ class AIFilterView(APIView):
             # Smart mode — agentic tool-use loop
             # ------------------------------------------------------------
             if mode == "smart":
+                from tracer.services.clickhouse.read_budget import ReadDeadline
+
+                grounding_deadline = ReadDeadline.start(SMART_FILTER_REQUEST_WALL_MS)
                 source = payload.get("source", "traces")
                 if source == "traces":
                     project_id = payload.get("project_id")
@@ -1039,11 +1124,13 @@ class AIFilterView(APIView):
                         if isinstance(s, dict) and s.get("field")
                     }
 
-                    def fetch_values(field_id):
+                    def fetch_values(field_id, *, search_query):
                         return _fetch_trace_field_values(
                             project_ids,
                             field_id,
                             metric_type_by_id.get(field_id, "system_metric"),
+                            search_query=search_query,
+                            deadline=grounding_deadline,
                         )
 
                 elif source == "dataset":
@@ -1057,15 +1144,25 @@ class AIFilterView(APIView):
                     if not dataset_id:
                         return self._gm.bad_request("dataset_id not found in workspace")
 
-                    def fetch_values(field_id):
-                        return _fetch_dataset_column_values(dataset_id, field_id)
+                    def fetch_values(field_id, *, search_query):
+                        return _fetch_dataset_column_values(
+                            dataset_id,
+                            field_id,
+                            search_query=search_query,
+                            deadline=grounding_deadline,
+                        )
 
                 else:
                     return self._gm.bad_request(
                         "smart mode supports source='traces' or 'dataset'"
                     )
 
-                filters = _run_smart_agent(query, schema, fetch_values)
+                filters = _run_smart_agent(
+                    query,
+                    schema,
+                    fetch_values,
+                    deadline=grounding_deadline,
+                )
                 return self._gm.success_response({"filters": filters})
 
             # Build the user message with schema context. Compact large
@@ -1216,6 +1313,18 @@ class AIFilterView(APIView):
 
             return self._gm.success_response({"filters": validated})
 
+        except SmartFilterGroundingError as exc:
+            logger.warning(
+                "ai_filter_grounding_refused",
+                mode=mode,
+                code=exc.code,
+                status_code=exc.status_code,
+            )
+            return self._gm.custom_error_response(
+                exc.status_code,
+                exc.public_message,
+                code=exc.code,
+            )
         except json.JSONDecodeError as e:
             logger.warning(f"AI filter JSON parse error: {e}")
             if mode == "select_fields":

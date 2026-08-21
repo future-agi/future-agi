@@ -59,6 +59,7 @@ def test_python_c_without_deployment_env_skips_every_startup_mutation_path(monke
 @pytest.mark.parametrize(
     "command",
     [
+        "ch25_activate_attribute_catalog",
         "ch25_apply_schema",
         "createcachetable",
         "future_schema_command",
@@ -75,6 +76,7 @@ def test_mutation_guard_rejects_unsafe_management_commands(command):
 @pytest.mark.parametrize(
     "command",
     [
+        "ch25_activate_attribute_catalog",
         "ch25_apply_schema",
         "ch25_remove_pg",
         "createcachetable",

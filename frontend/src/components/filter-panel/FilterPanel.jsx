@@ -1615,7 +1615,7 @@ const FilterPanel = ({
   // Optional smart-mode wiring. When the caller passes a `projectId`,
   // the AI filter call goes through the agentic backend (`mode=smart`),
   // which fetches real CH values and grounds the LLM's answer. Without
-  // a `projectId` the panel falls back to the legacy build_filters path.
+  // a `projectId` this component retains its non-smart local-parser path.
   projectId,
   source = "traces",
 }) => {
@@ -1746,14 +1746,23 @@ const FilterPanel = ({
 
   const handleAiFilter = useCallback(async () => {
     if (!aiQuery.trim()) return;
-    const aiFilters = await aiParseQuery(
-      aiQuery,
-      projectId ? { smart: true, projectId, source } : undefined,
-    );
+    let aiFilters;
+    try {
+      aiFilters = await aiParseQuery(
+        aiQuery,
+        projectId ? { smart: true, projectId, source } : undefined,
+      );
+    } catch {
+      // A smart request that could not prove its value vocabulary must not
+      // silently become an ungrounded local literal filter.
+      return;
+    }
     const parsed =
       aiFilters.length > 0
         ? aiFilters
-        : parseNaturalLanguage(aiQuery, filterFields, fieldMap);
+        : projectId
+          ? []
+          : parseNaturalLanguage(aiQuery, filterFields, fieldMap);
     setRows(parsed);
     setAiQuery("");
   }, [aiQuery, aiParseQuery, filterFields, fieldMap, projectId, source]);

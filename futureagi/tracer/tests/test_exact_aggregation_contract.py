@@ -2262,7 +2262,6 @@ def test_exact_refresh_has_a_dedicated_minimal_temporal_queue():
         _ACTIVITY_WRAPPERS,
     )
     from tfc.temporal.drop_in.workflow import TaskRunnerWorkflow
-
     from tracer.services import exact_aggregation_cache as cache_module
     from tracer.tasks.exact_aggregation import (
         EXACT_AGGREGATION_TASK_QUEUE,
@@ -5658,7 +5657,7 @@ def test_exact_graph_budget_failure_does_not_publish_or_split_contribution_batch
 
 
 @pytest.mark.unit
-def test_public_filtered_graph_budget_failure_never_enqueues_raw_exact_fallback():
+def test_public_filtered_graph_returns_pending_without_inline_clickhouse():
     from tracer.services.clickhouse import graph_dispatch
 
     cache.clear()
@@ -5670,9 +5669,17 @@ def test_public_filtered_graph_budget_failure_never_enqueues_raw_exact_fallback(
 
     start = datetime(2026, 8, 1, 0, 0)
     end = datetime(2026, 8, 8, 0, 0)
-    with patch(
-        "tracer.tasks.exact_aggregation.refresh_exact_aggregation_snapshot.apply_async"
-    ) as enqueue:
+    exact_read = []
+
+    def read_or_schedule(namespace, identity, **options):
+        exact_read.append((namespace, identity, options))
+        return options["pending_payload"]
+
+    with patch.object(
+        graph_dispatch,
+        "read_or_schedule_exact_snapshot",
+        side_effect=read_or_schedule,
+    ):
         result = graph_dispatch.fetch_system_metric_graph_ch(
             analytics=InlineQueryForbidden(),
             project_id="11111111-1111-4111-8111-111111111111",
@@ -5680,17 +5687,17 @@ def test_public_filtered_graph_budget_failure_never_enqueues_raw_exact_fallback(
             interval="day",
             metric_id="traffic",
             observe_type="trace",
-            # An already exhausted interactive budget must return typed
-            # degradation. It must not enqueue the retired raw exact path.
+            # The HTTP path must remain independent of the exact worker's
+            # ClickHouse budget and return its pending envelope immediately.
             timeout_ms=1,
         )
 
-    assert result["query_status"] == "degraded"
+    assert result["query_status"] == "pending"
     assert result["query_complete"] is False
-    assert result["query_error_code"] == "read_budget_exceeded"
-    assert result["query_exact"] is False
-    assert result["query_provenance"] == "bounded_candidates"
-    enqueue.assert_not_called()
+    assert result["query_sampled"] is False
+    assert result["query_refreshing"] is True
+    assert exact_read[0][0] == "observe-system-graph"
+    assert exact_read[0][1]["filters"] == _exact_multi_filters(start, end)
 
 
 @pytest.mark.unit

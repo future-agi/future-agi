@@ -1,61 +1,63 @@
-"""Inactive, fail-closed reader for span-attribute catalog candidates.
+"""Fail-closed reader for immutable span-attribute catalog epochs.
 
-This module is deliberately not wired to an API.  It reads only the independent
-catalog tables created by schema 025 and returns *candidates* for a later exact
-``spans`` verification/fallback layer.  A fresh unsearched catalog page is
-available only when every already-authorized project has the requested active
-epoch, a valid handoff, a writer watermark at or beyond the frozen window, and
-complete, gap-free checkpoint coverage for that whole half-open window.
+Only the additive catalog tables are read. Admission requires an active row
+whose handoff interval exactly equals the request window, complete gap-free
+hourly checkpoints for that entire interval, and unambiguous terminal
+source-stream evidence for every authorized project. Exact-window admission is
+essential because the current tables store epoch-global first/last bounds, not
+occurrence buckets. An ``open`` stream keeps an actively-written epoch out of
+reads; ``frozen`` and ``complete`` streams make keyset continuation safe.
 
-Schema 025 has no source/content fence on key/value rows.  Qualification state
-therefore cannot freeze catalog contents against a late same-epoch insert.  All
-continuations fail closed until a later schema/writer contract supplies such a
-fence.  Searched pages also fail closed: ``key_folded``/ClickHouse ``lower`` do
-not implement the authoritative Python Unicode-casefold contract, and a finite
-SQL page cannot prove that conservative non-ASCII false positives did not hide
-a later match.
+ClickHouse's lower-casing is deliberately *not* treated as authoritative for
+search.  SQL returns an indexed ASCII superset plus every non-ASCII row and the
+reader applies Python ``casefold`` before publishing a page.  It scans until it
+has a complete page and a proven continuation (or proves exhaustion) inside one
+two-second wall, so a timeout can never leak an uncontinuable partial page.
 
-All pagination state below is internal.  The explicit source and scope fields
-are intended to be wrapped by the existing signed-cursor boundary before this
-reader is activated.
+All pagination state is internal and must be wrapped by the existing signed
+cursor boundary at an HTTP surface.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
+from time import monotonic
 from typing import Any, Literal, Protocol, TypeAlias, cast
 
 from tracer.services.clickhouse.v2.attribute_catalog_codec import (
     encode_catalog_scalar,
+)
+from tracer.utils.attribute_suggestion_contract import (
+    TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES,
 )
 
 CATALOG_MAX_PROJECTS = 64
 CATALOG_MAX_PAGE_SIZE = 50
 CATALOG_MAX_ATTRIBUTE_KEY_BYTES = 512
 CATALOG_MAX_SEARCH_BYTES = 512
-CATALOG_MAX_VALUE_SEARCH_TEXT_BYTES = 4_096
-CATALOG_MAX_VALUE_JSON_BYTES = 32 * 1024
+CATALOG_MAX_VALUE_SEARCH_TEXT_BYTES = TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES
+# A 16-KiB UTF-8 string can expand when control characters are emitted through
+# the canonical JSON codec.  Keep one row bounded at 128 KiB and one maximum
+# 50-value page below the separate eight-MiB result envelope.
+CATALOG_MAX_VALUE_JSON_BYTES = 128 * 1024
 CATALOG_QUERY_TIMEOUT_MS = 2_000
-
-# Schema 025 has no authoritative contiguous producer/source fence. Keep all
-# qualification unavailable until a later schema+writer change supplies and
-# validates one; tests temporarily override this module-private rollout fuse to
-# exercise the otherwise dormant parser/query contracts.
-_CONTIGUOUS_SOURCE_FENCE_SUPPORTED = False
+CATALOG_MAX_DATABASE_NAME_BYTES = 128
+CATALOG_SEARCH_SCAN_ROWS = 512
 
 CATALOG_READ_SETTINGS: dict[str, Any] = {
     "max_threads": 2,
     "max_bytes_to_read": 512 * 1024 * 1024,
     "read_overflow_mode": "throw",
     "max_memory_usage": 512 * 1024 * 1024,
-    "max_result_bytes": 2 * 1024 * 1024,
+    "max_result_bytes": 8 * 1024 * 1024,
     "result_overflow_mode": "throw",
     "timeout_overflow_mode": "throw",
 }
@@ -98,6 +100,14 @@ _ALL_ATTRIBUTE_TYPES = tuple(
 _KEY_SOURCE = "span_attribute_catalog.keys.v1"
 _VALUE_SOURCE = "span_attribute_catalog.values.v1"
 _QUALIFICATION_SOURCE = "span_attribute_catalog.qualification.v1"
+_CATALOG_TABLES = (
+    "span_attribute_catalog_activations",
+    "span_attribute_catalog_source_streams",
+    "span_attribute_catalog_checkpoints",
+    "span_attribute_key_catalog",
+    "span_attribute_value_catalog",
+)
+_DATABASE_RE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]*\Z")
 
 
 class _Result(Protocol):
@@ -131,6 +141,7 @@ class CatalogQualification:
     window_start: datetime
     window_end: datetime
     qualification_fingerprint: str
+    source_fence_fingerprint: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,6 +172,7 @@ class CatalogKeyCheckpoint:
     project_scope_fingerprint: str
     window_start: datetime
     window_end: datetime
+    attribute_types: tuple[AttributeType, ...]
     normalized_search: str
     query_fingerprint: str
     qualification_fingerprint: str
@@ -191,6 +203,11 @@ class CatalogKeyPage:
     has_more: bool
     next_checkpoint: CatalogKeyCheckpoint | None
     qualification: CatalogQualification
+    query_count: int = 0
+    # Exact distinct-key cardinality for the immutable filtered catalog scope.
+    # Search reads keep this unset because Python's Unicode casefold contract is
+    # intentionally broader than ClickHouse's indexed ASCII-fold superset.
+    total_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,11 +216,28 @@ class CatalogValuePage:
     has_more: bool
     next_checkpoint: CatalogValueCheckpoint | None
     qualification: CatalogQualification
+    query_count: int = 0
 
 
 CatalogQualificationResult: TypeAlias = CatalogQualification | CatalogUnavailable
 CatalogKeyPageResult: TypeAlias = CatalogKeyPage | CatalogUnavailable
 CatalogValuePageResult: TypeAlias = CatalogValuePage | CatalogUnavailable
+
+
+@dataclass(slots=True)
+class _OperationBudget:
+    deadline: float
+    query_count: int = 0
+
+    @classmethod
+    def start(cls) -> _OperationBudget:
+        return cls(monotonic() + CATALOG_QUERY_TIMEOUT_MS / 1_000)
+
+    def remaining_ms(self) -> int:
+        remaining = int((self.deadline - monotonic()) * 1_000)
+        if remaining < 1:
+            raise TimeoutError("catalog read deadline exceeded")
+        return min(remaining, CATALOG_QUERY_TIMEOUT_MS)
 
 
 _ACTIVATION_SQL = """
@@ -260,6 +294,113 @@ LIMIT %(catalog_activation_limit)s
 """
 
 
+_SOURCE_STREAM_SQL = """
+WITH stream_rows AS
+(
+    SELECT
+        *,
+        max(_version) OVER
+        (
+            PARTITION BY project_id, catalog_epoch, producer_stream_id
+        ) AS latest_version
+    FROM span_attribute_catalog_source_streams
+    PREWHERE project_id IN %(catalog_project_ids)s
+      AND catalog_epoch = %(catalog_epoch)s
+), latest_streams AS
+(
+    SELECT
+        project_id,
+        producer_stream_id,
+        argMax(
+            tuple(
+                envelope_version,
+                first_sequence,
+                last_sequence,
+                frozen_sequence,
+                terminal_payload_sha256,
+                source_fence_digest,
+                status,
+                gap_count,
+                gap_reasons,
+                frozen_at
+            ),
+            _version
+        ) AS state,
+        max(_version) AS stream_state_version,
+        uniqExactIf(
+            tuple(
+                envelope_version,
+                first_sequence,
+                last_sequence,
+                frozen_sequence,
+                terminal_payload_sha256,
+                source_fence_digest,
+                status,
+                gap_count,
+                gap_reasons,
+                frozen_at
+            ),
+            _version = latest_version
+        ) AS latest_state_variants
+    FROM stream_rows
+    GROUP BY project_id, producer_stream_id
+), decoded_streams AS
+(
+    SELECT
+        project_id,
+        producer_stream_id,
+        tupleElement(state, 1) AS envelope_version,
+        tupleElement(state, 2) AS first_sequence,
+        tupleElement(state, 3) AS last_sequence,
+        tupleElement(state, 4) AS frozen_sequence,
+        toString(tupleElement(state, 5)) AS terminal_payload_sha256,
+        toString(tupleElement(state, 6)) AS source_fence_digest,
+        toString(tupleElement(state, 7)) AS status,
+        tupleElement(state, 8) AS gap_count,
+        tupleElement(state, 9) AS gap_reasons,
+        tupleElement(state, 10) AS frozen_at,
+        stream_state_version,
+        latest_state_variants
+    FROM latest_streams
+)
+SELECT
+    toString(project_id) AS project_id,
+    count() AS stream_count,
+    countIf(status = 'open') AS open_count,
+    countIf(status NOT IN ('frozen', 'complete')) AS non_terminal_count,
+    countIf(gap_count != 0 OR notEmpty(gap_reasons)) AS declared_gap_count,
+    countIf(
+        first_sequence = 0
+        OR last_sequence < first_sequence
+        OR frozen_sequence != last_sequence
+    ) AS sequence_invalid_count,
+    countIf(
+        length(terminal_payload_sha256) != 64
+        OR length(source_fence_digest) != 64
+    ) AS digest_invalid_count,
+    countIf(isNull(frozen_at)) AS missing_frozen_at_count,
+    countIf(stream_state_version = 0) AS missing_version_count,
+    countIf(latest_state_variants != 1) AS version_conflict_count,
+    arraySort(
+        groupArray(
+            tuple(
+                toString(producer_stream_id),
+                envelope_version,
+                first_sequence,
+                last_sequence,
+                frozen_sequence,
+                terminal_payload_sha256,
+                source_fence_digest
+            )
+        )
+    ) AS source_stream_fences
+FROM decoded_streams
+GROUP BY project_id
+ORDER BY project_id ASC
+LIMIT %(catalog_source_stream_limit)s
+"""
+
+
 _CHECKPOINT_SQL = """
 WITH checkpoint_rows AS
 (
@@ -272,8 +413,8 @@ WITH checkpoint_rows AS
     FROM span_attribute_catalog_checkpoints
     PREWHERE project_id IN %(catalog_project_ids)s
       AND catalog_epoch = %(catalog_epoch)s
-    WHERE window_start < %(catalog_window_end)s
-      AND window_end > %(catalog_window_start)s
+    WHERE window_start < fromUnixTimestamp64Micro(%(catalog_window_end_us)s, 'UTC')
+      AND window_end > fromUnixTimestamp64Micro(%(catalog_window_start_us)s, 'UTC')
 ), latest_checkpoints AS
 (
     SELECT
@@ -350,10 +491,10 @@ SELECT
     ) AS checkpoint_fences,
     countIf(
         window_start > greatest(
-            toDateTime64(%(catalog_window_start)s, 6, 'UTC'),
+            fromUnixTimestamp64Micro(%(catalog_window_start_us)s, 'UTC'),
             ifNull(
                 prior_coverage_end,
-                toDateTime64(%(catalog_window_start)s, 6, 'UTC')
+                fromUnixTimestamp64Micro(%(catalog_window_start_us)s, 'UTC')
             )
         )
     ) AS interior_gap_count
@@ -376,10 +517,11 @@ WITH grouped_keys AS
     FROM span_attribute_key_catalog
     PREWHERE project_id IN %(catalog_project_ids)s
       AND catalog_epoch = %(catalog_epoch)s
+      AND attribute_type IN %(catalog_key_attribute_types)s
     WHERE key_folded LIKE %(catalog_key_search_pattern)s
        OR length(key_folded) != lengthUTF8(key_folded)
     GROUP BY key_folded, attribute_key, attribute_type
-), ordered_keys AS
+), eligible_keys AS
 (
     SELECT
         key_folded,
@@ -387,8 +529,11 @@ WITH grouped_keys AS
         attribute_type,
         toInt8(attribute_type) AS attribute_type_rank,
         first_seen,
-        last_seen
+        last_seen,
+        uniqExact(attribute_key) OVER () AS total_count
     FROM grouped_keys
+    WHERE first_seen < fromUnixTimestamp64Micro(%(catalog_window_end_us)s, 'UTC')
+      AND last_seen >= fromUnixTimestamp64Micro(%(catalog_window_start_us)s, 'UTC')
 )
 SELECT
     key_folded,
@@ -396,11 +541,10 @@ SELECT
     toString(attribute_type) AS attribute_type,
     attribute_type_rank,
     first_seen,
-    last_seen
-FROM ordered_keys
-WHERE first_seen < %(catalog_window_end)s
-  AND last_seen >= %(catalog_window_start)s
-  AND tuple(key_folded, attribute_key, attribute_type_rank) > tuple(
+    last_seen,
+    total_count
+FROM eligible_keys
+WHERE tuple(key_folded, attribute_key, attribute_type_rank) > tuple(
       %(catalog_after_key_folded)s,
       %(catalog_after_key)s,
       %(catalog_after_key_type_rank)s
@@ -464,8 +608,8 @@ SELECT
     first_seen,
     last_seen
 FROM ordered_values
-WHERE first_seen < %(catalog_window_end)s
-  AND last_seen >= %(catalog_window_start)s
+WHERE first_seen < fromUnixTimestamp64Micro(%(catalog_window_end_us)s, 'UTC')
+  AND last_seen >= fromUnixTimestamp64Micro(%(catalog_window_start_us)s, 'UTC')
   AND (
       attribute_type IN %(catalog_attribute_types)s
   )
@@ -494,6 +638,7 @@ class AttributeCatalogReader:
         catalog_epoch: int,
         window_start: datetime,
         window_end: datetime,
+        catalog_database: str | None = None,
     ) -> None:
         self._executor = executor
         self.project_ids = _canonical_project_ids(project_ids)
@@ -504,13 +649,30 @@ class AttributeCatalogReader:
         self.window_end = _aware_utc(window_end, "window_end")
         if self.window_start >= self.window_end:
             raise ValueError("catalog window must be a non-empty half-open interval")
+        self.catalog_database = _catalog_database(catalog_database)
+        self._activation_sql = _qualify_catalog_sql(
+            _ACTIVATION_SQL, self.catalog_database
+        )
+        self._source_stream_sql = _qualify_catalog_sql(
+            _SOURCE_STREAM_SQL, self.catalog_database
+        )
+        self._checkpoint_sql = _qualify_catalog_sql(
+            _CHECKPOINT_SQL, self.catalog_database
+        )
+        self._key_page_sql = _qualify_catalog_sql(_KEY_PAGE_SQL, self.catalog_database)
+        self._value_page_sql = _qualify_catalog_sql(
+            _VALUE_PAGE_SQL, self.catalog_database
+        )
         self.project_scope_fingerprint = _scope_fingerprint(self.project_ids)
 
-    def qualify(self) -> CatalogQualificationResult:
-        """Prove epoch, handoff, watermark, and window coverage for every project."""
+    def qualify(
+        self,
+        *,
+        _budget: _OperationBudget | None = None,
+    ) -> CatalogQualificationResult:
+        """Prove frozen source, activation, and exact window coverage."""
 
-        if not _CONTIGUOUS_SOURCE_FENCE_SUPPORTED:
-            return CatalogUnavailable("activation_requires_contiguous_source_fence")
+        budget = _budget or _OperationBudget.start()
 
         params = {
             "catalog_project_ids": self.project_ids,
@@ -518,9 +680,10 @@ class AttributeCatalogReader:
         }
         try:
             activation_rows = self._execute(
-                _ACTIVATION_SQL,
+                self._activation_sql,
                 params,
                 max_result_rows=CATALOG_MAX_PROJECTS + 1,
+                budget=budget,
             )
         except Exception:
             return CatalogUnavailable("activation_query_error")
@@ -535,8 +698,30 @@ class AttributeCatalogReader:
         params = {
             "catalog_project_ids": self.project_ids,
             "catalog_epoch": self.catalog_epoch,
-            "catalog_window_start": self.window_start,
-            "catalog_window_end": self.window_end,
+            "catalog_source_stream_limit": CATALOG_MAX_PROJECTS + 1,
+        }
+        try:
+            source_stream_rows = self._execute(
+                self._source_stream_sql,
+                params,
+                max_result_rows=CATALOG_MAX_PROJECTS + 1,
+                budget=budget,
+            )
+        except Exception:
+            return CatalogUnavailable("source_stream_query_error")
+
+        try:
+            source_stream_failure = self._validate_source_streams(source_stream_rows)
+        except Exception:
+            return CatalogUnavailable("source_stream_invalid")
+        if source_stream_failure is not None:
+            return source_stream_failure
+
+        params = {
+            "catalog_project_ids": self.project_ids,
+            "catalog_epoch": self.catalog_epoch,
+            "catalog_window_start_us": _unix_microseconds(self.window_start),
+            "catalog_window_end_us": _unix_microseconds(self.window_end),
             "catalog_checkpoint_complete_status": (
                 CatalogCheckpointStatus.COMPLETE.value
             ),
@@ -544,9 +729,10 @@ class AttributeCatalogReader:
         }
         try:
             checkpoint_rows = self._execute(
-                _CHECKPOINT_SQL,
+                self._checkpoint_sql,
                 params,
                 max_result_rows=CATALOG_MAX_PROJECTS + 1,
+                budget=budget,
             )
         except Exception:
             return CatalogUnavailable("checkpoint_query_error")
@@ -560,8 +746,10 @@ class AttributeCatalogReader:
         try:
             qualification_fingerprint = _qualification_fingerprint(
                 activation_rows,
+                source_stream_rows,
                 checkpoint_rows,
             )
+            source_fence_fingerprint = _source_fence_fingerprint(source_stream_rows)
         except Exception:
             return CatalogUnavailable("qualification_invalid")
         return CatalogQualification(
@@ -571,6 +759,7 @@ class AttributeCatalogReader:
             window_start=self.window_start,
             window_end=self.window_end,
             qualification_fingerprint=qualification_fingerprint,
+            source_fence_fingerprint=source_fence_fingerprint,
         )
 
     def read_key_candidates(
@@ -579,9 +768,11 @@ class AttributeCatalogReader:
         page_size: int,
         search: str | None = None,
         after: CatalogKeyCheckpoint | None = None,
+        attribute_types: Iterable[AttributeType] | None = None,
     ) -> CatalogKeyPageResult:
         """Return one immutable-keyset page of catalog key candidates."""
 
+        budget = _OperationBudget.start()
         limit = _page_limit(page_size)
         search_value = _bounded_text(
             search,
@@ -590,75 +781,141 @@ class AttributeCatalogReader:
             allow_empty=True,
         )
         normalized_search = _normalize_key_search(search_value)
+        types = _attribute_types(attribute_types)
         query_fingerprint = self._key_query_fingerprint(
+            attribute_types=types,
             normalized_search=normalized_search,
             page_size=limit,
         )
         if after is not None:
             self._validate_key_checkpoint(
                 after,
+                attribute_types=types,
                 normalized_search=normalized_search,
                 query_fingerprint=query_fingerprint,
             )
-            return CatalogUnavailable(
-                "continuation_requires_immutable_snapshot",
-                _KEY_SOURCE,
-            )
-        if normalized_search:
-            return CatalogUnavailable("search_requires_unicode_parity", _KEY_SOURCE)
-        qualification = self.qualify()
+        qualification = self.qualify(_budget=budget)
         if isinstance(qualification, CatalogUnavailable):
             return qualification
+        if (
+            after is not None
+            and after.qualification_fingerprint
+            != qualification.qualification_fingerprint
+        ):
+            return CatalogUnavailable("qualification_changed", _KEY_SOURCE)
 
-        params = {
-            "catalog_project_ids": self.project_ids,
-            "catalog_epoch": self.catalog_epoch,
-            "catalog_window_start": self.window_start,
-            "catalog_window_end": self.window_end,
-            "catalog_key_search_pattern": _like_contains_pattern(normalized_search),
-            "catalog_after_key_folded": "",
-            "catalog_after_key": "",
-            "catalog_after_key_type_rank": 0,
-            "catalog_page_limit": limit + 1,
-        }
+        after_position = (
+            (after.key_folded, after.attribute_key, after.attribute_type_rank)
+            if after is not None
+            else ("", "", 0)
+        )
+        # At most six type rows can share one key.  For unsearched reads this
+        # proves a full public page plus the next distinct key in one query.
+        # Searched reads may need multiple conservative-superset scans because
+        # every non-ASCII key is admitted for the Python casefold recheck.
+        scan_limit = max((limit + 1) * len(types), 1)
+        if normalized_search:
+            scan_limit = max(scan_limit, CATALOG_SEARCH_SCAN_ROWS)
+        candidates: list[CatalogKeyCandidate] = []
+        matched_keys: list[str] = []
+        matched_key_set: set[str] = set()
+        last_emitted_position: tuple[str, str, int] | None = None
+        # The SQL total is computed before the keyset predicate, so every page
+        # of the immutable epoch reports the same distinct-key cardinality.
+        # The indexed search predicate deliberately admits every non-ASCII key
+        # for Python casefold rechecking; do not mislabel that superset count as
+        # exact for searched pages.
+        total_count: int | None = None
         try:
-            rows = self._execute(
-                _KEY_PAGE_SQL,
-                params,
-                max_result_rows=limit + 1,
-            )
-            decoded = tuple(self._decode_key_row(row) for row in rows)
+            while len(matched_keys) <= limit:
+                params = {
+                    "catalog_project_ids": self.project_ids,
+                    "catalog_epoch": self.catalog_epoch,
+                    "catalog_window_start_us": _unix_microseconds(self.window_start),
+                    "catalog_window_end_us": _unix_microseconds(self.window_end),
+                    "catalog_key_attribute_types": types,
+                    "catalog_key_search_pattern": _like_contains_pattern(
+                        normalized_search
+                    ),
+                    "catalog_after_key_folded": after_position[0],
+                    "catalog_after_key": after_position[1],
+                    "catalog_after_key_type_rank": after_position[2],
+                    "catalog_page_limit": scan_limit,
+                }
+                rows = self._execute(
+                    self._key_page_sql,
+                    params,
+                    max_result_rows=scan_limit,
+                    budget=budget,
+                )
+                previous_position = after_position
+                stop = False
+                for row in rows:
+                    if not normalized_search:
+                        row_total_count = _strict_int(row.get("total_count"))
+                        if total_count is None:
+                            total_count = row_total_count
+                        elif total_count != row_total_count:
+                            raise ValueError("catalog key total changed within page")
+                    candidate = self._decode_key_row(row)
+                    if candidate.attribute_type not in types:
+                        raise ValueError("catalog key type escaped query filter")
+                    position = (
+                        _ascii_fold(candidate.attribute_key),
+                        candidate.attribute_key,
+                        _ATTRIBUTE_TYPE_RANK[candidate.attribute_type],
+                    )
+                    if position <= previous_position:
+                        raise ValueError("catalog key rows are not strictly ordered")
+                    previous_position = position
+                    if (
+                        normalized_search
+                        and normalized_search not in candidate.attribute_key.casefold()
+                    ):
+                        continue
+                    if candidate.attribute_key not in matched_key_set:
+                        matched_key_set.add(candidate.attribute_key)
+                        matched_keys.append(candidate.attribute_key)
+                        if len(matched_keys) > limit:
+                            stop = True
+                            break
+                    candidates.append(candidate)
+                    last_emitted_position = position
+                if stop or len(rows) < scan_limit:
+                    break
+                if not rows:
+                    break
+                after_position = previous_position
         except Exception:
             return CatalogUnavailable("key_candidate_query_error", _KEY_SOURCE)
 
-        if len(decoded) > limit:
-            return CatalogUnavailable(
-                "multi_page_requires_immutable_snapshot",
-                _KEY_SOURCE,
-            )
-        has_more = False
-        candidates = decoded[:limit]
+        if not normalized_search and total_count is None and after is None:
+            total_count = 0
+
+        has_more = len(matched_keys) > limit
         next_checkpoint = None
-        if has_more and candidates:
-            last = candidates[-1]
+        if has_more and candidates and last_emitted_position is not None:
             next_checkpoint = CatalogKeyCheckpoint(
                 source=_KEY_SOURCE,
                 catalog_epoch=self.catalog_epoch,
                 project_scope_fingerprint=self.project_scope_fingerprint,
                 window_start=self.window_start,
                 window_end=self.window_end,
+                attribute_types=types,
                 normalized_search=normalized_search,
                 query_fingerprint=query_fingerprint,
                 qualification_fingerprint=(qualification.qualification_fingerprint),
-                key_folded=_ascii_fold(last.attribute_key),
-                attribute_key=last.attribute_key,
-                attribute_type_rank=_ATTRIBUTE_TYPE_RANK[last.attribute_type],
+                key_folded=last_emitted_position[0],
+                attribute_key=last_emitted_position[1],
+                attribute_type_rank=last_emitted_position[2],
             )
         return CatalogKeyPage(
-            candidates=candidates,
+            candidates=tuple(candidates),
             has_more=has_more,
             next_checkpoint=next_checkpoint,
             qualification=qualification,
+            query_count=budget.query_count,
+            total_count=total_count,
         )
 
     def read_value_candidates(
@@ -672,6 +929,7 @@ class AttributeCatalogReader:
     ) -> CatalogValuePageResult:
         """Return one strict typed-scalar candidate page for one attribute key."""
 
+        budget = _OperationBudget.start()
         limit = _page_limit(page_size)
         key = _bounded_text(
             attribute_key,
@@ -701,54 +959,80 @@ class AttributeCatalogReader:
                 normalized_search=normalized_search,
                 query_fingerprint=query_fingerprint,
             )
-            return CatalogUnavailable(
-                "continuation_requires_immutable_snapshot",
-                _VALUE_SOURCE,
-            )
-        if normalized_search:
-            return CatalogUnavailable("search_requires_unicode_parity", _VALUE_SOURCE)
-        qualification = self.qualify()
+        qualification = self.qualify(_budget=budget)
         if isinstance(qualification, CatalogUnavailable):
             return qualification
+        if (
+            after is not None
+            and after.qualification_fingerprint
+            != qualification.qualification_fingerprint
+        ):
+            return CatalogUnavailable("qualification_changed", _VALUE_SOURCE)
 
-        params = {
-            "catalog_project_ids": self.project_ids,
-            "catalog_epoch": self.catalog_epoch,
-            "catalog_window_start": self.window_start,
-            "catalog_window_end": self.window_end,
-            "catalog_attribute_key": key,
-            "catalog_attribute_types": types,
-            "catalog_value_search_pattern": _indexed_value_search_pattern(
-                normalized_search
-            ),
-            "catalog_after_value_fingerprint": "",
-            "catalog_after_value_type_rank": 0,
-            "catalog_page_limit": limit + 1,
-        }
+        after_position = (
+            (after.attribute_type_rank, after.value_fingerprint)
+            if after is not None
+            else (0, "")
+        )
+        scan_limit = limit + 1
+        if normalized_search:
+            # One maximum public page keeps the worst-case decoded scalar body
+            # below the reader's two-MiB result cap.
+            scan_limit = max(scan_limit, CATALOG_MAX_PAGE_SIZE + 1)
+        matches: list[CatalogValueCandidate] = []
         try:
-            rows = self._execute(
-                _VALUE_PAGE_SQL,
-                params,
-                max_result_rows=limit + 1,
-            )
-            decoded = tuple(self._decode_value_row(key, row) for row in rows)
+            while len(matches) <= limit:
+                params = {
+                    "catalog_project_ids": self.project_ids,
+                    "catalog_epoch": self.catalog_epoch,
+                    "catalog_window_start_us": _unix_microseconds(self.window_start),
+                    "catalog_window_end_us": _unix_microseconds(self.window_end),
+                    "catalog_attribute_key": key,
+                    "catalog_attribute_types": types,
+                    "catalog_value_search_pattern": _indexed_value_search_pattern(
+                        normalized_search
+                    ),
+                    "catalog_after_value_fingerprint": after_position[1],
+                    "catalog_after_value_type_rank": after_position[0],
+                    "catalog_page_limit": scan_limit,
+                }
+                rows = self._execute(
+                    self._value_page_sql,
+                    params,
+                    max_result_rows=scan_limit,
+                    budget=budget,
+                )
+                previous_position = after_position
+                for row in rows:
+                    candidate = self._decode_value_row(key, row)
+                    position = (
+                        _ATTRIBUTE_TYPE_RANK[candidate.attribute_type],
+                        candidate.value_fingerprint,
+                    )
+                    if position <= previous_position:
+                        raise ValueError("catalog value rows are not strictly ordered")
+                    previous_position = position
+                    if candidate.attribute_type not in types:
+                        raise ValueError("catalog value type escaped query filter")
+                    if (
+                        normalized_search
+                        and normalized_search
+                        not in candidate.value_search_text.casefold()
+                    ):
+                        continue
+                    matches.append(candidate)
+                    if len(matches) > limit:
+                        break
+                if len(matches) > limit or len(rows) < scan_limit:
+                    break
+                if not rows:
+                    break
+                after_position = previous_position
         except Exception:
             return CatalogUnavailable("value_candidate_query_error", _VALUE_SOURCE)
 
-        if len(decoded) > limit:
-            return CatalogUnavailable(
-                "multi_page_requires_immutable_snapshot",
-                _VALUE_SOURCE,
-            )
-        has_more = False
-        candidates = decoded[:limit]
-        if any(candidate.attribute_type not in types for candidate in candidates):
-            return CatalogUnavailable("value_candidate_query_error", _VALUE_SOURCE)
-        if any(
-            candidate.attribute_type == "array" and candidate.scalar_kind == "number"
-            for candidate in candidates
-        ):
-            return CatalogUnavailable("unsupported_array_numeric", _VALUE_SOURCE)
+        has_more = len(matches) > limit
+        candidates = tuple(matches[:limit])
         next_checkpoint = None
         if has_more and candidates:
             last = candidates[-1]
@@ -771,6 +1055,7 @@ class AttributeCatalogReader:
             has_more=has_more,
             next_checkpoint=next_checkpoint,
             qualification=qualification,
+            query_count=budget.query_count,
         )
 
     def _execute(
@@ -779,16 +1064,21 @@ class AttributeCatalogReader:
         params: dict[str, Any],
         *,
         max_result_rows: int,
+        budget: _OperationBudget,
     ) -> list[dict[str, Any]]:
+        timeout_ms = budget.remaining_ms()
+        budget.query_count += 1
         result = self._executor.execute(
             sql,
             params,
-            timeout_ms=CATALOG_QUERY_TIMEOUT_MS,
+            timeout_ms=timeout_ms,
             settings={
                 **CATALOG_READ_SETTINGS,
                 "max_result_rows": max_result_rows,
+                "max_execution_time": timeout_ms / 1_000,
             },
         )
+        budget.remaining_ms()
         rows = getattr(result, "data", None)
         if not isinstance(rows, list) or len(rows) > max_result_rows:
             raise ValueError("invalid catalog query result envelope")
@@ -829,8 +1119,68 @@ class AttributeCatalogReader:
                 or writer_watermark < handoff_end
             ):
                 return CatalogUnavailable("activation_handoff_invalid")
-            if writer_watermark < self.window_end:
-                return CatalogUnavailable("activation_writer_lag")
+            # Schema 025 stores only epoch-global first/last bounds. Those
+            # bounds prove membership for the *entire* frozen activation
+            # interval, but they cannot prove an occurrence in an arbitrary
+            # subwindow (an attribute seen before and after a subwindow may be
+            # absent inside it). Never use the catalog for a subset/superset;
+            # callers must run their authoritative spans fallback instead.
+            if (
+                self.window_start != handoff_start
+                or self.window_end != handoff_end
+                or writer_watermark < self.window_end
+            ):
+                return CatalogUnavailable("activation_window_not_exact")
+        return None
+
+    def _validate_source_streams(
+        self, rows: list[dict[str, Any]]
+    ) -> CatalogUnavailable | None:
+        by_project = _rows_by_project(rows)
+        if by_project is None or set(by_project) != set(self.project_ids):
+            return CatalogUnavailable("source_stream_missing")
+        for project_id in self.project_ids:
+            row = by_project[project_id]
+            try:
+                stream_count = _strict_int(row.get("stream_count"))
+                open_count = _strict_int(row.get("open_count"))
+                non_terminal_count = _strict_int(row.get("non_terminal_count"))
+                declared_gap_count = _strict_int(row.get("declared_gap_count"))
+                sequence_invalid_count = _strict_int(row.get("sequence_invalid_count"))
+                digest_invalid_count = _strict_int(row.get("digest_invalid_count"))
+                missing_frozen_at_count = _strict_int(
+                    row.get("missing_frozen_at_count")
+                )
+                missing_version_count = _strict_int(row.get("missing_version_count"))
+                version_conflict_count = _strict_int(row.get("version_conflict_count"))
+                source_stream_fences = _source_stream_fences(
+                    row.get("source_stream_fences")
+                )
+            except (TypeError, ValueError):
+                return CatalogUnavailable("source_stream_invalid")
+            if stream_count <= 0 or len(source_stream_fences) != stream_count:
+                return CatalogUnavailable("source_stream_missing")
+            if open_count:
+                return CatalogUnavailable("source_stream_open")
+            if non_terminal_count:
+                return CatalogUnavailable("source_stream_not_frozen")
+            if declared_gap_count:
+                return CatalogUnavailable("source_stream_declared_gap")
+            if sequence_invalid_count:
+                return CatalogUnavailable("source_stream_sequence_invalid")
+            if digest_invalid_count:
+                return CatalogUnavailable("source_stream_digest_invalid")
+            if missing_frozen_at_count:
+                return CatalogUnavailable("source_stream_freeze_missing")
+            if missing_version_count:
+                return CatalogUnavailable("source_stream_version_missing")
+            if version_conflict_count:
+                return CatalogUnavailable("source_stream_version_conflict")
+            if (
+                source_stream_fences != tuple(sorted(source_stream_fences))
+                or len({fence[0] for fence in source_stream_fences}) != stream_count
+            ):
+                return CatalogUnavailable("source_stream_fence_invalid")
         return None
 
     def _validate_checkpoint_coverage(
@@ -979,6 +1329,7 @@ class AttributeCatalogReader:
     def _key_query_fingerprint(
         self,
         *,
+        attribute_types: tuple[AttributeType, ...],
         normalized_search: str,
         page_size: int,
     ) -> str:
@@ -989,6 +1340,7 @@ class AttributeCatalogReader:
                 "project_scope": self.project_scope_fingerprint,
                 "window_start_us": _unix_microseconds(self.window_start),
                 "window_end_us": _unix_microseconds(self.window_end),
+                "attribute_types": attribute_types,
                 "normalized_search": normalized_search,
                 "page_size": page_size,
             },
@@ -1020,12 +1372,14 @@ class AttributeCatalogReader:
         self,
         checkpoint: CatalogKeyCheckpoint,
         *,
+        attribute_types: tuple[AttributeType, ...],
         normalized_search: str,
         query_fingerprint: str,
     ) -> None:
         self._validate_checkpoint_scope(checkpoint, _KEY_SOURCE)
         if (
-            checkpoint.normalized_search != normalized_search
+            checkpoint.attribute_types != attribute_types
+            or checkpoint.normalized_search != normalized_search
             or checkpoint.query_fingerprint != query_fingerprint
             or checkpoint.key_folded != _ascii_fold(checkpoint.attribute_key)
             or checkpoint.attribute_type_rank not in _ATTRIBUTE_TYPE_RANK.values()
@@ -1115,6 +1469,7 @@ def _identity_fingerprint(domain: str, identity: Any) -> str:
 
 def _qualification_fingerprint(
     activation_rows: list[dict[str, Any]],
+    source_stream_rows: list[dict[str, Any]],
     checkpoint_rows: list[dict[str, Any]],
 ) -> str:
     activations = []
@@ -1134,10 +1489,20 @@ def _qualification_fingerprint(
                     _row_datetime(row["writer_watermark"])
                 ),
                 "status": str(row["status"]),
-                "qualified_at_us": _unix_microseconds(
-                    _row_datetime(row["qualified_at"])
+            }
+        )
+
+    source_streams = []
+    for project_id, row in sorted(
+        ((str(row["project_id"]), row) for row in source_stream_rows),
+        key=lambda item: item[0],
+    ):
+        source_streams.append(
+            {
+                "project_id": project_id,
+                "source_stream_fences": _source_stream_fences(
+                    row["source_stream_fences"]
                 ),
-                "state_version": _strict_int(row["state_version"]),
             }
         )
 
@@ -1149,12 +1514,36 @@ def _qualification_fingerprint(
         checkpoints.append(
             {
                 "project_id": project_id,
-                "checkpoint_fences": _checkpoint_fences(row["checkpoint_fences"]),
+                # Replacement-state versions can change after an idempotent
+                # controller replay without changing the immutable epoch.
+                "checkpoint_fences": tuple(
+                    fence[:3] for fence in _checkpoint_fences(row["checkpoint_fences"])
+                ),
             }
         )
     return _identity_fingerprint(
-        "qualification-v1",
-        {"activations": activations, "checkpoints": checkpoints},
+        "qualification-v2",
+        {
+            "activations": activations,
+            "source_streams": source_streams,
+            "checkpoints": checkpoints,
+        },
+    )
+
+
+def _source_fence_fingerprint(source_stream_rows: list[dict[str, Any]]) -> str:
+    return _identity_fingerprint(
+        "source-fence-v1",
+        tuple(
+            (
+                str(row["project_id"]),
+                _source_stream_fences(row["source_stream_fences"]),
+            )
+            for row in sorted(
+                source_stream_rows,
+                key=lambda value: str(value["project_id"]),
+            )
+        ),
     )
 
 
@@ -1162,6 +1551,46 @@ def _aware_utc(value: datetime, label: str) -> datetime:
     if not isinstance(value, datetime) or value.tzinfo is None:
         raise ValueError(f"{label} must be a timezone-aware datetime")
     return value.astimezone(UTC)
+
+
+def _catalog_database(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if (
+        not isinstance(value, str)
+        or not _DATABASE_RE.fullmatch(value)
+        or len(value.encode("utf-8")) > CATALOG_MAX_DATABASE_NAME_BYTES
+        or value.lower() in {"system", "information_schema"}
+    ):
+        raise ValueError("catalog_database must be a simple non-system identifier")
+    return value
+
+
+def _qualify_catalog_sql(sql: str, database: str | None) -> str:
+    """Qualify only the closed catalog-table names.
+
+    Dev keeps the additive catalog in an isolated database so neither schema
+    application nor catalog credentials need access to an existing table.
+    Production may leave this unset when the reviewed replicated tables are
+    eventually installed in the CH25 application database.
+    """
+
+    database = _catalog_database(database)
+    if database is None:
+        return sql
+    qualified = sql
+    replacement_count = 0
+    for table in _CATALOG_TABLES:
+        table_reference = re.compile(rf"\bFROM[ \t]+{re.escape(table)}(?=[ \t\r\n]|$)")
+        qualified, count = table_reference.subn(
+            f"FROM `{database}`.`{table}`",
+            qualified,
+        )
+        if count:
+            replacement_count += count
+    if replacement_count != 1:
+        raise ValueError("catalog SQL must reference exactly one allowlisted table")
+    return qualified
 
 
 def _row_datetime(value: Any) -> datetime:
@@ -1198,6 +1627,44 @@ def _checkpoint_fences(value: Any) -> tuple[tuple[int, int, int, int], ...]:
         if start_us >= end_us or source_version_fence <= 0 or state_version <= 0:
             raise ValueError("invalid catalog checkpoint fence")
         fences.append((start_us, end_us, source_version_fence, state_version))
+    return tuple(fences)
+
+
+def _source_stream_fences(
+    value: Any,
+) -> tuple[tuple[str, int, int, int, int, str, str], ...]:
+    if not isinstance(value, (tuple, list)) or not value:
+        raise ValueError("catalog source stream fences must be a non-empty array")
+    fences: list[tuple[str, int, int, int, int, str, str]] = []
+    for item in value:
+        if not isinstance(item, (tuple, list)) or len(item) != 7:
+            raise ValueError("invalid catalog source stream fence")
+        stream_id = item[0]
+        if not isinstance(stream_id, str) or str(uuid.UUID(stream_id)) != stream_id:
+            raise ValueError("invalid catalog source stream id")
+        envelope_version, first_sequence, last_sequence, frozen_sequence = (
+            _strict_int(part) for part in item[1:5]
+        )
+        terminal_digest = _fingerprint(item[5])
+        source_fence_digest = _fingerprint(item[6])
+        if (
+            envelope_version <= 0
+            or first_sequence <= 0
+            or last_sequence < first_sequence
+            or frozen_sequence != last_sequence
+        ):
+            raise ValueError("invalid catalog source stream sequence fence")
+        fences.append(
+            (
+                stream_id,
+                envelope_version,
+                first_sequence,
+                last_sequence,
+                frozen_sequence,
+                terminal_digest,
+                source_fence_digest,
+            )
+        )
     return tuple(fences)
 
 

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import structlog
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import Q, QuerySet
 from django.shortcuts import get_object_or_404
@@ -5004,20 +5005,24 @@ class EvalUsageStatsView(APIView):
                 "start_date": query.get("start_date"),
                 "end_date": query.get("end_date"),
             }
-            previous_exact = read_exact_snapshot("eval-usage", cache_identity)
-            if not getattr(request, "_exact_aggregation_worker", False):
-                return self._gm.success_response(
-                    read_or_schedule_exact_snapshot(
-                        "eval-usage",
-                        cache_identity,
-                        refresh=bool(query["refresh"]),
-                        pending_payload=_pending_eval_usage_payload(
-                            template_id,
-                            page,
-                            page_size,
-                        ),
+            clickhouse_usage_enabled = (
+                settings.EVAL_USAGE_CLICKHOUSE_ENABLED and is_clickhouse_enabled()
+            )
+            if clickhouse_usage_enabled:
+                previous_exact = read_exact_snapshot("eval-usage", cache_identity)
+                if not getattr(request, "_exact_aggregation_worker", False):
+                    return self._gm.success_response(
+                        read_or_schedule_exact_snapshot(
+                            "eval-usage",
+                            cache_identity,
+                            refresh=bool(query["refresh"]),
+                            pending_payload=_pending_eval_usage_payload(
+                                template_id,
+                                page,
+                                page_size,
+                            ),
+                        )
                     )
-                )
 
             if period in ("30m", "6h", "1d"):
                 bucket_minutes = (
@@ -5030,7 +5035,7 @@ class EvalUsageStatsView(APIView):
             period_qs = None
             read_completeness = EvalUsageReadCompleteness.COMPLETE.value
             unavailable_fields: list[str] = []
-            if is_clickhouse_enabled():
+            if clickhouse_usage_enabled:
                 project_configs = CustomEvalConfig.objects.filter(
                     eval_template_id=template_id,
                     deleted=False,
@@ -5512,7 +5517,10 @@ class EvalUsageStatsView(APIView):
             # missing/mistyped field raises here (caught below → 400 + log)
             # instead of shipping a drifted shape to the FE.
             serialized = EvalUsageStatsResponseResultSerializer(instance=response).data
-            if getattr(request, "_exact_aggregation_worker", False):
+            if (
+                getattr(request, "_exact_aggregation_worker", False)
+                or not clickhouse_usage_enabled
+            ):
                 return self._gm.success_response(serialized)
             return self._gm.success_response(
                 publish_exact_snapshot("eval-usage", cache_identity, serialized)

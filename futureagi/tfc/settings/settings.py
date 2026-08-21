@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
 import os
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -42,6 +43,14 @@ EXACT_AGGREGATION_TASK_QUEUE = os.getenv(
     "EXACT_AGGREGATION_TASK_QUEUE",
     "tasks_xl",
 )
+
+# Eval-usage API reads use ClickHouse in deployed environments. Keep the
+# source selection explicit so contract tests and standalone installs can use
+# the existing PostgreSQL fallback without changing global ClickHouse routing.
+EVAL_USAGE_CLICKHOUSE_ENABLED = os.getenv(
+    "EVAL_USAGE_CLICKHOUSE_ENABLED",
+    "true",
+).lower() in ("true", "1", "t", "yes", "y")
 
 
 def _split_env(name: str, default: str = "") -> list[str]:
@@ -881,6 +890,175 @@ CLICKHOUSE_V2 = {
     "QUERY_TYPES_SHADOW": os.getenv("CH25_QUERY_TYPES_SHADOW", ""),
     "QUERY_TYPES_DISABLED": os.getenv("CH25_QUERY_TYPES_DISABLED", ""),
 }
+
+# ``off`` is the production-safe default. ``shadow`` is fail-open observation;
+# ``read`` can affect public results only in an explicitly acknowledged DEV
+# deployment. The runtime helper repeats this guard so an override cannot turn
+# a production process into a catalog reader after settings import.
+SPAN_ATTRIBUTE_CATALOG_READ_MODE = (
+    os.getenv("SPAN_ATTRIBUTE_CATALOG_READ_MODE", "off").strip().lower()
+)
+SPAN_ATTRIBUTE_CATALOG_DATABASE = os.getenv(
+    "SPAN_ATTRIBUTE_CATALOG_DATABASE", ""
+).strip()
+SPAN_ATTRIBUTE_CATALOG_DEV_READ_ACK = os.getenv(
+    "SPAN_ATTRIBUTE_CATALOG_DEV_READ_ACK", ""
+).strip()
+_span_attribute_catalog_dev_snapshot_raw = (
+    os.getenv("SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED", "false").strip().lower()
+)
+if _span_attribute_catalog_dev_snapshot_raw not in {"true", "false"}:
+    raise ValueError(
+        "SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED must be true or false"
+    )
+SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED = (
+    _span_attribute_catalog_dev_snapshot_raw == "true"
+)
+_span_attribute_catalog_is_dev_deployment = ENV_TYPE in {
+    "dev",
+    "development",
+} or (ENV_TYPE == "staging" and CLOUD_DEPLOYMENT == "DEV")
+_span_attribute_catalog_handoff_start_raw = os.getenv(
+    "SPAN_ATTRIBUTE_CATALOG_HANDOFF_START", ""
+).strip()
+_span_attribute_catalog_handoff_end_raw = os.getenv(
+    "SPAN_ATTRIBUTE_CATALOG_HANDOFF_END", ""
+).strip()
+
+
+def _span_attribute_catalog_bound(raw_value):
+    if not raw_value:
+        return None
+    try:
+        return datetime.fromisoformat(raw_value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+SPAN_ATTRIBUTE_CATALOG_HANDOFF_START = _span_attribute_catalog_bound(
+    _span_attribute_catalog_handoff_start_raw
+)
+SPAN_ATTRIBUTE_CATALOG_HANDOFF_END = _span_attribute_catalog_bound(
+    _span_attribute_catalog_handoff_end_raw
+)
+SPAN_ATTRIBUTE_CATALOG_CH_HOST = os.getenv("SPAN_ATTRIBUTE_CATALOG_CH_HOST", "").strip()
+_span_attribute_catalog_ch_port_raw = os.getenv(
+    "SPAN_ATTRIBUTE_CATALOG_CH_PORT", ""
+).strip()
+SPAN_ATTRIBUTE_CATALOG_CH_DATABASE = os.getenv(
+    "SPAN_ATTRIBUTE_CATALOG_CH_DATABASE", ""
+).strip()
+SPAN_ATTRIBUTE_CATALOG_CH_USER = os.getenv("SPAN_ATTRIBUTE_CATALOG_CH_USER", "").strip()
+# Do not strip or interpolate secrets. Runtime connection construction consumes
+# this value directly and its redacted config object excludes it from repr().
+SPAN_ATTRIBUTE_CATALOG_CH_PASSWORD = os.getenv("SPAN_ATTRIBUTE_CATALOG_CH_PASSWORD", "")
+try:
+    SPAN_ATTRIBUTE_CATALOG_CH_PORT = (
+        int(_span_attribute_catalog_ch_port_raw)
+        if _span_attribute_catalog_ch_port_raw
+        else 0
+    )
+except ValueError:
+    SPAN_ATTRIBUTE_CATALOG_CH_PORT = 0
+if SPAN_ATTRIBUTE_CATALOG_READ_MODE not in {"off", "shadow", "read"}:
+    raise ValueError("SPAN_ATTRIBUTE_CATALOG_READ_MODE must be off, shadow, or read")
+try:
+    SPAN_ATTRIBUTE_CATALOG_EPOCH = int(os.getenv("SPAN_ATTRIBUTE_CATALOG_EPOCH", "0"))
+except ValueError as exc:
+    raise ValueError("SPAN_ATTRIBUTE_CATALOG_EPOCH must be a UInt16") from exc
+if not 0 <= SPAN_ATTRIBUTE_CATALOG_EPOCH <= 65_535:
+    raise ValueError("SPAN_ATTRIBUTE_CATALOG_EPOCH must be a UInt16")
+if SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED and (
+    SPAN_ATTRIBUTE_CATALOG_READ_MODE != "read"
+    or not _span_attribute_catalog_is_dev_deployment
+    or SPAN_ATTRIBUTE_CATALOG_DEV_READ_ACK
+    != "I_ACKNOWLEDGE_DEV_ONLY_ATTRIBUTE_CATALOG_READS"
+):
+    raise ValueError(
+        "span attribute catalog DEV snapshot requires acknowledged DEV read mode"
+    )
+if SPAN_ATTRIBUTE_CATALOG_READ_MODE == "read":
+    if (
+        not _span_attribute_catalog_is_dev_deployment
+        or SPAN_ATTRIBUTE_CATALOG_DEV_READ_ACK
+        != "I_ACKNOWLEDGE_DEV_ONLY_ATTRIBUTE_CATALOG_READS"
+    ):
+        raise ValueError(
+            "span attribute catalog public reads require DEV and explicit "
+            "acknowledgement"
+        )
+    if not 1 <= SPAN_ATTRIBUTE_CATALOG_EPOCH <= 65_535:
+        raise ValueError(
+            "span attribute catalog public reads require an epoch from 1 to 65535"
+        )
+    if not SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED:
+        raise ValueError(
+            "span attribute catalog public reads require the pinned DEV snapshot"
+        )
+    if (
+        SPAN_ATTRIBUTE_CATALOG_HANDOFF_START is None
+        or SPAN_ATTRIBUTE_CATALOG_HANDOFF_END is None
+        or SPAN_ATTRIBUTE_CATALOG_HANDOFF_START.tzinfo is None
+        or SPAN_ATTRIBUTE_CATALOG_HANDOFF_END.tzinfo is None
+        or SPAN_ATTRIBUTE_CATALOG_HANDOFF_START.utcoffset() != timedelta(0)
+        or SPAN_ATTRIBUTE_CATALOG_HANDOFF_END.utcoffset() != timedelta(0)
+        or any(
+            (
+                bound.minute,
+                bound.second,
+                bound.microsecond,
+            )
+            != (0, 0, 0)
+            for bound in (
+                SPAN_ATTRIBUTE_CATALOG_HANDOFF_START,
+                SPAN_ATTRIBUTE_CATALOG_HANDOFF_END,
+            )
+        )
+        or SPAN_ATTRIBUTE_CATALOG_HANDOFF_START >= SPAN_ATTRIBUTE_CATALOG_HANDOFF_END
+    ):
+        raise ValueError(
+            "span attribute catalog public reads require aligned increasing UTC "
+            "handoff bounds"
+        )
+    if (
+        not SPAN_ATTRIBUTE_CATALOG_CH_DATABASE
+        or len(SPAN_ATTRIBUTE_CATALOG_CH_DATABASE.encode("utf-8")) > 128
+        or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", SPAN_ATTRIBUTE_CATALOG_CH_DATABASE)
+        is None
+    ):
+        raise ValueError(
+            "span attribute catalog public reads require a safe dedicated "
+            "catalog database"
+        )
+    if (
+        SPAN_ATTRIBUTE_CATALOG_DATABASE != SPAN_ATTRIBUTE_CATALOG_CH_DATABASE
+        or "dev" not in SPAN_ATTRIBUTE_CATALOG_CH_DATABASE.lower()
+        or SPAN_ATTRIBUTE_CATALOG_CH_DATABASE.lower()
+        in {"default", "system", "information_schema", "futureagi"}
+    ):
+        raise ValueError(
+            "span attribute catalog public reads require the same isolated "
+            "development catalog database for qualification and connection"
+        )
+    if (
+        not SPAN_ATTRIBUTE_CATALOG_CH_HOST
+        or not 1 <= SPAN_ATTRIBUTE_CATALOG_CH_PORT <= 65_535
+        or not SPAN_ATTRIBUTE_CATALOG_CH_USER
+        or not SPAN_ATTRIBUTE_CATALOG_CH_PASSWORD
+    ):
+        raise ValueError(
+            "span attribute catalog public reads require complete dedicated "
+            "ClickHouse connection settings"
+        )
+    _span_attribute_catalog_source_users = {
+        str(CLICKHOUSE_V2.get("CH25_USER") or "").strip(),
+        str(CLICKHOUSE.get("CH_USERNAME") or "").strip(),
+    } - {""}
+    if SPAN_ATTRIBUTE_CATALOG_CH_USER in _span_attribute_catalog_source_users:
+        raise ValueError(
+            "span attribute catalog public reads require a dedicated ClickHouse "
+            "read identity distinct from source application users"
+        )
 
 # Fail-closed: rollup routing requires both flag=on and window >= coverage date.
 # Set COVERED_SINCE (ISO-8601) after running rebuild_dashboard_attr_rollup.

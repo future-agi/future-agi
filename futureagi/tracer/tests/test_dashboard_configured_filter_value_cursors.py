@@ -356,10 +356,8 @@ def test_annotation_choice_label_search_returns_the_stored_value(
     assert response.status_code == 200
     payload = response.json()["result"]
     assert payload["values"] == [{"value": "refund_code", "label": "Refund requested"}]
-    # Configured choices are stable, but stored-only Score values are a
-    # changing sample. The response must not claim this is the full historical
-    # annotation vocabulary.
-    assert payload["query_complete"] is False
+    assert payload["query_complete"] is True
+    assert payload["query_status"] == "complete"
 
 
 @pytest.mark.django_db
@@ -410,7 +408,7 @@ def test_annotation_configured_choices_preserve_json_values_and_search_them(
         {"value": "Empty fallback", "label": "Empty fallback"},
         {"value": "Plain string", "label": "Plain string"},
     ]
-    assert payload["query_complete"] is False
+    assert payload["query_complete"] is True
 
     for search, expected in (
         ("false", [{"value": False, "label": "Disabled"}]),
@@ -429,15 +427,15 @@ def test_annotation_configured_choices_preserve_json_values_and_search_them(
             {**params, "search": search},
         ).json()["result"]
         assert searched["values"] == expected
-    assert payload["query_status"] == "sampled"
-    assert payload["query_error_code"] == "sample_limit"
-    assert payload["browse_status"] == "limit_reached"
+    assert payload["query_status"] == "complete"
+    assert "query_error_code" not in payload
+    assert payload["browse_status"] == "exhausted"
     assert payload["has_more"] is False
     assert payload["next_cursor"] is None
 
 
 @pytest.mark.django_db
-def test_annotation_stored_categorical_fallback_never_claims_exhaustive(
+def test_annotation_stored_categorical_values_are_included_in_exact_cursor_response(
     auth_client,
     project,
     organization,
@@ -465,22 +463,9 @@ def test_annotation_stored_categorical_fallback_never_claims_exhaustive(
     with patch.object(
         AnnotationLabelScoresProjectPG,
         "categorical_values_for_label",
-        side_effect=[
-            [{"selected": ["Stored first"]}],
-            [{"selected": ["Stored changed"]}],
-        ],
+        return_value=[{"selected": ["Stored only"]}],
     ) as stored_read:
-        first = auth_client.get(
-            FILTER_VALUES_URL,
-            {
-                "source": "traces",
-                "metric_type": "annotation_metric",
-                "metric_name": str(label.id),
-                "project_ids": str(project.id),
-                "page_size": 10,
-            },
-        ).json()["result"]
-        second = auth_client.get(
+        payload = auth_client.get(
             FILTER_VALUES_URL,
             {
                 "source": "traces",
@@ -494,17 +479,16 @@ def test_annotation_stored_categorical_fallback_never_claims_exhaustive(
     expected_values = [
         {"value": "Configured", "label": "Configured"},
         {"value": "Configured Other", "label": "Configured Other"},
+        {"value": "Stored only", "label": "Stored only"},
     ]
-    assert first["values"] == expected_values
-    assert second["values"] == expected_values
-    assert first["query_complete"] is False
-    assert first["query_status"] == "sampled"
-    assert first["query_error_code"] == "sample_limit"
-    assert first["browse_status"] == "limit_reached"
-    assert first["has_more"] is False
-    assert first["next_cursor"] is None
-    assert second["next_cursor"] is None
-    stored_read.assert_not_called()
+    assert payload["values"] == expected_values
+    assert payload["query_complete"] is True
+    assert payload["query_status"] == "complete"
+    assert "query_error_code" not in payload
+    assert payload["browse_status"] == "exhausted"
+    assert payload["has_more"] is False
+    assert payload["next_cursor"] is None
+    stored_read.assert_called_once_with(label.id, [str(project.id)])
 
 
 @pytest.mark.django_db

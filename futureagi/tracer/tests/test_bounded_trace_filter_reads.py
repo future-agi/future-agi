@@ -21,6 +21,7 @@ from tracer.selectors.trace_filter_reads import (
 )
 from tracer.services.clickhouse.page_dedup import paginate_deduped
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.filters import EvalFilterMetadata
 from tracer.services.clickhouse.query_builders.session_list import (
     SessionListQueryBuilder,
 )
@@ -161,6 +162,22 @@ def _annotation_filter(
         "filter_config": {
             "col_type": "ANNOTATION",
             "filter_type": filter_type,
+            "filter_op": operation,
+            "filter_value": value,
+        },
+    }
+
+
+def _annotator_filter(
+    value: object,
+    *,
+    operation: str = "equals",
+) -> dict[str, Any]:
+    return {
+        "column_id": "annotator",
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "annotator",
             "filter_op": operation,
             "filter_value": value,
         },
@@ -884,7 +901,7 @@ def test_structural_end_user_id_candidate_seed_uses_direct_uuid_predicate(
     assert params["col_1"] == end_user_id
 
 
-def test_voice_annotator_and_turn_count_use_resumable_bounded_seed() -> None:
+def test_voice_annotator_and_turn_count_use_positive_candidate_seed() -> None:
     annotator_id = "00000000-0000-4000-8000-000000000099"
     filters = [
         _time_filter(),
@@ -913,20 +930,35 @@ def test_voice_annotator_and_turn_count_use_resumable_bounded_seed() -> None:
         filters=filters,
     )
 
-    sql, params = builder.build_filter_seed_page(
+    sql, params = builder.build_filter_candidate_seed_page(
         slice_start=START,
         slice_end=END,
         limit=26,
     )
     compact_sql = " ".join(sql.split())
+    match_sql, match_params = builder.build_filter_match_query(
+        ["trace-a", "trace-b"]
+    )
 
-    assert builder.supports_filter_candidate_seed_page() is False
+    assert builder.supports_filter_candidate_seed_page() is True
+    assert builder.recommended_filter_initial_slice_width() == END - START
+    assert builder.recommended_filter_max_slice_width() == END - START
     assert builder.recommended_filter_query_timeout_ms() == 9_500
-    assert "model_hub_score" not in compact_sql
+    assert "model_hub_score AS s FINAL" in compact_sql
+    assert "s.annotator_id IN (toUUID(%(uid_1)s))" in compact_sql
+    assert "s.created_at >=" not in compact_sql
     assert "observation_type" in compact_sql
     assert "ORDER BY start_time DESC, trace_id DESC" in compact_sql
     assert "LIMIT 1 BY trace_id LIMIT %(filter_seed_limit)s" in compact_sql
+    assert params["uid_1"] == annotator_id
     assert params["filter_seed_limit"] == 26
+    # Candidate acquisition uses the selective Score relation, but publication
+    # still repeats both the annotator and turn-count predicates on the finite
+    # candidate batch.
+    assert "model_hub_score AS s FINAL" in match_sql
+    assert "candidate_trace_ids" in match_sql
+    assert 4 in match_params.values()
+    assert match_params["candidate_trace_ids"] == ("trace-a", "trace-b")
 
 
 def test_negative_voice_annotator_stays_on_exact_bounded_classifier() -> None:
@@ -1152,12 +1184,17 @@ def test_has_eval_candidate_seed_requires_authoritative_project_config_metadata(
         [_time_filter(), _has_annotation_filter("false")],
         [
             _time_filter(),
-            _has_eval_filter(True),
-            _attribute_filter("final_status", "Rejected"),
+            {
+                **_has_eval_filter(False),
+                "filter_config": {
+                    **_has_eval_filter(False)["filter_config"],
+                    "col_type": "EVAL_METRIC",
+                },
+            },
         ],
     ],
 )
-def test_non_positive_or_conjoined_relation_does_not_use_candidate_seed(
+def test_negative_existence_relation_does_not_use_candidate_seed(
     filters: list[dict[str, Any]],
 ) -> None:
     builder = TraceListQueryBuilderV2(
@@ -1175,6 +1212,37 @@ def test_non_positive_or_conjoined_relation_does_not_use_candidate_seed(
             slice_end=END,
             limit=26,
         )
+
+
+@override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2")
+def test_conjoined_positive_relation_seeds_then_reclassifies_every_filter() -> None:
+    config_id = "00000000-0000-4000-8000-000000000088"
+    builder = TraceListQueryBuilderV2(
+        project_id=PROJECT_ID,
+        filters=[
+            _time_filter(),
+            _has_eval_filter(True),
+            _attribute_filter("final_status", "Rejected"),
+        ],
+        eval_config_ids=[config_id],
+    )
+
+    seed_sql, _ = builder.build_filter_candidate_seed_page(
+        slice_start=START,
+        slice_end=END,
+        limit=26,
+    )
+    match_sql, match_params = builder.build_filter_match_query(
+        ["trace-a", "trace-b"]
+    )
+
+    assert builder.supports_filter_candidate_seed_page() is True
+    assert "tracer_eval_logger_v2 AS eval_scan" in seed_sql
+    assert "candidate_trace_ids" not in seed_sql
+    assert "tracer_eval_logger_v2 AS eval_scan" in match_sql
+    assert "candidate_trace_ids" in match_sql
+    assert "rejected" in match_params.values()
+    assert match_params["candidate_trace_ids"] == ("trace-a", "trace-b")
 
 
 @pytest.mark.parametrize(
@@ -1376,6 +1444,104 @@ def test_voice_positive_relation_candidate_seed_keeps_conversation_and_cursor_or
     assert internal_builder.supports_filter_candidate_seed_page() is False
     assert internal_builder.recommended_filter_initial_slice_width() is None
     assert internal_builder.recommended_filter_max_slice_width() is None
+
+
+@pytest.mark.parametrize("operation", ["in", "not_in"])
+@override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2")
+def test_voice_eval_value_filter_uses_project_scoped_positive_candidate_seed(
+    operation: str,
+) -> None:
+    config_id = "480d5837-49e8-4a39-aad9-93d04790833c"
+    eval_filter = _eval_filter(
+        config_id,
+        ["Passed", "Failed"],
+        filter_type="text",
+        operation=operation,
+    )
+    builder = VoiceCallListQueryBuilderV2(
+        project_id=PROJECT_ID,
+        filters=[_time_filter(), eval_filter],
+        eval_config_ids=[config_id],
+        eval_filter_metadata={
+            config_id: EvalFilterMetadata((config_id,), "PASS_FAIL")
+        },
+    )
+
+    seed_sql, seed_params = builder.build_filter_candidate_seed_page(
+        slice_start=START,
+        slice_end=END,
+        limit=26,
+        before_start_time=END - timedelta(minutes=1),
+        before_id="trace-z",
+    )
+    match_sql, match_params = builder.build_filter_match_query(
+        ["trace-a", "trace-b"]
+    )
+
+    comparison = "NOT IN" if operation == "not_in" else "IN"
+    assert builder.supports_filter_candidate_seed_page() is True
+    assert builder.recommended_filter_initial_slice_width() == END - START
+    assert "tracer_eval_logger_v2 AS eval_scan" in seed_sql
+    assert f"output_bool {comparison} %(eval_bool_2)s" in seed_sql
+    assert "eval_scan.created_at >=" not in seed_sql
+    assert "candidate_trace_ids" not in seed_sql
+    assert "lowerUTF8(toString(observation_type))" in seed_sql
+    assert seed_params["eval_cfg_1"] == (config_id,)
+    assert seed_params["eval_bool_2"] == (1, 0)
+    assert seed_params["filter_before_id"] == "trace-z"
+
+    # Candidate-first is acquisition-only. The finite latest-state classifier
+    # rechecks the same value operation for the exact page identities.
+    assert "tracer_eval_logger_v2 AS eval_scan" in match_sql
+    assert f"output_bool {comparison} %(eval_bool_2)s" in match_sql
+    assert "toString(eval_scan.trace_id) IN %(candidate_trace_ids)s" in match_sql
+    assert match_params["candidate_trace_ids"] == ("trace-a", "trace-b")
+
+
+@override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2")
+def test_voice_eval_and_annotator_conjunction_prefers_score_seed_and_rechecks_eval() -> (
+    None
+):
+    config_id = "480d5837-49e8-4a39-aad9-93d04790833c"
+    annotator_id = "e1f8e455-9248-4aec-a510-ead35a946235"
+    builder = VoiceCallListQueryBuilderV2(
+        project_id=PROJECT_ID,
+        filters=[
+            _time_filter(),
+            _eval_filter(
+                config_id,
+                ["Passed", "Failed"],
+                filter_type="text",
+                operation="in",
+            ),
+            _annotator_filter(annotator_id),
+        ],
+        eval_config_ids=[config_id],
+        eval_filter_metadata={
+            config_id: EvalFilterMetadata((config_id,), "PASS_FAIL")
+        },
+    )
+
+    seed_sql, seed_params = builder.build_filter_candidate_seed_page(
+        slice_start=START,
+        slice_end=END,
+        limit=26,
+    )
+    match_sql, match_params = builder.build_filter_match_query(["trace-positive"])
+
+    # Annotator is the more selective positive witness even when the eval leaf
+    # appears first in the public payload.
+    assert builder.supports_filter_candidate_seed_page() is True
+    assert "model_hub_score AS s FINAL" in seed_sql
+    assert "s.annotator_id IN (toUUID(%(uid_1)s))" in seed_sql
+    assert "tracer_eval_logger_v2" not in seed_sql
+    assert seed_params["uid_1"] == annotator_id
+    assert "lowerUTF8(toString(observation_type))" in seed_sql
+
+    assert "model_hub_score AS s FINAL" in match_sql
+    assert "tracer_eval_logger_v2 AS eval_scan" in match_sql
+    assert "candidate_trace_ids" in match_sql
+    assert match_params["candidate_trace_ids"] == ("trace-positive",)
 
 
 def test_negated_user_trace_filter_does_not_use_positive_root_seed() -> None:

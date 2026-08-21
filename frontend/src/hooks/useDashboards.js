@@ -87,6 +87,12 @@ const validateFilterValueCursor = (page, consumedCursors = new Set()) => {
 // one physical request; a signed cursor remains available for the next
 // explicit action, so this latency guard never becomes a vocabulary cap.
 export const FILTER_VALUE_REQUEST_TIMEOUT_MS = 4_800;
+// Sparse system dimensions (for example Model) can legitimately have no
+// value inside the server's first recent-time checkpoint.  One bounded
+// follow-up still keeps the complete property-selection gesture below the
+// product's ten-second SLA while avoiding an empty picker that requires a
+// manual "Continue" click.
+const SYSTEM_FILTER_VALUE_INITIAL_FOLLOW_DEADLINE_MS = 9_500;
 
 const getFilterValueIdentity = (option) => {
   const value =
@@ -517,12 +523,15 @@ export function useDashboardFilterValues({
       isCurrent: () => !signal?.aborted,
       cancellationSignal: signal,
       startedAt: actionStartedAt,
-      // One interaction owns one physical HTTP request. Empty advancing
-      // checkpoints stay explicit through the signed cursor so a second
-      // four-second request can never push the same click beyond five
-      // seconds.
-      maxContinuations: 0,
-      maxElapsedMs: FILTER_VALUE_REQUEST_TIMEOUT_MS,
+      // System dimensions may be sparse at the newest retained-data frontier.
+      // Follow exactly one empty checkpoint on the initial gesture; later
+      // pages and every other metric family remain one-request actions.
+      maxContinuations:
+        isFreshChainRead && metricType === "system_metric" ? 1 : 0,
+      maxElapsedMs:
+        isFreshChainRead && metricType === "system_metric"
+          ? SYSTEM_FILTER_VALUE_INITIAL_FOLLOW_DEADLINE_MS
+          : FILTER_VALUE_REQUEST_TIMEOUT_MS,
     });
     const checkedPage = checkedMetadata(page);
     return {
