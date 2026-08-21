@@ -29,7 +29,22 @@ const properties = [
   })),
 ];
 
-const renderPanel = (currentFilters, onApply = vi.fn()) =>
+// No property ships operators its type does not have; this stands in for one
+// that does, so the fallback is exercised.
+const MISDECLARED_PROPERTY = {
+  id: "cache_hit_flag",
+  name: "Cache Hit Flag",
+  category: "system",
+  rawCategory: "system_metric",
+  type: "boolean",
+  operators: ["contains"],
+};
+
+const renderPanel = (
+  currentFilters,
+  onApply = vi.fn(),
+  propertyList = properties,
+) =>
   renderWithRouter(
     <QueryClientProvider
       client={
@@ -42,7 +57,7 @@ const renderPanel = (currentFilters, onApply = vi.fn()) =>
         onClose={vi.fn()}
         onApply={onApply}
         currentFilters={currentFilters}
-        properties={properties}
+        properties={propertyList}
         categories={CATEGORIES}
         projectId="test-project"
         showAi={false}
@@ -225,5 +240,26 @@ describe("alert filter operators follow the row's chosen type", () => {
       expect.arrayContaining(["contains", "not contains"]),
     );
     expect(options).not.toContain("between");
+  });
+
+  it("keeps the type's operators when a property declares ones its type lacks", async () => {
+    renderPanel(
+      [
+        {
+          field: "cache_hit_flag",
+          fieldType: "boolean",
+          fieldCategory: "system",
+          operator: "equals",
+          value: true,
+        },
+      ],
+      vi.fn(),
+      [...properties, MISDECLARED_PROPERTY],
+    );
+
+    // Intersecting the declared `contains` with the boolean operators leaves
+    // nothing, which would render the row with an empty dropdown.
+    const options = await operatorOptions({ hasTypeSelect: false });
+    expect(options).toEqual(["equals", "not equals", "is null", "is not null"]);
   });
 });

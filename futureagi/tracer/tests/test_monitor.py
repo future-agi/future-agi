@@ -1189,6 +1189,26 @@ class TestMonitorViewHardening:
         response = auth_client.get("/tracer/user-alerts/?page_size=abc")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_preview_graph_deleted_eval_config_is_400(
+        self, auth_client, observe_project
+    ):
+        # Real path, no mocks: build_monitor_ch_builder raises for the missing
+        # eval config, so the graph surfaces the misconfig instead of
+        # rendering silently empty.
+        payload = {
+            "project": str(observe_project.id),
+            "metric_type": "evaluation_metrics",
+            "metric": "22222222-2222-2222-2222-222222222222",
+            "threshold_operator": "greater_than",
+            "threshold_type": "static",
+            "critical_threshold_value": 0.15,
+            "alert_frequency": 60,
+        }
+        response = auth_client.post(
+            "/tracer/user-alerts/preview-graph/", payload, format="json"
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
     def test_preview_graph_config_error_is_400(self, auth_client, observe_project):
         from unittest import mock
 

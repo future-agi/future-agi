@@ -109,14 +109,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: future-agi/ee
-          path: futureagi/ee
+          path: futureagi/ee/cloud
           token: ${{ secrets.EE_REPO_READ_TOKEN }}
           persist-credentials: true
           fetch-depth: 1
 
       - name: Resolve the EE branch to test against
         if: env.IS_INTERNAL_RUN == 'true'
-        working-directory: futureagi/ee
+        working-directory: futureagi/ee/cloud
         run: |
           # EE's default branch trails its own dev, so never settle for whatever
           # the checkout landed on: walk the same candidate chain the SDK
@@ -139,7 +139,7 @@ jobs:
         # always(): the branch-resolution step above hard-fails when no
         # candidate branch exists, and the token must be scrubbed regardless.
         if: ${{ always() && env.IS_INTERNAL_RUN == 'true' }}
-        working-directory: futureagi/ee
+        working-directory: futureagi/ee/cloud
         run: git config --unset-all http.https://github.com/.extraheader || true
 
       - uses: astral-sh/setup-uv@v5

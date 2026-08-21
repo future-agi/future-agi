@@ -5,13 +5,12 @@ Pure SQL-string assertions, no ClickHouse."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import List, Type
+from datetime import UTC, datetime
 
 import pytest
 from django.test import override_settings
 
-from tracer.services.clickhouse.query_builders import monitor_metrics as mm
+from tracer.models.monitor import MonitorMetricTypeChoices
 from tracer.services.clickhouse.query_builders.monitor_metrics import (
     MonitorMetricsQueryBuilder,
 )
@@ -21,8 +20,8 @@ from tracer.services.clickhouse.v2.query_builders.monitor_metrics import (
 
 PROJECT_ID = "11111111-1111-1111-1111-111111111111"
 EVAL_CONFIG_ID = "22222222-2222-2222-2222-222222222222"
-START = datetime(2026, 8, 1, tzinfo=timezone.utc)
-END = datetime(2026, 8, 8, tzinfo=timezone.utc)
+START = datetime(2026, 8, 1, tzinfo=UTC)
+END = datetime(2026, 8, 8, tzinfo=UTC)
 
 LEGACY_ND = "(deleted = 0 OR deleted IS NULL)"
 ATTR_FILTER = {
@@ -41,7 +40,7 @@ ATTR_FILTER = {
 
 
 def _builder(
-    cls: Type[MonitorMetricsQueryBuilder] = MonitorMetricsQueryBuilder,
+    cls: type[MonitorMetricsQueryBuilder] = MonitorMetricsQueryBuilder,
     output_type: str = "SCORE",
     filters=None,
 ) -> MonitorMetricsQueryBuilder:
@@ -54,14 +53,14 @@ def _builder(
 
 
 def _eval_sqls(
-    cls: Type[MonitorMetricsQueryBuilder] = MonitorMetricsQueryBuilder,
+    cls: type[MonitorMetricsQueryBuilder] = MonitorMetricsQueryBuilder,
     filters=None,
-) -> List[str]:
+) -> list[str]:
     b = _builder(cls, filters=filters)
     return [
-        b.build_metric_value_query(mm.EVALUATION_METRICS, START, END)[0],
-        b.build_historical_stats_query(mm.EVALUATION_METRICS, START, END)[0],
-        b.build_time_series_query(mm.EVALUATION_METRICS, START, END, 3600)[0],
+        b.build_metric_value_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END)[0],
+        b.build_historical_stats_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END)[0],
+        b.build_time_series_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END, 3600)[0],
     ]
 
 
@@ -88,19 +87,28 @@ def test_eval_v2_table_uses_is_deleted() -> None:
             )
 
 
-def test_eval_span_subquery_windowed_on_span_time() -> None:
-    # The metric window lives on the SPAN's created_at inside the membership
-    # subquery (evals run async after their spans), with the same ±1-day
-    # start_time pruning pads as every other spans query. An unbounded (or
-    # 30-day) span set exploded to 105M ids at prod scale.
-    for sql in _eval_sqls():
-        subq = sql.split("observation_span_id IN (", 1)[1]
-        assert "SELECT id FROM spans" in subq
-        assert "created_at >= %(start_time)s AND created_at < %(end_time)s" in subq
-        assert "start_time >= %(start_time)s - INTERVAL 1 DAY" in subq
-        assert "start_time < %(end_time)s + INTERVAL 1 DAY" in subq
+def test_eval_membership_is_windowed_span_join() -> None:
+    # Membership is a JOIN on a span subquery windowed on the SPAN's
+    # start_time (event time; evals run async after their spans), with the
+    # created_at skew guard. A JOIN streams the span set — the old IN
+    # materialized it in memory (105M ids / 30d at prod scale). The series
+    # additionally selects start_time to bucket on.
+    value_sql, stats_sql, ts_sql = _eval_sqls()
+    for sql in (value_sql, stats_sql, ts_sql):
+        subq = sql.split("INNER JOIN (", 1)[1]
+        assert "ON observation_span_id = sp.id" in subq
+        assert "start_time >= %(start_time)s AND start_time < %(end_time)s" in subq
+        assert "created_at >= %(start_time)s - INTERVAL 1 DAY" in subq
         assert "project_id = %(project_id)s" in subq
+        assert "observation_span_id IN" not in sql
         assert "INTERVAL 30 DAY" not in sql
+    assert "SELECT id FROM spans" in value_sql
+    assert "SELECT id, start_time FROM spans" in ts_sql
+
+
+def _eval_guards(sql: str) -> str:
+    # Eval-row conditions live in the WHERE after the membership join.
+    return sql.split("ON observation_span_id = sp.id", 1)[1]
 
 
 def test_eval_table_window_is_loose_lower_bound_only() -> None:
@@ -110,17 +118,32 @@ def test_eval_table_window_is_loose_lower_bound_only() -> None:
     # upper eval-time window — that measured "evals computed recently", not
     # "quality of recent activity" (8,577 vs 400 evals for the same hour).
     for sql in _eval_sqls():
-        head = sql.split("observation_span_id IN (", 1)[0]
-        assert "created_at >= %(start_time)s - INTERVAL 1 DAY" in head
-        assert "created_at < %(end_time)s" not in head
+        guards = _eval_guards(sql)
+        assert "created_at >= %(start_time)s - INTERVAL 1 DAY" in guards
+        assert "created_at < %(end_time)s" not in guards
         assert "created_at BETWEEN" not in sql
+
+
+def test_eval_rows_exclude_non_completed_statuses() -> None:
+    # Pending/running/skipped/errored work items carry NULL outputs that
+    # would read as failures (a burst of newly-enqueued evals must not
+    # depress the pass rate). Mirrors span_list.py / filters.py.
+    for sql in _eval_sqls():
+        guards = _eval_guards(sql)
+        assert "error = 0" in guards
+        assert "ifNull(output_str, '') != 'ERROR'" in guards
+        for status in ("pending", "running", "skipped", "errored"):
+            assert status in guards
+        assert "'completed'" not in guards  # NOT-IN keeps empty/NULL rows
 
 
 def test_v1_eval_filter_emits_legacy_span_attr_token() -> None:
     # Sanity: the spliced filter fragment uses v1 map columns pre-rewrite.
     b = _builder(filters=ATTR_FILTER)
     assert b._filter_clause, "attr filter should compile to a clause"
-    assert "span_attr" in b.build_metric_value_query(mm.EVALUATION_METRICS, START, END)[0]
+    assert (
+        "span_attr" in b.build_metric_value_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END)[0]
+    )
 
 
 def test_v2_eval_filter_fragment_is_rewritten() -> None:
@@ -143,10 +166,16 @@ def test_eval_empty_window_yields_null_for_all_output_types() -> None:
             eval_output_type=output_type,
             threshold_metric_value="Passed" if output_type != "SCORE" else None,
         )
-        assert "ifNotFinite(" in b.build_metric_value_query(mm.EVALUATION_METRICS, START, END)[0]
-        assert b.build_historical_stats_query(mm.EVALUATION_METRICS, START, END)[0].count(
+        assert (
             "ifNotFinite("
-        ) >= 2
+            in b.build_metric_value_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END)[0]
+        )
+        assert (
+            b.build_historical_stats_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END)[0].count(
+                "ifNotFinite("
+            )
+            >= 2
+        )
 
 
 @pytest.mark.parametrize("output_type", ["SCORE", "PASS_FAIL", "CHOICES"])
@@ -157,7 +186,7 @@ def test_all_eval_output_types_build(output_type: str) -> None:
         eval_output_type=output_type,
         threshold_metric_value="Passed" if output_type != "SCORE" else None,
     )
-    sql, _ = b.build_metric_value_query(mm.EVALUATION_METRICS, START, END)
+    sql, _ = b.build_metric_value_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END)
     assert "FROM " in sql and "custom_eval_config_id" in sql
 
 
@@ -170,9 +199,9 @@ def test_choices_without_threshold_value_returns_null() -> None:
         eval_output_type="CHOICES",
         threshold_metric_value=None,
     )
-    value_sql, _ = b.build_metric_value_query(mm.EVALUATION_METRICS, START, END)
-    stats_sql, _ = b.build_historical_stats_query(mm.EVALUATION_METRICS, START, END)
-    ts_sql, _ = b.build_time_series_query(mm.EVALUATION_METRICS, START, END, 3600)
+    value_sql, _ = b.build_metric_value_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END)
+    stats_sql, _ = b.build_historical_stats_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END)
+    ts_sql, _ = b.build_time_series_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END, 3600)
     assert "NULL" in value_sql and "output_str_list" not in value_sql
     assert "NULL" in stats_sql and "output_str_list" not in stats_sql
     assert "output_str_list" not in ts_sql
@@ -185,7 +214,7 @@ def test_pass_fail_time_series_shape() -> None:
         eval_output_type="PASS_FAIL",
         threshold_metric_value="Passed",
     )
-    sql, params = b.build_time_series_query(mm.EVALUATION_METRICS, START, END, 3600)
+    sql, params = b.build_time_series_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END, 3600)
     assert "output_bool = %(output_bool_val)s" in sql
     assert params["output_bool_val"] == 1
     assert "GROUP BY timestamp" in sql
@@ -198,7 +227,7 @@ def test_choices_time_series_shape() -> None:
         eval_output_type="CHOICES",
         threshold_metric_value="Good",
     )
-    sql, params = b.build_time_series_query(mm.EVALUATION_METRICS, START, END, 3600)
+    sql, params = b.build_time_series_query(MonitorMetricTypeChoices.EVALUATION_METRICS, START, END, 3600)
     assert "has(JSONExtract(output_str_list, 'Array(String)'), %(choice_val)s)" in sql
     assert params["choice_val"] == "Good"
     assert "GROUP BY timestamp" in sql

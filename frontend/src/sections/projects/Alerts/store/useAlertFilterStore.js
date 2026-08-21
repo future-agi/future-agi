@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import { alertTypes } from "../common";
+import { CLEARED_FILTER_STATE, createFilterSlice } from "./alertFilterState";
 
 // Fields the alerts list can be filtered on, in FilterPanel's `filterFields`
 // shape. `choices` hold the values the API expects; `choiceLabels` map them to
@@ -41,36 +42,8 @@ const buildProjectField = (projectOptions) => ({
   ),
 });
 
-// Only `project_id` goes to the API as a repeated param; the rest are scalars.
-const MULTI_VALUE_FIELDS = new Set(["project_id"]);
-
-const hasAnyValue = (filters) =>
-  !!filters && Object.values(filters).some((v) => v?.length > 0);
-
-/**
- * FilterPanel emits `{field: [values]}`. Translate that into the query params
- * the monitor-list endpoint expects, unwrapping single-select fields back to
- * scalars so the wire format is unchanged.
- */
-export const buildAlertFilterParams = (activeFilters) => {
-  if (!activeFilters) return null;
-
-  const params = Object.entries(activeFilters).reduce(
-    (acc, [field, values]) => {
-      if (!values?.length) return acc;
-      acc[field] = MULTI_VALUE_FIELDS.has(field) ? values : values[0];
-      return acc;
-    },
-    {},
-  );
-
-  return Object.keys(params).length > 0 ? params : null;
-};
-
 export const useAlertFilterStore = create((set) => ({
-  // `{field: [values]}` as produced by FilterPanel, or null when cleared.
-  activeFilters: null,
-  hasValidFilters: false,
+  ...createFilterSlice(set),
   projectOptions: [],
 
   setProjectOptions: (options) =>
@@ -78,16 +51,6 @@ export const useAlertFilterStore = create((set) => ({
       projectOptions:
         options?.map(({ id, name }) => ({ label: name, value: id })) || [],
     }),
-
-  setActiveFilters: (filters) =>
-    set({
-      activeFilters: hasAnyValue(filters) ? filters : null,
-      hasValidFilters: hasAnyValue(filters),
-    }),
-
-  clearAllFilters: () => set({ activeFilters: null, hasValidFilters: false }),
-
-  resetFilters: () => set({ activeFilters: null, hasValidFilters: false }),
 }));
 
 export const useAlertFilterShallow = () =>
@@ -99,8 +62,6 @@ export const useAlertFilterShallow = () =>
 
       setProjectOptions: state.setProjectOptions,
       setActiveFilters: state.setActiveFilters,
-      clearAllFilters: state.clearAllFilters,
-      resetFilters: state.resetFilters,
     })),
   );
 
@@ -119,10 +80,7 @@ export const useAlertFilterFields = (mainPage) => {
   );
 };
 
+// Also clears projectOptions, unlike the sheet store's reset.
 export const resetAlertFilterStoreState = () => {
-  useAlertFilterStore.setState({
-    activeFilters: null,
-    hasValidFilters: false,
-    projectOptions: [],
-  });
+  useAlertFilterStore.setState({ ...CLEARED_FILTER_STATE, projectOptions: [] });
 };

@@ -1,7 +1,13 @@
 from datetime import datetime, timedelta
-from typing import Optional, Tuple
+from typing import TYPE_CHECKING, Optional, Tuple
+
+if TYPE_CHECKING:
+    from tracer.services.clickhouse.query_builders.monitor_metrics import (
+        MonitorMetricsQueryBuilder,
+    )
 
 import structlog
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import DurationField, ExpressionWrapper, F, Q
 from django.db.models.functions import Now
 from django.utils import timezone
@@ -40,7 +46,7 @@ class MonitorConfigError(Exception):
     """Monitor misconfiguration (e.g. deleted eval config); not retryable."""
 
 
-def build_monitor_ch_builder(monitor: UserAlertMonitor):
+def build_monitor_ch_builder(monitor: UserAlertMonitor) -> "MonitorMetricsQueryBuilder":
     """Construct the routed MONITOR_METRICS builder from a monitor instance."""
     eval_config_id = None
     eval_output_type = None
@@ -50,17 +56,16 @@ def build_monitor_ch_builder(monitor: UserAlertMonitor):
     ):
         try:
             custom_eval_config = CustomEvalConfig.objects.get(id=monitor.metric)
-            raw_output = custom_eval_config.eval_template.config.get("output")
-            # Normalize the stored EvalOutputType value to the builder's key;
-            # an unknown/missing value stays None -> MonitorConfigError.
-            eval_output_type = _EVAL_OUTPUT_TYPE_MAP.get(raw_output)
-            eval_config_id = str(monitor.metric)
-        except CustomEvalConfig.DoesNotExist:
-            logger.warning(
-                "monitor_eval_config_missing",
-                monitor_id=str(monitor.id),
-                eval_config_id=str(monitor.metric),
-            )
+        except (CustomEvalConfig.DoesNotExist, DjangoValidationError) as e:
+            # ValidationError = non-UUID junk in the free CharField ``metric``
+            # — a permanent misconfig, not a transient failure to retry.
+            raise MonitorConfigError(f"Eval config {monitor.metric} not found") from e
+        raw_output = custom_eval_config.eval_template.config.get("output")
+        # Normalize the stored EvalOutputType value to the builder's key.
+        eval_output_type = _EVAL_OUTPUT_TYPE_MAP.get(raw_output)
+        if eval_output_type is None:
+            raise MonitorConfigError(f"Eval config {monitor.metric} has no output type")
+        eval_config_id = str(monitor.metric)
 
     # v1↔v2 dispatch — flips with CH25_QUERY_TYPES_V2_PRIMARY=MONITOR_METRICS
     from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
@@ -79,7 +84,7 @@ def build_monitor_ch_builder(monitor: UserAlertMonitor):
         raise MonitorConfigError(f"Invalid monitor filters: {e}") from e
 
 
-def _get_interval_kind(monitor: UserAlertMonitor) -> str:
+def get_interval_kind(monitor: UserAlertMonitor) -> str:
     """Calendar bucket kind for the monitor's frequency (Trunc parity)."""
     interval = timedelta(minutes=monitor.alert_frequency)
 
@@ -264,7 +269,11 @@ def _process_monitor(monitor: UserAlertMonitor, now: datetime) -> None:
     """Processes a single monitor."""
     time_window_start = now - timedelta(minutes=monitor.alert_frequency)
 
-    metric_value = _get_metric_value(monitor, time_window_start, now)
+    # Build once: value + historical share the builder (avoids a second eval
+    # config read and filter translation per percentage-change cycle).
+    builder = build_monitor_ch_builder(monitor)
+
+    metric_value = _get_metric_value(monitor, time_window_start, now, builder)
     if metric_value is None:
         logger.warning(
             "monitor_no_data",
@@ -273,24 +282,19 @@ def _process_monitor(monitor: UserAlertMonitor, now: datetime) -> None:
         )
         return
 
-    _check_thresholds_and_alert(monitor, metric_value, time_window_start, now)
+    _check_thresholds_and_alert(monitor, metric_value, time_window_start, now, builder)
 
 
 def _get_metric_value(
-    monitor: UserAlertMonitor, start_time: datetime, end_time: datetime
+    monitor: UserAlertMonitor,
+    start_time: datetime,
+    end_time: datetime,
+    builder: Optional["MonitorMetricsQueryBuilder"] = None,
 ) -> Optional[float]:
     """Metric value for the time window, from ClickHouse. Raises on CH errors."""
     analytics = AnalyticsQueryService()
-    builder = build_monitor_ch_builder(monitor)
+    builder = builder or build_monitor_ch_builder(monitor)
     metric_type = monitor.metric_type
-
-    if metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS and monitor.metric:
-        if builder.eval_config_id is None:
-            raise MonitorConfigError(f"Eval config {monitor.metric} not found")
-        if builder.eval_output_type is None:
-            raise MonitorConfigError(
-                f"Eval config {monitor.metric} has no output type"
-            )
 
     # DAILY/MONTHLY are trailing windows regardless of alert_frequency.
     ch_start = start_time
@@ -312,17 +316,20 @@ def _get_metric_value(
 
 
 def _get_historical_stats(
-    monitor: UserAlertMonitor, start_time: datetime, end_time: datetime
+    monitor: UserAlertMonitor,
+    start_time: datetime,
+    end_time: datetime,
+    builder: Optional["MonitorMetricsQueryBuilder"] = None,
 ) -> Tuple[Optional[float], Optional[float]]:
     """Historical (mean, stddev) for the window, from ClickHouse. Raises on CH errors."""
     analytics = AnalyticsQueryService()
-    builder = build_monitor_ch_builder(monitor)
+    builder = builder or build_monitor_ch_builder(monitor)
 
     query, params = builder.build_historical_stats_query(
         monitor.metric_type,
         start_time,
         end_time,
-        interval_kind=_get_interval_kind(monitor),
+        interval_kind=get_interval_kind(monitor),
     )
     result = analytics.execute_ch_query(
         query,
@@ -341,6 +348,7 @@ def _check_thresholds_and_alert(
     current_value: float,
     time_window_start: datetime,
     now: datetime,
+    builder: Optional["MonitorMetricsQueryBuilder"] = None,
 ) -> None:
     """Checks the metric value against the monitor's thresholds and alerts if needed."""
 
@@ -349,7 +357,7 @@ def _check_thresholds_and_alert(
 
     elif monitor.threshold_type == ThresholdCalculationMethodChoices.PERCENTAGE_CHANGE:
         _check_percentage_change_threshold(
-            monitor, current_value, time_window_start, now
+            monitor, current_value, time_window_start, now, builder
         )
 
 
@@ -388,15 +396,15 @@ def _check_percentage_change_threshold(
     current_value: float,
     time_window_start: datetime,
     now: datetime,
+    builder: Optional["MonitorMetricsQueryBuilder"] = None,
 ) -> None:
     """Checks for alerts based on percentage change from historical mean."""
-    time_window_start = now - timedelta(minutes=monitor.alert_frequency)
     historical_start = time_window_start - timedelta(
         minutes=monitor.auto_threshold_time_window
     )
 
     historical_mean, historical_stddev = _get_historical_stats(
-        monitor, historical_start, time_window_start
+        monitor, historical_start, time_window_start, builder
     )
 
     if historical_mean is None or historical_stddev is None:

@@ -1000,6 +1000,7 @@ const DatapointDrawerChild = () => {
                       setAddEvaluationFeeback({
                         ...evalColumn,
                         ...datapoint,
+                        sourceId: evalOpen?.evalMetricId ?? evalColumn?.source_id,
                         rowData: datapoint?.rowData,
                         value:
                           evalOpen?.cell_value ??

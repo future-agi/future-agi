@@ -9,6 +9,7 @@ import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel"
 import axios, { endpoints } from "src/utils/axios";
 import {
   CATEGORIES,
+  OBSERVATION_TYPE_FIELD,
   SPAN_TYPE_PROPERTY,
   toPanelRows,
   toFormRows,
@@ -148,9 +149,14 @@ export default function AlertFilterBar({ control, setValue, projectId }) {
     [handleApply, panelFilters],
   );
 
-  // Attribute keys are their own label; span types have display names.
-  const labelFor = useCallback(
-    (value) => SPAN_TYPE_PROPERTY.choiceLabels[value] ?? String(value),
+  // Only span types have display names. Attribute values are their own label,
+  // and must not be run through the span-type map — an attribute whose value
+  // happens to be "agent" is not the Agent span type.
+  const labelForField = useCallback(
+    (field) =>
+      field === OBSERVATION_TYPE_FIELD
+        ? (value) => SPAN_TYPE_PROPERTY.choiceLabels[value] ?? String(value)
+        : String,
     [],
   );
 
@@ -162,7 +168,7 @@ export default function AlertFilterBar({ control, setValue, projectId }) {
         <FilterChip
           key={`${filter.field}-${index}`}
           filter={filter}
-          labelFor={labelFor}
+          labelFor={labelForField(filter.field)}
           onRemove={() => handleRemove(index)}
         />
       ))}

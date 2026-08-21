@@ -52,6 +52,18 @@ from tracer.utils.monitor_graphs import get_graph_data
 logger = structlog.get_logger(__name__)
 
 
+def _parse_page_params(query_params, default_size: int = 30) -> tuple[int, int]:
+    """Parse pagination params, clamped to sane bounds.
+
+    A negative page_number reaches the queryset slice as a Django ValueError
+    ("negative indexing"), which callers mislabel as a parse error or a 500.
+    Raises ValueError for non-integer input.
+    """
+    page_number = int(query_params.get("page_number", 0))
+    page_size = int(query_params.get("page_size", default_size))
+    return max(page_number, 0), max(page_size, 1)
+
+
 class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -128,8 +140,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             return query_Set.filter(id=user_alert_id)
 
         search_text = self.request.query_params.get("search_text")
-        page_number = self.request.query_params.get("page_number", 0)
-        page_size = self.request.query_params.get("page_size", 30)
+        page_number, page_size = _parse_page_params(self.request.query_params)
         project_ids = self.request.query_params.getlist("project_id")
         status_filters = self.request.query_params.getlist("status")
         metric_type_filters = self.request.query_params.getlist("metric_type")
@@ -155,8 +166,8 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         sort_direction = self.request.query_params.get("sort_direction", "desc")
         sort_query = get_sort_query(sort_by, sort_direction)
 
-        start = int(page_number) * int(page_size)
-        end = start + int(page_size)
+        start = page_number * page_size
+        end = start + page_size
 
         return query_Set.order_by(sort_query)[start:end], total_count
 
@@ -168,29 +179,29 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         default ``list`` expects only a queryset, so keep the root endpoint
         explicit instead of letting DRF serialize the tuple incorrectly.
         """
+        # Narrow try: only int parsing belongs to this 400; unrelated
+        # ValueErrors from the query path must not be mislabeled.
         try:
-            page_number = int(request.query_params.get("page_number", 0))
-            page_size = int(request.query_params.get("page_size", 30))
-            queryset, total_records = self.get_queryset()
-            serializer = self.get_serializer(queryset, many=True)
-
-            return self._gm.success_response(
-                {
-                    "results": serializer.data,
-                    "metadata": {
-                        "total_rows": total_records,
-                        "page_number": page_number,
-                        "page_size": page_size,
-                        "total_pages": (
-                            math.ceil(total_records / page_size) if page_size > 0 else 0
-                        ),
-                    },
-                }
-            )
+            page_number, page_size = _parse_page_params(request.query_params)
         except ValueError:
             return self._gm.bad_request(
                 {"pagination": "page_number and page_size must be integers."}
             )
+
+        queryset, total_records = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+
+        return self._gm.success_response(
+            {
+                "results": serializer.data,
+                "metadata": {
+                    "total_rows": total_records,
+                    "page_number": page_number,
+                    "page_size": page_size,
+                    "total_pages": math.ceil(total_records / page_size),
+                },
+            }
+        )
 
     @action(detail=True, methods=["get"], url_path="details")
     def monitor_details(self, request, *args, **kwargs):
@@ -204,8 +215,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             data = serializer.data
 
             try:
-                page_number = int(request.query_params.get("page_number", 0))
-                page_size = int(request.query_params.get("page_size", 30))
+                page_number, page_size = _parse_page_params(request.query_params)
             except (TypeError, ValueError):
                 page_number = 0
                 page_size = 10
@@ -302,18 +312,14 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 f"Error occurred while deleting User Alerts: {str(e)}"
             )
 
-    # Operational / audit / soft-delete fields the server owns; a client must
-    # not set them via create/update (e.g. PATCH last_checked_at to silently
-    # stop a monitor, or deleted=true to bypass the delete endpoint).
-    _SERVER_OWNED_FIELDS = ("last_checked_at", "logs", "deleted", "deleted_at")
-
+    # Server-owned fields (last_checked_at/logs/deleted/deleted_at) are
+    # enforced as read_only on the serializer; only scope fields need view
+    # handling here.
     def _scope_safe_update_data(self, request, instance, *, partial):
         data = request.data.copy()
         data.pop("organization", None)
         data.pop("workspace", None)
         data.pop("created_by", None)
-        for field in self._SERVER_OWNED_FIELDS:
-            data.pop(field, None)
         if not partial:
             data["organization"] = str(instance.organization_id)
             if instance.workspace_id:
@@ -437,7 +443,12 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     @action(detail=False, methods=["get"])
     def list_monitors(self, request, *args, **kwargs):
         try:
-            page_size = self.request.query_params.get("page_size", 30)
+            _page_number, page_size = _parse_page_params(self.request.query_params)
+        except ValueError:
+            return self._gm.bad_request(
+                {"pagination": "page_number and page_size must be integers."}
+            )
+        try:
             queryset, total_records = self.get_queryset()
             queryset = queryset.prefetch_related("useralertmonitorlog_set")
             serializer = self.get_serializer(queryset, many=True)
@@ -482,12 +493,9 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
             response["table"] = table_data
 
-            page_size_int = int(page_size)
             response["metadata"] = {
                 "total_rows": total_records,
-                "total_pages": (
-                    math.ceil(total_records / page_size_int) if page_size_int > 0 else 0
-                ),
+                "total_pages": math.ceil(total_records / page_size),
             }
 
             return self._gm.success_response(response)
@@ -522,26 +530,27 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
         try:
             data = request.data.copy()
-            # Strip client-supplied server-owned fields before seeding our own.
-            for field in self._SERVER_OWNED_FIELDS:
-                data.pop(field, None)
             data["organization"] = (
                 getattr(request, "organization", None) or request.user.organization
             ).id
             if getattr(request, "workspace", None):
                 data["workspace"] = request.workspace.id
             data["created_by"] = request.user.id
-            data["logs"] = [
-                {
-                    "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                    "message": f"Monitor {data.get('name')} has been created",
-                    "type": "INFO",
-                }
-            ]
 
             serializer = self.get_serializer(data=data)
             if serializer.is_valid():
-                user_alert = serializer.save()
+                # logs is read_only on the serializer; seed it server-side.
+                user_alert = serializer.save(
+                    logs=[
+                        {
+                            "timestamp": datetime.now().strftime(
+                                "%Y-%m-%dT%H:%M:%S.%fZ"
+                            ),
+                            "message": f"Monitor {data.get('name')} has been created",
+                            "type": "INFO",
+                        }
+                    ]
+                )
 
                 return self._gm.success_response(
                     f"{user_alert.name} alert created successfully"

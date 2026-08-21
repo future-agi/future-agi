@@ -16,10 +16,11 @@ import axios, { endpoints } from "src/utils/axios";
 import { useDebounce } from "src/hooks/use-debounce";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useAlertStore } from "../../store/useAlertStore";
+import { useAlertFilterShallow } from "../../store/useAlertFilterStore";
 import {
-  buildAlertFilterParams,
-  useAlertFilterShallow,
-} from "../../store/useAlertFilterStore";
+  ALERT_LIST_MULTI_VALUE_FIELDS,
+  buildFilterParams,
+} from "../../store/alertFilterState";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import { formatNumberWithCommas } from "../../../UsersView/common";
@@ -79,9 +80,22 @@ export default function AlertsListView() {
   }, [storeColumns]);
 
   const extractedFilterObject = useMemo(
-    () => buildAlertFilterParams(activeFilters),
+    () => buildFilterParams(activeFilters, ALERT_LIST_MULTI_VALUE_FIELDS),
     [activeFilters],
   );
+
+  // Narrowing the result set can leave the current page out of range, and the
+  // API does not clamp — it returns an empty table with a total that says
+  // otherwise. Adjusted during render rather than in an effect: an effect runs
+  // after commit, so the query would fire once for the stale page before the
+  // reset landed. Keyed on the serialized filters because the panel re-emits
+  // an equal-but-new object when it opens, which must not move the user.
+  const resultSetKey = `${JSON.stringify(extractedFilterObject)}|${debouncedSearchTerm}`;
+  const [prevResultSetKey, setPrevResultSetKey] = useState(resultSetKey);
+  if (resultSetKey !== prevResultSetKey) {
+    setPrevResultSetKey(resultSetKey);
+    setPage(0);
+  }
 
   // Register refresh function in the store
   const refreshFn = useCallback(() => {

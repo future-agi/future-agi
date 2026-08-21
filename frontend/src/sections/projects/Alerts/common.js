@@ -878,3 +878,17 @@ export const isSpanAttrFilterValid = (spanFilters = []) => {
 
   return spanFilters.every((filter) => apiFilterHasValue(filter));
 };
+
+// FilterPanel `filterFields` for the issues table. `choices` hold the values
+// the API expects; `choiceLabels` map them to what the user sees.
+export const ISSUE_FILTER_FIELDS = [
+  {
+    value: "type",
+    label: "Trigger Type",
+    type: "enum",
+    operators: ["is"],
+    single: true,
+    choices: ["critical", "warning"],
+    choiceLabels: { critical: "Critical", warning: "Warning" },
+  },
+];

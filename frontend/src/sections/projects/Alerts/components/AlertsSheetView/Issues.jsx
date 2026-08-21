@@ -24,15 +24,12 @@ import ColumnDropdown from "src/components/ColumnDropdown/ColumnDropdown";
 import FilterPanel from "src/components/filter-panel/FilterPanel";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
-import { issueColumns } from "../../common";
+import { ISSUE_FILTER_FIELDS, issueColumns } from "../../common";
 import { camelCase } from "lodash";
 import { useAlertStore } from "../../store/useAlertStore";
 import { useAlertSheetView } from "../../store/useAlertSheetView";
-import {
-  buildIssueFilterParams,
-  ISSUE_FILTER_FIELDS,
-  useAlertSheetFilterShallow,
-} from "../../store/useAlertSheetFilterStore";
+import { useAlertSheetFilterShallow } from "../../store/useAlertSheetFilterStore";
+import { buildFilterParams } from "../../store/alertFilterState";
 import logger from "src/utils/logger";
 import { APP_CONSTANTS } from "src/utils/constants";
 
@@ -287,7 +284,7 @@ export default function Issues() {
   const debouncedSearchTerm = useDebounce(searchQuery, 300);
 
   const extractedFilterObject = useMemo(
-    () => buildIssueFilterParams(activeFilters),
+    () => buildFilterParams(activeFilters),
     [activeFilters],
   );
 

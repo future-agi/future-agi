@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { buildAlertFilterParams } from "../store/useAlertFilterStore";
-import { buildIssueFilterParams } from "../store/useAlertSheetFilterStore";
+import {
+  ALERT_LIST_MULTI_VALUE_FIELDS,
+  buildFilterParams,
+} from "../store/alertFilterState";
+
+const buildAlertFilterParams = (f) =>
+  buildFilterParams(f, ALERT_LIST_MULTI_VALUE_FIELDS);
+const buildIssueFilterParams = (f) => buildFilterParams(f);
 
 // FilterPanel always emits `{field: [values]}`. The monitor-list endpoint still
 // expects scalars for the single-select fields and a repeated param only for
@@ -50,5 +56,18 @@ describe("alert issues filter params", () => {
   it("returns null when nothing is filtered", () => {
     expect(buildIssueFilterParams(null)).toBeNull();
     expect(buildIssueFilterParams({ type: [] })).toBeNull();
+  });
+
+  it("unwraps every field, including ones the list sends as arrays", () => {
+    // The two builders share an implementation; only the list passes a
+    // multi-value set. Pin that the issues table applies none of it.
+    expect(buildIssueFilterParams({ project_id: ["a", "b"] })).toEqual({
+      project_id: "a",
+    });
+  });
+
+  it("keeps a falsy first value rather than dropping the field", () => {
+    expect(buildIssueFilterParams({ type: [""] })).toEqual({ type: "" });
+    expect(buildAlertFilterParams({ status: [0] })).toEqual({ status: 0 });
   });
 });

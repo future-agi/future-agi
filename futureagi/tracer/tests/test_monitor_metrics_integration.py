@@ -16,9 +16,9 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
+from tracer.models.monitor import MonitorMetricTypeChoices
 from tracer.services.clickhouse.client import get_clickhouse_client
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
-from tracer.services.clickhouse.query_builders import monitor_metrics as mm
 from tracer.services.clickhouse.v2.query_builders.monitor_metrics import (
     MonitorMetricsQueryBuilderV2,
 )
@@ -70,9 +70,12 @@ def _seed_evals(ch, config_id: str, evals: List[Dict[str, Any]]) -> None:
     table, _ = eval_logger_source()
     # id is part of the ReplacingMergeTree sort key — must be unique per row or
     # FINAL collapses distinct evals of the same config.
+    # Shape-intersection columns only: the legacy prod table has ``deleted``,
+    # v2 has ``is_deleted`` — both DEFAULT to not-deleted, so neither is
+    # seeded (keeps the insert valid on a fresh CH for either shape).
     cols = [
         "id", "custom_eval_config_id", "observation_span_id", "output_float",
-        "output_bool", "output_str_list", "created_at", "is_deleted",
+        "output_bool", "output_str_list", "created_at",
     ]
     rows = []
     for ev in evals:
@@ -85,7 +88,6 @@ def _seed_evals(ch, config_id: str, evals: List[Dict[str, Any]]) -> None:
                 "output_bool": ev.get("output_bool"),
                 "output_str_list": ev.get("output_str_list", "[]"),
                 "created_at": ev.get("created_at", NOW),
-                "is_deleted": 0,
             }
         )
     ch.execute("INSERT INTO %s (%s) VALUES" % (table, ",".join(cols)), rows)
@@ -111,12 +113,12 @@ def _value(project_id: str, metric_type: str, **kw: Any) -> Optional[float]:
 
 def test_count_of_errors_value(ch, project_id):
     _seed_spans(ch, [_span(project_id, status=s) for s in ["ERROR", "ERROR", "OK"]])
-    assert _value(project_id, mm.COUNT_OF_ERRORS) == 2
+    assert _value(project_id, MonitorMetricTypeChoices.COUNT_OF_ERRORS) == 2
 
 
 def test_span_response_time_avg(ch, project_id):
     _seed_spans(ch, [_span(project_id, latency_ms=lm) for lm in [100, 200, 300]])
-    assert _value(project_id, mm.SPAN_RESPONSE_TIME) == 200.0
+    assert _value(project_id, MonitorMetricTypeChoices.SPAN_RESPONSE_TIME) == 200.0
 
 
 def test_llm_response_time_only_counts_llm(ch, project_id):
@@ -128,23 +130,23 @@ def test_llm_response_time_only_counts_llm(ch, project_id):
             _span(project_id, observation_type="tool", latency_ms=9999),
         ],
     )
-    assert _value(project_id, mm.LLM_RESPONSE_TIME) == 150.0
+    assert _value(project_id, MonitorMetricTypeChoices.LLM_RESPONSE_TIME) == 150.0
 
 
 def test_token_usage_sum(ch, project_id):
     _seed_spans(ch, [_span(project_id, total_tokens=t) for t in [10, 20, 30]])
-    assert _value(project_id, mm.TOKEN_USAGE) == 60
+    assert _value(project_id, MonitorMetricTypeChoices.TOKEN_USAGE) == 60
 
 
 def test_token_usage_empty_window_is_none(ch, project_id):
     # No spans at all -> None (no-data), which the evaluator skips (no false alert).
-    assert _value(project_id, mm.TOKEN_USAGE) is None
+    assert _value(project_id, MonitorMetricTypeChoices.TOKEN_USAGE) is None
 
 
 def test_token_usage_all_zero_tokens_is_none(ch, project_id):
     # Traffic but zero tokens (v2 non-Nullable) -> None, not 0.
     _seed_spans(ch, [_span(project_id, total_tokens=0) for _ in range(3)])
-    assert _value(project_id, mm.TOKEN_USAGE) is None
+    assert _value(project_id, MonitorMetricTypeChoices.TOKEN_USAGE) is None
 
 
 def test_error_rates_for_function_calling(ch, project_id):
@@ -154,7 +156,7 @@ def test_error_rates_for_function_calling(ch, project_id):
         [_span(project_id, observation_type="tool", status=s) for s in ["ERROR", "OK", "OK", "OK"]]
         + [_span(project_id, observation_type="llm", status="ERROR")],
     )
-    assert _value(project_id, mm.ERROR_RATES_FOR_FUNCTION_CALLING) == 0.25
+    assert _value(project_id, MonitorMetricTypeChoices.ERROR_RATES_FOR_FUNCTION_CALLING) == 0.25
 
 
 def test_llm_api_failure_rates(ch, project_id):
@@ -162,7 +164,7 @@ def test_llm_api_failure_rates(ch, project_id):
         ch,
         [_span(project_id, observation_type="llm", status=s) for s in ["ERROR", "ERROR", "ERROR", "OK", "OK"]],
     )
-    assert _value(project_id, mm.LLM_API_FAILURE_RATES) == 0.6
+    assert _value(project_id, MonitorMetricTypeChoices.LLM_API_FAILURE_RATES) == 0.6
 
 
 def test_service_provider_error_free_rate(ch, project_id):
@@ -175,7 +177,7 @@ def test_service_provider_error_free_rate(ch, project_id):
             _span(project_id, provider="p2", status="OK"),
         ],
     )
-    assert _value(project_id, mm.SERVICE_PROVIDER_ERROR_RATES) == 0.5
+    assert _value(project_id, MonitorMetricTypeChoices.SERVICE_PROVIDER_ERROR_RATES) == 0.5
 
 
 def test_error_free_session_rates(ch, project_id):
@@ -189,7 +191,28 @@ def test_error_free_session_rates(ch, project_id):
         ],
     )
     # session s1 has an error, s2 does not -> 1/2 error-free.
-    assert _value(project_id, mm.ERROR_FREE_SESSION_RATES) == 0.5
+    assert _value(project_id, MonitorMetricTypeChoices.ERROR_FREE_SESSION_RATES) == 0.5
+
+
+def test_error_free_session_rates_dedups_remap_aliases(ch, project_id):
+    # Two aliases of one logical session (cross-cutover straddler) must count
+    # as ONE session via the trace_session_id_remap survivor map — not two.
+    old_id, new_id, other = (str(uuid.uuid4()) for _ in range(3))
+    ch.execute(
+        "INSERT INTO trace_session_id_remap (old_id, new_id, version) VALUES",
+        [{"old_id": old_id, "new_id": new_id, "version": 1}],
+    )
+    _seed_spans(
+        ch,
+        [
+            _span(project_id, trace_session_id=old_id, status="ERROR"),
+            _span(project_id, trace_session_id=new_id, status="OK"),
+            _span(project_id, trace_session_id=other, status="OK"),
+        ],
+    )
+    # Straddler resolves to one session (carrying the error) + one clean
+    # session -> 1/2 error-free. Without dedup this would read 2/3.
+    assert _value(project_id, MonitorMetricTypeChoices.ERROR_FREE_SESSION_RATES) == 0.5
 
 
 # --- Filters ------------------------------------------------------------------
@@ -204,7 +227,7 @@ def test_entity_scoping_filter_is_ignored(ch, project_id):
         [_span(project_id, trace_session_id=s1, status="ERROR") for _ in range(2)]
         + [_span(project_id, trace_session_id=s2, status="ERROR") for _ in range(5)],
     )
-    assert _value(project_id, mm.COUNT_OF_ERRORS, filters={"session_id": [s1]}) == 7
+    assert _value(project_id, MonitorMetricTypeChoices.COUNT_OF_ERRORS, filters={"session_id": [s1]}) == 7
 
 
 def test_observation_type_filter(ch, project_id):
@@ -213,7 +236,7 @@ def test_observation_type_filter(ch, project_id):
         [_span(project_id, observation_type="tool", status="ERROR") for _ in range(2)]
         + [_span(project_id, observation_type="llm", status="ERROR") for _ in range(4)],
     )
-    val = _value(project_id, mm.COUNT_OF_ERRORS, filters={"observation_type": ["tool"]})
+    val = _value(project_id, MonitorMetricTypeChoices.COUNT_OF_ERRORS, filters={"observation_type": ["tool"]})
     assert val == 2
 
 
@@ -227,7 +250,7 @@ def test_historical_stats_count_of_errors(ch, project_id):
     rows = [_span(project_id, status="ERROR", start_time=b1, created_at=b1) for _ in range(4)]
     rows += [_span(project_id, status="ERROR", start_time=b2, created_at=b2) for _ in range(2)]
     _seed_spans(ch, rows)
-    m = _monitor(project_id, mm.COUNT_OF_ERRORS, alert_frequency=60)
+    m = _monitor(project_id, MonitorMetricTypeChoices.COUNT_OF_ERRORS, alert_frequency=60)
     mean, stddev = _get_historical_stats(m, NOW - timedelta(hours=3), NOW)
     assert mean == pytest.approx(3.0)
     assert stddev == pytest.approx(2.0 ** 0.5, rel=1e-6)
@@ -249,7 +272,7 @@ def _eval_value(
         threshold_metric_value=threshold_metric_value,
     )
     query, params = builder.build_metric_value_query(
-        mm.EVALUATION_METRICS, start or WINDOW_START, end or WINDOW_END
+        MonitorMetricTypeChoices.EVALUATION_METRICS, start or WINDOW_START, end or WINDOW_END
     )
     return AnalyticsQueryService().execute_ch_query(
         query, params, timeout_ms=10000
@@ -279,42 +302,54 @@ def test_evaluation_metrics_score_avg(ch, project_id, eval_table):
         assert _eval_value(project_id, cfg, "SCORE") == pytest.approx(0.5)
 
 
-def test_evaluation_metrics_pass_fail_rate(ch, project_id):
-    cfg = str(uuid.uuid4())
-    spans = [_span(project_id) for _ in range(3)]
-    _seed_spans(ch, spans)
-    _seed_evals(
-        ch,
-        cfg,
-        [
-            {"span_id": spans[0]["id"], "output_bool": 1},
-            {"span_id": spans[1]["id"], "output_bool": 1},
-            {"span_id": spans[2]["id"], "output_bool": 0},
-        ],
-    )
-    # 2 of 3 "Passed" -> 0.666…
-    assert _eval_value(
-        project_id, cfg, "PASS_FAIL", threshold_metric_value="Passed"
-    ) == pytest.approx(2 / 3)
+@pytest.mark.parametrize(
+    "eval_table", ["tracer_eval_logger", "tracer_eval_logger_v2"]
+)
+def test_evaluation_metrics_pass_fail_rate(ch, project_id, eval_table):
+    from django.test import override_settings
+
+    with override_settings(CH25_EVAL_LOGGER_TABLE=eval_table):
+        cfg = str(uuid.uuid4())
+        spans = [_span(project_id) for _ in range(3)]
+        _seed_spans(ch, spans)
+        _seed_evals(
+            ch,
+            cfg,
+            [
+                {"span_id": spans[0]["id"], "output_bool": 1},
+                {"span_id": spans[1]["id"], "output_bool": 1},
+                {"span_id": spans[2]["id"], "output_bool": 0},
+            ],
+        )
+        # 2 of 3 "Passed" -> 0.666…
+        assert _eval_value(
+            project_id, cfg, "PASS_FAIL", threshold_metric_value="Passed"
+        ) == pytest.approx(2 / 3)
 
 
-def test_evaluation_metrics_choices_rate(ch, project_id):
-    cfg = str(uuid.uuid4())
-    spans = [_span(project_id) for _ in range(3)]
-    _seed_spans(ch, spans)
-    _seed_evals(
-        ch,
-        cfg,
-        [
-            {"span_id": spans[0]["id"], "output_str_list": '["good"]'},
-            {"span_id": spans[1]["id"], "output_str_list": '["bad"]'},
-            {"span_id": spans[2]["id"], "output_str_list": '["good"]'},
-        ],
-    )
-    # 2 of 3 contain "good" -> 0.666…
-    assert _eval_value(
-        project_id, cfg, "CHOICES", threshold_metric_value="good"
-    ) == pytest.approx(2 / 3)
+@pytest.mark.parametrize(
+    "eval_table", ["tracer_eval_logger", "tracer_eval_logger_v2"]
+)
+def test_evaluation_metrics_choices_rate(ch, project_id, eval_table):
+    from django.test import override_settings
+
+    with override_settings(CH25_EVAL_LOGGER_TABLE=eval_table):
+        cfg = str(uuid.uuid4())
+        spans = [_span(project_id) for _ in range(3)]
+        _seed_spans(ch, spans)
+        _seed_evals(
+            ch,
+            cfg,
+            [
+                {"span_id": spans[0]["id"], "output_str_list": '["good"]'},
+                {"span_id": spans[1]["id"], "output_str_list": '["bad"]'},
+                {"span_id": spans[2]["id"], "output_str_list": '["good"]'},
+            ],
+        )
+        # 2 of 3 contain "good" -> 0.666…
+        assert _eval_value(
+            project_id, cfg, "CHOICES", threshold_metric_value="good"
+        ) == pytest.approx(2 / 3)
 
 
 # --- Trailing-window (daily) --------------------------------------------------
@@ -329,7 +364,7 @@ def test_daily_tokens_spent_uses_trailing_day(ch, project_id):
         + [_span(project_id, total_tokens=100, start_time=old, created_at=old)],
     )
     # Only the two recent spans count -> 60; the 2-day-old one is excluded.
-    assert _value(project_id, mm.DAILY_TOKENS_SPENT) == 60
+    assert _value(project_id, MonitorMetricTypeChoices.DAILY_TOKENS_SPENT) == 60
 
 
 def test_historical_stats_token_usage(ch, project_id):
@@ -340,7 +375,7 @@ def test_historical_stats_token_usage(ch, project_id):
         [_span(project_id, total_tokens=10, start_time=b1, created_at=b1)]
         + [_span(project_id, total_tokens=30, start_time=b2, created_at=b2)],
     )
-    m = _monitor(project_id, mm.TOKEN_USAGE, alert_frequency=60)
+    m = _monitor(project_id, MonitorMetricTypeChoices.TOKEN_USAGE, alert_frequency=60)
     mean, stddev = _get_historical_stats(m, NOW - timedelta(hours=3), NOW)
     assert mean == pytest.approx(20.0)  # buckets [10, 30]
     assert stddev == pytest.approx(200.0 ** 0.5, rel=1e-6)  # sample stddev
@@ -439,7 +474,9 @@ def test_end_to_end_no_data_no_alert(ch, observe_project):
         project=observe_project,
         name="E2E quiet",
         metric_type="span_response_time",
-        threshold_operator="greater_than",
+        # less_than discriminates: a buggy 0 would fire (0 < 1), a correct
+        # NULL no-data skip does not.
+        threshold_operator="less_than",
         threshold_type="static",
         critical_threshold_value=1,
         alert_frequency=60,
@@ -461,18 +498,19 @@ def _run_query(query, params):
 
 
 def test_half_open_window_excludes_end_boundary(ch, project_id):
-    # A span landing exactly at end_time belongs to the NEXT window, never both.
-    inside = _span(project_id, status="ERROR", created_at=NOW - timedelta(minutes=1))
-    boundary = _span(project_id, status="ERROR", created_at=NOW)
+    # A span whose start_time lands exactly at end_time belongs to the NEXT
+    # window, never both (event-time half-open window).
+    inside = _span(project_id, status="ERROR", start_time=NOW - timedelta(minutes=1))
+    boundary = _span(project_id, status="ERROR", start_time=NOW)
     _seed_spans(ch, [inside, boundary])
     b = MonitorMetricsQueryBuilderV2(project_id=project_id)
     query, params = b.build_metric_value_query(
-        mm.COUNT_OF_ERRORS, NOW - timedelta(minutes=30), NOW
+        MonitorMetricTypeChoices.COUNT_OF_ERRORS, NOW - timedelta(minutes=30), NOW
     )
     assert _run_query(query, params)[0]["value"] == 1
     # ...and the boundary span is picked up by the adjacent window.
     query, params = b.build_metric_value_query(
-        mm.COUNT_OF_ERRORS, NOW, NOW + timedelta(minutes=30)
+        MonitorMetricTypeChoices.COUNT_OF_ERRORS, NOW, NOW + timedelta(minutes=30)
     )
     assert _run_query(query, params)[0]["value"] == 1
 
@@ -486,7 +524,7 @@ def test_time_series_bucket_values(ch, project_id):
     _seed_spans(ch, rows)
     b = MonitorMetricsQueryBuilderV2(project_id=project_id)
     query, params = b.build_time_series_query(
-        mm.COUNT_OF_ERRORS, NOW - timedelta(hours=3), NOW, 3600
+        MonitorMetricTypeChoices.COUNT_OF_ERRORS, NOW - timedelta(hours=3), NOW, 3600
     )
     values = [row["value"] for row in _run_query(query, params)]
     assert values == [4, 2]
@@ -549,24 +587,29 @@ def test_eval_excludes_spans_outside_window(ch, project_id):
 # --- span-attribute filter: windowed trace membership -------------------------
 
 
-def test_attr_filter_membership_windowed(ch, project_id):
-    # The attr-filter membership subquery is bounded to the monitor window
-    # (span_date_scope): a trace qualifies via an attr span in/near the
-    # window, not one from anywhere in project history (which full-scanned
-    # 241M spans at prod scale).
-    t1, t2 = str(uuid.uuid4()), str(uuid.uuid4())
+def test_attr_filter_is_span_scoped_and_windowed(ch, project_id):
+    # Span-scoped attr filters (PG parity): only ERROR spans that THEMSELVES
+    # carry the attribute count — not siblings of a matching trace — and only
+    # inside the event-time window.
+    t1 = str(uuid.uuid4())
     rows = [
-        # T1: attr span in-window + an ERROR span in-window -> counted
-        _span(project_id, trace_id=t1, attrs_string={"llm.model_name": "gpt-4o"}),
-        _span(project_id, trace_id=t1, status="ERROR"),
-        # T2: attr span 3 days old (outside window + 1-day pad) + ERROR now
+        # attr + ERROR, in window -> the only counted span
         _span(
-            project_id, trace_id=t2,
+            project_id, trace_id=t1, status="ERROR",
+            attrs_string={"llm.model_name": "gpt-4o"},
+        ),
+        # attr but OK -> not counted
+        _span(project_id, trace_id=t1, attrs_string={"llm.model_name": "gpt-4o"}),
+        # ERROR without the attr, same trace -> not counted (span scope,
+        # unlike the dashboard's trace scoping)
+        _span(project_id, trace_id=t1, status="ERROR"),
+        # attr + ERROR but outside the window -> not counted
+        _span(
+            project_id, status="ERROR",
             attrs_string={"llm.model_name": "gpt-4o"},
             start_time=NOW - timedelta(days=3),
             created_at=NOW - timedelta(days=3),
         ),
-        _span(project_id, trace_id=t2, status="ERROR"),
     ]
     _seed_spans(ch, rows)
     from tracer.services.clickhouse.query_service import AnalyticsQueryService
@@ -588,9 +631,9 @@ def test_attr_filter_membership_windowed(ch, project_id):
         },
     )
     query, params = builder.build_metric_value_query(
-        mm.COUNT_OF_ERRORS, WINDOW_START, WINDOW_END
+        MonitorMetricTypeChoices.COUNT_OF_ERRORS, WINDOW_START, WINDOW_END
     )
     value = AnalyticsQueryService().execute_ch_query(
         query, params, timeout_ms=10000
     ).data[0]["value"]
-    assert value == 1  # T1's error only; T2's attr span is out of the window
+    assert value == 1  # only the in-window ERROR span carrying the attr

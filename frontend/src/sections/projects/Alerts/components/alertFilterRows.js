@@ -1,7 +1,8 @@
+import { FIELD_TYPE_ALIASES } from "src/api/contracts/filter-contract.generated";
 import { AllowedEvalSpanTypes } from "src/utils/constant";
 import { getRandomId } from "src/utils/utils";
 
-const OBSERVATION_TYPE_FIELD = "observation_type";
+export const OBSERVATION_TYPE_FIELD = "observation_type";
 
 // The form stores one row per selected span type; the panel shows them as a
 // single multi-value row.
@@ -29,16 +30,31 @@ export const CATEGORIES = [
   { key: "attribute", label: "Attributes" },
 ];
 
-const FILTER_TYPE_BY_PANEL_TYPE = {
-  number: "number",
-  boolean: "boolean",
-};
-
+// The contract is the authority on how a stored type spells itself — the
+// backend rejects anything outside it — so normalise through its aliases
+// rather than a local map that only knew number/boolean/text.
 export const toPanelType = (filterType) =>
-  FILTER_TYPE_BY_PANEL_TYPE[filterType] || "text";
+  FIELD_TYPE_ALIASES[filterType] ?? filterType ?? "text";
+
+// Span attributes only ever store text, number or boolean; anything the
+// contract normalises to something else is left alone so it round-trips
+// instead of being rewritten as text.
+const SPAN_ATTRIBUTE_TYPES = new Set(["text", "number", "boolean"]);
 
 const toFilterType = (panelType) =>
-  FILTER_TYPE_BY_PANEL_TYPE[panelType] || "text";
+  SPAN_ATTRIBUTE_TYPES.has(panelType) ? panelType : "text";
+
+// The panel's numeric input is a plain text field, so an edited row comes back
+// as a string. The old form coerced with parseFloat before storing, so keep
+// doing that or an edited row changes the type of filter_value on save.
+// Anything not a finite number — "", "-", a half-typed "1e" — is left alone.
+const toApiNumber = (value) => {
+  if (Array.isArray(value)) return value.map(toApiNumber);
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (trimmed === "" || !Number.isFinite(Number(trimmed))) return value;
+  return Number(trimmed);
+};
 
 // The panel's boolean control works in the strings "true"/"false"; the API
 // takes a native bool and drops the condition outright if given anything else.
@@ -112,6 +128,11 @@ const toLegacyScalarOp = (operator, value) => {
   return { operator: LEGACY_SCALAR_OP[operator], value: values[0] ?? "" };
 };
 
+const API_VALUE_BY_TYPE = {
+  boolean: toApiBool,
+  number: toApiNumber,
+};
+
 /** Panel rows → form rows, matching what `transformFilterResponse` produces. */
 export const toFormRows = (panelRows = []) => {
   const out = [];
@@ -152,7 +173,7 @@ export const toFormRows = (panelRows = []) => {
       filterConfig: {
         filterType,
         filterOp: operator,
-        filterValue: filterType === "boolean" ? toApiBool(value) : value,
+        filterValue: API_VALUE_BY_TYPE[filterType]?.(value) ?? value,
       },
     });
   });

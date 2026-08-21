@@ -23,6 +23,15 @@ import { transformFilterResponse } from "../components/validation";
 const properties = [
   SPAN_TYPE_PROPERTY,
   {
+    id: "confidence_score",
+    name: "confidence_score",
+    category: "attribute",
+    rawCategory: "custom_attribute",
+    type: "number",
+    typeSelectable: true,
+    apiColType: "SPAN_ATTRIBUTE",
+  },
+  {
     id: "region",
     name: "region",
     category: "attribute",
@@ -132,5 +141,38 @@ describe("saved alert survives a visit to the filter panel", () => {
     );
     expect(untouched.filter_config.filter_op).toBe("equals");
     expect(untouched.filter_config.filter_value).toBe("enterprise");
+  });
+
+  it("saves an edited numeric value as a number, not the input's string", async () => {
+    // The panel's numeric input is a plain TextField. The old form ran
+    // parseFloat before storing, so an edit must not change filter_value's
+    // type on save.
+    const payload = {
+      observation_type: [],
+      span_attributes_filters: [
+        {
+          column_id: "confidence_score",
+          filter_config: {
+            filter_type: "number",
+            filter_op: "greater_than",
+            filter_value: 0.8,
+            col_type: "SPAN_ATTRIBUTE",
+          },
+        },
+      ],
+    };
+
+    const onApply = openPanelWith(payload);
+
+    const input = screen.getByDisplayValue("0.8");
+    fireEvent.change(input, { target: { value: "0.95" } });
+
+    await waitFor(() => expect(onApply).toHaveBeenCalled());
+    const sent = convertFiltersToPayload(
+      toFormRows(onApply.mock.calls.at(-1)[0]),
+    );
+    const value = sent.span_attributes_filters[0].filter_config.filter_value;
+    expect(value).toBe(0.95);
+    expect(typeof value).toBe("number");
   });
 });

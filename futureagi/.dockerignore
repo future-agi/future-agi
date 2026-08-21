@@ -81,13 +81,12 @@ test-results/
 **/.playwright-mcp/
 # ee/ ships in the image since the ee->futureagi code move (TH-7256): the
 # license (EE_LICENSE_KEY), not code stripping, gates paid features now.
-# Private cloud bits are gitignored (absent in CI checkouts), but dev
-# machines have them in the working tree — exclude so local builds match
-# what CI/a fresh clone produces.
+# The cloud-private delta is a separate repo (future-agi/ee) checked out at
+# ee/cloud/, so that one rule covers everything it owns. It is gitignored
+# (absent in CI checkouts) but present on dev machines — exclude it so local
+# builds match what CI and a fresh clone produce. The CE base image must not
+# carry cloud code; Dockerfile.ee in the private repo overlays it.
 ee/cloud/
-ee/billing.yaml
-ee/Dockerfile.cloud
-ee/.github/
 ee.local-leftover/
 
 # Documentation (not needed in image)

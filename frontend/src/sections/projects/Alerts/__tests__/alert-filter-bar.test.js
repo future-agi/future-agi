@@ -55,8 +55,8 @@ describe("alert filter bar round-trip", () => {
   });
 
   it("preserves a stored type that disagrees with the attribute's real type", () => {
-    // retry_count lives in attrs_number, but this alert was saved as text.
-    // Coercing it would change the payload and could invalidate the operator.
+    // Saved as text on an attribute that holds numbers. Coercing the stored
+    // type would change the payload and could invalidate the operator.
     const payload = {
       observation_type: [],
       span_attributes_filters: [
@@ -181,5 +181,22 @@ describe("alert filter bar round-trip", () => {
     expect(toPanelRows([{ property: "attributes", propertyId: "" }])).toEqual(
       [],
     );
+  });
+
+  it("normalises stored type spellings through the contract's aliases", () => {
+    // `str`, `int`, `bool` are all live spellings in filter_contract.json.
+    const rowFor = (filterType) =>
+      toPanelRows([
+        {
+          property: "attributes",
+          propertyId: "attr",
+          filterConfig: { filterType, filterOp: "equals", filterValue: "x" },
+        },
+      ])[0];
+
+    expect(rowFor("str").fieldType).toBe("text");
+    expect(rowFor("int").fieldType).toBe("number");
+    expect(rowFor("bool").fieldType).toBe("boolean");
+    expect(rowFor("float").fieldType).toBe("number");
   });
 });

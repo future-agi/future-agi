@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -810,7 +811,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 					if errResp.Error.Code != "" {
 						return nil, fmt.Errorf("%s: %s", errResp.Error.Code, errResp.Error.Message)
 					}
-					return nil, fmt.Errorf(errResp.Error.Message)
+					return nil, errors.New(errResp.Error.Message)
 				}
 				return nil, fmt.Errorf("chat completion failed with status %d", rec.Code)
 			}

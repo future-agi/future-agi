@@ -18,10 +18,10 @@ from tracer.utils.monitor import (
     MONITOR_CH_SETTINGS,
     MONITOR_QUERY_TIMEOUT_MS,
     MonitorConfigError,
-    _get_interval_kind,
     _get_metric_value,
     _process_monitor,
     build_monitor_ch_builder,
+    get_interval_kind,
     process_monitor_task,
 )
 
@@ -52,6 +52,17 @@ def test_eval_output_type_normalized_to_builder_key(
     ):
         builder = build_monitor_ch_builder(user_alert_monitor)
     assert builder.eval_output_type == expected
+
+
+def test_missing_eval_config_raises_config_error_at_builder(
+    user_alert_monitor,
+) -> None:
+    # The raise lives in build_monitor_ch_builder so evaluator, graph and
+    # preview all fail loud — not just the evaluator path.
+    user_alert_monitor.metric_type = "evaluation_metrics"
+    user_alert_monitor.metric = "22222222-2222-2222-2222-222222222222"
+    with pytest.raises(MonitorConfigError):
+        build_monitor_ch_builder(user_alert_monitor)
 
 
 def test_unknown_eval_output_type_raises_config_error(user_alert_monitor) -> None:
@@ -223,6 +234,16 @@ def test_invalid_filters_are_non_retryable(user_alert_monitor) -> None:
     assert UserAlertMonitorLog.objects.count() == 0
 
 
+def test_invalid_observation_type_filter_raises_config_error(
+    user_alert_monitor,
+) -> None:
+    # Non-list/non-str observation_type is a permanent misconfig: the builder's
+    # ValueError must surface as MonitorConfigError, not silently drop the filter.
+    user_alert_monitor.filters = {"observation_type": 123}
+    with pytest.raises(MonitorConfigError):
+        build_monitor_ch_builder(user_alert_monitor)
+
+
 def test_deleted_monitor_returns_quietly() -> None:
     task_fn = process_monitor_task._original_func
     with _patch_ch([]):  # no CH call may happen for a missing monitor
@@ -255,7 +276,7 @@ def test_interval_kind_mapping(
 ) -> None:
     user_alert_monitor.metric_type = metric_type
     user_alert_monitor.alert_frequency = alert_frequency
-    assert _get_interval_kind(user_alert_monitor) == expected
+    assert get_interval_kind(user_alert_monitor) == expected
 
 
 def test_graph_static_formats_ch_series(user_alert_monitor) -> None:

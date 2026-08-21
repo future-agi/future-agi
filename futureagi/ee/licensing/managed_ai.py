@@ -51,6 +51,19 @@ def _cloud_chat_completion(
     path: str,
     timeout: float,
 ) -> dict[str, Any]:
+    """Managed completion on cloud.
+
+    Cloud deployments carry no ``EE_LICENSE_KEY``, so the self-hosted
+    activation-token exchange in ``call_managed_service`` never yields a
+    usable token. The gateway is internal here, so we authenticate with
+    ``AGENTCC_INTERNAL_API_KEY`` — mirroring the ``vertex_ai``/``turing_*``
+    internal-key branch in ``FalconLLMClient``.
+
+    Shares the transport + error mapping with ``call_managed_service`` via
+    ``dispatch_managed_request`` so the two paths cannot drift. Only the 401
+    handling differs: here it means a bad internal key, not a stale
+    activation token, so it deliberately does not touch the EE token cache.
+    """
     base_url, api_key = _cloud_gateway_credentials()
 
     def _on_unauthorized() -> None:
@@ -79,6 +92,10 @@ def chat_completion(payload: dict[str, Any]) -> dict[str, Any]:
         return _cloud_chat_completion(
             payload,
             path="/v1/chat/completions",
+            # Matches the shared gateway client (gateway_llm_client). A managed
+            # agent turn with a large max_tokens routinely runs well past the
+            # 30s default, so use the same generous ceiling rather than let a
+            # slow-but-valid completion trip a transport timeout.
             timeout=300.0,
         )
     return call_managed_service(

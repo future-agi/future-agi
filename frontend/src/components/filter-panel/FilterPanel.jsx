@@ -1311,6 +1311,38 @@ QueryInput.propTypes = {
   getOperators: PropTypes.func,
 };
 
+// Collapse rows into the `{field: [values]}` shape callers receive. Rows with
+// no value drop out; an all-empty set applies as null rather than `{}`.
+const buildFilterResult = (rows) => {
+  const result = {};
+  for (const row of rows) {
+    const val = row.value;
+    const isEmpty = !val || (Array.isArray(val) && val.length === 0);
+    if (isEmpty) continue;
+    const values = Array.isArray(val) ? val : [val];
+    const isNeg = row.operator === "is_not" || row.operator === "not_equals";
+    const key = isNeg ? `${row.field}_not` : row.field;
+    if (!result[key]) result[key] = [];
+    // Rows sharing a key merge, so a value picked in two of them would
+    // otherwise go out twice.
+    for (const v of values) {
+      if (!result[key].includes(v)) result[key].push(v);
+    }
+  }
+  return Object.keys(result).length > 0 ? result : null;
+};
+
+// Key order follows row order, which the user can change without changing the
+// filter, so sort before comparing.
+const serializeFilters = (result) =>
+  result
+    ? JSON.stringify(
+        Object.keys(result)
+          .sort()
+          .map((k) => [k, result[k]]),
+      )
+    : "null";
+
 // ---------------------------------------------------------------------------
 // FilterPanel — main component
 // ---------------------------------------------------------------------------
@@ -1383,9 +1415,11 @@ const FilterPanel = ({
 
   const [rows, setRows] = useState([{ ...defaultRow }]);
   const applyTimerRef = useRef(null);
+  const lastAppliedRef = useRef(undefined);
 
   useEffect(() => {
     if (!open) return;
+    let initialRows;
     if (
       currentFilters &&
       typeof currentFilters === "object" &&
@@ -1396,13 +1430,24 @@ const FilterPanel = ({
       for (const [key, val] of Object.entries(currentFilters)) {
         const isNeg = key.endsWith("_not");
         const field = isNeg ? key.slice(0, -4) : key;
+        const fieldDef = fieldMap[field];
         if (Array.isArray(val)) {
           const op = isNeg
             ? "is_not"
-            : fieldMap[field]?.type === "enum"
+            : fieldDef?.type === "enum"
               ? "is"
               : "contains";
-          val.forEach((v) => initial.push({ field, operator: op, value: v }));
+          if (fieldDef?.type === "enum") {
+            // An enum row holds the whole set and shows it as chips, so keep
+            // the values together — one row per value would come back as a
+            // pile of identical rows the user never created.
+            const values = fieldDef.single ? val.slice(0, 1) : val;
+            if (values.length > 0)
+              initial.push({ field, operator: op, value: values });
+          } else {
+            // A text row is a single input, so each value needs its own.
+            val.forEach((v) => initial.push({ field, operator: op, value: v }));
+          }
         } else if (val) {
           initial.push({
             field,
@@ -1411,13 +1456,16 @@ const FilterPanel = ({
           });
         }
       }
-      if (initial.length > 0) setRows(initial);
-      else setRows([{ ...defaultRow }]);
+      initialRows = initial.length > 0 ? initial : [{ ...defaultRow }];
     } else if (Array.isArray(currentFilters) && currentFilters.length > 0) {
-      setRows([...currentFilters]);
+      initialRows = [...currentFilters];
     } else {
-      setRows([{ ...defaultRow }]);
+      initialRows = [{ ...defaultRow }];
     }
+    setRows(initialRows);
+    // Seed the guard with what these rows would apply to, so merely opening
+    // the panel doesn't re-emit filters the caller already holds.
+    lastAppliedRef.current = serializeFilters(buildFilterResult(initialRows));
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-apply on row changes (debounced)
@@ -1425,23 +1473,14 @@ const FilterPanel = ({
     if (!open) return;
     if (applyTimerRef.current) clearTimeout(applyTimerRef.current);
     applyTimerRef.current = setTimeout(() => {
-      const result = {};
-      for (const row of rows) {
-        const val = row.value;
-        const isEmpty = !val || (Array.isArray(val) && val.length === 0);
-        if (isEmpty) continue;
-        const values = Array.isArray(val) ? val : [val];
-        const isNeg =
-          row.operator === "is_not" || row.operator === "not_equals";
-        const key = isNeg ? `${row.field}_not` : row.field;
-        if (!result[key]) result[key] = [];
-        // Rows sharing a key merge, so a value picked in two of them would
-        // otherwise go out twice.
-        for (const v of values) {
-          if (!result[key].includes(v)) result[key].push(v);
-        }
-      }
-      onApply(Object.keys(result).length > 0 ? result : null);
+      const result = buildFilterResult(rows);
+      // `result` is rebuilt on every run, so callers keying off its identity
+      // (an AG Grid datasource, a memo) would refetch even when nothing
+      // changed. Compare by value and stay quiet when it hasn't.
+      const serialized = serializeFilters(result);
+      if (serialized === lastAppliedRef.current) return;
+      lastAppliedRef.current = serialized;
+      onApply(result);
     }, 400);
     return () => {
       if (applyTimerRef.current) clearTimeout(applyTimerRef.current);
@@ -1507,6 +1546,7 @@ const FilterPanel = ({
 
   const handleClear = useCallback(() => {
     setRows([{ ...defaultRow }]);
+    lastAppliedRef.current = serializeFilters(null);
     onApply(null);
     onClose();
   }, [defaultRow, onApply, onClose]);

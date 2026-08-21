@@ -22004,8 +22004,8 @@ export interface UserAlertMonitorApi {
   readonly metric_name?: string;
   readonly created_at?: string;
   readonly updated_at?: string;
-  deleted?: boolean;
-  deleted_at?: string;
+  readonly deleted?: boolean;
+  readonly deleted_at?: string;
   metric_type: UserAlertMonitorApiMetricType;
   /**
      * Id of the evaluation template.
@@ -22037,14 +22037,14 @@ export interface UserAlertMonitorApi {
      */
   auto_threshold_time_window?: number;
   /** The last time the monitor was checked for alerts. */
-  last_checked_at?: string;
+  readonly last_checked_at?: string;
   notification_emails?: string[];
   /** @maxLength 200 */
   slack_webhook_url?: string;
   slack_notes?: string;
   is_mute?: boolean;
   filters?: UserAlertMonitorApiFilters;
-  logs?: UserAlertMonitorApiLogsItem[];
+  readonly logs?: readonly UserAlertMonitorApiLogsItem[];
   organization: string;
   workspace?: string;
   created_by?: string;
@@ -22139,8 +22139,8 @@ export interface UserAlertMonitorPreviewGraphApi {
   readonly metric_name?: string;
   readonly created_at?: string;
   readonly updated_at?: string;
-  deleted?: boolean;
-  deleted_at?: string;
+  readonly deleted?: boolean;
+  readonly deleted_at?: string;
   metric_type: UserAlertMonitorPreviewGraphApiMetricType;
   /**
      * Id of the evaluation template.
@@ -22172,14 +22172,14 @@ export interface UserAlertMonitorPreviewGraphApi {
      */
   auto_threshold_time_window?: number;
   /** The last time the monitor was checked for alerts. */
-  last_checked_at?: string;
+  readonly last_checked_at?: string;
   notification_emails?: string[];
   /** @maxLength 200 */
   slack_webhook_url?: string;
   slack_notes?: string;
   is_mute?: boolean;
   filters?: UserAlertMonitorPreviewGraphApiFilters;
-  logs?: UserAlertMonitorPreviewGraphApiLogsItem[];
+  readonly logs?: readonly UserAlertMonitorPreviewGraphApiLogsItem[];
   organization: string;
   workspace?: string;
   created_by?: string;

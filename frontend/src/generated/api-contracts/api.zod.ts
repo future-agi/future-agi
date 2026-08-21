@@ -43582,8 +43582,6 @@ export const tracerUserAlertsCreateBodySlackWebhookUrlMax = 200;
 export const TracerUserAlertsCreateBody = zod.object({
   "project": zod.string().uuid(),
   "name": zod.string().min(1),
-  "deleted": zod.boolean().optional(),
-  "deleted_at": zod.string().datetime({"offset":true}).optional(),
   "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics']),
   "metric": zod.string().max(tracerUserAlertsCreateBodyMetricMax).optional().describe('Id of the evaluation template.'),
   "threshold_operator": zod.enum(['greater_than', 'less_than']),
@@ -43593,7 +43591,6 @@ export const TracerUserAlertsCreateBody = zod.object({
   "warning_threshold_value": zod.number().min(tracerUserAlertsCreateBodyWarningThresholdValueMin).optional(),
   "alert_frequency": zod.number().min(tracerUserAlertsCreateBodyAlertFrequencyMin).max(tracerUserAlertsCreateBodyAlertFrequencyMax).optional().describe('Frequency of alert checks in minutes.'),
   "auto_threshold_time_window": zod.number().min(tracerUserAlertsCreateBodyAutoThresholdTimeWindowMin).max(tracerUserAlertsCreateBodyAutoThresholdTimeWindowMax).optional().describe('For auto-thresholding. The time window in minutes to calculate the historical mean'),
-  "last_checked_at": zod.string().datetime({"offset":true}).optional().describe('The last time the monitor was checked for alerts.'),
   "notification_emails": zod.array(zod.string().email().min(1).max(tracerUserAlertsCreateBodyNotificationEmailsItemMax)).optional(),
   "slack_webhook_url": zod.string().url().max(tracerUserAlertsCreateBodySlackWebhookUrlMax).optional(),
   "slack_notes": zod.string().optional(),
@@ -43601,9 +43598,6 @@ export const TracerUserAlertsCreateBody = zod.object({
   "filters": zod.object({
 
 }).passthrough().optional(),
-  "logs": zod.array(zod.object({
-
-}).passthrough()).optional(),
   "organization": zod.string().uuid(),
   "workspace": zod.string().uuid().optional(),
   "created_by": zod.string().uuid().optional()
@@ -43758,8 +43752,6 @@ export const tracerUserAlertsPreviewGraphBodySlackWebhookUrlMax = 200;
 export const TracerUserAlertsPreviewGraphBody = zod.object({
   "project": zod.string().uuid(),
   "name": zod.string().optional(),
-  "deleted": zod.boolean().optional(),
-  "deleted_at": zod.string().datetime({"offset":true}).optional(),
   "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics']),
   "metric": zod.string().max(tracerUserAlertsPreviewGraphBodyMetricMax).optional().describe('Id of the evaluation template.'),
   "threshold_operator": zod.enum(['greater_than', 'less_than']),
@@ -43769,7 +43761,6 @@ export const TracerUserAlertsPreviewGraphBody = zod.object({
   "warning_threshold_value": zod.number().min(tracerUserAlertsPreviewGraphBodyWarningThresholdValueMin).optional(),
   "alert_frequency": zod.number().min(tracerUserAlertsPreviewGraphBodyAlertFrequencyMin).max(tracerUserAlertsPreviewGraphBodyAlertFrequencyMax).optional().describe('Frequency of alert checks in minutes.'),
   "auto_threshold_time_window": zod.number().min(tracerUserAlertsPreviewGraphBodyAutoThresholdTimeWindowMin).max(tracerUserAlertsPreviewGraphBodyAutoThresholdTimeWindowMax).optional().describe('For auto-thresholding. The time window in minutes to calculate the historical mean'),
-  "last_checked_at": zod.string().datetime({"offset":true}).optional().describe('The last time the monitor was checked for alerts.'),
   "notification_emails": zod.array(zod.string().email().min(1).max(tracerUserAlertsPreviewGraphBodyNotificationEmailsItemMax)).optional(),
   "slack_webhook_url": zod.string().url().max(tracerUserAlertsPreviewGraphBodySlackWebhookUrlMax).optional(),
   "slack_notes": zod.string().optional(),
@@ -43777,9 +43768,6 @@ export const TracerUserAlertsPreviewGraphBody = zod.object({
   "filters": zod.object({
 
 }).passthrough().optional(),
-  "logs": zod.array(zod.object({
-
-}).passthrough()).optional(),
   "organization": zod.string().uuid(),
   "workspace": zod.string().uuid().optional(),
   "created_by": zod.string().uuid().optional()
@@ -43874,8 +43862,6 @@ export const tracerUserAlertsUpdateBodySlackWebhookUrlMax = 200;
 export const TracerUserAlertsUpdateBody = zod.object({
   "project": zod.string().uuid(),
   "name": zod.string().min(1),
-  "deleted": zod.boolean().optional(),
-  "deleted_at": zod.string().datetime({"offset":true}).optional(),
   "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics']),
   "metric": zod.string().max(tracerUserAlertsUpdateBodyMetricMax).optional().describe('Id of the evaluation template.'),
   "threshold_operator": zod.enum(['greater_than', 'less_than']),
@@ -43885,7 +43871,6 @@ export const TracerUserAlertsUpdateBody = zod.object({
   "warning_threshold_value": zod.number().min(tracerUserAlertsUpdateBodyWarningThresholdValueMin).optional(),
   "alert_frequency": zod.number().min(tracerUserAlertsUpdateBodyAlertFrequencyMin).max(tracerUserAlertsUpdateBodyAlertFrequencyMax).optional().describe('Frequency of alert checks in minutes.'),
   "auto_threshold_time_window": zod.number().min(tracerUserAlertsUpdateBodyAutoThresholdTimeWindowMin).max(tracerUserAlertsUpdateBodyAutoThresholdTimeWindowMax).optional().describe('For auto-thresholding. The time window in minutes to calculate the historical mean'),
-  "last_checked_at": zod.string().datetime({"offset":true}).optional().describe('The last time the monitor was checked for alerts.'),
   "notification_emails": zod.array(zod.string().email().min(1).max(tracerUserAlertsUpdateBodyNotificationEmailsItemMax)).optional(),
   "slack_webhook_url": zod.string().url().max(tracerUserAlertsUpdateBodySlackWebhookUrlMax).optional(),
   "slack_notes": zod.string().optional(),
@@ -43893,9 +43878,6 @@ export const TracerUserAlertsUpdateBody = zod.object({
   "filters": zod.object({
 
 }).passthrough().optional(),
-  "logs": zod.array(zod.object({
-
-}).passthrough()).optional(),
   "organization": zod.string().uuid(),
   "workspace": zod.string().uuid().optional(),
   "created_by": zod.string().uuid().optional()
@@ -43985,8 +43967,6 @@ export const tracerUserAlertsPartialUpdateBodySlackWebhookUrlMax = 200;
 export const TracerUserAlertsPartialUpdateBody = zod.object({
   "project": zod.string().uuid(),
   "name": zod.string().min(1),
-  "deleted": zod.boolean().optional(),
-  "deleted_at": zod.string().datetime({"offset":true}).optional(),
   "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics']),
   "metric": zod.string().max(tracerUserAlertsPartialUpdateBodyMetricMax).optional().describe('Id of the evaluation template.'),
   "threshold_operator": zod.enum(['greater_than', 'less_than']),
@@ -43996,7 +43976,6 @@ export const TracerUserAlertsPartialUpdateBody = zod.object({
   "warning_threshold_value": zod.number().min(tracerUserAlertsPartialUpdateBodyWarningThresholdValueMin).optional(),
   "alert_frequency": zod.number().min(tracerUserAlertsPartialUpdateBodyAlertFrequencyMin).max(tracerUserAlertsPartialUpdateBodyAlertFrequencyMax).optional().describe('Frequency of alert checks in minutes.'),
   "auto_threshold_time_window": zod.number().min(tracerUserAlertsPartialUpdateBodyAutoThresholdTimeWindowMin).max(tracerUserAlertsPartialUpdateBodyAutoThresholdTimeWindowMax).optional().describe('For auto-thresholding. The time window in minutes to calculate the historical mean'),
-  "last_checked_at": zod.string().datetime({"offset":true}).optional().describe('The last time the monitor was checked for alerts.'),
   "notification_emails": zod.array(zod.string().email().min(1).max(tracerUserAlertsPartialUpdateBodyNotificationEmailsItemMax)).optional(),
   "slack_webhook_url": zod.string().url().max(tracerUserAlertsPartialUpdateBodySlackWebhookUrlMax).optional(),
   "slack_notes": zod.string().optional(),
@@ -44004,9 +43983,6 @@ export const TracerUserAlertsPartialUpdateBody = zod.object({
   "filters": zod.object({
 
 }).passthrough().optional(),
-  "logs": zod.array(zod.object({
-
-}).passthrough()).optional(),
   "organization": zod.string().uuid(),
   "workspace": zod.string().uuid().optional(),
   "created_by": zod.string().uuid().optional()

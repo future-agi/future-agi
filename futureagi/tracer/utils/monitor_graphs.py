@@ -17,8 +17,8 @@ from tracer.models.monitor import (
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
 from tracer.utils.monitor import (
     MONITOR_CH_SETTINGS,
-    _get_interval_kind,
     build_monitor_ch_builder,
+    get_interval_kind,
 )
 
 # Graphs are interactive; keep a tighter timeout than the evaluator.
@@ -300,7 +300,7 @@ def _evaluator_percentage_band(
         monitor.metric_type,
         hist_start,
         hist_end,
-        interval_kind=_get_interval_kind(monitor),
+        interval_kind=get_interval_kind(monitor),
     )
     result = analytics.execute_ch_query(
         query, params, timeout_ms=GRAPH_QUERY_TIMEOUT_MS, settings=MONITOR_CH_SETTINGS

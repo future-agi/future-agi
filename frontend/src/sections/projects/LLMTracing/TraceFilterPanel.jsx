@@ -341,7 +341,10 @@ const getOperatorsForFilter = (filter, property) => {
   // takes a value list and has nowhere to put an operator, so anything but
   // "is one of" would be a no-op or an inversion.
   if (!Array.isArray(property?.operators)) return ops;
-  return ops.filter((op) => property.operators.includes(op.value));
+  // A property whose declared operators share nothing with its type would
+  // narrow the row down to an empty dropdown, so fall back to the type's own.
+  const narrowed = ops.filter((op) => property.operators.includes(op.value));
+  return narrowed.length ? narrowed : ops;
 };
 
 const getDefaultOperatorForFilter = (filter, ops) => {
