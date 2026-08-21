@@ -3,8 +3,12 @@ import PropTypes from "prop-types";
 import { Box, IconButton, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 
-// Sticky in-content header for the chat compare view (back arrow + title).
-const CompareHeaderBar = ({ onBack, scenarioName, sessionId }) => {
+const CompareHeaderBar = ({
+  onBack,
+  scenarioName,
+  sessionId,
+  backLabel = "Back",
+}) => {
   const subtitleParts = [];
   if (scenarioName) subtitleParts.push(scenarioName);
   if (sessionId) subtitleParts.push(`Session ${sessionId}`);
@@ -28,7 +32,7 @@ const CompareHeaderBar = ({ onBack, scenarioName, sessionId }) => {
         <IconButton
           onClick={onBack}
           size="small"
-          aria-label="Back to chat"
+          aria-label={backLabel}
           sx={{
             color: "text.primary",
             border: "1px solid",
@@ -81,6 +85,7 @@ CompareHeaderBar.propTypes = {
   onBack: PropTypes.func.isRequired,
   scenarioName: PropTypes.string,
   sessionId: PropTypes.string,
+  backLabel: PropTypes.string,
 };
 
 export default CompareHeaderBar;

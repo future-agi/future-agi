@@ -2451,7 +2451,7 @@ class TestExecutionDetailView(APIView):
                     status=status.HTTP_200_OK,
                 )
 
-            # Bulk fetch dataset session_ids (Row.metadata["session_id"]) for this page to avoid N+1.
+            # Bulk fetch dataset baseline ids (Row.metadata) for this page to avoid N+1.
             row_ids = set()
             for call_execution in paginated_calls:
                 row_id = getattr(call_execution, "row_id", None)
@@ -7713,8 +7713,10 @@ def add_trace_details_to_call_executions(call_executions):
     for call_exec_id, trace_details in trace_details_map.items():
         call_executions_dict[call_exec_id]["trace_details"] = trace_details
 
-    # Add dataset session_id (from Row.metadata) to grouped/flattened call executions.
-    # We only do one Row query for the whole page to avoid N+1.
+    # Add the dataset baseline id (from Row.metadata) to grouped/flattened call
+    # executions. We only do one Row query for the whole page to avoid N+1.
+    # Routed through resolve_baseline_id so this path agrees with the list and
+    # detail views.
     row_ids = set()
     for call_execution in call_executions_dict.values():
         call_metadata = call_execution.get("call_metadata") or {}
@@ -7727,8 +7729,9 @@ def add_trace_details_to_call_executions(call_executions):
         for row_id, metadata in Row.all_objects.filter(id__in=row_ids).values_list(
             "id", "metadata"
         ):
-            if isinstance(metadata, dict) and "session_id" in metadata:
-                row_session_id_map[str(row_id)] = metadata.get("session_id")
+            baseline_id = resolve_baseline_id(metadata, is_replay=False)
+            if baseline_id:
+                row_session_id_map[str(row_id)] = baseline_id
 
     for call_execution in call_executions_dict.values():
         call_metadata = call_execution.get("call_metadata") or {}
