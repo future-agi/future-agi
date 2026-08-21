@@ -2,12 +2,15 @@ package a2a
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/mcp"
+	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
 func newTestA2AServer() *Server {
@@ -297,5 +300,115 @@ func TestTasksCancel(t *testing.T) {
 	json.Unmarshal(resp.Result, &task)
 	if task.Status.State != TaskStatusCanceled {
 		t.Fatalf("expected canceled, got %s", task.Status.State)
+	}
+}
+
+func TestAsyncCancelCannotBeOverwrittenByLateSuccess(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	executor := func(context.Context, string, *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+		close(started)
+		<-release
+		return &models.ChatCompletionResponse{
+			Model: "test-model",
+			Choices: []models.Choice{{
+				Message: models.Message{Content: json.RawMessage(`"late success"`)},
+			}},
+		}, nil
+	}
+	s := NewServer(
+		CardConfig{Name: "test-agentcc"},
+		NewRegistry(nil),
+		WithChatCompletionExecutor(executor),
+	)
+	defer s.Close()
+
+	params := MessageSendParams{
+		Message: Message{
+			Role:  "user",
+			Parts: []MessagePart{{Type: "text", Text: "slow request"}},
+		},
+		Metadata: json.RawMessage(`{"model":"test-model"}`),
+		Configuration: &MessageSendConfiguration{
+			ReturnImmediately: true,
+		},
+	}
+	paramsData, _ := json.Marshal(params)
+	w := postA2A(t, s, &mcp.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  MethodMessageSend,
+		Params:  paramsData,
+	})
+	var task Task
+	if err := json.Unmarshal(decodeA2AResponse(t, w).Result, &task); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("executor did not start")
+	}
+
+	cancelData, _ := json.Marshal(TaskCancelParams{TaskID: task.ID})
+	postA2A(t, s, &mcp.Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`2`),
+		Method:  MethodTasksCancel,
+		Params:  cancelData,
+	})
+	close(release)
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if _, running := s.taskCancels.Load(task.ID); !running {
+			stored, ok := s.tasks.Get(task.ID)
+			if !ok {
+				t.Fatal("expected async task to remain stored")
+			}
+			if stored.Status.State != TaskStatusCanceled {
+				t.Fatalf("late success overwrote cancellation: %s", stored.Status.State)
+			}
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("async task did not finish")
+}
+
+func TestDeadlineCannotBeOverwrittenByLateSuccess(t *testing.T) {
+	executor := func(ctx context.Context, _ string, _ *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+		<-ctx.Done()
+		return &models.ChatCompletionResponse{
+			Model: "test-model",
+			Choices: []models.Choice{{
+				Message: models.Message{Content: json.RawMessage(`"late success"`)},
+			}},
+		}, nil
+	}
+	s := NewServer(
+		CardConfig{Name: "test-agentcc"},
+		NewRegistry(nil),
+		WithChatCompletionExecutor(executor),
+	)
+	defer s.Close()
+
+	task := &Task{ID: "deadline-task", Status: TaskStatus{State: TaskStatusWorking}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+	s.runMessageSendWithPipeline(ctx, "", task, "slow request", MessageSendParams{
+		Metadata: json.RawMessage(`{"model":"test-model"}`),
+	})
+
+	stored, ok := s.tasks.Get(task.ID)
+	if !ok {
+		t.Fatal("expected timed-out task to remain stored")
+	}
+	if stored.Status.State != TaskStatusFailed {
+		t.Fatalf("late success overwrote deadline failure: %s", stored.Status.State)
+	}
+	if len(stored.Status.Message) != 1 || stored.Status.Message[0].Text != "Pipeline error: context deadline exceeded" {
+		t.Fatalf("unexpected deadline error: %#v", stored.Status.Message)
 	}
 }
