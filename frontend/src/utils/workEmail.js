@@ -24,8 +24,10 @@ export const NON_WORK_EMAIL_DOMAINS = [
   "yandex.ru",
   "mailinator.com",
   "yopmail.com",
+  "guerrillamailblock.com",
   "web-library.net",
   "example.com",
+  "example.net",
   "noreply.github.com",
   "github.com",
 ];
