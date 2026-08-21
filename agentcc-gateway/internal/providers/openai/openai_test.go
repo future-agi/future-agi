@@ -736,6 +736,32 @@ func TestChatCompletion_Success(t *testing.T) {
 	}
 }
 
+func TestChatCompletion_BaseURLWithVersionSuffix(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Errorf("path = %s, want /v1/chat/completions", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(models.ChatCompletionResponse{
+			ID:      "chatcmpl-vllm",
+			Choices: []models.Choice{{Message: models.Message{Content: json.RawMessage(`"ok"`)}}},
+		})
+	}))
+	defer ts.Close()
+
+	p := newTestProvider(t, ts.URL+"/v1/")
+	resp, err := p.ChatCompletion(context.Background(), &models.ChatCompletionRequest{
+		Model:    "meta-llama/Llama-3.1-8B-Instruct",
+		Messages: []models.Message{{Role: "user", Content: json.RawMessage(`"Hi"`)}},
+	})
+	if err != nil {
+		t.Fatalf("ChatCompletion error: %v", err)
+	}
+	if resp.ID != "chatcmpl-vllm" {
+		t.Errorf("id = %q, want chatcmpl-vllm", resp.ID)
+	}
+}
+
 func TestChatCompletion_ModelPassedThrough(t *testing.T) {
 	// Upstream Groq, Together, Fireworks etc. use slash-prefixed model IDs
 	// natively (groq/compound-mini, meta-llama/…, accounts/fireworks/…), so
@@ -795,6 +821,48 @@ func TestResolveModelName(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("resolveModelName(%q) = %q, want %q", tc.input, got, tc.want)
 		}
+	}
+}
+
+func TestCompatibleEndpoint(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseURL string
+		path    string
+		want    string
+	}{
+		{
+			name:    "server style base URL",
+			baseURL: "http://localhost:8000",
+			path:    "/v1/models",
+			want:    "http://localhost:8000/v1/models",
+		},
+		{
+			name:    "SDK style base URL",
+			baseURL: "http://localhost:8000/v1",
+			path:    "/v1/models",
+			want:    "http://localhost:8000/v1/models",
+		},
+		{
+			name:    "trailing slash",
+			baseURL: "http://localhost:8000/v1/",
+			path:    "/v1/chat/completions",
+			want:    "http://localhost:8000/v1/chat/completions",
+		},
+		{
+			name:    "non-versioned path",
+			baseURL: "http://localhost:8000/v1",
+			path:    "/health",
+			want:    "http://localhost:8000/v1/health",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CompatibleEndpoint(tc.baseURL, tc.path); got != tc.want {
+				t.Errorf("CompatibleEndpoint(%q, %q) = %q, want %q", tc.baseURL, tc.path, got, tc.want)
+			}
+		})
 	}
 }
 
