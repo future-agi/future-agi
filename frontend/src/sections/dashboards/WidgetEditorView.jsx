@@ -92,6 +92,11 @@ import {
   toAxisConfigPayload,
 } from "./widgetUtils";
 import {
+  buildBreakdownColorMap,
+  buildSeriesColorMap,
+  getSeriesColorFromMap,
+} from "./seriesColors";
+import {
   AGGREGATION_OPTIONS,
   ALL_AGGREGATIONS,
   PERCENTILE_OPTIONS,
@@ -340,48 +345,9 @@ const METRIC_TYPE_ICONS = {
   custom_column: "mdi:table-column",
 };
 
-const SERIES_COLORS = [
-  "#7B56DB", // purple (primary)
-  "#1ABCFE", // cyan
-  "#FF6B6B", // coral red
-  "#2ECB71", // emerald green
-  "#F7B731", // amber
-  "#E84393", // magenta pink
-  "#0984E3", // ocean blue
-  "#FD7E14", // tangerine orange
-  "#00CEC9", // teal
-  "#A29BFE", // lavender
-];
-
-const hashSeriesName = (name) => {
-  const s = String(name || "");
-  let h = 0;
-  for (let i = 0; i < s.length; i += 1) {
-    h = (h * 31 + s.charCodeAt(i)) | 0;
-  }
-  return Math.abs(h);
-};
-const buildSeriesColorMap = (names) => {
-  const map = {};
-  const used = new Set();
-  (names || []).forEach((name) => {
-    const start = hashSeriesName(name) % SERIES_COLORS.length;
-    let picked = start;
-    for (let i = 0; i < SERIES_COLORS.length; i += 1) {
-      const candidate = (start + i) % SERIES_COLORS.length;
-      if (!used.has(candidate)) {
-        picked = candidate;
-        break;
-      }
-    }
-    used.add(picked);
-    map[name] = SERIES_COLORS[picked];
-  });
-  return map;
-};
-const getSeriesColor = (name, map) =>
-  (map && map[name]) ||
-  SERIES_COLORS[hashSeriesName(name) % SERIES_COLORS.length];
+// Thin alias over the shared seriesColors resolver, preserving the existing
+// `(name, map)` argument order used throughout this file.
+const getSeriesColor = (name, map) => getSeriesColorFromMap(map, name);
 
 const LETTER_LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
@@ -2291,8 +2257,11 @@ export default function WidgetEditorView() {
   // share a color inside one widget. Built from previewSeries so hidden
   // series keep their color when re-checked.
   const seriesColorMap = useMemo(
-    () => buildSeriesColorMap(previewSeries.map((s) => s.name)),
-    [previewSeries],
+    () =>
+      buildBreakdownColorMap(previewSeries, {
+        isDark: theme.palette.mode === "dark",
+      }),
+    [previewSeries, theme.palette.mode],
   );
   const chartColors = useMemo(
     () => chartSeries.map((s) => getSeriesColor(s.name, seriesColorMap)),
