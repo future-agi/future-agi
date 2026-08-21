@@ -1147,13 +1147,13 @@ class DatasetExperimentsView(APIView):
                                 )
                             ),
                             "name": (
-                                column.name
-                                if "-reason" not in column.name
-                                else column.name.split("-reason")[0]
+                                column.name.removesuffix("-reason")
+                                if column.name.endswith("-reason")
+                                else column.name
                             ),
                             "data_type": (
                                 column.data_type
-                                if "-reason" not in column.name
+                                if not column.name.endswith("-reason")
                                 else "text"
                             ),
                             "origin": (
