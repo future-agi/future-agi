@@ -248,10 +248,14 @@ def calculate_total_cost(
     prompt_cost = 0.0
     completion_cost = 0.0
 
-    # Token-based pricing (LLM/Chat models)
-    if "input_per_1M_tokens" in pricing and "output_per_1M_tokens" in pricing:
-        input_cost_per_1M = pricing["input_per_1M_tokens"]
-        output_cost_per_1M = pricing["output_per_1M_tokens"]
+    # Token-based pricing (LLM/Chat/embedding models). Embedding models are priced
+    # with only `input_per_1M_tokens` (they produce no output tokens), so accept
+    # either key and treat a missing side as zero. Requiring both keys made every
+    # embedding model fall through to the "unknown pricing structure" branch and be
+    # costed at $0.
+    if "input_per_1M_tokens" in pricing or "output_per_1M_tokens" in pricing:
+        input_cost_per_1M = pricing.get("input_per_1M_tokens") or 0
+        output_cost_per_1M = pricing.get("output_per_1M_tokens") or 0
 
         # Use `or 0` to handle both missing keys AND explicit None values
         prompt_tokens = token_usage.get("prompt_tokens") or 0

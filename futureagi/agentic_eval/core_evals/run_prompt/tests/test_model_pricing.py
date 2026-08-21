@@ -142,6 +142,44 @@ class TestTokenBasedPricing:
 
 
 # =============================================================================
+# Unit Tests - Embedding Model Pricing (input-only token pricing)
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestEmbeddingModelPricing:
+    """Embedding models are priced with only ``input_per_1M_tokens`` (they
+    produce no output tokens). Their cost must be computed from that key, not
+    silently dropped to $0 because an ``output_per_1M_tokens`` key is absent."""
+
+    @pytest.mark.parametrize(
+        "model_name",
+        [
+            "text-embedding-3-large",
+            "text-embedding-3-small",
+            "text-embedding-ada-002",
+        ],
+    )
+    def test_embedding_cost_is_not_zero(self, model_name):
+        pricing = get_model_pricing(model_name)
+        # Sanity: embeddings are priced with an input token rate and no output rate.
+        assert "input_per_1M_tokens" in pricing
+        assert "output_per_1M_tokens" not in pricing
+        input_price = pricing["input_per_1M_tokens"]
+        assert input_price > 0
+
+        token_usage = {"prompt_tokens": 1_000_000, "completion_tokens": 0}
+        result = calculate_total_cost(model_name, token_usage)
+
+        expected = round((1_000_000 / 1_000_000) * input_price, 6)
+        assert result["prompt_cost"] == expected
+        assert result["completion_cost"] == 0.0
+        assert result["total_cost"] == expected
+        assert result["total_cost"] > 0  # regression: used to fall through to $0
+        assert result["pricing_source"] == "available_models"
+
+
+# =============================================================================
 # Unit Tests - Character-Based Pricing (TTS Models)
 # =============================================================================
 
