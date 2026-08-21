@@ -231,8 +231,8 @@ All ports are configurable via `.env`. Defaults:
 | ClickHouse HTTP            | `8123` | same                                   |
 | ClickHouse TCP             | `9000` | same                                   |
 | Redis                      | `6379` | same                                   |
-| MinIO S3 API               | `9000` | same                                   |
-| MinIO console              | `9001` | same                                   |
+| MinIO S3 API               | `9005` | same                                   |
+| MinIO console              | `9006` | same                                   |
 | Temporal gRPC              | `7233` | same                                   |
 | Temporal UI                | `8085` | dev mode only                          |
 
