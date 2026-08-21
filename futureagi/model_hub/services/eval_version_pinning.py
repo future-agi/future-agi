@@ -11,11 +11,17 @@ from model_hub.utils.eval_prompt_variables import sync_required_keys_from_prompt
 from model_hub.utils.prompt_migration import config_to_prompt_messages
 
 
-def maybe_pin_new_version(eval_metric, request_data, user, organization, workspace):
+def maybe_pin_new_version(
+    eval_metric, request_data, user, organization, workspace, set_as_default=True
+):
     """Create and pin a new EvalTemplateVersion if config actually changed.
 
     Mutates eval_metric.pinned_version in place. The caller is responsible
     for persisting eval_metric via save().
+
+    set_as_default=False creates the version without flipping the template's
+    default — used for experiment-scoped edits so they don't affect the
+    eval workbench.
     """
     from model_hub.models.choices import OwnerChoices
 
@@ -80,5 +86,6 @@ def maybe_pin_new_version(eval_metric, request_data, user, organization, workspa
         user=user,
         organization=organization,
         workspace=workspace,
+        set_as_default=set_as_default,
     )
     eval_metric.pinned_version = ver

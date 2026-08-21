@@ -71,6 +71,28 @@ class TestVersionManager:
         default = EvalTemplateVersion.objects.get_default(user_template)
         assert default.id == v1.id
 
+    def test_set_as_default_false_preserves_existing_default(
+        self, user_template, user, organization
+    ):
+        v1 = EvalTemplateVersion.objects.create_version(
+            eval_template=user_template,
+            criteria="V1",
+            user=user,
+            organization=organization,
+        )
+        v2 = EvalTemplateVersion.objects.create_version(
+            eval_template=user_template,
+            criteria="V2",
+            user=user,
+            organization=organization,
+            set_as_default=False,
+        )
+        v1.refresh_from_db()
+        assert v2.version_number == 2
+        assert v2.is_default is False
+        assert v1.is_default is True
+        assert EvalTemplateVersion.objects.get_default(user_template).id == v1.id
+
 
 # =============================================================================
 # E2E: Version List API
@@ -858,6 +880,50 @@ class TestVersionsCreateCapturesLiveState:
         assert cs.get("knowledge_bases") == ["kb-1"]
         # And no camelCase leak (we sourced from template.config, not req)
         assert "agentMode" not in cs
+
+    def test_fe_supplied_config_snapshot_overrides_template_fields(
+        self, auth_client, user_template
+    ):
+        """When the experiment wizard sends a config_snapshot, its
+        snake_case fields override the template config so the version
+        captures the user's edits without mutating the shared template."""
+        user_template.config = {
+            "rule_prompt": "original prompt",
+            "model": "turing_large",
+            "eval_type_id": "AgentEvaluator",
+            "choices": ["Yes", "No"],
+            "pass_threshold": 0.5,
+        }
+        user_template.save()
+
+        response = auth_client.post(
+            _versions_create_url(user_template.id),
+            {
+                "config_snapshot": {
+                    "rule_prompt": "edited prompt from wizard",
+                    "model": "gpt-5.5",
+                    "pass_threshold": 0.7,
+                },
+                "criteria": "edited prompt from wizard",
+                "model": "gpt-5.5",
+            },
+            format="json",
+        )
+        assert response.status_code == 200, response.data
+        version = EvalTemplateVersion.objects.get(
+            id=response.data["result"]["id"]
+        )
+        cs = version.config_snapshot
+        assert cs["rule_prompt"] == "edited prompt from wizard"
+        assert cs["model"] == "gpt-5.5"
+        assert cs["pass_threshold"] == 0.7
+        # Template-only fields are preserved
+        assert cs["eval_type_id"] == "AgentEvaluator"
+        assert cs["choices"] == ["Yes", "No"]
+        # Shared template is NOT mutated
+        user_template.refresh_from_db()
+        assert user_template.config["rule_prompt"] == "original prompt"
+        assert user_template.config["model"] == "turing_large"
 
 
 # =============================================================================
@@ -1707,6 +1773,36 @@ class TestMaybePinNewVersion:
         )
 
         assert uem.pinned_version == before  # unchanged
+
+    def test_experiment_scoped_pin_does_not_steal_default(
+        self, organization, workspace, user, user_template
+    ):
+        """set_as_default=False (experiment-scoped edit) must pin the new
+        version without changing the template's default version."""
+        from model_hub.models.evals_metric import EvalTemplateVersion
+        from model_hub.services.eval_version_pinning import maybe_pin_new_version
+
+        v1 = EvalTemplateVersion.objects.create_version(
+            eval_template=user_template,
+            criteria="V1",
+            user=user,
+            organization=organization,
+        )
+        uem = self._make_uem(organization, workspace, user, user_template)
+
+        maybe_pin_new_version(
+            uem,
+            {"config": {"config": {"system_prompt": "experiment-only edit"}}},
+            user=user,
+            organization=organization,
+            workspace=workspace,
+            set_as_default=False,
+        )
+
+        assert uem.pinned_version is not None
+        assert uem.pinned_version.id != v1.id
+        assert uem.pinned_version.is_default is False
+        assert EvalTemplateVersion.objects.get_default(user_template).id == v1.id
 
     def test_explicit_version_switch_pins_target_version(
         self, organization, workspace, user, user_template

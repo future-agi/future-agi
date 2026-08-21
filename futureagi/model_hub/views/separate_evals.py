@@ -2948,8 +2948,16 @@ class EvalTemplateVersionCreateView(APIView):
             except EvalTemplate.DoesNotExist:
                 return self._gm.not_found("Eval template not found or not editable.")
 
-            # Use live template.config; FE-supplied snapshot is incomplete.
-            effective_config = template.config or {}
+            # Start from the live template config (authoritative for
+            # structural fields like choices, choices_map, eval_type_id)
+            # then overlay the caller-supplied snapshot so the experiment
+            # wizard can create a version without mutating the template.
+            effective_config = dict(template.config or {})
+            if req.config_snapshot:
+                for k, v in req.config_snapshot.items():
+                    if k != k.lower():
+                        continue
+                    effective_config[k] = v
             version = EvalTemplateVersion.objects.create_version(
                 eval_template=template,
                 prompt_messages=effective_config.get("messages") or [],
@@ -2959,6 +2967,7 @@ class EvalTemplateVersionCreateView(APIView):
                 user=request.user,
                 organization=organization,
                 workspace=getattr(template, "workspace", None),
+                set_as_default=req.set_as_default,
             )
 
             # Only set as default if this is the first version (no existing default)
@@ -3950,20 +3959,21 @@ class CompositeEvalDetailView(APIView):
                 except ValueError as ve:
                     return self._gm.bad_request(str(ve))
 
-                for link in existing_links:
-                    cid = str(link.child_id)
-                    update_fields = []
-                    if req.child_weights is not None and cid in req.child_weights:
-                        link.weight = req.child_weights[cid]
-                        update_fields.append("weight")
-                    if pinned_versions is not None and cid in req.child_pinned_versions:
-                        link.pinned_version = pinned_versions.get(cid)
-                        update_fields.append("pinned_version")
-                    if req.child_configs is not None and cid in req.child_configs:
-                        link.config = req.child_configs[cid] or {}
-                        update_fields.append("config")
-                    if update_fields:
-                        link.save(update_fields=update_fields)
+                if not req.skip_template_update:
+                    for link in existing_links:
+                        cid = str(link.child_id)
+                        update_fields = []
+                        if req.child_weights is not None and cid in req.child_weights:
+                            link.weight = req.child_weights[cid]
+                            update_fields.append("weight")
+                        if pinned_versions is not None and cid in req.child_pinned_versions:
+                            link.pinned_version = pinned_versions.get(cid)
+                            update_fields.append("pinned_version")
+                        if req.child_configs is not None and cid in req.child_configs:
+                            link.config = req.child_configs[cid] or {}
+                            update_fields.append("config")
+                        if update_fields:
+                            link.save(update_fields=update_fields)
 
             parent.save()
 
@@ -3974,9 +3984,12 @@ class CompositeEvalDetailView(APIView):
                 .order_by("order")
             )
 
-            # Create a new version snapshot for the composite
+            # Create a new version snapshot for the composite.
+            # In snapshot_only mode, overlay requested weights into the snapshot
+            # without having written them to the shared CompositeEvalChild rows.
             from model_hub.models.evals_metric import EvalTemplateVersion
 
+            weight_overrides = (req.child_weights or {}) if req.skip_template_update else {}
             config_snapshot = {
                 "aggregation_enabled": parent.aggregation_enabled,
                 "aggregation_function": parent.aggregation_function,
@@ -3986,7 +3999,7 @@ class CompositeEvalDetailView(APIView):
                         "child_id": str(link.child_id),
                         "child_name": link.child.name,
                         "order": link.order,
-                        "weight": link.weight,
+                        "weight": weight_overrides.get(str(link.child_id), link.weight),
                         "config": link.config or {},
                         "pinned_version_id": (
                             str(link.pinned_version_id)
@@ -4041,6 +4054,7 @@ class CompositeEvalDetailView(APIView):
                 tags=parent.eval_tags or [],
                 created_at=parent.created_at.isoformat() if parent.created_at else "",
                 updated_at=parent.updated_at.isoformat() if parent.updated_at else "",
+                version_id=str(new_version.id),
                 version_number=new_version.version_number,
             )
             return self._gm.success_response(response.model_dump())

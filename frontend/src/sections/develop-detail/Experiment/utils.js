@@ -6,6 +6,7 @@ import {
 } from "../RunPrompt/common";
 import _ from "lodash";
 import { DEFAULT_MESSAGES } from "./constants";
+import axios, { endpoints } from "src/utils/axios";
 
 // Normalize key for matching (remove special chars, lowercase)
 const normalizeKey = (key) => {
@@ -737,4 +738,98 @@ export const promptConfigTransform = (
   }
 
   return [];
+};
+
+export const isCompositeEval = (evalConfig) =>
+  evalConfig.templateType === "composite" ||
+  evalConfig.evalTemplate?.template_type === "composite" ||
+  evalConfig.evalTemplate?.templateType === "composite";
+
+export const buildExperimentRunConfig = (evalConfig) => {
+  const runConfig = {};
+  if (!isCompositeEval(evalConfig)) {
+    if (evalConfig.model) runConfig.model = evalConfig.model;
+    if (evalConfig.agent_mode) runConfig.agent_mode = evalConfig.agent_mode;
+    if (evalConfig.check_internet !== undefined)
+      runConfig.check_internet = !!evalConfig.check_internet;
+    if (evalConfig.summary) runConfig.summary = evalConfig.summary;
+    if (evalConfig.knowledge_base_id)
+      runConfig.knowledge_base_id = evalConfig.knowledge_base_id;
+    if (evalConfig.knowledge_bases)
+      runConfig.knowledge_bases = evalConfig.knowledge_bases;
+    if (evalConfig.tools) runConfig.tools = evalConfig.tools;
+    if (evalConfig.pass_threshold !== undefined)
+      runConfig.pass_threshold = evalConfig.pass_threshold;
+    if (
+      evalConfig.choice_scores &&
+      Object.keys(evalConfig.choice_scores).length
+    )
+      runConfig.choice_scores = evalConfig.choice_scores;
+    if (evalConfig.multi_choice !== undefined)
+      runConfig.multi_choice = !!evalConfig.multi_choice;
+  }
+  if (evalConfig.data_injection)
+    runConfig.data_injection = evalConfig.data_injection;
+  if (evalConfig.error_localizer_enabled !== undefined)
+    runConfig.error_localizer_enabled = !!evalConfig.error_localizer_enabled;
+  return runConfig;
+};
+
+export const createEvalVersionForExperiment = async (
+  evalConfig,
+  queryClient,
+) => {
+  const isSystemEval = evalConfig.evalTemplate?.owner === "system";
+
+  if (isSystemEval) return null;
+
+  if (isCompositeEval(evalConfig)) {
+    const patchPayload = { skip_template_update: true };
+    if (evalConfig.composite_weight_overrides) {
+      const weights = {};
+      for (const [childId, w] of Object.entries(
+        evalConfig.composite_weight_overrides,
+      )) {
+        if (w != null) weights[childId] = w;
+      }
+      if (Object.keys(weights).length) patchPayload.child_weights = weights;
+    }
+    const { data } = await axios.patch(
+      endpoints.develop.eval.getCompositeDetail(evalConfig.templateId),
+      patchPayload,
+    );
+    const versionId = data?.result?.version_id;
+    if (versionId) {
+      await queryClient.refetchQueries({
+        queryKey: ["evals", "versions", evalConfig.templateId],
+      });
+      return versionId;
+    }
+    return null;
+  }
+
+  const isCodeEval = evalConfig.evalTemplate?.eval_type === "code";
+  const configSnapshot = { ...(evalConfig.config || evalConfig.evalTemplate?.config || {}) };
+  const criteria = isCodeEval
+    ? configSnapshot.code
+    : configSnapshot.rule_prompt;
+  const { data: versionData } = await axios.post(
+    endpoints.develop.eval.createEvalVersion(evalConfig.templateId),
+    {
+      config_snapshot: configSnapshot,
+      criteria,
+      model: evalConfig.model,
+      // Experiment-scoped version: pin it without stealing the
+      // template's default version in the eval workbench.
+      set_as_default: false,
+    },
+  );
+  const versionId = versionData?.result?.id;
+  if (versionId) {
+    await queryClient.refetchQueries({
+      queryKey: ["evals", "versions", evalConfig.templateId],
+    });
+    return versionId;
+  }
+  return null;
 };

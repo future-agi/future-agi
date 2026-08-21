@@ -308,6 +308,7 @@ class CreateVersionRequest(BaseModel):
     criteria: str | None = None
     model: str | None = None
     config_snapshot: dict | None = None
+    set_as_default: bool = True
 
 
 class CreateVersionResponse(BaseModel):
@@ -387,6 +388,7 @@ class CompositeDetailResponse(BaseModel):
     tags: list[str]
     created_at: str = ""
     updated_at: str = ""
+    version_id: str | None = None
     version_number: int | None = None
 
 
@@ -409,6 +411,7 @@ class CompositeUpdateRequest(BaseModel):
     child_pinned_versions: dict[str, str | None] | None = None
     child_configs: dict[str, dict[str, Any]] | None = None
     composite_child_axis: str | None = None
+    skip_template_update: bool = False
 
 
 class CompositeExecuteRequest(BaseModel):

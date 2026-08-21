@@ -18070,7 +18070,8 @@ export const ModelHubDevelopsAddUserEvalCreateBody = zod.object({
   "experiment_id": zod.string().uuid().optional(),
   "composite_weight_overrides": zod.object({
 
-}).passthrough().optional()
+}).passthrough().optional(),
+  "pinned_version_id": zod.string().uuid().optional()
 })
 
 
@@ -18132,7 +18133,7 @@ export const ModelHubDevelopsEditAndRunUserEvalCreateBody = zod.object({
   "template_id": zod.string().max(modelHubDevelopsEditAndRunUserEvalCreateBodyTemplateIdMax).optional(),
   "config": zod.object({
 
-}).passthrough(),
+}).passthrough().optional(),
   "kb_id": zod.string().uuid().optional(),
   "error_localizer": zod.boolean().default(modelHubDevelopsEditAndRunUserEvalCreateBodyErrorLocalizerDefault),
   "model": zod.string().max(modelHubDevelopsEditAndRunUserEvalCreateBodyModelMax).optional(),
@@ -18345,7 +18346,8 @@ export const ModelHubDevelopsGetEvalStructureReadParams = zod.object({
 })
 
 export const ModelHubDevelopsGetEvalStructureReadQueryParams = zod.object({
-  "eval_type": zod.enum(['preset', 'user', 'previously_configured'])
+  "eval_type": zod.enum(['preset', 'user', 'previously_configured']),
+  "experiment_id": zod.string().uuid().optional()
 })
 
 
@@ -19631,6 +19633,7 @@ export const modelHubEvalTemplatesCompositeListResponseResultChildrenItemConfigD
 
 
 
+
 export const ModelHubEvalTemplatesCompositeListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
@@ -19657,6 +19660,7 @@ export const ModelHubEvalTemplatesCompositeListResponse = zod.object({
   "tags": zod.array(zod.string().min(1)).optional(),
   "created_at": zod.string().optional(),
   "updated_at": zod.string().optional(),
+  "version_id": zod.string().min(1).optional(),
   "version_number": zod.number().optional()
 })
 })
@@ -19677,7 +19681,7 @@ export const ModelHubEvalTemplatesCompositePartialUpdateParams = zod.object({
 export const modelHubEvalTemplatesCompositePartialUpdateBodyNameMax = 255;
 
 
-
+export const modelHubEvalTemplatesCompositePartialUpdateBodySkipTemplateUpdateDefault = false;
 
 export const ModelHubEvalTemplatesCompositePartialUpdateBody = zod.object({
   "name": zod.string().min(1).max(modelHubEvalTemplatesCompositePartialUpdateBodyNameMax).optional(),
@@ -19695,7 +19699,8 @@ export const ModelHubEvalTemplatesCompositePartialUpdateBody = zod.object({
   "child_configs": zod.object({
 
 }).passthrough().optional(),
-  "composite_child_axis": zod.enum(['', 'pass_fail', 'percentage', 'choices', 'code']).optional()
+  "composite_child_axis": zod.enum(['', 'pass_fail', 'percentage', 'choices', 'code']).optional(),
+  "skip_template_update": zod.boolean().default(modelHubEvalTemplatesCompositePartialUpdateBodySkipTemplateUpdateDefault)
 })
 
 
@@ -19704,6 +19709,7 @@ export const ModelHubEvalTemplatesCompositePartialUpdateBody = zod.object({
 
 
 export const modelHubEvalTemplatesCompositePartialUpdateResponseResultChildrenItemConfigDefault = {  };
+
 
 
 
@@ -19733,6 +19739,7 @@ export const ModelHubEvalTemplatesCompositePartialUpdateResponse = zod.object({
   "tags": zod.array(zod.string().min(1)).optional(),
   "created_at": zod.string().optional(),
   "updated_at": zod.string().optional(),
+  "version_id": zod.string().min(1).optional(),
   "version_number": zod.number().optional()
 })
 })
@@ -20263,12 +20270,15 @@ export const ModelHubEvalTemplatesVersionsCreateCreateParams = zod.object({
   "template_id": zod.string()
 })
 
+export const modelHubEvalTemplatesVersionsCreateCreateBodySetAsDefaultDefault = true;
+
 export const ModelHubEvalTemplatesVersionsCreateCreateBody = zod.object({
   "criteria": zod.string().optional(),
   "model": zod.string().optional(),
   "config_snapshot": zod.object({
 
-}).passthrough().optional()
+}).passthrough().optional(),
+  "set_as_default": zod.boolean().default(modelHubEvalTemplatesVersionsCreateCreateBodySetAsDefaultDefault)
 })
 
 export const ModelHubEvalTemplatesVersionsCreateCreateResponse = zod.object({
@@ -20592,7 +20602,8 @@ export const ModelHubExperimentsV2CreateBody = zod.object({
   "kb_id": zod.string().uuid().optional(),
   "composite_weight_overrides": zod.object({
 
-}).passthrough().optional()
+}).passthrough().optional(),
+  "pinned_version_id": zod.string().uuid().optional()
 }))
 })
 
@@ -20843,7 +20854,8 @@ export const ModelHubExperimentsV2UpdateBody = zod.object({
   "kb_id": zod.string().uuid().optional(),
   "composite_weight_overrides": zod.object({
 
-}).passthrough().optional()
+}).passthrough().optional(),
+  "pinned_version_id": zod.string().uuid().optional()
 })).optional()
 })
 
@@ -21471,7 +21483,8 @@ export const ModelHubExperimentsAddEvalCreateBody = zod.object({
   "experiment_id": zod.string().uuid().optional(),
   "composite_weight_overrides": zod.object({
 
-}).passthrough().optional()
+}).passthrough().optional(),
+  "pinned_version_id": zod.string().uuid().optional()
 })
 
 

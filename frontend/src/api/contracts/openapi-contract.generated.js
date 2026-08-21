@@ -16520,6 +16520,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 "previously_configured"
               ]
             }
+          },
+          "experiment_id": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         },
         "responses": {
@@ -50241,6 +50248,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "code"
           ],
           "x-nullable": true
+        },
+        "skip_template_update": {
+          "title": "Skip template update",
+          "type": "boolean",
+          "default": false
         }
       }
     },
@@ -55613,6 +55625,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Config snapshot",
           "type": "object",
           "x-nullable": true
+        },
+        "set_as_default": {
+          "title": "Set as default",
+          "type": "boolean",
+          "default": true
         }
       }
     },
@@ -74769,13 +74786,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Composite weight overrides",
           "type": "object",
           "x-nullable": true
+        },
+        "pinned_version_id": {
+          "title": "Pinned version id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
         }
       }
     },
     "UserEvalUpdateRequest": {
-      "required": [
-        "config"
-      ],
       "type": "object",
       "properties": {
         "name": {
@@ -79444,6 +79464,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Updated at",
           "type": "string"
         },
+        "version_id": {
+          "title": "Version id",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
         "version_number": {
           "title": "Version number",
           "type": "integer",
@@ -82542,6 +82568,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "composite_weight_overrides": {
           "title": "Composite weight overrides",
           "type": "object",
+          "x-nullable": true
+        },
+        "pinned_version_id": {
+          "title": "Pinned version id",
+          "type": "string",
+          "format": "uuid",
           "x-nullable": true
         }
       }

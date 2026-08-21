@@ -9094,6 +9094,7 @@ export interface UserEvalMutationRequestApi {
   save_as_template?: boolean;
   experiment_id?: string;
   composite_weight_overrides?: UserEvalMutationRequestApiCompositeWeightOverrides;
+  pinned_version_id?: string;
 }
 
 export type UserEvalUpdateRequestApiConfig = { [key: string]: unknown };
@@ -9105,7 +9106,7 @@ export interface UserEvalUpdateRequestApi {
   name?: string;
   /** @maxLength 500 */
   template_id?: string;
-  config: UserEvalUpdateRequestApiConfig;
+  config?: UserEvalUpdateRequestApiConfig;
   kb_id?: string;
   error_localizer?: boolean;
   /** @maxLength 100 */
@@ -10169,6 +10170,8 @@ export interface CompositeEvalDetailResponseResultApi {
   tags?: string[];
   created_at?: string;
   updated_at?: string;
+  /** @minLength 1 */
+  version_id?: string;
   version_number?: number;
 }
 
@@ -10220,6 +10223,7 @@ export interface CompositeEvalUpdateRequestApi {
   child_pinned_versions?: CompositeEvalUpdateRequestApiChildPinnedVersions;
   child_configs?: CompositeEvalUpdateRequestApiChildConfigs;
   composite_child_axis?: CompositeEvalUpdateRequestApiCompositeChildAxis;
+  skip_template_update?: boolean;
 }
 
 export type CompositeEvalExecuteRequestApiMapping = { [key: string]: unknown };
@@ -10673,6 +10677,7 @@ export interface EvalTemplateVersionCreateRequestApi {
   criteria?: string;
   model?: string;
   config_snapshot?: EvalTemplateVersionCreateRequestApiConfigSnapshot;
+  set_as_default?: boolean;
 }
 
 export interface EvalTemplateVersionResponseResultApi {
@@ -10948,6 +10953,7 @@ export interface EvalMetricEntryApi {
   error_localizer?: boolean;
   kb_id?: string;
   composite_weight_overrides?: EvalMetricEntryApiCompositeWeightOverrides;
+  pinned_version_id?: string;
 }
 
 export interface ExperimentCreateV2Api {
@@ -24992,6 +24998,7 @@ column_config_only?: boolean;
 
 export type ModelHubDevelopsGetEvalStructureReadParams = {
 eval_type: ModelHubDevelopsGetEvalStructureReadEvalType;
+experiment_id?: string;
 };
 
 export type ModelHubDevelopsGetEvalStructureReadEvalType = typeof ModelHubDevelopsGetEvalStructureReadEvalType[keyof typeof ModelHubDevelopsGetEvalStructureReadEvalType];

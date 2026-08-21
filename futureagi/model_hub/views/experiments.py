@@ -3432,6 +3432,14 @@ class AddExperimentEvalView(APIView):
             # Create UserEvalMetric
             # V2 experiments use snapshot_dataset for eval execution
             eval_dataset = experiment.snapshot_dataset or experiment.dataset
+            try:
+                pinned_version_id = _resolve_pinned_version(
+                    template_id,
+                    validated_data.get("pinned_version_id"),
+                    organization,
+                )
+            except ValueError as e:
+                return self._gm.bad_request(str(e))
             user_eval_metric = UserEvalMetric.objects.create(
                 name=validated_data.get("name"),
                 organization=organization,
@@ -3445,6 +3453,7 @@ class AddExperimentEvalView(APIView):
                 composite_weight_overrides=validated_data.get(
                     "composite_weight_overrides"
                 ),
+                pinned_version_id=pinned_version_id,
             )
 
             experiment.user_eval_template_ids.add(user_eval_metric)
@@ -4524,6 +4533,33 @@ def _with_default_reason_column(config):
     return config
 
 
+def _resolve_pinned_version(template_id, pinned_version_id, organization):
+    """Validate that pinned_version_id belongs to the given template and org."""
+    if not pinned_version_id:
+        return None
+    from model_hub.models.evals_metric import EvalTemplateVersion
+
+    try:
+        version = EvalTemplateVersion.objects.get(
+            id=pinned_version_id,
+            eval_template_id=template_id,
+            deleted=False,
+        )
+    except EvalTemplateVersion.DoesNotExist:
+        raise ValueError(
+            f"pinned_version_id {pinned_version_id} does not belong to "
+            f"template {template_id} or does not exist."
+        )
+    if (
+        version.organization_id
+        and str(version.organization_id) != str(organization.id)
+    ):
+        raise ValueError(
+            f"pinned_version_id {pinned_version_id} belongs to a different organization."
+        )
+    return version.id
+
+
 def _create_eval_metrics_inline(
     eval_entries,
     experiment,
@@ -4583,6 +4619,11 @@ def _create_eval_metrics_inline(
             # Per-binding weight overrides for composite evals. Ignored
             # for single-template metrics. See Phase 7 wiring plan.
             composite_weight_overrides=entry.get("composite_weight_overrides"),
+            pinned_version_id=_resolve_pinned_version(
+                entry["template_id"],
+                entry.get("pinned_version_id"),
+                organization,
+            ),
         )
         created.append(metric)
     return created
@@ -5102,6 +5143,8 @@ def _has_eval_changed(metric, entry, translated_mapping):
         return True
     if metric.name != entry.get("name", ""):
         return True
+    if str(metric.pinned_version_id or "") != str(entry.get("pinned_version_id") or ""):
+        return True
     return False
 
 
@@ -5152,6 +5195,11 @@ def _diff_and_update_evals(
                 metric.model = entry.get("model", "")
                 metric.error_localizer = entry.get("error_localizer", False)
                 metric.kb_id = entry.get("kb_id")
+                metric.pinned_version_id = _resolve_pinned_version(
+                    entry["template_id"],
+                    entry.get("pinned_version_id"),
+                    organization,
+                )
                 metric.save()
                 rerun_ids.append(entry_id)
         else:

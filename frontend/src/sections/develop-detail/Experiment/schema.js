@@ -462,6 +462,7 @@ export const getNewExperimentValidationSchema = (
         model: evalItem.model,
         error_localizer: evalItem.errorLocalizer ?? evalItem.error_localizer,
         kb_id: evalItem.kbId || evalItem.kb_id || null,
+        pinned_version_id: evalItem.pinned_version_id || null,
       })),
     }));
 

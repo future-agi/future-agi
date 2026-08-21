@@ -221,9 +221,7 @@ const EvaluationDrawerChild = ({
   }, [setCurrentTab, setSelectedGroup, setVisibleSection]);
 
   // After any eval action (add/run/stop/edit/delete) we need to re-fetch the
-  // queries that render eval state. Mirrors ManageExperimentEvalsDrawer's
-  // invalidateEvalCaches so the shared drawer and the experiment-specific
-  // drawer stay in sync.
+  // queries that render eval state.
   const invalidateEvalCaches = useCallback(() => {
     queryClient.invalidateQueries({
       queryKey: getUserEvalListKey(module, id),
@@ -570,8 +568,7 @@ const EvaluationDrawerChild = ({
         // Experiment evals reference two values that don't exist as real
         // dataset cells — the prompt/agent output and the full prompt chain.
         // Surface them as virtual columns in the variable-mapping dropdown
-        // so users can map eval inputs to them (mirrors the legacy
-        // ManageExperimentEvalsDrawer.experimentVirtualColumns).
+        // so users can map eval inputs to them.
         extraColumns={
           module === "experiment"
             ? [
@@ -668,25 +665,22 @@ const EvaluationDrawerChild = ({
               name: evalConfig.name,
               template_id: evalConfig.templateId,
               model: isComposite ? undefined : evalConfig.model,
-              // In the optimization context the optimizer runs evals itself —
-              // skip the full-dataset run so adding an eval is near-instant.
-              // Dataset adds are also save-only now: the user runs evals
-              // manually from the dataset grid rather than auto-running on
-              // add, which would otherwise queue work the user didn't ask for.
               run: module !== "run-optimization" && module !== "dataset",
-              // Mirror the workbench path: surface error_localizer at the top
-              // level so EditAndRunUserEvalView can update eval_metric.error_localizer.
               error_localizer: runConfig.error_localizer_enabled ?? false,
-              config: {
-                mapping: evalConfig.mapping || {},
-                config: isComposite ? {} : evalConfig.config || {},
-                ...(Object.keys(evalParams).length
-                  ? { params: evalParams }
-                  : {}),
-                ...(Object.keys(runConfig).length
-                  ? { run_config: runConfig }
-                  : {}),
-              },
+              ...(evalConfig.isDirty
+                ? {
+                    config: {
+                      mapping: evalConfig.mapping || {},
+                      config: isComposite ? {} : evalConfig.config || {},
+                      ...(Object.keys(evalParams).length
+                        ? { params: evalParams }
+                        : {}),
+                      ...(Object.keys(runConfig).length
+                        ? { run_config: runConfig }
+                        : {}),
+                    },
+                  }
+                : {}),
               ...(isComposite && evalConfig.compositeWeightOverrides
                 ? {
                     composite_weight_overrides:
@@ -719,8 +713,6 @@ const EvaluationDrawerChild = ({
               effectiveModule === "experiment")
           ) {
             try {
-              // `id` in this drawer is always the datasetId for dataset /
-              // experiment flows (experiment evals still live under a dataset).
               await axios.post(
                 endpoints.develop.eval.editEval(id, evalConfig.userEvalId),
                 {

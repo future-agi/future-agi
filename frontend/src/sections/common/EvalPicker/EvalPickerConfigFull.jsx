@@ -119,6 +119,17 @@ const SOURCE_NAME_SLUGS = {
 const getEvalPromptText = (evalData, config = {}) =>
   evalData?.instructions || config?.rule_prompt || "";
 
+const buildCompositeWeightsFromSnapshot = (children) => {
+  const weights = {};
+  if (!Array.isArray(children)) return weights;
+  children.forEach((c) => {
+    if (c?.child_id != null) {
+      weights[c.child_id] = c.weight ?? 1;
+    }
+  });
+  return weights;
+};
+
 const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   // Fail closed while capabilities load (both flags true) so gated controls
   // never flash as available before the fetch resolves.
@@ -196,18 +207,15 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [evalName, setEvalName] = useState("");
   const [dataReady, setDataReady] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
+  const versionSeededRef = useRef(false);
   useEffect(() => {
-    const pinned =
-      evalData?.pinned_version_id ?? evalData?.pinnedVersionId ?? null;
-    if (pinned && !selectedVersionId && !isDirty) {
+    if (versionSeededRef.current) return;
+    const pinned = evalData?.pinned_version_id ?? null;
+    if (pinned) {
+      versionSeededRef.current = true;
       setSelectedVersionId(pinned);
     }
-  }, [
-    evalData?.pinned_version_id,
-    evalData?.pinnedVersionId,
-    selectedVersionId,
-    isDirty,
-  ]);
+  }, [evalData?.pinned_version_id]);
   const [isTesting, setIsTesting] = useState(false);
   const [testPassed, setTestPassed] = useState(false);
   const [testError, setTestError] = useState(null);
@@ -482,6 +490,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       setErrorLocalizerEnabled(!!config.error_localizer_enabled);
     }
 
+    if (Array.isArray(config.children)) {
+      setCompositeChildWeights(buildCompositeWeightsFromSnapshot(config.children));
+    }
+
     if (isEditMode) setEvalName(evalData?.name || fullEval?.name || "");
     setIsDirty(false);
     setDataReady(true);
@@ -597,14 +609,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         setCode("");
       }
       setCodeLanguage(getEvalCodeLanguage(normalizedFullEval));
-      // Priority: user's saved run-config override → canonical detail
-      // (`fullEval.model`, full form e.g. "turing_small") → list-level
-      // `evalData.model`. The list endpoint returns a stripped form
-      // ("small") for built-in templates while detail returns the full
-      // canonical value, so we intentionally prefer `fullEval.model`
-      // over `evalData.model` to avoid the chip rendering "small".
+      // Priority: user's saved run-config override → per-binding model
+      // (evalData.model, from UserEvalMetric.model in edit mode) →
+      // canonical template detail (`fullEval.model`) → fallback.
       setModel(
-        config?.model || fullEval?.model || evalData?.model || "turing_large",
+        config?.model || evalData?.model || fullEval?.model || "turing_large",
       );
       setOutputType(fullEval.output_type || "pass_fail");
       // Prefer user's saved run_config overrides (edit flow) over template defaults
@@ -825,7 +834,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             : ["variables_only"],
         );
         setUseInternet(config.check_internet ?? false);
-        setIsDirty(false);
+        if (Array.isArray(config.children)) {
+          setCompositeChildWeights(buildCompositeWeightsFromSnapshot(config.children));
+        }
+        setIsDirty(true);
       }
     },
     [versions, fullEval, normalizedFullEval, normalizedEvalData],
@@ -907,7 +919,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         model,
       });
       enqueueSnackbar(
-        `Version V${newVersion?.version_number || newVersion?.versionNumber || ""} saved`,
+        `Version V${newVersion?.version_number || ""} saved`,
         { variant: "success" },
       );
       setIsDirty(false);
@@ -975,7 +987,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     setTimeout(() => setIsTesting((v) => (v ? false : v)), 60000);
   }, [templateId, fagiLocked, evalType, model, isComposite]);
 
-  const handleAdd = useCallback(() => {
+  const handleAdd = useCallback(async () => {
     if (fagiLocked && evalType !== "code" && !model && !isComposite) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
@@ -1053,12 +1065,16 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           ? evalName || evalData?.name
           : evalName || fullEval?.name || evalData?.name;
 
+    const resolvedVersionId = isSystemEval
+      ? null
+      : selectedVersionId || null;
+
     if (templateType === "composite") {
       // Composite metrics don't carry prompt/model/output-type/choice-score
       // state — those live on each child template. Emit only the fields
       // the host needs to create a UserEvalMetric plus the per-binding
       // weight overrides.
-      onSave({
+      await onSave({
         templateId,
         evalTemplateId: templateId,
         userEvalId,
@@ -1068,7 +1084,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         evalType,
         templateType,
         config: fullEval?.config || evalData?.config,
-        versionId: selectedVersionId,
+        versionId: resolvedVersionId,
+        isDirty,
         data_injection: dataInjection,
         error_localizer_enabled: errorLocalizerActive,
         composite_weight_overrides: compositeChildWeights,
@@ -1076,7 +1093,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       return;
     }
 
-    onSave({
+    await onSave({
       templateId,
       evalTemplateId: templateId,
       userEvalId,
@@ -1088,7 +1105,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       templateType,
       outputType,
       config: resolvedConfig,
-      versionId: selectedVersionId,
+      versionId: resolvedVersionId,
+      isDirty,
       instructions,
       messages,
       pass_threshold: passThreshold,
@@ -1139,6 +1157,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     connectorIds,
     knowledgeBaseIds,
     contextOptions,
+    isDirty,
     isComposite,
     compositeChildWeights,
     errorLocalizerActive,
@@ -1271,7 +1290,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
               Save version
             </LoadingButton>
           )}
-          {versions.length > 0 && (
+          {!isSystemEval && versions.length > 0 && (
             <Select
               size="small"
               value={selectedVersionId || ""}
