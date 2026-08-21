@@ -62,7 +62,7 @@ export const AlertConfigValidationSchema = z
     ),
     notification: z
       .object({
-        method: z.enum(["email", "slack"], {
+        method: z.enum(["email", "slack", "webhook"], {
           required_error: "Select notification method",
         }),
         emails: z
@@ -73,6 +73,11 @@ export const AlertConfigValidationSchema = z
           .object({
             webhookUrl: z.string().optional(),
             notes: z.string().optional(),
+          })
+          .optional(),
+        webhook: z
+          .object({
+            url: z.string().optional(),
           })
           .optional(),
       })
@@ -101,6 +106,25 @@ export const AlertConfigValidationSchema = z
                 path: ["slack", "webhookUrl"],
                 code: "custom",
                 message: "Invalid Slack webhook URL",
+              });
+            }
+          }
+        }
+
+        if (notif.method === "webhook") {
+          if (!notif.webhook || !notif.webhook.url) {
+            ctx.addIssue({
+              path: ["webhook", "url"],
+              code: "custom",
+              message: "Webhook URL is required",
+            });
+          } else {
+            const urlPattern = /^(https?:\/\/)[^\s/$.?#].[^\s]*$/i;
+            if (!urlPattern.test(notif.webhook.url)) {
+              ctx.addIssue({
+                path: ["webhook", "url"],
+                code: "custom",
+                message: "Invalid webhook URL",
               });
             }
           }
@@ -251,15 +275,20 @@ export function getDefaultAlertConfigValues(existingConfig = {}) {
     critical_threshold_value: existingConfig?.criticalThresholdValue || 400,
     warning_threshold_value: existingConfig?.warningThresholdValue || 300,
     notification: {
-      method: existingConfig?.slackWebhookUrl
-        ? "slack"
-        : existingConfig?.notificationEmails?.length
-          ? "email"
-          : "email",
+      method: existingConfig?.webhookUrl
+        ? "webhook"
+        : existingConfig?.slackWebhookUrl
+          ? "slack"
+          : existingConfig?.notificationEmails?.length
+            ? "email"
+            : "email",
       emails: existingConfig?.notificationEmails || [],
       slack: {
         webhookUrl: existingConfig?.slackWebhookUrl || "",
         notes: existingConfig?.slackNotes || "",
+      },
+      webhook: {
+        url: existingConfig?.webhookUrl || "",
       },
     },
   };
