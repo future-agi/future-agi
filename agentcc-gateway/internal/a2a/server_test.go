@@ -299,3 +299,32 @@ func TestTasksCancel(t *testing.T) {
 		t.Fatalf("expected canceled, got %s", task.Status.State)
 	}
 }
+
+func TestSyncTaskStoreDoesNotOverwriteCanceledTaskWithStaleResult(t *testing.T) {
+	tasks := newSyncTaskStore()
+	tasks.Store(&Task{ID: "task-1", Status: TaskStatus{State: TaskStatusWorking}})
+
+	canceled, ok := tasks.Get("task-1")
+	if !ok {
+		t.Fatal("expected stored task")
+	}
+	canceled.Status.State = TaskStatusCanceled
+	tasks.Store(canceled)
+
+	tasks.Store(&Task{
+		ID:        "task-1",
+		Status:    TaskStatus{State: TaskStatusCompleted},
+		Artifacts: []Artifact{{Name: "stale result"}},
+	})
+
+	got, ok := tasks.Get("task-1")
+	if !ok {
+		t.Fatal("expected stored task")
+	}
+	if got.Status.State != TaskStatusCanceled {
+		t.Fatalf("task status = %q, want %q", got.Status.State, TaskStatusCanceled)
+	}
+	if len(got.Artifacts) != 0 {
+		t.Fatalf("canceled task contains stale artifacts: %#v", got.Artifacts)
+	}
+}
