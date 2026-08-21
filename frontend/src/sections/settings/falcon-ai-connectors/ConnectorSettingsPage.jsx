@@ -18,6 +18,7 @@ import Select from "@mui/material/Select";
 import FormControl from "@mui/material/FormControl";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import ToolsSkeleton from "src/sections/falcon-ai/components/ToolsSkeleton";
 import {
   fetchConnectors,
   useConnector,
@@ -77,10 +78,13 @@ export default function ConnectorSettingsPage() {
   const [selectedId, setSelectedId] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isNew, setIsNew] = useState(false);
-  const { data: selectedConnector, refetch: refetchSelectedConnector } =
-    useConnector(selectedId, {
-      enabled: Boolean(selectedId) && !isNew,
-    });
+  const {
+    data: selectedConnector,
+    refetch: refetchSelectedConnector,
+    isLoading: isConnectorLoading,
+  } = useConnector(selectedId, {
+    enabled: Boolean(selectedId) && !isNew,
+  });
 
   const loadConnectors = useCallback(async ({ showSpinner = true } = {}) => {
     try {
@@ -191,9 +195,7 @@ export default function ConnectorSettingsPage() {
   };
 
   if (loading) {
-    return (
-      <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />
-    );
+    return <LoadingScreen sx={{ height: "100%", minHeight: "60vh" }} />;
   }
 
   return (
@@ -373,6 +375,7 @@ export default function ConnectorSettingsPage() {
           ) : selected ? (
             <ConnectorDetail
               connector={selected}
+              loading={isConnectorLoading}
               onEdit={() => setIsEditing(true)}
               onDelete={() => handleDelete(selected.id)}
               onRefresh={() => refreshSelected(selected.id)}
@@ -432,7 +435,7 @@ export default function ConnectorSettingsPage() {
 // ---------------------------------------------------------------------------
 // Connector Detail (read-only)
 // ---------------------------------------------------------------------------
-function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
+function ConnectorDetail({ connector, loading, onEdit, onDelete, onRefresh }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const statusInfo = getStatusInfo(connector);
@@ -778,7 +781,14 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
         )}
       </Typography>
 
-      {tools.length === 0 ? (
+      {loading ? (
+        <ToolsSkeleton
+          title={null}
+          subtitle={null}
+          groupHeader={false}
+          trailing="switch"
+        />
+      ) : tools.length === 0 ? (
         <Box sx={{ textAlign: "center", py: 4 }}>
           <Iconify
             icon="mdi:tools"
@@ -844,6 +854,7 @@ function ConnectorDetail({ connector, onEdit, onDelete, onRefresh }) {
 }
 
 ConnectorDetail.propTypes = {
+  loading: PropTypes.bool,
   connector: PropTypes.shape({
     id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
     name: PropTypes.string,

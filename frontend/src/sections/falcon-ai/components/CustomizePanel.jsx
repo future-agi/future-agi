@@ -22,6 +22,10 @@ import {
   discoverConnectorTools,
 } from "../hooks/useFalconAPI";
 import useFalconStore from "../store/useFalconStore";
+import ToolsSkeleton from "./ToolsSkeleton";
+import ConnectorDetailError from "./ConnectorDetailError";
+import { useConnectorToolPermissions } from "../hooks/useConnectorToolPermissions";
+import { resolveEnabledNames, toolActionErrorMessage } from "./connectorTools";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1308,6 +1312,11 @@ function ConnectorDetailPanel({
   onDisconnect,
   onReauth,
   onToolToggle,
+  onToolsAllow,
+  toolError,
+  loading,
+  detailError,
+  onRetry,
   onSaved,
   onCancelEdit,
   onEdit,
@@ -1824,6 +1833,16 @@ function ConnectorDetailPanel({
             Choose when Falcon is allowed to use these tools.
           </Typography>
 
+          {toolError && (
+            <Typography
+              role="alert"
+              typography="s2"
+              sx={{ color: "error.main", mb: 2 }}
+            >
+              {toolError}
+            </Typography>
+          )}
+
           {/* Interactive tools */}
           {interactiveTools.length > 0 && (
             <Box sx={{ mb: 2 }}>
@@ -1867,11 +1886,7 @@ function ConnectorDetailPanel({
                     borderRadius: "6px",
                     cursor: "pointer",
                   }}
-                  onClick={() =>
-                    interactiveTools.forEach((t) => {
-                      if (!isToolEnabled(t)) onToolToggle(connector.id, t);
-                    })
-                  }
+                  onClick={() => onToolsAllow(connector.id, interactiveTools)}
                 />
               </Box>
               <Box
@@ -1939,11 +1954,7 @@ function ConnectorDetailPanel({
                     borderRadius: "6px",
                     cursor: "pointer",
                   }}
-                  onClick={() =>
-                    readOnlyTools.forEach((t) => {
-                      if (!isToolEnabled(t)) onToolToggle(connector.id, t);
-                    })
-                  }
+                  onClick={() => onToolsAllow(connector.id, readOnlyTools)}
                 />
               </Box>
               <Box
@@ -1970,7 +1981,15 @@ function ConnectorDetailPanel({
         </Box>
       )}
 
-      {tools.length === 0 && (
+      {/* The list row carries no tools, so without this the pane would answer
+          "nothing discovered" for every connector until its detail lands. */}
+      {loading && <ToolsSkeleton />}
+
+      {!loading && detailError && (
+        <ConnectorDetailError message={detailError} onRetry={onRetry} />
+      )}
+
+      {!loading && !detailError && tools.length === 0 && (
         <Box sx={{ textAlign: "center", py: 3 }}>
           <Iconify
             icon="mdi:tools"
@@ -2018,6 +2037,11 @@ ConnectorDetailPanel.propTypes = {
   onDisconnect: PropTypes.func,
   onReauth: PropTypes.func,
   onToolToggle: PropTypes.func,
+  onToolsAllow: PropTypes.func,
+  toolError: PropTypes.string,
+  loading: PropTypes.bool,
+  detailError: PropTypes.string,
+  onRetry: PropTypes.func,
   onSaved: PropTypes.func,
   onCancelEdit: PropTypes.func,
   onEdit: PropTypes.func,
@@ -2105,6 +2129,14 @@ export default function CustomizePanel() {
   const [skills, setSkills] = useState([]);
   const [connectors, setConnectors] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
+  const [connectorDetailLoading, setConnectorDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState(null);
+  const { toolError, setToolError, handleToolToggle, handleToolsAllow } =
+    useConnectorToolPermissions({
+      selectedItem,
+      setSelectedItem,
+      setConnectors,
+    });
   const [loadingSkills, setLoadingSkills] = useState(false);
   const [loadingConnectors, setLoadingConnectors] = useState(false);
   const [isEditingSkill, setIsEditingSkill] = useState(false);
@@ -2156,17 +2188,30 @@ export default function CustomizePanel() {
       setSelectedItem(item); // show immediately with list data
       setIsEditingSkill(false);
       setIsEditingConnector(false);
+      setToolError(null); // stale error from the previously selected connector
+      setDetailError(null);
 
-      // For skills, fetch full detail (includes instructions)
-      if (selectedTab === "skills" && item?.id) {
-        try {
-          const { getSkill } = await import("../hooks/useFalconAPI");
-          const resp = await getSkill(item.id);
-          const fullSkill = resp.result || resp;
-          setSelectedItem(fullSkill);
-        } catch {
-          // keep partial data from list
+      if (!item?.id) return;
+
+      // Both tabs list from an endpoint whose serializer is a summary: skills
+      // arrive without instructions, connectors without discovered_tools or
+      // enabled_tool_names. Either pane needs the detail record before it can
+      // render what it is for.
+      setConnectorDetailLoading(selectedTab === "connectors");
+      try {
+        const api = await import("../hooks/useFalconAPI");
+        if (selectedTab === "skills") {
+          const resp = await api.getSkill(item.id);
+          setSelectedItem(resp.result || resp);
+        } else if (selectedTab === "connectors") {
+          setSelectedItem(await api.getConnector(item.id));
         }
+      } catch (error) {
+        setDetailError(
+          toolActionErrorMessage(error, "Couldn't load this connector."),
+        );
+      } finally {
+        setConnectorDetailLoading(false);
       }
     },
     [selectedTab],
@@ -2307,32 +2352,6 @@ export default function CustomizePanel() {
     }
   }, []);
 
-  const handleToolToggle = useCallback(
-    async (connectorId, tool) => {
-      const conn = connectors.find((c) => c.id === connectorId);
-      if (!conn) return;
-      const updatedTools = (conn.tools || []).map((t) =>
-        (t.name || t.id) === (tool.name || tool.id)
-          ? { ...t, enabled: t.enabled === false }
-          : t,
-      );
-      try {
-        await updateConnectorTools(connectorId, updatedTools);
-        setConnectors((prev) =>
-          prev.map((c) =>
-            c.id === connectorId ? { ...c, tools: updatedTools } : c,
-          ),
-        );
-        setSelectedItem((prev) =>
-          prev?.id === connectorId ? { ...prev, tools: updatedTools } : prev,
-        );
-      } catch {
-        // silent
-      }
-    },
-    [connectors],
-  );
-
   // ---- Render ----
   return (
     <>
@@ -2388,6 +2407,11 @@ export default function CustomizePanel() {
             onDisconnect={handleDisconnect}
             onReauth={handleReauth}
             onToolToggle={handleToolToggle}
+            onToolsAllow={handleToolsAllow}
+            toolError={toolError}
+            loading={connectorDetailLoading}
+            detailError={detailError}
+            onRetry={() => handleSelectItem(selectedItem)}
             onEdit={handleEditConnector}
             onSaved={handleConnectorSaved}
             onCancelEdit={() => setIsEditingConnector(false)}
