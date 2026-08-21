@@ -1290,6 +1290,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     onReadyChange={handleSourceReadyChange}
                     hasDataInjection={hasDataInjection}
                     initialProjectId={sourceId}
+                    lockProject
                     initialRowType={sourceRowType}
                     isComposite={isComposite}
                     compositeAdhocConfig={compositeAdhocConfig}

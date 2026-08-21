@@ -32,6 +32,45 @@ globalThis.ResizeObserver = class ResizeObserver {
 };
 
 /**
+ * Mock Web Storage. jsdom exposes a `localStorage` object here that has no
+ * methods on it, so any module reading storage at import time dies during
+ * collection rather than in a test — `states.jsx` builds a zustand store from
+ * `JSON.parse(localStorage.getItem(...))` at module scope, which took five
+ * evals test files down with `localStorage.getItem is not a function` before
+ * a single assertion ran.
+ */
+const createStorageMock = () => {
+  let store = {};
+  return {
+    getItem: (key) => (key in store ? store[key] : null),
+    setItem: (key, value) => {
+      store[key] = String(value);
+    },
+    removeItem: (key) => {
+      delete store[key];
+    },
+    clear: () => {
+      store = {};
+    },
+    key: (i) => Object.keys(store)[i] ?? null,
+    get length() {
+      return Object.keys(store).length;
+    },
+  };
+};
+
+Object.defineProperty(window, "localStorage", {
+  writable: true,
+  configurable: true,
+  value: createStorageMock(),
+});
+Object.defineProperty(window, "sessionStorage", {
+  writable: true,
+  configurable: true,
+  value: createStorageMock(),
+});
+
+/**
  * Mock matchMedia for responsive components
  */
 Object.defineProperty(window, "matchMedia", {

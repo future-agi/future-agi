@@ -42,6 +42,7 @@ import {
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import EvalResultDisplay from "./EvalResultDisplay";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
+import { reconcileMappingToVariables } from "../utils/evalMappingPersistence";
 import VersionBadge from "./VersionBadge";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
@@ -700,6 +701,13 @@ const TestPlayground = React.forwardRef(
       codeLanguage = "python",
       isSystemEval = false,
       onReadyChange,
+      // Seed the Tracing/Dataset tab from the loaded version's saved mapping
+      // and project so switching versions restores their mapping. Keyed by
+      // mode — the two tabs map to different value spaces.
+      initialMapping = null,
+      initialTracingProjectId = null,
+      // Version identity; changing it re-seeds both tabs in place.
+      seedKey = "live",
     },
     ref,
   ) => {
@@ -719,6 +727,9 @@ const TestPlayground = React.forwardRef(
     } = useCreditExhaustion({ feature: "eval_playground" });
     const datasetTestRef = useRef(null);
     const tracingTestRef = useRef(null);
+    // Only one mode is mounted at a time and Save Version unmounts it before
+    // getMappingState is read, so each mode's last report has to survive.
+    const lastMappingByModeRef = useRef({ tracing: null, dataset: null });
     const simulationTestRef = useRef(null);
     const { state: errorLocalizerState, start: startErrorLocalizerPoll } =
       useErrorLocalizerPoll();
@@ -862,6 +873,22 @@ const TestPlayground = React.forwardRef(
       codeLanguage,
       isSystemEval,
     ]);
+
+    // Variables are parsed live from the editor while the mapping comes off the
+    // version row, so entries for variables that no longer exist are dropped.
+    const seededMapping = React.useMemo(
+      () => ({
+        tracing: reconcileMappingToVariables(
+          initialMapping?.tracing,
+          variables,
+        ),
+        dataset: reconcileMappingToVariables(
+          initialMapping?.dataset,
+          variables,
+        ),
+      }),
+      [initialMapping, variables],
+    );
 
     // Custom input values
     const [inputValues, setInputValues] = useState({});
@@ -1111,6 +1138,22 @@ const TestPlayground = React.forwardRef(
         switchToVersion: (versionId) => {
           setActiveMainTab("versions");
           if (versionId) setSelectedVersionId(versionId);
+        },
+        // Reports BOTH modes, not just the visible one — the payload replaces
+        // the whole field, so the other tab's mapping has to ride along.
+        getMappingState: () => {
+          const remembered = lastMappingByModeRef.current;
+          const liveTracing = tracingTestRef.current?.getMappingState?.();
+          const liveDataset = datasetTestRef.current?.getMappingState?.();
+          if (liveTracing) remembered.tracing = liveTracing;
+          if (liveDataset) remembered.dataset = liveDataset;
+          return {
+            mapping: {
+              tracing: remembered.tracing?.mapping || {},
+              dataset: remembered.dataset?.mapping || {},
+            },
+            tracingProjectId: remembered.tracing?.tracingProjectId || null,
+          };
         },
         isRunning,
       }),
@@ -1474,6 +1517,8 @@ const TestPlayground = React.forwardRef(
                   onReadyChange={handleDatasetReady}
                   isComposite={isComposite}
                   compositeAdhocConfig={compositeAdhocConfig}
+                  initialMapping={seededMapping.dataset}
+                  seedKey={seedKey}
                 />
               )}
 
@@ -1492,6 +1537,9 @@ const TestPlayground = React.forwardRef(
                   isComposite={isComposite}
                   compositeAdhocConfig={compositeAdhocConfig}
                   hostsFilter
+                  initialMapping={seededMapping.tracing}
+                  initialProjectId={initialTracingProjectId}
+                  seedKey={seedKey}
                 />
               )}
 
@@ -1962,6 +2010,12 @@ TestPlayground.propTypes = {
   codeLanguage: PropTypes.string,
   onReadyChange: PropTypes.func,
   isSystemEval: PropTypes.bool,
+  initialMapping: PropTypes.shape({
+    tracing: PropTypes.object,
+    dataset: PropTypes.object,
+  }),
+  initialTracingProjectId: PropTypes.string,
+  seedKey: PropTypes.string,
 };
 
 export default TestPlayground;
