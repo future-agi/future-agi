@@ -625,26 +625,6 @@ class ExperimentsTableView(APIView):
             return self._gm.bad_request(get_error_message("FAILED_TO_UPDATE_EXP"))
 
 
-class ExperimentsTableListView(generics.ListAPIView):
-    queryset = ExperimentsTable.objects.filter(deleted=False).all()
-    serializer_class = ExperimentsTableGetSerializer
-    pagination_class = ExtendedPageNumberPagination
-    filter_backends = [DjangoFilterBackend, OrderingFilter]
-    filterset_fields = ["status"]
-    search_fields = ["name", "dataset__name"]
-    ordering_fields = ["created_at", "name"]
-    ordering = ["-created_at"]
-
-    def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
-        page = self.paginate_queryset(queryset)
-        if page is not None:
-            serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
-        serializer = self.get_serializer(queryset, many=True)
-        return self._gm.success_response(serializer.data)
-
-
 class ExperimentsTableDetailView(BaseModelViewSetMixin, generics.ListAPIView):
     queryset = ExperimentsTable.objects.all()
     serializer_class = ExperimentsTableGetSerializer
