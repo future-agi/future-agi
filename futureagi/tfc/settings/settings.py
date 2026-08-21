@@ -136,6 +136,7 @@ INSTALLED_APPS = [
     # MCP Server (protocol layer for external AI clients)
     "mcp_server",
     "agentcc",
+    "sources",
     "tfc.deployment_telemetry",
     "tfc.licensing",
     "tfc.capabilities",
