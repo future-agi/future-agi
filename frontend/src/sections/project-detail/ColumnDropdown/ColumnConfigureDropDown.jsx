@@ -27,6 +27,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import Iconify from "src/components/iconify";
 import { useDebounce } from "src/hooks/use-debounce";
+import TruncatedLabel from "src/components/truncated-label/TruncatedLabel";
 
 // ---------------------------------------------------------------------------
 // Aggregate selection state
@@ -47,7 +48,7 @@ const aggregateState = (cols) => {
 
 const toggleMap = (cols, value) =>
   (cols || []).reduce((acc, c) => {
-    acc[c.id] = value;
+    if (c?.id) acc[c.id] = value;
     return acc;
   }, {});
 
@@ -172,19 +173,7 @@ const DraggableColumnRow = ({ id, name, checked, onChange }) => {
       >
         <Iconify icon="mdi:dots-grid" width={14} />
       </Box>
-      <Typography
-        variant="body2"
-        noWrap
-        sx={{
-          fontSize: 14,
-          lineHeight: "22px",
-          color: "text.primary",
-          flex: 1,
-          minWidth: 0,
-        }}
-      >
-        {name}
-      </Typography>
+      <TruncatedLabel text={name} />
     </Box>
   );
 };
@@ -255,8 +244,7 @@ const ColumnConfigureDropDown = ({
     const newIndex = columns.findIndex((item) => item.id === over.id);
     if (oldIndex === -1 || newIndex === -1) return;
 
-    const newColumns = arrayMove(columns, oldIndex, newIndex);
-    setColumns(newColumns);
+    setColumns(arrayMove(columns, oldIndex, newIndex));
   }
 
   return (
@@ -371,20 +359,22 @@ const ColumnConfigureDropDown = ({
           onDragEnd={handleDragEnd}
         >
           <SortableContext
-            items={filteredColumns.map((c) => c.id)}
+            items={filteredColumns.map((c) => c?.id).filter(Boolean)}
             strategy={verticalListSortingStrategy}
           >
-            {filteredColumns.map((column) => (
-              <DraggableColumnRow
-                key={column.id}
-                id={column.id}
-                name={column.name}
-                checked={column.isVisible}
-                onChange={(e) => {
-                  onColumnChange({ [column.id]: e.target.checked });
-                }}
-              />
-            ))}
+            {filteredColumns.map((column) =>
+              column?.id ? (
+                <DraggableColumnRow
+                  key={column.id}
+                  id={column.id}
+                  name={column.name || column.id}
+                  checked={!!column.isVisible}
+                  onChange={(e) => {
+                    onColumnChange({ [column.id]: e.target.checked });
+                  }}
+                />
+              ) : null,
+            )}
           </SortableContext>
         </DndContext>
 

@@ -16,11 +16,13 @@ import _ from "lodash";
 import React from "react";
 import { Skeleton } from "@mui/material";
 import CustomTraceRenderer from "./Renderers/CustomTraceRenderer";
+import EvalResultChips from "./Renderers/EvalResultChips";
 import { RENDERER_CONFIG } from "./Renderers/common";
 import { NameCell } from "./Renderers";
 import IPOPCell from "./Renderers/IPOPCell";
 import IPOPTooltipComponent from "./Renderers/IPOPTooltipComponent";
 import { isCellValueEmpty } from "src/components/table/utils";
+import { getEvalNonScoreStatusFromValue } from "src/utils/evalStatus";
 import AnnotationHeaderCellRenderer from "../../agents/CallLogs/AnnotationHeaderCellRenderer";
 import NewAnnotationCellRenderer from "../../agents/NewAnnotationCellRenderer";
 import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
@@ -559,16 +561,18 @@ export const getTraceListColumnDefs = (col) => {
 
   // Eval, annotation, and custom columns need wider minWidth for readable names.
   // Reason columns are text-heavy so default to an even wider min width.
+  const isEvalMetric = col?.groupBy === "Evaluation Metrics";
   const isEvalOrAnnotation =
-    col?.groupBy === "Evaluation Metrics" ||
-    col?.groupBy === "Annotation Metrics";
+    isEvalMetric || col?.groupBy === "Annotation Metrics";
   const defaultMinWidth = isReasonColumn
     ? 240
     : isCustomColumn
       ? 180
-      : isEvalOrAnnotation
-        ? 150
-        : 80;
+      : isEvalMetric
+        ? 230
+        : isEvalOrAnnotation
+          ? 150
+          : 80;
 
   // Custom columns need a valueGetter that handles dot-notation keys
   // and extracts values from flat row data (attributes included by backend).
@@ -630,11 +634,23 @@ export const getTraceListColumnDefs = (col) => {
       // The tags column keeps its default left alignment so an empty "+ Tag"
       // sits where the chips will, instead of jumping from center to left.
       const cellColId = params?.colDef?.context?.sourceColumn?.id;
-      if (isCellValueEmpty(value) && cellColId !== "tags") {
+      const structured =
+        isEvalMetric && value && typeof value === "object" && !Array.isArray(value);
+      if (isCellValueEmpty(value) && !structured && cellColId !== "tags") {
         return {
           display: "flex",
           height: "100%",
           justifyContent: "center",
+        };
+      }
+      if (isEvalMetric) {
+        return {
+          display: "flex",
+          height: "100%",
+          alignItems: "center",
+          justifyContent: "flex-start",
+          padding: 0,
+          overflow: "hidden",
         };
       }
     },
@@ -650,6 +666,20 @@ export const getTraceListColumnDefs = (col) => {
     cellRendererSelector: (params) => {
       const value = params.value;
       const column = params?.colDef?.context?.sourceColumn;
+      // Chips for object-valued eval cells (pass/fail or choice counts);
+      // scalar score cells fall through to the default renderer.
+      // Lifecycle markers ({error}, {status: pending|running|skipped}) are
+      // objects too, but must reach EvaluationCell's status indicator instead —
+      // chips would render them as "Not evaluated" or "[object Object]".
+      if (
+        column?.groupBy === "Evaluation Metrics" &&
+        value !== null &&
+        typeof value === "object" &&
+        !Array.isArray(value) &&
+        !getEvalNonScoreStatusFromValue(value)
+      ) {
+        return { component: EvalResultChips };
+      }
       const colId = column?.id;
 
       // The tags column stays interactive even when empty so a first tag can
@@ -730,6 +760,9 @@ export const generateAnnotationColumnsForTracing = (
         return {
           headerName: displayName,
           field: metricId,
+          // Without this the column-visibility toggle has no effect on
+          // annotation columns — they render regardless of isVisible.
+          hide: metric?.isVisible === false,
           flex: 1,
           minWidth: 200,
           headerComponent: AnnotationHeaderCellRenderer,
@@ -763,6 +796,8 @@ export const generateAnnotationColumnsForTracing = (
       const avgColumn = {
         headerName: "Avg",
         field: `${metricId}.score`,
+        // Hiding the metric hides every column it expands into.
+        hide: metric?.isVisible === false,
         flex: 1,
         minWidth: 200,
         headerComponent: AnnotationHeaderCellRenderer,
@@ -793,6 +828,7 @@ export const generateAnnotationColumnsForTracing = (
       const annotatorColumns = metricAnnotators.map((annotator) => ({
         headerName: annotator?.user_name,
         field: `${metricId}.annotators.${annotator?.user_id}`,
+        hide: metric?.isVisible === false,
         flex: 1,
         minWidth: 200,
         ...(outputType === "text" ? { wrapText: true, autoHeight: true } : {}),

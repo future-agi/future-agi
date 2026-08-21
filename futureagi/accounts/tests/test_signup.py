@@ -2120,6 +2120,47 @@ class TestWorkEmailGate:
 
 
 @pytest.mark.unit
+class TestDisposableEmailDomains:
+    """The packaged blocklist and the hand-maintained free-provider set cover
+    different things, so the gate has to consult both."""
+
+    def test_a_listed_throwaway_provider_is_disposable(self):
+        from accounts.utils import is_disposable_email_domain
+
+        assert is_disposable_email_domain("mailinator.com")
+
+    def test_subdomains_of_a_listed_provider_are_disposable(self):
+        """Mailinator hands out `anything.mailinator.com`; matching the exact
+        domain alone would let every one of those through."""
+        from accounts.utils import is_disposable_email_domain
+
+        assert is_disposable_email_domain("inbox.mailinator.com")
+        assert is_disposable_email_domain("deep.nested.mailinator.com")
+
+    def test_a_company_domain_is_not_disposable(self):
+        from accounts.utils import is_disposable_email_domain
+
+        assert not is_disposable_email_domain("futureagi.com")
+        assert not is_disposable_email_domain("mail.futureagi.com")
+
+    def test_the_bare_tld_is_never_matched(self):
+        """The walk stops before the last label, so a stray `.com` in the
+        blocklist could not take out every commercial domain."""
+        from accounts.utils import is_disposable_email_domain
+
+        assert not is_disposable_email_domain("com")
+
+    def test_free_providers_are_absent_from_the_package_list(self):
+        """gmail and friends are permanent mailboxes, not throwaways, so the
+        package does not list them. Dropping the hand-maintained set in favour
+        of the package alone would silently reopen the gate to them."""
+        from accounts.utils import DISPOSABLE_EMAIL_DOMAINS
+
+        assert "gmail.com" not in DISPOSABLE_EMAIL_DOMAINS
+        assert "yahoo.com" not in DISPOSABLE_EMAIL_DOMAINS
+
+
+@pytest.mark.unit
 class TestAuthLinkBuilders:
     def test_reset_link_uses_the_uid_and_token_it_is_given(self):
         """The caller has already minted the AuthToken the token encodes;

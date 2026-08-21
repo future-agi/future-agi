@@ -5,6 +5,7 @@ import string
 
 import requests
 import structlog
+from disposable_email_domains import blocklist as DISPOSABLE_EMAIL_DOMAINS
 from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
 from django.db import close_old_connections, transaction
@@ -164,6 +165,21 @@ class WorkEmailRequired(Exception):
         super().__init__(message)
 
 
+def is_disposable_email_domain(domain):
+    """True if the domain, or any parent of it, is a known throwaway provider.
+
+    Walks the suffixes so a single blocklist entry also covers a provider's
+    subdomains -- Mailinator hands out `anything.mailinator.com`, and an exact
+    match on `mailinator.com` would miss every one of them. The bare TLD is
+    never tested, so a stray entry there can't take out a whole namespace.
+    """
+    domain_parts = domain.split(".")
+    for i in range(len(domain_parts) - 1):
+        if ".".join(domain_parts[i:]) in DISPOSABLE_EMAIL_DOMAINS:
+            return True
+    return False
+
+
 def is_work_email(email):
     """
     Returns True if the email appears to be a work email,
@@ -221,8 +237,10 @@ def is_work_email(email):
     # Extract the domain part from the email
     domain = email.split("@")[-1]
 
-    # Return False if the domain is in the free domains list
-    return domain not in free_domains
+    if domain in free_domains:
+        return False
+
+    return not is_disposable_email_domain(domain)
 
 
 def first_signup(data, mode=None):
