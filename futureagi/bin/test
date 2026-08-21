@@ -48,6 +48,8 @@ export MINIO_SECRET_KEY=minioadmin
 export DEBUG=1
 export TEST=1
 
+export HARNESS_STORE_DSN="${HARNESS_STORE_DSN:-postgresql://harness:harness@localhost:15433/harness}"
+
 show_help() {
     echo "Usage: bin/test [command] [options]"
     echo ""
@@ -119,6 +121,17 @@ PY
 
         if ! curl -fsS --max-time 2 http://localhost:19005/minio/health/live > /dev/null 2>&1; then
             missing+=("minio:19005")
+        fi
+
+        if ! "$PYTHON_BIN" - localhost 15433 > /dev/null 2>&1 <<'PY'
+import socket
+import sys
+
+with socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=1):
+    pass
+PY
+        then
+            missing+=("harness-store:15433")
         fi
 
         if [ ${#missing[@]} -eq 0 ]; then

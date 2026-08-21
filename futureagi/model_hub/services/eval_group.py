@@ -596,9 +596,12 @@ def apply_eval_group_to_simulate(
 
     eval_templates = _get_eval_templates_for_group(eval_group, deselected_evals)
 
-    # Count existing configs per template for versioning
+    # Count existing configs per template for versioning. Every non-deleted
+    # config on the run_test counts, not just this group's: the config name is
+    # now unique per (run_test, name), so a name taken by another group or by
+    # a direct-create path would otherwise collide.
     current_configs = SimulateEvalConfig.objects.filter(
-        run_test=run_test, eval_group=eval_group, deleted=False
+        run_test=run_test, deleted=False
     )
     template_names_count = {}
     for cfg in current_configs:

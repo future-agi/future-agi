@@ -141,6 +141,9 @@ x-backend-env: &backend-env
   FUTURE_AGI_CLOUD_API_KEY: ${FUTURE_AGI_CLOUD_API_KEY:-}
   FUTURE_AGI_CLOUD_API_URL: ${FUTURE_AGI_CLOUD_API_URL:-https://api.futureagi.com}
   TEMPORAL_TEST_EXECUTION_ENABLED: ${TEMPORAL_TEST_EXECUTION_ENABLED:-true}
+  # Empty by default: the harness doesn't run in this stack, so nothing needs it here.
+  # Production deployments that do run it must supply their own value.
+  INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-}
 services:
   # ==========================================================================
   # Application

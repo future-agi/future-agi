@@ -277,15 +277,20 @@ from .postgres import PostgresStore  # noqa: E402
 # the gates, rather than waiting for someone to ship a class for it.
 register_store(PostgresStore.engine, PostgresStore)
 
+from .manager import QuotaExceeded, StoreManager, StoreManagerError  # noqa: E402
+
 __all__ = [
     "ContainerStore",
     "InProcessStore",
     "PostgresStore",
+    "QuotaExceeded",
     "Records",
     "Snapshot",
     "SqliteStore",
     "Store",
     "StoreError",
+    "StoreManager",
+    "StoreManagerError",
     "docker",
     "open_store",
     "register_store",

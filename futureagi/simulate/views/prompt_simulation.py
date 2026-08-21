@@ -204,6 +204,19 @@ class PromptSimulationListCreateView(APIView):
                 deleted=False,
             )
 
+            # The eval config name is unique per run test at the DB level, so a
+            # payload with two entries resolving to the same name would otherwise
+            # 500 partway through the loop below, after the RunTest already exists.
+            seen_eval_names = set()
+            for eval_config_data in validated_data.get("evaluations_config", []):
+                template_id = eval_config_data.get("template_id")
+                eval_name = eval_config_data.get("name", f"Eval-{template_id}")
+                if eval_name in seen_eval_names:
+                    return self.gm.bad_request(
+                        f"An evaluation config with the name '{eval_name}' already exists in this run test. Please use a different name."
+                    )
+                seen_eval_names.add(eval_name)
+
             # Create the simulation run
             with transaction.atomic():
                 # Get workspace from prompt template if available

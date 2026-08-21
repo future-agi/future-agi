@@ -32,6 +32,11 @@ class InternalServiceAuthentication(BaseAuthentication):
         except UnicodeDecodeError:
             return None
 
+        # compare_digest raises on a non-ASCII str; a malformed header must fail
+        # authentication, not 500.
+        if not supplied_secret.isascii():
+            return None
+
         if not secrets.compare_digest(supplied_secret, configured_secret):
             return None
         # Authentication has already consumed the bearer credential. Do not

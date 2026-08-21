@@ -423,6 +423,11 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 10,  # Number of objects per page.
     "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.URLPathVersioning",
     "EXCEPTION_HANDLER": "accounts.authentication.custom_exception_handler",
+    "DEFAULT_THROTTLE_RATES": {
+        # The harness-hook surface is public (no platform credential to key a
+        # rate limit off), so it is bounded by a flat rate instead.
+        "harness_hook": os.getenv("HARNESS_HOOK_THROTTLE_RATE", "240/min"),
+    },
 }
 
 # SECRET_KEY — sentinel default so the app starts for first-run self-host;

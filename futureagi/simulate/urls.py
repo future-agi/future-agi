@@ -97,6 +97,7 @@ from .views.agent_version import (
     RestoreAgentVersionView,
 )
 from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
+from .views.harness_hook import HarnessHookView, HarnessRoomConfigView
 from .views.livekit_api import (
     CallConfigView,
     CallExecutionUpdateView,
@@ -108,6 +109,22 @@ from .views.livekit_api import (
     ValidateLiveKitCredentialsView,
 )
 from .views.persona import PersonaDuplicateView, PersonaViewSet
+from .views.rl_internal import (
+    RLEnvironmentContractsView,
+    RLEnvironmentDetailView,
+    RLEnvironmentListCreateView,
+    RLEnvironmentMessagesView,
+    RLEnvironmentScenariosView,
+    RLEnvironmentWorldDetailView,
+    RLEnvironmentWorldsView,
+    RLScenarioDetailView,
+    RLVerdictsView,
+    RLWorldCopyByTokenView,
+    RLWorldCopyCallLogView,
+    RLWorldCopyDetailView,
+    RLWorldCopyListCreateView,
+    RLWorldDetailView,
+)
 from .views.scenarios import EditScenarioPromptsView
 
 app_name = "simulate"
@@ -126,6 +143,91 @@ router.register(
 )
 
 urlpatterns = [
+    # RL harness internal persistence API — harness-runtime-only (see
+    # simulate/authentication.py:InternalServiceAuthentication), mounted next
+    # to the alk-simulate block above under api/rl-harness/.
+    path(
+        "api/rl-harness/environments/",
+        RLEnvironmentListCreateView.as_view(),
+        name="rl-harness-environments-create",
+    ),
+    path(
+        "api/rl-harness/environments/<uuid:environment_id>/",
+        RLEnvironmentDetailView.as_view(),
+        name="rl-harness-environment-detail",
+    ),
+    path(
+        "api/rl-harness/environments/<uuid:environment_id>/messages/",
+        RLEnvironmentMessagesView.as_view(),
+        name="rl-harness-environment-messages",
+    ),
+    path(
+        "api/rl-harness/environments/<uuid:environment_id>/contracts/",
+        RLEnvironmentContractsView.as_view(),
+        name="rl-harness-environment-contracts",
+    ),
+    path(
+        "api/rl-harness/environments/<uuid:environment_id>/worlds/",
+        RLEnvironmentWorldsView.as_view(),
+        name="rl-harness-environment-worlds",
+    ),
+    path(
+        "api/rl-harness/environments/<uuid:environment_id>/worlds/<int:version>/",
+        RLEnvironmentWorldDetailView.as_view(),
+        name="rl-harness-environment-world-detail",
+    ),
+    path(
+        "api/rl-harness/worlds/<uuid:world_id>/",
+        RLWorldDetailView.as_view(),
+        name="rl-harness-world-detail",
+    ),
+    path(
+        "api/rl-harness/environments/<uuid:environment_id>/scenarios/",
+        RLEnvironmentScenariosView.as_view(),
+        name="rl-harness-environment-scenarios",
+    ),
+    path(
+        "api/rl-harness/scenarios/<uuid:scenario_id>/",
+        RLScenarioDetailView.as_view(),
+        name="rl-harness-scenario-detail",
+    ),
+    path(
+        "api/rl-harness/world-copies/",
+        RLWorldCopyListCreateView.as_view(),
+        name="rl-harness-world-copies-create",
+    ),
+    path(
+        "api/rl-harness/world-copies/by-token/<uuid:token>/",
+        RLWorldCopyByTokenView.as_view(),
+        name="rl-harness-world-copy-by-token",
+    ),
+    path(
+        "api/rl-harness/world-copies/<uuid:copy_id>/",
+        RLWorldCopyDetailView.as_view(),
+        name="rl-harness-world-copy-detail",
+    ),
+    path(
+        "api/rl-harness/world-copies/<uuid:copy_id>/call-log/",
+        RLWorldCopyCallLogView.as_view(),
+        name="rl-harness-world-copy-call-log",
+    ),
+    path(
+        "api/rl-harness/call-executions/<uuid:call_execution_id>/rl-verdicts/",
+        RLVerdictsView.as_view(),
+        name="rl-harness-call-execution-verdicts",
+    ),
+    re_path(
+        r"^harness-hook/room-config/(?P<room>[A-Za-z0-9_.\-]{1,255})$",
+        HarnessRoomConfigView.as_view(),
+        name="harness-hook-room-config",
+    ),
+    re_path(
+        r"^harness-hook/"
+        r"(?P<token>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+        r"/(?P<tool>[A-Za-z0-9_\-]{1,128})$",
+        HarnessHookView.as_view(),
+        name="harness-hook-tool",
+    ),
     re_path(r"^harness/(?P<path>.+)$", HarnessProxyView.as_view(), name="harness-proxy"),
     path("api/", include(router.urls)),
     # Persona duplicate endpoint with custom URL pattern

@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from . import Held, Snapshot, StoreError
-from .container import ContainerStore, docker
+from .container import ContainerStore
 
 SCHEMA = "schema.sql"
 
@@ -33,9 +33,29 @@ def _psycopg() -> Any:
     except ImportError as exc:  # pragma: no cover - depends on the install
         raise StoreError(
             "psycopg is not installed, so a Postgres store cannot be read. Install it with "
-            "`uv sync --extra harness-stores`."
+            "`uv sync --extra postgres`."
         ) from exc
     return psycopg
+
+
+def _tables(connection: Any) -> list[str]:
+    rows = connection.execute(
+        "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
+    ).fetchall()
+    return [row[0] for row in rows]
+
+
+def _column_types(connection: Any, table: str) -> dict[str, str]:
+    """Declared column types, so arrays are not coerced into JSON."""
+    rows = connection.execute(
+        """
+        SELECT column_name, data_type
+          FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = %s
+        """,
+        (table,),
+    ).fetchall()
+    return {row[0]: row[1] for row in rows}
 
 
 class PostgresStore(ContainerStore):
@@ -86,12 +106,6 @@ class PostgresStore(ContainerStore):
         # quietly restores nothing.
         self.applied.append(script)
 
-    def _tables(self, connection: Any) -> list[str]:
-        rows = connection.execute(
-            "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
-        ).fetchall()
-        return [row[0] for row in rows]
-
     def _primary_key(self, connection: Any, table: str) -> list[str]:
         """The primary key columns, used only to read rows back in a stable order."""
         rows = connection.execute(
@@ -106,18 +120,6 @@ class PostgresStore(ContainerStore):
         ).fetchall()
         return [row[0] for row in rows]
 
-    def _column_types(self, connection: Any, table: str) -> dict[str, str]:
-        """Return declared column types so arrays are not coerced into JSON."""
-        rows = connection.execute(
-            """
-            SELECT column_name, data_type
-              FROM information_schema.columns
-             WHERE table_schema = 'public' AND table_name = %s
-            """,
-            (table,),
-        ).fetchall()
-        return {row[0]: row[1] for row in rows}
-
     def state(self) -> dict[str, list[dict[str, Any]]]:
         """Every table and its rows, in the shape the checks already expect.
 
@@ -127,7 +129,7 @@ class PostgresStore(ContainerStore):
         """
         with self._connect() as connection:
             out: dict[str, list[dict[str, Any]]] = {}
-            for table in self._tables(connection):
+            for table in _tables(connection):
                 key = self._primary_key(connection, table)
                 order = (
                     " ORDER BY " + ", ".join(f'"{column}"' for column in key)
@@ -166,7 +168,7 @@ class PostgresStore(ContainerStore):
         scenario's did.
         """
         with self._connect() as connection:
-            tables = self._tables(connection)
+            tables = _tables(connection)
             if not tables:
                 return
             listed = ", ".join(f'"{table}"' for table in tables)
@@ -179,7 +181,7 @@ class PostgresStore(ContainerStore):
                     if not rows or table not in tables:
                         continue
                     columns = list(rows[0])
-                    types = self._column_types(connection, table)
+                    types = _column_types(connection, table)
                     quoted = ", ".join(f'"{column}"' for column in columns)
                     placeholders = ", ".join(["%s"] * len(columns))
                     statement = (
@@ -205,35 +207,31 @@ class PostgresStore(ContainerStore):
                 )
 
     def save_to(self, path: str | Path) -> None:
-        """Save both the records and the DDL a fresh Postgres store needs."""
+        """Save both the records and the DDL a fresh Postgres store needs.
+
+        The DDL is every script `apply` ran, not a `pg_dump`: those scripts are the agent's own
+        migrations and seed, already proved to work through psycopg, so replaying them needs no
+        shell out to the container at all.
+        """
+        if not self.applied:
+            with self._connect() as connection:
+                tables = _tables(connection)
+            if tables:
+                # applied is empty only when nothing ever went through apply() -- an
+                # ALK_POSTGRES_DSN store migrated by something outside the harness. Writing
+                # an empty schema.sql over a real schema would silently lose it.
+                raise StoreError(
+                    "no scripts were recorded through apply(), but the database already has "
+                    f"tables ({', '.join(tables)}); refusing to write an empty {SCHEMA}"
+                )
         Held.save_to(self, path)
         root = Path(path)
-        schema = docker(
-            "exec",
-            self.container,
-            "pg_dump",
-            "--schema-only",
-            "--no-owner",
-            "--no-privileges",
-            "--username",
-            self.user,
-            "--dbname",
-            self.database,
-        )
-        # pg_dump can emit psql-only safety commands. The snapshot is replayed through psycopg,
-        # so keep SQL and discard client meta-commands.
-        schema = "\n".join(
-            line for line in schema.splitlines() if not line.startswith("\\")
-        )
-        (root / SCHEMA).write_text(schema, encoding="utf-8")
+        (root / SCHEMA).write_text("\n\n".join(self.applied), encoding="utf-8")
 
     def load_from(self, path: str | Path) -> None:
-        root = Path(path)
-        schema = root / SCHEMA
-        if not schema.exists():
-            raise StoreError(f"no saved Postgres schema at {schema}")
-        self.apply(schema.read_text(encoding="utf-8"))
-        Held.load_from(self, root)
+        # Held.load_from replays store.json's own "schema" list script by script; applying
+        # schema.sql here too would run the same CREATE TABLEs a second time.
+        Held.load_from(self, path)
 
     # -- what a scenario changes -----------------------------------------------------
 
@@ -242,7 +240,7 @@ class PostgresStore(ContainerStore):
         quoted = ", ".join(f'"{column}"' for column in columns)
         placeholders = ", ".join(["%s"] * len(columns))
         with self._connect() as connection:
-            types = self._column_types(connection, collection)
+            types = _column_types(connection, collection)
             cursor = connection.execute(
                 f'INSERT INTO "{collection}" ({quoted}) VALUES ({placeholders})',
                 tuple(
@@ -258,7 +256,7 @@ class PostgresStore(ContainerStore):
             )
         sets = ", ".join(f'"{column}" = %s' for column in changes)
         with self._connect() as connection:
-            types = self._column_types(connection, collection)
+            types = _column_types(connection, collection)
             cursor = connection.execute(
                 f'UPDATE "{collection}" SET {sets} WHERE "{by}" = %s',
                 (

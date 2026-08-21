@@ -1,6 +1,7 @@
 import uuid
 
 from django.db import models
+from django.db.models import Q
 
 from model_hub.models.choices import StatusType
 from model_hub.models.develop_dataset import KnowledgeBaseFile
@@ -50,3 +51,10 @@ class SimulateEvalConfig(BaseModel):
         verbose_name = "Simulate Eval Config"
         verbose_name_plural = "Simulate Eval Configs"
         ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run_test", "name"],
+                condition=Q(deleted=False, name__isnull=False),
+                name="uniq_simulate_eval_config_name",
+            )
+        ]

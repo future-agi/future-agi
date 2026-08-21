@@ -137,6 +137,19 @@ class CreateRunTestTool(BaseTool):
                     .first()
                 )
 
+        # The eval config name is unique per run test at the DB level, so a
+        # payload with two entries resolving to the same name would otherwise
+        # fail partway through the loop below, after the RunTest already exists.
+        seen_eval_names = set()
+        for eval_config_data in params.evaluations_config or []:
+            template_id = eval_config_data.get("template_id")
+            eval_name = eval_config_data.get("name", f"Eval-{template_id}")
+            if eval_name in seen_eval_names:
+                return ToolResult.validation_error(
+                    f"An evaluation config with the name '{eval_name}' already exists in this run test. Please use a different name."
+                )
+            seen_eval_names.add(eval_name)
+
         with transaction.atomic():
             run_test = RunTest.objects.create(
                 name=params.name,
