@@ -56,6 +56,7 @@ import { useSnackbar } from "src/components/snackbar";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import WidgetChart from "./WidgetChart";
 import { resolveGlobalDateRange } from "./dashboardDateRange";
+import { useDebounce } from "src/hooks/use-debounce";
 import useCanEditDashboard from "./hooks/useCanEditDashboard";
 import {
   DndContext,
@@ -573,10 +574,10 @@ function DraggableWidgetCard({
           {/* Chart */}
           <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
             <WidgetChart
-              key={`${widget.id}:${datePreset || "default"}${
+              key={`${widget.id}:${
                 globalDateRange
-                  ? `:${globalDateRange.start}:${globalDateRange.end}`
-                  : ""
+                  ? `${globalDateRange.start}:${globalDateRange.end}`
+                  : "default"
               }`}
               widget={widget}
               globalDateRange={globalDateRange}
@@ -666,6 +667,9 @@ export default function DashboardDetailView() {
     () => resolveGlobalDateRange(datePreset, customDateRange),
     [datePreset, customDateRange],
   );
+  // Debounce only the value that drives widget refetches, so rapid preset
+  // switching fires one round of requests. The chip UI updates immediately.
+  const debouncedGlobalDateRange = useDebounce(globalDateRange, 300);
 
   // Widget context menu
   const [menuAnchor, setMenuAnchor] = useState(null);
@@ -1367,7 +1371,7 @@ export default function DashboardDetailView() {
                               dashboardId={dashboardId}
                               navigate={navigate}
                               onMenuOpen={handleWidgetMenuOpen}
-                              globalDateRange={globalDateRange}
+                              globalDateRange={debouncedGlobalDateRange}
                               isDragActive={!!activeWidget}
                               rowHeight={rowHeight}
                               datePreset={datePreset}
