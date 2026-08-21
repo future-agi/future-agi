@@ -31,6 +31,12 @@ class RunTestFilterSerializer(StrictInputSerializer):
         allow_blank=True,
         default="",
     )
+    agent_type = serializers.ChoiceField(
+        choices=AgentDefinition.AgentTypeChoices.choices,
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
     prompt_template_id = serializers.UUIDField(required=False, allow_null=True)
     page = serializers.IntegerField(required=False, default=1, min_value=1)
     limit = serializers.IntegerField(required=False, min_value=1)
