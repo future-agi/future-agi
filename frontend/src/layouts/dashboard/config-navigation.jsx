@@ -209,6 +209,11 @@ export function useNavData() {
         subheader: "Simulate",
         items: [
           {
+            title: "RL Environment",
+            path: paths.dashboard.simulate.harness,
+            icon: <Iconify icon="solar:server-square-cloud-linear" />,
+          },
+          {
             title: "Agent Definition",
             path: paths.dashboard.simulate.agentDefinition,
             icon: ICONS.agentDefinition,

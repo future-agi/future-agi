@@ -321,6 +321,9 @@ const CreateNewAgentDefinition = lazyWithRetry(
 const RunTests = lazyWithRetry(
   () => import("src/pages/dashboard/run-tests/RunTests"),
 );
+const Harness = lazyWithRetry(
+  () => import("src/pages/dashboard/harness/Harness"),
+);
 const RunTestDetail = lazyWithRetry(
   () => import("src/pages/dashboard/run-tests/RunTestDetail"),
 );
@@ -1326,6 +1329,10 @@ export const dashboardRoutes = (
     {
       path: "simulate",
       children: [
+        {
+          path: "harness",
+          element: <Harness />,
+        },
         {
           path: "agent-definitions",
           element: <AgentDefinitions />,

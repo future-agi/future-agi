@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 984,
+  "endpointCount": 988,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -18362,24 +18362,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeResponseValidation": false,
         "requestBody": null,
         "queryParameters": {
-          "created_at": {
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "status": {
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "dataset_id": {
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
           "ordering": {
             "required": false,
             "schema": {
@@ -18543,24 +18525,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeResponseValidation": false,
         "requestBody": null,
         "queryParameters": {
-          "created_at": {
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "status": {
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "dataset_id": {
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
           "search": {
             "required": false,
             "schema": {
@@ -21045,18 +21009,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeResponseValidation": false,
         "requestBody": null,
         "queryParameters": {
-          "optimize_type": {
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "status": {
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
           "search": {
             "required": false,
             "schema": {
@@ -22559,12 +22511,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeResponseValidation": false,
         "requestBody": null,
         "queryParameters": {
-          "name": {
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
           "search": {
             "required": false,
             "schema": {
@@ -22784,24 +22730,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeResponseValidation": false,
         "requestBody": null,
         "queryParameters": {
-          "template_name": {
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "template_version": {
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "created_at": {
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
           "search": {
             "required": false,
             "schema": {
@@ -22869,24 +22797,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeResponseValidation": false,
         "requestBody": null,
         "queryParameters": {
-          "template_name": {
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "template_version": {
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "created_at": {
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
           "search": {
             "required": false,
             "schema": {
@@ -23506,24 +23416,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeResponseValidation": false,
         "requestBody": null,
         "queryParameters": {
-          "name": {
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "version": {
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "created_at": {
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
           "search": {
             "required": false,
             "schema": {
@@ -23737,24 +23629,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeResponseValidation": false,
         "requestBody": null,
         "queryParameters": {
-          "name": {
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "version": {
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "created_at": {
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
           "search": {
             "required": false,
             "schema": {
@@ -27425,6 +27299,84 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           "500": {
             "$ref": "#/definitions/CallExecutionErrorResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/simulate/api/harness-jobs/": {
+      "get": {
+        "operationId": "simulate_api_harness-jobs_list",
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
+        "queryParameters": {},
+        "responses": {
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      },
+      "post": {
+        "operationId": "simulate_api_harness-jobs_create",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": false,
+        "requestBody": {
+          "$ref": "#/definitions/HarnessJobCreate"
+        },
+        "queryParameters": {},
+        "responses": {
+          "201": {
+            "$ref": "#/definitions/HarnessJobCreate"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/simulate/api/harness-jobs/health/": {
+      "get": {
+        "operationId": "simulate_api_harness-jobs_health",
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
+        "queryParameters": {},
+        "responses": {
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/simulate/api/harness-jobs/{id}/": {
+      "get": {
+        "operationId": "simulate_api_harness-jobs_read",
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
+        "queryParameters": {},
+        "responses": {
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/simulate/api/harness-jobs/{id}/cancel/": {
+      "post": {
+        "operationId": "simulate_api_harness-jobs_cancel",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": false,
+        "requestBody": {
+          "$ref": "#/definitions/HarnessJobAction"
+        },
+        "queryParameters": {},
+        "responses": {
+          "201": {
+            "$ref": "#/definitions/HarnessJobAction"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -41722,6 +41674,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "maxLength": 255,
           "minLength": 1
         },
+        "modality": {
+          "title": "Modality",
+          "type": "string",
+          "enum": [
+            "text",
+            "voice"
+          ],
+          "default": "text"
+        },
         "description": {
           "title": "Description",
           "type": "string"
@@ -43442,7 +43403,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "livekit_max_concurrency": {
           "title": "Livekit max concurrency",
           "type": "integer",
-          "maximum": 25,
+          "maximum": 5,
           "minimum": 1,
           "x-nullable": true
         }
@@ -43601,7 +43562,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "livekit_max_concurrency": {
           "title": "Livekit max concurrency",
           "type": "integer",
-          "maximum": 25,
+          "maximum": 5,
           "minimum": 1,
           "x-nullable": true
         }
@@ -44636,7 +44597,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "livekit_max_concurrency": {
           "title": "Livekit max concurrency",
           "type": "integer",
-          "maximum": 25,
+          "maximum": 5,
           "minimum": 1
         },
         "commit_message": {
@@ -58209,6 +58170,73 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/GroundTruthUploadResponseResult"
+        }
+      }
+    },
+    "HarnessJobAction": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "title": "Reason",
+          "description": "Optional operator-provided reason for the action.",
+          "type": "string",
+          "maxLength": 500
+        }
+      }
+    },
+    "HarnessJobCreate": {
+      "required": [
+        "source_path"
+      ],
+      "type": "object",
+      "properties": {
+        "source_path": {
+          "title": "Source path",
+          "type": "string",
+          "maxLength": 4096,
+          "minLength": 1
+        },
+        "scenario_count": {
+          "title": "Scenario count",
+          "type": "integer",
+          "default": 10,
+          "maximum": 100,
+          "minimum": 1
+        },
+        "seed": {
+          "title": "Seed",
+          "type": "integer",
+          "x-nullable": true
+        },
+        "agent_name": {
+          "title": "Agent name",
+          "type": "string",
+          "maxLength": 255
+        },
+        "connector": {
+          "title": "Connector",
+          "type": "string",
+          "default": "auto",
+          "maxLength": 128,
+          "minLength": 1
+        },
+        "connector_config": {
+          "title": "Connector config",
+          "type": "object",
+          "default": {}
+        },
+        "secret_refs": {
+          "title": "Secret refs",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/SecretReference"
+          },
+          "default": {}
+        },
+        "metadata": {
+          "title": "Metadata",
+          "type": "object",
+          "default": {}
         }
       }
     },
@@ -84301,6 +84329,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "embedding_status": {
           "title": "Embedding status",
           "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "SecretReference": {
+      "required": [
+        "manager",
+        "key",
+        "purpose"
+      ],
+      "type": "object",
+      "properties": {
+        "manager": {
+          "title": "Manager",
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1
+        },
+        "key": {
+          "title": "Key",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "version": {
+          "title": "Version",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "purpose": {
+          "title": "Purpose",
+          "type": "string",
+          "maxLength": 128,
           "minLength": 1
         }
       }

@@ -20468,9 +20468,6 @@ export const ModelHubExperimentsUpdateResponse = zod.object({
 
 
 export const ModelHubExperimentsDataListQueryParams = zod.object({
-  "created_at": zod.string().optional(),
-  "status": zod.string().optional(),
-  "dataset_id": zod.string().optional(),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "search": zod.string().optional().describe('A search term.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -20609,9 +20606,6 @@ export const ModelHubExperimentsV2CreateResponse = zod.object({
  * V2 experiment list with filtering, search, and pagination.
  */
 export const ModelHubExperimentsV2ListListQueryParams = zod.object({
-  "created_at": zod.string().optional(),
-  "status": zod.string().optional(),
-  "dataset_id": zod.string().optional(),
   "search": zod.string().optional().describe('A search term.'),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -22903,8 +22897,6 @@ export const ModelHubMetricsByColumnListResponse = zod.object({
 
 
 export const ModelHubOptimisationListQueryParams = zod.object({
-  "optimize_type": zod.string().optional(),
-  "status": zod.string().optional(),
   "search": zod.string().optional().describe('A search term.'),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -24113,7 +24105,6 @@ export const ModelHubPromptBaseTemplatesDeleteParams = zod.object({
 
 
 export const ModelHubPromptExecutionsListQueryParams = zod.object({
-  "name": zod.string().optional(),
   "search": zod.string().optional().describe('A search term.'),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -24307,9 +24298,6 @@ export const ModelHubPromptFoldersDeleteParams = zod.object({
 
 
 export const ModelHubPromptHistoryExecutionsListQueryParams = zod.object({
-  "template_name": zod.string().optional(),
-  "template_version": zod.string().optional(),
-  "created_at": zod.string().optional(),
   "search": zod.string().optional().describe('A search term.'),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -24372,9 +24360,6 @@ export const ModelHubPromptHistoryExecutionsGetExecutionDetailsParams = zod.obje
 })
 
 export const ModelHubPromptHistoryExecutionsGetExecutionDetailsQueryParams = zod.object({
-  "template_name": zod.string().optional(),
-  "template_version": zod.string().optional(),
-  "created_at": zod.string().optional(),
   "search": zod.string().optional().describe('A search term.'),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -24755,9 +24740,6 @@ export const ModelHubPromptLabelsAssignLabelByIdBody = zod.object({
 
 
 export const ModelHubPromptTemplatesListQueryParams = zod.object({
-  "name": zod.string().optional(),
-  "version": zod.string().optional(),
-  "created_at": zod.string().optional(),
   "search": zod.string().optional().describe('A search term.'),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -24953,9 +24935,6 @@ If no version is specified, returns the default version (is_default=True).
 If a version is specified, returns that specific version.
  */
 export const ModelHubPromptTemplatesGetTemplateByNameQueryParams = zod.object({
-  "name": zod.string().optional(),
-  "version": zod.string().optional(),
-  "created_at": zod.string().optional(),
   "search": zod.string().optional().describe('A search term.'),
   "ordering": zod.string().optional().describe('Which field to use when ordering the results.'),
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -27704,7 +27683,7 @@ export const simulateAgentDefinitionsCreateCreateBodyDescriptionDefault = ``;
 export const simulateAgentDefinitionsCreateCreateBodyObservabilityEnabledDefault = false;
 export const simulateAgentDefinitionsCreateCreateBodyLivekitUrlMax = 500;
 
-export const simulateAgentDefinitionsCreateCreateBodyLivekitMaxConcurrencyMax = 25;
+export const simulateAgentDefinitionsCreateCreateBodyLivekitMaxConcurrencyMax = 5;
 
 
 
@@ -27823,7 +27802,7 @@ export const simulateAgentDefinitionsEditUpdateBodyAgentNameMax = 255;
 
 export const simulateAgentDefinitionsEditUpdateBodyLivekitUrlMax = 500;
 
-export const simulateAgentDefinitionsEditUpdateBodyLivekitMaxConcurrencyMax = 25;
+export const simulateAgentDefinitionsEditUpdateBodyLivekitMaxConcurrencyMax = 5;
 
 
 
@@ -27958,7 +27937,7 @@ export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitApiSecretMax
 
 export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitAgentNameMax = 255;
 
-export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitMaxConcurrencyMax = 25;
+export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitMaxConcurrencyMax = 5;
 
 export const simulateAgentDefinitionsVersionsCreateCreateBodyCommitMessageDefault = ``;
 export const simulateAgentDefinitionsVersionsCreateCreateBodyObservabilityEnabledDefault = false;
@@ -29308,6 +29287,7 @@ scenario generation. See ``provision_alk_sim_run_test``.
  */
 export const simulateApiAlkSimulateRunTestsProvisionRunTestBodyNameMax = 255;
 
+export const simulateApiAlkSimulateRunTestsProvisionRunTestBodyModalityDefault = `text`;
 export const simulateApiAlkSimulateRunTestsProvisionRunTestBodyPersonasItemNameMax = 255;
 
 export const simulateApiAlkSimulateRunTestsProvisionRunTestBodyPersonasItemRoleMax = 255;
@@ -29318,6 +29298,7 @@ export const simulateApiAlkSimulateRunTestsProvisionRunTestBodyAgentNameMax = 25
 
 export const SimulateApiAlkSimulateRunTestsProvisionRunTestBody = zod.object({
   "name": zod.string().min(1).max(simulateApiAlkSimulateRunTestsProvisionRunTestBodyNameMax),
+  "modality": zod.enum(['text', 'voice']).default(simulateApiAlkSimulateRunTestsProvisionRunTestBodyModalityDefault),
   "description": zod.string().optional(),
   "personas": zod.array(zod.object({
   "name": zod.string().max(simulateApiAlkSimulateRunTestsProvisionRunTestBodyPersonasItemNameMax).optional(),
@@ -29554,6 +29535,76 @@ export const SimulateApiCallExecutionsListResponseItem = zod.object({
   "processing_skip_reason": zod.string().optional()
 })
 export const SimulateApiCallExecutionsListResponse = zod.array(SimulateApiCallExecutionsListResponseItem)
+
+
+/**
+ * Control-plane facade over the configured ALK sandbox provider.
+ */
+export const simulateApiHarnessJobsCreateBodySourcePathMax = 4096;
+
+export const simulateApiHarnessJobsCreateBodyScenarioCountDefault = 10;
+export const simulateApiHarnessJobsCreateBodyScenarioCountMax = 100;
+
+export const simulateApiHarnessJobsCreateBodyAgentNameMax = 255;
+
+export const simulateApiHarnessJobsCreateBodyConnectorDefault = `auto`;
+export const simulateApiHarnessJobsCreateBodyConnectorMax = 128;
+
+export const simulateApiHarnessJobsCreateBodyConnectorConfigDefault = {  };
+export const simulateApiHarnessJobsCreateBodySecretRefsManagerMax = 64;
+
+export const simulateApiHarnessJobsCreateBodySecretRefsKeyMax = 255;
+
+export const simulateApiHarnessJobsCreateBodySecretRefsVersionMax = 255;
+
+export const simulateApiHarnessJobsCreateBodySecretRefsPurposeMax = 128;
+
+export const simulateApiHarnessJobsCreateBodySecretRefsDefault = {  };
+export const simulateApiHarnessJobsCreateBodyMetadataDefault = {  };
+
+export const SimulateApiHarnessJobsCreateBody = zod.object({
+  "source_path": zod.string().min(1).max(simulateApiHarnessJobsCreateBodySourcePathMax),
+  "scenario_count": zod.number().min(1).max(simulateApiHarnessJobsCreateBodyScenarioCountMax).default(simulateApiHarnessJobsCreateBodyScenarioCountDefault),
+  "seed": zod.number().optional(),
+  "agent_name": zod.string().max(simulateApiHarnessJobsCreateBodyAgentNameMax).optional(),
+  "connector": zod.string().min(1).max(simulateApiHarnessJobsCreateBodyConnectorMax).default(simulateApiHarnessJobsCreateBodyConnectorDefault),
+  "connector_config": zod.object({
+
+}).passthrough().default(simulateApiHarnessJobsCreateBodyConnectorConfigDefault),
+  "secret_refs": zod.record(zod.string(), zod.object({
+  "manager": zod.string().min(1).max(simulateApiHarnessJobsCreateBodySecretRefsManagerMax),
+  "key": zod.string().min(1).max(simulateApiHarnessJobsCreateBodySecretRefsKeyMax),
+  "version": zod.string().min(1).max(simulateApiHarnessJobsCreateBodySecretRefsVersionMax).optional(),
+  "purpose": zod.string().min(1).max(simulateApiHarnessJobsCreateBodySecretRefsPurposeMax)
+})).default(simulateApiHarnessJobsCreateBodySecretRefsDefault),
+  "metadata": zod.object({
+
+}).passthrough().default(simulateApiHarnessJobsCreateBodyMetadataDefault)
+})
+
+
+/**
+ * Control-plane facade over the configured ALK sandbox provider.
+ */
+export const SimulateApiHarnessJobsReadParams = zod.object({
+  "id": zod.string()
+})
+
+
+/**
+ * Control-plane facade over the configured ALK sandbox provider.
+ */
+export const SimulateApiHarnessJobsCancelParams = zod.object({
+  "id": zod.string()
+})
+
+export const simulateApiHarnessJobsCancelBodyReasonMax = 500;
+
+
+
+export const SimulateApiHarnessJobsCancelBody = zod.object({
+  "reason": zod.string().max(simulateApiHarnessJobsCancelBodyReasonMax).optional().describe('Optional operator-provided reason for the action.')
+})
 
 
 /**

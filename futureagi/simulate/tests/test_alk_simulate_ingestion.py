@@ -208,6 +208,24 @@ class TestProvisionRunTest:
         assert cell_values["outcome"] == "refunded"
         assert json.loads(cell_values["persona"])["name"] == "Sam"
 
+    def test_provision_voice_preserves_voice_call_type(self, auth_client):
+        resp = self._provision(
+            auth_client,
+            name="sdk-voice-e2e",
+            modality="voice",
+            personas=[{"name": "Avery", "situation": "book a ride"}],
+        )
+        assert resp.status_code == 200, resp.content
+        run_test = RunTest.objects.get(id=resp.json()["result"]["run_test_id"])
+        assert (
+            run_test.agent_definition.agent_type
+            == AgentDefinition.AgentTypeChoices.VOICE
+        )
+
+        _test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.simulation_call_type == CallExecution.SimulationCallType.VOICE
+
     def test_provisioned_run_test_batches_one_call_per_persona(self, auth_client):
         resp = self._provision(
             auth_client,
@@ -580,6 +598,35 @@ class TestMixedResultRollup:
 @pytest.mark.api
 @pytest.mark.django_db
 class TestResultIngest:
+    def test_harness_checks_complete_external_parent_without_platform_eval_wait(
+        self, auth_client, run_test
+    ):
+        test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+            {
+                "status": "completed",
+                "transcript": _transcript_payload(),
+                "call_metadata": {
+                    "harness_evaluations": [
+                        {"name": "ride_booked", "passed": False}
+                    ]
+                },
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+
+        call = CallExecution.objects.get(id=call_ids[0])
+        execution = SimTestExecution.objects.get(id=test_execution_id)
+        assert call.call_metadata["eval_started"] is True
+        assert call.call_metadata["eval_completed"] is True
+        assert execution.status == SimTestExecution.ExecutionStatus.COMPLETED
+        assert execution.completed_at is not None
+        assert execution.total_calls == 1
+        assert execution.completed_calls == 1
+        assert execution.failed_calls == 0
+
     def test_ingest_computes_metrics_and_duration(self, auth_client, run_test):
         _, call_ids = _start_and_batch(auth_client, run_test)
         call_id = call_ids[0]
@@ -827,6 +874,9 @@ class TestRecordingUpload:
         result = resp.json()["result"]
         assert result["recording_url"].endswith(".wav")
         assert result["object_key"].startswith("alk-sim/recordings/")
+        call = CallExecution.objects.get(id=call_id)
+        assert call.recording_url == result["recording_url"]
+        assert call.recording_available is True
         # Bytes were written to the upload bucket via the storage client.
         fake_client.put_object.assert_called_once()
 

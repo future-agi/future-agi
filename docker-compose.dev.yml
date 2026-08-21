@@ -37,6 +37,52 @@ services:
       - ./futureagi:/app/backend
     environment:
       FAST_STARTUP: "true"
+      ALK_HARNESS_SANDBOX_URL: http://alk-harness-sandbox:8788
+
+  # Local implementation of the hosted ALK sandbox contract. It is reachable by the
+  # backend over the private Compose network; its host port is loopback-only.
+  alk-harness-sandbox:
+    build:
+      context: ${ALK_REPOSITORY_PATH:-../alk-pr58}
+      dockerfile: Dockerfile.sandbox
+    image: futureagi/alk-harness-sandbox:dev
+    pull_policy: never
+    env_file:
+      - path: ${ALK_HARNESS_ENV_FILE:-../alk-pr58/.env.acceptance}
+        required: false
+    environment:
+      ALK_SANDBOX_HOST: 0.0.0.0
+      ALK_SANDBOX_PORT: 8788
+      ALK_SANDBOX_ROOT: /var/lib/alk-sandbox
+      # The Docker daemon is on the host. Mount the workspace at the same
+      # absolute path inside the runner so Compose bind mounts resolve to a
+      # path both the client and daemon can see. A hosted provider uses the
+      # equivalent shared bundle/workspace mount.
+      ALK_SANDBOX_SOURCE_ROOTS: ${ALK_HOST_WORKSPACE_ROOT:?set ALK_HOST_WORKSPACE_ROOT to the directory containing agent repositories}
+      ALK_SANDBOX_PATH_MAP: ${ALK_HOST_WORKSPACE_ROOT}=${ALK_HOST_WORKSPACE_ROOT}
+      ALK_HARNESS_MODEL: ${ALK_HARNESS_MODEL:-claude-sonnet-4-6}
+      CLOUD_ML_REGION: ${CLOUD_ML_REGION:-global}
+      # The sandbox reports canonical run events/results to the platform. Keep
+      # these separate from model-provider settings loaded above: in hosted
+      # execution they are short-lived job credentials supplied by the control
+      # plane rather than values baked into the runner image.
+      HARNESS_PLATFORM_URL: http://backend:80
+      HARNESS_PLATFORM_API_KEY: ${FI_API_KEY:?FI_API_KEY is required for harness result ingestion}
+      HARNESS_PLATFORM_SECRET_KEY: ${FI_SECRET_KEY:?FI_SECRET_KEY is required for harness result ingestion}
+      GOOGLE_APPLICATION_CREDENTIALS: ${ALK_HOST_WORKSPACE_ROOT}/future-agi/Vertex_AI_Creds.json
+      DOCKER_HOST: tcp://docker-proxy:2375
+      ALK_DOCKER_PUBLISHED_HOST: host.docker.internal
+      ALK_RUNNER_CONTAINER: self
+      HARNESS_WEBHOOK_HOST: 0.0.0.0
+    volumes:
+      - ${ALK_HOST_WORKSPACE_ROOT}:${ALK_HOST_WORKSPACE_ROOT}:ro
+      - alk_harness_artifacts:/var/lib/alk-sandbox
+    ports:
+      - "127.0.0.1:${ALK_SANDBOX_PORT:-8788}:8788"
+    depends_on:
+      docker-proxy:
+        condition: service_started
+    restart: unless-stopped
 
   # agentcc-gateway, serving, and code-executor are separate services we
   # don't modify in local dev, so they are NOT built from source here —
@@ -159,3 +205,6 @@ services:
     volumes:
       - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
     restart: unless-stopped
+
+volumes:
+  alk_harness_artifacts:

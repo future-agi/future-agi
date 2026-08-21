@@ -547,6 +547,8 @@ import type {
   GroundTruthStatusResponseApi,
   GroundTruthUploadRequestApi,
   GroundTruthUploadResponseApi,
+  HarnessJobActionApi,
+  HarnessJobCreateApi,
   HealthCheckResponseApi,
   HeartbeatApi,
   HuggingFaceAddRowsRequestApi,
@@ -52845,6 +52847,224 @@ export const simulateApiCallExecutionsList = async (params?: SimulateApiCallExec
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export type simulateApiHarnessJobsListResponse200 = {
+  data: void
+  status: 200
+}
+
+export type simulateApiHarnessJobsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type simulateApiHarnessJobsListResponseSuccess = (simulateApiHarnessJobsListResponse200) & {
+  headers: Headers;
+};
+export type simulateApiHarnessJobsListResponseError = (simulateApiHarnessJobsListResponseDefault) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessJobsListResponse = (simulateApiHarnessJobsListResponseSuccess | simulateApiHarnessJobsListResponseError)
+
+export const getSimulateApiHarnessJobsListUrl = () => {
+
+
+
+
+  return `/simulate/api/harness-jobs/`
+}
+
+/**
+ * Control-plane facade over the configured ALK sandbox provider.
+ */
+export const simulateApiHarnessJobsList = async ( options?: RequestInit): Promise<simulateApiHarnessJobsListResponse> => {
+
+  return apiMutator<simulateApiHarnessJobsListResponse>(getSimulateApiHarnessJobsListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type simulateApiHarnessJobsCreateResponse201 = {
+  data: HarnessJobCreateApi
+  status: 201
+}
+
+export type simulateApiHarnessJobsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type simulateApiHarnessJobsCreateResponseSuccess = (simulateApiHarnessJobsCreateResponse201) & {
+  headers: Headers;
+};
+export type simulateApiHarnessJobsCreateResponseError = (simulateApiHarnessJobsCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessJobsCreateResponse = (simulateApiHarnessJobsCreateResponseSuccess | simulateApiHarnessJobsCreateResponseError)
+
+export const getSimulateApiHarnessJobsCreateUrl = () => {
+
+
+
+
+  return `/simulate/api/harness-jobs/`
+}
+
+/**
+ * Control-plane facade over the configured ALK sandbox provider.
+ */
+export const simulateApiHarnessJobsCreate = async (harnessJobCreateApi: HarnessJobCreateApi, options?: RequestInit): Promise<simulateApiHarnessJobsCreateResponse> => {
+
+  return apiMutator<simulateApiHarnessJobsCreateResponse>(getSimulateApiHarnessJobsCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      harnessJobCreateApi,)
+  }
+);}
+
+
+
+export type simulateApiHarnessJobsHealthResponse200 = {
+  data: void
+  status: 200
+}
+
+export type simulateApiHarnessJobsHealthResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type simulateApiHarnessJobsHealthResponseSuccess = (simulateApiHarnessJobsHealthResponse200) & {
+  headers: Headers;
+};
+export type simulateApiHarnessJobsHealthResponseError = (simulateApiHarnessJobsHealthResponseDefault) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessJobsHealthResponse = (simulateApiHarnessJobsHealthResponseSuccess | simulateApiHarnessJobsHealthResponseError)
+
+export const getSimulateApiHarnessJobsHealthUrl = () => {
+
+
+
+
+  return `/simulate/api/harness-jobs/health/`
+}
+
+/**
+ * Control-plane facade over the configured ALK sandbox provider.
+ */
+export const simulateApiHarnessJobsHealth = async ( options?: RequestInit): Promise<simulateApiHarnessJobsHealthResponse> => {
+
+  return apiMutator<simulateApiHarnessJobsHealthResponse>(getSimulateApiHarnessJobsHealthUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type simulateApiHarnessJobsReadResponse200 = {
+  data: void
+  status: 200
+}
+
+export type simulateApiHarnessJobsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type simulateApiHarnessJobsReadResponseSuccess = (simulateApiHarnessJobsReadResponse200) & {
+  headers: Headers;
+};
+export type simulateApiHarnessJobsReadResponseError = (simulateApiHarnessJobsReadResponseDefault) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessJobsReadResponse = (simulateApiHarnessJobsReadResponseSuccess | simulateApiHarnessJobsReadResponseError)
+
+export const getSimulateApiHarnessJobsReadUrl = (id: string,) => {
+
+
+
+
+  return `/simulate/api/harness-jobs/${id}/`
+}
+
+/**
+ * Control-plane facade over the configured ALK sandbox provider.
+ */
+export const simulateApiHarnessJobsRead = async (id: string, options?: RequestInit): Promise<simulateApiHarnessJobsReadResponse> => {
+
+  return apiMutator<simulateApiHarnessJobsReadResponse>(getSimulateApiHarnessJobsReadUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type simulateApiHarnessJobsCancelResponse201 = {
+  data: HarnessJobActionApi
+  status: 201
+}
+
+export type simulateApiHarnessJobsCancelResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type simulateApiHarnessJobsCancelResponseSuccess = (simulateApiHarnessJobsCancelResponse201) & {
+  headers: Headers;
+};
+export type simulateApiHarnessJobsCancelResponseError = (simulateApiHarnessJobsCancelResponseDefault) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessJobsCancelResponse = (simulateApiHarnessJobsCancelResponseSuccess | simulateApiHarnessJobsCancelResponseError)
+
+export const getSimulateApiHarnessJobsCancelUrl = (id: string,) => {
+
+
+
+
+  return `/simulate/api/harness-jobs/${id}/cancel/`
+}
+
+/**
+ * Control-plane facade over the configured ALK sandbox provider.
+ */
+export const simulateApiHarnessJobsCancel = async (id: string,
+    harnessJobActionApi: HarnessJobActionApi, options?: RequestInit): Promise<simulateApiHarnessJobsCancelResponse> => {
+
+  return apiMutator<simulateApiHarnessJobsCancelResponse>(getSimulateApiHarnessJobsCancelUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      harnessJobActionApi,)
   }
 );}
 

@@ -197,6 +197,9 @@ class ALKSimulateProvisionRunTestRequestSerializer(serializers.Serializer):
     """
 
     name = serializers.CharField(max_length=255)
+    modality = serializers.ChoiceField(
+        choices=("text", "voice"), required=False, default="text"
+    )
     description = serializers.CharField(required=False, allow_blank=True)
     personas = ALKSimulateProvisionPersonaSerializer(many=True, required=False)
     scenario_ids = serializers.ListField(

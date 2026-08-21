@@ -33559,27 +33559,6 @@
                 "description": "",
                 "parameters": [
                     {
-                        "name": "created_at",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "status",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "dataset_id",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
                         "name": "ordering",
                         "in": "query",
                         "description": "Which field to use when ordering the results.",
@@ -33834,27 +33813,6 @@
                 "operationId": "model-hub_experiments_v2_list_list",
                 "description": "V2 experiment list with filtering, search, and pagination.",
                 "parameters": [
-                    {
-                        "name": "created_at",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "status",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "dataset_id",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
                     {
                         "name": "search",
                         "in": "query",
@@ -38396,20 +38354,6 @@
                 "description": "",
                 "parameters": [
                     {
-                        "name": "optimize_type",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "status",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
                         "name": "search",
                         "in": "query",
                         "description": "A search term.",
@@ -41022,13 +40966,6 @@
                 "description": "",
                 "parameters": [
                     {
-                        "name": "name",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
                         "name": "search",
                         "in": "query",
                         "description": "A search term.",
@@ -41351,27 +41288,6 @@
                 "description": "",
                 "parameters": [
                     {
-                        "name": "template_name",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "template_version",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "created_at",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
                         "name": "search",
                         "in": "query",
                         "description": "A search term.",
@@ -41450,27 +41366,6 @@
                 "operationId": "model-hub_prompt-history-executions_get_execution_details",
                 "description": "Get detailed information about a specific PromptVersion",
                 "parameters": [
-                    {
-                        "name": "template_name",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "template_version",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "created_at",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
                     {
                         "name": "search",
                         "in": "query",
@@ -42505,27 +42400,6 @@
                 "description": "",
                 "parameters": [
                     {
-                        "name": "name",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "version",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "created_at",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
                         "name": "search",
                         "in": "query",
                         "description": "A search term.",
@@ -42873,27 +42747,6 @@
                 "operationId": "model-hub_prompt-templates_get_template_by_name",
                 "description": "Retrieve a prompt template by name.\nIf no version is specified, returns the default version (is_default=True).\nIf a version is specified, returns that specific version.",
                 "parameters": [
-                    {
-                        "name": "name",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "version",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
-                    {
-                        "name": "created_at",
-                        "in": "query",
-                        "description": "",
-                        "required": false,
-                        "type": "string"
-                    },
                     {
                         "name": "search",
                         "in": "query",
@@ -49433,6 +49286,153 @@
                 "x-runtime-response-validation": true
             },
             "parameters": []
+        },
+        "/simulate/api/harness-jobs/": {
+            "get": {
+                "operationId": "simulate_api_harness-jobs_list",
+                "description": "Control-plane facade over the configured ALK sandbox provider.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "post": {
+                "operationId": "simulate_api_harness-jobs_create",
+                "description": "Control-plane facade over the configured ALK sandbox provider.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessJobCreate"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessJobCreate"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
+            },
+            "parameters": []
+        },
+        "/simulate/api/harness-jobs/health/": {
+            "get": {
+                "operationId": "simulate_api_harness-jobs_health",
+                "description": "Control-plane facade over the configured ALK sandbox provider.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": []
+        },
+        "/simulate/api/harness-jobs/{id}/": {
+            "get": {
+                "operationId": "simulate_api_harness-jobs_read",
+                "description": "Control-plane facade over the configured ALK sandbox provider.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-jobs/{id}/cancel/": {
+            "post": {
+                "operationId": "simulate_api_harness-jobs_cancel",
+                "description": "Control-plane facade over the configured ALK sandbox provider.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessJobAction"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessJobAction"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
         },
         "/simulate/api/livekit/call-config/{call_id}/": {
             "get": {
@@ -64493,10 +64493,6 @@
                         }
                     }
                 },
-                "produces": [
-                    "application/json",
-                    "text/csv"
-                ],
                 "tags": [
                     "tracer"
                 ],
@@ -110671,7 +110667,7 @@
                 "livekit_max_concurrency": {
                     "title": "Livekit max concurrency",
                     "type": "integer",
-                    "maximum": 25,
+                    "maximum": 5,
                     "minimum": 1,
                     "x-nullable": true
                 }
@@ -111090,7 +111086,7 @@
                 "livekit_max_concurrency": {
                     "title": "Livekit max concurrency",
                     "type": "integer",
-                    "maximum": 25,
+                    "maximum": 5,
                     "minimum": 1,
                     "x-nullable": true
                 }
@@ -111327,7 +111323,7 @@
                 "livekit_max_concurrency": {
                     "title": "Livekit max concurrency",
                     "type": "integer",
-                    "maximum": 25,
+                    "maximum": 5,
                     "minimum": 1
                 },
                 "commit_message": {
@@ -113744,6 +113740,15 @@
                     "maxLength": 255,
                     "minLength": 1
                 },
+                "modality": {
+                    "title": "Modality",
+                    "type": "string",
+                    "enum": [
+                        "text",
+                        "voice"
+                    ],
+                    "default": "text"
+                },
                 "description": {
                     "title": "Description",
                     "type": "string"
@@ -114013,6 +114018,108 @@
                             "minLength": 1
                         }
                     }
+                }
+            }
+        },
+        "SecretReference": {
+            "required": [
+                "manager",
+                "key",
+                "purpose"
+            ],
+            "type": "object",
+            "properties": {
+                "manager": {
+                    "title": "Manager",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "purpose": {
+                    "title": "Purpose",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessJobCreate": {
+            "required": [
+                "source_path"
+            ],
+            "type": "object",
+            "properties": {
+                "source_path": {
+                    "title": "Source path",
+                    "type": "string",
+                    "maxLength": 4096,
+                    "minLength": 1
+                },
+                "scenario_count": {
+                    "title": "Scenario count",
+                    "type": "integer",
+                    "default": 10,
+                    "maximum": 100,
+                    "minimum": 1
+                },
+                "seed": {
+                    "title": "Seed",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "agent_name": {
+                    "title": "Agent name",
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "connector": {
+                    "title": "Connector",
+                    "type": "string",
+                    "default": "auto",
+                    "maxLength": 128,
+                    "minLength": 1
+                },
+                "connector_config": {
+                    "title": "Connector config",
+                    "type": "object",
+                    "default": {}
+                },
+                "secret_refs": {
+                    "title": "Secret refs",
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/SecretReference"
+                    },
+                    "default": {}
+                },
+                "metadata": {
+                    "title": "Metadata",
+                    "type": "object",
+                    "default": {}
+                }
+            }
+        },
+        "HarnessJobAction": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "title": "Reason",
+                    "description": "Optional operator-provided reason for the action.",
+                    "type": "string",
+                    "maxLength": 500
                 }
             }
         },

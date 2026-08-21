@@ -164,6 +164,15 @@ def store_alk_recording(
         content_type=content_type,
     )
     recording_url = get_object_url(UPLOAD_BUCKET_NAME, object_key)
+    # The upload response alone is not enough: the simulations UI reads the
+    # CallExecution row later, after the SDK process is gone. Persist the URL
+    # here so transcript playback and downloads survive that boundary.
+    call_execution.recording_url = recording_url
+    # Harness reporting sends the result before uploading its recording.  The
+    # UI gates the player on this flag, so persisting only the URL leaves a
+    # perfectly valid uploaded recording rendered as "No recording found".
+    call_execution.recording_available = True
+    call_execution.save(update_fields=["recording_url", "recording_available"])
     return RecordingUploadResult(
         recording_url=recording_url,
         object_key=object_key,
@@ -178,15 +187,20 @@ def _extension_from_filename(filename: str | None) -> str:
     return tail if tail and 1 <= len(tail) <= 5 else "wav"
 
 
-def _provision_text_agent_definition(
-    organization, agent_definition_id, agent_name, description
+def _provision_agent_definition(
+    organization, agent_definition_id, agent_name, description, modality="text"
 ):
-    """Resolve the RunTest's agent definition for provisioning.
+    """Resolve a modality-correct agent definition for an external ALK run.
 
-    Explicit id must resolve to a non-VOICE agent (voice is entitlement-gated in
-    CreateRunTestView; provisioning must not bypass that gate). Otherwise a TEXT
-    agent is created — chat call type follows the agent definition's type.
+    This endpoint does not originate a platform-hosted voice call. It records a call
+    already executed by an authenticated ALK runner, so the definition must preserve
+    the submitted modality for the transcript, recording and analytics UI.
     """
+    expected_type = (
+        AgentDefinition.AgentTypeChoices.VOICE
+        if modality == "voice"
+        else AgentDefinition.AgentTypeChoices.TEXT
+    )
     if agent_definition_id:
         try:
             agent_definition = AgentDefinition.objects.get(
@@ -196,16 +210,16 @@ def _provision_text_agent_definition(
             raise ALKSimulateIngestionError(
                 f"agent definition {agent_definition_id} not found"
             ) from exc
-        if agent_definition.agent_type == AgentDefinition.AgentTypeChoices.VOICE:
+        if agent_definition.agent_type != expected_type:
             raise ALKSimulateIngestionError(
-                "voice agent definitions cannot be provisioned via ALK ingestion"
+                "agent definition modality does not match the ALK run modality"
             )
         return agent_definition
     return AgentDefinition.objects.create(
         agent_name=agent_name or "alk-sdk-agent",
-        agent_type=AgentDefinition.AgentTypeChoices.TEXT,
-        inbound=True,  # NOT NULL; call-direction is a no-op for chat
-        description=description or "SDK-provisioned chat agent (ALK ingestion).",
+        agent_type=expected_type,
+        inbound=True,
+        description=description or f"SDK-provisioned {modality} agent (ALK ingestion).",
         organization=organization,
     )
 
@@ -219,8 +233,9 @@ def provision_alk_sim_run_test(
     agent_definition_id: str | None = None,
     agent_name: str | None = None,
     description: str = "",
+    modality: str = "text",
 ) -> tuple[RunTest, list[Scenarios], AgentDefinition]:
-    """Stand up a chat RunTest for an SDK-first run, two ways (exactly one):
+    """Stand up a modality-correct RunTest for an SDK-first run, two ways.
 
     * ``scenario_ids`` — attach existing (natively generated) scenarios. Nothing
       is fabricated or mutated; the scenarios keep their real datasets so they
@@ -252,8 +267,12 @@ def provision_alk_sim_run_test(
                 raise ALKSimulateIngestionError(
                     f"scenario(s) not found: {', '.join(missing)}"
                 )
-            agent_definition = _provision_text_agent_definition(
-                organization, agent_definition_id, agent_name, description
+            agent_definition = _provision_agent_definition(
+                organization,
+                agent_definition_id,
+                agent_name,
+                description,
+                modality,
             )
             simulator_agent = next(
                 (s.simulator_agent for s in scenarios if s.simulator_agent), None
@@ -277,8 +296,12 @@ def provision_alk_sim_run_test(
             run_test.scenarios.set(scenarios)
             return run_test, scenarios, agent_definition
 
-        agent_definition = _provision_text_agent_definition(
-            organization, agent_definition_id, agent_name, description
+        agent_definition = _provision_agent_definition(
+            organization,
+            agent_definition_id,
+            agent_name,
+            description,
+            modality,
         )
 
         scenarios: list[Scenarios] = []
@@ -587,7 +610,21 @@ def ingest_alk_sim_result(
             == CallExecution.SimulationCallType.VOICE
         ):
             _dispatch_csat_once(call_execution)
-        eval_dispatched = _dispatch_evaluations_once(call_execution)
+        call_metadata = call_execution.call_metadata or {}
+        if "harness_evaluations" in call_metadata:
+            # An ALK harness result already contains the execution-backed
+            # checks. Starting the platform evaluator as well leaves the call
+            # permanently `eval_started` when no platform eval templates are
+            # configured, and therefore leaves the parent run pending. Mark
+            # this evaluation source complete instead of double-evaluating it.
+            call_metadata["eval_started"] = True
+            call_metadata["eval_completed"] = True
+            call_execution.call_metadata = call_metadata
+            call_execution.save(update_fields=["call_metadata"])
+        else:
+            eval_dispatched = _dispatch_evaluations_once(call_execution)
+
+    _roll_up_external_execution(call_execution.test_execution_id)
 
     try:
         notify_simulation_update(
@@ -619,6 +656,50 @@ def ingest_alk_sim_result(
         call_execution_id=str(call_execution.id),
         status="ingested",
         eval_dispatched=eval_dispatched,
+    )
+
+
+def _roll_up_external_execution(test_execution_id) -> None:
+    """Synchronously close an SDK-owned parent once all child calls finish.
+
+    The regular platform executor has Temporal/Celery monitoring its lifecycle.
+    An external SDK runner does not, so ingestion itself must make the terminal
+    transition deterministic. Async monitoring still runs for summaries and
+    notifications, but the list view no longer depends on a worker race.
+    """
+    calls = CallExecution.objects.filter(
+        test_execution_id=test_execution_id, deleted=False
+    )
+    if not calls.exists():
+        return
+    terminal = (
+        CallExecution.CallStatus.COMPLETED,
+        CallExecution.CallStatus.FAILED,
+        CallExecution.CallStatus.CANCELLED,
+    )
+    if calls.exclude(status__in=terminal).exists():
+        return
+
+    status = (
+        TestExecution.ExecutionStatus.COMPLETED
+        if calls.filter(status=CallExecution.CallStatus.COMPLETED).exists()
+        else TestExecution.ExecutionStatus.FAILED
+    )
+    completed_calls = calls.filter(
+        status=CallExecution.CallStatus.COMPLETED
+    ).count()
+    failed_calls = calls.filter(
+        status__in=(
+            CallExecution.CallStatus.FAILED,
+            CallExecution.CallStatus.CANCELLED,
+        )
+    ).count()
+    TestExecution.objects.filter(id=test_execution_id).update(
+        status=status,
+        completed_at=timezone.now(),
+        total_calls=calls.count(),
+        completed_calls=completed_calls,
+        failed_calls=failed_calls,
     )
 
 

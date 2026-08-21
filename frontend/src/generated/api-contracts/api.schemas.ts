@@ -14314,7 +14314,7 @@ export interface AgentDefinitionCreateRequestApi {
   livekit_config_json?: AgentDefinitionCreateRequestApiLivekitConfigJson;
   /**
      * @minimum 1
-     * @maximum 25
+     * @maximum 5
      */
   livekit_max_concurrency?: number;
 }
@@ -14547,7 +14547,7 @@ export interface AgentDefinitionEditRequestApi {
   livekit_config_json?: AgentDefinitionEditRequestApiLivekitConfigJson;
   /**
      * @minimum 1
-     * @maximum 25
+     * @maximum 5
      */
   livekit_max_concurrency?: number;
 }
@@ -14656,7 +14656,7 @@ export interface AgentVersionCreateRequestApi {
   livekit_config_json?: AgentVersionCreateRequestApiLivekitConfigJson;
   /**
      * @minimum 1
-     * @maximum 25
+     * @maximum 5
      */
   livekit_max_concurrency?: number;
   commit_message?: string;
@@ -15758,6 +15758,14 @@ export interface ALKSimulateStatusUpdateResponseApi {
   result: ALKSimulateStatusUpdateOutcomeApi;
 }
 
+export type ALKSimulateProvisionRunTestRequestApiModality = typeof ALKSimulateProvisionRunTestRequestApiModality[keyof typeof ALKSimulateProvisionRunTestRequestApiModality];
+
+
+export const ALKSimulateProvisionRunTestRequestApiModality = {
+  text: 'text',
+  voice: 'voice',
+} as const;
+
 export type ALKSimulateProvisionPersonaApiPersona = { [key: string]: unknown };
 
 export interface ALKSimulateProvisionPersonaApi {
@@ -15776,6 +15784,7 @@ export interface ALKSimulateProvisionRunTestRequestApi {
      * @maxLength 255
      */
   name: string;
+  modality?: ALKSimulateProvisionRunTestRequestApiModality;
   description?: string;
   personas?: ALKSimulateProvisionPersonaApi[];
   scenario_ids?: string[];
@@ -15863,6 +15872,67 @@ export interface CallExecutionErrorResponseApi {
   error?: string;
   attr?: string;
   details?: CallExecutionErrorResponseApiDetails;
+}
+
+export type HarnessJobCreateApiConnectorConfig = { [key: string]: unknown };
+
+export interface SecretReferenceApi {
+  /**
+     * @minLength 1
+     * @maxLength 64
+     */
+  manager: string;
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  key: string;
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  version?: string;
+  /**
+     * @minLength 1
+     * @maxLength 128
+     */
+  purpose: string;
+}
+
+export type HarnessJobCreateApiSecretRefs = {[key: string]: SecretReferenceApi};
+
+export type HarnessJobCreateApiMetadata = { [key: string]: unknown };
+
+export interface HarnessJobCreateApi {
+  /**
+     * @minLength 1
+     * @maxLength 4096
+     */
+  source_path: string;
+  /**
+     * @minimum 1
+     * @maximum 100
+     */
+  scenario_count?: number;
+  seed?: number;
+  /** @maxLength 255 */
+  agent_name?: string;
+  /**
+     * @minLength 1
+     * @maxLength 128
+     */
+  connector?: string;
+  connector_config?: HarnessJobCreateApiConnectorConfig;
+  secret_refs?: HarnessJobCreateApiSecretRefs;
+  metadata?: HarnessJobCreateApiMetadata;
+}
+
+export interface HarnessJobActionApi {
+  /**
+     * Optional operator-provided reason for the action.
+     * @maxLength 500
+     */
+  reason?: string;
 }
 
 export type LiveKitCallConfigResponseApiCallMetadata = {[key: string]: { [key: string]: unknown }};
@@ -25074,9 +25144,6 @@ export type ModelHubExperimentDetailList200 = {
 };
 
 export type ModelHubExperimentsDataListParams = {
-created_at?: string;
-status?: string;
-dataset_id?: string;
 /**
  * Which field to use when ordering the results.
  */
@@ -25103,9 +25170,6 @@ export type ModelHubExperimentsDataList200 = {
 };
 
 export type ModelHubExperimentsV2ListListParams = {
-created_at?: string;
-status?: string;
-dataset_id?: string;
 /**
  * A search term.
  */
@@ -25278,8 +25342,6 @@ limit?: number;
 };
 
 export type ModelHubOptimisationListParams = {
-optimize_type?: string;
-status?: string;
 /**
  * A search term.
  */
@@ -25457,7 +25519,6 @@ export type ModelHubPromptBaseTemplatesGetAllCategories200 = {
 };
 
 export type ModelHubPromptExecutionsListParams = {
-name?: string;
 /**
  * A search term.
  */
@@ -25502,9 +25563,6 @@ export type ModelHubPromptFoldersList200 = {
 };
 
 export type ModelHubPromptHistoryExecutionsListParams = {
-template_name?: string;
-template_version?: string;
-created_at?: string;
 /**
  * A search term.
  */
@@ -25531,9 +25589,6 @@ export type ModelHubPromptHistoryExecutionsList200 = {
 };
 
 export type ModelHubPromptHistoryExecutionsGetExecutionDetailsParams = {
-template_name?: string;
-template_version?: string;
-created_at?: string;
 /**
  * A search term.
  */
@@ -25614,9 +25669,6 @@ export type ModelHubPromptLabelsTemplateLabels200 = {
 };
 
 export type ModelHubPromptTemplatesListParams = {
-name?: string;
-version?: string;
-created_at?: string;
 /**
  * A search term.
  */
@@ -25643,9 +25695,6 @@ export type ModelHubPromptTemplatesList200 = {
 };
 
 export type ModelHubPromptTemplatesGetTemplateByNameParams = {
-name?: string;
-version?: string;
-created_at?: string;
 /**
  * A search term.
  */
