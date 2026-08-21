@@ -1188,7 +1188,7 @@ class VectorDBColumnRequestSerializer(serializers.Serializer):
     column_id = serializers.UUIDField()
     new_column_name = serializers.CharField(required=False, allow_blank=True)
     sub_type = serializers.CharField()
-    api_key = serializers.CharField()
+    api_key = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     collection_name = serializers.CharField(required=False, allow_blank=True)
     url = serializers.CharField(required=False, allow_blank=True)
     search_type = serializers.CharField(required=False, allow_blank=True)
