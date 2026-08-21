@@ -676,6 +676,10 @@ STRIPE_LIVE = bool(STRIPE_SECRET_KEY and STRIPE_SECRET_KEY.startswith("sk_live")
 STRIPE_WEBHOOK_SECRET = os.getenv(
     "WEBHOOK_SECRET_LIVE" if STRIPE_LIVE else "WEBHOOK_SECRET_TEST", ""
 )
+# Compatibility for EE service images that still import the pre-rename symbol.
+# Keep one resolved value so OSS and EE billing routes cannot select different
+# webhook secrets during a rolling/local mixed-version deployment.
+WEBHOOK_SECRET = STRIPE_WEBHOOK_SECRET
 
 BUSINESS_MONTHLY_STRIPE_PRICE_IDS_ALL = [
     x

@@ -38,6 +38,10 @@ services:
     environment:
       FAST_STARTUP: "true"
       ALK_HARNESS_SANDBOX_URL: http://alk-harness-sandbox:8788
+      # The local EE overlay keeps billing.yaml at /app/backend/ee. Without
+      # this, standalone harness evaluations resolve the cloud-only default
+      # path and fail after the model has already produced a valid score.
+      BILLING_CONFIG_PATH: /app/backend/ee/billing.yaml
 
   # Local implementation of the hosted ALK sandbox contract. It is reachable by the
   # backend over the private Compose network; its host port is loopback-only.
@@ -69,6 +73,11 @@ services:
       HARNESS_PLATFORM_URL: http://backend:80
       HARNESS_PLATFORM_API_KEY: ${FI_API_KEY:?FI_API_KEY is required for harness result ingestion}
       HARNESS_PLATFORM_SECRET_KEY: ${FI_SECRET_KEY:?FI_SECRET_KEY is required for harness result ingestion}
+      # ALK's reusable eval client uses the public SDK variable names. Point both
+      # reporting paths at the same local control/data plane for deployment parity.
+      FI_BASE_URL: http://backend:80
+      FI_API_KEY: ${FI_API_KEY:?FI_API_KEY is required for harness evaluation}
+      FI_SECRET_KEY: ${FI_SECRET_KEY:?FI_SECRET_KEY is required for harness evaluation}
       GOOGLE_APPLICATION_CREDENTIALS: ${ALK_HOST_WORKSPACE_ROOT}/future-agi/Vertex_AI_Creds.json
       DOCKER_HOST: tcp://docker-proxy:2375
       ALK_DOCKER_PUBLISHED_HOST: host.docker.internal
