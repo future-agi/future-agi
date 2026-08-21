@@ -33,6 +33,7 @@ import { useRunEvalMutation } from "./getEvalsList";
 import { format } from "date-fns";
 import logger from "src/utils/logger";
 import EvaluationMappingFormContent from "./EvaluationMappingFormContent";
+import { sanitizeEvalMapping } from "src/sections/common/EvalPicker/serializeEvalConfig";
 
 function removeElements(array1, array2) {
   return array1.filter((element) => !array2.includes(element));
@@ -583,7 +584,7 @@ const EvaluationMappingFormChild = ({
               ...(payload?.kb_id ? { kb_id: payload.kb_id } : {}),
             },
             page_id: EVALUATION_PAGE_ID_MAPPER[module],
-            mapping: payload.config?.mapping,
+            mapping: sanitizeEvalMapping(payload.config?.mapping),
             params: payload.config?.params || {},
             ...(removedEvals?.length > 0 && { deselected_evals: removedEvals }),
           };
@@ -595,7 +596,7 @@ const EvaluationMappingFormChild = ({
             project: id,
             name: payload.name,
             eval_template: payload.template_id,
-            mapping: payload.config?.mapping,
+            mapping: sanitizeEvalMapping(payload.config?.mapping),
             config: {
               ...(payload.config?.config || {}),
               params: payload.config?.params || {},

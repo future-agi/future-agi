@@ -73,6 +73,7 @@ def _stamp_eval_version(source_config, eval_template):
             exc_info=True,
         )
 
+
 # Re-export for backward compat
 from tracer.utils.eval_helpers import resolve_eval_config_id  # noqa: F401, E402
 
@@ -1110,6 +1111,7 @@ def _execute_composite_on_span(
     eval_task_id,
     run_params=None,
     feedback_id=None,
+    project_id=None,
 ):
     """Execute a composite `EvalTemplate` against a tracer span.
 
@@ -1133,6 +1135,7 @@ def _execute_composite_on_span(
         observation_span = get_observation_span(
             observation_span_id,
             select_related=("project", "project__organization", "project__workspace"),
+            project_id=project_id,
         )
         custom_eval_config = CustomEvalConfig.objects.get(
             id=custom_eval_config_id, deleted=False
@@ -1498,6 +1501,7 @@ def _execute_evaluation(
     type,
     run_params=None,
     feedback_id=None,
+    project_id=None,
 ):
     from evaluations.constants import FUTUREAGI_EVAL_TYPES
     from evaluations.engine import EvalRequest, run_eval
@@ -1506,9 +1510,13 @@ def _execute_evaluation(
     try:
         from tracer.services.clickhouse.v2.eval_loader import get_observation_span
 
+        # project_id scopes the CH point-read to one tenant's primary-key
+        # range; an unscoped `id =` read merges the whole table under FINAL
+        # and can hit the per-query memory limit.
         observation_span = get_observation_span(
             observation_span_id,
             select_related=("project", "project__organization", "project__workspace"),
+            project_id=project_id,
         )
 
         custom_eval_config = CustomEvalConfig.objects.get(
@@ -1537,6 +1545,7 @@ def _execute_evaluation(
             eval_task_id=eval_task_id,
             run_params=run_params,
             feedback_id=feedback_id,
+            project_id=project_id,
         )
 
     # Apply the shared empty-input rules so eval tasks behave the same as
@@ -1965,6 +1974,7 @@ def evaluate_observation_span(
             run_params=run_params,
             type=EXPERIMENT,
             feedback_id=feedback_id,
+            project_id=observation_span.project_id,
         )
         return True
     except ValueError as e:
@@ -2078,6 +2088,7 @@ def evaluate_observation_span_observe(
             run_params=run_params,
             type=OBSERVE,
             feedback_id=feedback_id,
+            project_id=observation_span.project_id,
         )
 
         # Composite evals return a logger_kwargs dict instead of writing

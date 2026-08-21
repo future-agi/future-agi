@@ -134,6 +134,8 @@ dataclasses-json==0.6.7
     # via langchain-community
 defusedxml==0.7.1
     # via pysaml2
+disposable-email-domains==0.0.239
+    # via core-backend (pyproject.toml)
 distro==1.9.0
     # via
     #   anthropic
