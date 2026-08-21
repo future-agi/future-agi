@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -872,10 +874,10 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	// Pass Authorization header for auth plugin.
 	setAuthMetadataFromRequest(rc, r)
 
-	// Extract Agentcc metadata from headers (with security key blocklist).
-	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
-		parseMetadataHeader(meta, rc)
-	}
+	// Caller dimensions, from the x-agentcc-metadata header and the body's
+	// own metadata field (with security key blocklist).
+	applyCallerMetadata(rc, r, req.Extra["metadata"])
+	applyCallerExtras(rc, req.Extra)
 	if sid := r.Header.Get("x-agentcc-session-id"); sid != "" {
 		if len(sid) > maxSessionIDLen {
 			models.WriteError(w, models.ErrBadRequest("session_id_too_long",
@@ -1886,21 +1888,167 @@ func splitCSV(s string) []string {
 	return result
 }
 
-// parseMetadataHeader parses the x-agentcc-metadata JSON header into the request
-// context. Security-sensitive keys are blocked to prevent client-side injection.
-// Accepted keys are recorded on the context so telemetry can distinguish them
-// from the metadata plugins write themselves.
+// applyCallerMetadata records the caller's own dimensions on the request
+// context, from both channels that carry them: the x-agentcc-metadata header
+// and the OpenAI-spec `metadata` body field. Either one is the gateway's
+// equivalent of calling span.SetAttribute() in a natively instrumented service.
+//
+// The header wins on conflict. It is set by the calling infrastructure, and
+// infrastructure tagging should not be overridable by the payload it forwards.
+//
+// body is the request body's own metadata object, or nil for endpoints whose
+// body has no such field.
+func applyCallerMetadata(rc *models.RequestContext, r *http.Request, body json.RawMessage) {
+	if len(body) > 0 {
+		mergeCallerMetadata(rc, body)
+	}
+	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
+		mergeCallerMetadata(rc, json.RawMessage(meta))
+	}
+}
+
+// parseMetadataHeader records the dimensions carried by the x-agentcc-metadata
+// header alone, for endpoints that read the header before their body exists.
 func parseMetadataHeader(meta string, rc *models.RequestContext) {
-	var m map[string]string
-	if err := json.Unmarshal([]byte(meta), &m); err != nil {
+	mergeCallerMetadata(rc, json.RawMessage(meta))
+}
+
+// applyCallerExtras snapshots the request body's unknown top-level fields onto
+// the request context, so telemetry can export what the caller actually sent.
+//
+// These are not exotic: ChatCompletionRequest.UnmarshalJSON matches against a
+// fixed list of ~23 field names, so every OpenAI parameter added since —
+// reasoning_effort, parallel_tool_calls, store, prediction — arrives here too,
+// alongside whatever an SDK's extra_body carried.
+//
+// Taken at parse time on purpose. The translation layer writes its own state
+// into the same Extra map on the canonical request, and reading it later would
+// export gateway internals as if the caller had sent them. A snapshot taken
+// before any of that runs excludes them by provenance, with no list of our own
+// key names to keep correct.
+//
+// Scalars only. A nested object or array cannot be exported as a queryable
+// attribute anyway, and objects are where credentials live when someone passes
+// service-account JSON through extra_body.
+func applyCallerExtras(rc *models.RequestContext, extra map[string]json.RawMessage) {
+	for k, raw := range extra {
+		// metadata is the curated dimension channel and has already been read.
+		if k == "metadata" {
+			continue
+		}
+		recordCallerExtra(rc, k, raw)
+	}
+}
+
+// applyCallerExtrasFromBody is applyCallerExtras for dialects the gateway does
+// not unmarshal into a canonical struct — the Anthropic and Gemini endpoints.
+//
+// It reads the raw body instead of a parsed request because both of those
+// handlers have a native pass-through path that forwards the caller's bytes
+// untouched; there is no struct to hang unknown fields off, and adding one
+// would still miss the pass-through. `known` is the dialect's own field set.
+func applyCallerExtrasFromBody(rc *models.RequestContext, body []byte, known map[string]struct{}) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
 		return
 	}
-	for k, v := range m {
+	for k, v := range raw {
+		if _, isSpec := known[k]; isSpec {
+			continue
+		}
+		recordCallerExtra(rc, k, v)
+	}
+}
+
+// recordCallerExtra vets one caller-supplied body field and stores it.
+func recordCallerExtra(rc *models.RequestContext, key string, raw json.RawMessage) {
+	if isCredentialShapedKey(key) {
+		rc.CallerExtrasDropped++
+		return
+	}
+	v, ok := decodeScalar(raw)
+	if !ok {
+		rc.CallerExtrasDropped++
+		return
+	}
+	if rc.CallerExtras == nil {
+		rc.CallerExtras = make(map[string]any, 8)
+	}
+	rc.CallerExtras[key] = v
+}
+
+// decodeScalar returns a JSON string, number or bool as its Go value. Anything
+// else — object, array, null — is not a scalar and is reported as such.
+//
+// Numbers keep their type rather than becoming strings: an integer exported as
+// an int lands in the platform's numeric attribute column, where a range filter
+// works. That is worth more than matching how metadata stringifies everything.
+func decodeScalar(raw json.RawMessage) (any, bool) {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, false
+	}
+	switch t := v.(type) {
+	case string, bool:
+		return t, true
+	case float64:
+		// json.Unmarshal makes every number a float64. Integral values go back
+		// to int64 so they render as 3 rather than 3.0 in a trace UI.
+		if t == math.Trunc(t) && math.Abs(t) < 1<<53 {
+			return int64(t), true
+		}
+		return t, true
+	default:
+		return nil, false
+	}
+}
+
+// isCredentialShapedKey is the last line of defence over scalar-only filtering
+// and value redaction, not the only one. Over-blocking here costs an absent
+// attribute; under-blocking costs a leaked secret, so the match is deliberately
+// broad.
+func isCredentialShapedKey(key string) bool {
+	lower := strings.ToLower(key)
+	for _, needle := range []string{
+		"secret", "token", "credential", "password", "passwd",
+		"api_key", "apikey", "auth", "private_key", "bearer", "signature",
+	} {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// mergeCallerMetadata merges one JSON object of caller dimensions into the
+// request context. Security-sensitive keys are blocked to prevent client-side
+// injection, and accepted keys are recorded on the context so telemetry can
+// tell them apart from the metadata plugins write themselves.
+//
+// Values are decoded leniently: a JSON string is unquoted, anything else keeps
+// its JSON text. Strict string-only decoding threw away the whole object over
+// one numeric value, which is a silent and very confusing way to lose every
+// dimension a caller sent.
+func mergeCallerMetadata(rc *models.RequestContext, raw json.RawMessage) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return
+	}
+	for k, rv := range m {
 		if isBlockedMetadataKey(k) {
 			continue
 		}
+		var v string
+		if err := json.Unmarshal(rv, &v); err != nil {
+			v = string(rv)
+		}
+		// Dedup against the accepted list, not against rc.Metadata: that map
+		// also holds internal keys the plugins wrote, and a caller key that
+		// collides with one still has to be recorded as caller-supplied.
+		if !slices.Contains(rc.CustomMetadataKeys, k) {
+			rc.CustomMetadataKeys = append(rc.CustomMetadataKeys, k)
+		}
 		rc.Metadata[k] = v
-		rc.CustomMetadataKeys = append(rc.CustomMetadataKeys, k)
 	}
 }
 
@@ -1911,15 +2059,20 @@ func isBlockedMetadataKey(key string) bool {
 	lower := strings.ToLower(key)
 	for _, prefix := range []string{
 		"auth_", "key_", "org_", "budget_", "ratelimit_",
-		"cost", "cache_", "guardrail_", "credit_",
+		"cache_", "guardrail_", "credit_", "credits_",
 	} {
 		if strings.HasPrefix(lower, prefix) {
 			return true
 		}
 	}
 	// Block specific keys that don't follow a prefix pattern.
+	//
+	// The cost family is listed exactly rather than by prefix. The plugins own
+	// "cost" and "cost_source" and nothing else, while any prefix wide enough
+	// to cover them also swallows cost_center and cost_code — ordinary business
+	// dimensions. A new internal cost_* key must be added here by hand.
 	switch lower {
-	case "authorization", "client_ip", "timeout_ms":
+	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source":
 		return true
 	}
 	return false

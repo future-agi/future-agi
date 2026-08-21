@@ -776,12 +776,53 @@ type OTelConfig struct {
 	// environment rather than in this file.
 	Headers map[string]string `yaml:"headers" json:"-"`
 
+	// TracePropagation makes the gateway honour an inbound W3C `traceparent`
+	// header: its trace id is adopted and its span id becomes this span's
+	// parent, so the gateway span nests under the caller's span instead of
+	// standing alone as a second root.
+	//
+	// Off by default, and deliberately so. A trace whose root span lives in a
+	// different backend has no root here, and consumers that key a trace off
+	// its root span will not list it. Enable when the caller exports its spans
+	// to the same destination as this gateway.
+	TracePropagation bool `yaml:"trace_propagation" json:"trace_propagation"`
+
 	// IncludeBodies attaches the prompt and completion to each span. Off by
 	// default: it sends user content to the collector, and it is a separate
 	// decision from logging.request_logging.include_bodies because the two
 	// go to different places and are signed off separately. Content is
 	// redacted with the org's privacy config exactly as the request log is.
 	IncludeBodies bool `yaml:"include_bodies" json:"include_bodies"`
+
+	// MetadataAttributes additionally emits every caller-supplied metadata key
+	// as its own `agentcc.metadata.<key>` span attribute, next to the `metadata`
+	// JSON object that is always written. Flat attributes are what a trace
+	// backend can filter and group on; the JSON object is one opaque string.
+	// nil = default true.
+	MetadataAttributes *bool `yaml:"metadata_attributes" json:"metadata_attributes"`
+
+	// CaptureHeaders lists request headers to copy onto the span as
+	// `http.request.header.<name>`. Names are matched case-insensitively and a
+	// trailing `*` is a prefix wildcard, so "x-acme-*" takes a whole namespace.
+	//
+	// Empty by default, and an allowlist rather than a blocklist on purpose.
+	// Request headers carry credentials — the gateway itself copies x-api-key
+	// into Authorization before a span exists — and a trace goes somewhere
+	// wider than a log does. A blocklist is a list you can only be wrong about
+	// once. Credential headers stay denied even when a wildcard matches them.
+	CaptureHeaders []string `yaml:"capture_headers" json:"capture_headers"`
+
+	// BodyAttributes emits the request body's unknown top-level fields as
+	// `agentcc.body.<key>` — an SDK's extra_body, and every OpenAI parameter
+	// newer than the field list the request struct knows about
+	// (reasoning_effort, parallel_tool_calls, store...). On by default: those
+	// are ordinary request knobs, and a span that cannot be filtered by them is
+	// missing something the caller assumes is recorded.
+	//
+	// Scalars only, so a nested object — the shape credentials arrive in when
+	// someone passes service-account JSON through extra_body — is never
+	// exported. Values are redacted with the privacy config. nil = default true.
+	BodyAttributes *bool `yaml:"body_attributes" json:"body_attributes"`
 }
 
 // PrometheusConfig controls the Prometheus metrics endpoint.

@@ -15,7 +15,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/translation"
-	_ "github.com/futureagi/agentcc-gateway/internal/translation/anthropic" // register translator
+	anthropictrans "github.com/futureagi/agentcc-gateway/internal/translation/anthropic"
 )
 
 // MappingRestorer is satisfied by translators that can restore truncated tool
@@ -71,9 +71,11 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 
 	// Extract headers.
 	setAuthMetadataFromRequest(rc, r)
-	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
-		parseMetadataHeader(meta, rc)
-	}
+	// Caller dimensions, from the x-agentcc-metadata header and the body's own
+	// non-spec fields. Read from the raw bytes: the native pass-through below
+	// never unmarshals this body.
+	applyCallerMetadata(rc, r, nil)
+	applyCallerExtrasFromBody(rc, body, anthropictrans.KnownRequestFields())
 
 	// Resolve timeout and context.
 	timeout := h.resolveTimeout(rc, r)
