@@ -6,6 +6,7 @@ Fail-open: any exception is caught and logged, original value preserved.
 """
 
 import json
+import time
 from typing import Any
 
 import structlog
@@ -18,16 +19,19 @@ logger = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 _analyzer = None
 _anonymizer = None
-_INIT_FAILED = False
+_INIT_FAILED_AT: float | None = None
+_RETRY_INTERVAL = 300  # seconds
 
 
+# Retry initialization after a transient Presidio failure.
 def _ensure_engines() -> bool:
     """Lazily initialise Presidio engines. Returns True if ready."""
-    global _analyzer, _anonymizer, _INIT_FAILED  # noqa: PLW0603
-    if _INIT_FAILED:
-        return False
+    global _analyzer, _anonymizer, _INIT_FAILED_AT  # noqa: PLW0603
     if _analyzer is not None and _anonymizer is not None:
         return True
+    if _INIT_FAILED_AT is not None:
+        if time.monotonic() - _INIT_FAILED_AT < _RETRY_INTERVAL:
+            return False
     try:
         from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
         from presidio_anonymizer import AnonymizerEngine
@@ -56,11 +60,12 @@ def _ensure_engines() -> bool:
         _analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
         _analyzer.registry.add_recognizer(api_key_recognizer)
         _anonymizer = AnonymizerEngine()
+        _INIT_FAILED_AT = None
 
         logger.info("pii_scrubber_engines_initialized")
         return True
     except Exception:
-        _INIT_FAILED = True
+        _INIT_FAILED_AT = time.monotonic()
         logger.warning("pii_scrubber_init_failed", exc_info=True)
         return False
 
