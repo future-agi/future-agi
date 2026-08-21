@@ -11,6 +11,7 @@ import CreateApiKey from "./CreateApiKey";
 import ActionMenu from "./ActionMenu";
 import SecretKeyRenderer from "./SecretKeyRenderer";
 import stringAvatar from "src/utils/stringAvatar";
+import { formatApiKeyExpiry, isOrgApiKeyExpired } from "./keyExpiry";
 
 export default function DevKeysView() {
   const queryClient = useQueryClient();
@@ -84,7 +85,20 @@ export default function DevKeysView() {
             >
               {getValue()}
             </Typography>
-            {!row.original.enabled && (
+            {isOrgApiKeyExpired(row.original.expires_at) ? (
+              <Chip
+                label="Expired"
+                sx={{
+                  ml: 1,
+                  flexShrink: 0,
+                  height: 22,
+                  fontSize: 11,
+                  borderRadius: "4px",
+                  color: "warning.darker",
+                  bgcolor: "warning.lighter",
+                }}
+              />
+            ) : !row.original.enabled ? (
               <Chip
                 label="Disabled"
                 sx={{
@@ -97,7 +111,7 @@ export default function DevKeysView() {
                   bgcolor: "background.neutral",
                 }}
               />
-            )}
+            ) : null}
           </Box>
         ),
       },
@@ -160,6 +174,17 @@ export default function DevKeysView() {
             </Typography>
           );
         },
+      },
+      {
+        id: "expires_at",
+        accessorKey: "expires_at",
+        header: "Expires",
+        meta: { flex: 1 },
+        cell: ({ getValue }) => (
+          <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+            {formatApiKeyExpiry(getValue())}
+          </Typography>
+        ),
       },
       {
         id: "actions",

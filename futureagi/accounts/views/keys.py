@@ -32,6 +32,7 @@ def _publish_key_revocation(api_key: str, secret_key: str) -> None:
     except Exception:
         logger.warning("fi_auth_revoke_publish_failed", exc_info=True)
 
+
 from accounts.models import OrgApiKey
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
@@ -105,6 +106,8 @@ class SecretKeyAPIViewSet(ViewSet):
         "created_at": "created_at",
         "createdBy": "user__name",
         "created_by": "user__name",
+        "expiresAt": "expires_at",
+        "expires_at": "expires_at",
         "enabled": "enabled",
         "type": "type",
     }
@@ -174,6 +177,7 @@ class SecretKeyAPIViewSet(ViewSet):
                     "secret_key": mask_key(key.secret_key),
                     "created_by": key.user.name if key.user else None,
                     "created_at": key.created_at,
+                    "expires_at": key.expires_at,
                     "enabled": key.enabled,
                     "type": key.type,
                 }
@@ -273,6 +277,7 @@ class SecretKeyAPIViewSet(ViewSet):
     def generate_secret_key(self, request, *args, **kwargs):
         try:
             key_name = request.validated_data.get("key_name")
+            expires_at = request.validated_data.get("expires_at")
 
             if OrgApiKey.objects.filter(
                 name=key_name,
@@ -288,6 +293,7 @@ class SecretKeyAPIViewSet(ViewSet):
                 or request.user.organization,
                 type="user",
                 user=request.user,
+                expires_at=expires_at,
             )
             response = {
                 "key_id": org_key.id,
