@@ -42,6 +42,11 @@ type rootConfig struct {
 	Writer chwriter.Config `yaml:"writer"`
 	Server server.Config   `yaml:"server"`
 	Auth   auth.Config     `yaml:"auth"`
+	Admin  adminConfig     `yaml:"admin"`
+}
+
+type adminConfig struct {
+	Addr string `yaml:"addr"`
 }
 
 func main() {
@@ -105,7 +110,11 @@ func main() {
 	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, opts...)
 
 	// Admin HTTP server — internal only, health check endpoint.
-	go runAdmin(":9464", writer, log)
+	adminAddr := cfg.Admin.Addr
+	if adminAddr == "" {
+		adminAddr = ":9464"
+	}
+	go runAdmin(adminAddr, writer, srv, log)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -115,7 +124,11 @@ func main() {
 	log.Info("starting",
 		"grpc_addr", cfg.Server.GRPCAddr,
 		"http_addr", cfg.Server.HTTPAddr,
+		"admin_addr", adminAddr,
 		"ch_url", cfg.Writer.URL,
+		"max_pending_requests", srv.QueueSnapshot().MaxPendingRequests,
+		"max_pending_rows", srv.QueueSnapshot().MaxPendingRows,
+		"max_pending_bytes", srv.QueueSnapshot().MaxPendingBytes,
 	)
 	if err := srv.Run(ctx); err != nil && ctx.Err() == nil {
 		log.Error("server exited with error", "err", err)
@@ -208,6 +221,13 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) {
 			log.Warn("ignoring invalid FI_GRPC_MAX_RECV_MIB", "value", v)
 		}
 	}
+	applyPositiveIntEnv(log, "FI_MAX_PENDING_REQUESTS", &c.Server.MaxPendingRequests)
+	applyPositiveIntEnv(log, "FI_MAX_PENDING_ROWS", &c.Server.MaxPendingRows)
+	applyPositiveIntEnv(log, "FI_MAX_PENDING_MIB", &c.Server.MaxPendingMiB)
+	applyPositiveIntEnv(log, "FI_MAX_CONCURRENT_REQUESTS", &c.Server.MaxConcurrentRequests)
+	if v := os.Getenv("FI_ADMIN_ADDR"); v != "" {
+		c.Admin.Addr = v
+	}
 	if v := os.Getenv("FI_DEAD_LETTER_FILE"); v != "" {
 		c.Writer.DeadLetterFile = v
 	}
@@ -223,22 +243,46 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) {
 	}
 }
 
+func applyPositiveIntEnv(log *slog.Logger, name string, target *int) {
+	v := os.Getenv(name)
+	if v == "" {
+		return
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		log.Warn("ignoring invalid positive integer environment variable", "env", name, "value", v)
+		return
+	}
+	*target = n
+}
+
 // runAdmin serves /healthz for container health checks.
-func runAdmin(addr string, w *chwriter.Writer, log *slog.Logger) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(rw http.ResponseWriter, r *http.Request) {
-		s := w.Snapshot()
-		denom := s.BatchesInserted + s.BatchesFailed
-		if denom > 100 && s.BatchesFailed*2 > denom {
-			rw.WriteHeader(503)
-			_ = json.NewEncoder(rw).Encode(map[string]any{"status": "unhealthy", "stats": s})
-			return
-		}
-		rw.WriteHeader(200)
-		_ = json.NewEncoder(rw).Encode(map[string]any{"status": "ok", "stats": s})
-	})
-	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+func runAdmin(addr string, w *chwriter.Writer, collector *server.Server, log *slog.Logger) {
+	srv := &http.Server{Addr: addr, Handler: adminHandler(w, collector), ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Warn("admin server stopped", "err", err)
 	}
+}
+
+func adminHandler(w *chwriter.Writer, collector *server.Server) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(rw http.ResponseWriter, r *http.Request) {
+		s := w.Snapshot()
+		queue := collector.QueueSnapshot()
+		rw.Header().Set("Content-Type", "application/json")
+		if s.BatchesNotDurable > 0 {
+			rw.WriteHeader(503)
+			_ = json.NewEncoder(rw).Encode(map[string]any{"status": "unhealthy", "stats": s, "queue": queue})
+			return
+		}
+		denom := s.BatchesInserted + s.BatchesFailed
+		if denom > 100 && s.BatchesFailed*2 > denom {
+			rw.WriteHeader(503)
+			_ = json.NewEncoder(rw).Encode(map[string]any{"status": "unhealthy", "stats": s, "queue": queue})
+			return
+		}
+		rw.WriteHeader(200)
+		_ = json.NewEncoder(rw).Encode(map[string]any{"status": "ok", "stats": s, "queue": queue})
+	})
+	return mux
 }

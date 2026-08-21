@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -19,6 +21,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -702,9 +705,9 @@ func TestDrainAggregatesCuratedAcrossPayloads(t *testing.T) {
 	r2a, ids2a, _ := chexp.ConvertWithIdentities(context.Background(), makeObserveTraces(proj, org, "userA", "sessX", 0x02), nil) // dup identity
 	r2b, ids2b, _ := chexp.ConvertWithIdentities(context.Background(), makeObserveTraces(proj, org, "userB", "sessY", 0x03), nil)
 
-	s.enqueue(r1, ids1)
-	s.enqueue(r2a, ids2a)
-	s.enqueue(r2b, ids2b)
+	_, _ = s.enqueue(r1, ids1, 1, nil)
+	_, _ = s.enqueue(r2a, ids2a, 1, nil)
+	_, _ = s.enqueue(r2b, ids2b, 1, nil)
 
 	// One drain → one span insert + one end_users + one trace_sessions.
 	s.drainNow(context.Background())
@@ -741,6 +744,344 @@ func TestDrainAggregatesCuratedAcrossPayloads(t *testing.T) {
 	}
 	if sessRows != 2 {
 		t.Errorf("trace_sessions rows: got %d want 2", sessRows)
+	}
+}
+
+func TestEnqueueRejectsAtomicallyAtRowLimit(t *testing.T) {
+	s := &Server{
+		cfg:       Config{MaxPendingRequests: 10, MaxPendingRows: 2, MaxPendingMiB: 1},
+		accepting: true,
+		pendCh:    make(chan struct{}, 1),
+	}
+	first := []map[string]any{{"id": "1"}}
+	second := []map[string]any{{"id": "2"}, {"id": "3"}}
+	if _, err := s.enqueue(first, nil, 10, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.enqueue(second, nil, 10, nil); !errors.Is(err, errQueueFull) {
+		t.Fatalf("err=%v, want queue full", err)
+	}
+	stats := s.QueueSnapshot()
+	if stats.PendingRequests != 1 || stats.PendingRows != 1 {
+		t.Fatalf("partial admission: %+v", stats)
+	}
+	if len(s.pend) != 1 || s.pend[0]["id"] != "1" {
+		t.Fatalf("pending rows mutated by rejected request: %#v", s.pend)
+	}
+}
+
+func TestEnqueueRejectsSingleRequestLargerThanCapacity(t *testing.T) {
+	s := &Server{
+		cfg:       Config{MaxPendingRequests: 10, MaxPendingRows: 1, MaxPendingMiB: 1},
+		accepting: true,
+		pendCh:    make(chan struct{}, 1),
+	}
+	if _, err := s.enqueue([]map[string]any{{"id": "1"}, {"id": "2"}}, nil, 10, nil); !errors.Is(err, errRequestTooLarge) {
+		t.Fatalf("row limit err=%v, want request too large", err)
+	}
+	if _, err := s.enqueue([]map[string]any{{"id": "1"}}, nil, (1<<20)+1, nil); !errors.Is(err, errRequestTooLarge) {
+		t.Fatalf("byte limit err=%v, want request too large", err)
+	}
+}
+
+func TestCapacityIncludesInFlightAndReleasesAfterWrite(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if insertTable(r) == "spans" {
+			close(started)
+			<-release
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer chSrv.Close()
+	w, _ := chwriter.New(chwriter.Config{
+		URL: chSrv.URL, Database: "default", Table: "spans", MaxRetries: 1,
+		InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond,
+		RequestTimeout: 2 * time.Second, DeadLetterFile: t.TempDir() + "/dl.jsonl",
+	})
+	s := New(Config{
+		BatchMaxRows: 100, BatchMaxAge: time.Hour,
+		MaxPendingRequests: 1, MaxPendingRows: 1, MaxPendingMiB: 1,
+	}, w, nil, nil, nil)
+	done, err := s.enqueue([]map[string]any{{"id": "1"}}, nil, 10, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drained := make(chan struct{})
+	go func() {
+		s.drainNow(context.Background())
+		close(drained)
+	}()
+	<-started
+	if _, err := s.enqueue([]map[string]any{{"id": "2"}}, nil, 10, nil); !errors.Is(err, errQueueFull) {
+		t.Fatalf("in-flight admission err=%v, want queue full", err)
+	}
+	stats := s.QueueSnapshot()
+	if stats.InFlightRequests != 1 || stats.InFlightRows != 1 || stats.PendingRows != 0 {
+		t.Fatalf("bad in-flight accounting: %+v", stats)
+	}
+	close(release)
+	<-drained
+	if outcome := <-done; !outcome.Durable {
+		t.Fatalf("outcome=%+v, want durable", outcome)
+	}
+	if _, err := s.enqueue([]map[string]any{{"id": "2"}}, nil, 10, nil); err != nil {
+		t.Fatalf("capacity not released: %v", err)
+	}
+}
+
+func TestOTLPAcknowledgementWaitsForCanonicalWrite(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if insertTable(r) == "spans" {
+			close(started)
+			<-release
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer chSrv.Close()
+	w, _ := chwriter.New(chwriter.Config{
+		URL: chSrv.URL, Database: "default", Table: "spans", MaxRetries: 1,
+		InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond,
+		RequestTimeout: 2 * time.Second, DeadLetterFile: t.TempDir() + "/dl.jsonl",
+	})
+	s := New(Config{BatchMaxRows: 1, BatchMaxAge: time.Hour}, w, nil, nil, nil)
+	s.wg.Add(1 + usageWorkerCount)
+	go s.flushLoop()
+	for i := 0; i < usageWorkerCount; i++ {
+		go s.usageLoop()
+	}
+	defer func() {
+		close(s.stopCh)
+		close(s.usageCh)
+		s.wg.Wait()
+	}()
+
+	returned := make(chan error, 1)
+	go func() {
+		req := ptraceotlp.NewExportRequestFromTraces(makeTraces("wait-for-durable", "33333333-3333-4333-8333-333333333333"))
+		_, err := (&otlpHandler{s: s}).Export(context.Background(), req)
+		returned <- err
+	}()
+	<-started
+	select {
+	case err := <-returned:
+		t.Fatalf("Export returned before canonical write completed: %v", err)
+	default:
+	}
+	close(release)
+	if err := <-returned; err != nil {
+		t.Fatalf("Export after durable write: %v", err)
+	}
+}
+
+func TestOTLPReturnsRetryableErrorWhenDeadLetterAlsoFails(t *testing.T) {
+	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if insertTable(r) == "spans" {
+			http.Error(w, "bad schema", http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer chSrv.Close()
+	w, _ := chwriter.New(chwriter.Config{
+		URL: chSrv.URL, Database: "default", Table: "spans", MaxRetries: 1,
+		InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond,
+		RequestTimeout: 2 * time.Second, DeadLetterFile: t.TempDir(),
+	})
+	s := New(Config{BatchMaxRows: 1, BatchMaxAge: time.Hour}, w, nil, nil, nil)
+	s.wg.Add(1 + usageWorkerCount)
+	go s.flushLoop()
+	for i := 0; i < usageWorkerCount; i++ {
+		go s.usageLoop()
+	}
+	defer func() {
+		close(s.stopCh)
+		close(s.usageCh)
+		s.wg.Wait()
+	}()
+
+	req := ptraceotlp.NewExportRequestFromTraces(makeTraces("not-durable", "33333333-3333-4333-8333-333333333333"))
+	_, err := (&otlpHandler{s: s}).Export(context.Background(), req)
+	if status.Code(err) != codes.Unavailable {
+		t.Fatalf("code=%s err=%v, want retryable Unavailable", status.Code(err), err)
+	}
+}
+
+func TestConcurrentEnqueueNeverExceedsRequestLimit(t *testing.T) {
+	const limit = 20
+	s := &Server{
+		cfg:       Config{MaxPendingRequests: limit, MaxPendingRows: limit, MaxPendingMiB: 1},
+		accepting: true,
+		pendCh:    make(chan struct{}, 1),
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 200; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, _ = s.enqueue([]map[string]any{{"id": i}}, nil, 1, nil)
+		}(i)
+	}
+	wg.Wait()
+	stats := s.QueueSnapshot()
+	if stats.PendingRequests > limit || stats.PendingRows > limit || stats.PendingBytes > limit {
+		t.Fatalf("limits exceeded: %+v", stats)
+	}
+	if stats.RejectedQueueFull != 180 {
+		t.Fatalf("rejected=%d, want 180", stats.RejectedQueueFull)
+	}
+}
+
+func TestConcurrentReservationsBoundConversionWork(t *testing.T) {
+	const limit = 12
+	s := &Server{
+		cfg:       Config{MaxPendingRequests: limit, MaxPendingRows: limit, MaxPendingMiB: 1},
+		accepting: true,
+		pendCh:    make(chan struct{}, 1),
+	}
+	var wg sync.WaitGroup
+	reservations := make(chan *admissionReservation, 100)
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			reservation, err := s.reserve(1, 1)
+			if err == nil {
+				reservations <- reservation
+			}
+		}()
+	}
+	wg.Wait()
+	close(reservations)
+	stats := s.QueueSnapshot()
+	if stats.ReservedRequests != limit || stats.ReservedRows != limit || stats.ReservedBytes != limit {
+		t.Fatalf("reservation limits not enforced: %+v", stats)
+	}
+	for reservation := range reservations {
+		s.releaseReservation(reservation)
+	}
+	stats = s.QueueSnapshot()
+	if stats.ReservedRequests != 0 || stats.ReservedRows != 0 || stats.ReservedBytes != 0 {
+		t.Fatalf("reservations not released: %+v", stats)
+	}
+}
+
+func TestReceiverConcurrencyLimitBlocksAdditionalHandlers(t *testing.T) {
+	s := New(Config{MaxConcurrentRequests: 2}, nil, nil, nil, nil)
+	first, err := s.tryAcquireReceiver()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.tryAcquireReceiver()
+	if err != nil {
+		t.Fatal("failed to acquire configured receiver slots")
+	}
+	if _, err := s.tryAcquireReceiver(); !errors.Is(err, errQueueFull) {
+		t.Fatalf("err=%v, want immediate queue full", err)
+	}
+	first.release()
+	second.release()
+}
+
+func TestShutdownWaitsForReservedConversionAndDrainsIt(t *testing.T) {
+	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer chSrv.Close()
+	w, _ := chwriter.New(chwriter.Config{
+		URL: chSrv.URL, Database: "default", Table: "spans", MaxRetries: 1,
+		InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond,
+		RequestTimeout: 2 * time.Second, DeadLetterFile: t.TempDir() + "/dl.jsonl",
+	})
+	s := New(Config{BatchMaxRows: 100, BatchMaxAge: time.Hour}, w, nil, nil, nil)
+	reservation, err := s.reserve(1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	shutdownDone := make(chan struct{})
+	go func() {
+		s.shutdown()
+		close(shutdownDone)
+	}()
+	select {
+	case <-shutdownDone:
+		t.Fatal("shutdown returned while an admitted conversion was still reserved")
+	case <-time.After(20 * time.Millisecond):
+	}
+	done, err := s.commitReservation(reservation, []map[string]any{{"id": "1"}}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-shutdownDone:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not drain committed reservation")
+	}
+	if outcome := <-done; !outcome.Durable {
+		t.Fatalf("outcome=%+v, want durable", outcome)
+	}
+	if s.QueueSnapshot().Accepting {
+		t.Fatal("shutdown did not close admission")
+	}
+}
+
+func TestGRPCAdmissionErrorsHaveCorrectRetrySemantics(t *testing.T) {
+	retryable := grpcAdmissionError(errQueueFull)
+	st, _ := status.FromError(retryable)
+	if st.Code() != codes.Unavailable {
+		t.Fatalf("queue full code=%s, want Unavailable", st.Code())
+	}
+	var sawRetryInfo bool
+	for _, detail := range st.Details() {
+		if retry, ok := detail.(*errdetails.RetryInfo); ok && retry.RetryDelay.AsDuration() == time.Second {
+			sawRetryInfo = true
+		}
+	}
+	if !sawRetryInfo {
+		t.Fatal("retryable overload missing RetryInfo")
+	}
+	if code := status.Code(grpcAdmissionError(errRequestTooLarge)); code != codes.ResourceExhausted {
+		t.Fatalf("too-large code=%s, want ResourceExhausted", code)
+	}
+}
+
+func TestHTTPAdmissionErrorsHaveCorrectRetrySemantics(t *testing.T) {
+	s := &Server{}
+	rw := httptest.NewRecorder()
+	s.writeHTTPAdmissionError(rw, "application/json", errQueueFull)
+	if rw.Code != http.StatusServiceUnavailable || rw.Header().Get("Retry-After") != "1" {
+		t.Fatalf("queue full response=%d headers=%v", rw.Code, rw.Header())
+	}
+	var rpcStatus map[string]any
+	if err := json.Unmarshal(rw.Body.Bytes(), &rpcStatus); err != nil {
+		t.Fatalf("invalid OTLP JSON error: %v", err)
+	}
+	if rpcStatus["code"] != "14" && rpcStatus["code"] != float64(codes.Unavailable) {
+		t.Fatalf("unexpected status body: %v", rpcStatus)
+	}
+
+	rw = httptest.NewRecorder()
+	s.writeHTTPAdmissionError(rw, "application/x-protobuf", errRequestTooLarge)
+	if rw.Code != http.StatusRequestEntityTooLarge || rw.Header().Get("Retry-After") != "" {
+		t.Fatalf("too-large response=%d headers=%v", rw.Code, rw.Header())
+	}
+}
+
+func TestEnqueueRejectsAfterShutdownBegins(t *testing.T) {
+	s := &Server{
+		cfg:       Config{MaxPendingRequests: 10, MaxPendingRows: 10, MaxPendingMiB: 1},
+		accepting: false,
+		pendCh:    make(chan struct{}, 1),
+	}
+	if _, err := s.enqueue([]map[string]any{{"id": "1"}}, nil, 1, nil); !errors.Is(err, errShuttingDown) {
+		t.Fatalf("err=%v, want shutting down", err)
+	}
+	if s.QueueSnapshot().RejectedShuttingDown != 1 {
+		t.Fatal("shutdown rejection not counted")
 	}
 }
 
@@ -865,9 +1206,21 @@ func TestGRPCOverCapRejectionIsLogged(t *testing.T) {
 	if status.Code(err) != codes.ResourceExhausted {
 		t.Fatalf("want ResourceExhausted, got %v", err)
 	}
+	// InTapHandle runs before size validation. The ticket must still be
+	// released when decoding rejects the RPC before the unary interceptor.
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if len(s.receiverSem) == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(s.receiverSem) != 0 {
+		t.Fatalf("receiver ticket leaked after over-cap rejection: %d", len(s.receiverSem))
+	}
 
 	// stats.End may fire concurrently with the client seeing the status.
-	deadline := time.Now().Add(time.Second)
+	deadline = time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		logMu.Lock()
 		got := logBuf.String()

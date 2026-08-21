@@ -68,11 +68,12 @@ type Config struct {
 // function of curated-RMT outcomes and a curated outage can't trip the span
 // dead-letter alarm.
 type Stats struct {
-	BatchesInserted  uint64
-	RowsInserted     uint64
-	BatchesRetried   uint64
-	RowsDeadLettered uint64
-	BatchesFailed    uint64
+	BatchesInserted   uint64
+	RowsInserted      uint64
+	BatchesRetried    uint64
+	RowsDeadLettered  uint64
+	BatchesFailed     uint64
+	BatchesNotDurable uint64
 
 	// Best-effort curated-dimension path (end_users / trace_sessions).
 	CuratedBatchesInserted uint64
@@ -90,6 +91,16 @@ type Writer struct {
 	stats  Stats
 	rng    *rand.Rand
 	rngMu  sync.Mutex // rng isn't safe for concurrent use
+}
+
+// InsertOutcome describes whether the caller can safely acknowledge a batch.
+// A terminal ClickHouse failure is still durable when every row was fsynced to
+// the dead-letter file; Err remains populated so health and logs retain the
+// original failure signal.
+type InsertOutcome struct {
+	Durable      bool
+	DeadLettered bool
+	Err          error
 }
 
 // New constructs a Writer and validates the config. The file path of the
@@ -143,13 +154,23 @@ func New(cfg Config) (*Writer, error) {
 
 // Insert serialises `rows` to a single JSONEachRow request body and POSTs
 // with retry/backoff into the writer's PINNED table (cfg.Table — `spans`).
-// Returns nil on success (HTTP 200) OR on dead-letter (rows persisted to disk,
-// error returned for the caller's awareness).
+// It preserves the legacy error contract; callers that need to decide when an
+// upstream request is safe to acknowledge should use InsertWithOutcome.
 //
 // Caller owns `rows`. We do NOT mutate the slice; row maps are also not
 // mutated. Returning quickly on transient CH outages with successful
 // dead-letter is preferable to blocking the receiver loop indefinitely.
 func (w *Writer) Insert(ctx context.Context, rows []map[string]any) error {
+	return w.InsertWithOutcome(ctx, rows).Err
+}
+
+// InsertWithOutcome writes a canonical span batch and reports whether it is
+// durable either in ClickHouse or in the fsynced dead-letter file.
+func (w *Writer) InsertWithOutcome(ctx context.Context, rows []map[string]any) InsertOutcome {
+	if w.cfg.AsyncInsert {
+		atomic.AddUint64(&w.stats.BatchesNotDurable, 1)
+		return InsertOutcome{Err: fmt.Errorf("chwriter: async_insert cannot provide durable acknowledgements")}
+	}
 	// Hot path: use the pre-built URL (no per-batch string-concat).
 	return w.insert(ctx, w.url, rows)
 }
@@ -199,14 +220,15 @@ func (w *Writer) InsertBestEffort(ctx context.Context, table string, rows []map[
 // with retry/backoff → dead-letter on exhaustion. `url` selects the target
 // table. The curated path uses InsertBestEffort instead — single POST, no
 // retry, no dead-letter — so it deliberately does NOT share this.
-func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any) error {
+func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any) InsertOutcome {
 	if len(rows) == 0 {
-		return nil
+		return InsertOutcome{Durable: true}
 	}
 
 	body, err := encodeBatch(rows)
 	if err != nil {
-		return fmt.Errorf("chwriter: encode: %w", err)
+		atomic.AddUint64(&w.stats.BatchesNotDurable, 1)
+		return InsertOutcome{Err: fmt.Errorf("chwriter: encode: %w", err)}
 	}
 
 	var lastErr error
@@ -222,7 +244,7 @@ func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any) 
 		if err == nil && status == http.StatusOK {
 			atomic.AddUint64(&w.stats.BatchesInserted, 1)
 			atomic.AddUint64(&w.stats.RowsInserted, uint64(len(rows)))
-			return nil
+			return InsertOutcome{Durable: true}
 		}
 		lastErr = err
 		// 4xx (except 429) is non-retryable — schema or data bug. Dead-letter
@@ -236,11 +258,16 @@ func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any) 
 	// Exhausted retries — persist verbatim and surface error so the caller
 	// (and any /healthz reader) sees the failure.
 	if dlErr := w.appendDeadLetter(rows); dlErr != nil {
-		return fmt.Errorf("chwriter: terminal failure and dead-letter write failed: %v (original: %w)", dlErr, lastErr)
+		atomic.AddUint64(&w.stats.BatchesNotDurable, 1)
+		return InsertOutcome{Err: fmt.Errorf("chwriter: terminal failure and dead-letter write failed: %v (original: %w)", dlErr, lastErr)}
 	}
 	atomic.AddUint64(&w.stats.BatchesFailed, 1)
 	atomic.AddUint64(&w.stats.RowsDeadLettered, uint64(len(rows)))
-	return fmt.Errorf("chwriter: batch dead-lettered after %d attempts: %w", w.cfg.MaxRetries+1, lastErr)
+	return InsertOutcome{
+		Durable:      true,
+		DeadLettered: true,
+		Err:          fmt.Errorf("chwriter: batch dead-lettered after %d attempts: %w", w.cfg.MaxRetries+1, lastErr),
+	}
 }
 
 // insertURL builds an INSERT URL for an arbitrary table, mirroring the
@@ -359,6 +386,7 @@ func (w *Writer) Snapshot() Stats {
 		BatchesRetried:         atomic.LoadUint64(&w.stats.BatchesRetried),
 		RowsDeadLettered:       atomic.LoadUint64(&w.stats.RowsDeadLettered),
 		BatchesFailed:          atomic.LoadUint64(&w.stats.BatchesFailed),
+		BatchesNotDurable:      atomic.LoadUint64(&w.stats.BatchesNotDurable),
 		CuratedBatchesInserted: atomic.LoadUint64(&w.stats.CuratedBatchesInserted),
 		CuratedBatchesFailed:   atomic.LoadUint64(&w.stats.CuratedBatchesFailed),
 	}
