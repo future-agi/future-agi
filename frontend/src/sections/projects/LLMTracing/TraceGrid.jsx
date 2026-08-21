@@ -12,11 +12,9 @@ import React, {
 } from "react";
 import { useAgTheme } from "src/hooks/use-ag-theme";
 import axios, { endpoints } from "src/utils/axios";
-import { getRandomId } from "src/utils/utils";
 import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
 import NoRowsOverlay from "src/sections/project-detail/CompareDrawer/NoRowsOverlay";
 import {
-  AllowedGroups,
   applyQuickFilters,
   TRACE_DEFAULT_COLUMNS,
   getTraceListColumnDefs,
@@ -66,6 +64,7 @@ const TraceGrid = React.forwardRef(
     const agTheme = useAgTheme();
     const theme = useTheme();
     const [dateInterval] = useUrlState("dateInterval", "day");
+    const [, setDrawerTab] = useUrlState("drawerTab");
     const { openReplaySessionDrawer, currentStep, validatedSteps } =
       useReplaySessionsStoreShallow((state) => ({
         openReplaySessionDrawer: state.openReplaySessionDrawer,
@@ -380,38 +379,43 @@ const TraceGrid = React.forwardRef(
         };
       }
 
-      // Flat columns — no grouping for eval/annotation metrics
       const bottomRowObj = {};
-      const annotationCols = columns.filter(
-        (c) => c?.groupBy === "Annotation Metrics",
-      );
-      // Custom columns flat (ungrouped), in store order.
-      const columnDefsResult = [];
+
+      // Annotation col defs, keyed by store id. An expanded metric generates
+      // several child defs, so each entry is a list. Built up-front so the
+      // ordered pass below can drop them at their own store position — they
+      // used to be appended after every other column, which silently undid a
+      // user's drag of an annotation column on the next rebuild.
+      const annotationDefsById = new Map();
       for (const c of columns) {
-        if (c?.groupBy === "Annotation Metrics") continue;
-        bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-        if (c?.groupBy === "Custom Columns") {
-          const colDef = getTraceListColumnDefs(c);
-          columnDefsResult.push({ ...colDef, minWidth: 200, flex: 1 });
-          continue;
+        if (c?.groupBy !== "Annotation Metrics") continue;
+        const generated =
+          generateAnnotationColumnsForTracing([c], showMetricsIds) || [];
+        const flat = [];
+        for (const group of generated) {
+          if (group.children) flat.push(...group.children);
+          else flat.push(group);
         }
-        columnDefsResult.push(getTraceListColumnDefs(c));
+        if (flat.length) annotationDefsById.set(c.id, flat);
       }
 
-      // Add annotation columns as flat columns (not grouped)
-      const annotationColumns = generateAnnotationColumnsForTracing(
-        annotationCols,
-        showMetricsIds,
-      );
-      if (annotationColumns?.length > 0) {
-        // Flatten: extract children from annotation groups
-        for (const group of annotationColumns) {
-          if (group.children) {
-            columnDefsResult.push(...group.children);
-          } else {
-            columnDefsResult.push(group);
-          }
+      // Eval columns render flat in store order, same as every other column.
+      // Annotation defs drop in at their own store position — appending them
+      // after everything else silently undid a user's drag.
+      const columnDefsResult = [];
+      for (const c of columns) {
+        if (!c) continue;
+        if (annotationDefsById.has(c?.id)) {
+          columnDefsResult.push(...annotationDefsById.get(c.id));
+          continue;
         }
+        bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+        const colDef = getTraceListColumnDefs(c);
+        columnDefsResult.push(
+          c?.groupBy === "Custom Columns"
+            ? { ...colDef, minWidth: 200, flex: 1 }
+            : colDef,
+        );
       }
       return {
         columnDefs: columnDefsResult,
@@ -516,11 +520,18 @@ const TraceGrid = React.forwardRef(
         if (!traceId) {
           return;
         }
+        // Eval-cell click pre-focuses the drawer's Evals tab (read once on
+        // open); any other cell clears it for the default tab.
+        setDrawerTab(
+          event?.colDef?.headerComponentParams?.group === "Evaluation Metrics"
+            ? "evals"
+            : null,
+        );
         setTraceDetailDrawerOpen({ traceId: traceId, filters: filters });
 
         // trackEvent(Events.observeTraceidClicked);
       },
-      [filters, setTraceDetailDrawerOpen],
+      [filters, setTraceDetailDrawerOpen, setDrawerTab],
     );
 
     const shouldDisable = useMemo(() => {
