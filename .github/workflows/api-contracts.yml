@@ -266,7 +266,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Install backend dependencies
-        run: uv sync --frozen
+        run: uv sync --frozen --all-extras
 
       - name: Apply ClickHouse test schema
         run: >

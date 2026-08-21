@@ -10,7 +10,6 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
-from retell.lib.webhook_auth import verify as verify_retell_webhook
 
 from accounts.utils import get_request_organization
 from simulate.models import AgentDefinition
@@ -346,6 +345,8 @@ class WebhookHandlerView(APIView):
                     logger.warning(error_message)
 
                     continue
+
+                from retell.lib.webhook_auth import verify as verify_retell_webhook
 
                 valid_signature = verify_retell_webhook(
                     json.dumps(post_data, separators=(",", ":"), ensure_ascii=False),

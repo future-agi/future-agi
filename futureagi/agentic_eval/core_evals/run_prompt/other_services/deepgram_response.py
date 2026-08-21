@@ -36,7 +36,6 @@ import websocket
 import threading
 import io
 from tfc.utils.storage import audio_bytes_from_url_or_base64
-from pydub import AudioSegment
 from urllib.parse import urlencode
 
 
@@ -257,6 +256,8 @@ def _load_and_convert_audio(run_prompt_instance):
 
     logger.info("Converting audio to linear16 PCM")
     try:
+        from pydub import AudioSegment
+
         audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
 
         # Convert to mono, 16kHz, 16-bit PCM

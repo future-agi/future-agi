@@ -14,7 +14,6 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
-from retell import Retell
 
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.serializers.agent_definition import AgentDefinitionSerializer
@@ -569,6 +568,8 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
                 prompt = system_object.get("content")
 
             elif provider == ProviderChoices.RETELL:
+                from retell import Retell
+
                 client = Retell(api_key=api_key)
 
                 assistant_raw = client.agent.retrieve(

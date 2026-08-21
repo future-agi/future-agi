@@ -13,9 +13,9 @@ import uuid
 from io import BytesIO
 from urllib.parse import urlparse
 
-import av
 import numpy as np
-import soundfile as sf
+from tfc.utils.lazy_extras import av
+from tfc.utils.lazy_extras import soundfile as sf
 import structlog
 from PIL import Image
 

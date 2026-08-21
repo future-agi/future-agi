@@ -148,7 +148,7 @@ jobs:
           cache-dependency-glob: futureagi/uv.lock
 
       - name: Install dependencies (overlaps with service startup)
-        run: uv sync --frozen
+        run: uv sync --frozen --all-extras
 
       - name: Gate on service health
         # Blocks until every service is healthy; no need to wait on the
