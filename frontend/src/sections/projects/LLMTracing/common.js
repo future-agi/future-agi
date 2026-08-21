@@ -30,8 +30,7 @@ import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
 // Normalize config object keys from snake_case to camelCase while preserving
 // id values as snake_case. Shared by the trace and span grids. Dedup by id: the
 // spans config can list a column twice → AG Grid would otherwise mint a phantom
-// `<id>_1` column. Runs before buildColumnBlocks, so eval task groups are built
-// from already-deduped columns.
+// `<id>_1` column.
 export const normalizeConfigKeys = (config) => {
   if (!Array.isArray(config)) return config;
   const seen = new Set();

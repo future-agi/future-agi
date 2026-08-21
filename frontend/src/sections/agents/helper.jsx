@@ -435,9 +435,6 @@ export const generateEvalColumnsFromConfig = (items = []) => {
     return {
       headerName: displayName,
       field: `eval_outputs.${evalId}`,
-      evalTaskId: item.eval_task_id || null,
-      evalTaskName: item.eval_task_name || null,
-      evalTaskCreatedAt: item.eval_task_created_at || null,
       flex: 1,
       minWidth: isReason ? 240 : 140,
       hide: item.is_visible === false,

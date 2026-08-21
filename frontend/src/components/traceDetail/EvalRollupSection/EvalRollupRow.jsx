@@ -5,12 +5,13 @@ import Iconify from "src/components/iconify";
 import { evalCellChips } from "src/sections/projects/LLMTracing/evalCellModel";
 import { ResultChip } from "src/sections/projects/LLMTracing/Renderers/EvalResultChips";
 import BreakdownRow from "./BreakdownRow";
+import EvalTargetGlyph from "./EvalTargetGlyph";
 import { colFromEval, NAME_W, activatableProps } from "./utils";
 import { evalShape } from "./shapes";
 
 // One eval rolled up across its spans (trace scope); expands to the per-span
 // breakdown. The chip renders the backend-computed `aggregate` directly.
-const EvalRollupRow = ({ ev, onSelectSpan, onFixWithFalcon }) => {
+const EvalRollupRow = ({ ev, onSelectSpan, onFixWithFalcon, showGlyph = true }) => {
   const spans = ev.spans || [];
   const erroredCount = spans.filter((s) => s.error).length;
   const chips = evalCellChips(ev.aggregate, colFromEval(ev));
@@ -41,9 +42,20 @@ const EvalRollupRow = ({ ev, onSelectSpan, onFixWithFalcon }) => {
             color="text.disabled"
           />
         </Box>
-        <Typography noWrap sx={{ width: NAME_W, fontSize: 11.5, fontWeight: 500 }}>
-          {ev.eval_name}
-        </Typography>
+        <Box
+          sx={{
+            width: NAME_W,
+            display: "flex",
+            alignItems: "center",
+            gap: 0.5,
+            minWidth: 0,
+          }}
+        >
+          <Typography noWrap sx={{ fontSize: 11.5, fontWeight: 500, minWidth: 0 }}>
+            {ev.eval_name}
+          </Typography>
+          {showGlyph && <EvalTargetGlyph rowType={ev.target_type} />}
+        </Box>
         <Box
           sx={{
             flex: 1,
@@ -82,6 +94,7 @@ EvalRollupRow.propTypes = {
   ev: evalShape.isRequired,
   onSelectSpan: PropTypes.func,
   onFixWithFalcon: PropTypes.func,
+  showGlyph: PropTypes.bool,
 };
 
 export default EvalRollupRow;

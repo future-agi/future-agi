@@ -28,8 +28,6 @@ import { CSS } from "@dnd-kit/utilities";
 import Iconify from "src/components/iconify";
 import { useDebounce } from "src/hooks/use-debounce";
 import TruncatedLabel from "src/components/truncated-label/TruncatedLabel";
-import { buildColumnBlocks } from "src/sections/projects/LLMTracing/evalTaskGrouping";
-import TaskGroupHeader from "./TaskGroupHeader";
 
 // ---------------------------------------------------------------------------
 // Aggregate selection state
@@ -114,7 +112,7 @@ BulkSelectRow.propTypes = {
 // ---------------------------------------------------------------------------
 // Draggable column row
 // ---------------------------------------------------------------------------
-const DraggableColumnRow = ({ id, name, checked, onChange, indent }) => {
+const DraggableColumnRow = ({ id, name, checked, onChange }) => {
   const {
     attributes,
     listeners,
@@ -138,8 +136,7 @@ const DraggableColumnRow = ({ id, name, checked, onChange, indent }) => {
         display: "flex",
         alignItems: "center",
         gap: "4px",
-        pl: indent ? "20px" : "4px",
-        pr: "4px",
+        px: "4px",
         py: "2px",
         borderRadius: "4px",
         cursor: "default",
@@ -186,7 +183,6 @@ DraggableColumnRow.propTypes = {
   name: PropTypes.string.isRequired,
   checked: PropTypes.bool,
   onChange: PropTypes.func,
-  indent: PropTypes.bool,
 };
 
 // ---------------------------------------------------------------------------
@@ -205,16 +201,7 @@ const ColumnConfigureDropDown = ({
 }) => {
   const theme = useTheme();
   const [searchQuery, setSearchQuery] = useState("");
-  const [collapsedTasks, setCollapsedTasks] = useState(() => new Set());
   const debouncedSearchQuery = useDebounce(searchQuery.trim(), 300);
-
-  const toggleTaskCollapse = (taskKey) =>
-    setCollapsedTasks((prev) => {
-      const next = new Set(prev);
-      if (next.has(taskKey)) next.delete(taskKey);
-      else next.add(taskKey);
-      return next;
-    });
 
   // Flatten columns for display (no accordion grouping)
   const flatColumns = useMemo(() => {
@@ -228,27 +215,6 @@ const ColumnConfigureDropDown = ({
       col?.name?.toLowerCase()?.includes(debouncedSearchQuery.toLowerCase()),
     );
   }, [flatColumns, debouncedSearchQuery]);
-
-  const { blocks, dragBlocks, sortableIds } = useMemo(() => {
-    const blockList = buildColumnBlocks(filteredColumns || []);
-    const drag = blockList.map((b) =>
-      b.type === "col"
-        ? { type: "col", ids: b.col?.id ? [b.col.id] : [] }
-        : {
-            type: "task",
-            headerId: `task:${b.group?.key}`,
-            ids: (b.group?.evals || []).map((c) => c?.id).filter(Boolean),
-          },
-    );
-    return {
-      blocks: blockList,
-      dragBlocks: drag,
-      sortableIds: drag.flatMap((b) => [
-        ...(b.headerId ? [b.headerId] : []),
-        ...b.ids,
-      ]),
-    };
-  }, [filteredColumns]);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -270,46 +236,15 @@ const ColumnConfigureDropDown = ({
     onColumnVisibilityChange(data);
   };
 
-  // Drags map displayed (grouped) order back onto the flat columns array;
-  // cross-task eval drops are ignored — membership comes from the eval task id.
   function handleDragEnd(event) {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    const blockOf = (id) =>
-      dragBlocks.findIndex((b) => b.headerId === id || b.ids.includes(id));
-    const fromBlock = blockOf(active.id);
-    const toBlock = blockOf(over.id);
-    if (fromBlock === -1 || toBlock === -1) return;
+    const oldIndex = columns.findIndex((item) => item.id === active.id);
+    const newIndex = columns.findIndex((item) => item.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
 
-    const isHeader = (id) => String(id).startsWith("task:");
-    let newDisplayedIds;
-    if (isHeader(active.id) || dragBlocks[fromBlock].type === "col") {
-      if (fromBlock === toBlock) return;
-      newDisplayedIds = arrayMove(dragBlocks, fromBlock, toBlock).flatMap(
-        (b) => b.ids,
-      );
-    } else if (fromBlock === toBlock) {
-      const ids = dragBlocks[fromBlock].ids;
-      const moved = arrayMove(
-        ids,
-        ids.indexOf(active.id),
-        ids.indexOf(over.id),
-      );
-      newDisplayedIds = dragBlocks.flatMap((b, i) =>
-        i === fromBlock ? moved : b.ids,
-      );
-    } else {
-      return;
-    }
-
-    const displayedSet = new Set(newDisplayedIds);
-    const byId = new Map((columns || []).map((c) => [c?.id, c]));
-    let next = 0;
-    const reordered = (columns || []).map((c) =>
-      displayedSet.has(c?.id) ? byId.get(newDisplayedIds[next++]) : c,
-    );
-    setColumns(reordered);
+    setColumns(arrayMove(columns, oldIndex, newIndex));
   }
 
   return (
@@ -424,59 +359,22 @@ const ColumnConfigureDropDown = ({
           onDragEnd={handleDragEnd}
         >
           <SortableContext
-            items={sortableIds}
+            items={filteredColumns.map((c) => c?.id).filter(Boolean)}
             strategy={verticalListSortingStrategy}
           >
-            {blocks.map((block) => {
-              if (block.type === "col") {
-                const column = block.col;
-                return column?.id ? (
-                  <DraggableColumnRow
-                    key={column.id}
-                    id={column.id}
-                    name={column.name || column.id}
-                    checked={!!column.isVisible}
-                    onChange={(e) => {
-                      onColumnChange({ [column.id]: e.target.checked });
-                    }}
-                  />
-                ) : null;
-              }
-              const task = block.group;
-              const evals = task?.evals || [];
-              const state = aggregateState(evals);
-              const isCollapsed = collapsedTasks.has(task?.key);
-              return (
-                <React.Fragment key={task?.key}>
-                  <TaskGroupHeader
-                    dragId={`task:${task?.key}`}
-                    label={task?.taskName}
-                    checked={state === SELECTION_STATE.ALL}
-                    indeterminate={state === SELECTION_STATE.SOME}
-                    onToggle={(value) =>
-                      onColumnChange(toggleMap(evals, value))
-                    }
-                    collapsed={isCollapsed}
-                    onCollapseToggle={() => toggleTaskCollapse(task?.key)}
-                  />
-                  {!isCollapsed &&
-                    evals.map((column) =>
-                      column?.id ? (
-                        <DraggableColumnRow
-                          key={column.id}
-                          id={column.id}
-                          name={column.name || column.id}
-                          checked={!!column.isVisible}
-                          indent
-                          onChange={(e) => {
-                            onColumnChange({ [column.id]: e.target.checked });
-                          }}
-                        />
-                      ) : null,
-                    )}
-                </React.Fragment>
-              );
-            })}
+            {filteredColumns.map((column) =>
+              column?.id ? (
+                <DraggableColumnRow
+                  key={column.id}
+                  id={column.id}
+                  name={column.name || column.id}
+                  checked={!!column.isVisible}
+                  onChange={(e) => {
+                    onColumnChange({ [column.id]: e.target.checked });
+                  }}
+                />
+              ) : null,
+            )}
           </SortableContext>
         </DndContext>
 

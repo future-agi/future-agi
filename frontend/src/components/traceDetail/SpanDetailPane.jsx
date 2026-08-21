@@ -41,6 +41,7 @@ import { normalizeTags } from "./tagUtils";
 import TagChip from "./TagChip";
 import TagInput from "./TagInput";
 import EvalRollupSection from "./EvalRollupSection";
+import { evalsOf } from "./evalScores";
 import { openFixWithFalcon } from "src/sections/falcon-ai/helpers/openFixWithFalcon";
 import ImageCard from "src/components/multimodal/ImageCard";
 import AudioCellRenderer from "src/sections/common/DevelopCellRenderer/CellRenderers/AudioCellRenderer";
@@ -622,10 +623,7 @@ const LogViewRow = ({
   const provider = span.provider;
   const totalTokens = span.total_tokens;
   const cost = span.cost;
-  const evalCount = (entry?.eval_scores?.eval_tasks || []).reduce(
-    (n, t) => n + (t.evals?.length || 0),
-    0,
-  );
+  const evalCount = evalsOf(entry?.eval_scores).length;
   const annotationCount = entry?.annotations?.length || 0;
   const isDimmed = entry?._filterMatch === false;
   const hasAnyContent = input || output || Object.keys(attributes).length > 0;
