@@ -82,8 +82,29 @@ type anthropicResponse struct {
 }
 
 type anthropicUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+}
+
+// Anthropic's input_tokens excludes cached tokens, so add cache writes and reads back in.
+func (u anthropicUsage) promptTokens() int {
+	return u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
+}
+
+func promptTokenDetails(cachedTokens int) *json.RawMessage {
+	if cachedTokens <= 0 {
+		return nil
+	}
+	b, err := json.Marshal(struct {
+		CachedTokens int `json:"cached_tokens"`
+	}{CachedTokens: cachedTokens})
+	if err != nil {
+		return nil
+	}
+	raw := json.RawMessage(b)
+	return &raw
 }
 
 type anthropicErrorResponse struct {
@@ -549,9 +570,11 @@ func translateResponse(resp *anthropicResponse) *models.ChatCompletionResponse {
 			},
 		},
 		Usage: &models.Usage{
-			PromptTokens:     resp.Usage.InputTokens,
-			CompletionTokens: resp.Usage.OutputTokens,
-			TotalTokens:      resp.Usage.InputTokens + resp.Usage.OutputTokens,
+			PromptTokens:        resp.Usage.promptTokens(),
+			CompletionTokens:    resp.Usage.OutputTokens,
+			TotalTokens:         resp.Usage.promptTokens() + resp.Usage.OutputTokens,
+			CachedPromptTokens:  resp.Usage.CacheReadInputTokens,
+			PromptTokensDetails: promptTokenDetails(resp.Usage.CacheReadInputTokens),
 		},
 	}
 }

@@ -66,17 +66,21 @@ func ExtractTextFromResponse(respBody []byte) string {
 }
 
 // ExtractUsage extracts input and output token counts from an Anthropic response.
+// input_tokens excludes cached tokens, so cache creation/read are added back in.
 func ExtractUsage(respBody []byte) (inputTokens int, outputTokens int) {
 	var m struct {
 		Usage struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
+			InputTokens              int `json:"input_tokens"`
+			OutputTokens             int `json:"output_tokens"`
+			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(respBody, &m); err != nil {
 		return 0, 0
 	}
-	return m.Usage.InputTokens, m.Usage.OutputTokens
+	inputTokens = m.Usage.InputTokens + m.Usage.CacheCreationInputTokens + m.Usage.CacheReadInputTokens
+	return inputTokens, m.Usage.OutputTokens
 }
 
 // ExtractModel extracts the model name from an Anthropic response body.
