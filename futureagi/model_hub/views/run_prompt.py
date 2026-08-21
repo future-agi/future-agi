@@ -1146,6 +1146,109 @@ class LitellmAPIView(CreateAPIView):
         return self._gm.success_response("success")
 
 
+def _persist_cell_result(
+    *,
+    dataset,
+    column,
+    row,
+    value,
+    value_info,
+    status,
+    edit_mode,
+    run_prompt_id=None,
+    row_id=None,
+):
+    """Persist a processed cell result with a terminal-status guarantee.
+
+    issue #2080: the terminal status must never be silently lost. The full
+    persist (value + value_infos + status) is attempted, retried once on
+    failure, and if it still fails a queryset-level status-only ``.update()``
+    fallback records at least the terminal status. If even the fallback
+    fails, the error is raised loudly instead of leaving the row
+    non-terminal.
+
+    Returns ``True`` when the full result was persisted, ``False`` when only
+    the terminal status could be recorded via the queryset fallback.
+    """
+    token_kwargs = {}
+    if value_info:
+        metadata = value_info.get("metadata", {})
+        usage = metadata.get("usage", {})
+        token_kwargs = {
+            "prompt_tokens": usage.get("prompt_tokens", None),
+            "completion_tokens": usage.get("completion_tokens", None),
+            "response_time": metadata.get("response_time", None),
+        }
+
+    base_kwargs = {
+        "dataset": dataset,
+        "column": column,
+        "row": row,
+        "value": str(value),
+        "value_infos": json.dumps(value_info) if value_info else json.dumps({}),
+        "status": status,
+        **token_kwargs,
+    }
+
+    def _do_persist():
+        if edit_mode:
+            try:
+                cell = Cell.objects.get(
+                    dataset=dataset, column=column, row=row, deleted=False
+                )
+                for field, field_value in base_kwargs.items():
+                    setattr(cell, field, field_value)
+                cell.save()
+                return cell
+            except Cell.DoesNotExist:
+                pass
+        return Cell.objects.create(**base_kwargs)
+
+    try:
+        _do_persist()
+    except Exception as persist_error:
+        logger.warning(
+            "RunPrompts_process_row_cell_persist_retry",
+            run_prompt_id=run_prompt_id,
+            row_id=row_id,
+            error=str(persist_error),
+        )
+        try:
+            _do_persist()
+        except Exception as retry_error:
+            # The full persist failed twice — fall back to a queryset-level
+            # status-only update so the cell still reaches a terminal state.
+            try:
+                updated = Cell.objects.filter(
+                    dataset=dataset, column=column, row=row, deleted=False
+                ).update(status=status)
+            except Exception as fallback_error:
+                logger.critical(
+                    "RunPrompts_process_row_terminal_status_unpersisted",
+                    run_prompt_id=run_prompt_id,
+                    row_id=row_id,
+                    error=str(fallback_error),
+                )
+                raise
+            if not updated:
+                logger.critical(
+                    "RunPrompts_process_row_terminal_status_unpersisted_no_row",
+                    run_prompt_id=run_prompt_id,
+                    row_id=row_id,
+                    status=status,
+                )
+                raise retry_error
+            logger.error(
+                "RunPrompts_process_row_status_only_persisted",
+                run_prompt_id=run_prompt_id,
+                row_id=row_id,
+                status=status,
+                error=str(retry_error),
+            )
+            return False
+    return True
+
+
 class RunPrompts:
     def __init__(self, run_prompt_id):
         self.run_prompt_id = run_prompt_id
@@ -1313,8 +1416,16 @@ class RunPrompts:
                         f"run_prompt {self.run_prompt_id} was modified during failed execution "
                         f"(status={current_status}). Not setting to FAILED."
                     )
-            except Exception:
-                pass
+            except Exception as terminal_status_error:
+                # issue #2080: never silently leave the prompt non-terminal.
+                # If the FAILED status itself cannot be recorded, fail loudly
+                # rather than leaving the row stuck in a non-terminal state.
+                logger.critical(
+                    "RunPrompts_terminal_status_persist_failed",
+                    run_prompt_id=str(self.run_prompt_id),
+                    error=str(terminal_status_error),
+                )
+                raise terminal_status_error from e
             raise
 
     def process_row(self, row, column, edit_mode=False):
@@ -1396,30 +1507,10 @@ class RunPrompts:
                             row_id=row_id,
                         )
 
-                # Dual-write: emit usage event for new billing system
-                try:
-                    try:
-                        from ee.usage.schemas.events import UsageEvent
-                    except ImportError:
-                        UsageEvent = None
-                    try:
-                        from ee.usage.services.emitter import emit
-                    except ImportError:
-                        emit = None
-
-                    if emit is not None and UsageEvent is not None:
-                        emit(
-                            UsageEvent(
-                                org_id=str(self.run_prompt_model.organization.id),
-                                event_type=APICallTypeChoices.DATASET_RUN_PROMPT.value,
-                                properties={
-                                    "source": "dataset_run_prompt",
-                                    "source_id": str(self.run_prompt_id),
-                                },
-                            )
-                        )
-                except Exception:
-                    pass  # Metering failure must not break the action
+                # NOTE: the usage/billing event is deliberately NOT emitted here.
+                # It is emitted only after the cell result has been persisted and
+                # the call reached a success state (see below), so a failed
+                # persist never bills work whose result was not saved (#2080).
 
                 logger.info(
                     "RunPrompts_process_row_populating_placeholders",
@@ -1532,142 +1623,62 @@ class RunPrompts:
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                 )
-                try:
-                    # First try to get the existing cell
-                    cell = Cell.objects.get(
-                        dataset=self.run_prompt_model.dataset,
-                        column=column,
-                        row=row,
-                        deleted=False,  # Add this to ensure we only get active cells
-                    )
-                    logger.info(
-                        "RunPrompts_process_row_existing_cell_found",
-                        run_prompt_id=str(self.run_prompt_id),
-                        row_id=row_id,
-                        cell_id=str(cell.id),
-                    )
-                    # Update the existing cell
-                    # Note: Media (image/audio) is already uploaded to S3 in litellm_response()
-                    cell.value = str(response)
-                    cell.value_infos = (
-                        json.dumps(value_info) if value_info else json.dumps({})
-                    )
-                    cell.status = status
-
-                    if value_info:
-                        cell.prompt_tokens = (
-                            value_info.get("metadata", {})
-                            .get("usage", {})
-                            .get("prompt_tokens", None)
-                        )
-                        cell.completion_tokens = (
-                            value_info.get("metadata", {})
-                            .get("usage", {})
-                            .get("completion_tokens", None)
-                        )
-                        cell.response_time = value_info.get("metadata", {}).get(
-                            "response_time", None
-                        )
-
-                    cell.save()
-                    logger.info(
-                        "cell_updated",
-                        cell_id=str(cell.id),
-                        row_id=row_id,
-                        run_prompt_id=str(self.run_prompt_id),
-                        status=status,
-                    )
-                except Cell.DoesNotExist:
-                    logger.info(
-                        "RunPrompts_process_row_cell_not_found_creating_new",
-                        run_prompt_id=str(self.run_prompt_id),
-                        row_id=row_id,
-                    )
-                    # Create a new cell if none exists
-                    prompt_tokens = None
-                    completion_tokens = None
-                    response_time = None
-                    if value_info:
-                        prompt_tokens = (
-                            value_info.get("metadata", {})
-                            .get("usage", {})
-                            .get("prompt_tokens", None)
-                        )
-                        completion_tokens = (
-                            value_info.get("metadata", {})
-                            .get("usage", {})
-                            .get("completion_tokens", None)
-                        )
-                        response_time = value_info.get("metadata", {}).get(
-                            "response_time", None
-                        )
-
-                    cell = Cell.objects.create(
-                        dataset=self.run_prompt_model.dataset,
-                        column=column,
-                        row=row,
-                        value=str(response),
-                        value_infos=(
-                            json.dumps(value_info) if value_info else json.dumps({})
-                        ),
-                        status=status,
-                        prompt_tokens=prompt_tokens,
-                        completion_tokens=completion_tokens,
-                        response_time=response_time,
-                    )
-                    logger.info(
-                        "cell_created_in_edit_mode",
-                        cell_id=str(cell.id),
-                        row_id=row_id,
-                        run_prompt_id=str(self.run_prompt_id),
-                        status=status,
-                    )
             else:
                 logger.info(
                     "RunPrompts_process_row_creating_new_cell",
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                 )
-                prompt_tokens = (None,)
-                completion_tokens = (None,)
-                response_time = (None,)
-                if value_info:
-                    prompt_tokens = (
-                        value_info.get("metadata", {})
-                        .get("usage", {})
-                        .get("prompt_tokens", None)
-                    )
-                    completion_tokens = (
-                        value_info.get("metadata", {})
-                        .get("usage", {})
-                        .get("completion_tokens", None)
-                    )
-                    response_time = value_info.get("metadata", {}).get(
-                        "response_time", None
-                    )
 
-                # Create a Cell object for each processed row
-                # Note: Media (image/audio) is already uploaded to S3 in litellm_response()
-                cell = Cell.objects.create(
-                    dataset=self.run_prompt_model.dataset,
-                    column=column,
-                    row=row,
-                    value=str(response),
-                    value_infos=(
-                        json.dumps(value_info) if value_info else json.dumps({})
-                    ),
-                    status=status,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    response_time=response_time,
-                )
-                logger.info(
-                    "cell_created",
-                    cell_id=str(cell.id),
-                    row_id=row_id,
-                    run_prompt_id=str(self.run_prompt_id),
-                    status=status,
-                )
+            # Persist the cell with a terminal-status guarantee: the full
+            # result is written with a retry and a queryset-level status-only
+            # fallback so the cell always reaches a terminal state (#2080).
+            cell_persisted = _persist_cell_result(
+                dataset=self.run_prompt_model.dataset,
+                column=column,
+                row=row,
+                value=response,
+                value_info=value_info,
+                status=status,
+                edit_mode=self.is_editing,
+                run_prompt_id=str(self.run_prompt_id),
+                row_id=row_id,
+            )
+            logger.info(
+                "RunPrompts_process_row_cell_persisted",
+                run_prompt_id=str(self.run_prompt_id),
+                row_id=row_id,
+                status=status,
+                cell_persisted=cell_persisted,
+            )
+
+            # Emit the usage/billing event only after the cell result has been
+            # persisted and the call reached a success state, so a failed
+            # persist never bills work whose result was not saved (#2080).
+            if cell_persisted and status == CellStatus.PASS.value:
+                try:
+                    try:
+                        from ee.usage.schemas.events import UsageEvent
+                    except ImportError:
+                        UsageEvent = None
+                    try:
+                        from ee.usage.services.emitter import emit
+                    except ImportError:
+                        emit = None
+
+                    if emit is not None and UsageEvent is not None:
+                        emit(
+                            UsageEvent(
+                                org_id=str(self.run_prompt_model.organization.id),
+                                event_type=APICallTypeChoices.DATASET_RUN_PROMPT.value,
+                                properties={
+                                    "source": "dataset_run_prompt",
+                                    "source_id": str(self.run_prompt_id),
+                                },
+                            )
+                        )
+                except Exception:
+                    pass  # Metering failure must not break the action
             logger.info(
                 "RunPrompts_process_row_completed",
                 run_prompt_id=str(self.run_prompt_id),
