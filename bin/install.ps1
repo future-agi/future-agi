@@ -190,7 +190,7 @@ function New-HexSecret {
 
 function Test-Placeholder { param([string]$Var) ((Get-EnvValue $Var) -match '^CHANGEME-') }
 
-foreach ($var in 'SECRET_KEY','PG_PASSWORD','MINIO_ROOT_PASSWORD','AGENTCC_INTERNAL_API_KEY','AGENTCC_ADMIN_TOKEN') {
+foreach ($var in 'SECRET_KEY','PG_PASSWORD','MINIO_ROOT_PASSWORD','AGENTCC_INTERNAL_API_KEY','AGENTCC_ADMIN_TOKEN','CODE_EXECUTOR_INTERNAL_API_KEY') {
   if (Test-Placeholder $var) {
     Set-EnvValue $var (New-HexSecret 32)
     Ok "Generated $var"

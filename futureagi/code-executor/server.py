@@ -2,7 +2,8 @@
 Code Executor HTTP API Server.
 
 Provides a simple HTTP endpoint for executing untrusted code in nsjail sandboxes.
-Falls back to subprocess isolation when nsjail is not available.
+nsjail is the only execution path — /execute refuses (and /health reports
+unhealthy) when nsjail is unavailable, rather than degrading to a weaker sandbox.
 
 POST /execute
 {
@@ -19,12 +20,12 @@ Returns:
 }
 """
 
+import hmac
 import json
 import os
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 
 import falcon
@@ -63,10 +64,9 @@ def _execute_python_nsjail(code: str, input_data: dict, timeout: int) -> dict:
             "--rlimit_fsize",
             "1",  # 1 MB file writes
             "--rlimit_nofile",
-            "64",  # Max open files (needs more for network)
+            "64",  # Max open files
             "--time_limit",
             str(timeout),  # Wall clock limit
-            "-N",  # Allow network access — code can fetch URLs
             "-R",
             "/",  # Bind-mount root read-only (includes /sandbox/scripts)
             "-T",
@@ -114,52 +114,9 @@ def _execute_python_nsjail(code: str, input_data: dict, timeout: int) -> dict:
             pass
 
 
-def _execute_python_fallback(code: str, input_data: dict, timeout: int) -> dict:
-    """Fallback: execute Python code in a subprocess without nsjail."""
-    script = _build_python_script(code, input_data)
-
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".py", delete=False, dir="/tmp", prefix="eval_"
-    ) as f:
-        f.write(script)
-        script_path = f.name
-
-    try:
-        result = subprocess.run(
-            [PYTHON_PATH, "-I", script_path],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env={"PYTHONDONTWRITEBYTECODE": "1"},
-            cwd="/tmp",
-        )
-
-        stdout = result.stdout.strip()
-        if not stdout:
-            stderr = result.stderr.strip()[:500]
-            return {
-                "status": "error",
-                "data": f"No output. Exit: {result.returncode}. {stderr}",
-            }
-
-        try:
-            return json.loads(stdout)
-        except json.JSONDecodeError:
-            return {"status": "error", "data": f"Invalid JSON: {stdout[:200]}"}
-
-    except subprocess.TimeoutExpired:
-        return {"status": "error", "data": f"Timed out ({timeout}s)"}
-    except Exception as e:
-        return {"status": "error", "data": f"Error: {e}"}
-    finally:
-        try:
-            os.remove(script_path)
-        except OSError:
-            pass
-
-
 def _execute_javascript(code: str, input_data: dict, timeout: int) -> dict:
-    """Execute JavaScript code in nsjail (or fallback subprocess)."""
+    """Execute JavaScript code in the nsjail sandbox. Callers must gate on
+    NSJAIL_AVAILABLE (on_post refuses without it) — nsjail is the only path."""
     if not NODE_PATH:
         return {"status": "error", "data": "Node.js not available"}
 
@@ -171,31 +128,27 @@ def _execute_javascript(code: str, input_data: dict, timeout: int) -> dict:
         f.write(script)
 
     try:
-        if NSJAIL_AVAILABLE:
-            cmd = [
-                NSJAIL_PATH,
-                "-Mo",
-                "-Q",
-                "--rlimit_as",
-                "512",
-                "--rlimit_cpu",
-                str(timeout),
-                "--rlimit_nofile",
-                "64",
-                "--time_limit",
-                str(timeout),
-                "-N",  # Allow network
-                "-R",
-                "/",
-                "-T",
-                "/tmp:size=16777216",
-                "--",
-                NODE_PATH,
-                "--max-old-space-size=64",
-                script_path,
-            ]
-        else:
-            cmd = [NODE_PATH, "--max-old-space-size=64", script_path]
+        cmd = [
+            NSJAIL_PATH,
+            "-Mo",
+            "-Q",
+            "--rlimit_as",
+            "512",
+            "--rlimit_cpu",
+            str(timeout),
+            "--rlimit_nofile",
+            "64",
+            "--time_limit",
+            str(timeout),
+            "-R",
+            "/",
+            "-T",
+            "/tmp:size=16777216",
+            "--",
+            NODE_PATH,
+            "--max-old-space-size=64",
+            script_path,
+        ]
 
         result = subprocess.run(
             cmd,
@@ -303,13 +256,6 @@ if __name__ == "__main__":
 def _build_js_script(code: str, input_data: dict) -> str:
     """Build JS eval script."""
     input_json = json.dumps(input_data, default=str)
-    escaped = (
-        code.replace("\\", "\\\\")
-        .replace("'", "\\'")
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-    )
-
     return f"""'use strict';
 const inputData = {input_json};
 
@@ -354,14 +300,21 @@ class ExecuteResource:
             resp.media = {"status": "error", "data": "No code provided"}
             return
 
+        # Fail closed: the sandbox boundary is nsjail. Without it, refuse rather
+        # than silently degrade to running untrusted code unsandboxed on the host.
+        if not NSJAIL_AVAILABLE:
+            resp.media = {"status": "error", "data": "code executor misconfigured: nsjail unavailable, refusing to run untrusted code"}
+            return
+
         start = time.time()
 
         if language == "javascript":
             result = _execute_javascript(code, input_data, timeout)
-        elif NSJAIL_AVAILABLE:
+        elif language == "python":
             result = _execute_python_nsjail(code, input_data, timeout)
         else:
-            result = _execute_python_fallback(code, input_data, timeout)
+            resp.media = {"status": "error", "data": f"Unsupported language: {language!r}"}
+            return
 
         elapsed = time.time() - start
         result["execution_time"] = round(elapsed, 3)
@@ -372,13 +325,32 @@ class ExecuteResource:
 class HealthResource:
     def on_get(self, req, resp):
         resp.media = {
-            "status": "ok",
+            # Unhealthy without nsjail — /execute refuses to run, so the service
+            # is not doing its job and orchestrators should not route to it.
+            "status": "ok" if NSJAIL_AVAILABLE else "unhealthy",
             "nsjail": NSJAIL_AVAILABLE,
             "python": PYTHON_PATH,
             "node": NODE_PATH,
         }
 
 
-app = falcon.App()
+class AuthMiddleware:
+    """Reject /execute calls that don't present the internal API key. Fail closed:
+    an unset key rejects everything, so a misconfigured executor never runs open."""
+
+    _EXEMPT = ("/health",)
+
+    def __init__(self, key=None):
+        self._key = key if key is not None else os.environ.get("CODE_EXECUTOR_INTERNAL_API_KEY", "")
+
+    def process_request(self, req, resp):
+        if req.path in self._EXEMPT:
+            return
+        presented = req.get_header("X-Internal-Api-Key") or ""
+        if not self._key or not hmac.compare_digest(presented, self._key):
+            raise falcon.HTTPUnauthorized(title="Unauthorized")
+
+
+app = falcon.App(middleware=[AuthMiddleware()])
 app.add_route("/execute", ExecuteResource())
 app.add_route("/health", HealthResource())
