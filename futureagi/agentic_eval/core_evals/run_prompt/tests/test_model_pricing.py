@@ -270,6 +270,85 @@ class TestMultimodalEmbeddingPricing:
         assert result["total_cost"] > 0
 
 
+@pytest.mark.unit
+class TestVisionModelImageInputPerImageAlias:
+    """Some vision models carry the same per-image input component under the key
+    ``image_input_per_image`` instead of ``input_per_image`` (e.g.
+    ``vertex_ai/meta/llama-3.2-90b-vision-instruct-maas``, priced
+    ``{input_per_1M_tokens: 0.7, output_per_1M_tokens: 0.9,
+    image_input_per_image: 0.002}``). The per-image component must still be
+    added, otherwise the image cost is silently dropped.
+
+    Regression: before the alias was accepted, a mixed request of
+    ``{prompt_tokens: 1000, completion_tokens: 500, num_images: 4}`` returned
+    only $0.00115 in tokens and dropped 4 x $0.002 = $0.008 of image cost
+    (~87% undercharge)."""
+
+    MODEL = "vertex_ai/meta/llama-3.2-90b-vision-instruct-maas"
+
+    def test_catalog_entry_uses_alias_key(self):
+        pricing = get_model_pricing(self.MODEL)
+        # Guards the assumption behind this suite: this model prices per token
+        # AND per image, but under the ``image_input_per_image`` alias.
+        assert pricing is not None
+        assert "input_per_1M_tokens" in pricing
+        assert "output_per_1M_tokens" in pricing
+        assert "input_per_image" not in pricing
+        assert "image_input_per_image" in pricing
+        assert pricing["image_input_per_image"] > 0
+
+    def test_mixed_request_includes_image_component(self):
+        """Mixed text+image request must include token AND image cost billed
+        under the ``image_input_per_image`` alias.
+
+        Fail-without: before the alias was accepted, the image component was
+        dropped and total_cost was only the token cost ($0.00115)."""
+        pricing = get_model_pricing(self.MODEL)
+        input_rate = pricing["input_per_1M_tokens"]
+        output_rate = pricing["output_per_1M_tokens"]
+        per_image = pricing["image_input_per_image"]
+
+        token_usage = {
+            "prompt_tokens": 1000,
+            "completion_tokens": 500,
+            "num_images": 4,
+        }
+        result = calculate_total_cost(self.MODEL, token_usage)
+
+        expected_prompt_tokens = round((1000 / 1_000_000) * input_rate, 6)
+        expected_images = round(4 * per_image, 6)
+        expected_prompt = round(expected_prompt_tokens + expected_images, 6)
+        expected_completion = round((500 / 1_000_000) * output_rate, 6)
+        expected_total = round(expected_prompt + expected_completion, 6)
+
+        # The image component is strictly positive and actually counted.
+        assert expected_images == 0.008
+        assert result["prompt_cost"] == expected_prompt
+        assert result["completion_cost"] == expected_completion
+        assert result["total_cost"] == expected_total
+        # Regression guard: total must exceed the token-only cost by the full
+        # image component (fails when the alias is dropped).
+        token_only_total = round(expected_prompt_tokens + expected_completion, 6)
+        assert token_only_total == 0.00115
+        assert result["total_cost"] == round(token_only_total + expected_images, 6)
+        assert result["total_cost"] > token_only_total
+
+    def test_image_only_request_is_not_zero(self):
+        """Image-only request under the alias key must bill the per-image
+        component instead of returning $0."""
+        pricing = get_model_pricing(self.MODEL)
+        per_image = pricing["image_input_per_image"]
+
+        token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "num_images": 4}
+        result = calculate_total_cost(self.MODEL, token_usage)
+
+        expected = round(4 * per_image, 6)
+        assert expected > 0
+        assert result["prompt_cost"] == expected
+        assert result["completion_cost"] == 0.0
+        assert result["total_cost"] == expected
+
+
 # =============================================================================
 # Unit Tests - Character-Based Pricing (TTS Models)
 # =============================================================================

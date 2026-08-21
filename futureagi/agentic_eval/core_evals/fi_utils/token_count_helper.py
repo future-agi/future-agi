@@ -256,11 +256,14 @@ def calculate_total_cost(
     # embedding model fall through to the "unknown pricing structure" branch and be
     # costed at $0. Multimodal embedding models (e.g. amazon.titan-embed-image-v1)
     # additionally carry `input_per_image`, so enter this branch for that key too
-    # and add the per-image component below.
+    # and add the per-image component below. Some vision models (e.g.
+    # vertex_ai/meta/llama-3.2-90b-vision-instruct-maas) carry the same per-image
+    # component under the key `image_input_per_image`, so accept it as an alias.
     if (
         "input_per_1M_tokens" in pricing
         or "output_per_1M_tokens" in pricing
         or "input_per_image" in pricing
+        or "image_input_per_image" in pricing
     ):
         input_cost_per_1M = pricing.get("input_per_1M_tokens") or 0
         output_cost_per_1M = pricing.get("output_per_1M_tokens") or 0
@@ -278,8 +281,14 @@ def calculate_total_cost(
         # requests include both components. Text-only requests supply no image
         # count and are unaffected. `num_images` is the canonical key; fall back to
         # `images_generated` for callers that already report image counts that way.
-        if "input_per_image" in pricing:
-            cost_per_image = pricing.get("input_per_image") or 0
+        # `image_input_per_image` is an alias some vision models use for the same
+        # per-image component.
+        if "input_per_image" in pricing or "image_input_per_image" in pricing:
+            cost_per_image = (
+                pricing.get("input_per_image")
+                or pricing.get("image_input_per_image")
+                or 0
+            )
             num_images = (
                 token_usage.get("num_images")
                 or token_usage.get("images_generated")
