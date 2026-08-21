@@ -324,9 +324,18 @@ type ServerConfig struct {
 }
 
 type ProviderConfig struct {
-	BaseURL        string            `yaml:"base_url" json:"base_url"`
-	APIKey         string            `yaml:"api_key" json:"-"`
-	APIFormat      string            `yaml:"api_format" json:"api_format"`
+	BaseURL   string `yaml:"base_url" json:"base_url"`
+	APIKey    string `yaml:"api_key" json:"-"`
+	APIFormat string `yaml:"api_format" json:"api_format"`
+
+	// APIPathPrefix is the version segment placed between base_url and each
+	// endpoint — "/v1" unless the provider says otherwise. Set it to "" for an
+	// upstream that serves /chat/completions with no version (Perplexity's
+	// Sonar API), or to something else entirely (DeepInfra uses /v1/openai).
+	//
+	// nil takes the preset's value, or "/v1". A pointer because "" is a
+	// meaningful setting distinct from unset. openai-format providers only.
+	APIPathPrefix  *string           `yaml:"api_path_prefix" json:"api_path_prefix"`
 	DefaultTimeout time.Duration     `yaml:"default_timeout" json:"default_timeout"`
 	MaxConcurrent  int               `yaml:"max_concurrent" json:"max_concurrent"`
 	ConnPoolSize   int               `yaml:"conn_pool_size" json:"conn_pool_size"`
@@ -1232,4 +1241,53 @@ func validateLicenseRSAPublicKey(raw string) error {
 // Addr returns the listen address.
 func (c *Config) Addr() string {
 	return fmt.Sprintf("%s:%d", c.Server.Host, c.Server.Port)
+}
+
+// DefaultAPIPathPrefix is the version segment assumed for an OpenAI-format
+// provider that does not state one.
+const DefaultAPIPathPrefix = "/v1"
+
+// EffectiveAPIPathPrefix returns the version segment for this provider,
+// normalised to a leading slash and no trailing one.
+func (c *ProviderConfig) EffectiveAPIPathPrefix() string {
+	if c.APIPathPrefix == nil {
+		return DefaultAPIPathPrefix
+	}
+	return normalizePathPrefix(*c.APIPathPrefix)
+}
+
+// EndpointURL builds an upstream URL for a versioned path such as
+// "/v1/chat/completions", replacing the caller's assumed "/v1" with whatever
+// this provider actually uses.
+//
+// A base_url that already ends in the prefix keeps it rather than repeating it:
+// "https://api.cohere.ai/compatibility/v1" resolves to ".../compatibility/v1/
+// chat/completions", not ".../v1/v1/...".
+func (c *ProviderConfig) EndpointURL(path string) string {
+	return JoinEndpoint(c.BaseURL, c.EffectiveAPIPathPrefix(), path)
+}
+
+// JoinEndpoint is EndpointURL for callers holding a base URL rather than a
+// config — the registry builds probe URLs before any provider exists.
+func JoinEndpoint(baseURL, prefix, path string) string {
+	base := strings.TrimRight(baseURL, "/")
+	path = strings.TrimPrefix(path, DefaultAPIPathPrefix)
+	if prefix == "" {
+		return base + path
+	}
+	if strings.HasSuffix(base, prefix) {
+		return base + path
+	}
+	return base + prefix + path
+}
+
+func normalizePathPrefix(prefix string) string {
+	prefix = strings.TrimRight(strings.TrimSpace(prefix), "/")
+	if prefix == "" {
+		return ""
+	}
+	if !strings.HasPrefix(prefix, "/") {
+		prefix = "/" + prefix
+	}
+	return prefix
 }

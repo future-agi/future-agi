@@ -208,6 +208,18 @@ providers:
   #   models:
   #     - meta-llama/Meta-Llama-3.1-70B-Instruct
 
+  # api_path_prefix overrides the version segment placed between base_url and
+  # each endpoint. Unset means "/v1", which is what almost every
+  # OpenAI-compatible provider uses.
+  #
+  #   api_path_prefix: ""            # upstream serves /chat/completions
+  #   api_path_prefix: "/v1/openai"  # upstream mounts the API deeper
+  #
+  # A base_url that already ends in the prefix is left alone rather than having
+  # it repeated, so copying a vendor's documented URL verbatim works:
+  # "https://api.mistral.ai/v1" resolves to ".../v1/chat/completions", not
+  # ".../v1/v1/chat/completions". openai-format providers only.
+
   # Perplexity exposes two complementary APIs over the same OpenAI-compatible base URL:
   #   * Sonar API  (chat completions) - models: sonar, sonar-pro, sonar-reasoning, sonar-reasoning-pro, sonar-deep-research
   #   * Agent API  (responses)        - orchestrates third-party LLMs (default model: gpt-5.1)
