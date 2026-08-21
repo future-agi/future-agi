@@ -32,8 +32,24 @@ def send_alert_email(alert, event_type, context=None, recipient_override=None):
     if alert.encrypted_config:
         try:
             config = CredentialManager.decrypt(bytes(alert.encrypted_config))
-        except Exception:
+        except ValueError as e:
+            logger.warning(
+                "Alert config decryption failed - invalid format",
+                extra={"alert_id": alert.id, "provider": alert.provider},
+                exc_info=True,
+            )
             return {"success": False, "error": "Invalid provider configuration."}
+        except Exception as e:
+            logger.error(
+                "Unexpected error decrypting alert config",
+                extra={
+                    "alert_id": alert.id,
+                    "provider": alert.provider,
+                    "error_type": type(e).__name__,
+                },
+                exc_info=True,
+            )
+            return {"success": False, "error": "Configuration error - contact support."}
 
     # Check cooldown
     if not recipient_override and alert.last_triggered_at:
@@ -52,7 +68,27 @@ def send_alert_email(alert, event_type, context=None, recipient_override=None):
         elif alert.provider == "smtp":
             result = _send_via_smtp(config, recipients, subject, body)
         else:
+            logger.error(
+                "Unknown email provider",
+                extra={"alert_id": alert.id, "provider": alert.provider},
+            )
             return {"success": False, "error": f"Unknown provider: {alert.provider}"}
+
+        # Log send result for observability
+        if not result.get("success"):
+            logger.warning(
+                "Email send failed",
+                extra={
+                    "alert_id": alert.id,
+                    "provider": alert.provider,
+                    "error": result.get("error"),
+                },
+            )
+        else:
+            logger.debug(
+                "Alert email sent successfully",
+                extra={"alert_id": alert.id, "provider": alert.provider},
+            )
 
         # Update last_triggered_at on success (skip for test sends)
         if result.get("success") and not recipient_override:
@@ -61,9 +97,30 @@ def send_alert_email(alert, event_type, context=None, recipient_override=None):
 
         return result
 
+    except requests.exceptions.Timeout as e:
+        logger.error(
+            "Email send timeout",
+            extra={"alert_id": alert.id, "provider": alert.provider},
+            exc_info=True,
+        )
+        return {"success": False, "error": "Email delivery timed out - please try again."}
+    except requests.exceptions.RequestException as e:
+        logger.error(
+            "Email send request failed",
+            extra={"alert_id": alert.id, "provider": alert.provider},
+            exc_info=True,
+        )
+        return {"success": False, "error": f"Failed to send email: {str(e)[:100]}"}
     except Exception as e:
-        logger.exception("Failed to send alert email")
-        return {"success": False, "error": str(e)}
+        logger.exception(
+            "Unexpected error sending alert email",
+            extra={
+                "alert_id": alert.id,
+                "provider": alert.provider,
+                "error_type": type(e).__name__,
+            },
+        )
+        return {"success": False, "error": "Internal error sending email - contact support."}
 
 
 def _render_email_body(alert_name, event_type, context):
@@ -193,9 +250,39 @@ def _send_via_smtp(config, recipients, subject, body):
             server.login(username, password)
         server.sendmail(from_email, recipients, msg.as_string())
         return {"success": True}
+    except smtplib.SMTPAuthenticationError as e:
+        logger.error(
+            "SMTP authentication failed",
+            extra={"smtp_host": host, "smtp_port": port},
+            exc_info=True,
+        )
+        return {"success": False, "error": "SMTP authentication failed - check credentials."}
+    except smtplib.SMTPException as e:
+        logger.error(
+            "SMTP protocol error",
+            extra={"smtp_host": host, "smtp_port": port, "smtp_error": str(e)},
+            exc_info=True,
+        )
+        return {"success": False, "error": f"SMTP error: {str(e)[:100]}"}
+    except Exception as e:
+        logger.error(
+            "Unexpected SMTP error",
+            extra={
+                "smtp_host": host,
+                "smtp_port": port,
+                "error_type": type(e).__name__,
+            },
+            exc_info=True,
+        )
+        return {"success": False, "error": "Failed to send email via SMTP - contact support."}
     finally:
         if server:
             try:
                 server.quit()
-            except Exception:
-                pass
+            except Exception as e:
+                # Log but don't fail the send - connection cleanup is secondary
+                logger.debug(
+                    "SMTP quit error (non-fatal)",
+                    extra={"smtp_host": host, "error_type": type(e).__name__},
+                    exc_info=False,
+                )
