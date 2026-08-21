@@ -48,16 +48,21 @@ config:
                 clipped += min(count, ref_ngrams.get(ng, 0))
             return clipped, total
 
-        # Compute 1..4-gram precisions with +1 smoothing (Laplace) to avoid log(0).
-        weights = [0.25, 0.25, 0.25, 0.25]
+        # BLEU is only defined over the n-gram orders the hypothesis can
+        # form. Scoring fixed 1..4 orders zeroed out short answers: a
+        # single-word exact match scored ~2e-07 because orders 2-4 each
+        # contributed log(1e-9). Restrict to the available orders with
+        # renormalized weights, and smooth zero-overlap orders with a small
+        # epsilon mass (NLTK method-1 style) instead of inflating them.
+        max_n = min(4, len(hyp_tokens))
+        weights = [1.0 / max_n] * max_n
         log_precisions = []
-        for n in range(1, 5):
+        for n in range(1, max_n + 1):
             clipped, total = _modified_precision(ref_tokens, hyp_tokens, n)
-            if total == 0:
-                # No n-grams of this order in hypothesis.
-                precision = 1e-9
+            if clipped > 0:
+                precision = clipped / total
             else:
-                precision = (clipped + 1) / (total + 1)  # add-1 smoothing
+                precision = 0.1 / total  # epsilon smoothing, avoids log(0)
             log_precisions.append(math.log(precision))
 
         # Brevity penalty
