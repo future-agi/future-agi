@@ -54,7 +54,8 @@ type Config struct {
 type Server struct {
 	cfg      Config
 	writer   *chwriter.Writer
-	curated  *curatedwriter.Writer // CH-derived dimensions dual-write (P3b step2 HALF 2)
+	curated  *curatedwriter.Writer  // CH-derived dimensions dual-write (P3b step2 HALF 2)
+	catalog  AttributeCatalogWriter // optional; nil unless explicitly injected
 	auth     *auth.Authenticator
 	usage    UsageEmitter
 	metering Metering
@@ -85,8 +86,9 @@ type Server struct {
 
 // Option configures optional Server dependencies.
 type Option struct {
-	log    *slog.Logger
-	pricer chexp.Pricer
+	log     *slog.Logger
+	pricer  chexp.Pricer
+	catalog AttributeCatalogWriter
 }
 
 // WithLogger sets the server's logger.
@@ -95,6 +97,14 @@ func WithLogger(l *slog.Logger) Option { return Option{log: l} }
 // WithPricer sets the server's token-cost pricer. Nil (the zero value)
 // disables token-based cost (see chexp.Pricer).
 func WithPricer(p chexp.Pricer) Option { return Option{pricer: p} }
+
+// WithAttributeCatalogWriter installs the disabled-by-default catalog staging
+// seam. main does not supply this option yet; activation, bounded async
+// admission, fsync-latency qualification, and worker lifecycle belong to a
+// later, separately qualified change.
+func WithAttributeCatalogWriter(w AttributeCatalogWriter) Option {
+	return Option{catalog: w}
+}
 
 // New wires up the server but does NOT start serving. Call Run().
 //
@@ -131,12 +141,16 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 
 	log := slog.Default()
 	var pricer chexp.Pricer
+	var catalog AttributeCatalogWriter
 	for _, o := range opts {
 		if o.log != nil {
 			log = o.log
 		}
 		if o.pricer != nil {
 			pricer = o.pricer
+		}
+		if o.catalog != nil {
+			catalog = o.catalog
 		}
 	}
 
@@ -148,6 +162,7 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 		metering: metering,
 		log:      log,
 		pricer:   pricer,
+		catalog:  catalog,
 		// Share the span writer's HTTP client (keep-alive) for the curated RMTs,
 		// but the curated path writes BEST-EFFORT (chwriter.InsertBestEffort:
 		// single POST, no retry, no dead-letter) so it can't stall the span flush
@@ -536,11 +551,34 @@ func (s *Server) drainNow(ctx context.Context) {
 	if len(batch) == 0 {
 		return
 	}
-	_ = s.writer.Insert(ctx, batch)
+	spanErr := s.writer.Insert(ctx, batch)
 	// Insert returns an error on dead-letter; the writer already persisted
 	// the rows + bumped stats. We swallow here because the flusher's job
 	// is to make progress, not propagate per-batch failures. /healthz
 	// surfaces the writer's failure counter.
+
+	// Stage the independent attribute catalog only after the canonical spans
+	// received an unambiguous ClickHouse HTTP 200. A dead-lettered span batch
+	// returns a non-nil error and is intentionally skipped here; its later
+	// canonical replay/backfill owns reconciliation. Catalog staging and its
+	// catalog-only spool are isolated from span health: any gap is logged, never
+	// returned, and never changes span writer stats. This seam remains unwired in
+	// main until local staging/fsync is moved or latency-qualified.
+	if spanErr == nil && s.catalog != nil {
+		job, report := s.catalog.StageCanonicalSpans(batch)
+		if report.RejectedSpans > 0 || report.IncompleteSpans > 0 || report.GlobalTruncated {
+			s.log.Warn(
+				"attribute catalog staging incomplete",
+				"rejected_spans", report.RejectedSpans,
+				"incomplete_spans", report.IncompleteSpans,
+				"rows_omitted", report.RowsOmitted,
+				"gap_reasons", report.BuildGapReasons,
+			)
+		}
+		if err := s.catalog.Submit(ctx, job); err != nil {
+			s.log.Warn("attribute catalog spool failed", "err", err)
+		}
+	}
 
 	// CH-derived dimensions (P3b step2 HALF 2): BEST-EFFORT mirror the
 	// drain-scoped curated end_users / trace_sessions identities AFTER the span

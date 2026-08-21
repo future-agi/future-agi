@@ -3,11 +3,13 @@ package server
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	chexp "github.com/future-agi/future-agi/fi-collector/exporter/clickhouse25exporter"
+	"github.com/future-agi/future-agi/fi-collector/pkg/catalogwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -123,6 +126,162 @@ func insertTable(r *http.Request) string {
 		}
 	}
 	return ""
+}
+
+type catalogWriterStub struct {
+	stageCalls  int
+	submitCalls int
+	stagedRows  []map[string]any
+	report      catalogwriter.StageReport
+	submitErr   error
+	events      *[]string
+	eventsMu    *sync.Mutex
+}
+
+func (s *catalogWriterStub) record(event string) {
+	if s.events == nil {
+		return
+	}
+	if s.eventsMu != nil {
+		s.eventsMu.Lock()
+		defer s.eventsMu.Unlock()
+	}
+	*s.events = append(*s.events, event)
+}
+
+func (s *catalogWriterStub) StageCanonicalSpans(rows []map[string]any) (catalogwriter.Job, catalogwriter.StageReport) {
+	s.stageCalls++
+	s.stagedRows = rows
+	s.record("stage")
+	return catalogwriter.Job{}, s.report
+}
+
+func (s *catalogWriterStub) Submit(context.Context, catalogwriter.Job) error {
+	s.submitCalls++
+	s.record("submit")
+	return s.submitErr
+}
+
+func newSpanTestWriter(t *testing.T, url, deadLetterFile string) *chwriter.Writer {
+	t.Helper()
+	writer, err := chwriter.New(chwriter.Config{
+		URL:            url,
+		Database:       "default",
+		Table:          "spans",
+		MaxRetries:     1,
+		InitialBackoff: time.Millisecond,
+		MaxBackoff:     time.Millisecond,
+		RequestTimeout: time.Second,
+		DeadLetterFile: deadLetterFile,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return writer
+}
+
+func TestAttributeCatalogWriterOptionIsNilByDefault(t *testing.T) {
+	without := New(Config{}, nil, nil, nil, nil)
+	if without.catalog != nil {
+		t.Fatal("catalog writer must be nil unless explicitly installed")
+	}
+	stub := &catalogWriterStub{}
+	with := New(Config{}, nil, nil, nil, nil, WithAttributeCatalogWriter(stub))
+	if with.catalog != stub {
+		t.Fatal("catalog writer option was not installed")
+	}
+}
+
+func TestDrainStagesCatalogOnlyAfterCanonicalSpanSuccess(t *testing.T) {
+	var eventsMu sync.Mutex
+	events := []string{}
+	chServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if insertTable(r) == "spans" {
+			eventsMu.Lock()
+			events = append(events, "spans")
+			eventsMu.Unlock()
+		}
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer chServer.Close()
+
+	writer := newSpanTestWriter(t, chServer.URL, t.TempDir()+"/spans.jsonl")
+	stub := &catalogWriterStub{events: &events, eventsMu: &eventsMu}
+	server := New(Config{}, writer, nil, nil, nil, WithAttributeCatalogWriter(stub))
+	row := map[string]any{"id": "span-1", "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}
+	server.enqueue([]map[string]any{row}, nil)
+	server.drainNow(context.Background())
+
+	eventsMu.Lock()
+	gotEvents := append([]string(nil), events...)
+	eventsMu.Unlock()
+	if strings.Join(gotEvents, ",") != "spans,stage,submit" {
+		t.Fatalf("catalog ordering=%v want [spans stage submit]", gotEvents)
+	}
+	if stub.stageCalls != 1 || stub.submitCalls != 1 || len(stub.stagedRows) != 1 || stub.stagedRows[0]["id"] != row["id"] {
+		t.Fatalf("catalog calls stage=%d submit=%d rows=%v", stub.stageCalls, stub.submitCalls, stub.stagedRows)
+	}
+}
+
+func TestDrainSkipsCatalogWhenCanonicalSpanIsDeadLettered(t *testing.T) {
+	chServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("forced non-retryable failure"))
+	}))
+	defer chServer.Close()
+
+	deadLetter := t.TempDir() + "/spans.jsonl"
+	writer := newSpanTestWriter(t, chServer.URL, deadLetter)
+	stub := &catalogWriterStub{}
+	server := New(Config{}, writer, nil, nil, nil, WithAttributeCatalogWriter(stub))
+	server.enqueue([]map[string]any{{"id": "span-1"}}, nil)
+	server.drainNow(context.Background())
+
+	stats := writer.Snapshot()
+	if stub.stageCalls != 0 || stub.submitCalls != 0 {
+		t.Fatalf("dead-lettered span reached catalog: stage=%d submit=%d", stub.stageCalls, stub.submitCalls)
+	}
+	if stats.BatchesFailed != 1 || stats.RowsDeadLettered != 1 || stats.BatchesInserted != 0 {
+		t.Fatalf("unexpected span stats: %+v", stats)
+	}
+	if payload, err := os.ReadFile(deadLetter); err != nil || !strings.Contains(string(payload), "span-1") {
+		t.Fatalf("span dead-letter missing: payload=%q err=%v", payload, err)
+	}
+}
+
+func TestCatalogSubmitFailureCannotFailCanonicalSpanDrain(t *testing.T) {
+	chServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer chServer.Close()
+
+	writer := newSpanTestWriter(t, chServer.URL, t.TempDir()+"/spans.jsonl")
+	stub := &catalogWriterStub{submitErr: errors.New("catalog disk unavailable")}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	server := New(
+		Config{}, writer, nil, nil, nil,
+		WithLogger(logger),
+		WithAttributeCatalogWriter(stub),
+	)
+	server.enqueue([]map[string]any{{"id": "span-1"}}, nil)
+	server.drainNow(context.Background())
+	server.enqueue([]map[string]any{{"id": "span-2"}}, nil)
+	server.drainNow(context.Background())
+
+	stats := writer.Snapshot()
+	if stub.stageCalls != 2 || stub.submitCalls != 2 {
+		t.Fatalf("subsequent drain did not progress: stage=%d submit=%d", stub.stageCalls, stub.submitCalls)
+	}
+	if stats.BatchesInserted != 2 || stats.RowsInserted != 2 || stats.BatchesFailed != 0 || stats.RowsDeadLettered != 0 {
+		t.Fatalf("catalog failure changed span health: %+v", stats)
+	}
+	if !strings.Contains(logs.String(), "attribute catalog spool failed") {
+		t.Fatalf("catalog failure was not observable: %q", logs.String())
+	}
 }
 
 // TestServerEnd2End_WritesTraceRow: an OTLP root span through the real converter
