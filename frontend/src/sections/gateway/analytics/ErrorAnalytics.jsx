@@ -21,6 +21,7 @@ import {
 import { useTheme } from "@mui/material/styles";
 import Chart from "react-apexcharts";
 import { useAnalyticsErrors } from "./hooks/useAnalyticsErrors";
+import { computeGranularity } from "../utils/analyticsHelpers";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -37,17 +38,6 @@ const TOP_N = 10;
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function computeGranularity(start, end) {
-  if (!start || !end) return "1h";
-  const diffMs = new Date(end).getTime() - new Date(start).getTime();
-  const diffHours = diffMs / (1000 * 60 * 60);
-  if (diffHours <= 6) return "5m";
-  if (diffHours <= 24) return "15m";
-  if (diffHours <= 168) return "1h";
-  if (diffHours <= 720) return "6h";
-  return "1d";
-}
 
 function getChartColors(theme) {
   return [
