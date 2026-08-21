@@ -355,6 +355,7 @@ Future AGI is an **open-source ecosystem** — each SDK is independently usable,
 | **Voice platforms** | VAPI · Retell · LiveKit · Pipecat |
 | **Vector DBs** | Pinecone · Weaviate · Chroma · Milvus · Qdrant · pgvector |
 | **Tools & infra** | Vercel AI SDK · n8n · MongoDB · MCP · A2A · Guardrails AI · Langfuse · HuggingFace Smol-agents |
+| **Agent data tools** | Brave Search · [Adanos Market Sentiment](https://adanos.org/) (optional with `ADANOS_API_KEY`) |
 
 <sub> [Full integrations catalog →](https://docs.futureagi.com/docs/integrations)</sub>
 
