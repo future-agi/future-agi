@@ -179,6 +179,97 @@ class TestEmbeddingModelPricing:
         assert result["pricing_source"] == "available_models"
 
 
+@pytest.mark.unit
+class TestMultimodalEmbeddingPricing:
+    """Multimodal embedding models (e.g. ``amazon.titan-embed-image-v1``) carry
+    both ``input_per_1M_tokens`` and ``input_per_image`` pricing. The per-image
+    component must be added on top of any token cost, otherwise image-only
+    requests are reported as $0 and mixed requests omit the image cost."""
+
+    MODEL = "amazon.titan-embed-image-v1"
+
+    def test_catalog_entry_has_both_components(self):
+        pricing = get_model_pricing(self.MODEL)
+        # Guards the assumption behind this suite: this model prices per token
+        # AND per image.
+        assert pricing is not None
+        assert "input_per_1M_tokens" in pricing
+        assert "input_per_image" in pricing
+        assert pricing["input_per_image"] > 0
+
+    def test_image_only_request_is_not_zero(self):
+        """Image-only request (no tokens) must bill the per-image component.
+
+        Regression: previously took the token branch, never added the image
+        component, and returned $0."""
+        pricing = get_model_pricing(self.MODEL)
+        per_image = pricing["input_per_image"]
+
+        token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "num_images": 5}
+        result = calculate_total_cost(self.MODEL, token_usage)
+
+        expected = round(5 * per_image, 6)
+        assert expected > 0
+        assert result["prompt_cost"] == expected
+        assert result["completion_cost"] == 0.0
+        assert result["total_cost"] == expected
+        assert result["total_cost"] > 0  # regression: used to fall through to $0
+        assert result["pricing_source"] == "available_models"
+
+    def test_mixed_request_includes_both_components(self):
+        """Mixed text+image request must include token AND image cost."""
+        pricing = get_model_pricing(self.MODEL)
+        token_rate = pricing["input_per_1M_tokens"]
+        per_image = pricing["input_per_image"]
+
+        token_usage = {
+            "prompt_tokens": 1_000_000,
+            "completion_tokens": 0,
+            "num_images": 5,
+        }
+        result = calculate_total_cost(self.MODEL, token_usage)
+
+        expected_tokens = round((1_000_000 / 1_000_000) * token_rate, 6)
+        expected_images = round(5 * per_image, 6)
+        expected = round(expected_tokens + expected_images, 6)
+
+        assert result["prompt_cost"] == expected
+        assert result["completion_cost"] == 0.0
+        assert result["total_cost"] == expected
+        # Both components are strictly positive and both are counted.
+        assert expected_tokens > 0 and expected_images > 0
+        assert result["total_cost"] > expected_tokens
+
+    def test_text_only_request_unchanged(self):
+        """Text-only request (no image count) bills tokens only -- the image
+        branch must not add anything or break the existing token path."""
+        pricing = get_model_pricing(self.MODEL)
+        token_rate = pricing["input_per_1M_tokens"]
+
+        token_usage = {"prompt_tokens": 1_000_000, "completion_tokens": 0}
+        result = calculate_total_cost(self.MODEL, token_usage)
+
+        expected = round((1_000_000 / 1_000_000) * token_rate, 6)
+        assert result["prompt_cost"] == expected
+        assert result["total_cost"] == expected
+
+    def test_images_generated_key_is_accepted(self):
+        """Callers that report image counts as ``images_generated`` are billed
+        the per-image component too."""
+        pricing = get_model_pricing(self.MODEL)
+        per_image = pricing["input_per_image"]
+
+        token_usage = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "images_generated": 3,
+        }
+        result = calculate_total_cost(self.MODEL, token_usage)
+
+        assert result["total_cost"] == round(3 * per_image, 6)
+        assert result["total_cost"] > 0
+
+
 # =============================================================================
 # Unit Tests - Character-Based Pricing (TTS Models)
 # =============================================================================
