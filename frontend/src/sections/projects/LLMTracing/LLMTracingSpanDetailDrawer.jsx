@@ -3,9 +3,11 @@ import PropTypes from "prop-types";
 import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2";
 import { useParams } from "react-router";
 import { useLLMTracingStoreShallow } from "./states";
+import { useUrlState } from "src/routes/hooks/use-url-state";
 
 const LLMTracingSpanDetailDrawer = ({ refreshGrid }) => {
   const { observeId } = useParams();
+  const [, setDrawerTab] = useUrlState("drawerTab");
   const { spanDetailDrawerOpen, setSpanDetailDrawerOpen, visibleTraceIds } =
     useLLMTracingStoreShallow((state) => ({
       spanDetailDrawerOpen: state.spanDetailDrawerOpen,
@@ -51,7 +53,10 @@ const LLMTracingSpanDetailDrawer = ({ refreshGrid }) => {
     <TraceDetailDrawerV2
       traceId={traceId}
       open={Boolean(spanDetailDrawerOpen)}
-      onClose={() => setSpanDetailDrawerOpen(null)}
+      onClose={() => {
+        setDrawerTab(null);
+        setSpanDetailDrawerOpen(null);
+      }}
       projectId={observeId}
       initialSpanId={spanId}
       onPrev={onPrev}

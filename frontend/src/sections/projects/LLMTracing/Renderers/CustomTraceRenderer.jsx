@@ -105,6 +105,9 @@ const CustomTraceRenderer = (params) => {
     );
   }
 
+  // Carries isSpanLevel so span cells render a Pass/Fail pill while trace-level
+  // averages fall through to a percentage. Still reached for scalar values —
+  // only object-valued cells are intercepted by EvalResultChips.
   if (isEval && column?.outputType === "Pass/Fail") {
     return (
       <div style={{ height: "100%", width: "100%", padding: 0, margin: 0 }}>

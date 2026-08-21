@@ -24,9 +24,8 @@ function defaultFixNotice() {
  * render identical eval tables.
  *
  * The component is data-shape agnostic: callers pass a pre-normalized list
- * of eval rows matching the `EvalRow` shape below. Use
- * `collectAllEvalsFromEntry` for the trace drawer's span-subtree case, or
- * map your own data into the canonical shape for other drawers.
+ * of eval rows matching the `EvalRow` shape below — map your data into the
+ * canonical shape for the drawer you're rendering.
  */
 
 /**
@@ -41,40 +40,6 @@ function defaultFixNotice() {
  *   spanId?:      string — optional, enables "View span" action
  * }
  */
-
-/**
- * Walk a trace entry subtree and flatten all eval_scores into a flat list.
- * Keeps the trace drawer's existing behavior — exported so SpanDetailPane
- * can continue using it without duplication.
- */
-export function collectAllEvalsFromEntry(entry) {
-  const rows = [];
-  function walk(e, spanId) {
-    const s = e?.observation_span || {};
-    const evals = e?.eval_scores || [];
-    for (const ev of evals) {
-      rows.push({
-        // Spread the raw eval so error_analysis, cell_id, selected_input_key,
-        // input_data, input_types, error_localizer_status flow through to
-        // EvalTableRow → EvalErrorLocalization automatically.
-        ...ev,
-        id: `${s.id || spanId || "root"}-${ev.eval_config_id || ev.eval_name || rows.length}`,
-        spanId: s.id || spanId,
-        spanName: s.name || "unnamed",
-        spanType: s.observation_type || "unknown",
-        // Trace API writes "ERROR" into `result` instead of a dedicated error
-        // field (voice API uses `error: true`). Unify both into `error` so the
-        // shared EvalTableRow renderer only checks one signal.
-        error: ev?.error === true || ev?.result === "ERROR",
-      });
-    }
-    if (e?.children?.length) {
-      for (const child of e.children) walk(child, null);
-    }
-  }
-  walk(entry, null);
-  return rows;
-}
 
 // `score >= 50` matches the summary's totalPass threshold. Some evals
 // (label-based pass/fail) may come through with no numeric score — fall back

@@ -303,6 +303,44 @@ class AnalyticsQueryService:
         )
         return [row["config_id"] for row in result.data]
 
+    def get_eval_config_targets_with_data_ch(
+        self,
+        candidate_config_ids: list[str],
+        timeout_ms: int = 5000,
+        window_days: int | None = 30,
+    ) -> list[dict[str, Any]]:
+        """Per-``(config, target_type)`` presence groups for a candidate set.
+
+        Superset of ``get_eval_config_ids_with_data_ch``'s fast path (same
+        leading-sort-key scan, one extra LowCardinality GROUP BY column) that
+        the Observe trace/span lists use for BOTH discoveries at once: which
+        configs have data in the window, and which target_type ("span" /
+        "trace" / "session") each was most recently applied at (the S/T
+        column glyph — resolved via ``build_eval_target_map``).
+
+        Returns rows of ``{"config_id", "target_type", "last_seen"}`` — one
+        per (config, target_type) pair with non-deleted rows in the window.
+        """
+        if not candidate_config_ids:
+            return []
+        eval_table, eval_nd = eval_logger_source()
+        params: dict[str, Any] = {"config_ids": tuple(candidate_config_ids)}
+        window_sql = ""
+        if window_days is not None:
+            params["window_days"] = int(window_days)
+            window_sql = "AND created_at >= now() - toIntervalDay(%(window_days)s)"
+        query = (
+            "SELECT toString(custom_eval_config_id) AS config_id, "
+            "target_type, "
+            "max(created_at) AS last_seen "
+            f"FROM {eval_table} "
+            f"WHERE {eval_nd} {window_sql} "
+            "AND custom_eval_config_id IN %(config_ids)s "
+            "GROUP BY config_id, target_type"
+        )
+        result = self.execute_ch_query(query, params, timeout_ms=timeout_ms)
+        return list(result.data)
+
     def get_eval_config_ids_for_traces_ch(
         self, trace_ids: list[str], timeout_ms: int = 3000
     ) -> list[str]:

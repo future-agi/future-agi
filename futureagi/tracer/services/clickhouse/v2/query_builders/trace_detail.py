@@ -26,7 +26,6 @@ from tracer.services.clickhouse.query_builders.trace_detail import (
 )
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.span_reader import merge_span_attributes
-from tracer.utils.helper import _normalize_eval_output_type
 
 if TYPE_CHECKING:
     from rest_framework.request import Request
@@ -35,22 +34,6 @@ if TYPE_CHECKING:
     from tracer.views.trace import TraceView
 
 logger = structlog.get_logger(__name__)
-
-
-def _parse_output_str_list(raw) -> list[str]:
-    """Parse a CHOICES eval's ``output_str_list`` (CH JSON string or native list)."""
-    import json
-
-    if isinstance(raw, list):
-        return [str(x) for x in raw if x not in (None, "")]
-    if isinstance(raw, str) and raw.startswith("["):
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            return []
-        if isinstance(parsed, list):
-            return [str(x) for x in parsed if x not in (None, "")]
-    return []
 
 
 class TraceDetailHandlerV2(V2RewriteMixin, TraceDetailHandler):
@@ -86,11 +69,9 @@ def retrieve_trace_detail_ch(
     from django.db.utils import ProgrammingError
 
     from tracer.constants.provider_logos import PROVIDER_LOGOS
-    from tracer.models.custom_eval_config import CustomEvalConfig
     from tracer.models.observation_span import ObservationSpan
     from tracer.models.project import Project
     from tracer.models.trace import Trace
-    from tracer.services.clickhouse.eval_logger_table import eval_logger_source
     from tracer.views.trace import _project_workspace_scope_q
 
     # Cross-store tenant gate, CH-sourced: the trace's project comes from CH
@@ -266,157 +247,9 @@ def retrieve_trace_detail_ch(
             "_parent_id": parent_id_str,
         }
 
-    # ----- Phase 8: Batch fetch eval scores from CH -----
-    eval_map = {}
-    try:
-        eval_table, eval_nd = eval_logger_source()
-        eval_query = f"""
-        SELECT
-            toString(observation_span_id) AS span_id,
-            toString(custom_eval_config_id) AS eval_config_id,
-            output_float,
-            output_bool,
-            output_str,
-            output_str_list,
-            eval_explanation,
-            error,
-            status,
-            skipped_reason
-        FROM {eval_table} FINAL
-        WHERE trace_id = %(trace_id)s
-          AND {eval_nd}
-        """
-        eval_result = analytics.execute_ch_query(
-            eval_query, {"trace_id": str(trace_id)}, timeout_ms=30000
-        )
-        # Collect unique config IDs for name lookup
-        config_ids_set = set()
-        for row in eval_result.data:
-            cid = row.get("eval_config_id", "")
-            if cid:
-                config_ids_set.add(cid)
-        # Lookup eval config names from PG
-        config_lookup = {}
-        if config_ids_set:
-            from model_hub.utils.eval_list import derive_output_type
-
-            configs = CustomEvalConfig.objects.filter(
-                id__in=list(config_ids_set), deleted=False
-            ).select_related("eval_template")
-            config_lookup = {
-                str(c.id): {
-                    # Prefer the CustomEvalConfig's user-given name (e.g.
-                    # "voice_sentence_count"), fall back to the template
-                    # name only if unset. This keeps the drawer labels in
-                    # sync with the trace list column headers.
-                    "name": c.name
-                    or (c.eval_template.name if c.eval_template else str(c.id)),
-                    # Resolved type — falls back to config["output"] when
-                    # output_type_normalized is unset, matching the list paths.
-                    "output_type": (
-                        derive_output_type(c.eval_template) if c.eval_template else None
-                    ),
-                    "template_type": (
-                        getattr(c.eval_template, "template_type", None)
-                        if c.eval_template
-                        else None
-                    ),
-                }
-                for c in configs
-            }
-        # Pivot into per-span map
-        for row in eval_result.data:
-            sid = row.get("span_id", "")
-            if not sid:
-                continue
-            if sid not in eval_map:
-                eval_map[sid] = []
-            cid = row.get("eval_config_id", "")
-            info = config_lookup.get(cid, {})
-            # Score is type-dependent; the CH mirror coerces unused typed
-            # columns to 0, so route by type (choices → str_list, Pass/Fail →
-            # bool, percentage → float) instead of trusting a populated column.
-            output_float = row.get("output_float")
-            output_bool = row.get("output_bool")
-            output_str = row.get("output_str")
-            str_list = _parse_output_str_list(row.get("output_str_list"))
-
-            is_pass_fail = (
-                _normalize_eval_output_type(info.get("output_type")) == "PASS_FAIL"
-            )
-            score_label = None
-            if str_list:
-                # Choices: no numeric score — surface the option(s), score None.
-                score = None
-                score_label = ", ".join(str_list)
-            elif is_pass_fail and output_bool is not None:
-                score = 100 if output_bool else 0
-            elif output_float is not None:
-                score = round(output_float * 100, 2)
-            elif output_bool is not None:
-                score = 100 if output_bool else 0
-            else:
-                score = None
-
-            explanation = row.get("eval_explanation", "")
-            # Lifecycle status (pending/running/completed/errored/skipped) so the
-            # drawer can render a loading / pending / skipped state per eval.
-            status = (row.get("status") or "").lower()
-            skipped_reason = row.get("skipped_reason")
-
-            # An errored or non-terminal row can carry stale/coerced output (the
-            # CH mirror stores 0 for a NULL bool), so drop the fabricated
-            # score/result — the drawer renders the error / lifecycle state
-            # instead. ``status == 'errored'`` is treated as an error even when
-            # the legacy ``error`` flag/``output_str`` weren't set. (Named
-            # ``result_value`` — ``result`` is the CH query result in the outer
-            # scope and must not be shadowed by this loop.)
-            is_errored = (
-                bool(row.get("error")) or output_str == "ERROR" or status == "errored"
-            )
-            is_non_terminal = status in ("pending", "running", "skipped")
-            drop_derived = is_errored or is_non_terminal
-            eval_score = None if drop_derived else score
-            eval_score_label = None if drop_derived else score_label
-            # Choices: per-option list the drawer renders as separate chips.
-            eval_score_items = None if drop_derived else (str_list or None)
-
-            # ``result`` = the raw verdict, by type: choices → the option list,
-            # Pass/Fail → the bool, free-text → output_str, numeric → None.
-            if drop_derived:
-                result_value = None
-            elif str_list:
-                result_value = str_list
-            elif output_str:
-                result_value = output_str
-            elif is_pass_fail and output_bool is not None:
-                result_value = output_bool
-            else:
-                result_value = None
-
-            eval_map[sid].append(
-                {
-                    "eval_config_id": cid,
-                    "eval_name": info.get("name", cid),
-                    "output_type": info.get("output_type"),
-                    "template_type": info.get("template_type"),
-                    "score": eval_score,
-                    "score_label": eval_score_label,
-                    "score_items": eval_score_items,
-                    "result": result_value,
-                    "explanation": (
-                        explanation
-                        or (skipped_reason if status == "skipped" else None)
-                        or None
-                    ),
-                    "status": status or None,
-                    "error": is_errored,
-                    "skipped": status == "skipped",
-                    "skipped_reason": skipped_reason,
-                }
-            )
-    except Exception:
-        logger.exception("Failed to fetch trace eval scores")
+    # Grouped eval_scores are attached uniformly for the v1 and v2 handlers
+    # by the view (TraceView.retrieve -> attach_grouped_eval_scores), from one
+    # shared CH read — no per-handler eval fetch here (TH-7610).
 
     # ----- Phase 8: Batch fetch annotations from PG -----
     annotation_map = {}
@@ -469,9 +302,8 @@ def retrieve_trace_detail_ch(
         except Exception:
             logger.exception("Failed to fetch span tags from PG")
 
-    # ----- Attach evals + annotations to each span -----
+    # ----- Attach annotations to each span -----
     for sid, entry in span_map.items():
-        entry["eval_scores"] = eval_map.get(sid, [])
         entry["annotations"] = annotation_map.get(sid, [])
 
     # Build tree: link children to parents

@@ -104,6 +104,8 @@ from tracer.utils.eval import (
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import (
     FieldConfig,
+    build_eval_target_map,
+    eval_count_cell,
     get_annotation_labels_for_project,
     get_default_span_config,
     update_column_config_based_on_eval_config,
@@ -1492,17 +1494,27 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # org-scoped falls back to a PG EvalLogger scan.
         eval_config_ids = []
         if org_scope:
-            _eval_ids = (
+            # One aggregated scan serves both discoveries: which configs have
+            # rows (the column set — same population the old DISTINCT
+            # subquery matched) and the most recent target_type per config
+            # (the S/T column glyph).
+            target_rows = list(
                 EvalLogger.objects.filter(
                     observation_span__project_id__in=org_project_ids
                 )
-                .values("custom_eval_config_id")
-                .distinct()
+                .values("custom_eval_config_id", "target_type")
+                .annotate(last_seen=Max("created_at"))
+                .order_by()
             )
             eval_configs = CustomEvalConfig.objects.filter(
-                id__in=_eval_ids, deleted=False
+                id__in={r["custom_eval_config_id"] for r in target_rows},
+                deleted=False,
             ).select_related("eval_template")
             eval_config_ids = [str(c.id) for c in eval_configs]
+            discovery_rows = [
+                (r["custom_eval_config_id"], r["target_type"], r["last_seen"])
+                for r in target_rows
+            ]
         else:
             # PERF: resolve this project's configs from PG first (indexed by the
             # project FK), then ask CH which of them have recent data via a
@@ -1530,11 +1542,13 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             # and this endpoint fires it on EVERY page. Key includes the
             # candidate set and window so a newly-created config or a different
             # time range gets a fresh entry; worst case a brand-new config's
-            # column appears one TTL late.
-            ids_with_data: set[str] = set()
+            # column appears one TTL late. The cached rows also carry each
+            # config's most recent target_type (the S/T column glyph), so the
+            # glyph rides the same single scan + cache entry.
+            target_rows: list[dict] = []
             if candidate_ids:
                 cache_key = (
-                    "span_list_eval_cfgs:"
+                    "span_list_eval_targets:"
                     + hashlib.sha256(
                         (
                             str(project_id)
@@ -1544,21 +1558,24 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         ).encode()
                     ).hexdigest()
                 )
-                cached_ids = django_cache.get(cache_key)
-                if cached_ids is not None:
-                    ids_with_data = set(cached_ids)
+                cached_rows = django_cache.get(cache_key)
+                if cached_rows is not None:
+                    target_rows = cached_rows
                 else:
-                    ids_with_data = set(
-                        analytics.get_eval_config_ids_with_data_ch(
-                            str(project_id),
-                            timeout_ms=30000,
-                            candidate_config_ids=candidate_ids,
-                            window_days=window_days,
-                        )
+                    target_rows = analytics.get_eval_config_targets_with_data_ch(
+                        candidate_ids,
+                        timeout_ms=30000,
+                        window_days=window_days,
                     )
-                    django_cache.set(cache_key, list(ids_with_data), timeout=120)
+                    django_cache.set(cache_key, target_rows, timeout=120)
+            ids_with_data = {r["config_id"] for r in target_rows}
             eval_configs = [c for c in project_configs if str(c.id) in ids_with_data]
             eval_config_ids = [str(c.id) for c in eval_configs]
+            discovery_rows = [
+                (r["config_id"], r.get("target_type"), r.get("last_seen"))
+                for r in target_rows
+            ]
+        eval_target_map = build_eval_target_map(discovery_rows, eval_config_ids)
 
         # Labels can be project-local or org/shared labels that are referenced
         # by span scores. Use the score-backed helper so span columns and
@@ -1692,7 +1709,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             eval_result = analytics.execute_ch_query(
                 eval_query, eval_params, timeout_ms=5000
             )
-            return SpanListQueryBuilder.pivot_eval_results(eval_result.data)
+            # count mode: Pass/Fail cells carry exact {"pass","fail"} counts
+            # and Choices cells carry {label: count} (one chip column),
+            # mapped by eval_count_cell below.
+            return SpanListQueryBuilder.pivot_eval_results(
+                eval_result.data, count_mode=True
+            )
 
         def _fetch_annotations():
             if not (span_ids and annotation_label_ids):
@@ -1800,8 +1822,13 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         column_config.append(
             asdict(FieldConfig(id="cost", name="Cost", is_visible=True, group_by=None))
         )
+        # skip_choices: Choices evals render as ONE chip column ({label:
+        # count}), not per-choice ``{config}**{choice}`` sub-columns.
         column_config = update_column_config_based_on_eval_config(
-            column_config, eval_configs
+            column_config,
+            eval_configs,
+            skip_choices=True,
+            eval_target_map=eval_target_map,
         )
         column_config = update_span_column_config_based_on_annotations(
             column_config, annotation_labels
@@ -1866,34 +1893,17 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 "cost": round(cost, 6) if cost else 0,
             }
 
-            # Add eval metrics
+            # Add eval metrics. count_mode pivot gives raw appearance counts;
+            # eval_count_cell renders each eval as ONE column whose value is
+            # a number (Score), {"pass", "fail"} counts (Pass/Fail) or
+            # {label: count} (Choices). Error / lifecycle markers pass
+            # through unchanged.
             span_evals = eval_map.get(span_id, {})
             for config in eval_configs:
                 config_id = str(config.id)
                 if config_id not in span_evals:
                     continue
-                val = span_evals[config_id]
-                # Lifecycle marker — ``{"status": ...}`` (pending/running/skipped)
-                # or ``{"error": True}`` (errored): pass the whole marker through
-                # on the ``config_id`` column so the cell renders the
-                # loading / pending / skipped / error state instead of a blank.
-                if isinstance(val, dict) and (
-                    isinstance(val.get("status"), str) or val.get("error")
-                ):
-                    entry[config_id] = val
-                # CHOICES eval: spread per-choice percentages into separate
-                # columns keyed ``{config_id}**{choice}`` to match the
-                # column config produced by
-                # ``update_column_config_based_on_eval_config``.
-                elif isinstance(val, dict) and not val.get("error") and val:
-                    for choice, pct in val.items():
-                        entry[f"{config_id}**{choice}"] = pct
-                else:
-                    entry[config_id] = val
-                    if isinstance(val, dict):
-                        entry[config_id] = val.get("score")
-                    else:
-                        entry[config_id] = val
+                entry[config_id] = eval_count_cell(span_evals[config_id], config)
 
             # Add annotations
             span_annotations = annotation_map.get(span_id, {})

@@ -27,6 +27,7 @@ import {
   prefetchCallLogs,
 } from "../helper";
 import Iconify from "src/components/iconify";
+import { useUrlState } from "src/routes/hooks/use-url-state";
 import { useAgentDetailsStore } from "../store/agentDetailsStore";
 import TestDetailSideDrawer from "src/sections/test-detail/TestDetailDrawer/TestDetailSideDrawer";
 import {
@@ -191,6 +192,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     }),
     [],
   );
+  const [, setDrawerTab] = useUrlState("drawerTab");
   const { data, isLoading, queryKey } = useCallLogs({
     module,
     id: id,
@@ -365,6 +367,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       const bi = orderIndex.get(b?.field ?? b?.colId) ?? Infinity;
       return ai - bi;
     });
+
     return combined;
   }, [callLogsColumnDefs, columnVisibility, isLoading]);
   useEffect(() => {
@@ -472,6 +475,16 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
               )
             }
             getRowStyle={getRowStyle}
+            onCellClicked={(params) => {
+              // Eval-cell click pre-focuses the drawer's Evals tab (read once
+              // on drawer open). Any other cell clears it so normal opens
+              // land on the default tab.
+              setDrawerTab(
+                params?.colDef?.field?.startsWith("eval_outputs.")
+                  ? "evals"
+                  : null,
+              );
+            }}
             onRowClicked={(params) => {
               onRowClicked(params, page, pageLimit);
             }}

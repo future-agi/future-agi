@@ -16,6 +16,7 @@ span IDs, grouped by ``(observation_span_id, label_id)``.
 The three result sets are merged in Python to produce the final response.
 """
 
+import math
 from datetime import datetime
 from typing import Any
 
@@ -541,7 +542,13 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             groupArrayIf(
                 output_str_list,
                 error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ) AS str_lists
+            ) AS str_lists,
+            countIf(
+                output_bool = 1 AND error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS pass_count,
+            countIf(
+                output_bool = 0 AND error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS fail_count
         -- PERF: no table-level FINAL. FINAL forces a merge across the WHOLE eval
         -- table before the WHERE is applied, so a page of ~50 span ids dragged a
         -- merge over tens of millions of rows — GBs of memory that OOM-crashed
@@ -642,6 +649,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
     @staticmethod
     def pivot_eval_results(
         eval_rows: list[dict],
+        count_mode: bool = False,
     ) -> dict[str, dict[str, Any]]:
         """Pivot eval query results into a nested dict keyed by span_id.
 
@@ -653,8 +661,25 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             completed result yet. For CHOICES evals (non-empty ``str_lists``) the
             value is a ``{choice: pct}`` dict the caller spreads into
             ``{config_id}**{choice}`` keys.
+
+            With ``count_mode=True`` (Observe span list) the completed shapes
+            change to the chip "count" cells mapped downstream by
+            ``eval_count_cell``: Choices -> ``{"choice_counts": {label: n}}``
+            (a SINGLE column, no ``**`` spread) and Score / Pass/Fail ->
+            ``{"avg_score", "pass_count", "fail_count"}``. A real 0.0 average
+            survives via the finite-guard (the legacy scalar path drops it).
+            Error and lifecycle markers are emitted identically in both modes.
         """
         import json as _json
+
+        from tracer.utils.helper import build_count_eval_cell
+
+        def _finite(v):
+            return (
+                isinstance(v, (int, float))
+                and not isinstance(v, bool)
+                and math.isfinite(v)
+            )
 
         result: dict[str, dict[str, Any]] = {}
         for row in eval_rows:
@@ -700,8 +725,32 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 for lst in parsed:
                     for choice in set(lst):
                         counts[choice] = counts.get(choice, 0) + 1
+                if count_mode:
+                    # Exact appearance counts — one chip per label, single
+                    # column (no ``**`` spread).
+                    result.setdefault(span_id, {})[config_id] = {
+                        "choice_counts": counts,
+                    }
+                    continue
                 per_choice = {k: round(100.0 * v / total, 2) for k, v in counts.items()}
                 result.setdefault(span_id, {})[config_id] = per_choice
+                continue
+
+            if count_mode:
+                avg_val = round(avg_score * 100, 2) if _finite(avg_score) else None
+                pass_val = round(pass_rate, 2) if _finite(pass_rate) else None
+                # No completed value at all: keep the lifecycle-marker
+                # precedence identical to the legacy path.
+                if avg_val is None and pass_val is None:
+                    marker = non_terminal_eval_marker(row)
+                    if marker is not None:
+                        result.setdefault(span_id, {})[config_id] = marker
+                        continue
+                result.setdefault(span_id, {})[config_id] = build_count_eval_cell(
+                    avg_score=avg_val,
+                    pass_count=row.get("pass_count", 0) or 0,
+                    fail_count=row.get("fail_count", 0) or 0,
+                )
                 continue
 
             # Determine the score value matching PG format

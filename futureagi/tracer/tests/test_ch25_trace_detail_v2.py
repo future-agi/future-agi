@@ -119,7 +119,9 @@ def _patch_v2_pg(stack, *, project_accessible, pg_trace=None):
 
     if ScoreModel is not None:
         score_mgr = MagicMock()
-        score_mgr.filter.return_value.select_related.return_value.values.return_value = []
+        score_mgr.filter.return_value.select_related.return_value.values.return_value = (
+            []
+        )
         stack.enter_context(patch.object(ScoreModel, "objects", score_mgr))
 
     stack.enter_context(
@@ -221,9 +223,7 @@ class TestV2InputOutputParsing:
         )
         with ExitStack() as stack:
             _patch_v2_pg(stack, project_accessible=True, pg_trace=None)
-            result = retrieve_trace_detail_ch(
-                MagicMock(), MagicMock(), "T1", analytics
-            )
+            result = retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
         return result
 
     def test_json_input_output_parsed_to_objects(self):
@@ -455,148 +455,31 @@ class TestV1V2EnvelopeParity:
 
 
 # --------------------------------------------------------------------------- #
-# 4) Eval score mapping
+# 4) Eval enrichment moved to the view (TH-7610)
 # --------------------------------------------------------------------------- #
-class TestV2EvalScoreRendering:
-    """Nullable output_float/output_bool -> numeric score; a real 0.0 (0%) float
-    score must survive (`is not None`, not truthiness)."""
+class TestV2NoHandlerEvalFetch:
+    """Grouped eval_scores are attached uniformly for v1+v2 by the view
+    (``TraceView.retrieve`` -> ``attach_grouped_eval_scores``); the v2 handler
+    must neither query the eval table nor attach a per-span ``eval_scores``
+    key — otherwise every detail request pays a second CH eval read. The
+    grouped structure itself is covered by test_trace_detail_eval_scores.py.
+    """
 
-    @staticmethod
-    def _eval_row(**overrides):
-        # empty eval_config_id -> skips the CustomEvalConfig lookup (no DB hit)
-        row = {
-            "span_id": "S1",
-            "eval_config_id": "",
-            "output_float": None,
-            "output_bool": None,
-            "output_str": None,
-            "eval_explanation": "",
-        }
-        row.update(overrides)
-        return row
-
-    def _scores_for(self, eval_row):
+    def test_handler_emits_no_eval_query_and_no_eval_scores_key(self):
         analytics = _FakeAnalytics(
             project_rows=[{"project_id": "P1"}],
             span_rows=[_root_span_row()],
-            eval_rows=[eval_row],
+            # Would leak into the response if the handler still ran its own
+            # eval fetch (the fake routes any FINAL query here).
+            eval_rows=[{"span_id": "S1", "eval_config_id": "C1"}],
         )
         with ExitStack() as stack:
             _patch_v2_pg(stack, project_accessible=True, pg_trace=None)
             result = retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
-        return result["observation_spans"][0]["eval_scores"]
-
-    def test_zero_float_score_is_kept(self):
-        # regression: truthiness check previously dropped this to None
-        scores = self._scores_for(self._eval_row(output_float=0.0))
-        assert len(scores) == 1 and scores[0]["score"] == 0.0
-
-    def test_nonzero_float_score(self):
-        assert self._scores_for(self._eval_row(output_float=0.75))[0]["score"] == 75.0
-
-    def test_bool_false_score(self):
-        assert self._scores_for(self._eval_row(output_bool=False))[0]["score"] == 0
-
-    def test_no_score_when_both_null(self):
-        assert self._scores_for(self._eval_row())[0]["score"] is None
-
-    def _scores_for_type(self, output_type, eval_row, config=None):
-        """Config resolves to an eval of ``output_type`` (via derive_output_type).
-        Pass ``config`` (e.g. {"output": "Pass/Fail"}) with output_type=None to
-        exercise the config["output"] fallback when output_type_normalized is unset."""
-        analytics = _FakeAnalytics(
-            project_rows=[{"project_id": "P1"}],
-            span_rows=[_root_span_row()],
-            eval_rows=[eval_row],
-        )
-        cfg = SimpleNamespace(
-            id="C1",
-            name="e",
-            eval_template=SimpleNamespace(
-                output_type_normalized=output_type,
-                name="e",
-                template_type="single",
-                config=config or {},
-            ),
-        )
-        cfg_mgr = MagicMock()
-        cfg_mgr.filter.return_value.select_related.return_value = [cfg]
-        with ExitStack() as stack:
-            _patch_v2_pg(stack, project_accessible=True, pg_trace=None)
-            stack.enter_context(
-                patch(
-                    "tracer.models.custom_eval_config.CustomEvalConfig.objects",
-                    cfg_mgr,
-                )
-            )
-            result = retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
-        return result["observation_spans"][0]["eval_scores"]
-
-    def test_pass_fail_pass_with_coerced_zero_float(self):
-        # Verdict in output_bool, output_float coerced to 0 → 100 (Pass), not 0.
-        row = self._eval_row(eval_config_id="C1", output_bool=True, output_float=0.0)
-        assert self._scores_for_type("pass_fail", row)[0]["score"] == 100
-
-    def test_pass_fail_fail_with_coerced_zero_float(self):
-        row = self._eval_row(eval_config_id="C1", output_bool=False, output_float=0.0)
-        assert self._scores_for_type("pass_fail", row)[0]["score"] == 0
-
-    def test_percentage_uses_float_not_coerced_bool(self):
-        # percentage → output_float; the coerced output_bool must be ignored.
-        row = self._eval_row(eval_config_id="C1", output_float=0.6, output_bool=True)
-        assert self._scores_for_type("percentage", row)[0]["score"] == 60.0
-
-    def test_choices_single_surfaces_label_not_zero(self):
-        # Choices: value in output_str_list; float/bool coerced to 0. Must show
-        # the option as score_label with score None (not 0% / a fake Fail).
-        row = self._eval_row(
-            output_str_list='["neutral"]', output_bool=False, output_float=0.0
-        )
-        e = self._scores_for(row)[0]
-        assert e["score"] is None
-        assert e["score_items"] == ["neutral"]
-        assert e["score_label"] == "neutral"
-
-    def test_choices_multiselect_lists_each_option(self):
-        row = self._eval_row(
-            output_str_list='["neutral","formal"]', output_bool=False, output_float=0.0
-        )
-        e = self._scores_for(row)[0]
-        assert e["score"] is None
-        assert e["score_items"] == ["neutral", "formal"]
-        assert e["score_label"] == "neutral, formal"
-
-    def test_pass_fail_with_real_float_uses_bool_not_float(self):
-        # Deterministic evaluator writes a bool verdict AND a float; Pass/Fail
-        # must score from the bool (100), not the float (85).
-        row = self._eval_row(eval_config_id="C1", output_bool=True, output_float=0.85)
-        assert self._scores_for_type("pass_fail", row)[0]["score"] == 100
-
-    def test_pass_fail_routed_via_config_output_when_normalized_null(self):
-        # output_type_normalized unset → derive_output_type falls back to
-        # config["output"], so a passing Pass/Fail still scores 100, not 0.
-        row = self._eval_row(eval_config_id="C1", output_bool=True, output_float=0.0)
-        e = self._scores_for_type(None, row, config={"output": "Pass/Fail"})[0]
-        assert e["score"] == 100
-
-    def test_errored_row_nulls_all_derived_fields(self):
-        row = self._eval_row(
-            output_str_list='["neutral"]', output_bool=True, error=True
-        )
-        e = self._scores_for(row)[0]
-        assert e["score"] is None
-        assert e["score_items"] is None
-        assert e["score_label"] is None
-        assert e["result"] is None
-
-    def test_skipped_row_nulls_all_derived_fields(self):
-        row = self._eval_row(
-            output_str_list='["neutral"]', output_bool=True, status="skipped"
-        )
-        e = self._scores_for(row)[0]
-        assert e["score"] is None
-        assert e["score_items"] is None
-        assert e["result"] is None
+        entry = result["observation_spans"][0]
+        assert "eval_scores" not in entry
+        assert entry["annotations"] == []
+        assert not any("eval_logger" in q for q in analytics.queries)
 
 
 # --------------------------------------------------------------------------- #
