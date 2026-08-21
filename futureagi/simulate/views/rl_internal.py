@@ -11,6 +11,8 @@ lookups, explicit ``deleted=False`` filters): ``views/alk_simulate_ingestion.py`
 
 from __future__ import annotations
 
+import uuid
+
 from django.db import IntegrityError, transaction
 from django.db.models import Max
 from django.utils import timezone
@@ -428,7 +430,7 @@ class RLEnvironmentWorldsView(_RLInternalAPIView):
                 state=data.get("state", {}),
                 handlers=data.get("handlers", {}),
                 tool_specs=data.get("tool_specs", []),
-                world_checks=data.get("world_checks", []),
+                world_checks=data.get("world_checks", {}),
                 refusal_signature=data.get("refusal_signature", ""),
                 master_db_name=data.get("master_db_name", ""),
             )
@@ -477,6 +479,16 @@ class RLEnvironmentWorldDetailView(_RLInternalAPIView):
 
 
 class RLWorldDetailView(_RLInternalAPIView):
+    def get(self, request, world_id):
+        world = (
+            RLWorld.no_workspace_objects.filter(id=world_id, deleted=False)
+            .select_related("contract")
+            .first()
+        )
+        if world is None:
+            return _error("world not found", 404)
+        return Response(world_payload(world), status=200)
+
     def patch(self, request, world_id):
         world = (
             RLWorld.no_workspace_objects.filter(id=world_id, deleted=False)
@@ -566,21 +578,25 @@ class RLEnvironmentScenariosView(_RLInternalAPIView):
                 existing.save(update_fields=update_fields)
                 return Response(scenario_payload(existing), status=200)
 
-            scenario = RLScenario.no_workspace_objects.create(
-                organization=locked_environment.organization,
-                environment=locked_environment,
-                world=world,
-                name=data["name"],
-                instruction=data.get("instruction", ""),
-                persona=data.get("persona", {}),
-                variables=data.get("variables", {}),
-                solution=data.get("solution", {}),
-                sub_goals=data.get("sub_goals", []),
-                setup_code=data.get("setup_code", ""),
-                ready_code=data.get("ready_code", ""),
-                checks=data.get("checks", []),
-                max_turns=data.get("max_turns", 12),
-            )
+            create_kwargs = {
+                "organization": locked_environment.organization,
+                "environment": locked_environment,
+                "world": world,
+                "name": data["name"],
+                "instruction": data.get("instruction", ""),
+                "persona": data.get("persona", {}),
+                "variables": data.get("variables", {}),
+                "solution": data.get("solution", []),
+                "sub_goals": data.get("sub_goals", []),
+                "setup_code": data.get("setup_code", ""),
+                "ready_code": data.get("ready_code", ""),
+                "checks": data.get("checks", {}),
+            }
+            # Omit when absent so the model default (10) applies, rather than
+            # duplicating that literal here where it can drift out of sync.
+            if "max_turns" in data:
+                create_kwargs["max_turns"] = data["max_turns"]
+            scenario = RLScenario.no_workspace_objects.create(**create_kwargs)
         return Response(scenario_payload(scenario), status=201)
 
 
@@ -631,6 +647,22 @@ class RLScenarioDetailView(_RLInternalAPIView):
 
 
 class RLWorldCopyListCreateView(_RLInternalAPIView):
+    def get(self, request):
+        raw_call_execution_id = request.query_params.get("call_execution_id")
+        if not raw_call_execution_id:
+            return _error("call_execution_id is required", 400)
+        try:
+            call_execution_id = uuid.UUID(raw_call_execution_id)
+        except ValueError:
+            return _error(f"call_execution_id is not a uuid: {raw_call_execution_id}", 400)
+
+        copy = RLWorldCopy.no_workspace_objects.filter(
+            call_execution_id=call_execution_id, deleted=False
+        ).first()
+        if copy is None:
+            return _error("no copy for call execution", 404)
+        return Response(world_copy_payload(copy), status=200)
+
     def post(self, request):
         serializer = WorldCopyCreateRequestSerializer(data=request.data)
         if not serializer.is_valid():
@@ -741,8 +773,19 @@ class RLWorldCopyDetailView(_RLInternalAPIView):
             return Response(serializer.errors, status=400)
         data = serializer.validated_data
 
+        # Terminal statuses are never overwritten; callers treat 409 as
+        # already-settled.
+        if "status" in data and copy.status in (
+            RLWorldCopy.Status.GRADED,
+            RLWorldCopy.Status.DROPPED,
+            RLWorldCopy.Status.EXPIRED,
+        ):
+            return Response(
+                {"error": f"copy is {copy.status}", "status": copy.status}, status=409
+            )
+
         update_fields = []
-        for field in ("status", "db_name", "error", "verdicts", "expires_at"):
+        for field in ("status", "db_name", "error", "verdicts", "expires_at", "state"):
             if field in data:
                 setattr(copy, field, data[field])
                 update_fields.append(field)
@@ -756,7 +799,8 @@ class RLWorldCopyCallLogView(_RLInternalAPIView):
         serializer = WorldCopyCallLogRequestSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=400)
-        entries = serializer.validated_data["entries"]
+        data = serializer.validated_data
+        entries = data["entries"]
 
         with transaction.atomic():
             # Two concurrent tool calls appending to the same copy must both
@@ -766,8 +810,17 @@ class RLWorldCopyCallLogView(_RLInternalAPIView):
             ).first()
             if copy is None:
                 return _error("world copy not found", 404)
+            # An abandoned handler must not corrupt evidence behind an
+            # already-computed grade, so once a copy leaves READY/IN_CALL its
+            # call log is frozen.
+            if copy.status not in (RLWorldCopy.Status.READY, RLWorldCopy.Status.IN_CALL):
+                return _error(f"copy is {copy.status}", 409)
+            update_fields = ["call_log", "updated_at"]
             copy.call_log = copy.call_log + entries
-            copy.save(update_fields=["call_log", "updated_at"])
+            if "state" in data:
+                copy.state = data["state"]
+                update_fields.append("state")
+            copy.save(update_fields=update_fields)
         return Response({"count": len(copy.call_log)}, status=200)
 
 

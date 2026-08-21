@@ -290,7 +290,11 @@ class StoreManager:
                 connection.execute("SET session_replication_role = DEFAULT")
 
             for sequence, value in snapshot.counters.items():
-                connection.execute("SELECT setval(%s, %s, true)", (f"public.{sequence}", value))
+                # Quoted to match PostgresStore.restore: an unquoted mixed-case
+                # sequence name resolves to a different (lowercased) identifier.
+                connection.execute(
+                    "SELECT setval(%s, %s, true)", (f'public."{sequence}"', value)
+                )
 
     def _verify(self, temp: str, snapshot: Snapshot) -> None:
         psycopg = _psycopg()

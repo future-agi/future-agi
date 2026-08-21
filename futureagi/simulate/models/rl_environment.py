@@ -271,7 +271,8 @@ class RLWorld(BaseModel):
     state = models.JSONField(default=dict, blank=True, help_text="World state")
     handlers = models.JSONField(default=dict, blank=True, help_text="Registered handlers")
     tool_specs = models.JSONField(default=list, blank=True, help_text="Tool specifications")
-    world_checks = models.JSONField(default=list, blank=True, help_text="World-level checks")
+    # The harness produces {name: python_source}, not a list.
+    world_checks = models.JSONField(default=dict, blank=True, help_text="World-level checks")
     refusal_signature = models.TextField(
         blank=True, default="", help_text="Signature used to detect agent refusals"
     )
@@ -340,15 +341,18 @@ class RLScenario(BaseModel):
     instruction = models.TextField(blank=True, default="", help_text="Simulator instruction")
     persona = models.JSONField(default=dict, blank=True, help_text="Persona driving the simulator")
     variables = models.JSONField(default=dict, blank=True, help_text="Scenario variables")
-    solution = models.JSONField(default=dict, blank=True, help_text="Reference solution")
+    # The harness produces [{"tool": str, "arguments": dict}], not a dict.
+    solution = models.JSONField(default=list, blank=True, help_text="Reference solution")
     sub_goals = models.JSONField(default=list, blank=True, help_text="Scenario sub-goals")
     setup_code = models.TextField(blank=True, default="", help_text="Code run before the scenario")
     ready_code = models.TextField(
         blank=True, default="", help_text="Code that determines scenario readiness"
     )
-    checks = models.JSONField(default=list, blank=True, help_text="Scenario-level checks")
+    # A mapping of expectation -> value (e.g. {"cart.count": 1}), not a list.
+    checks = models.JSONField(default=dict, blank=True, help_text="Scenario-level checks")
+    # Matches the harness's own Scenario default; the harness is the producer.
     max_turns = models.PositiveIntegerField(
-        default=12, help_text="Maximum number of turns allowed"
+        default=10, help_text="Maximum number of turns allowed"
     )
     gate_status = models.CharField(
         max_length=20,
@@ -467,6 +471,9 @@ class RLWorldCopy(BaseModel):
         help_text="Current lease status",
     )
     call_log = models.JSONField(default=list, blank=True, help_text="Call log entries")
+    # Written by the world service alongside call-log appends so a restart can
+    # rehydrate mutated state instead of rewinding to the build-time snapshot.
+    state = models.JSONField(default=dict, blank=True, help_text="The copy's live, mutated state")
     verdicts = models.JSONField(default=list, blank=True, help_text="Grading verdicts")
     # Computed backend-side; the harness cannot read the run's max duration.
     expires_at = models.DateTimeField(null=True, blank=True, help_text="When the lease expires")

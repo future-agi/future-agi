@@ -30,8 +30,16 @@ from harness.world.stores.manager import (  # noqa: E402
     TEMP_PREFIX,
 )
 
-SCRIPTS = ["CREATE TABLE t (id serial primary key, v text)", "INSERT INTO t (v) VALUES ('seed')"]
-SNAPSHOT = {"rows": {"t": [{"id": 1, "v": "seed"}, {"id": 2, "v": "second"}]}, "counters": {"t_id_seq": 2}}
+SCRIPTS = [
+    "CREATE TABLE t (id serial primary key, v text)",
+    "INSERT INTO t (v) VALUES ('seed')",
+    # Mixed-case, so restoring it only works if the setval call quotes the name.
+    'CREATE SEQUENCE "Order_id_seq"',
+]
+SNAPSHOT = {
+    "rows": {"t": [{"id": 1, "v": "seed"}, {"id": 2, "v": "second"}]},
+    "counters": {"t_id_seq": 2, "Order_id_seq": 2},
+}
 
 
 def _unique(prefix: str) -> str:
@@ -130,7 +138,9 @@ class TestStoreManagerLive:
             rows = conn.execute("SELECT id, v FROM t ORDER BY id").fetchall()
             assert rows == [(1, "seed"), (2, "second")]
             new_id = conn.execute("INSERT INTO t (v) VALUES ('third') RETURNING id").fetchone()[0]
+            last_value = conn.execute('SELECT last_value FROM "Order_id_seq"').fetchone()[0]
         assert new_id == 3
+        assert last_value == 2
 
         # Proves the GRANTs made during materialize survived CREATE DATABASE ... TEMPLATE:
         # harness_app, not just the admin role, can read what the scenario just wrote.

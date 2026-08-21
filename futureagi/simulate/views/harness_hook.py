@@ -71,6 +71,12 @@ class HarnessRoomConfigView(APIView):
         if copy is None:
             return JsonResponse({"error": "unknown room", "room": room}, status=404)
 
+        # Unreachable until run initiation wires room->copy registration (see
+        # _resolve_room above); that wiring replaces this stub response.
+        return JsonResponse(
+            {"error": "room resolution is not wired yet", "room": room}, status=501
+        )
+
 
 class HarnessHookView(APIView):
     """Deliberately public: the capability token in the URL is the only

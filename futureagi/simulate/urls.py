@@ -194,7 +194,7 @@ urlpatterns = [
     path(
         "api/rl-harness/world-copies/",
         RLWorldCopyListCreateView.as_view(),
-        name="rl-harness-world-copies-create",
+        name="rl-harness-world-copies",
     ),
     path(
         "api/rl-harness/world-copies/by-token/<uuid:token>/",

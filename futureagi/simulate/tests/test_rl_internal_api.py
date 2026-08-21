@@ -97,14 +97,19 @@ def full_setup(db, organization, workspace):
     environment, contract, world, scenario = _make_chain(
         organization, workspace, title="Auth Matrix"
     )
+    call_execution, _ = _make_call_execution(organization, workspace, name="Auth Matrix ALK")
+    # READY (not the default PROVISIONING) so the call-log route's status
+    # gate doesn't 409 the auth-matrix's "correct secret succeeds" case; tied
+    # to call_execution so the world-copy-lookup route also finds it.
     world_copy = RLWorldCopy.objects.create(
         organization=organization,
         environment=environment,
         world=world,
         scenario=scenario,
+        call_execution=call_execution,
         purpose=RLWorldCopy.Purpose.GATE,
+        status=RLWorldCopy.Status.READY,
     )
-    call_execution, _ = _make_call_execution(organization, workspace, name="Auth Matrix ALK")
 
     # organization=None global template: an active workspace context would
     # silently reassign it back to the current org, defeating the
@@ -173,6 +178,7 @@ def _route_table(setup):
             {"status": "saved"},
             200,
         ),
+        "world_get_by_id": ("get", f"{RL_BASE}/worlds/{setup.world.id}/", None, 200),
         "scenario_create": (
             "post",
             f"{RL_BASE}/environments/{env.id}/scenarios/",
@@ -215,6 +221,12 @@ def _route_table(setup):
             {"entries": [{"tool": "x"}]},
             200,
         ),
+        "world_copy_lookup": (
+            "get",
+            f"{RL_BASE}/world-copies/?call_execution_id={setup.call_execution.id}",
+            None,
+            200,
+        ),
         "rl_verdicts": (
             "post",
             f"{RL_BASE}/call-executions/{setup.call_execution.id}/rl-verdicts/",
@@ -234,6 +246,7 @@ _ROUTE_NAMES = [
     "world_create",
     "world_get",
     "world_patch",
+    "world_get_by_id",
     "scenario_create",
     "scenario_patch",
     "scenario_get",
@@ -241,6 +254,7 @@ _ROUTE_NAMES = [
     "world_copy_by_token",
     "world_copy_patch",
     "world_copy_call_log",
+    "world_copy_lookup",
     "rl_verdicts",
 ]
 
@@ -599,6 +613,105 @@ def test_world_version_increments_and_get_roundtrip(internal_client, organizatio
 @pytest.mark.integration
 @pytest.mark.api
 @pytest.mark.django_db
+def test_world_get_by_id(internal_client, organization, workspace):
+    environment = RLEnvironment.objects.create(
+        organization=organization, workspace=workspace, title="World By Id Env"
+    )
+    contract = RLContract.objects.create(
+        organization=organization,
+        environment=environment,
+        version=1,
+        status=RLContract.Status.ACTIVE,
+        data={},
+    )
+    snapshot = {"rows": {"users": [{"id": 1}]}, "counters": {"users": 1}}
+    handlers = {"on_start": "def on_start(): ..."}
+    schema_scripts = ["CREATE TABLE users (id int)"]
+    world_checks = {"holds": "def check(world):\n    return None"}
+
+    with_checks = internal_client.post(
+        f"{RL_BASE}/environments/{environment.id}/worlds/",
+        {
+            "contract_id": str(contract.id),
+            "snapshot": snapshot,
+            "handlers": handlers,
+            "schema_scripts": schema_scripts,
+            "world_checks": world_checks,
+        },
+        format="json",
+    )
+    assert with_checks.status_code == 201, with_checks.content
+    world_id = with_checks.json()["id"]
+
+    response = internal_client.get(f"{RL_BASE}/worlds/{world_id}/")
+    assert response.status_code == 200, response.content
+    body = response.json()
+    assert set(body.keys()) == {
+        "id",
+        "environment_id",
+        "contract_id",
+        "contract_version",
+        "version",
+        "status",
+        "store_kind",
+        "schema_scripts",
+        "snapshot",
+        "state",
+        "handlers",
+        "tool_specs",
+        "world_checks",
+        "refusal_signature",
+        "master_db_name",
+        "master_materialized_at",
+        "created_at",
+        "updated_at",
+    }
+    assert body["id"] == world_id
+    assert body["snapshot"] == snapshot
+    assert body["handlers"] == handlers
+    assert body["schema_scripts"] == schema_scripts
+    assert body["contract_version"] == contract.version
+    assert body["world_checks"] == world_checks
+
+    without_checks = internal_client.post(
+        f"{RL_BASE}/environments/{environment.id}/worlds/",
+        {"contract_id": str(contract.id)},
+        format="json",
+    )
+    assert without_checks.status_code == 201, without_checks.content
+    world_id_no_checks = without_checks.json()["id"]
+
+    response_no_checks = internal_client.get(f"{RL_BASE}/worlds/{world_id_no_checks}/")
+    assert response_no_checks.status_code == 200, response_no_checks.content
+    assert response_no_checks.json()["world_checks"] == {}
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+def test_world_create_rejects_sqlite(internal_client, organization, workspace):
+    environment = RLEnvironment.objects.create(
+        organization=organization, workspace=workspace, title="Sqlite Env"
+    )
+    contract = RLContract.objects.create(
+        organization=organization,
+        environment=environment,
+        version=1,
+        status=RLContract.Status.ACTIVE,
+        data={},
+    )
+    response = internal_client.post(
+        f"{RL_BASE}/environments/{environment.id}/worlds/",
+        {"contract_id": str(contract.id), "store_kind": "sqlite"},
+        format="json",
+    )
+    assert response.status_code == 400, response.content
+    assert "sqlite" in str(response.json()).lower()
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
 def test_world_contract_must_belong_to_environment_404(internal_client, organization, workspace):
     environment = RLEnvironment.objects.create(
         organization=organization, workspace=workspace, title="Owner Env"
@@ -646,7 +759,7 @@ def test_scenario_upsert_resets_gate(internal_client, organization, workspace):
 
     created = internal_client.post(
         f"{RL_BASE}/environments/{environment.id}/scenarios/",
-        {"name": "Refund Flow", "world_id": str(world.id), "checks": [{"kind": "final"}]},
+        {"name": "Refund Flow", "world_id": str(world.id), "checks": {"cart.count": 1}},
         format="json",
     )
     assert created.status_code == 201, created.content
@@ -675,7 +788,7 @@ def test_scenario_upsert_resets_gate(internal_client, organization, workspace):
     assert body["proved_at"] is None
     assert body["instruction"] == "Updated instruction"
     # Fields the upsert didn't mention are preserved from the create call.
-    assert body["checks"] == [{"kind": "final"}]
+    assert body["checks"] == {"cart.count": 1}
     assert (
         RLScenario.objects.filter(environment=environment, name="Refund Flow").count() == 1
     )
@@ -790,6 +903,43 @@ def test_copy_create_integrity_error_recovers_existing_row(
 @pytest.mark.integration
 @pytest.mark.api
 @pytest.mark.django_db
+def test_copy_lookup_by_call_execution(internal_client, organization, workspace):
+    environment, _, world, scenario = _make_chain(
+        organization, workspace, title="Copy Lookup Env"
+    )
+    call_execution, _ = _make_call_execution(organization, workspace, name="Copy Lookup ALK")
+    copy = RLWorldCopy.objects.create(
+        organization=organization,
+        environment=environment,
+        world=world,
+        scenario=scenario,
+        call_execution=call_execution,
+        purpose=RLWorldCopy.Purpose.GATE,
+    )
+
+    found = internal_client.get(
+        f"{RL_BASE}/world-copies/?call_execution_id={call_execution.id}"
+    )
+    assert found.status_code == 200, found.content
+    assert found.json()["id"] == str(copy.id)
+
+    missing_param = internal_client.get(f"{RL_BASE}/world-copies/")
+    assert missing_param.status_code == 400
+
+    invalid_uuid = internal_client.get(
+        f"{RL_BASE}/world-copies/?call_execution_id=not-a-uuid"
+    )
+    assert invalid_uuid.status_code == 400
+
+    unknown = internal_client.get(
+        f"{RL_BASE}/world-copies/?call_execution_id={uuid.uuid4()}"
+    )
+    assert unknown.status_code == 404
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
 def test_copy_coherence_404s(internal_client, organization, workspace):
     environment, _, world, scenario = _make_chain(
         organization, workspace, title="Copy Coherence Env"
@@ -839,6 +989,7 @@ def test_copy_call_log_appends_under_retry(internal_client, organization, worksp
         world=world,
         scenario=scenario,
         purpose=RLWorldCopy.Purpose.GATE,
+        status=RLWorldCopy.Status.READY,
     )
 
     first = internal_client.post(
@@ -864,6 +1015,105 @@ def test_copy_call_log_appends_under_retry(internal_client, organization, worksp
         f"{RL_BASE}/world-copies/{copy.id}/call-log/", {"entries": []}, format="json"
     )
     assert empty.status_code == 400
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+def test_call_log_fenced_after_grading(internal_client, organization, workspace):
+    environment, _, world, scenario = _make_chain(
+        organization, workspace, title="Fenced Call Log Env"
+    )
+    copy = RLWorldCopy.objects.create(
+        organization=organization,
+        environment=environment,
+        world=world,
+        scenario=scenario,
+        purpose=RLWorldCopy.Purpose.GATE,
+        status=RLWorldCopy.Status.GRADED,
+    )
+
+    response = internal_client.post(
+        f"{RL_BASE}/world-copies/{copy.id}/call-log/",
+        {"entries": [{"tool": "late"}]},
+        format="json",
+    )
+    assert response.status_code == 409, response.content
+    assert response.json()["error"] == "copy is graded"
+
+    copy.refresh_from_db()
+    assert copy.call_log == []
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+def test_call_log_carries_state(internal_client, organization, workspace):
+    environment, _, world, scenario = _make_chain(
+        organization, workspace, title="Call Log State Env"
+    )
+    copy = RLWorldCopy.objects.create(
+        organization=organization,
+        environment=environment,
+        world=world,
+        scenario=scenario,
+        purpose=RLWorldCopy.Purpose.GATE,
+        status=RLWorldCopy.Status.IN_CALL,
+    )
+
+    response = internal_client.post(
+        f"{RL_BASE}/world-copies/{copy.id}/call-log/",
+        {"entries": [{"tool": "a"}], "state": {"cart.count": 2}},
+        format="json",
+    )
+    assert response.status_code == 200, response.content
+
+    by_token = internal_client.get(f"{RL_BASE}/world-copies/by-token/{copy.token}/")
+    assert by_token.status_code == 200, by_token.content
+    body = by_token.json()
+    assert body["state"] == {"cart.count": 2}
+    assert [entry["tool"] for entry in body["call_log"]] == ["a"]
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+def test_terminal_status_patch_409(internal_client, organization, workspace):
+    environment, _, world, scenario = _make_chain(
+        organization, workspace, title="Terminal Status Env"
+    )
+    copy = RLWorldCopy.objects.create(
+        organization=organization,
+        environment=environment,
+        world=world,
+        scenario=scenario,
+        purpose=RLWorldCopy.Purpose.GATE,
+        status=RLWorldCopy.Status.GRADED,
+    )
+
+    response = internal_client.patch(
+        f"{RL_BASE}/world-copies/{copy.id}/",
+        {"status": "dropped"},
+        format="json",
+    )
+    assert response.status_code == 409, response.content
+    body = response.json()
+    assert body["error"] == "copy is graded"
+    assert body["status"] == "graded"
+    copy.refresh_from_db()
+    assert copy.status == RLWorldCopy.Status.GRADED
+
+    # Only the "status" key triggers the fence; other bookkeeping fields on a
+    # terminal row still write.
+    bookkeeping = internal_client.patch(
+        f"{RL_BASE}/world-copies/{copy.id}/",
+        {"error": "late grading note"},
+        format="json",
+    )
+    assert bookkeeping.status_code == 200, bookkeeping.content
+    copy.refresh_from_db()
+    assert copy.error == "late grading note"
+    assert copy.status == RLWorldCopy.Status.GRADED
 
 
 @pytest.mark.integration

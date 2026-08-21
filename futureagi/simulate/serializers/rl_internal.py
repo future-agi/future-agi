@@ -175,7 +175,8 @@ class WorldCreateRequestSerializer(_StrictSerializer):
     state = serializers.DictField(required=False)
     handlers = serializers.DictField(required=False)
     tool_specs = serializers.ListField(required=False)
-    world_checks = serializers.ListField(required=False)
+    # The harness produces {name: python_source}, not a list.
+    world_checks = serializers.DictField(required=False)
     refusal_signature = serializers.CharField(required=False, allow_blank=True)
     master_db_name = serializers.CharField(required=False, allow_blank=True, max_length=63)
     status = serializers.ChoiceField(
@@ -183,6 +184,15 @@ class WorldCreateRequestSerializer(_StrictSerializer):
         default=RLWorld.Status.SAVED.value,
         required=False,
     )
+
+    def validate_store_kind(self, value):
+        # A sqlite world has no DB snapshot, so it can never be served — refuse at save.
+        if value == RLWorld.StoreKind.SQLITE.value:
+            raise serializers.ValidationError(
+                'store_kind "sqlite" cannot be saved; sqlite is a build-time store with '
+                "no servable snapshot"
+            )
+        return value
 
 
 class WorldPatchRequestSerializer(_StrictSerializer):
@@ -229,11 +239,13 @@ class ScenarioUpsertRequestSerializer(_StrictSerializer):
     instruction = serializers.CharField(required=False, allow_blank=True)
     persona = serializers.DictField(required=False)
     variables = serializers.DictField(required=False)
-    solution = serializers.DictField(required=False)
+    # The harness produces [{"tool": str, "arguments": dict}], not a dict.
+    solution = serializers.ListField(child=serializers.DictField(), required=False)
     sub_goals = serializers.ListField(required=False)
     setup_code = serializers.CharField(required=False, allow_blank=True)
     ready_code = serializers.CharField(required=False, allow_blank=True)
-    checks = serializers.ListField(required=False)
+    # A mapping of expectation -> value (e.g. {"cart.count": 1}), not a list.
+    checks = serializers.DictField(required=False)
     max_turns = serializers.IntegerField(required=False, min_value=1)
 
 
@@ -289,10 +301,13 @@ class WorldCopyPatchRequestSerializer(_StrictSerializer):
     error = serializers.CharField(required=False, allow_blank=True)
     verdicts = serializers.ListField(required=False)
     expires_at = serializers.DateTimeField(required=False, allow_null=True)
+    # Prepare's ready-PATCH seeds the initial state.
+    state = serializers.DictField(required=False)
 
 
 class WorldCopyCallLogRequestSerializer(_StrictSerializer):
     entries = serializers.ListField(child=serializers.DictField())
+    state = serializers.DictField(required=False)
 
     def validate_entries(self, value):
         if not value:
@@ -315,6 +330,7 @@ def world_copy_payload(copy: RLWorldCopy) -> dict:
         "db_name": copy.db_name,
         "status": copy.status,
         "call_log": copy.call_log,
+        "state": copy.state,
         "verdicts": copy.verdicts,
         "expires_at": copy.expires_at.isoformat() if copy.expires_at else None,
         "error": copy.error,
