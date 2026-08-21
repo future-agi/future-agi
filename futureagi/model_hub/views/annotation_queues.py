@@ -1,6 +1,7 @@
 import json
 import re
 import threading
+import time
 import unicodedata
 import uuid
 from datetime import date, datetime, timedelta
@@ -22,6 +23,8 @@ from django.db.models import (
 )
 from django.db.models.functions import Coalesce, Lower, TruncDate
 from django.utils import timezone
+from django.utils.decorators import method_decorator
+from django.views.decorators.gzip import gzip_page
 from drf_yasg.utils import swagger_auto_schema
 from model_hub.models.annotation_queues import (
     FULL_ACCESS_QUEUE_ROLES,
@@ -3329,10 +3332,32 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             **ERROR_RESPONSES,
         },
     )
+    # Compress at the origin, not at the proxy. nginx already gzips
+    # application/json, but it runs one replica capped at 100m CPU, so
+    # compressing a 38MB export there cost ~17s of the ~24s request — measured
+    # 24.4s with Accept-Encoding: gzip vs 12.3s without, 3 reps each. nginx skips
+    # any response that already carries Content-Encoding, so this moves the work
+    # onto the backend pods, which have real CPU. It depends on nginx forwarding
+    # the client's Accept-Encoding, which it does today; a
+    # `proxy_set_header Accept-Encoding "";` upstream would silently fall back
+    # to identity, which is slow but correct. CSV was never compressed at all —
+    # nginx's gzip_types omits text/csv — so that path gains the most.
+    @method_decorator(gzip_page)
     @action(detail=True, methods=["get"], url_path="export")
     def export_annotations(self, request, pk=None):
         """Export all items with their annotations."""
         query_params = request.validated_query_data
+        # Phase timings are logged once at the end. The server half of this
+        # request is ~7.5s on a real account and local data is 5x smaller, so
+        # attribution has to come from production rather than a laptop.
+        phase_ms: dict[str, float] = {}
+        phase_started = time.perf_counter()
+
+        def mark(phase):
+            nonlocal phase_started
+            now = time.perf_counter()
+            phase_ms[phase] = round((now - phase_started) * 1000, 1)
+            phase_started = now
 
         queue = self.get_object()
         # Tracer sources resolve CH-native via CollectorSourceCache below, so no
@@ -3372,14 +3397,19 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 ),
                 code=ApiErrorCode.EXPORT_TOO_LARGE.value,
             )
+        mark("items")
         queue_label_ids = list(
             queue.queue_labels.filter(deleted=False).values_list("label_id", flat=True)
         )
         scores_by_item = _scores_for_queue_items(items_list, queue_label_ids)
+        mark("scores")
         item_notes_by_id = _latest_item_notes_for_queue_items(items_list)
         eval_metrics_by_item = _eval_metrics_for_queue_items(items_list)
+        mark("notes_evals")
         ch_source_cache = CollectorSourceCache.for_items(items_list)
+        mark("clickhouse")
         cell_cache = dataset_cells_by_row(items_list)
+        mark("cells")
 
         result = []
         for item in items_list:
@@ -3409,7 +3439,17 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 }
             )
 
+        mark("assemble")
+
         fmt = query_params.get("export_format") or "json"
+        logger.info(
+            "annotation_export_phases",
+            queue_id=str(queue.id),
+            items=len(items_list),
+            export_format=fmt,
+            total_ms=round(sum(phase_ms.values()), 1),
+            **{f"{name}_ms": value for name, value in phase_ms.items()},
+        )
         if fmt == "csv":
             import csv
             import io
