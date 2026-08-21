@@ -93,9 +93,15 @@ def generate_scenario_columns(
         dataset_description = dataset_metadata.get("description") or getattr(
             scenario, "description", ""
         )
-        agent_name = getattr(agent_definition, "agent_name", "")
-        agent_description = getattr(agent_definition, "description", "")
-        agent_language = getattr(agent_definition, "language", "")
+        from simulate.models.agent_version import (
+            pinned_or_live,
+            resolve_configuration_snapshot,
+        )
+
+        _snap = resolve_configuration_snapshot(scenario)
+        agent_name = pinned_or_live(_snap, agent_definition, "agent_name") or ""
+        agent_description = pinned_or_live(_snap, agent_definition, "description") or ""
+        agent_language = pinned_or_live(_snap, agent_definition, "language") or ""
         dataset_objective = dataset_metadata.get("objective") or (
             f"Generate realistic values for the newly added columns within scenario '{scenario.name}' "
             f"for agent '{agent_name}' focused on {agent_description}."
@@ -180,6 +186,12 @@ def generate_scenario_columns(
             "reference_data": reference_rows,
             "batch_size": len(reference_rows),
         }
+
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
+
+        knowledge_base_payload = build_agent_kb_payload(agent_definition, scenario=scenario)
+        if knowledge_base_payload:
+            payload["knowledge_base"] = knowledge_base_payload
 
         logger.info(
             "Generating scenario columns for dataset %s (%d columns, %d reference rows)",
@@ -348,8 +360,16 @@ def generate_scenario_rows(
                 metadata = json.loads(metadata)
             persona_ids = metadata.get("persona_ids", None)
             custom_instruction = metadata.get("custom_instruction", None)
+            if metadata.get("add_persona_automatically"):
+                persona_ids = None
         # Get agent definition for constraints
         agent_definition = scenario.agent_definition
+
+        from model_hub.utils.kb_indexer import build_agent_kb_payload
+        from simulate.models.agent_version import resolve_configuration_snapshot
+
+        knowledge_base_payload = build_agent_kb_payload(agent_definition, scenario=scenario)
+        configuration_snapshot = resolve_configuration_snapshot(scenario)
 
         # Determine simulation mode
         mode = "voice" if agent_definition.agent_type == "voice" else "chat"
@@ -388,6 +408,9 @@ def generate_scenario_rows(
             no_of_rows=num_rows,
             simulation_mode=mode,
             custom_columns=custom_columns,
+            knowledge_base=knowledge_base_payload,
+            scenario_description=scenario.description,
+            configuration_snapshot=configuration_snapshot,
         )
         if custom_instruction:
             scenario_agent.custom_instruction = custom_instruction

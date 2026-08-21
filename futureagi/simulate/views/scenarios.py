@@ -78,6 +78,7 @@ from tfc.temporal.simulate import (
     start_create_graph_scenario_workflow_sync,
     start_create_script_scenario_workflow_sync,
 )
+from model_hub.utils.kb_indexer import build_agent_kb_payload
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
@@ -486,11 +487,23 @@ class CreateScenarioView(APIView):
                 "graph": Scenarios.ScenarioTypes.GRAPH,
             }
 
-            # Store persona_ids in metadata for future use
+            # Store persona_ids in metadata for future use. When
+            # add_persona_automatically is True the user opted into SDA-driven
+            # persona generation; drop any hand-picked personas so the row
+            # generator does not constrain the persona property_list.
             metadata = {}
-            persona_ids = validated_data.get("personas", [])
+            add_persona_automatically = validated_data.get(
+                "add_persona_automatically", False
+            )
+            persona_ids = (
+                []
+                if add_persona_automatically
+                else validated_data.get("personas", [])
+            )
             if persona_ids:
                 metadata["persona_ids"] = [str(pid) for pid in persona_ids]
+            if add_persona_automatically:
+                metadata["add_persona_automatically"] = True
 
             # Store agent_definition_version_id and custom_instruction in metadata
             agent_definition_version_id = validated_data.get(
@@ -1595,7 +1608,11 @@ def _deprecated_create_script_scenario_background_task(validated_data, scenario_
         no_of_rows = validated_data.get("no_of_rows", 20)
         script_url = validated_data.get("script_url")
         agent_definition_id = validated_data.get("agent_definition_id")
-        persona_ids = validated_data.get("personas", [])
+        persona_ids = (
+            []
+            if validated_data.get("add_persona_automatically", False)
+            else validated_data.get("personas", [])
+        )
         custom_columns = validated_data.get("custom_columns", [])
 
         # persona_ids = ['c82e9449-ea6b-4d1c-ae33-f18378528cc3','cc55a95d-1334-42ce-a3fb-6be23c26f53c']
@@ -1632,6 +1649,8 @@ def _deprecated_create_script_scenario_background_task(validated_data, scenario_
             str(agent_definition_id),
             no_of_rows=no_of_rows,
             custom_columns=custom_columns,
+            knowledge_base=build_agent_kb_payload(agent_definition_id, scenario=scenario),
+            scenario_description=scenario.description,
         )
         s, d = enhanced_agent.run(
             name=scenario.name,
@@ -1685,7 +1704,11 @@ def _deprecated_create_graph_scenario_background_task(validated_data, scenario_i
         generate_graph = validated_data.get("generate_graph", False)
         graph_data = validated_data.get("graph")
         no_of_rows = validated_data.get("no_of_rows", 20)
-        persona_ids = validated_data.get("personas", [])
+        persona_ids = (
+            []
+            if validated_data.get("add_persona_automatically", False)
+            else validated_data.get("personas", [])
+        )
         custom_columns = validated_data.get("custom_columns", [])
 
         # persona_ids = ['c82e9449-ea6b-4d1c-ae33-f18378528cc3','cc55a95d-1334-42ce-a3fb-6be23c26f53c']
@@ -1732,6 +1755,8 @@ def _deprecated_create_graph_scenario_background_task(validated_data, scenario_i
             str(agent_definition_id),
             no_of_rows=no_of_rows,
             custom_columns=custom_columns,
+            knowledge_base=build_agent_kb_payload(agent_definition_id, scenario=scenario),
+            scenario_description=scenario.description,
         )
         s, d = enhanced_agent.run(
             name=scenario.name,

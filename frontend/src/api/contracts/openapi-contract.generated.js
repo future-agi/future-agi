@@ -90023,6 +90023,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "maxLength": 200,
           "minLength": 1
+        },
+        "property": {
+          "title": "Property",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "x-nullable": true
+          },
+          "x-nullable": true
         }
       }
     },

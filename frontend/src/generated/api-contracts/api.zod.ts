@@ -33167,7 +33167,8 @@ export const SimulateScenariosCreateCreateBody = zod.object({
   "custom_columns": zod.array(zod.object({
   "name": zod.string().min(1).max(simulateScenariosCreateCreateBodyCustomColumnsItemNameMax),
   "data_type": zod.enum(['text', 'boolean', 'integer', 'float', 'json', 'array', 'image', 'images', 'datetime', 'audio', 'document', 'others', 'persona']),
-  "description": zod.string().min(1).max(simulateScenariosCreateCreateBodyCustomColumnsItemDescriptionMax)
+  "description": zod.string().min(1).max(simulateScenariosCreateCreateBodyCustomColumnsItemDescriptionMax),
+  "property": zod.record(zod.string(), zod.string()).optional()
 })).max(simulateScenariosCreateCreateBodyCustomColumnsMax).optional(),
   "agent_name": zod.string().min(1).max(simulateScenariosCreateCreateBodyAgentNameMax).optional(),
   "agent_prompt": zod.string().optional(),
@@ -33307,7 +33308,8 @@ export const SimulateScenariosAddColumnsCreateBody = zod.object({
   "columns": zod.array(zod.object({
   "name": zod.string().min(1).max(simulateScenariosAddColumnsCreateBodyColumnsItemNameMax),
   "data_type": zod.enum(['text', 'boolean', 'integer', 'float', 'json', 'array', 'image', 'images', 'datetime', 'audio', 'document', 'others', 'persona']),
-  "description": zod.string().min(1).max(simulateScenariosAddColumnsCreateBodyColumnsItemDescriptionMax)
+  "description": zod.string().min(1).max(simulateScenariosAddColumnsCreateBodyColumnsItemDescriptionMax),
+  "property": zod.record(zod.string(), zod.string()).optional()
 }))
 })
 
