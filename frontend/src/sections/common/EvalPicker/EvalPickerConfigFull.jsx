@@ -1304,7 +1304,6 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           size="small"
           placeholder="e.g. toxicity-check, my-custom-eval"
           value={evalName}
-          disabled={isEditMode} // Name is not editable in edit mode — it's the name of the UserEvalMetric instance, not the template
           onChange={(e) => {
             // Sanitise: lowercase, replace spaces with hyphens, only allow a-z 0-9 _ -
             const raw = e.target.value
@@ -1314,13 +1313,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             setEvalName(raw);
             setIsDirty(true);
           }}
-          error={!isEditMode && evalName.length >= 51}
+          error={evalName.length >= 51}
           helperText={
-            isEditMode
-              ? undefined
-              : evalName.length >= 51
-                ? "Name can't be longer than 50 characters"
-                : `Lowercase letters, numbers, hyphens and underscores only · ${evalName.length}/50`
+            evalName.length >= 51
+              ? "Name can't be longer than 50 characters"
+              : `Lowercase letters, numbers, hyphens and underscores only · ${evalName.length}/50`
           }
           FormHelperTextProps={{ sx: { fontSize: "11px", mt: 0.25, mx: 0 } }}
           sx={{ "& .MuiInputBase-root": { fontSize: "13px", height: 34 } }}
