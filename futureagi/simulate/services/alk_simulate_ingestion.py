@@ -164,6 +164,14 @@ def store_alk_recording(
         content_type=content_type,
     )
     recording_url = get_object_url(UPLOAD_BUCKET_NAME, object_key)
+    # Point the call at what was just stored. Returning the URL is not enough: the simulate
+    # pages read ``recording_url`` off the row, so a call whose audio uploaded but whose row
+    # was never updated shows no player at all -- indistinguishable from one never recorded.
+    call_execution.recording_url = recording_url
+    call_execution.recording_available = True
+    call_execution.save(
+        update_fields=["recording_url", "recording_available", "updated_at"]
+    )
     return RecordingUploadResult(
         recording_url=recording_url,
         object_key=object_key,
@@ -178,14 +186,29 @@ def _extension_from_filename(filename: str | None) -> str:
     return tail if tail and 1 <= len(tail) <= 5 else "wav"
 
 
-def _provision_text_agent_definition(
-    organization, agent_definition_id, agent_name, description
+def _voice_denied(organization) -> str:
+    """Why this organization may not run voice simulation, or an empty string.
+
+    The same two layers a run test created in the UI passes, asked here rather than assumed: an
+    external runner reporting a spoken call is still voice simulation, and provisioning must
+    neither bypass the gate nor refuse where the gate would allow.
+    """
+    from tfc.ee_gates import voice_sim_oss_gate_response, voice_sim_plan_denial
+
+    if voice_sim_oss_gate_response() is not None:
+        return "voice simulation is not available on this deployment"
+    denial = voice_sim_plan_denial(organization.id)
+    return denial.reason if denial else ""
+
+
+def _provision_agent_definition(
+    organization, agent_definition_id, agent_name, description, modality: str = ""
 ):
     """Resolve the RunTest's agent definition for provisioning.
 
-    Explicit id must resolve to a non-VOICE agent (voice is entitlement-gated in
-    CreateRunTestView; provisioning must not bypass that gate). Otherwise a TEXT
-    agent is created — chat call type follows the agent definition's type.
+    The call type follows the agent definition's type, so a spoken run reported as text renders
+    in the chat view with no player, whatever actually happened. ``modality`` is what the runner
+    observed, and voice is gated exactly as it is everywhere else.
     """
     if agent_definition_id:
         try:
@@ -197,15 +220,29 @@ def _provision_text_agent_definition(
                 f"agent definition {agent_definition_id} not found"
             ) from exc
         if agent_definition.agent_type == AgentDefinition.AgentTypeChoices.VOICE:
-            raise ALKSimulateIngestionError(
-                "voice agent definitions cannot be provisioned via ALK ingestion"
-            )
+            denied = _voice_denied(organization)
+            if denied:
+                raise ALKSimulateIngestionError(denied)
         return agent_definition
+    spoken = str(modality or "").strip().lower() == "voice"
+    if spoken:
+        denied = _voice_denied(organization)
+        if denied:
+            raise ALKSimulateIngestionError(denied)
+    # An external runner can drive a spoken agent as well as a typed one, and the call type
+    # follows from this: a run reported as text renders in the chat view, with no player and no
+    # audio, whatever actually happened on the call.
+    kind = (
+        AgentDefinition.AgentTypeChoices.VOICE
+        if spoken
+        else AgentDefinition.AgentTypeChoices.TEXT
+    )
     return AgentDefinition.objects.create(
         agent_name=agent_name or "alk-sdk-agent",
-        agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+        agent_type=kind,
         inbound=True,  # NOT NULL; call-direction is a no-op for chat
-        description=description or "SDK-provisioned chat agent (ALK ingestion).",
+        description=description
+        or f"SDK-provisioned {'voice' if spoken else 'chat'} agent (ALK ingestion).",
         organization=organization,
     )
 
@@ -219,6 +256,7 @@ def provision_alk_sim_run_test(
     agent_definition_id: str | None = None,
     agent_name: str | None = None,
     description: str = "",
+    modality: str = "",
 ) -> tuple[RunTest, list[Scenarios], AgentDefinition]:
     """Stand up a chat RunTest for an SDK-first run, two ways (exactly one):
 
@@ -252,8 +290,8 @@ def provision_alk_sim_run_test(
                 raise ALKSimulateIngestionError(
                     f"scenario(s) not found: {', '.join(missing)}"
                 )
-            agent_definition = _provision_text_agent_definition(
-                organization, agent_definition_id, agent_name, description
+            agent_definition = _provision_agent_definition(
+                organization, agent_definition_id, agent_name, description, modality
             )
             simulator_agent = next(
                 (s.simulator_agent for s in scenarios if s.simulator_agent), None
@@ -277,8 +315,8 @@ def provision_alk_sim_run_test(
             run_test.scenarios.set(scenarios)
             return run_test, scenarios, agent_definition
 
-        agent_definition = _provision_text_agent_definition(
-            organization, agent_definition_id, agent_name, description
+        agent_definition = _provision_agent_definition(
+            organization, agent_definition_id, agent_name, description, modality
         )
 
         scenarios: list[Scenarios] = []
@@ -587,7 +625,12 @@ def ingest_alk_sim_result(
             == CallExecution.SimulationCallType.VOICE
         ):
             _dispatch_csat_once(call_execution)
-        eval_dispatched = _dispatch_evaluations_once(call_execution)
+        # A call that arrived already graded keeps the verdicts it came with. Dispatching here
+        # would run this run test's eval configs against it and write the results over them —
+        # including the configs that only exist to name the reported verdicts, which have no
+        # inputs to run and fail every time.
+        if not payload.get("evaluations"):
+            eval_dispatched = _dispatch_evaluations_once(call_execution)
 
     try:
         notify_simulation_update(
@@ -830,6 +873,9 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
         merged.update(incoming)
         call_execution.call_metadata = merged
 
+    if payload.get("evaluations"):
+        _store_reported_evaluations(call_execution, payload["evaluations"])
+
     segments = payload.get("transcript") or []
     is_text = (
         call_execution.simulation_call_type == CallExecution.SimulationCallType.TEXT
@@ -892,6 +938,74 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
         _apply_conversation_metrics(call_execution)
         call_execution.save()
     _deduct_alk_sim_cost_once(call_execution)
+
+
+# What an externally-reported evaluation hangs off. The FK is required, and a run whose grading
+# happened elsewhere has no template of its own to point at: the harness decided the verdict,
+# and this only records that it did. Agent-typed and deterministic, which is what these are.
+_REPORTED_EVAL_TEMPLATE = "deterministic_evals"
+
+
+def _store_reported_evaluations(
+    call_execution: CallExecution, evaluations: list[dict]
+) -> None:
+    """Record evaluations an external runner already decided, so the call renders them.
+
+    The simulate pages read ``eval_outputs`` keyed by ``SimulateEvalConfig`` id, so a verdict
+    with no config behind it cannot be shown at all — which is why a fully graded run appeared
+    unevaluated. Configs are reused by name within a run test, so the same sub-goal keeps one
+    id across executions and a column means the same thing every run.
+    """
+    from model_hub.models.evals_metric import EvalTemplate
+    from simulate.models import SimulateEvalConfig
+
+    run_test = call_execution.test_execution.run_test
+    # Not the default manager: it is workspace-scoped inside a request, and a global template
+    # belongs to no workspace, so the ordinary lookup finds nothing and every reported verdict
+    # is silently dropped.
+    template = EvalTemplate.no_workspace_objects.filter(
+        name=_REPORTED_EVAL_TEMPLATE, organization__isnull=True
+    ).first()
+    if template is None:
+        logger.warning(
+            "alk_reported_evals_no_template", template=_REPORTED_EVAL_TEMPLATE
+        )
+        return
+
+    outputs = call_execution.eval_outputs or {}
+    for judged in evaluations:
+        name = str(judged.get("name") or "").strip()
+        if not name:
+            continue
+        config, _ = SimulateEvalConfig.objects.get_or_create(
+            run_test=run_test,
+            name=name,
+            defaults={"eval_template": template, "config": {"source": "external_runner"}},
+        )
+        # A scored metric and a pass/fail sub-goal are both verdicts, but they are not the same
+        # verdict, and flattening one into the other loses which was measured and which was met.
+        if judged.get("score") is not None:
+            output = {"score": float(judged["score"])}
+            output_type = "score"
+        else:
+            passed = bool(judged.get("passed"))
+            output = {"score": 1.0 if passed else 0.0, "choice": "Passed" if passed else "Failed"}
+            output_type = "pass_fail"
+        outputs[str(config.id)] = {
+            "name": name,
+            "output": output,
+            "reason": str(judged.get("reason") or ""),
+            "output_type": output_type,
+        }
+    call_execution.eval_outputs = outputs
+    # Evaluation of this call is over, not merely never begun. The rollup holds an execution
+    # open until every completed call reports both, and a run whose grading happened elsewhere
+    # would otherwise sit at pending for good — with the page showing each empty cell as still
+    # loading, which reads as a run that is thinking rather than one that is finished.
+    call_metadata = call_execution.call_metadata or {}
+    call_metadata["eval_started"] = True
+    call_metadata["eval_completed"] = True
+    call_execution.call_metadata = call_metadata
 
 
 _ALK_CHAT_SESSION_PREFIX = "alk-chat"

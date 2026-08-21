@@ -829,6 +829,9 @@ class TestRecordingUpload:
         assert result["object_key"].startswith("alk-sim/recordings/")
         # Bytes were written to the upload bucket via the storage client.
         fake_client.put_object.assert_called_once()
+        call = CallExecution.objects.get(id=call_id)
+        assert call.recording_available is True
+        assert call.recording_url == result["recording_url"]
 
     def test_missing_file_returns_400(self, auth_client, run_test):
         _, call_ids = _start_and_batch(auth_client, run_test)

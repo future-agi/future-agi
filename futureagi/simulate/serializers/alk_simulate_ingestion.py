@@ -29,6 +29,20 @@ class ALKSimulateTranscriptSegmentSerializer(serializers.Serializer):
     )
 
 
+class ALKSimulateReportedEvaluationSerializer(serializers.Serializer):
+    """One verdict an external runner reached about a call.
+
+    ``score`` and ``passed`` are alternatives, not both: a scored metric places the run on a
+    scale, a sub-goal says whether the world ended up as the scenario required.
+    """
+
+    name = serializers.CharField(max_length=255)
+    kind = serializers.CharField(required=False, allow_blank=True, max_length=64)
+    score = serializers.FloatField(required=False, allow_null=True)
+    passed = serializers.BooleanField(required=False, allow_null=True)
+    reason = serializers.CharField(required=False, allow_blank=True)
+
+
 class ALKSimulateCostBreakdownSerializer(serializers.Serializer):
     stt_cost_cents = serializers.IntegerField(required=False, allow_null=True)
     llm_cost_cents = serializers.IntegerField(required=False, allow_null=True)
@@ -58,6 +72,11 @@ class ALKSimulateResultSerializer(serializers.Serializer):
     call_summary = serializers.CharField(required=False, allow_blank=True)
 
     transcript = ALKSimulateTranscriptSegmentSerializer(many=True, required=False)
+
+    # Verdicts an external runner already reached. The backend still derives everything it can
+    # derive itself; these are the ones only the runner was in a position to decide, such as
+    # whether the world it built was left in the state the scenario asked for.
+    evaluations = ALKSimulateReportedEvaluationSerializer(many=True, required=False)
 
     recording_url = serializers.URLField(
         required=False, allow_blank=True, max_length=500
@@ -197,6 +216,11 @@ class ALKSimulateProvisionRunTestRequestSerializer(serializers.Serializer):
     """
 
     name = serializers.CharField(max_length=255)
+    # What the runner observed. Voice is gated exactly as it is elsewhere; reporting a spoken
+    # call as text renders it in the chat view, with no player.
+    modality = serializers.ChoiceField(
+        choices=("text", "voice"), required=False, default="text"
+    )
     description = serializers.CharField(required=False, allow_blank=True)
     personas = ALKSimulateProvisionPersonaSerializer(many=True, required=False)
     scenario_ids = serializers.ListField(

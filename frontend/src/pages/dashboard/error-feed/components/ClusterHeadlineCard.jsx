@@ -11,6 +11,7 @@ import {
 import PropTypes from "prop-types";
 import { formatDistanceToNowStrict } from "date-fns";
 import Iconify from "src/components/iconify";
+import AnalyzeMarkdown from "./AnalyzeMarkdown";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { purple } from "src/theme/palette";
 import openExternal from "../openExternal";
@@ -224,6 +225,11 @@ function AnalyzedState({ data, linkedIssue, onCreateLinear, onOpenAnalyze }) {
         {data.synthesis}
       </Typography>
 
+      {/* Laid out exactly as the Fix tab's synthesis card does it: no container of its own,
+          because the analysis card around it already is one — a second box inside it reads as
+          a box within a box. The fix is markdown (a file reference, a fenced diff, then prose),
+          so it goes through the same renderer as that tab; as a plain Typography the backticks
+          and asterisks arrived on screen verbatim. */}
       <Stack direction="row" gap={1} alignItems="flex-start">
         <Typography
           fontSize="10px"
@@ -242,13 +248,16 @@ function AnalyzedState({ data, linkedIssue, onCreateLinear, onOpenAnalyze }) {
         >
           Fix
         </Typography>
-        <Typography
-          fontSize="12.5px"
-          color="text.secondary"
-          sx={{ lineHeight: 1.65, flex: 1 }}
-        >
-          {data.fix}
-        </Typography>
+        {/* minWidth: 0 so a long unbroken line in the diff scrolls inside its own <pre>
+            instead of stretching the flex row and the whole card with it. */}
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <AnalyzeMarkdown
+            text={data.fix}
+            fontSize="12.5px"
+            color="text.secondary"
+            sx={{ lineHeight: 1.6 }}
+          />
+        </Box>
       </Stack>
 
       <Stack

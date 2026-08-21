@@ -249,6 +249,11 @@ export function useNavData() {
           //   },
           // },
           {
+            title: "RL Environment",
+            path: paths.dashboard.simulate.alEnvironment,
+            icon: ICONS.prototype,
+          },
+          {
             title: "Run Simulation",
             path: paths.dashboard.simulate.test,
             icon: ICONS.test,

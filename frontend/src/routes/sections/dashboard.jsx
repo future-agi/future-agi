@@ -299,6 +299,12 @@ const Scenarios = lazyWithRetry(
 const Personas = lazyWithRetry(
   () => import("src/pages/dashboard/personas/Personas"),
 );
+const AlEnvironment = lazyWithRetry(
+  () => import("src/pages/dashboard/al-environment/AlEnvironment"),
+);
+const RlEnvironments = lazyWithRetry(
+  () => import("src/pages/dashboard/rl-environments/RlEnvironments"),
+);
 const CreateScenario = lazyWithRetry(
   () => import("src/pages/dashboard/scenarios/CreateScenario"),
 );
@@ -1362,6 +1368,14 @@ export const dashboardRoutes = (
         {
           path: "personas",
           element: <Personas />,
+        },
+        {
+          path: "rl-environment",
+          element: <RlEnvironments />,
+        },
+        {
+          path: "rl-environment/:sessionId",
+          element: <AlEnvironment />,
         },
         {
           path: "test",
