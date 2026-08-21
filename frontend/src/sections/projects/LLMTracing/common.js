@@ -643,7 +643,11 @@ export const getTraceListColumnDefs = (col) => {
           justifyContent: "center",
         };
       }
-      if (isEvalMetric) {
+      // Chip-shaped values (pass/fail + choice counts) sit flush left with no
+      // padding so the chips align across rows. A scalar score is not chips —
+      // it renders as a pill that would shrink to its text and hug the edge,
+      // so it keeps the default cell and fills the column as before.
+      if (structured) {
         return {
           display: "flex",
           height: "100%",
