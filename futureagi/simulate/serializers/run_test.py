@@ -54,6 +54,7 @@ class SimulateEvalConfigSimpleSerializer(serializers.ModelSerializer):
             "status",
             "eval_group",
             "template_id",
+            "pinned_version_id",
         ]
 
     def get_eval_group(self, obj):

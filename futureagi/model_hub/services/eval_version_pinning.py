@@ -11,6 +11,60 @@ from model_hub.utils.eval_prompt_variables import sync_required_keys_from_prompt
 from model_hub.utils.prompt_migration import config_to_prompt_messages
 
 
+def is_versioned_template(eval_template):
+    """Whether this template carries versions.
+
+    Only user-owned (custom) templates do. System templates run off the
+    binding's run_config and must never hold a pin.
+    """
+    from model_hub.models.choices import OwnerChoices
+
+    return (
+        eval_template is not None
+        and eval_template.owner == OwnerChoices.USER.value
+    )
+
+
+def resolve_pin_for_new_binding(eval_template, pinned_version_id=None):
+    """Version to store on a binding being created or edited.
+
+    Write path: pinned_version_id arrives on a request and is untrusted, so
+    it is looked up and must belong to this template. Falls back to the
+    template default. Returns None for system templates, so an explicit
+    pinned_version_id is ignored there.
+    """
+    if not is_versioned_template(eval_template):
+        return None
+    if pinned_version_id:
+        selected = EvalTemplateVersion.objects.filter(
+            id=pinned_version_id,
+            eval_template=eval_template,
+            deleted=False,
+        ).first()
+        if selected:
+            return selected
+    return EvalTemplateVersion.objects.get_default(eval_template)
+
+
+def resolve_version_for_binding(eval_template, pinned_version):
+    """Version that will actually run for a binding.
+
+    Read path: pinned_version is the already-loaded FK, so this issues no
+    query and is safe inside the per-eval runner loop. A live pin wins; a
+    soft-deleted one falls back to the template default. Returns None for
+    system templates, leaving the engine on its own get_default() path.
+
+    Mirrors EvalTemplateVersion.objects.resolve_for_metric, which cannot be
+    reused directly because SimulateEvalConfig names its FK `eval_template`
+    rather than `template`.
+    """
+    if not is_versioned_template(eval_template):
+        return None
+    if pinned_version is not None and not getattr(pinned_version, "deleted", False):
+        return pinned_version
+    return EvalTemplateVersion.objects.get_default(eval_template)
+
+
 def maybe_pin_new_version(eval_metric, request_data, user, organization, workspace):
     """Create and pin a new EvalTemplateVersion if config actually changed.
 

@@ -17,6 +17,7 @@ from rest_framework.views import APIView
 from accounts.utils import get_request_organization
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+from model_hub.services.eval_version_pinning import resolve_pin_for_new_binding
 from simulate.models import RunTest, Scenarios, SimulateEvalConfig
 from simulate.serializers.prompt_simulation import (
     ExecutePromptSimulationRequestSerializer,
@@ -261,6 +262,10 @@ class PromptSimulationListCreateView(APIView):
                                     model=eval_config_data.get("model", None),
                                     eval_group_id=eval_config_data.get(
                                         "eval_group", None
+                                    ),
+                                    pinned_version=resolve_pin_for_new_binding(
+                                        eval_template,
+                                        eval_config_data.get("pinned_version_id"),
                                     ),
                                 )
                             except EvalTemplate.DoesNotExist:

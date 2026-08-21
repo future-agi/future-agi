@@ -60,13 +60,11 @@ def resolve_version(eval_template, version_number=None, organization=None):
     Resolve the eval template version to use.
 
     Returns the EvalTemplateVersion instance or None.
-    Increments usage_count on the resolved version.
 
     Extracted from EvaluationRunner._resolve_version (eval_runner.py:1630).
     """
     try:
         from django.db import models
-        from django.db.utils import DatabaseError, ProgrammingError
 
         from model_hub.models.evals_metric import EvalTemplateVersion
 
@@ -88,18 +86,6 @@ def resolve_version(eval_template, version_number=None, organization=None):
             )
         else:
             resolved = EvalTemplateVersion.objects.get_default(eval_template)
-
-        if resolved:
-            try:
-                EvalTemplateVersion.all_objects.filter(id=resolved.id).update(
-                    usage_count=models.F("usage_count") + 1
-                )
-            except (DatabaseError, ProgrammingError):
-                logger.warning(
-                    "usage_count_update_failed",
-                    version_id=str(resolved.id),
-                    exc_info=True,
-                )
 
         return resolved
 

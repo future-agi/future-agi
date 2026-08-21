@@ -4169,11 +4169,11 @@ class TestExecutor:
             if eval_config_ids:
                 eval_configs = SimulateEvalConfig.objects.filter(
                     id__in=eval_config_ids, deleted=False
-                )
+                ).select_related("eval_template", "pinned_version")
             else:
                 eval_configs = SimulateEvalConfig.objects.filter(
                     run_test=run_test, deleted=False
-                )
+                ).select_related("eval_template", "pinned_version")
 
             if not eval_configs.exists():
                 logger.info(f"No evaluation configs found for run test {run_test.id}")
@@ -4961,6 +4961,16 @@ class TestExecutor:
                 f"Running evaluation {eval_config.id} for call {call_execution.id}"
             )
 
+            # Custom evals run the version pinned on the binding; system evals
+            # resolve None here and stay on the engine's template-default path.
+            from model_hub.services.eval_version_pinning import (
+                resolve_version_for_binding,
+            )
+
+            resolved_version = resolve_version_for_binding(
+                eval_template, eval_config.pinned_version
+            )
+
             eval_result = run_eval_func(
                 config=config,
                 mappings=updated_mapping,
@@ -4972,6 +4982,10 @@ class TestExecutor:
                 workspace=call_execution.test_execution.run_test.workspace,
                 source="simulate",
                 call_context=_call_context,
+                version_number=(
+                    resolved_version.version_number if resolved_version else None
+                ),
+                resolved_version=resolved_version,
             )
 
             if isinstance(eval_result, str):
@@ -5001,6 +5015,12 @@ class TestExecutor:
                     "output_type": eval_result.get("output_type"),
                     "name": eval_config.name,
                     "status": StatusType.COMPLETED.value,
+                    "version_id": (
+                        str(resolved_version.id) if resolved_version else None
+                    ),
+                    "version_number": (
+                        resolved_version.version_number if resolved_version else None
+                    ),
                 }
                 call_execution.save(update_fields=["eval_outputs"])
 

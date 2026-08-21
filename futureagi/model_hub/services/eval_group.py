@@ -11,6 +11,7 @@ from model_hub.models.experiments import ExperimentsTable
 from model_hub.models.run_prompt import PromptEvalConfig, PromptTemplate
 from model_hub.schema.eval_group import PageType
 from model_hub.serializers.eval_group import EvalGroupSerializer
+from model_hub.services.eval_version_pinning import resolve_pin_for_new_binding
 from model_hub.utils.function_eval_params import (
     get_function_params_schema,
     normalize_eval_runtime_config,
@@ -643,6 +644,7 @@ def apply_eval_group_to_simulate(
                 eval_group=eval_group,
                 filters=simulate_config_filters,
                 mapping=parsed_mapping,
+                pinned_version=resolve_pin_for_new_binding(eval_template),
             )
         )
 
