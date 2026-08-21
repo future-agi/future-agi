@@ -1,6 +1,27 @@
 import axios, { endpoints } from "src/utils/axios";
 import logger from "../../utils/logger";
 import { useInfiniteQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { useDebounce } from "src/hooks/use-debounce";
+
+/**
+ * Search + pagination state for a server-paginated, searchable list.
+ *
+ * Resets to page 1 whenever the debounced search term changes: the filtered
+ * result set can have fewer pages than the current page, and requesting a
+ * page that no longer exists makes the backend answer "Invalid page." (#1485)
+ */
+export function useSearchedPagination(delay = 500, pageSize = 10) {
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(search, delay);
+  const [pagination, setPagination] = useState({ page: 1, pageSize });
+
+  useEffect(() => {
+    setPagination((prev) => (prev.page === 1 ? prev : { ...prev, page: 1 }));
+  }, [debouncedSearch]);
+
+  return { search, setSearch, debouncedSearch, pagination, setPagination };
+}
 
 /**
  * Enum for simulation source types - matches backend RunTest.SourceTypes
