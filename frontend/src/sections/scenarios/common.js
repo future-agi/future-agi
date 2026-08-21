@@ -65,7 +65,7 @@ const CreateScenarioDefaultSchema = {
   sourceId: z.string().min(1, "Source is required"),
   sourceLabel: z.string().optional(), // Used for auto-generating scenario name, not sent to API
   name: z.string().trim().min(1, "Name is required"),
-  description: z.string().optional(),
+  description: z.string().trim().optional(),
   agentDefinitionId: z.string().optional(),
   agentDefinitionVersionId: z.string().optional(),
   promptTemplateId: z.string().optional(),
