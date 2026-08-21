@@ -177,6 +177,7 @@ const EvaluationCell = ({ value, column, isSpanLevel = false }) => {
         fontWeight: 500,
         fontSize: "13px",
         height: "100%",
+        width: "100%",
         display: "flex",
         alignItems: "center",
       }}

@@ -6,7 +6,11 @@ import VoiceCostCell from "./CallLogs/VoiceCostCell";
 import VoiceLatencyCell from "./CallLogs/VoiceLatencyCell";
 import VoiceTokenCell from "./CallLogs/VoiceTokenCell";
 import TalkRatioCell from "./CallLogs/TalkRatioCell";
-import { evalCellChips } from "src/sections/projects/LLMTracing/evalCellModel";
+import {
+  evalCellChips,
+  resolveEvalKind,
+  EVAL_KIND,
+} from "src/sections/projects/LLMTracing/evalCellModel";
 import { ResultChip } from "src/sections/projects/LLMTracing/Renderers/EvalResultChips";
 import CallLogsHeaderCellRenderer from "./CallLogs/CallLogsHeaderCellRenderer";
 import { useQuery } from "@tanstack/react-query";
@@ -472,6 +476,24 @@ export const generateEvalColumnsFromConfig = (items = []) => {
             >
               <ResultChip label="Errored" tone="errored" dense />
             </Box>
+          );
+        }
+        // A score is a percentage, not chips: render it through the same cell
+        // the trace list uses so it fills the column with its interpolated
+        // background, instead of shrinking to a pill. Pass/Fail and Choices
+        // stay as chips below.
+        if (
+          resolveEvalKind({ outputType: evalData.output_type }) ===
+          EVAL_KIND.NUMERIC
+        ) {
+          return (
+            <EvaluationCell
+              value={evalData.output}
+              column={{
+                outputType: evalData.output_type,
+                reverseOutput: item.reverse_output,
+              }}
+            />
           );
         }
         const chips = evalCellChips(evalData.output, {
