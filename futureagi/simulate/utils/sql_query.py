@@ -80,6 +80,8 @@ def get_combined_call_executions_and_snapshots_query(
         JOIN simulate_test_execution te ON ce.test_execution_id = te.id
         JOIN simulate_scenarios s ON ce.scenario_id = s.id
         WHERE te.run_test_id = %s
+        AND te.deleted = false
+        AND ce.deleted = false
         {search_conditions}
         {status_conditions}
 
@@ -98,6 +100,9 @@ def get_combined_call_executions_and_snapshots_query(
         JOIN simulate_test_execution te2 ON ce2.test_execution_id = te2.id
         JOIN simulate_scenarios s2 ON ce2.scenario_id = s2.id
         WHERE te2.run_test_id = %s
+        AND te2.deleted = false
+        AND ce2.deleted = false
+        AND ces.deleted = false
         AND ces.rerun_type = 'call_and_eval'
         {search_conditions.replace('ce.', 'ce2.').replace('s.name', 's2.name')}
         {status_conditions.replace('ce.status', 'ces.status')}
@@ -156,6 +161,8 @@ def get_combined_call_executions_and_snapshots_count_query(
         JOIN simulate_test_execution te ON ce.test_execution_id = te.id
         JOIN simulate_scenarios s ON ce.scenario_id = s.id
         WHERE te.run_test_id = %s
+        AND te.deleted = false
+        AND ce.deleted = false
         {search_conditions}
         {status_conditions}
 
@@ -166,6 +173,9 @@ def get_combined_call_executions_and_snapshots_count_query(
         JOIN simulate_test_execution te2 ON ce2.test_execution_id = te2.id
         JOIN simulate_scenarios s2 ON ce2.scenario_id = s2.id
         WHERE te2.run_test_id = %s
+        AND te2.deleted = false
+        AND ce2.deleted = false
+        AND ces.deleted = false
         AND ces.rerun_type = 'call_and_eval'
         {search_conditions.replace('ce.', 'ce2.').replace('s.name', 's2.name')}
         {status_conditions.replace('ce.status', 'ces.status')}
@@ -210,6 +220,7 @@ def get_kpi_eval_metrics_query(test_execution_id):
         FROM simulate_call_execution ce,
              jsonb_each(ce.eval_outputs) AS e(key, value)
         WHERE ce.test_execution_id = %s
+          AND ce.deleted = false
           AND ce.eval_outputs IS NOT NULL
           AND jsonb_typeof(ce.eval_outputs) = 'object'
           AND e.value ? 'output'
@@ -396,6 +407,7 @@ def get_kpi_metrics_query(test_execution_id):
         ROUND(AVG((conversation_metrics_data->>'csat_score')::numeric), 2) AS avg_csat_score
     FROM simulate_call_execution
     WHERE test_execution_id = %s
+      AND deleted = false
     """
     params = [str(test_execution_id)]
     return query, params
