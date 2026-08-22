@@ -57,6 +57,7 @@ import {
   useDeleteWidget,
   useSimulationAgents,
 } from "src/hooks/useDashboards";
+import { useCrossWorkspaceRecovery } from "src/hooks/use_cross_workspace_recovery";
 import { useDebounce } from "src/hooks/use-debounce";
 import Iconify from "src/components/iconify";
 import FilterValueLabel, {
@@ -1079,7 +1080,24 @@ export default function WidgetEditorView() {
 
   const { canDelete, isReadOnly } = useCanEditDashboard();
 
-  const { data: dashboard } = useDashboardDetail(dashboardId);
+  const {
+    data: dashboard,
+    isLoading: isDashboardLoading,
+    isError: isDashboardError,
+    error: dashboardError,
+  } = useDashboardDetail(dashboardId);
+
+  // Auto-resolve and switch workspace when a dashboard 404s because it
+  // belongs to a different workspace than the one the user is currently in.
+  const {
+    isResolving: isResolvingWorkspace,
+    resolveAttempted: resolveAttemptedWorkspace,
+  } = useCrossWorkspaceRecovery({
+    dashboardId,
+    isError: isDashboardError,
+    error: dashboardError,
+    isLoading: isDashboardLoading,
+  });
   const createMutation = useCreateWidget();
   const updateMutation = useUpdateWidget();
   const deleteMutation = useDeleteWidget();
@@ -2807,6 +2825,49 @@ export default function WidgetEditorView() {
       if (cleanupDragRef.current) cleanupDragRef.current();
     };
   }, []);
+
+  // Show a loading indicator while the dashboard is resolving across workspaces.
+  // (The initial fetch loading and the resolve stage are both covered here.)
+  if (isDashboardLoading || isResolvingWorkspace) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          alignItems: "center",
+          height: "60vh",
+          gap: 2,
+        }}
+      >
+        <CircularProgress />
+        {isResolvingWorkspace && (
+          <Typography color="text.secondary">
+            Looking for this dashboard…
+          </Typography>
+        )}
+      </Box>
+    );
+  }
+
+  if (!dashboard) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          height: "60vh",
+        }}
+      >
+        <Typography color="text.secondary">
+          {resolveAttemptedWorkspace
+            ? "Dashboard not found or you may not have access to this workspace."
+            : "Dashboard not found"}
+        </Typography>
+      </Box>
+    );
+  }
 
   return (
     <Box

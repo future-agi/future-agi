@@ -9,6 +9,11 @@ const h = vi.hoisted(() => ({
   deleteWidget: { mutate: vi.fn(), isPending: false },
   deleteDashboard: { mutate: vi.fn(), isPending: false },
   widgets: [{ id: "w-1", name: "Tokens", position: 0, width: 12 }],
+  dashboardData: {
+    id: "dash-1",
+    name: "My Dash",
+    widgets: undefined,
+  }, // set to null to simulate 404
   // Permission state the useCanEditDashboard mock returns; per-test controllable
   // so we can drive both the writer and viewer (read-only) paths.
   canEdit: {
@@ -34,12 +39,10 @@ const VIEWER = {
 
 vi.mock("src/hooks/useDashboards", () => ({
   useDashboardDetail: () => ({
-    data: {
-      id: "dash-1",
-      name: "My Dash",
-      widgets: h.widgets,
-    },
+    data: h.dashboardData ? { ...h.dashboardData, widgets: h.widgets } : null,
     isLoading: false,
+    isError: !h.dashboardData,
+    error: h.dashboardData ? null : { statusCode: 404 },
   }),
   useUpdateDashboard: () => ({ mutate: vi.fn() }),
   useUpdateWidget: () => ({ mutate: vi.fn() }),
@@ -81,6 +84,10 @@ describe("DashboardDetailView — delete confirmation", () => {
     h.deleteWidget.isPending = false;
     h.deleteDashboard.isPending = false;
     h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
+    h.dashboardData = {
+      id: "dash-1",
+      name: "My Dash",
+    };
   });
 
   it("widget delete: opens the keyed dialog with the widget's name", () => {
@@ -136,6 +143,10 @@ describe("DashboardDetailView — time filter bar visibility", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     h.canEdit = { ...WRITER };
+    h.dashboardData = {
+      id: "dash-1",
+      name: "My Dash",
+    };
   });
 
   it("hides the time filter bar on an empty (0-widget) dashboard", () => {
@@ -159,6 +170,10 @@ describe("DashboardDetailView — RBAC gating", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
+    h.dashboardData = {
+      id: "dash-1",
+      name: "My Dash",
+    };
   });
 
   it("writer sees the write affordances", () => {
@@ -192,5 +207,51 @@ describe("DashboardDetailView — RBAC gating", () => {
     render(<DashboardDetailView />);
     // chart still renders — viewers can view, just not edit
     expect(screen.getByTestId("widget-chart")).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cross-workspace recovery behaviour
+// ---------------------------------------------------------------------------
+
+// Controlled stubs for the recovery hook so we can drive the resolve states.
+const recovery = vi.hoisted(() => ({
+  isResolving: false,
+  resolveAttempted: false,
+}));
+
+vi.mock("src/hooks/use_cross_workspace_recovery", () => ({
+  useCrossWorkspaceRecovery: () => ({
+    isResolving: recovery.isResolving,
+    resolveAttempted: recovery.resolveAttempted,
+  }),
+}));
+
+describe("DashboardDetailView — cross-workspace recovery", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    recovery.isResolving = false;
+    h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
+    // Simulate a 404 — the primary fetch failed, triggering the resolve path.
+    h.dashboardData = null;
+  });
+
+  it("shows 'Looking for this dashboard…' when resolving", () => {
+    recovery.isResolving = true;
+
+    render(<DashboardDetailView />);
+    expect(screen.getByText(/Looking for this dashboard/i)).toBeInTheDocument();
+  });
+
+  it("shows 'Dashboard not found' when resolve also fails", () => {
+    recovery.isResolving = false;
+    recovery.resolveAttempted = true;
+
+    render(<DashboardDetailView />);
+    expect(
+      screen.getByText(
+        /Dashboard not found or you may not have access to this workspace/i,
+      ),
+    ).toBeInTheDocument();
   });
 });

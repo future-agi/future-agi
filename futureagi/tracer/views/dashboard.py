@@ -1,5 +1,6 @@
-import structlog
 from concurrent.futures import ThreadPoolExecutor
+
+import structlog
 from django.conf import settings
 from django.http import Http404
 from django.utils import timezone
@@ -34,7 +35,6 @@ from tracer.services.clickhouse.client import (
     get_clickhouse_client,
     is_clickhouse_enabled,
 )
-from tracer.services.dashboard_metrics_catalog import get_cached_metrics_catalog
 from tracer.services.clickhouse.query_builders.dashboard import (
     METRIC_UNITS,
     DashboardQueryBuilder,
@@ -56,6 +56,7 @@ from tracer.services.clickhouse.v2.id_remap_sql import (
     remap_left_join,
     resolved_id_expr,
 )
+from tracer.services.dashboard_metrics_catalog import get_cached_metrics_catalog
 from tracer.utils.sql_queries import SQL_query_handler
 
 logger = structlog.get_logger(__name__)
@@ -125,7 +126,6 @@ def _normalize_dashboard_query_filters(query_config):
     return query_config
 
 
-
 class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -178,7 +178,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 metric_info["error"] = str(e)
                 return (metric_info, [])
             except Exception as e:
-                logger.warning("metric_query_failed", metric=metric_info.get("name"), error=str(e)[:200])
+                logger.warning(
+                    "metric_query_failed",
+                    metric=metric_info.get("name"),
+                    error=str(e)[:200],
+                )
                 return (metric_info, [])
 
         if len(metrics) == 1:
@@ -457,9 +461,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     self._run_metric_queries(
                         builder,
                         "traces",
-                        lambda sql, params: analytics.execute_ch_query(
-                            sql, params, timeout_ms=query_timeout
-                        ).data,
+                        lambda sql, params: (
+                            analytics.execute_ch_query(
+                                sql, params, timeout_ms=query_timeout
+                            ).data
+                        ),
                     )
                 )
 
@@ -488,9 +494,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     self._run_metric_queries(
                         builder,
                         "datasets",
-                        lambda sql, params: analytics.execute_ch_query(
-                            sql, params, timeout_ms=10000
-                        ).data,
+                        lambda sql, params: (
+                            analytics.execute_ch_query(
+                                sql, params, timeout_ms=10000
+                            ).data
+                        ),
                     )
                 )
 
@@ -601,9 +609,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 agent_definition_id=(
                     request.query_params.get("agent_definition_id", "") or ""
                 ),
-                per_eval_config=(
-                    request.query_params.get("per_eval_config") == "true"
-                ),
+                per_eval_config=(request.query_params.get("per_eval_config") == "true"),
             )
 
             # --- Optional server-side filtering & pagination ---
@@ -1042,9 +1048,13 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         try:
             if metric_type == "annotation_metric" and metric_name == "annotator":
                 from accounts.models.user import User
-                from tracer.services.annotation_label_source import AnnotationLabelScoresCH
+                from tracer.services.annotation_label_source import (
+                    AnnotationLabelScoresCH,
+                )
 
-                annotator_ids = AnnotationLabelScoresCH().annotator_ids_for_projects(project_ids)
+                annotator_ids = AnnotationLabelScoresCH().annotator_ids_for_projects(
+                    project_ids
+                )
                 users = (
                     User.objects.filter(id__in=annotator_ids)
                     .values("id", "name", "email")
@@ -1300,9 +1310,13 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     # CH-backed stored categorical choices (Score.value), scoped via spans.
                     import json
 
-                    from tracer.services.annotation_label_source import AnnotationLabelScoresCH
+                    from tracer.services.annotation_label_source import (
+                        AnnotationLabelScoresCH,
+                    )
 
-                    for payload_str in AnnotationLabelScoresCH().categorical_values_for_label(
+                    for (
+                        payload_str
+                    ) in AnnotationLabelScoresCH().categorical_values_for_label(
                         label.id, project_ids
                     ):
                         try:
@@ -1686,6 +1700,60 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         return self._gm.success_response({"agents": result})
 
+    @action(detail=True, methods=["get"], url_path="resolve-workspace")
+    def resolve_workspace(self, request, pk=None):
+        """Return the workspace that owns this dashboard, if the user has access.
+
+        Used by the frontend when a dashboard 404s in the current workspace
+        so it can auto-switch to the correct workspace instead of showing
+        "Dashboard not found".
+        """
+        try:
+            dashboard = Dashboard.no_workspace_objects.select_related(
+                "workspace",
+            ).get(pk=pk, deleted=False)
+        except Dashboard.DoesNotExist:
+            return self._gm.not_found("Dashboard not found")
+
+        workspace = dashboard.workspace
+
+        # Verify the requesting user belongs to the same organization.
+        # A user in org A should not be able to probe dashboards in org B.
+        org = getattr(request, "organization", None)
+        if org and workspace.organization_id != org.id:
+            return self._gm.not_found("Dashboard not found")
+
+        # Check if user has access to this workspace (membership or global role).
+        from accounts.models.workspace import WorkspaceMembership
+
+        has_access = WorkspaceMembership.no_workspace_objects.filter(
+            workspace=workspace,
+            user=request.user,
+            is_active=True,
+        ).exists()
+
+        if not has_access:
+            try:
+                from accounts.utils import resolve_org_role
+                from tfc.constants.roles import RolePermissions
+
+                org_role = resolve_org_role(request.user, workspace.organization)
+                has_access = bool(
+                    org_role and org_role in RolePermissions.GLOBAL_ACCESS_ROLES
+                )
+            except Exception:
+                has_access = False
+
+        if not has_access:
+            return self._gm.not_found("Dashboard not found")
+
+        return self._gm.success_response(
+            {
+                "workspace_id": str(workspace.id),
+                "workspace_name": workspace.display_name or workspace.name,
+            }
+        )
+
 
 class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()
@@ -1918,7 +1986,9 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                 return [dict(zip(col_names, row, strict=True)) for row in rows]
 
             metric_results.extend(
-                DashboardViewSet._run_metric_queries(builder, "traces", _fetch_trace_rows)
+                DashboardViewSet._run_metric_queries(
+                    builder, "traces", _fetch_trace_rows
+                )
             )
 
         if dataset_metrics:
@@ -1932,7 +2002,9 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                 return [dict(zip(col_names, row, strict=True)) for row in rows]
 
             metric_results.extend(
-                DashboardViewSet._run_metric_queries(builder, "datasets", _fetch_ds_rows)
+                DashboardViewSet._run_metric_queries(
+                    builder, "datasets", _fetch_ds_rows
+                )
             )
 
         if simulation_metrics:

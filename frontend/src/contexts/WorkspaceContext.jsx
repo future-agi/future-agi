@@ -19,6 +19,7 @@ const SS_KEY_WORKSPACE_NAME = "workspaceName";
 const SS_KEY_WORKSPACE_DISPLAY_NAME = "workspaceDisplayName";
 const SS_KEY_WORKSPACE_ROLE = "workspaceRole";
 const SS_KEY_WS_LEVEL = "wsLevel";
+const SS_KEY_POST_SWITCH_REDIRECT = "postSwitchRedirectUrl";
 
 function readSessionWorkspace() {
   try {
@@ -184,7 +185,7 @@ export function WorkspaceProvider({ children }) {
 
   // Switch workspace — called from UI
   const switchWorkspace = useCallback(
-    async (newWorkspaceId, oldWorkspaceId) => {
+    async (newWorkspaceId, oldWorkspaceId, redirectUrl) => {
       try {
         const response = await axios.post(endpoints.workspaces.switch, {
           old_workspace_id: oldWorkspaceId || workspace.id,
@@ -206,7 +207,17 @@ export function WorkspaceProvider({ children }) {
         // 2. Update axios header
         setWorkspaceHeader(newWs.id);
 
-        // 3. Hard refresh — clears all React state, query cache, component trees
+        // 3. Save redirect URL if provided, so the app can navigate back
+        //    after the hard reload.
+        if (redirectUrl) {
+          try {
+            sessionStorage.setItem(SS_KEY_POST_SWITCH_REDIRECT, redirectUrl);
+          } catch {
+            // sessionStorage unavailable — fall through to default redirect
+          }
+        }
+
+        // 4. Hard refresh — clears all React state, query cache, component trees
         window.location.assign("/dashboard/develop");
       } catch (error) {
         logger.error("Workspace switch failed:", error);
@@ -217,7 +228,7 @@ export function WorkspaceProvider({ children }) {
         throw error;
       }
     },
-    [workspace.id],
+    [workspace.id, workspace.wsLevel],
   );
 
   // Update workspace display name in-place (e.g. after rename in settings)
@@ -250,6 +261,33 @@ export function WorkspaceProvider({ children }) {
       clearWorkspace();
     }
   }, [authenticated, loading, clearWorkspace]);
+
+  // After a cross-workspace redirect, navigate back to the original URL.
+  // `switchWorkspace` saves the URL to sessionStorage before the hard reload;
+  // we restore it once the workspace context is ready.
+  useEffect(() => {
+    if (!isReady) return;
+
+    let redirectUrl;
+    try {
+      redirectUrl = sessionStorage.getItem(SS_KEY_POST_SWITCH_REDIRECT);
+    } catch {
+      return;
+    }
+
+    if (redirectUrl) {
+      try {
+        sessionStorage.removeItem(SS_KEY_POST_SWITCH_REDIRECT);
+      } catch {
+        // best effort
+      }
+      // Defer to next tick so React finishes the initial render first
+      const timer = setTimeout(() => {
+        window.location.replace(redirectUrl);
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [isReady]);
 
   const value = useMemo(
     () => ({

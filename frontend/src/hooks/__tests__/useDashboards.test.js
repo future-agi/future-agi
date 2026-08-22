@@ -16,6 +16,8 @@ vi.mock("src/utils/axios", () => ({
   endpoints: {
     dashboard: {
       list: "/tracer/dashboard/",
+      detail: (id) => `/tracer/dashboard/${id}/`,
+      resolveWorkspace: (id) => `/tracer/dashboard/${id}/resolve-workspace/`,
       widgets: (dashboardId) => `/tracer/dashboard/${dashboardId}/widgets/`,
       widgetDetail: (dashboardId, widgetId) =>
         `/tracer/dashboard/${dashboardId}/widgets/${widgetId}/`,
@@ -33,6 +35,7 @@ import {
   useDeleteWidget,
   useReorderWidgets,
   useDuplicateWidget,
+  useResolveDashboardWorkspace,
 } from "../useDashboards";
 
 const DASHBOARD_LIST_KEY = ["dashboards", "list"];
@@ -174,6 +177,53 @@ describe("useDashboards widget mutations", () => {
     });
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: DASHBOARD_LIST_KEY,
+    });
+  });
+});
+
+describe("useResolveDashboardWorkspace", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("does not auto-fetch (enabled: false) and returns null data by default", () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    const { result } = renderHook(
+      () => useResolveDashboardWorkspace("dash-1"),
+      { wrapper: createQueryWrapper(queryClient) },
+    );
+
+    expect(result.current.data).toBeUndefined();
+    expect(result.current.isFetching).toBe(false);
+  });
+
+  it("resolves workspace when refetch is called", async () => {
+    mocks.get.mockResolvedValueOnce({
+      data: { result: { workspace_id: "ws-1", workspace_name: "Test WS" } },
+    });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    const { result } = renderHook(
+      () => useResolveDashboardWorkspace("dash-1"),
+      { wrapper: createQueryWrapper(queryClient) },
+    );
+
+    result.current.refetch();
+
+    await waitFor(() => expect(result.current.isFetching).toBe(false));
+
+    expect(mocks.get).toHaveBeenCalledWith(
+      "/tracer/dashboard/dash-1/resolve-workspace/",
+    );
+    expect(result.current.data).toEqual({
+      workspace_id: "ws-1",
+      workspace_name: "Test WS",
     });
   });
 });
