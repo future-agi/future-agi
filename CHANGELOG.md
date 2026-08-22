@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.28.1](https://github.com/future-agi/future-agi/compare/v1.28.0...v1.28.1) (2026-08-22)
+
+
+### Bug Fixes
+
+* **annotations:** route conversation traces to the voice UI in the queue ([5dc9ff2](https://github.com/future-agi/future-agi/commit/5dc9ff237fe076b218355d16352b37fe6c5f8c70))
+* **annotations:** route conversation traces to the voice UI in the queue ([584f6db](https://github.com/future-agi/future-agi/commit/584f6db93c8f936758e0d093aa60ebcf72e8103e))
+
 ## [1.28.0](https://github.com/future-agi/future-agi/compare/v1.27.4...v1.28.0) (2026-08-18)
 
 
