@@ -46,6 +46,75 @@ _TTS_VOICE_DEFAULTS = {
     "vertex": "en-US-Chirp3-HD-Kore",
 }
 
+# What the persona's language means to a speech stack. The persona model offers English and
+# Hindi; anything else falls through to the default rather than guessing a code.
+_STT_LANGUAGE = {"english": "en", "hindi": "hi"}
+_GOOGLE_STT_LANGUAGE = {"english": "en-US", "hindi": "hi-IN"}
+
+
+def _accent_voices() -> dict[str, dict[str, str]]:
+    """Which voice each accent should speak in, per provider.
+
+    Configuration, not a guess. A persona asking for an Indian accent is only heard as one if a
+    real voice id is named for it, and inventing ids here would produce calls that fail at the
+    provider or, worse, silently fall back to the default while the run reports the accent was
+    honoured. Supplied as ``{"deepgram": {"indian": "<voice>"}}``; unmapped accents keep the
+    provider default and are reported as unmapped rather than pretended.
+    """
+    try:
+        held = json.loads(os.environ.get("SIMULATOR_TTS_VOICE_BY_ACCENT") or "{}")
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(held, dict):
+        return {}
+    return {
+        str(provider).lower(): {str(k).lower(): str(v) for k, v in table.items()}
+        for provider, table in held.items()
+        if isinstance(table, dict)
+    }
+
+
+def _persona_now() -> dict:
+    """The persona this call is being placed for, as the harness handed it over."""
+    raw = os.environ.get("HARNESS_PERSONA", "").strip()
+    try:
+        held = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        return {}
+    return held if isinstance(held, dict) else {}
+
+
+def _voice_for(persona: dict, provider: str) -> tuple[str, str]:
+    """The voice this caller speaks in, and why it was chosen.
+
+    An explicit ``SIMULATOR_TTS_VOICE`` always wins: an operator pinning a voice for a run means
+    it. Otherwise the persona's accent selects one, if a voice has been named for that accent.
+    """
+    if explicit := os.environ.get("SIMULATOR_TTS_VOICE"):
+        return explicit, "pinned by SIMULATOR_TTS_VOICE"
+    default = _TTS_VOICE_DEFAULTS.get(provider.lower(), "alloy")
+    accent = str(persona.get("accent") or "").strip()
+    if not accent:
+        return default, "persona names no accent"
+    found = (_accent_voices().get(provider.lower()) or {}).get(accent.lower())
+    if found:
+        return found, f"accent {accent!r}"
+    return default, f"accent {accent!r} has no voice mapped for {provider}, using the default"
+
+
+def _language_for(persona: dict, provider: str) -> tuple[str, str]:
+    """The language the caller is understood in, and why."""
+    if explicit := os.environ.get("SIMULATOR_STT_LANGUAGE"):
+        return explicit, "pinned by SIMULATOR_STT_LANGUAGE"
+    google = provider.lower() in _GOOGLE_PROVIDERS
+    fallback = "en-US" if google else "en"
+    spoken = persona.get("languages") or []
+    first = str(spoken[0]).strip().lower() if spoken else ""
+    if not first:
+        return fallback, "persona names no language"
+    table = _GOOGLE_STT_LANGUAGE if google else _STT_LANGUAGE
+    return (table.get(first, fallback), f"persona speaks {first!r}")
+
 
 @dataclass(frozen=True)
 class VoiceCase:
@@ -258,6 +327,17 @@ def build_inputs(case_id: str, run_id: str) -> VoiceInputs:
     llm_provider = os.environ.get("SIMULATOR_LLM_PROVIDER", "google")
     stt_provider = os.environ.get("SIMULATOR_STT_PROVIDER", "deepgram")
     tts_provider = os.environ.get("SIMULATOR_TTS_PROVIDER", "deepgram")
+
+    # The caller's own speech, from the persona this scenario was written with. Without this the
+    # accent and language are prose in the prompt and nothing else: every persona sounds the
+    # same, which is exactly what "no persona variant recording" describes.
+    speaking = _persona_now()
+    speaks_as, voice_why = _voice_for(speaking, tts_provider)
+    speaks, language_why = _language_for(speaking, stt_provider)
+    print(
+        f"[voice] caller speaks {speaks} ({language_why}); voice {speaks_as} ({voice_why})",
+        flush=True,
+    )
     simulator = simulate.SimulatorAgentDefinition(
         llm={
             "provider": llm_provider,
@@ -267,16 +347,12 @@ def build_inputs(case_id: str, run_id: str) -> VoiceInputs:
         stt={
             "provider": stt_provider,
             "model": _model("stt", stt_provider),
-            "language": os.environ.get(
-                "SIMULATOR_STT_LANGUAGE",
-                "en-US" if stt_provider.lower() in _GOOGLE_PROVIDERS else "en",
-            ),
+            "language": speaks,
         },
         tts={
             "provider": tts_provider,
             "model": _model("tts", tts_provider),
-            "voice": os.environ.get("SIMULATOR_TTS_VOICE")
-            or _TTS_VOICE_DEFAULTS.get(tts_provider.lower(), "alloy"),
+            "voice": speaks_as,
         },
         instructions=os.environ.get("HARNESS_SIMULATOR_INSTRUCTIONS") or None,
         allow_interruptions=os.environ.get("SIMULATOR_ALLOW_INTERRUPTION", "1").lower()

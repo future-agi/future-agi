@@ -9,6 +9,7 @@ const mutation = () => ({ mutate: vi.fn(), isPending: false });
 // hoisted with it — otherwise the factory closes over a binding that does not exist yet.
 const hooks = vi.hoisted(() => ({
   useAlkStatus: vi.fn(),
+  useAlkGeneration: vi.fn(),
   useAlkSessions: vi.fn(),
   useAlkHistory: vi.fn(),
   useAlkContract: vi.fn(),
@@ -57,6 +58,7 @@ beforeEach(() => {
   hooks.useAlkSimulations.mockReturnValue({ runs: [] });
   hooks.useAlkSubgoals.mockReturnValue({ subgoals: null });
   hooks.useAlkRuns.mockReturnValue({ legacyRuns: [] });
+  hooks.useAlkGeneration.mockReturnValue({ generation: null });
   hooks.useAlkSimulation.mockReturnValue({ run: null });
   [
     "useCreateAlkSession", "useOpenAlkSession", "useDeleteAlkSession", "useSetAlkStage",

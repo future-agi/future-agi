@@ -606,6 +606,20 @@ async def world(session: str = ""):
     }
 
 
+@app.get("/api/generation")
+async def generation(session: str = ""):
+    """What the suite generation is doing right now, so the page can draw it while it runs.
+
+    Polled rather than streamed: the page may be opened halfway through a suite, refreshed, or
+    opened somewhere else entirely, and each of those has to show the same thing. Empty when
+    nothing has been generated here, which the page reads as "no fan-out to show".
+    """
+    from harness import progress
+
+    out = _folder(session)
+    return progress.read(out) if out else {}
+
+
 @app.get("/api/scenarios")
 async def scenarios(session: str = ""):
     """Every scenario, with its files and its three gates re-run.
