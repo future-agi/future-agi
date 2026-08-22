@@ -1,20 +1,17 @@
 # Manual trigger only, mirroring frontend-prod-deploy.yaml (AWS) for the
-# GCP us2 stack. Pick the branch to build: main -> production-flavored
-# build, dev -> dev-flavored build. Either way the result ships to the
-# us2 bucket behind app-us2.futureagi.com.
+# GCP us2 stack. Pick any branch to build: main -> production-flavored
+# build, anything else -> dev-flavored build. Either way the result ships
+# to the us2 bucket behind app-us2.futureagi.com.
 name: Deploy Frontend to US2 (GCP)
 
 on:
   workflow_dispatch:
     inputs:
       branch:
-        description: 'Branch to build and deploy'
+        description: "Branch to build and deploy"
         required: true
-        default: 'main'
-        type: choice
-        options:
-          - main
-          - dev
+        default: "main"
+        type: string
 
 jobs:
   deploy-us2:
@@ -32,8 +29,8 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22.18'
-          cache: 'yarn'
+          node-version: "22.18"
+          cache: "yarn"
           cache-dependency-path: frontend/yarn.lock
 
       - name: Install dependencies

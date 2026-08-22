@@ -2,7 +2,13 @@ import { describe, it, expect } from "vitest";
 import {
   fromAxisConfigPayload,
   getAggColumnLabel,
+  getSeriesScalar,
+  groupPieSeries,
+  isAdditiveAggregation,
   getYAxisRangeWarning,
+  makeSeriesKey,
+  resolveSavedSelection,
+  resolveVisibleSeries,
   seriesHasDataPoints,
   toAxisConfigPayload,
 } from "../widgetUtils";
@@ -209,5 +215,334 @@ describe("getYAxisRangeWarning", () => {
     expect(
       getYAxisRangeWarning(series([2, 7]), leftAxis({ min: "not-a-number" })),
     ).toBeNull();
+  });
+});
+
+describe("getSeriesScalar", () => {
+  const pts = (...ys) => ys.map((y, i) => ({ x: i, y }));
+
+  it("sums buckets for additive aggregations", () => {
+    expect(getSeriesScalar(pts(10, 20, 30), "sum")).toBe(60);
+    expect(getSeriesScalar(pts(10, 20, 30), "count")).toBe(60);
+  });
+
+  it("does not sum count_distinct, whose buckets overlap", () => {
+    // The same 100 users active on each of three days is 100 distinct users,
+    // not 300. An unweighted mean is the closest answer the per-bucket
+    // response supports.
+    expect(getSeriesScalar(pts(100, 100, 100), "count_distinct")).toBe(100);
+  });
+
+  it("sums the dataset count aggregations too, which are counts like any other", () => {
+    // pass_count/fail_count are selectable for dataset metrics; averaging them
+    // would report a per-bucket figure as if it were the period total.
+    expect(getSeriesScalar(pts(3, 4, 5), "pass_count")).toBe(12);
+    expect(getSeriesScalar(pts(3, 4, 5), "fail_count")).toBe(12);
+  });
+
+  it("keeps rate aggregations non-additive", () => {
+    expect(getSeriesScalar(pts(10, 20), "pass_rate")).toBe(15);
+    expect(getSeriesScalar(pts(10, 20), "fail_rate")).toBe(15);
+    expect(getSeriesScalar(pts(10, 20), "true_rate")).toBe(15);
+  });
+
+  it("takes the maximum bucket for a max aggregation instead of averaging them", () => {
+    // Regression for TH-6530: a "max" metric previously showed the MEAN of the
+    // per-bucket maxima, e.g. 124.28K instead of the true peak of 396,293.
+    expect(getSeriesScalar(pts(2838, 2878, 396293, 95098), "max")).toBe(396293);
+  });
+
+  it("takes the minimum bucket for a min aggregation", () => {
+    expect(getSeriesScalar(pts(9, 4, 7), "min")).toBe(4);
+  });
+
+  it("averages buckets for avg and percentile aggregations", () => {
+    expect(getSeriesScalar(pts(10, 20), "avg")).toBe(15);
+    expect(getSeriesScalar(pts(10, 20), "p95")).toBe(15);
+    expect(getSeriesScalar(pts(10, 20), "median")).toBe(15);
+  });
+
+  it("defaults to averaging when the aggregation is unknown or missing", () => {
+    expect(getSeriesScalar(pts(10, 20))).toBe(15);
+    expect(getSeriesScalar(pts(10, 20), "wat")).toBe(15);
+  });
+
+  it("skips null and non-finite buckets rather than counting them as zero", () => {
+    expect(getSeriesScalar(pts(10, null, 20), "avg")).toBe(15);
+    expect(getSeriesScalar(pts(10, NaN, 20), "sum")).toBe(30);
+  });
+
+  it("returns null when there is no usable data", () => {
+    expect(getSeriesScalar([], "sum")).toBeNull();
+    expect(getSeriesScalar(pts(null, null), "avg")).toBeNull();
+  });
+});
+
+describe("groupPieSeries", () => {
+  const s = (
+    metricIndex,
+    metricName,
+    aggregation,
+    unit,
+    breakdownName,
+    ys,
+  ) => ({
+    name: `${metricName} / ${breakdownName} (${aggregation})`,
+    metricIndex,
+    metricName,
+    aggregation,
+    unit,
+    breakdownName,
+    data: ys.map((y, i) => ({ x: i, y })),
+  });
+
+  it("groups flat series into one entry per metric, valued by that metric's aggregation", () => {
+    const groups = groupPieSeries([
+      s(0, "Tokens", "avg", "tokens", "proj-a", [10, 20]),
+      s(0, "Tokens", "avg", "tokens", "proj-b", [30, 40]),
+      s(1, "Latency", "max", "ms", "proj-a", [100, 200]),
+      s(1, "Latency", "max", "ms", "proj-b", [300, 400]),
+    ]);
+
+    expect(groups).toEqual([
+      {
+        metricIndex: 0,
+        metricName: "Tokens",
+        aggregation: "avg",
+        unit: "tokens",
+        hasValues: true,
+        slices: [
+          { name: "proj-a", value: 15 },
+          { name: "proj-b", value: 35 },
+        ],
+      },
+      {
+        metricIndex: 1,
+        metricName: "Latency",
+        aggregation: "max",
+        unit: "ms",
+        hasValues: true,
+        slices: [
+          { name: "proj-a", value: 200 },
+          { name: "proj-b", value: 400 },
+        ],
+      },
+    ]);
+  });
+
+  it("keeps metrics separate even when they share a name but differ by aggregation", () => {
+    const groups = groupPieSeries([
+      s(0, "Latency", "avg", "ms", "proj-a", [10, 20]),
+      s(1, "Latency", "max", "ms", "proj-a", [10, 20]),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups.map((g) => g.aggregation)).toEqual(["avg", "max"]);
+  });
+
+  it("drops slices with no usable data but keeps the metric", () => {
+    const groups = groupPieSeries([
+      s(0, "Tokens", "avg", "tokens", "proj-a", [10]),
+      s(0, "Tokens", "avg", "tokens", "proj-b", [null]),
+      s(1, "Latency", "avg", "ms", "proj-a", [null, null]),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].slices).toEqual([{ name: "proj-a", value: 10 }]);
+    expect(groups[1]).toMatchObject({ slices: [], hasValues: false });
+  });
+
+  it("drops zero-valued slices, which a ring cannot draw, and the count that implies them", () => {
+    // Real case from TH-6530 testing: projects whose traces record no tokens
+    // return avg 0, producing invisible slices that still inflated the count.
+    const groups = groupPieSeries([
+      s(0, "Tokens", "avg", "tokens", "cookbook", [149.89, 0]),
+      s(0, "Tokens", "avg", "tokens", "voice-sim", [0, 0]),
+      s(0, "Tokens", "avg", "tokens", "local-seed", [0]),
+    ]);
+    expect(groups[0].slices).toEqual([{ name: "cookbook", value: 74.945 }]);
+    expect(groups[0].hasValues).toBe(true);
+  });
+
+  it("keeps a metric whose slices are all zero so its panel can explain itself", () => {
+    // Dropping the metric outright makes it look like adding it silently
+    // failed; the panel stays and reports that every value is zero.
+    const groups = groupPieSeries([
+      s(0, "Tokens", "avg", "tokens", "a", [0]),
+      s(1, "Latency", "avg", "ms", "a", [12]),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups[0]).toMatchObject({
+      metricName: "Tokens",
+      slices: [],
+      hasValues: true,
+    });
+    expect(groups[1].slices).toEqual([{ name: "a", value: 12 }]);
+  });
+
+  it("marks a metric with no numeric values at all as having none", () => {
+    const groups = groupPieSeries([
+      s(0, "Tokens", "avg", "tokens", "a", [null, null]),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ slices: [], hasValues: false });
+  });
+
+  it("caps each metric at its own top slices by value, so one metric cannot crowd out another", () => {
+    const many = Array.from({ length: 12 }, (_, i) =>
+      s(0, "Tokens", "sum", "tokens", `p${i}`, [i + 1]),
+    );
+    const groups = groupPieSeries([
+      ...many,
+      s(1, "Latency", "sum", "ms", "only", [5]),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].slices).toHaveLength(10);
+    expect(groups[1].slices).toEqual([{ name: "only", value: 5 }]);
+  });
+
+  it("folds everything past the cap into one Other slice, so the ring still adds up", () => {
+    // 1..12 sums to 78. Dropping the tail would leave the ring normalised over
+    // 72 and the centre reporting 72 as the metric's total.
+    const groups = groupPieSeries(
+      Array.from({ length: 12 }, (_, i) =>
+        s(0, "Tokens", "sum", "tokens", `p${i}`, [i + 1]),
+      ),
+    );
+    const [g] = groups;
+    expect(g.slices).toHaveLength(10);
+    expect(g.slices.slice(0, 9).map((x) => x.value)).toEqual([
+      12, 11, 10, 9, 8, 7, 6, 5, 4,
+    ]);
+    // 3 + 2 + 1, named so the fold is visible rather than silent
+    expect(g.slices[9]).toEqual({ name: "Other (3)", value: 6 });
+    expect(g.slices.reduce((a, x) => a + x.value, 0)).toBe(78);
+  });
+
+  it("does not invent an Other slice for a non-additive aggregation", () => {
+    // Summing per-project averages into one "Other" would be a made-up number,
+    // so the tail is dropped instead and the centre stays blank.
+    const groups = groupPieSeries(
+      Array.from({ length: 12 }, (_, i) =>
+        s(0, "Latency", "avg", "ms", `p${i}`, [i + 1]),
+      ),
+    );
+    expect(groups[0].slices).toHaveLength(10);
+    expect(groups[0].slices.some((x) => /^Other/.test(x.name))).toBe(false);
+  });
+
+  it("leaves a metric alone when it is exactly at the cap", () => {
+    const groups = groupPieSeries(
+      Array.from({ length: 10 }, (_, i) =>
+        s(0, "Tokens", "sum", "tokens", `p${i}`, [i + 1]),
+      ),
+    );
+    expect(groups[0].slices).toHaveLength(10);
+    expect(groups[0].slices.some((x) => /^Other/.test(x.name))).toBe(false);
+  });
+
+  it("returns an empty array for no series", () => {
+    expect(groupPieSeries([])).toEqual([]);
+  });
+});
+
+describe("isAdditiveAggregation", () => {
+  it("is true only for aggregations whose slices sum to a real total", () => {
+    expect(isAdditiveAggregation("sum")).toBe(true);
+    expect(isAdditiveAggregation("count")).toBe(true);
+    expect(isAdditiveAggregation("pass_count")).toBe(true);
+    expect(isAdditiveAggregation("fail_count")).toBe(true);
+  });
+
+  it("is false where summing the slices would invent a quantity", () => {
+    // The backend evaluates count_distinct as uniq() per time bucket, so
+    // anyone active in more than one bucket is counted once per bucket.
+    expect(isAdditiveAggregation("count_distinct")).toBe(false);
+    // The sum of three per-project averages is not an average of anything.
+    expect(isAdditiveAggregation("avg")).toBe(false);
+    expect(isAdditiveAggregation("max")).toBe(false);
+    expect(isAdditiveAggregation("min")).toBe(false);
+    expect(isAdditiveAggregation("median")).toBe(false);
+    expect(isAdditiveAggregation("p95")).toBe(false);
+    expect(isAdditiveAggregation("pass_rate")).toBe(false);
+    expect(isAdditiveAggregation("true_rate")).toBe(false);
+    expect(isAdditiveAggregation()).toBe(false);
+  });
+});
+
+describe("makeSeriesKey", () => {
+  it("builds id|aggregation|bucket", () => {
+    expect(makeSeriesKey({ id: "m1", aggregation: "avg" }, "us")).toBe(
+      "m1|avg|us",
+    );
+  });
+
+  it("does not throw on a nullish metric", () => {
+    expect(makeSeriesKey(null, "us")).toBe("||us");
+    expect(makeSeriesKey(undefined, undefined)).toBe("||");
+  });
+});
+
+const seriesWithKeys = (keys) => keys.map((key) => ({ key }));
+
+describe("resolveVisibleSeries", () => {
+  it("returns null unchanged (all visible)", () => {
+    expect(resolveVisibleSeries(null, seriesWithKeys(["a", "b"]))).toBeNull();
+  });
+
+  it("maps saved keys to their current indices", () => {
+    const result = resolveVisibleSeries(
+      ["b", "d"],
+      seriesWithKeys(["a", "b", "c", "d"]),
+    );
+    expect([...result]).toEqual([1, 3]);
+  });
+
+  it("drops saved keys whose series no longer exist", () => {
+    const result = resolveVisibleSeries(
+      ["a", "gone"],
+      seriesWithKeys(["a", "b"]),
+    );
+    expect([...result]).toEqual([0]);
+  });
+
+  it("returns an empty Set when a non-empty selection matches nothing", () => {
+    const result = resolveVisibleSeries(
+      ["old1", "old2"],
+      seriesWithKeys(["new1", "new2"]),
+    );
+    expect(result).toBeInstanceOf(Set);
+    expect(result.size).toBe(0);
+  });
+});
+
+describe("resolveSavedSelection", () => {
+  it("returns undefined when nothing was saved (caller applies default)", () => {
+    expect(
+      resolveSavedSelection(undefined, seriesWithKeys(["a"])),
+    ).toBeUndefined();
+  });
+
+  it("honors an explicit show-all (null)", () => {
+    expect(resolveSavedSelection(null, seriesWithKeys(["a", "b"]))).toBeNull();
+  });
+
+  it("honors an intentional hide-all (empty saved list)", () => {
+    const result = resolveSavedSelection([], seriesWithKeys(["a", "b"]));
+    expect(result).toBeInstanceOf(Set);
+    expect(result.size).toBe(0);
+  });
+
+  it("honors a saved selection that still matches (including partial)", () => {
+    const result = resolveSavedSelection(
+      ["b", "gone"],
+      seriesWithKeys(["a", "b", "c"]),
+    );
+    expect([...result]).toEqual([1]);
+  });
+
+  it("returns undefined for a fully-stale selection (falls through to default)", () => {
+    // Non-empty saved keys, none survive → caller applies its top-10/show-all default.
+    expect(
+      resolveSavedSelection(["old1", "old2"], seriesWithKeys(["new1", "new2"])),
+    ).toBeUndefined();
   });
 });

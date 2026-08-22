@@ -100,11 +100,14 @@ const JsonSyntax = ({ json }) => {
       const colored = chunk.replace(
         /("(?:[^"\\]|\\.)*")|(\b(?:true|false)\b)|(\bnull\b)|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
         (match, str, bool, nul, num) => {
-          if (str) return `<span style="color:#b5520a">${str}</span>`;
-          if (bool) return `<span style="color:#9333EA">${match}</span>`;
+          if (str)
+            return `<span style="color:var(--syntax-string)">${str}</span>`;
+          if (bool)
+            return `<span style="color:var(--syntax-boolean)">${match}</span>`;
           if (nul)
             return `<span style="color:var(--text-disabled)">${match}</span>`;
-          if (num) return `<span style="color:#1750EB">${match}</span>`;
+          if (num)
+            return `<span style="color:var(--syntax-number)">${match}</span>`;
           return match;
         },
       );
@@ -533,9 +536,9 @@ const JsonPreviewBlock = ({
             },
             basicChildStyle: { paddingLeft: "16px" },
             label: { color: "var(--text-primary)", fontWeight: 500 },
-            stringValue: { color: "#b5520a" },
-            numberValue: { color: "#1750EB" },
-            booleanValue: { color: "#9333EA" },
+            stringValue: { color: "var(--syntax-string)" },
+            numberValue: { color: "var(--syntax-number)" },
+            booleanValue: { color: "var(--syntax-boolean)" },
             nullValue: { color: "var(--text-disabled)" },
             undefinedValue: { color: "var(--text-disabled)" },
             punctuation: { color: "var(--text-disabled)" },
@@ -1367,7 +1370,7 @@ const EvalCard = ({ ev, spanLabel }) => {
           px: 1.25,
           py: 0.75,
           cursor: explanation ? "pointer" : "default",
-          "&:hover": explanation ? { bgcolor: "rgba(0,0,0,0.02)" } : {},
+          "&:hover": explanation ? { bgcolor: "action.hover" } : {},
         }}
       >
         <Box
@@ -2367,7 +2370,7 @@ const AttrValueCell = ({
       variant="caption"
       sx={{
         fontSize: 11,
-        color: typeof value === "string" ? "#b5520a" : "text.primary",
+        color: typeof value === "string" ? "syntax.string" : "text.primary",
         wordBreak: "break-all",
       }}
     >

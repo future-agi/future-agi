@@ -23,6 +23,19 @@ import pandas as pd
 import requests
 import structlog
 import weaviate
+from accounts.models.user import User
+from agentic_eval.core.embeddings.embedding_manager import (
+    EmbeddingManager,
+    model_manager,
+)
+from agentic_eval.core_evals.fi_evals import *  # noqa: F403
+from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
+from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
+from analytics.utils import (
+    MixpanelEvents,
+    get_mixpanel_properties,
+    track_mixpanel_event,
+)
 from django.core.exceptions import ValidationError
 from django.db import close_old_connections, connection, transaction
 from django.db.models import (
@@ -48,32 +61,6 @@ from django.utils import timezone
 from docx import Document
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
-from pinecone import Pinecone
-from pypdf import PdfReader
-from pypdf.errors import PdfReadError
-from qdrant_client import QdrantClient
-from rest_framework import serializers, status, viewsets
-from rest_framework.decorators import action
-from rest_framework.generics import CreateAPIView
-from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
-from rest_framework.views import APIView
-from weaviate import AuthApiKey
-
-from accounts.models.user import User
-from agentic_eval.core.embeddings.embedding_manager import (
-    EmbeddingManager,
-    model_manager,
-)
-from agentic_eval.core_evals.fi_evals import *  # noqa: F403
-from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
-from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
-from analytics.utils import (
-    MixpanelEvents,
-    get_mixpanel_properties,
-    track_mixpanel_event,
-)
 from evaluations.constants import AGENT_EVALUATOR_TYPE_ID, FUTUREAGI_EVAL_TYPES
 from model_hub.constants import (
     CREATE_KB_SDK_CODE,
@@ -165,7 +152,9 @@ from model_hub.serializers.contracts import (
     HuggingFaceDatasetDetailResponseSerializer,
     HuggingFaceDatasetListRequestSerializer,
     HuggingFaceDatasetListResponseSerializer,
+    LegacyKnowledgeBaseBulkDeleteRequestSerializer,
     LegacyKnowledgeBaseCreateResponseSerializer,
+    LegacyKnowledgeBaseFileDeleteRequestSerializer,
     LegacyKnowledgeBaseFilesRequestSerializer,
     LegacyKnowledgeBaseFilesResponseSerializer,
     LegacyKnowledgeBaseListResponseSerializer,
@@ -178,6 +167,7 @@ from model_hub.serializers.contracts import (
     MergeDatasetRequestSerializer,
     ModelHubEmptyRequestSerializer,
     ModelHubEvalConfigResponseSerializer,
+    ModelHubStringResultResponseSerializer,
     PreviewRunEvalRequestSerializer,
     SingleRowEvaluationRequestSerializer,
     SingleRowEvaluationResponseSerializer,
@@ -267,6 +257,17 @@ from model_hub.views.utils.utils import (
     update_column_id,
     validate_file_url,
 )
+from pinecone import Pinecone
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
+from qdrant_client import QdrantClient
+from rest_framework import serializers, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.generics import CreateAPIView
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
 from sdk.utils.helpers import _get_api_call_type
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
@@ -299,6 +300,7 @@ from tfc.utils.storage import (
     upload_file_to_s3,
     upload_image_to_s3,
 )
+from weaviate import AuthApiKey
 
 try:
     from ee.usage.utils.usage_entries import (
@@ -706,7 +708,9 @@ class AddRowsFromFile(CreateAPIView):
             from model_hub.constants import MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB
 
             if file.size > MAX_FILE_SIZE_BYTES:
-                return self._gm.bad_request(f"File size exceeds the {MAX_FILE_SIZE_MB} MB limit")
+                return self._gm.bad_request(
+                    f"File size exceeds the {MAX_FILE_SIZE_MB} MB limit"
+                )
 
             # Process the file
             data, error = FileProcessor.process_file(file_obj=file)
@@ -6375,9 +6379,7 @@ class DatatypeConverter:
 
     @classmethod
     def _is_own_s3_url(cls, value):
-        return any(
-            is_own_storage_url(value, bucket) for bucket in cls._OWN_S3_BUCKETS
-        )
+        return any(is_own_storage_url(value, bucket) for bucket in cls._OWN_S3_BUCKETS)
 
     def _convert_cell_to_image(self, cell):
         """Convert to image - uploads to S3"""
@@ -6594,9 +6596,8 @@ class DownloadDatasetView(APIView):
             )
 
 
-from rest_framework import serializers  # noqa: E402
-
 from model_hub.models.choices import OwnerChoices  # noqa: E402
+from rest_framework import serializers  # noqa: E402
 
 
 class TemplateEvalSerializer(serializers.Serializer):
@@ -6908,7 +6909,10 @@ class GetEvalsListView(APIView):
 
         if search_text:
             from model_hub.utils.eval_list import normalize_search_for_name
-            eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
+
+            eval_templates = eval_templates.filter(
+                normalize_search_for_name(search_text)
+            )
 
         if validated_data.get("eval_tags"):
             eval_templates = eval_templates.filter(
@@ -7038,6 +7042,7 @@ class GetEvalsListView(APIView):
 
         if search_text:
             from model_hub.utils.eval_list import normalize_search_for_name
+
             user_evals = user_evals.filter(normalize_search_for_name(search_text))
 
         if validated_data.get("eval_tags"):
@@ -7084,13 +7089,15 @@ class GetEvalsListView(APIView):
                     ).order_by("version_number"),
                     to_attr="_prefetched_versions",
                 ),
-            )
-            .select_related("organization")
+            ).select_related("organization")
         )
 
         if search_text:
             from model_hub.utils.eval_list import normalize_search_for_name
-            eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
+
+            eval_templates = eval_templates.filter(
+                normalize_search_for_name(search_text)
+            )
 
         if validated_data.get("eval_tags"):
             eval_templates = eval_templates.filter(
@@ -7150,7 +7157,10 @@ class GetEvalsListView(APIView):
         )
         if search_text:
             from model_hub.utils.eval_list import normalize_search_for_name
-            eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
+
+            eval_templates = eval_templates.filter(
+                normalize_search_for_name(search_text)
+            )
 
         if validated_data.get("eval_tags"):
             eval_templates = eval_templates.filter(
@@ -7518,7 +7528,9 @@ class GetEvalStructureView(APIView):
                 template.config.get("config_params_option", {})
             ),
             "run_config": eval.config.get("run_config", {}),
-            "pinned_version_id": str(eval.pinned_version_id) if eval.pinned_version_id else None,
+            "pinned_version_id": (
+                str(eval.pinned_version_id) if eval.pinned_version_id else None
+            ),
         }
 
         return self._gm.success_response({"eval": eval_data})
@@ -7799,6 +7811,7 @@ class DeleteEvalsView(APIView):
                     from model_hub.services.column_service import (
                         delete_eval_column_and_dependents,
                     )
+
                     with transaction.atomic():
                         column = Column.objects.filter(
                             source_id=eval_metric.id,
@@ -7897,7 +7910,9 @@ class EditAndRunUserEvalView(APIView):
                 run = request_data.get("run", False)
                 save_as_template = request_data.get("save_as_template", False)
                 experiment_id = request_data.get("experiment_id")
-                dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+                dataset = (
+                    _request_dataset_queryset(request).filter(id=dataset_id).first()
+                )
                 if not dataset:
                     return self._gm.not_found("Dataset not found")
 
@@ -7943,7 +7958,9 @@ class EditAndRunUserEvalView(APIView):
                             deleted=False,
                         ).exists()
                     ):
-                        return self._gm.bad_request(get_error_message("EVAL_NAME_EXISTS"))
+                        return self._gm.bad_request(
+                            get_error_message("EVAL_NAME_EXISTS")
+                        )
 
                     new_template = EvalTemplate(
                         name=template_name,
@@ -7974,7 +7991,9 @@ class EditAndRunUserEvalView(APIView):
                     if has_function_params_schema(new_config):
                         for key, value in input_params.items():
                             if key in new_config.get("function_params_schema", {}):
-                                new_config["function_params_schema"][key]["default"] = value
+                                new_config["function_params_schema"][key][
+                                    "default"
+                                ] = value
                     new_template.config = new_config
                     new_template.save()
                     # Assign the full object (not just _id) so the FK cache
@@ -8001,10 +8020,10 @@ class EditAndRunUserEvalView(APIView):
                         get_required_mapping_keys_for_template,
                         validate_required_key_mapping,
                     )
-                    required_mapping_keys = (
-                        new_config.get("config", {}).get("required_keys")
-                        or get_required_mapping_keys_for_template(eval_metric.template)
-                    )
+
+                    required_mapping_keys = new_config.get("config", {}).get(
+                        "required_keys"
+                    ) or get_required_mapping_keys_for_template(eval_metric.template)
                     missing_keys = validate_required_key_mapping(
                         new_config.get("mapping", {}),
                         required_mapping_keys,
@@ -8024,12 +8043,12 @@ class EditAndRunUserEvalView(APIView):
                 # Both paths keep eval_metric.config and pinned_version.config_snapshot
                 # in lockstep (the invariant).
                 explicit_version_id = request_data.get("pinned_version_id")
-                version_switched = (
+                version_switched = explicit_version_id and str(
                     explicit_version_id
-                    and str(explicit_version_id) != str(eval_metric.pinned_version_id or "")
-                )
+                ) != str(eval_metric.pinned_version_id or "")
                 if version_switched:
                     from model_hub.models.evals_metric import EvalTemplateVersion as ETV
+
                     selected_ver = ETV.objects.filter(
                         id=explicit_version_id,
                         eval_template=eval_metric.template,
@@ -8044,13 +8063,16 @@ class EditAndRunUserEvalView(APIView):
                 # matches the baseline snapshot, dedup skips creation; if it
                 # differs (including after a version switch with edits), a new
                 # version is created and pinned.
-                from model_hub.services.eval_version_pinning import maybe_pin_new_version
+                from model_hub.services.eval_version_pinning import (
+                    maybe_pin_new_version,
+                )
 
                 maybe_pin_new_version(
                     eval_metric,
                     request_data,
                     user=request.user,
-                    organization=getattr(request, "organization", None) or request.user.organization,
+                    organization=getattr(request, "organization", None)
+                    or request.user.organization,
                     workspace=getattr(request, "workspace", None),
                 )
 
@@ -8325,9 +8347,9 @@ class AddUserEvalView(CreateAPIView):
                     if has_function_params_schema(new_config):
                         for key, value in input_params.items():
                             if key in new_config.get("function_params_schema", {}):
-                                new_config["function_params_schema"][key]["default"] = (
-                                    value
-                                )
+                                new_config["function_params_schema"][key][
+                                    "default"
+                                ] = value
                     new_template.config = new_config
                     new_template.save()
                     template_id = new_template.id
@@ -11551,9 +11573,8 @@ class FeedbackViewSet(viewsets.ModelViewSet):
             )[:5]
             for feedback in recent_feedback:
                 feedback_user = feedback.user
-                user_name = (
-                    getattr(feedback_user, "name", "")
-                    or getattr(feedback_user, "email", "")
+                user_name = getattr(feedback_user, "name", "") or getattr(
+                    feedback_user, "email", ""
                 )
                 summary["recent_feedback"].append(
                     {
@@ -11805,9 +11826,7 @@ def run_evaluation_task(evaluation_data):
                     # Stamp which eval version will run — pinned wins, else
                     # the template default (resolve_for_metric).
                     try:
-                        version = EvalTemplateVersion.objects.resolve_for_metric(
-                            metric
-                        )
+                        version = EvalTemplateVersion.objects.resolve_for_metric(metric)
                         if version:
                             runner_source_configs.setdefault(
                                 "version_id", str(version.id)
@@ -14575,6 +14594,7 @@ class GetCompareEvalsListView(APIView):
 
         if search_text:
             from model_hub.utils.eval_list import normalize_search_for_name
+
             user_evals = user_evals.filter(normalize_search_for_name(search_text))
 
         # Count occurrences of eval names across datasets
@@ -14911,7 +14931,6 @@ class CreateKnowledgeBaseView(APIView):
         self, file_bytes, file_name, kb_id, file_id, org_id=None
     ):
         from django.db import close_old_connections, connection
-
         from tfc.utils.storage import upload_file_to_s3
 
         try:
@@ -15289,20 +15308,8 @@ class CreateKnowledgeBaseView(APIView):
                     get_error_message("KNOWLEDGE_BASE_NOT_FOUND")
                 )
 
-            try:
-                try:
-                    from ee.usage.services.entitlements import Entitlements
-                except ImportError:
-                    Entitlements = None
-
-                if Entitlements is not None:
-                    feat_check = Entitlements.check_feature(
-                        str(org.id), "has_knowledge_base"
-                    )
-                    if not feat_check.allowed:
-                        return self._gm.forbidden_response(feat_check.reason)
-            except ImportError:
-                pass
+            # No feature check here: KB PATCH is oss_baseline — only CREATE
+            # is entitlement-gated (test_kb_patch_is_oss_baseline locks this).
 
             file_names = {file.name for file in files}
             if len(file_names) != len(files):
@@ -15377,6 +15384,14 @@ class CreateKnowledgeBaseView(APIView):
             )
 
     # Delete knowledge base
+    @validated_request(
+        request_serializer=LegacyKnowledgeBaseBulkDeleteRequestSerializer,
+        responses={
+            200: ModelHubStringResultResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        strict_request_validation=False,
+    )
     def delete(self, request, *args, **kwargs):
         try:
             kb_ids = request.data.get("kb_ids", [])
@@ -15503,6 +15518,7 @@ class GetKnowledgeBaseDetailsView(APIView):
                 }
 
                 if sort_config:
+                    sort_data = data
                     for sort_item in sort_config:
                         try:
                             column_id = sort_item.get("column_id")
@@ -15690,6 +15706,7 @@ class ExistingKnowledgeBaseView(APIView):
             }
 
             if sort_config:
+                sort_data = data
                 for sort_item in sort_config:
                     try:
                         column_id = sort_item.get("column_id")
@@ -15794,6 +15811,14 @@ class ExistingKnowledgeBaseView(APIView):
             )
 
     # Delete files from kb
+    @validated_request(
+        request_serializer=LegacyKnowledgeBaseFileDeleteRequestSerializer,
+        responses={
+            200: ModelHubStringResultResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        strict_request_validation=False,
+    )
     def delete(self, request, *args, **kwargs):
         try:
             org = getattr(request, "organization", None) or request.user.organization

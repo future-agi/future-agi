@@ -1819,12 +1819,13 @@ class EvalTemplateBulkDeleteView(APIView):
             from model_hub.models.develop_dataset import Cell, Column, Dataset
 
             with transaction.atomic():
+                delete_ts = timezone.now()
                 deleted_count = EvalTemplate.objects.filter(
                     id__in=req.template_ids,
                     organization=organization,
                     owner=OwnerChoices.USER.value,
                     deleted=False,
-                ).update(deleted=True, deleted_at=timezone.now())
+                ).update(deleted=True, deleted_at=delete_ts)
 
                 # Fetch all UserEvalMetrics bound to these templates
                 # Scoped to the requesting org to prevent cross-tenant cascade
@@ -1910,6 +1911,17 @@ class EvalTemplateBulkDeleteView(APIView):
                     UserEvalMetric.objects.filter(
                         id__in=[m[0] for m in metrics]
                     ).update(deleted=True, deleted_at=timezone.now())
+
+                # EvalSettings has no org field; gate through the exact templates deleted above.
+                EvalSettings.objects.filter(
+                    eval_id__in=EvalTemplate.all_objects.filter(
+                        id__in=req.template_ids,
+                        organization=organization,
+                        owner=OwnerChoices.USER.value,
+                        deleted_at=delete_ts,
+                    ).values_list("id", flat=True),
+                    deleted=False,
+                ).update(deleted=True, deleted_at=delete_ts)
 
             response = BulkDeleteResponse(deleted_count=deleted_count)
             return self._gm.success_response(response.model_dump())
@@ -2355,8 +2367,13 @@ class EvalTemplateDetailView(APIView):
             detail_criteria = template.criteria or (
                 default_version.criteria if default_version else ""
             )
+            # Turing is oss_locked: off-cloud deployments without it must not
+            # be handed a model they'd get 402'd on. Leave it unset instead.
+            from tfc.ee_gates import _turing_denied_off_cloud
+
+            fallback_model = None if _turing_denied_off_cloud() else "turing_large"
             detail_model = template.model or (
-                default_version.model if default_version else "turing_large"
+                default_version.model if default_version else fallback_model
             )
 
             # Normalize legacy short model names to full turing_* values
@@ -3343,12 +3360,6 @@ def _get_accessible_ground_truth(ground_truth_id, request):
     )
 
 
-def _get_accessible_composite_template(template_id, organization):
-    return _get_accessible_eval_template(
-        template_id, organization, template_type="composite"
-    )
-
-
 def _resolve_child_pinned_versions(child_ids, child_pinned_versions):
     """Resolve child_id -> EvalTemplateVersion for composite child pins."""
     if child_pinned_versions is None:
@@ -3462,6 +3473,7 @@ class CompositeEvalCreateView(APIView):
                 ).filter(
                     Q(owner=OwnerChoices.SYSTEM.value)
                     | Q(owner=OwnerChoices.USER.value, organization=organization)
+                    & _request_workspace_filter(request)
                 )
             )
             if len(children) != len(req.child_template_ids):
@@ -3869,6 +3881,7 @@ class CompositeEvalDetailView(APIView):
                             owner=OwnerChoices.USER.value,
                             organization=organization,
                         )
+                        & _request_workspace_filter(request)
                     )
                 )
                 if len(child_qs) != len(req.child_template_ids):
@@ -4162,7 +4175,9 @@ class CompositeEvalExecuteView(APIView):
             org = getattr(request, "organization", None) or request.user.organization
 
             try:
-                parent = _get_accessible_composite_template(template_id, org)
+                parent = _get_accessible_eval_template_for_request(
+                    template_id, request, template_type="composite"
+                )
             except EvalTemplate.DoesNotExist:
                 return self._gm.not_found("Composite eval template not found.")
 
@@ -4321,6 +4336,7 @@ class CompositeEvalAdhocExecuteView(APIView):
             ).filter(
                 Q(owner=OwnerChoices.SYSTEM.value)
                 | Q(owner=OwnerChoices.USER.value, organization=org)
+                & _request_workspace_filter(request)
             )
             children_by_id = {str(c.id): c for c in children_qs}
             if len(children_by_id) != len(set(req.child_template_ids)):
@@ -6810,6 +6826,11 @@ class DeleteEvalTemplateView(APIView):
                     )
                 EvalLogger.objects.filter(
                     custom_eval_config__eval_template=eval_template
+                ).update(deleted=True, deleted_at=timezone.now())
+
+                # EvalSettings has no FK; cascade on the just-verified template id.
+                EvalSettings.objects.filter(
+                    eval_id=eval_template.id, deleted=False
                 ).update(deleted=True, deleted_at=timezone.now())
 
             return self._gm.success_response("Evaluation template Deleted successfully")

@@ -17,7 +17,10 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-const revocationChannel = "fi:auth:revoke"
+const (
+	revocationChannel        = "fi:auth:revoke"
+	projectInvalidateChannel = "fi:project:invalidate"
+)
 
 var (
 	ErrUnauthenticated = errors.New("invalid or missing API key")
@@ -58,14 +61,15 @@ func New(ctx context.Context, cfg Config, rdb *redis.Client, log *slog.Logger) (
 	}, nil
 }
 
-// WatchRevocations subscribes to the Redis revocation channel and evicts
-// disabled/deleted keys from the local cache immediately. Blocks until ctx
-// is cancelled — call in a goroutine. No-op if Redis is not configured.
+// WatchRevocations evicts cache entries on two Redis channels: fi:auth:revoke
+// (payload = cache key) drops the whole entry; fi:project:invalidate
+// (payload = project_id) drops that mapping from every entry. Blocks until ctx
+// is cancelled; no-op if Redis is unconfigured.
 func (a *Authenticator) WatchRevocations(ctx context.Context) {
 	if a == nil || a.rdb == nil {
 		return
 	}
-	pubsub := a.rdb.Subscribe(ctx, revocationChannel)
+	pubsub := a.rdb.Subscribe(ctx, revocationChannel, projectInvalidateChannel)
 	defer pubsub.Close()
 
 	for {
@@ -74,8 +78,16 @@ func (a *Authenticator) WatchRevocations(ctx context.Context) {
 			if !ok {
 				return
 			}
-			a.cache.m.Delete(msg.Payload)
-			a.log.Debug("revoked key evicted from cache", "cache_key", msg.Payload[:8]+"…")
+			switch msg.Channel {
+			case revocationChannel:
+				a.cache.m.Delete(msg.Payload)
+				a.log.Debug("revoked key evicted from cache", "cache_key", msg.Payload[:min(len(msg.Payload), 8)]+"…")
+			case projectInvalidateChannel:
+				if n := a.cache.evictProjectID(msg.Payload); n > 0 {
+					a.log.Debug("deleted project evicted from cache",
+						"project_id", msg.Payload, "entries", n)
+				}
+			}
 		case <-ctx.Done():
 			return
 		}

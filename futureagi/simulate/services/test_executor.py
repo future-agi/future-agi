@@ -58,9 +58,9 @@ def _empty_call_log_summary(reason: str) -> dict:
 
 
 try:
-    from ee.evals.futureagi.eval_deterministic.evaluator import DeterministicEvaluator
+    from ee.evals.llm.agent_evaluator.evaluator import AgentEvaluator
 except ImportError:
-    DeterministicEvaluator = _ee_stub("DeterministicEvaluator")
+    AgentEvaluator = _ee_stub("AgentEvaluator")
 
 from model_hub.models.choices import StatusType
 from model_hub.models.develop_dataset import Cell, Column, Row
@@ -134,16 +134,28 @@ from tfc.constants.api_calls import APICallStatusChoices
 try:
     from ee.usage.models.usage import APICallType
 except ImportError:
-    APICallType = None
+    class APICallType:
+        class objects:
+            @classmethod
+            def get_or_create(cls, name=None, defaults=None, **kwargs):
+                from types import SimpleNamespace
+
+                return SimpleNamespace(id=f"oss-noop-{name or 'unspecified'}"), False
 try:
     from ee.usage.services.metering import check_usage
 except ImportError:
-    check_usage = None
+    def check_usage(*args, **kwargs):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(allowed=True, reason=None)
 try:
     from ee.usage.utils.usage_entries import deduct_cost_for_request, log_and_deduct_cost_for_api_request
 except ImportError:
-    deduct_cost_for_request = None
-    log_and_deduct_cost_for_api_request = None
+    def deduct_cost_for_request(*args, **kwargs):
+        return None
+
+    def log_and_deduct_cost_for_api_request(*args, **kwargs):
+        return None
 
 
 class TestExecutor:
@@ -3265,7 +3277,6 @@ class TestExecutor:
                                     )
                                 )
 
-                            recording_url = [s3_url]
                             csat = {
                                 "name": "csat_score",
                                 "description": "Evaluates the Customer Satisfaction (CSAT) score for a call between the customer and the agent.",
@@ -3284,24 +3295,33 @@ class TestExecutor:
                                 ],
                                 "multi_choice": False,
                             }
-                            evaluator = DeterministicEvaluator(
-                                multi_choice=csat["multi_choice"],
-                                choices=csat["choices"],
-                                rule_prompt=csat["criteria"],
-                                input=recording_url,
-                                input_type=["audio"],
-                            )
-                            result = evaluator._evaluate()
                             try:
-                                csat_score = result.get("data", [])[0]
-                                call_execution.overall_score = float(csat_score)
+                                csat_rule_prompt = (
+                                    csat["criteria"]
+                                    + "\n\n## Inputs\n\n<output>{{output}}</output>"
+                                )
+                                evaluator = AgentEvaluator(
+                                    rule_prompt=csat_rule_prompt,
+                                    model="turing_large",
+                                    output_type="choices",
+                                    choices=csat["choices"],
+                                    agent_mode="agent",
+                                )
+                                batch_result = evaluator.run(
+                                    output=s3_url,
+                                    required_keys=["output"],
+                                )
+                                csat_score = float(
+                                    batch_result.eval_results[0]["data"]["result"]
+                                )
+                                call_execution.overall_score = csat_score
                                 logger.debug(
                                     "csat_evaluation_result",
                                     call_execution_id=str(call_execution.id),
                                     csat_score=csat_score,
                                 )
 
-                            except:
+                            except Exception:
                                 logger.warning(
                                     "csat_evaluation_parse_failed",
                                     call_execution_id=str(call_execution.id),
@@ -4057,29 +4077,51 @@ class TestExecutor:
 
     def _check_and_update_test_execution_completion(self, test_execution_id):
         """
-        Check if all call executions in a test_execution have eval_completed = True,
-        and update test_execution status to COMPLETED if so.
+        Mark an execution completed once all calls are terminal and every
+        successful call has finished evaluation.
+
+        Failed and cancelled calls do not run evaluations, so requiring an
+        ``eval_completed`` flag on them leaves mixed-result executions stuck in
+        EVALUATING forever.
 
         Args:
             test_execution_id: TestExecution ID to check
         """
         try:
-            all_calls_completed = (
-                not CallExecution.objects.filter(
-                    test_execution_id=test_execution_id, deleted=False
-                )
-                .filter(
-                    Q(call_metadata__isnull=True)
-                    | Q(call_metadata__eval_completed__isnull=True)
-                    | Q(call_metadata__eval_completed=False)
-                )
-                .exists()
+            calls = CallExecution.objects.filter(
+                test_execution_id=test_execution_id, deleted=False
             )
+            has_non_terminal_calls = calls.exclude(
+                status__in=[
+                    CallExecution.CallStatus.COMPLETED,
+                    CallExecution.CallStatus.FAILED,
+                    CallExecution.CallStatus.CANCELLED,
+                ]
+            ).exists()
+            completed_calls = calls.filter(status=CallExecution.CallStatus.COMPLETED)
+            has_completed_calls = completed_calls.exists()
+            has_incomplete_evaluations = completed_calls.filter(
+                Q(call_metadata__isnull=True)
+                | Q(call_metadata__eval_completed__isnull=True)
+                | Q(call_metadata__eval_completed=False)
+            ).exists()
 
-            if all_calls_completed:
-                # Update test_execution status
+            if (
+                not has_non_terminal_calls
+                and has_completed_calls
+                and not has_incomplete_evaluations
+            ):
+                total_call_count = calls.count()
+                completed_call_count = completed_calls.count()
+                failed_call_count = calls.filter(
+                    status=CallExecution.CallStatus.FAILED
+                ).count()
                 updated = TestExecution.objects.filter(id=test_execution_id).update(
-                    status=TestExecution.ExecutionStatus.COMPLETED
+                    status=TestExecution.ExecutionStatus.COMPLETED,
+                    completed_at=timezone.now(),
+                    total_calls=total_call_count,
+                    completed_calls=completed_call_count,
+                    failed_calls=failed_call_count,
                 )
                 if updated:
                     logger.info(
@@ -4386,10 +4428,10 @@ class TestExecutor:
         """
         transcript_data = {
             "transcript": "",
-            "voice_recording": "",
+            "voice_recording": call_execution.recording_url or "",
             "assistant_recording": "",
             "customer_recording": "",
-            "stereo_recording": "",
+            "stereo_recording": call_execution.stereo_recording_url or "",
             "user_chat_transcript": "",
             "assistant_chat_transcript": "",
         }
@@ -4551,6 +4593,24 @@ class TestExecutor:
                 if (provider_key and call_execution.provider_call_data)
                 else None
             )
+
+            for provider_data in (call_execution.provider_call_data or {}).values():
+                if not isinstance(provider_data, dict):
+                    continue
+                normalized_recording = provider_data.get("recording", {})
+                if not isinstance(normalized_recording, dict):
+                    continue
+                for key, transcript_key in (
+                    ("assistant", "assistant_recording"),
+                    ("customer", "customer_recording"),
+                    ("stereo", "stereo_recording"),
+                    ("combined", "voice_recording"),
+                ):
+                    if (
+                        normalized_recording.get(key)
+                        and not transcript_data[transcript_key]
+                    ):
+                        transcript_data[transcript_key] = normalized_recording[key]
 
             recording_urls = self.voice_service_manager.get_recording_urls(
                 provider_payload

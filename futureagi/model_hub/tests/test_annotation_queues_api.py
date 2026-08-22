@@ -16,6 +16,8 @@ from unittest.mock import patch
 
 import pytest
 from django.core.management import call_command
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from rest_framework import status
 
 from accounts.models.organization_membership import OrganizationMembership
@@ -25,9 +27,16 @@ from model_hub.models.annotation_queues import (
     AnnotationQueue,
     AnnotationQueueAnnotator,
     AnnotationQueueLabel,
+    QueueItem,
 )
-from model_hub.models.choices import AnnotationQueueStatusChoices, AnnotatorRole
+from model_hub.models.choices import (
+    AnnotationQueueStatusChoices,
+    AnnotatorRole,
+    QueueItemSourceType,
+    QueueItemStatus,
+)
 from model_hub.models.develop_annotations import AnnotationsLabels
+from model_hub.views.annotation_queues import _related_count_subquery
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 from tfc.ee_gating import EEResource, FeatureUnavailable
@@ -210,6 +219,160 @@ class TestListQueues:
         assert resp.status_code == status.HTTP_200_OK
         result = resp.data["results"][0]
         assert "label_count" in result
+
+    def test_include_counts_does_not_join_multivalued_relations(
+        self, auth_client, organization, workspace, user
+    ):
+        """TH-7104: the counts must come from subqueries, not joins.
+
+        Counting labels, annotators and items in one GROUP BY joins three
+        multi-valued relations, so the row the aggregate runs over is their
+        cartesian product — a voice queue's item count multiplied by every
+        label and annotator. The COUNT(DISTINCT)s still return the right
+        numbers, which is why correctness alone can't catch a regression
+        here: the cost is the shape. Assert the shape.
+        """
+        create_queue(auth_client, name="Join Guard")
+        queue = AnnotationQueue.objects.get(name="Join Guard")
+        for i in range(3):
+            label = AnnotationsLabels.objects.create(
+                name=f"join-guard-label-{i}",
+                type="categorical",
+                organization=organization,
+                workspace=workspace,
+                settings={
+                    "options": [{"label": "A"}, {"label": "B"}],
+                    "multi_choice": False,
+                    "rule_prompt": "",
+                    "auto_annotate": False,
+                    "strategy": None,
+                },
+            )
+            AnnotationQueueLabel.objects.create(queue=queue, label=label, order=i)
+        for i in range(2):
+            member = User.objects.create_user(
+                email=f"join-guard-{i}@example.com",
+                password="pw",
+                name=f"Join Guard {i}",
+                organization=organization,
+            )
+            AnnotationQueueAnnotator.objects.create(queue=queue, user=member)
+        for i in range(4):
+            QueueItem.objects.create(
+                queue=queue,
+                source_type=QueueItemSourceType.TRACE.value,
+                trace_id=uuid.uuid4(),
+                organization=organization,
+                workspace=workspace,
+                status=(
+                    QueueItemStatus.COMPLETED.value
+                    if i < 2
+                    else QueueItemStatus.PENDING.value
+                ),
+            )
+
+        with CaptureQueriesContext(connection) as ctx:
+            resp = auth_client.get(QUEUE_URL, {"include_counts": "true"})
+
+        assert resp.status_code == status.HTTP_200_OK
+        row = next(r for r in resp.data["results"] if r["name"] == "Join Guard")
+        # creator is auto-added as an annotator alongside the 2 created here
+        assert (row["label_count"], row["item_count"], row["completed_count"]) == (
+            4,
+            4,
+            2,
+        )
+        assert row["annotator_count"] == 3
+
+        listing = [
+            q["sql"]
+            for q in ctx.captured_queries
+            if "label_count" in q["sql"] and "item_count" in q["sql"]
+        ]
+        assert listing, "did not capture the annotated queue-list query"
+        for sql in listing:
+            assert 'JOIN "model_hub_queueitem"' not in sql, (
+                "include_counts joined model_hub_queueitem into the list query — "
+                "that multiplies every queue row by its item count before the "
+                "aggregate runs (TH-7104). Count via a correlated subquery.\n" + sql
+            )
+
+    def test_include_counts_ignores_ambient_workspace_context(
+        self, organization, workspace, user
+    ):
+        """Counts must not shrink to the caller's workspace.
+
+        ``BaseModelManager`` folds the thread-local workspace into every
+        queryset, and ``QueueItem`` has a ``workspace`` FK — so counting
+        through ``QueueItem.objects`` would drop items belonging to another
+        workspace (or to none), which the joined ``Count()`` never did.
+
+        The API test client deliberately leaves that thread-local unset
+        (see conftest.WorkspaceAwareAPIClient), and so does manage.py — which
+        is exactly why this class of bug survives both the suite and manual
+        benchmarking. Set it explicitly here or the test proves nothing.
+        """
+        from tfc.middleware.workspace_context import (
+            clear_workspace_context,
+            set_workspace_context,
+        )
+
+        other_ws = Workspace.objects.create(
+            name="th7104-other-ws",
+            organization=organization,
+            is_default=False,
+            created_by=user,
+        )
+        queue = AnnotationQueue.objects.create(
+            name="th7104-ws-scope",
+            organization=organization,
+            workspace=workspace,
+            created_by=user,
+        )
+        # one item per workspace-shape the manager filter discriminates on
+        items = [
+            QueueItem.objects.create(
+                queue=queue,
+                source_type=QueueItemSourceType.TRACE.value,
+                trace_id=uuid.uuid4(),
+                organization=organization,
+                workspace=ws,
+                status=QueueItemStatus.PENDING.value,
+            )
+            for ws in (workspace, other_ws, None)
+        ]
+        # a post_save signal backfills workspace from the ambient context, so the
+        # third item only stays NULL if we blank it with an UPDATE afterwards
+        QueueItem.all_objects.filter(pk=items[-1].pk).update(workspace=None)
+
+        def count_under(ws):
+            # no_workspace_objects on the OUTER query too: all_objects applies the
+            # same ambient filter and would hide the queue itself.
+            if ws is not None:
+                set_workspace_context(workspace=ws, organization=organization)
+            try:
+                return (
+                    AnnotationQueue.no_workspace_objects.filter(pk=queue.pk)
+                    .annotate(
+                        item_count=_related_count_subquery(
+                            QueueItem.no_workspace_objects, "queue"
+                        )
+                    )
+                    .first()
+                    .item_count
+                )
+            finally:
+                clear_workspace_context()
+
+        unscoped = count_under(None)
+        scoped = count_under(other_ws)
+
+        assert unscoped == 3
+        assert scoped == 3, (
+            "item_count changed with the ambient workspace context "
+            f"({scoped} vs {unscoped}). The count subquery is going through a "
+            "workspace-filtering manager; use no_workspace_objects (TH-7104)."
+        )
 
     def test_combined_filters(self, auth_client):
         """TC-5: Combined status + search."""
@@ -403,9 +566,7 @@ class TestCreateQueue:
 
     def test_create_queue_without_label_ids_returns_400(self, auth_client):
         """A queue requires >=1 label; omitting label_ids is rejected."""
-        resp = auth_client.post(
-            QUEUE_URL, {"name": "No Label Queue"}, format="json"
-        )
+        resp = auth_client.post(QUEUE_URL, {"name": "No Label Queue"}, format="json")
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
         assert resp.data["type"] == "validation_error"
         assert resp.data["code"] == "invalid"
@@ -818,9 +979,7 @@ class TestUpdateQueue:
         API/SDK caller that toggles labels off via PATCH-with-empty gets 400.
         """
         label_id = create_label_for_queue(auth_client, name="L1")
-        create_queue(
-            auth_client, name="Empty Update Queue", label_ids=[str(label_id)]
-        )
+        create_queue(auth_client, name="Empty Update Queue", label_ids=[str(label_id)])
         queue_id = get_queue_id(auth_client, "Empty Update Queue")
         resp = auth_client.patch(
             queue_detail_url(queue_id),

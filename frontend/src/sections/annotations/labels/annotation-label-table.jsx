@@ -463,9 +463,10 @@ export default function AnnotationLabelTable({
               onClick={() => handleAction("archive")}
               sx={{ color: "error.main" }}
             >
-              <SvgColor
-                src="/assets/icons/ic_delete.svg"
-                sx={{ width: 18, height: 18, mr: 1, color: "error.main" }}
+              <Iconify
+                icon="solar:archive-down-bold"
+                width={18}
+                sx={{ mr: 1, color: "error.main" }}
               />
               Archive
             </MenuItem>

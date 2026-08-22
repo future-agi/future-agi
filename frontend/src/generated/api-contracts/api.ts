@@ -11,6 +11,17 @@ import type {
   AIEvalWriterResponseApi,
   AIFilterRequestApi,
   AIFilterResponseApi,
+  ALKSimulateBatchCreateRequestApi,
+  ALKSimulateBatchCreateResponseApi,
+  ALKSimulateProvisionResponseApi,
+  ALKSimulateProvisionRunTestRequestApi,
+  ALKSimulateRecordingUploadResponseApi,
+  ALKSimulateResultApi,
+  ALKSimulateResultResponseApi,
+  ALKSimulateStartTestExecutionRequestApi,
+  ALKSimulateStartTestExecutionResponseApi,
+  ALKSimulateStatusUpdateApi,
+  ALKSimulateStatusUpdateResponseApi,
   APICallCountResponseApi,
   APICallTypeListResponseApi,
   APIKeyBulkResponseApi,
@@ -36,6 +47,8 @@ import type {
   AccountsUserProfileResponseApi,
   AccountsWorkspaceListListParams,
   AccountsWorkspaceMembersListParams,
+  ActivationRequestApi,
+  ActivationResponseApi,
   AddAccessApi,
   AddApiColumnRequestApi,
   AddAsNewDatasetRequestApi,
@@ -233,6 +246,7 @@ import type {
   CallWebsocketRequestApi,
   CallWebsocketResponseApi,
   CancelTestExecutionResponseApi,
+  CapabilitiesResponseApi,
   CellErrorLocalizerResponseApi,
   CellUpdateApi,
   ChatSDKCodeResponseApi,
@@ -273,6 +287,7 @@ import type {
   CreateDatasetFromExperimentRequestApi,
   CreateDatasetFromLocalFileRequestApi,
   CreateEmptyDatasetRequestApi,
+  CreateGrantApi,
   CreateLinearIssueApi,
   CreateLinearIssueResponseApi,
   CreateNodeApi,
@@ -353,7 +368,11 @@ import type {
   DeleteEvalTemplateApi,
   DeleteUserApi,
   DeleteUserResponseApi,
+  DeploymentHeartbeatApi,
+  DeploymentHeartbeatResponseApi,
   DeploymentInfoResponseApi,
+  DeploymentRegistrationApi,
+  DeploymentRegistrationResponseApi,
   DerivedVariableDetailResponseApi,
   DerivedVariableExtractRequestApi,
   DerivedVariablePreviewRequestApi,
@@ -372,14 +391,10 @@ import type {
   DuplicateRowsResponseApi,
   DynamicColumnCreateResponseApi,
   DynamicColumnMessageResponseApi,
-  EELicenseCreateRequestApi,
-  EELicenseCreateResponseApi,
-  EELicenseListResponseApi,
-  EELicenseRevokeRequestApi,
-  EELicenseRevokeResponseApi,
   EditRunPromptColumnApi,
   EmbeddingsResponseApi,
   EmptyRequestApi,
+  EnterpriseHeartbeatResponseApi,
   ErrorResponseApi,
   EvalApiLogRowResponseApi,
   EvalApiLogTableResponseApi,
@@ -533,6 +548,7 @@ import type {
   GroundTruthUploadRequestApi,
   GroundTruthUploadResponseApi,
   HealthCheckResponseApi,
+  HeartbeatApi,
   HuggingFaceAddRowsRequestApi,
   HuggingFaceDatasetConfigRequestApi,
   HuggingFaceDatasetConfigResponseApi,
@@ -558,6 +574,7 @@ import type {
   InviteCreateApi,
   InviteCreateResponseApi,
   InviteResendApi,
+  IssuedLicenseResponseApi,
   KnowledgeBaseApi,
   KnowledgeBaseCreateApi,
   KnowledgeBaseEmbeddingModelsResponseApi,
@@ -571,7 +588,9 @@ import type {
   LegacyEvalTemplateUpdateResponseApi,
   LegacyEvalTemplatesRequestApi,
   LegacyEvalTemplatesResponseApi,
+  LegacyKnowledgeBaseBulkDeleteRequestApi,
   LegacyKnowledgeBaseCreateResponseApi,
+  LegacyKnowledgeBaseFileDeleteRequestApi,
   LegacyKnowledgeBaseFilesRequestApi,
   LegacyKnowledgeBaseFilesResponseApi,
   LegacyKnowledgeBaseListResponseApi,
@@ -579,6 +598,8 @@ import type {
   LegacyKnowledgeBaseMutationResponseApi,
   LegacyKnowledgeBaseSdkCodeResponseApi,
   LegacyKnowledgeBaseTableResponseApi,
+  LicenseActionRequestApi,
+  LicenseGrantApi,
   LinearTeamsResponseApi,
   LiteLLMModelVoicesResponseApi,
   LitellmApi,
@@ -791,6 +812,7 @@ import type {
   PasskeyRenameResponseApi,
   PasswordResetConfirmRequestApi,
   PasswordResetInitiateRequestApi,
+  PasswordResetInitiateResponseApi,
   PasswordValidationApi,
   PaymentMethodCheckoutResponseApi,
   PaymentMethodConfirmResponseApi,
@@ -913,6 +935,7 @@ import type {
   RunTestExecutionResponseApi,
   RunTestExecutionsResponseApi,
   RunTestKPIsResponseApi,
+  RunTestListPaginatedResponseApi,
   RunTestMessageResponseApi,
   RunTestNameResponseApi,
   RunTestResponseApi,
@@ -986,6 +1009,7 @@ import type {
   SecretKeysResponseApi,
   SendChatRequestApi,
   SessionComparisonResponseApi,
+  SetupChecksResponseApi,
   SetupIntentConfirmRequestApi,
   ShadowResultsWebhookRequestApi,
   SharedLinkCreateApi,
@@ -994,11 +1018,13 @@ import type {
   SharedLinkResolveResponseApi,
   SharedLinkUpdateApi,
   SignupRequestApi,
+  SignupResponseApi,
   SimulateAgentDefinitionsListParams,
   SimulateApiAgentDefinitionOperationsList200,
   SimulateApiAgentDefinitionOperationsListParams,
   SimulateApiAgentPromptOptimiserList200,
   SimulateApiAgentPromptOptimiserListParams,
+  SimulateApiAlkSimulateCallExecutionsRecordingUploadBody,
   SimulateApiCallExecutionsListParams,
   SimulateApiLivekitWebhookCreateBody,
   SimulateApiPersonasFieldOptions200,
@@ -1034,7 +1060,6 @@ import type {
   StartEvalsProcessRequestApi,
   StopUserEvalRequestApi,
   StreamStatusResponseApi,
-  StripeWebhookLegacyResponseApi,
   StripeWebhookRequestApi,
   StripeWebhookResponseApi,
   SubmitAnnotationsApi,
@@ -1234,6 +1259,7 @@ import type {
   UpdatePortApi,
   UpdateRunTestApi,
   UpdateScoreApi,
+  UpdateStatusApi,
   UpdateUserApi,
   UpgradeToPaygConfirmRequestApi,
   UpgradeToPaygPostResponseApi,
@@ -2206,6 +2232,48 @@ export const accountsAcceptInvitationCreate = async (uidb64: string,
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
       acceptInvitationRequestApi,)
+  }
+);}
+
+
+
+export type accountsActivateReadResponse200 = {
+  data: void
+  status: 200
+}
+
+export type accountsActivateReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type accountsActivateReadResponseSuccess = (accountsActivateReadResponse200) & {
+  headers: Headers;
+};
+export type accountsActivateReadResponseError = (accountsActivateReadResponseDefault) & {
+  headers: Headers;
+};
+
+export type accountsActivateReadResponse = (accountsActivateReadResponseSuccess | accountsActivateReadResponseError)
+
+export const getAccountsActivateReadUrl = (uidb64: string,
+    token: string,) => {
+
+
+
+
+  return `/accounts/activate/${uidb64}/${token}/`
+}
+
+export const accountsActivateRead = async (uidb64: string,
+    token: string, options?: RequestInit): Promise<accountsActivateReadResponse> => {
+
+  return apiMutator<accountsActivateReadResponse>(getAccountsActivateReadUrl(uidb64,token),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 
@@ -5544,7 +5612,7 @@ export const accountsPasswordResetConfirmCreate = async (uidb64: string,
 
 
 export type accountsPasswordResetInitiateCreateResponse200 = {
-  data: AccountsMessageResponseApi
+  data: PasswordResetInitiateResponseApi
   status: 200
 }
 
@@ -5808,7 +5876,7 @@ export const accountsResendInvitationEmailsCreate = async (userIdsRequestApi: Us
 
 
 export type accountsSignupCreateResponse200 = {
-  data: AccountsMessageResponseApi
+  data: SignupResponseApi
   status: 200
 }
 
@@ -17042,6 +17110,46 @@ export const aiToolsToolsList = async ( options?: RequestInit): Promise<aiToolsT
 
 
 
+export type apiCapabilitiesListResponse200 = {
+  data: CapabilitiesResponseApi
+  status: 200
+}
+
+export type apiCapabilitiesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type apiCapabilitiesListResponseSuccess = (apiCapabilitiesListResponse200) & {
+  headers: Headers;
+};
+export type apiCapabilitiesListResponseError = (apiCapabilitiesListResponseDefault) & {
+  headers: Headers;
+};
+
+export type apiCapabilitiesListResponse = (apiCapabilitiesListResponseSuccess | apiCapabilitiesListResponseError)
+
+export const getApiCapabilitiesListUrl = () => {
+
+
+
+
+  return `/api/capabilities/`
+}
+
+export const apiCapabilitiesList = async ( options?: RequestInit): Promise<apiCapabilitiesListResponse> => {
+
+  return apiMutator<apiCapabilitiesListResponse>(getApiCapabilitiesListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
 export type apiDeploymentInfoListResponse200 = {
   data: DeploymentInfoResponseApi
   status: 200
@@ -17316,6 +17424,63 @@ metadata so the credential check passes.
 export const apiPublicTracesList = async ( options?: RequestInit): Promise<apiPublicTracesListResponse> => {
 
   return apiMutator<apiPublicTracesListResponse>(getApiPublicTracesListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type apiSetupChecksListResponse200 = {
+  data: SetupChecksResponseApi
+  status: 200
+}
+
+export type apiSetupChecksListResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type apiSetupChecksListResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
+export type apiSetupChecksListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 500>
+}
+
+export type apiSetupChecksListResponseSuccess = (apiSetupChecksListResponse200) & {
+  headers: Headers;
+};
+export type apiSetupChecksListResponseError = (apiSetupChecksListResponse404 | apiSetupChecksListResponse500 | apiSetupChecksListResponseDefault) & {
+  headers: Headers;
+};
+
+export type apiSetupChecksListResponse = (apiSetupChecksListResponseSuccess | apiSetupChecksListResponseError)
+
+export const getApiSetupChecksListUrl = () => {
+
+
+
+
+  return `/api/setup-checks/`
+}
+
+/**
+ * Returns ``{"status": "ok"|"issues", "mode": ..., "checks": [...]}``. No auth —
+it runs before any account exists. Self-hosted only: on cloud and EE the
+route answers 404, so neither the internal service topology nor the outbound
+probes it triggers are reachable by an anonymous caller.
+ * @summary Public infrastructure probe for the OSS first-run setup screen.
+ */
+export const apiSetupChecksList = async ( options?: RequestInit): Promise<apiSetupChecksListResponse> => {
+
+  return apiMutator<apiSetupChecksListResponse>(getApiSetupChecksListUrl(),
   {
     ...options,
     method: 'GET'
@@ -40995,20 +41160,45 @@ export const modelHubKnowledgeBasePartialUpdate = async (legacyKnowledgeBaseMuta
 
 
 
-export type modelHubKnowledgeBaseDeleteResponse204 = {
-  data: void
-  status: 204
+export type modelHubKnowledgeBaseDeleteResponse200 = {
+  data: ModelHubStringResultResponseApi
+  status: 200
+}
+
+export type modelHubKnowledgeBaseDeleteResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubKnowledgeBaseDeleteResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubKnowledgeBaseDeleteResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubKnowledgeBaseDeleteResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubKnowledgeBaseDeleteResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubKnowledgeBaseDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 204>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
 }
 
-export type modelHubKnowledgeBaseDeleteResponseSuccess = (modelHubKnowledgeBaseDeleteResponse204) & {
+export type modelHubKnowledgeBaseDeleteResponseSuccess = (modelHubKnowledgeBaseDeleteResponse200) & {
   headers: Headers;
 };
-export type modelHubKnowledgeBaseDeleteResponseError = (modelHubKnowledgeBaseDeleteResponseDefault) & {
+export type modelHubKnowledgeBaseDeleteResponseError = (modelHubKnowledgeBaseDeleteResponse400 | modelHubKnowledgeBaseDeleteResponse403 | modelHubKnowledgeBaseDeleteResponse404 | modelHubKnowledgeBaseDeleteResponse409 | modelHubKnowledgeBaseDeleteResponse500 | modelHubKnowledgeBaseDeleteResponseDefault) & {
   headers: Headers;
 };
 
@@ -41022,14 +41212,15 @@ export const getModelHubKnowledgeBaseDeleteUrl = () => {
   return `/model-hub/knowledge-base/`
 }
 
-export const modelHubKnowledgeBaseDelete = async ( options?: RequestInit): Promise<modelHubKnowledgeBaseDeleteResponse> => {
+export const modelHubKnowledgeBaseDelete = async (legacyKnowledgeBaseBulkDeleteRequestApi: LegacyKnowledgeBaseBulkDeleteRequestApi, options?: RequestInit): Promise<modelHubKnowledgeBaseDeleteResponse> => {
 
   return apiMutator<modelHubKnowledgeBaseDeleteResponse>(getModelHubKnowledgeBaseDeleteUrl(),
   {
     ...options,
-    method: 'DELETE'
-
-
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      legacyKnowledgeBaseBulkDeleteRequestApi,)
   }
 );}
 
@@ -41101,20 +41292,45 @@ export const modelHubKnowledgeBaseFilesCreate = async (legacyKnowledgeBaseFilesR
 
 
 
-export type modelHubKnowledgeBaseFilesDeleteResponse204 = {
-  data: void
-  status: 204
+export type modelHubKnowledgeBaseFilesDeleteResponse200 = {
+  data: ModelHubStringResultResponseApi
+  status: 200
+}
+
+export type modelHubKnowledgeBaseFilesDeleteResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubKnowledgeBaseFilesDeleteResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubKnowledgeBaseFilesDeleteResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubKnowledgeBaseFilesDeleteResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubKnowledgeBaseFilesDeleteResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubKnowledgeBaseFilesDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 204>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
 }
 
-export type modelHubKnowledgeBaseFilesDeleteResponseSuccess = (modelHubKnowledgeBaseFilesDeleteResponse204) & {
+export type modelHubKnowledgeBaseFilesDeleteResponseSuccess = (modelHubKnowledgeBaseFilesDeleteResponse200) & {
   headers: Headers;
 };
-export type modelHubKnowledgeBaseFilesDeleteResponseError = (modelHubKnowledgeBaseFilesDeleteResponseDefault) & {
+export type modelHubKnowledgeBaseFilesDeleteResponseError = (modelHubKnowledgeBaseFilesDeleteResponse400 | modelHubKnowledgeBaseFilesDeleteResponse403 | modelHubKnowledgeBaseFilesDeleteResponse404 | modelHubKnowledgeBaseFilesDeleteResponse409 | modelHubKnowledgeBaseFilesDeleteResponse500 | modelHubKnowledgeBaseFilesDeleteResponseDefault) & {
   headers: Headers;
 };
 
@@ -41128,14 +41344,15 @@ export const getModelHubKnowledgeBaseFilesDeleteUrl = () => {
   return `/model-hub/knowledge-base/files/`
 }
 
-export const modelHubKnowledgeBaseFilesDelete = async ( options?: RequestInit): Promise<modelHubKnowledgeBaseFilesDeleteResponse> => {
+export const modelHubKnowledgeBaseFilesDelete = async (legacyKnowledgeBaseFileDeleteRequestApi: LegacyKnowledgeBaseFileDeleteRequestApi, options?: RequestInit): Promise<modelHubKnowledgeBaseFilesDeleteResponse> => {
 
   return apiMutator<modelHubKnowledgeBaseFilesDeleteResponse>(getModelHubKnowledgeBaseFilesDeleteUrl(),
   {
     ...options,
-    method: 'DELETE'
-
-
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      legacyKnowledgeBaseFileDeleteRequestApi,)
   }
 );}
 
@@ -52181,6 +52398,388 @@ export const simulateApiAgentPromptOptimiserTrialTrialScenarios = async (id: str
 
 
 
+export type simulateApiAlkSimulateCallExecutionsRecordingUploadResponse200 = {
+  data: ALKSimulateRecordingUploadResponseApi
+  status: 200
+}
+
+export type simulateApiAlkSimulateCallExecutionsRecordingUploadResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAlkSimulateCallExecutionsRecordingUploadResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulateApiAlkSimulateCallExecutionsRecordingUploadResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
+export type simulateApiAlkSimulateCallExecutionsRecordingUploadResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>
+}
+
+export type simulateApiAlkSimulateCallExecutionsRecordingUploadResponseSuccess = (simulateApiAlkSimulateCallExecutionsRecordingUploadResponse200) & {
+  headers: Headers;
+};
+export type simulateApiAlkSimulateCallExecutionsRecordingUploadResponseError = (simulateApiAlkSimulateCallExecutionsRecordingUploadResponse400 | simulateApiAlkSimulateCallExecutionsRecordingUploadResponse404 | simulateApiAlkSimulateCallExecutionsRecordingUploadResponse500 | simulateApiAlkSimulateCallExecutionsRecordingUploadResponseDefault) & {
+  headers: Headers;
+};
+
+export type simulateApiAlkSimulateCallExecutionsRecordingUploadResponse = (simulateApiAlkSimulateCallExecutionsRecordingUploadResponseSuccess | simulateApiAlkSimulateCallExecutionsRecordingUploadResponseError)
+
+export const getSimulateApiAlkSimulateCallExecutionsRecordingUploadUrl = (callExecutionId: string,) => {
+
+
+
+
+  return `/simulate/api/alk-simulate/call-executions/${callExecutionId}/recording/`
+}
+
+/**
+ * Accept a multipart audio upload and hand it to the shared voice
+storage helper (``upload_audio_to_s3``). Matches the pattern the
+LiveKit and Vapi voice services already use for their recordings.
+ */
+export const simulateApiAlkSimulateCallExecutionsRecordingUpload = async (callExecutionId: string,
+    simulateApiAlkSimulateCallExecutionsRecordingUploadBody?: SimulateApiAlkSimulateCallExecutionsRecordingUploadBody, options?: RequestInit): Promise<simulateApiAlkSimulateCallExecutionsRecordingUploadResponse> => {
+    const formData = new FormData();
+if(simulateApiAlkSimulateCallExecutionsRecordingUploadBody?.file !== undefined) {
+ formData.append(`file`, simulateApiAlkSimulateCallExecutionsRecordingUploadBody.file);
+ }
+if(simulateApiAlkSimulateCallExecutionsRecordingUploadBody?.filename !== undefined) {
+ formData.append(`filename`, simulateApiAlkSimulateCallExecutionsRecordingUploadBody.filename);
+ }
+
+  return apiMutator<simulateApiAlkSimulateCallExecutionsRecordingUploadResponse>(getSimulateApiAlkSimulateCallExecutionsRecordingUploadUrl(callExecutionId),
+  {
+    ...options,
+    method: 'POST'
+    ,
+    body:
+      formData,
+  }
+);}
+
+
+
+export type simulateApiAlkSimulateCallExecutionsResultResponse200 = {
+  data: ALKSimulateResultResponseApi
+  status: 200
+}
+
+export type simulateApiAlkSimulateCallExecutionsResultResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAlkSimulateCallExecutionsResultResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulateApiAlkSimulateCallExecutionsResultResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
+export type simulateApiAlkSimulateCallExecutionsResultResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>
+}
+
+export type simulateApiAlkSimulateCallExecutionsResultResponseSuccess = (simulateApiAlkSimulateCallExecutionsResultResponse200) & {
+  headers: Headers;
+};
+export type simulateApiAlkSimulateCallExecutionsResultResponseError = (simulateApiAlkSimulateCallExecutionsResultResponse400 | simulateApiAlkSimulateCallExecutionsResultResponse404 | simulateApiAlkSimulateCallExecutionsResultResponse500 | simulateApiAlkSimulateCallExecutionsResultResponseDefault) & {
+  headers: Headers;
+};
+
+export type simulateApiAlkSimulateCallExecutionsResultResponse = (simulateApiAlkSimulateCallExecutionsResultResponseSuccess | simulateApiAlkSimulateCallExecutionsResultResponseError)
+
+export const getSimulateApiAlkSimulateCallExecutionsResultUrl = (callExecutionId: string,) => {
+
+
+
+
+  return `/simulate/api/alk-simulate/call-executions/${callExecutionId}/result/`
+}
+
+/**
+ * Views here are intentionally minimal: they resolve the tenant-scoped
+target row, hand the parsed payload to
+`simulate.services.alk_simulate_ingestion`, and format the response.
+ * @summary Single view surface for all LiveKit sim ingestion HTTP endpoints.
+ */
+export const simulateApiAlkSimulateCallExecutionsResult = async (callExecutionId: string,
+    aLKSimulateResultApi: ALKSimulateResultApi, options?: RequestInit): Promise<simulateApiAlkSimulateCallExecutionsResultResponse> => {
+
+  return apiMutator<simulateApiAlkSimulateCallExecutionsResultResponse>(getSimulateApiAlkSimulateCallExecutionsResultUrl(callExecutionId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      aLKSimulateResultApi,)
+  }
+);}
+
+
+
+export type simulateApiAlkSimulateCallExecutionsStatusResponse200 = {
+  data: ALKSimulateStatusUpdateResponseApi
+  status: 200
+}
+
+export type simulateApiAlkSimulateCallExecutionsStatusResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAlkSimulateCallExecutionsStatusResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulateApiAlkSimulateCallExecutionsStatusResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
+export type simulateApiAlkSimulateCallExecutionsStatusResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>
+}
+
+export type simulateApiAlkSimulateCallExecutionsStatusResponseSuccess = (simulateApiAlkSimulateCallExecutionsStatusResponse200) & {
+  headers: Headers;
+};
+export type simulateApiAlkSimulateCallExecutionsStatusResponseError = (simulateApiAlkSimulateCallExecutionsStatusResponse400 | simulateApiAlkSimulateCallExecutionsStatusResponse404 | simulateApiAlkSimulateCallExecutionsStatusResponse500 | simulateApiAlkSimulateCallExecutionsStatusResponseDefault) & {
+  headers: Headers;
+};
+
+export type simulateApiAlkSimulateCallExecutionsStatusResponse = (simulateApiAlkSimulateCallExecutionsStatusResponseSuccess | simulateApiAlkSimulateCallExecutionsStatusResponseError)
+
+export const getSimulateApiAlkSimulateCallExecutionsStatusUrl = (callExecutionId: string,) => {
+
+
+
+
+  return `/simulate/api/alk-simulate/call-executions/${callExecutionId}/status/`
+}
+
+/**
+ * Non-terminal per-call status ping (currently only ``ongoing``): the
+SDK marks a pre-created PENDING row ONGOING the moment its call starts,
+so the UI shows progress instead of PENDING → terminal. PENDING-gated in
+the service, so a late ping never clobbers a result that already landed.
+ */
+export const simulateApiAlkSimulateCallExecutionsStatus = async (callExecutionId: string,
+    aLKSimulateStatusUpdateApi: ALKSimulateStatusUpdateApi, options?: RequestInit): Promise<simulateApiAlkSimulateCallExecutionsStatusResponse> => {
+
+  return apiMutator<simulateApiAlkSimulateCallExecutionsStatusResponse>(getSimulateApiAlkSimulateCallExecutionsStatusUrl(callExecutionId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      aLKSimulateStatusUpdateApi,)
+  }
+);}
+
+
+
+export type simulateApiAlkSimulateRunTestsProvisionRunTestResponse200 = {
+  data: ALKSimulateProvisionResponseApi
+  status: 200
+}
+
+export type simulateApiAlkSimulateRunTestsProvisionRunTestResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAlkSimulateRunTestsProvisionRunTestResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulateApiAlkSimulateRunTestsProvisionRunTestResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
+export type simulateApiAlkSimulateRunTestsProvisionRunTestResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>
+}
+
+export type simulateApiAlkSimulateRunTestsProvisionRunTestResponseSuccess = (simulateApiAlkSimulateRunTestsProvisionRunTestResponse200) & {
+  headers: Headers;
+};
+export type simulateApiAlkSimulateRunTestsProvisionRunTestResponseError = (simulateApiAlkSimulateRunTestsProvisionRunTestResponse400 | simulateApiAlkSimulateRunTestsProvisionRunTestResponse404 | simulateApiAlkSimulateRunTestsProvisionRunTestResponse500 | simulateApiAlkSimulateRunTestsProvisionRunTestResponseDefault) & {
+  headers: Headers;
+};
+
+export type simulateApiAlkSimulateRunTestsProvisionRunTestResponse = (simulateApiAlkSimulateRunTestsProvisionRunTestResponseSuccess | simulateApiAlkSimulateRunTestsProvisionRunTestResponseError)
+
+export const getSimulateApiAlkSimulateRunTestsProvisionRunTestUrl = () => {
+
+
+
+
+  return `/simulate/api/alk-simulate/run-tests/provision/`
+}
+
+/**
+ * Stand up a chat RunTest + scenario-of-record from SDK personas so an
+SDK-first run has somewhere to post — without the native UI's async
+scenario generation. See ``provision_alk_sim_run_test``.
+ */
+export const simulateApiAlkSimulateRunTestsProvisionRunTest = async (aLKSimulateProvisionRunTestRequestApi: ALKSimulateProvisionRunTestRequestApi, options?: RequestInit): Promise<simulateApiAlkSimulateRunTestsProvisionRunTestResponse> => {
+
+  return apiMutator<simulateApiAlkSimulateRunTestsProvisionRunTestResponse>(getSimulateApiAlkSimulateRunTestsProvisionRunTestUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      aLKSimulateProvisionRunTestRequestApi,)
+  }
+);}
+
+
+
+export type simulateApiAlkSimulateRunTestsStartTestExecutionResponse200 = {
+  data: ALKSimulateStartTestExecutionResponseApi
+  status: 200
+}
+
+export type simulateApiAlkSimulateRunTestsStartTestExecutionResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAlkSimulateRunTestsStartTestExecutionResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulateApiAlkSimulateRunTestsStartTestExecutionResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
+export type simulateApiAlkSimulateRunTestsStartTestExecutionResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>
+}
+
+export type simulateApiAlkSimulateRunTestsStartTestExecutionResponseSuccess = (simulateApiAlkSimulateRunTestsStartTestExecutionResponse200) & {
+  headers: Headers;
+};
+export type simulateApiAlkSimulateRunTestsStartTestExecutionResponseError = (simulateApiAlkSimulateRunTestsStartTestExecutionResponse400 | simulateApiAlkSimulateRunTestsStartTestExecutionResponse404 | simulateApiAlkSimulateRunTestsStartTestExecutionResponse500 | simulateApiAlkSimulateRunTestsStartTestExecutionResponseDefault) & {
+  headers: Headers;
+};
+
+export type simulateApiAlkSimulateRunTestsStartTestExecutionResponse = (simulateApiAlkSimulateRunTestsStartTestExecutionResponseSuccess | simulateApiAlkSimulateRunTestsStartTestExecutionResponseError)
+
+export const getSimulateApiAlkSimulateRunTestsStartTestExecutionUrl = (runTestId: string,) => {
+
+
+
+
+  return `/simulate/api/alk-simulate/run-tests/${runTestId}/test-executions/`
+}
+
+/**
+ * Views here are intentionally minimal: they resolve the tenant-scoped
+target row, hand the parsed payload to
+`simulate.services.alk_simulate_ingestion`, and format the response.
+ * @summary Single view surface for all LiveKit sim ingestion HTTP endpoints.
+ */
+export const simulateApiAlkSimulateRunTestsStartTestExecution = async (runTestId: string,
+    aLKSimulateStartTestExecutionRequestApi: ALKSimulateStartTestExecutionRequestApi, options?: RequestInit): Promise<simulateApiAlkSimulateRunTestsStartTestExecutionResponse> => {
+
+  return apiMutator<simulateApiAlkSimulateRunTestsStartTestExecutionResponse>(getSimulateApiAlkSimulateRunTestsStartTestExecutionUrl(runTestId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      aLKSimulateStartTestExecutionRequestApi,)
+  }
+);}
+
+
+
+export type simulateApiAlkSimulateTestExecutionsBatchResponse200 = {
+  data: ALKSimulateBatchCreateResponseApi
+  status: 200
+}
+
+export type simulateApiAlkSimulateTestExecutionsBatchResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAlkSimulateTestExecutionsBatchResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulateApiAlkSimulateTestExecutionsBatchResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
+export type simulateApiAlkSimulateTestExecutionsBatchResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>
+}
+
+export type simulateApiAlkSimulateTestExecutionsBatchResponseSuccess = (simulateApiAlkSimulateTestExecutionsBatchResponse200) & {
+  headers: Headers;
+};
+export type simulateApiAlkSimulateTestExecutionsBatchResponseError = (simulateApiAlkSimulateTestExecutionsBatchResponse400 | simulateApiAlkSimulateTestExecutionsBatchResponse404 | simulateApiAlkSimulateTestExecutionsBatchResponse500 | simulateApiAlkSimulateTestExecutionsBatchResponseDefault) & {
+  headers: Headers;
+};
+
+export type simulateApiAlkSimulateTestExecutionsBatchResponse = (simulateApiAlkSimulateTestExecutionsBatchResponseSuccess | simulateApiAlkSimulateTestExecutionsBatchResponseError)
+
+export const getSimulateApiAlkSimulateTestExecutionsBatchUrl = (testExecutionId: string,) => {
+
+
+
+
+  return `/simulate/api/alk-simulate/test-executions/${testExecutionId}/batch/`
+}
+
+/**
+ * Views here are intentionally minimal: they resolve the tenant-scoped
+target row, hand the parsed payload to
+`simulate.services.alk_simulate_ingestion`, and format the response.
+ * @summary Single view surface for all LiveKit sim ingestion HTTP endpoints.
+ */
+export const simulateApiAlkSimulateTestExecutionsBatch = async (testExecutionId: string,
+    aLKSimulateBatchCreateRequestApi: ALKSimulateBatchCreateRequestApi, options?: RequestInit): Promise<simulateApiAlkSimulateTestExecutionsBatchResponse> => {
+
+  return apiMutator<simulateApiAlkSimulateTestExecutionsBatchResponse>(getSimulateApiAlkSimulateTestExecutionsBatchUrl(testExecutionId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      aLKSimulateBatchCreateRequestApi,)
+  }
+);}
+
+
+
 export type simulateApiCallExecutionsListResponse200 = {
   data: CallExecutionApi[]
   status: 200
@@ -54499,7 +55098,7 @@ export const simulatePromptTemplatesSimulationsExecuteCreate = async (promptTemp
 
 
 export type simulateRunTestsListResponse200 = {
-  data: RunTestResponseApi[]
+  data: RunTestListPaginatedResponseApi
   status: 200
 }
 
@@ -57657,6 +58256,88 @@ export const simulateTestExecutionsTranscriptsList = async (testExecutionId: str
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export type telemetryHeartbeatCreateResponse200 = {
+  data: DeploymentHeartbeatResponseApi
+  status: 200
+}
+
+export type telemetryHeartbeatCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type telemetryHeartbeatCreateResponseSuccess = (telemetryHeartbeatCreateResponse200) & {
+  headers: Headers;
+};
+export type telemetryHeartbeatCreateResponseError = (telemetryHeartbeatCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type telemetryHeartbeatCreateResponse = (telemetryHeartbeatCreateResponseSuccess | telemetryHeartbeatCreateResponseError)
+
+export const getTelemetryHeartbeatCreateUrl = () => {
+
+
+
+
+  return `/telemetry/heartbeat/`
+}
+
+export const telemetryHeartbeatCreate = async (deploymentHeartbeatApi: DeploymentHeartbeatApi, options?: RequestInit): Promise<telemetryHeartbeatCreateResponse> => {
+
+  return apiMutator<telemetryHeartbeatCreateResponse>(getTelemetryHeartbeatCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      deploymentHeartbeatApi,)
+  }
+);}
+
+
+
+export type telemetryRegisterCreateResponse200 = {
+  data: DeploymentRegistrationResponseApi
+  status: 200
+}
+
+export type telemetryRegisterCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type telemetryRegisterCreateResponseSuccess = (telemetryRegisterCreateResponse200) & {
+  headers: Headers;
+};
+export type telemetryRegisterCreateResponseError = (telemetryRegisterCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type telemetryRegisterCreateResponse = (telemetryRegisterCreateResponseSuccess | telemetryRegisterCreateResponseError)
+
+export const getTelemetryRegisterCreateUrl = () => {
+
+
+
+
+  return `/telemetry/register/`
+}
+
+export const telemetryRegisterCreate = async (deploymentRegistrationApi: DeploymentRegistrationApi, options?: RequestInit): Promise<telemetryRegisterCreateResponse> => {
+
+  return apiMutator<telemetryRegisterCreateResponse>(getTelemetryRegisterCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      deploymentRegistrationApi,)
   }
 );}
 
@@ -69787,138 +70468,6 @@ export const usageDownloadInvoiceCreate = async (downloadInvoiceRequestApi: Down
 
 
 
-export type usageEeLicensesListResponse200 = {
-  data: EELicenseListResponseApi
-  status: 200
-}
-
-export type usageEeLicensesListResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
-}
-
-export type usageEeLicensesListResponseSuccess = (usageEeLicensesListResponse200) & {
-  headers: Headers;
-};
-export type usageEeLicensesListResponseError = (usageEeLicensesListResponseDefault) & {
-  headers: Headers;
-};
-
-export type usageEeLicensesListResponse = (usageEeLicensesListResponseSuccess | usageEeLicensesListResponseError)
-
-export const getUsageEeLicensesListUrl = () => {
-
-
-
-
-  return `/usage/ee/licenses/`
-}
-
-/**
- * List or create EE licenses.
- */
-export const usageEeLicensesList = async ( options?: RequestInit): Promise<usageEeLicensesListResponse> => {
-
-  return apiMutator<usageEeLicensesListResponse>(getUsageEeLicensesListUrl(),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-export type usageEeLicensesCreateResponse200 = {
-  data: EELicenseCreateResponseApi
-  status: 200
-}
-
-export type usageEeLicensesCreateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
-}
-
-export type usageEeLicensesCreateResponseSuccess = (usageEeLicensesCreateResponse200) & {
-  headers: Headers;
-};
-export type usageEeLicensesCreateResponseError = (usageEeLicensesCreateResponseDefault) & {
-  headers: Headers;
-};
-
-export type usageEeLicensesCreateResponse = (usageEeLicensesCreateResponseSuccess | usageEeLicensesCreateResponseError)
-
-export const getUsageEeLicensesCreateUrl = () => {
-
-
-
-
-  return `/usage/ee/licenses/`
-}
-
-/**
- * List or create EE licenses.
- */
-export const usageEeLicensesCreate = async (eELicenseCreateRequestApi: EELicenseCreateRequestApi, options?: RequestInit): Promise<usageEeLicensesCreateResponse> => {
-
-  return apiMutator<usageEeLicensesCreateResponse>(getUsageEeLicensesCreateUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      eELicenseCreateRequestApi,)
-  }
-);}
-
-
-
-export type usageEeLicensesRevokeCreateResponse200 = {
-  data: EELicenseRevokeResponseApi
-  status: 200
-}
-
-export type usageEeLicensesRevokeCreateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
-}
-
-export type usageEeLicensesRevokeCreateResponseSuccess = (usageEeLicensesRevokeCreateResponse200) & {
-  headers: Headers;
-};
-export type usageEeLicensesRevokeCreateResponseError = (usageEeLicensesRevokeCreateResponseDefault) & {
-  headers: Headers;
-};
-
-export type usageEeLicensesRevokeCreateResponse = (usageEeLicensesRevokeCreateResponseSuccess | usageEeLicensesRevokeCreateResponseError)
-
-export const getUsageEeLicensesRevokeCreateUrl = (grantId: string,) => {
-
-
-
-
-  return `/usage/ee/licenses/${grantId}/revoke/`
-}
-
-/**
- * Revoke an EE license.
- */
-export const usageEeLicensesRevokeCreate = async (grantId: string,
-    eELicenseRevokeRequestApi: EELicenseRevokeRequestApi, options?: RequestInit): Promise<usageEeLicensesRevokeCreateResponse> => {
-
-  return apiMutator<usageEeLicensesRevokeCreateResponse>(getUsageEeLicensesRevokeCreateUrl(grantId),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      eELicenseRevokeRequestApi,)
-  }
-);}
-
-
-
 export type usageGetAutoReloadSettingsListResponse200 = {
   data: AutoReloadSettingsResponseApi
   status: 200
@@ -75753,7 +76302,7 @@ export const usageV2UsageWorkspaceBreakdownList = async (params: UsageV2UsageWor
 
 
 export type usageWebhookCreateResponse200 = {
-  data: StripeWebhookLegacyResponseApi
+  data: StripeWebhookResponseApi
   status: 200
 }
 
@@ -75809,6 +76358,11 @@ export const getUsageWebhookCreateUrl = () => {
   return `/usage/webhook/`
 }
 
+/**
+ * No auth — Stripe authenticates via signature header.
+APIView.as_view() auto-applies csrf_exempt.
+ * @summary Handle Stripe webhook events.
+ */
 export const usageWebhookCreate = async (stripeWebhookRequestApi: StripeWebhookRequestApi, options?: RequestInit): Promise<usageWebhookCreateResponse> => {
 
   return apiMutator<usageWebhookCreateResponse>(getUsageWebhookCreateUrl(),
@@ -75985,6 +76539,47 @@ export const usageWorkspaceUsageSummaryList = async (params?: UsageWorkspaceUsag
 
 
 
+export type v1EnterpriseHeartbeatsCreateResponse200 = {
+  data: EnterpriseHeartbeatResponseApi
+  status: 200
+}
+
+export type v1EnterpriseHeartbeatsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type v1EnterpriseHeartbeatsCreateResponseSuccess = (v1EnterpriseHeartbeatsCreateResponse200) & {
+  headers: Headers;
+};
+export type v1EnterpriseHeartbeatsCreateResponseError = (v1EnterpriseHeartbeatsCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type v1EnterpriseHeartbeatsCreateResponse = (v1EnterpriseHeartbeatsCreateResponseSuccess | v1EnterpriseHeartbeatsCreateResponseError)
+
+export const getV1EnterpriseHeartbeatsCreateUrl = () => {
+
+
+
+
+  return `/v1/enterprise/heartbeats`
+}
+
+export const v1EnterpriseHeartbeatsCreate = async (heartbeatApi: HeartbeatApi, options?: RequestInit): Promise<v1EnterpriseHeartbeatsCreateResponse> => {
+
+  return apiMutator<v1EnterpriseHeartbeatsCreateResponse>(getV1EnterpriseHeartbeatsCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      heartbeatApi,)
+  }
+);}
+
+
+
 export type v1HealthListResponse200 = {
   data: OTLPHealthResponseApi
   status: 200
@@ -76028,5 +76623,253 @@ export const v1HealthList = async ( options?: RequestInit): Promise<v1HealthList
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export type v1InternalLicensesCreateResponse201 = {
+  data: LicenseGrantApi
+  status: 201
+}
+
+export type v1InternalLicensesCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 201>
+}
+
+export type v1InternalLicensesCreateResponseSuccess = (v1InternalLicensesCreateResponse201) & {
+  headers: Headers;
+};
+export type v1InternalLicensesCreateResponseError = (v1InternalLicensesCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type v1InternalLicensesCreateResponse = (v1InternalLicensesCreateResponseSuccess | v1InternalLicensesCreateResponseError)
+
+export const getV1InternalLicensesCreateUrl = () => {
+
+
+
+
+  return `/v1/internal/licenses`
+}
+
+export const v1InternalLicensesCreate = async (createGrantApi: CreateGrantApi, options?: RequestInit): Promise<v1InternalLicensesCreateResponse> => {
+
+  return apiMutator<v1InternalLicensesCreateResponse>(getV1InternalLicensesCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      createGrantApi,)
+  }
+);}
+
+
+
+export type v1InternalLicensesReadResponse200 = {
+  data: void
+  status: 200
+}
+
+export type v1InternalLicensesReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type v1InternalLicensesReadResponseSuccess = (v1InternalLicensesReadResponse200) & {
+  headers: Headers;
+};
+export type v1InternalLicensesReadResponseError = (v1InternalLicensesReadResponseDefault) & {
+  headers: Headers;
+};
+
+export type v1InternalLicensesReadResponse = (v1InternalLicensesReadResponseSuccess | v1InternalLicensesReadResponseError)
+
+export const getV1InternalLicensesReadUrl = (grantId: string,) => {
+
+
+
+
+  return `/v1/internal/licenses/${grantId}`
+}
+
+export const v1InternalLicensesRead = async (grantId: string, options?: RequestInit): Promise<v1InternalLicensesReadResponse> => {
+
+  return apiMutator<v1InternalLicensesReadResponse>(getV1InternalLicensesReadUrl(grantId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type v1InternalLicensesApproveCreateResponse200 = {
+  data: LicenseGrantApi
+  status: 200
+}
+
+export type v1InternalLicensesApproveCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type v1InternalLicensesApproveCreateResponseSuccess = (v1InternalLicensesApproveCreateResponse200) & {
+  headers: Headers;
+};
+export type v1InternalLicensesApproveCreateResponseError = (v1InternalLicensesApproveCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type v1InternalLicensesApproveCreateResponse = (v1InternalLicensesApproveCreateResponseSuccess | v1InternalLicensesApproveCreateResponseError)
+
+export const getV1InternalLicensesApproveCreateUrl = (grantId: string,) => {
+
+
+
+
+  return `/v1/internal/licenses/${grantId}/approve`
+}
+
+export const v1InternalLicensesApproveCreate = async (grantId: string,
+    licenseActionRequestApi: LicenseActionRequestApi, options?: RequestInit): Promise<v1InternalLicensesApproveCreateResponse> => {
+
+  return apiMutator<v1InternalLicensesApproveCreateResponse>(getV1InternalLicensesApproveCreateUrl(grantId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      licenseActionRequestApi,)
+  }
+);}
+
+
+
+export type v1InternalLicensesIssueCreateResponse200 = {
+  data: IssuedLicenseResponseApi
+  status: 200
+}
+
+export type v1InternalLicensesIssueCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type v1InternalLicensesIssueCreateResponseSuccess = (v1InternalLicensesIssueCreateResponse200) & {
+  headers: Headers;
+};
+export type v1InternalLicensesIssueCreateResponseError = (v1InternalLicensesIssueCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type v1InternalLicensesIssueCreateResponse = (v1InternalLicensesIssueCreateResponseSuccess | v1InternalLicensesIssueCreateResponseError)
+
+export const getV1InternalLicensesIssueCreateUrl = (grantId: string,) => {
+
+
+
+
+  return `/v1/internal/licenses/${grantId}/issue`
+}
+
+export const v1InternalLicensesIssueCreate = async (grantId: string,
+    licenseActionRequestApi: LicenseActionRequestApi, options?: RequestInit): Promise<v1InternalLicensesIssueCreateResponse> => {
+
+  return apiMutator<v1InternalLicensesIssueCreateResponse>(getV1InternalLicensesIssueCreateUrl(grantId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      licenseActionRequestApi,)
+  }
+);}
+
+
+
+export type v1InternalLicensesStatusCreateResponse200 = {
+  data: LicenseGrantApi
+  status: 200
+}
+
+export type v1InternalLicensesStatusCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type v1InternalLicensesStatusCreateResponseSuccess = (v1InternalLicensesStatusCreateResponse200) & {
+  headers: Headers;
+};
+export type v1InternalLicensesStatusCreateResponseError = (v1InternalLicensesStatusCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type v1InternalLicensesStatusCreateResponse = (v1InternalLicensesStatusCreateResponseSuccess | v1InternalLicensesStatusCreateResponseError)
+
+export const getV1InternalLicensesStatusCreateUrl = (grantId: string,) => {
+
+
+
+
+  return `/v1/internal/licenses/${grantId}/status`
+}
+
+export const v1InternalLicensesStatusCreate = async (grantId: string,
+    updateStatusApi: UpdateStatusApi, options?: RequestInit): Promise<v1InternalLicensesStatusCreateResponse> => {
+
+  return apiMutator<v1InternalLicensesStatusCreateResponse>(getV1InternalLicensesStatusCreateUrl(grantId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      updateStatusApi,)
+  }
+);}
+
+
+
+export type v1SelfHostedActivationsCreateResponse200 = {
+  data: ActivationResponseApi
+  status: 200
+}
+
+export type v1SelfHostedActivationsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type v1SelfHostedActivationsCreateResponseSuccess = (v1SelfHostedActivationsCreateResponse200) & {
+  headers: Headers;
+};
+export type v1SelfHostedActivationsCreateResponseError = (v1SelfHostedActivationsCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type v1SelfHostedActivationsCreateResponse = (v1SelfHostedActivationsCreateResponseSuccess | v1SelfHostedActivationsCreateResponseError)
+
+export const getV1SelfHostedActivationsCreateUrl = () => {
+
+
+
+
+  return `/v1/self-hosted/activations`
+}
+
+export const v1SelfHostedActivationsCreate = async (activationRequestApi: ActivationRequestApi, options?: RequestInit): Promise<v1SelfHostedActivationsCreateResponse> => {
+
+  return apiMutator<v1SelfHostedActivationsCreateResponse>(getV1SelfHostedActivationsCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      activationRequestApi,)
   }
 );}

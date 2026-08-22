@@ -175,10 +175,22 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         """
         return query, self.params
 
-    def build_id_query(self) -> tuple[str, dict[str, Any]]:
+    def build_id_query(
+        self,
+        *,
+        created_at_floor: datetime | None = None,
+        created_at_ceiling: datetime | None = None,
+    ) -> tuple[str, dict[str, Any]]:
         """Filtered session ids only — same grouped, remap-aware scan as build(),
         no pagination/order. Lets the eval resolver select the same sessions this
-        list endpoint returns."""
+        list endpoint returns.
+
+        ``created_at_floor`` (continuous eval tasks only): floor the span scan on
+        CH arrival time (``created_at``) instead of event time (``start_time``),
+        so a session whose spans landed in CH after their ``start_time`` is still
+        picked up. ``None`` keeps the ``start_time`` window used by the UI list
+        and historical tasks.
+        """
         self.start_date, self.end_date = self.parse_time_range(self.filters)
         self.params["start_date"] = self.start_date
         self.params["end_date"] = self.end_date
@@ -199,7 +211,21 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         filter_fragment = f"AND {extra_where}" if extra_where else ""
         having_fragment = f"HAVING {having_clauses}" if having_clauses else ""
         message_select = self._message_aggregate_select()
-        time_where = "AND start_time >= %(start_date)s AND start_time < %(end_date)s"
+        if created_at_floor is not None:
+            # Window on arrival (created_at), not start_time. NOTE: with a user
+            # filter, the membership subqueries still window on start_time, so a
+            # filtered task can miss an arrival whose start_time predates
+            # parse_time_range's window — pre-existing residual, tracked as a
+            # follow-up.
+            self.params["created_at_floor"] = created_at_floor
+            time_where = "AND created_at >= %(created_at_floor)s"
+            if created_at_ceiling is not None:
+                self.params["created_at_ceiling"] = created_at_ceiling
+                time_where += " AND created_at < %(created_at_ceiling)s"
+        else:
+            time_where = (
+                "AND start_time >= %(start_date)s AND start_time < %(end_date)s"
+            )
         from_where = self._session_from_where(
             self.params,
             time_where=time_where,

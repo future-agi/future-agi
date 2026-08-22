@@ -878,17 +878,37 @@ class TestCreateScenario:
         assert call_kwargs["description"] == "Custom description"
 
 
+def _make_agent(project, observability_provider=None, name="Agent"):
+    from simulate.models import AgentDefinition
+
+    return AgentDefinition.objects.create(
+        agent_name=name,
+        agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+        inbound=True,
+        description="test agent",
+        organization=project.organization,
+        workspace=project.workspace,
+        languages=["en"],
+        observability_provider=observability_provider,
+    )
+
+
 @pytest.mark.django_db
 class TestResolveAgentDefinitionForProject:
     def test_existing_replay_session_returns_agent(self, project):
-        from model_hub.models.agent_registry import AgentDefinition
-        from tracer.models import ReplaySession
-        agent = AgentDefinition.objects.create(name="ReplayAgent", project=project)
-        ReplaySession.objects.create(project=project, agent_definition=agent)
-        
-        from tracer.utils.replay_session import _resolve_agent_definition_for_project
-        result = _resolve_agent_definition_for_project(project)
-        assert result == agent
+        from tracer.models.replay_session import ReplaySession, ReplayType
+        from tracer.utils.replay_session import (
+            _resolve_agent_definition_for_project,
+        )
+
+        agent = _make_agent(project, name="ReplayAgent")
+        ReplaySession.objects.create(
+            project=project,
+            replay_type=ReplayType.SESSION,
+            agent_definition=agent,
+        )
+
+        assert _resolve_agent_definition_for_project(project) == agent
 
     def test_empty_and_no_providers_returns_none(self, project):
         from tracer.utils.replay_session import _resolve_agent_definition_for_project
@@ -896,24 +916,37 @@ class TestResolveAgentDefinitionForProject:
         assert result is None
 
     def test_empty_replay_sessions_returns_newest_provider_agent(self, project):
-        from model_hub.models.agent_registry import AgentDefinition
-        from tfc.models import ObservabilityProvider
-        from datetime import datetime, timedelta
-        
-        provider = ObservabilityProvider.objects.create(project=project, name="TestProv")
-        
-        # Create older agent
-        old_agent = AgentDefinition.objects.create(name="Old", project=project, observability_provider=provider)
-        old_agent.created_at = datetime.now() - timedelta(days=1)
-        old_agent.save()
-        
-        # Create newer agent
-        new_agent = AgentDefinition.objects.create(name="New", project=project, observability_provider=provider)
-        new_agent.created_at = datetime.now()
-        new_agent.save()
-        
-        from tracer.utils.replay_session import _resolve_agent_definition_for_project
-        result = _resolve_agent_definition_for_project(project)
-        
-        # Should return the newest one
-        assert result == new_agent
+        from datetime import UTC, datetime, timedelta
+
+        from simulate.models import AgentDefinition
+        from tracer.models.observability_provider import (
+            ObservabilityProvider,
+            ProviderChoices,
+        )
+        from tracer.utils.replay_session import (
+            _resolve_agent_definition_for_project,
+        )
+
+        # observability_provider is OneToOne, so each agent needs its own provider.
+        prov_old = ObservabilityProvider.objects.create(
+            project=project,
+            provider=ProviderChoices.VAPI,
+            organization=project.organization,
+            workspace=project.workspace,
+        )
+        prov_new = ObservabilityProvider.objects.create(
+            project=project,
+            provider=ProviderChoices.RETELL,
+            organization=project.organization,
+            workspace=project.workspace,
+        )
+        old_agent = _make_agent(project, observability_provider=prov_old, name="Old")
+        new_agent = _make_agent(project, observability_provider=prov_new, name="New")
+        # created_at is auto_now_add; force a deterministic order.
+        now = datetime(2026, 6, 23, tzinfo=UTC)
+        AgentDefinition.objects.filter(id=old_agent.id).update(
+            created_at=now - timedelta(days=1)
+        )
+        AgentDefinition.objects.filter(id=new_agent.id).update(created_at=now)
+
+        assert _resolve_agent_definition_for_project(project) == new_agent

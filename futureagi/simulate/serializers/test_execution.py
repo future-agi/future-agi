@@ -251,7 +251,9 @@ class CallExecutionErrorLocalizerTaskSerializer(serializers.Serializer):
         child=serializers.CharField(), allow_empty=True, required=False
     )
     input_types = serializers.JSONField(allow_null=True, required=False)
-    rule_prompt = serializers.CharField(allow_null=True, allow_blank=True, required=False)
+    rule_prompt = serializers.CharField(
+        allow_null=True, allow_blank=True, required=False
+    )
     error_analysis = serializers.JSONField(allow_null=True, required=False)
     selected_input_key = serializers.CharField(
         allow_null=True, allow_blank=True, required=False
@@ -259,8 +261,12 @@ class CallExecutionErrorLocalizerTaskSerializer(serializers.Serializer):
     error_message = serializers.CharField(
         allow_null=True, allow_blank=True, required=False
     )
-    created_at = serializers.CharField(allow_null=True, allow_blank=True, required=False)
-    updated_at = serializers.CharField(allow_null=True, allow_blank=True, required=False)
+    created_at = serializers.CharField(
+        allow_null=True, allow_blank=True, required=False
+    )
+    updated_at = serializers.CharField(
+        allow_null=True, allow_blank=True, required=False
+    )
 
 
 def _normalize_eval_value(value, output_type):
@@ -272,6 +278,12 @@ def _normalize_eval_value(value, output_type):
     a single-element list. Values that are already lists, None, or for other
     output types are returned unchanged.
     """
+    if output_type == "choices" and isinstance(value, dict):
+        choices = value.get("choices")
+        if isinstance(choices, list):
+            return choices
+        choice = value.get("choice")
+        return [choice] if choice is not None else []
     if output_type == "choices" and value is not None and not isinstance(value, list):
         return [value]
     return value
@@ -463,20 +475,23 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         ):
             return {}
 
-        provider_payload = None
-        if hasattr(obj, "provider_call_data") and isinstance(
-            obj.provider_call_data, dict
-        ):
-            provider_payload = obj.provider_call_data.get(
-                ProviderChoices.VAPI.value
-            )
+        pcd = (
+            obj.provider_call_data
+            if hasattr(obj, "provider_call_data")
+            and isinstance(obj.provider_call_data, dict)
+            else {}
+        )
+        provider_payload = pcd.get(ProviderChoices.VAPI.value)
 
-        # Shortcut dict from the provider payload's "recording" sub-object.
+        # Per-channel recording URLs live under <provider>.recording for whatever
+        # provider produced the call (vapi, livekit, ...). Read the shortcut from
+        # whichever bucket carries a "recording" dict — not just vapi — so
+        # LiveKit's per-channel customer/assistant tracks surface here too.
         shortcut = {}
-        if isinstance(provider_payload, dict):
-            raw_shortcut = provider_payload.get("recording")
-            if isinstance(raw_shortcut, dict):
-                shortcut = raw_shortcut
+        for bucket in pcd.values():
+            if isinstance(bucket, dict) and isinstance(bucket.get("recording"), dict):
+                shortcut = bucket["recording"]
+                break
 
         recordings: dict[str, str] = {}
         # Model fields (FAGI-rehosted S3 URLs) win, then the provider shortcut.
@@ -712,7 +727,6 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             else None
         )
         if eval_configs is None:
-
             logger.debug(
                 "eval_outputs_serialized_without_live_config_context",
                 method="get_eval_outputs",
@@ -777,7 +791,6 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             else None
         )
         if eval_configs is None:
-
             logger.debug(
                 "eval_outputs_serialized_without_live_config_context",
                 method="get_eval_metrics",
@@ -858,7 +871,15 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         if isinstance(obj, dict) and "count" in obj:
             return {}
 
-        row_id = call_metadata.get("row_id")
+        # Prefer the authoritative FK column over call_metadata: a rerun wipes
+        # call_metadata (to drop the ALK batch claim), which used to blank these
+        # columns for the reran row. obj.row_id survives the reset.
+        if hasattr(obj, "row_id"):
+            row_id = getattr(obj, "row_id", None) or call_metadata.get("row_id")
+        elif isinstance(obj, dict):
+            row_id = obj.get("row_id") or call_metadata.get("row_id")
+        else:
+            row_id = call_metadata.get("row_id")
         if row_id:
             row_id_str = str(row_id)
 

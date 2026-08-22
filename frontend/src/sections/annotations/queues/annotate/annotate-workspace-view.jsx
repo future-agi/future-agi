@@ -11,12 +11,12 @@ import {
   Box,
   Alert,
   Button,
-  CircularProgress,
   Stack,
   ToggleButton,
   ToggleButtonGroup,
   Typography,
 } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import Iconify from "src/components/iconify";
 import { useSnackbar } from "notistack";
 import axios from "src/utils/axios";
@@ -1422,16 +1422,7 @@ export default function AnnotateWorkspaceView() {
     isInitialDetailLoading
   ) {
     return (
-      <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "80vh",
-        }}
-      >
-        <CircularProgress />
-      </Box>
+      <LoadingScreen sx={{ height: "80vh" }} />
     );
   }
 

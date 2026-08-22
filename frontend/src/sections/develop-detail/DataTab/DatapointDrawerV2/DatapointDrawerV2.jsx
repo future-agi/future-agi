@@ -585,6 +585,19 @@ const DatapointDrawerChild = () => {
     }
   };
 
+  useEffect(() => {
+    const api = gridApi.current;
+    document.querySelectorAll(".ag-row.active-row").forEach((el) => {
+      el.classList.remove("active-row");
+    });
+    if (datapoint?.index != null) {
+      document
+        .querySelectorAll(`.ag-row[row-index="${datapoint.index}"]`)
+        .forEach((el) => el.classList.add("active-row"));
+      api?.ensureIndexVisible(datapoint.index);
+    }
+  }, [datapoint?.index]);
+
   const navStateRef = useRef({});
   navStateRef.current = {
     onNavigate,
@@ -987,6 +1000,7 @@ const DatapointDrawerChild = () => {
                       setAddEvaluationFeeback({
                         ...evalColumn,
                         ...datapoint,
+                        sourceId: evalOpen?.evalMetricId ?? evalColumn?.source_id,
                         rowData: datapoint?.rowData,
                         value:
                           evalOpen?.cell_value ??
