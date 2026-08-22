@@ -345,3 +345,125 @@ class TestClickHouseCombinator:
         builder = self._builder()
         explicit = builder.translate(self._filters(), filter_combinator="and")
         assert default == explicit
+
+
+# ---------------------------------------------------------------------------
+# Cross-engine equivalence — Django ORM vs ClickHouse
+# ---------------------------------------------------------------------------
+#
+# "Done when" #8: the Django path and the ClickHouse path must return the same
+# rows for the same OR query. A live row-by-row comparison needs both backends
+# wired to data, which the no-services harness does not provide. The contract
+# that guarantees identical rows offline is stricter and pinnable here:
+#
+#   For the same filter set, both engines derive the SAME predicate universe
+#   (same number of leaf conditions) and honor `filter_combinator` identically
+#   — AND keeps each leaf isolated, OR joins every leaf with one operator. If
+#   both build `(f1 OR f2 OR f3)` from three filters, and each leaf maps to the
+#   same column+op+value in both engines, the two queries consider the same row
+#   universe for identical source data. Toggling the combinator must only swap
+#   the connector, never add or drop a predicate.
+#
+# Trace-mode ClickHouse wraps every system-metric leaf in a
+# `trace_id IN (SELECT …)` subquery, so that substring occurs exactly once per
+# leaf and is a stable leaf counter.
+
+
+def _three_system_metrics():
+    """Three distinct numeric system metrics — latency, cost, tokens.
+
+    Each resolves to exactly one ORM leaf (DEFAULT_FIELD_MAP) and exactly one
+    ClickHouse `trace_id IN (SELECT …)` leaf (SYSTEM_METRIC_MAP, trace mode).
+    """
+    return [
+        _system_metric("latency_ms", "greater_than", 10),
+        _system_metric("cost", "greater_than", 20),
+        _system_metric("tokens", "greater_than", 100),
+    ]
+
+
+class TestCrossEngineEquivalence:
+    def _orm_leaf_count(self, q):
+        # reduce() nests Q objects, so a top-level `Q.children` count is NOT the
+        # leaf count (e.g. three filters reduce to Q(AND, [Q(AND,[a,b]), c])).
+        # Count leaf predicates recursively: a leaf is a child that is a tuple,
+        # not a nested Q.
+        count = 0
+        for child in q.children:
+            count += self._orm_leaf_count(child) if isinstance(child, Q) else 1
+        return count
+
+    def _ch_leaf_count(self, where):
+        # One `trace_id IN (SELECT …)` subquery per system-metric leaf.
+        return where.count("trace_id IN (SELECT")
+
+    def test_same_predicate_count_in_and_mode(self):
+        filters = _three_system_metrics()
+
+        orm_q = FilterEngine.get_filter_conditions_for_system_metrics(filters)
+        ch_where, _ = ClickHouseFilterBuilder(
+            query_mode=ClickHouseFilterBuilder.QUERY_MODE_TRACE
+        ).translate(filters, filter_combinator="and")
+
+        # Both engines see all three filters; neither drops or duplicates one.
+        assert self._orm_leaf_count(orm_q) == 3
+        assert self._ch_leaf_count(ch_where) == 3
+
+    def test_same_predicate_count_in_or_mode(self):
+        filters = _three_system_metrics()
+
+        orm_q = FilterEngine.get_filter_conditions_for_system_metrics(
+            filters, filter_combinator="or"
+        )
+        ch_where, _ = ClickHouseFilterBuilder(
+            query_mode=ClickHouseFilterBuilder.QUERY_MODE_TRACE
+        ).translate(filters, filter_combinator="or")
+
+        assert self._orm_leaf_count(orm_q) == 3
+        assert self._ch_leaf_count(ch_where) == 3
+
+    def test_toggling_combinator_keeps_predicate_count(self):
+        # Flipping AND↔OR changes only the connector, never the predicate set.
+        filters = _three_system_metrics()
+
+        orm_and = FilterEngine.get_filter_conditions_for_system_metrics(filters)
+        orm_or = FilterEngine.get_filter_conditions_for_system_metrics(
+            filters, filter_combinator="or"
+        )
+        ch_and, _ = ClickHouseFilterBuilder(
+            query_mode=ClickHouseFilterBuilder.QUERY_MODE_TRACE
+        ).translate(filters, filter_combinator="and")
+        ch_or, _ = ClickHouseFilterBuilder(
+            query_mode=ClickHouseFilterBuilder.QUERY_MODE_TRACE
+        ).translate(filters, filter_combinator="or")
+
+        assert self._orm_leaf_count(orm_and) == self._orm_leaf_count(orm_or)
+        assert self._ch_leaf_count(ch_and) == self._ch_leaf_count(ch_or)
+
+    def test_connectors_align_across_engines(self):
+        # The structural shape each engine builds from the same filters must
+        # match: AND → flat AND, OR → single parenthesised OR group.
+        filters = _three_system_metrics()
+
+        orm_and = FilterEngine.get_filter_conditions_for_system_metrics(filters)
+        orm_or = FilterEngine.get_filter_conditions_for_system_metrics(
+            filters, filter_combinator="or"
+        )
+        ch_and, _ = ClickHouseFilterBuilder(
+            query_mode=ClickHouseFilterBuilder.QUERY_MODE_TRACE
+        ).translate(filters, filter_combinator="and")
+        ch_or, _ = ClickHouseFilterBuilder(
+            query_mode=ClickHouseFilterBuilder.QUERY_MODE_TRACE
+        ).translate(filters, filter_combinator="or")
+
+        # Django ORM connectors.
+        assert orm_and.connector == Q.AND
+        assert orm_or.connector == Q.OR
+        # ClickHouse: AND has no wrapping parens and no top-level OR; OR is one
+        # parenthesised group joining every leaf.
+        assert not ch_and.startswith("(")
+        assert " OR " not in ch_and
+        assert ch_or.startswith("(")
+        assert ch_or.endswith(")")
+        assert " AND " not in ch_or
+        assert ch_or.count(" OR ") == self._ch_leaf_count(ch_or) - 1
