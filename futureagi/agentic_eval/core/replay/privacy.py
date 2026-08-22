@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import math
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import fields, is_dataclass
 from enum import Enum
@@ -47,6 +48,21 @@ _SENSITIVE_SUFFIXES: Final[tuple[str, ...]] = (
     "secret",
     "token",
 )
+_AUTHORIZATION_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"\b(Bearer|Basic)\s+[^\s,;]+",
+    re.IGNORECASE,
+)
+_CREDENTIAL_ASSIGNMENT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"\b("
+    r"api[ _-]?key|access[ _-]?token|refresh[ _-]?token|session[ _-]?token|"
+    r"client[ _-]?secret|password|passwd|secret(?:[ _-]?key)?|authorization"
+    r")\b(\s*[:=]\s*)[^\s,;]+",
+    re.IGNORECASE,
+)
+_COMMON_API_KEY_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"\b(?:sk|gsk|hf|xai)[-_][A-Za-z0-9._-]{8,}\b",
+    re.IGNORECASE,
+)
 
 
 def _normalized_key(value: str) -> str:
@@ -54,6 +70,8 @@ def _normalized_key(value: str) -> str:
 
 
 def _sensitive_key_set(additional_sensitive_keys: Iterable[str]) -> frozenset[str]:
+    if isinstance(additional_sensitive_keys, (str, bytes)):
+        raise TypeError("additional sensitive keys must be an iterable of strings")
     additional_keys = tuple(additional_sensitive_keys)
     if any(not isinstance(key, str) for key in additional_keys):
         raise TypeError("additional sensitive keys must be strings")
@@ -68,6 +86,165 @@ def _sensitive_key_set(additional_sensitive_keys: Iterable[str]) -> frozenset[st
 def _is_sensitive_key(key: str, sensitive_keys: frozenset[str]) -> bool:
     normalized = _normalized_key(key)
     return normalized in sensitive_keys or normalized.endswith(_SENSITIVE_SUFFIXES)
+
+
+def _leaf_text_values(value: Any, *, seen: set[int]) -> set[str]:
+    """Collect scalar text nested beneath a credential-shaped field."""
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        return {value} if value else set()
+    if isinstance(value, bytes):
+        decoded = value.decode("utf-8", errors="ignore")
+        return {decoded} if decoded else set()
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return {str(value)}
+    if isinstance(value, Path):
+        return {str(value)}
+    if isinstance(value, Enum):
+        return _leaf_text_values(value.value, seen=seen)
+
+    object_id = id(value)
+    if object_id in seen:
+        return set()
+
+    if is_dataclass(value) and not isinstance(value, type):
+        seen.add(object_id)
+        try:
+            collected: set[str] = set()
+            for item in fields(value):
+                collected.update(
+                    _leaf_text_values(getattr(value, item.name), seen=seen)
+                )
+            return collected
+        finally:
+            seen.remove(object_id)
+
+    if isinstance(value, Mapping):
+        seen.add(object_id)
+        try:
+            collected = set()
+            for item in value.values():
+                collected.update(_leaf_text_values(item, seen=seen))
+            return collected
+        finally:
+            seen.remove(object_id)
+
+    if isinstance(value, (list, tuple, set, frozenset)):
+        seen.add(object_id)
+        try:
+            collected = set()
+            for item in value:
+                collected.update(_leaf_text_values(item, seen=seen))
+            return collected
+        finally:
+            seen.remove(object_id)
+
+    return set()
+
+
+def _sensitive_values(
+    value: Any,
+    *,
+    sensitive_keys: frozenset[str],
+    seen: set[int] | None = None,
+) -> frozenset[str]:
+    """Collect credential values that can be removed from diagnostic text."""
+    if seen is None:
+        seen = set()
+    if value is None or isinstance(value, (str, bytes, int, float, bool, Path)):
+        return frozenset()
+    if isinstance(value, Enum):
+        return _sensitive_values(
+            value.value,
+            sensitive_keys=sensitive_keys,
+            seen=seen,
+        )
+
+    object_id = id(value)
+    if object_id in seen:
+        return frozenset()
+
+    collected: set[str] = set()
+    if is_dataclass(value) and not isinstance(value, type):
+        seen.add(object_id)
+        try:
+            for item in fields(value):
+                item_value = getattr(value, item.name)
+                if _is_sensitive_key(item.name, sensitive_keys):
+                    collected.update(_leaf_text_values(item_value, seen=set()))
+                else:
+                    collected.update(
+                        _sensitive_values(
+                            item_value,
+                            sensitive_keys=sensitive_keys,
+                            seen=seen,
+                        )
+                    )
+        finally:
+            seen.remove(object_id)
+        return frozenset(collected)
+
+    if isinstance(value, Mapping):
+        seen.add(object_id)
+        try:
+            for raw_key, item_value in value.items():
+                if isinstance(raw_key, str) and _is_sensitive_key(
+                    raw_key,
+                    sensitive_keys,
+                ):
+                    collected.update(_leaf_text_values(item_value, seen=set()))
+                else:
+                    collected.update(
+                        _sensitive_values(
+                            item_value,
+                            sensitive_keys=sensitive_keys,
+                            seen=seen,
+                        )
+                    )
+        finally:
+            seen.remove(object_id)
+        return frozenset(collected)
+
+    if isinstance(value, (list, tuple, set, frozenset)):
+        seen.add(object_id)
+        try:
+            for item in value:
+                collected.update(
+                    _sensitive_values(
+                        item,
+                        sensitive_keys=sensitive_keys,
+                        seen=seen,
+                    )
+                )
+        finally:
+            seen.remove(object_id)
+    return frozenset(collected)
+
+
+def _redact_text(
+    value: str,
+    *,
+    sensitive_values: Iterable[str] = (),
+) -> str:
+    """Remove known credentials and common credential forms from free text."""
+    redacted = value
+    known_values = {
+        item
+        for item in sensitive_values
+        if isinstance(item, str) and item
+    }
+    for secret in sorted(known_values, key=len, reverse=True):
+        redacted = redacted.replace(secret, "[REDACTED]")
+    redacted = _AUTHORIZATION_PATTERN.sub(
+        lambda match: f"{match.group(1)} [REDACTED]",
+        redacted,
+    )
+    redacted = _CREDENTIAL_ASSIGNMENT_PATTERN.sub(
+        lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]",
+        redacted,
+    )
+    return _COMMON_API_KEY_PATTERN.sub("[REDACTED]", redacted)
 
 
 def _canonical_request_value(
@@ -103,7 +280,7 @@ def _canonical_request_value(
     if object_id in seen:
         raise TypeError("request contains a reference cycle")
 
-    if is_dataclass(value):
+    if is_dataclass(value) and not isinstance(value, type):
         seen.add(object_id)
         try:
             output: dict[str, Any] = {}
@@ -127,13 +304,14 @@ def _canonical_request_value(
         seen.add(object_id)
         try:
             output: dict[str, Any] = {}
-            for raw_key in sorted(value, key=lambda item: str(item)):
+            raw_keys = list(value)
+            for raw_key in raw_keys:
                 if not isinstance(raw_key, str):
                     raise TypeError(
                         "replay request mappings must use string keys; "
                         f"got {type(raw_key).__qualname__}"
                     )
-                key = raw_key
+            for key in sorted(raw_keys):
                 if sensitive_keys is not None and _is_sensitive_key(
                     key,
                     sensitive_keys,
@@ -141,7 +319,7 @@ def _canonical_request_value(
                     output[key] = "[REDACTED]"
                 else:
                     output[key] = _canonical_request_value(
-                        value[raw_key],
+                        value[key],
                         sensitive_keys=sensitive_keys,
                         seen=seen,
                     )
@@ -245,14 +423,24 @@ def _safe_report_value(
     value: Any,
     *,
     sensitive_keys: frozenset[str],
-    include_object_repr: bool = False,
+    sensitive_values: frozenset[str] | None = None,
     seen: set[int] | None = None,
 ) -> Any:
     """Return redacted, JSON-serializable report data."""
     if seen is None:
         seen = set()
-    if value is None or isinstance(value, (str, int, bool)):
+    if sensitive_values is None:
+        try:
+            sensitive_values = _sensitive_values(
+                value,
+                sensitive_keys=sensitive_keys,
+            )
+        except Exception:
+            sensitive_values = frozenset()
+    if value is None or isinstance(value, (int, bool)):
         return value
+    if isinstance(value, str):
+        return _redact_text(value, sensitive_values=sensitive_values)
     if isinstance(value, float):
         if math.isfinite(value):
             return value
@@ -263,12 +451,15 @@ def _safe_report_value(
             "length": len(value),
         }
     if isinstance(value, Path):
-        return str(value)
+        return _redact_text(
+            str(value),
+            sensitive_values=sensitive_values,
+        )
     if isinstance(value, Enum):
         return _safe_report_value(
             value.value,
             sensitive_keys=sensitive_keys,
-            include_object_repr=include_object_repr,
+            sensitive_values=sensitive_values,
             seen=seen,
         )
 
@@ -276,7 +467,7 @@ def _safe_report_value(
     if object_id in seen:
         return "[CYCLE]"
 
-    if is_dataclass(value):
+    if is_dataclass(value) and not isinstance(value, type):
         seen.add(object_id)
         try:
             output: dict[str, Any] = {}
@@ -287,7 +478,7 @@ def _safe_report_value(
                     output[item.name] = _safe_report_value(
                         getattr(value, item.name),
                         sensitive_keys=sensitive_keys,
-                        include_object_repr=include_object_repr,
+                        sensitive_values=sensitive_values,
                         seen=seen,
                     )
             return output
@@ -298,15 +489,29 @@ def _safe_report_value(
         seen.add(object_id)
         try:
             output: dict[str, Any] = {}
-            for raw_key in sorted(value, key=lambda item: str(item)):
-                key = str(raw_key)
-                if _is_sensitive_key(key, sensitive_keys):
+            reserved_keys = {
+                raw_key for raw_key in value if isinstance(raw_key, str)
+            }
+            for index, (raw_key, item_value) in enumerate(value.items()):
+                if isinstance(raw_key, str):
+                    key = raw_key
+                else:
+                    base_key = f"__key_{index}_{type(raw_key).__name__}"
+                    key = base_key
+                    suffix = 1
+                    while key in reserved_keys or key in output:
+                        key = f"{base_key}_{suffix}"
+                        suffix += 1
+                if isinstance(raw_key, str) and _is_sensitive_key(
+                    key,
+                    sensitive_keys,
+                ):
                     output[key] = "[REDACTED]"
                 else:
                     output[key] = _safe_report_value(
-                        value[raw_key],
+                        item_value,
                         sensitive_keys=sensitive_keys,
-                        include_object_repr=include_object_repr,
+                        sensitive_values=sensitive_values,
                         seen=seen,
                     )
             return output
@@ -320,7 +525,7 @@ def _safe_report_value(
                 _safe_report_value(
                     item,
                     sensitive_keys=sensitive_keys,
-                    include_object_repr=include_object_repr,
+                    sensitive_values=sensitive_values,
                     seen=seen,
                 )
                 for item in value
@@ -335,7 +540,7 @@ def _safe_report_value(
                 _safe_report_value(
                     item,
                     sensitive_keys=sensitive_keys,
-                    include_object_repr=include_object_repr,
+                    sensitive_values=sensitive_values,
                     seen=seen,
                 )
                 for item in value
@@ -344,7 +549,4 @@ def _safe_report_value(
             seen.remove(object_id)
         return sorted(items, key=lambda item: json.dumps(item, sort_keys=True))
 
-    output = {"__type__": type(value).__qualname__}
-    if include_object_repr:
-        output["repr"] = repr(value)
-    return output
+    return {"__type__": type(value).__name__}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import threading
 import time
 from dataclasses import dataclass
@@ -355,7 +356,26 @@ def test_empty_suite_fails_closed_by_default():
     assert report.total == 0
     assert report.pass_rate == 0.0
     assert report.accepted is False
-    assert report.violations == ("case count 0 is below required 1",)
+    assert report.violations == (
+        "case count 0 is below required 1",
+        "evaluation count 0 is below required 1",
+        "pass rate 0.0000 is below required 1.0000",
+    )
+
+
+def test_empty_suite_requires_explicit_opt_out_of_every_minimum():
+    report = run(
+        CounterfactualReplay(
+            lambda request: request,
+            policy=RegressionPolicy(
+                minimum_case_count=0,
+                minimum_evaluation_count=0,
+                minimum_pass_rate=0.0,
+            ),
+        ).run([])
+    )
+
+    assert report.accepted is True
 
 
 def test_successful_candidate_without_evaluations_is_not_promotable_by_default():
@@ -381,7 +401,10 @@ def test_successful_candidate_without_evaluations_is_not_promotable_by_default()
 def test_candidate_errors_are_isolated_and_messages_are_opt_in():
     def candidate(request):
         if request["fail"]:
-            raise RuntimeError("Bearer provider-secret")
+            raise RuntimeError(
+                f"authorization={request['authorization']}; "
+                "Bearer provider-secret"
+            )
         return "ok"
 
     report = run(
@@ -425,7 +448,7 @@ def test_candidate_errors_are_isolated_and_messages_are_opt_in():
         "suite": "held-out",
     }
     assert diagnostic_payload["results"][0]["error_message"] == (
-        "Bearer provider-secret"
+        "authorization=[REDACTED]; Bearer [REDACTED]"
     )
 
 
@@ -443,6 +466,23 @@ def test_outputs_are_omitted_unless_explicitly_requested_and_then_redacted():
     assert report.to_dict(include_outputs=True)["results"][0]["output"] == {
         "answer": "ok",
         "token": "[REDACTED]",
+    }
+
+
+def test_unknown_output_repr_is_never_called_or_exported():
+    class SecretObject:
+        def __repr__(self):
+            raise AssertionError("repr must not be called")
+
+    report = run(
+        CounterfactualReplay(
+            lambda request: SecretObject(),
+            policy=RegressionPolicy(minimum_evaluation_count=0),
+        ).run([ReplayCase("case", {"prompt": "hello"})])
+    )
+
+    assert report.to_dict(include_outputs=True)["results"][0]["output"] == {
+        "__type__": "SecretObject",
     }
 
 
@@ -542,6 +582,29 @@ def test_evaluator_timeout_is_a_structured_case_error():
 
     assert report.results[0].error_stage == "evaluator:evaluator"
     assert report.results[0].error_type == "TimeoutError"
+
+
+def test_sync_candidate_timeout_is_rejected_before_execution():
+    with pytest.raises(ValueError, match="requires an async candidate"):
+        CounterfactualReplay(
+            lambda request: "ok",
+            candidate_timeout_seconds=0.1,
+        )
+
+
+def test_sync_evaluator_timeout_is_rejected_before_execution():
+    async def candidate(request):
+        return "ok"
+
+    def evaluator(output, baseline, case):
+        return Evaluation("quality", 1.0, True)
+
+    with pytest.raises(ValueError, match="requires async evaluators"):
+        CounterfactualReplay(
+            candidate,
+            [evaluator],
+            evaluator_timeout_seconds=0.1,
+        )
 
 
 def test_invalid_evaluator_return_is_a_structured_error():
@@ -680,6 +743,33 @@ def test_request_mapping_keys_must_be_strings():
     with pytest.raises(TypeError, match="must use string keys"):
         request_fingerprint({1: "not-json"})
 
+
+def test_invalid_request_key_does_not_invoke_user_string_conversion():
+    class UnsafeKey:
+        def __str__(self):
+            raise AssertionError("string conversion must not be called")
+
+    with pytest.raises(TypeError, match="must use string keys"):
+        request_fingerprint({UnsafeKey(): "not-json"})
+
+
+def test_report_mapping_keys_do_not_invoke_user_string_conversion():
+    class UnsafeKey:
+        def __str__(self):
+            raise AssertionError("string conversion must not be called")
+
+    report = run(
+        CounterfactualReplay(
+            lambda request: {UnsafeKey(): "value"},
+            policy=RegressionPolicy(minimum_evaluation_count=0),
+        ).run([ReplayCase("case", {"prompt": "hello"})])
+    )
+
+    assert report.to_dict(include_outputs=True)["results"][0]["output"] == {
+        "__key_0_UnsafeKey": "value",
+    }
+
+
 def test_evaluation_details_are_omitted_unless_requested_and_redacted():
     def evaluator(output, baseline, case):
         return Evaluation(
@@ -753,3 +843,242 @@ def test_evaluation_and_policy_values_are_normalized():
 
     with pytest.raises(TypeError, match="numeric, not bool"):
         Evaluation("invalid", True, True)
+
+    with pytest.raises(TypeError, match="minimum_pass_rate"):
+        RegressionPolicy(minimum_pass_rate=True)
+
+    with pytest.raises(TypeError, match="maximum_mean_score_drop"):
+        RegressionPolicy(maximum_mean_score_drop=False)
+
+
+def test_partial_evaluator_regression_is_not_hidden_by_a_later_error():
+    def regressing(output, baseline, case):
+        return Evaluation("quality", 0.0, False, baseline_score=1.0)
+
+    def broken(output, baseline, case):
+        raise RuntimeError("evaluation unavailable")
+
+    report = run(
+        CounterfactualReplay(
+            lambda request: "ok",
+            [regressing, broken],
+            policy=RegressionPolicy(
+                minimum_evaluation_count=0,
+                minimum_pass_rate=0.0,
+                maximum_error_rate=1.0,
+                maximum_regression_rate=0.0,
+            ),
+        ).run([ReplayCase("case", {"prompt": "hello"})])
+    )
+
+    assert report.error_count == 1
+    assert report.regression_count == 1
+    assert report.accepted is False
+    assert report.violations == (
+        "regression rate 1.0000 exceeds allowed 0.0000",
+        "mean score drop 1.000000 exceeds allowed 0.000000",
+    )
+
+def test_additional_sensitive_keys_reject_a_scalar_string():
+    with pytest.raises(TypeError, match="iterable of strings"):
+        request_fingerprint(
+            {"tenant_credential": "secret"},
+            additional_sensitive_keys="tenant_credential",
+        )
+
+
+def test_report_free_text_redacts_secrets_found_in_structured_fields():
+    secret = "tenant-secret-value"
+    report = run(
+        CounterfactualReplay(
+            lambda request: {
+                "api_key": secret,
+                "message": f"provider rejected {secret}",
+                "authorization_error": f"Bearer {secret}",
+            },
+            policy=RegressionPolicy(minimum_evaluation_count=0),
+        ).run([ReplayCase("case", {"prompt": "hello"})])
+    )
+
+    assert report.to_dict(include_outputs=True)["results"][0]["output"] == {
+        "api_key": "[REDACTED]",
+        "message": "provider rejected [REDACTED]",
+        "authorization_error": "Bearer [REDACTED]",
+    }
+
+
+def test_report_non_string_key_placeholders_cannot_overwrite_string_keys():
+    class UnsafeKey:
+        def __str__(self):
+            raise AssertionError("string conversion must not be called")
+
+    output = {
+        UnsafeKey(): "non-string",
+        "__key_0_UnsafeKey": "string",
+    }
+    report = run(
+        CounterfactualReplay(
+            lambda request: output,
+            policy=RegressionPolicy(minimum_evaluation_count=0),
+        ).run([ReplayCase("case", {"prompt": "hello"})])
+    )
+
+    assert report.to_dict(include_outputs=True)["results"][0]["output"] == {
+        "__key_0_UnsafeKey_1": "non-string",
+        "__key_0_UnsafeKey": "string",
+    }
+
+
+def test_error_message_capture_cannot_mask_an_exception_with_broken_str():
+    class BrokenMessageError(RuntimeError):
+        def __str__(self):
+            raise RuntimeError("message rendering failed")
+
+    def candidate(request):
+        raise BrokenMessageError()
+
+    report = run(
+        CounterfactualReplay(
+            candidate,
+            capture_error_messages=True,
+            policy=RegressionPolicy(
+                minimum_evaluation_count=0,
+                minimum_pass_rate=0.0,
+                maximum_error_rate=1.0,
+            ),
+        ).run([ReplayCase("case", {"prompt": "hello"})])
+    )
+
+    result = report.results[0]
+    assert result.error_type == "BrokenMessageError"
+    assert result.error_message == "[exception message unavailable]"
+
+
+def test_callable_name_lookup_cannot_break_evaluator_error_isolation():
+    class EvaluatorObject:
+        @property
+        def __name__(self):
+            raise RuntimeError("name lookup failed")
+
+        def __call__(self, output, baseline, case):
+            raise RuntimeError("evaluation failed")
+
+    report = run(
+        CounterfactualReplay(
+            lambda request: "ok",
+            [EvaluatorObject()],
+            policy=RegressionPolicy(
+                minimum_evaluation_count=0,
+                minimum_pass_rate=0.0,
+                maximum_error_rate=1.0,
+            ),
+        ).run([ReplayCase("case", {"prompt": "hello"})])
+    )
+
+    assert report.results[0].error_stage == "evaluator:EvaluatorObject"
+    assert report.results[0].error_type == "RuntimeError"
+
+
+def test_evaluation_is_snapshotted_before_entering_the_report():
+    returned = []
+
+    def evaluator(output, baseline, case):
+        evaluation = Evaluation(
+            "quality",
+            1.0,
+            True,
+            details={"items": [1]},
+        )
+        returned.append(evaluation)
+        return evaluation
+
+    report = run(
+        CounterfactualReplay(
+            lambda request: "ok",
+            [evaluator],
+        ).run([ReplayCase("case", {"prompt": "hello"})])
+    )
+
+    returned[0].details["items"].append(2)
+    assert report.results[0].evaluations[0].details == {"items": [1]}
+
+
+def test_score_delta_overflow_is_rejected_as_an_evaluator_error():
+    def evaluator(output, baseline, case):
+        return Evaluation(
+            "quality",
+            1e308,
+            True,
+            baseline_score=-1e308,
+        )
+
+    report = run(
+        CounterfactualReplay(
+            lambda request: "ok",
+            [evaluator],
+            policy=RegressionPolicy(
+                minimum_evaluation_count=0,
+                minimum_pass_rate=0.0,
+                maximum_error_rate=1.0,
+            ),
+        ).run([ReplayCase("case", {"prompt": "hello"})])
+    )
+
+    assert report.results[0].error_stage == "evaluator:evaluator"
+    assert report.results[0].error_type == "ValueError"
+
+
+def test_mean_score_drop_avoids_overflow_for_large_finite_deltas():
+    def evaluator(output, baseline, case):
+        return Evaluation(
+            "quality",
+            -8e307,
+            False,
+            baseline_score=8e307,
+        )
+
+    report = run(
+        CounterfactualReplay(
+            lambda request: "ok",
+            [evaluator],
+            policy=RegressionPolicy(
+                minimum_pass_rate=0.0,
+                maximum_regression_rate=1.0,
+                maximum_mean_score_drop=1.7e308,
+            ),
+        ).run(
+            [
+                ReplayCase("first", {"value": 1}),
+                ReplayCase("second", {"value": 2}),
+            ]
+        )
+    )
+
+    assert math.isfinite(report.mean_score_drop)
+    assert report.mean_score_drop == 1.6e308
+
+
+def test_dataclass_types_are_not_treated_as_request_instances():
+    @dataclass
+    class Payload:
+        prompt: str = "hello"
+
+    with pytest.raises(TypeError, match="unsupported value type: type"):
+        request_fingerprint({"payload": Payload})
+
+
+def test_dataclass_types_are_not_introspected_in_reports():
+    @dataclass
+    class Payload:
+        prompt: str = "hello"
+
+    report = run(
+        CounterfactualReplay(
+            lambda request: Payload,
+            policy=RegressionPolicy(minimum_evaluation_count=0),
+        ).run([ReplayCase("case", {"prompt": "hello"})])
+    )
+
+    assert report.to_dict(include_outputs=True)["results"][0]["output"] == {
+        "__type__": "type",
+    }

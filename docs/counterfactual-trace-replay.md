@@ -79,7 +79,6 @@ report.raise_for_regressions()
 - Requests that differ only by credentials never share candidate execution.
   The exported public fingerprint redacts credential values, while a separate
   non-exported digest controls execution reuse.
-- Candidate calls and evaluator calls share one global concurrency bound.
 - Requests, baselines, metadata, candidate outputs, and evaluator case objects
   are deep-copied so mutation does not contaminate later cases or evaluators.
   Values that cannot be copied fail before shared mutable state is exposed; an
@@ -109,10 +108,12 @@ successful candidate call without a quality or safety evaluator cannot be
 promoted accidentally. Set `minimum_evaluation_count=0` only for an explicit
 candidate-execution smoke test.
 
-Candidate and evaluator timeouts cancel asynchronous callables. Python cannot
-forcibly stop a synchronous function already running in a worker thread, so
-integrations that need enforceable cancellation should use asynchronous
-clients or enforce the timeout in the downstream client itself.
+Candidate and evaluator timeouts cancel asynchronous callables. Replay-level
+timeouts are rejected for synchronous callables because Python cannot forcibly
+stop a function already running in a worker thread; releasing the concurrency
+permit while that thread continued would violate the configured global bound.
+Synchronous integrations must enforce their timeout in the downstream client,
+or expose an asynchronous wrapper and use the replay-level timeout.
 
 ## Privacy defaults
 
@@ -137,7 +138,14 @@ payload = report.to_dict(
 ```
 
 To retain exception messages at all, the replay engine must also be constructed
-with `capture_error_messages=True`.
+with `capture_error_messages=True`. Captured messages are sanitized against
+credentials found in the replay case and common authorization/key patterns.
+Omission remains the safest setting for arbitrary provider exception text.
+
+Structurally known output values are redacted recursively. An unsupported
+object is represented by its type name only; its `repr()` is never exported,
+because arbitrary representations can contain credentials or execute unsafe
+formatting code.
 
 ## Self-healing loop
 

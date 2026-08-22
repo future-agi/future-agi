@@ -25,8 +25,10 @@ from agentic_eval.core.replay.models import (
 )
 from agentic_eval.core.replay.privacy import (
     _isolated_copy,
+    _redact_text,
     _request_digest,
     _sensitive_key_set,
+    _sensitive_values,
 )
 
 Candidate: TypeAlias = Callable[
@@ -50,17 +52,19 @@ class _CandidateOutcome:
     error_message: str | None = None
 
 
+def _is_async_callable(function: Callable[..., Any]) -> bool:
+    return inspect.iscoroutinefunction(function) or inspect.iscoroutinefunction(
+        type(function).__call__
+    )
+
+
 async def _invoke_callable(
     function: Callable[..., Any],
     *args: Any,
     timeout_seconds: float | None,
 ) -> Any:
     async def invoke() -> Any:
-        call_method = getattr(function, "__call__", None)
-        is_async = inspect.iscoroutinefunction(function) or (
-            call_method is not None and inspect.iscoroutinefunction(call_method)
-        )
-        if is_async:
+        if _is_async_callable(function):
             result = function(*args)
         else:
             result = await asyncio.to_thread(function, *args)
@@ -74,7 +78,13 @@ async def _invoke_callable(
 
 
 def _callable_name(function: Callable[..., Any]) -> str:
-    return getattr(function, "__name__", type(function).__qualname__)
+    try:
+        name = function.__name__
+    except Exception:
+        return type(function).__name__
+    if isinstance(name, str) and name:
+        return name
+    return type(function).__name__
 
 
 class CounterfactualReplay:
@@ -124,6 +134,26 @@ class CounterfactualReplay:
         evaluator_tuple = tuple(evaluators)
         if any(not callable(evaluator) for evaluator in evaluator_tuple):
             raise TypeError("every evaluator must be callable")
+        if (
+            normalized_timeouts["candidate_timeout_seconds"] is not None
+            and not _is_async_callable(candidate)
+        ):
+            raise ValueError(
+                "candidate_timeout_seconds requires an async candidate; "
+                "synchronous candidates must enforce their own downstream timeout"
+            )
+        if normalized_timeouts["evaluator_timeout_seconds"] is not None:
+            synchronous_evaluators = [
+                _callable_name(evaluator)
+                for evaluator in evaluator_tuple
+                if not _is_async_callable(evaluator)
+            ]
+            if synchronous_evaluators:
+                names = ", ".join(repr(name) for name in synchronous_evaluators)
+                raise ValueError(
+                    "evaluator_timeout_seconds requires async evaluators; "
+                    f"synchronous evaluators: {names}"
+                )
 
         self._candidate = candidate
         self._evaluators = evaluator_tuple
@@ -138,6 +168,38 @@ class CounterfactualReplay:
         ]
         self._capture_error_messages = capture_error_messages
         self._sensitive_keys = _sensitive_key_set(additional_sensitive_keys)
+
+    def _collect_sensitive_values(self, *context: Any) -> frozenset[str]:
+        known_secrets: set[str] = set()
+        for item in context:
+            try:
+                known_secrets.update(
+                    _sensitive_values(
+                        item,
+                        sensitive_keys=self._sensitive_keys,
+                    )
+                )
+            except Exception:
+                # Redaction discovery is best-effort and must not replace the
+                # original replay outcome with a secondary traversal error.
+                continue
+        return frozenset(known_secrets)
+
+    def _captured_error_message(
+        self,
+        error: Exception,
+        *context: Any,
+    ) -> str | None:
+        if not self._capture_error_messages:
+            return None
+        try:
+            message = str(error)
+        except Exception:
+            message = "[exception message unavailable]"
+        return _redact_text(
+            message,
+            sensitive_values=self._collect_sensitive_values(*context),
+        )
 
     async def _execute_candidate(
         self,
@@ -164,9 +226,12 @@ class CounterfactualReplay:
             return _CandidateOutcome(
                 output=None,
                 duration_ms=duration_ms,
-                error_type=type(error).__qualname__,
-                error_message=(
-                    str(error) if self._capture_error_messages else None
+                error_type=type(error).__name__,
+                error_message=self._captured_error_message(
+                    error,
+                    case.request,
+                    case.baseline,
+                    case.metadata,
                 ),
             )
 
@@ -213,9 +278,11 @@ class CounterfactualReplay:
                 candidate_duration_ms=outcome.duration_ms,
                 cache_hit=cache_hit,
                 error_stage="candidate-output-isolation",
-                error_type=type(error).__qualname__,
-                error_message=(
-                    str(error) if self._capture_error_messages else None
+                error_type=type(error).__name__,
+                error_message=self._captured_error_message(
+                    error,
+                    outcome.output,
+                    prepared.case,
                 ),
                 metadata=_isolated_copy(
                     prepared.case.metadata,
@@ -248,8 +315,15 @@ class CounterfactualReplay:
                 if not isinstance(evaluation, Evaluation):
                     raise TypeError(
                         f"evaluator {evaluator_name!r} returned "
-                        f"{type(evaluation).__qualname__}; expected Evaluation"
+                        f"{type(evaluation).__name__}; expected Evaluation"
                     )
+                evaluation = Evaluation(
+                    name=evaluation.name,
+                    score=evaluation.score,
+                    passed=evaluation.passed,
+                    baseline_score=evaluation.baseline_score,
+                    details=evaluation.details,
+                )
                 if evaluation.name in evaluation_names:
                     raise ValueError(
                         f"duplicate evaluation name {evaluation.name!r}"
@@ -266,9 +340,12 @@ class CounterfactualReplay:
                     candidate_duration_ms=outcome.duration_ms,
                     cache_hit=cache_hit,
                     error_stage=f"evaluator:{evaluator_name}",
-                    error_type=type(error).__qualname__,
-                    error_message=(
-                        str(error) if self._capture_error_messages else None
+                    error_type=type(error).__name__,
+                    error_message=self._captured_error_message(
+                        error,
+                        result_output,
+                        prepared.case,
+                        tuple(evaluations),
                     ),
                     metadata=_isolated_copy(
                         prepared.case.metadata,

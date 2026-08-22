@@ -8,7 +8,11 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, TypeAlias
 
-from agentic_eval.core.replay.privacy import _isolated_copy, _safe_report_value
+from agentic_eval.core.replay.privacy import (
+    _isolated_copy,
+    _redact_text,
+    _safe_report_value,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +77,8 @@ class Evaluation:
             baseline_score = float(self.baseline_score)
             if not math.isfinite(baseline_score):
                 raise ValueError("baseline_score must be finite")
+            if not math.isfinite(score - baseline_score):
+                raise ValueError("evaluation score delta must be finite")
             object.__setattr__(self, "baseline_score", baseline_score)
         if not isinstance(self.details, Mapping):
             raise TypeError("evaluation details must be a mapping")
@@ -143,7 +149,10 @@ class RegressionPolicy:
             "maximum_error_rate",
             "maximum_regression_rate",
         ):
-            value = float(getattr(self, field_name))
+            raw_value = getattr(self, field_name)
+            if isinstance(raw_value, bool):
+                raise TypeError(f"{field_name} must be numeric, not bool")
+            value = float(raw_value)
             if not math.isfinite(value) or not 0.0 <= value <= 1.0:
                 raise ValueError(f"{field_name} must be between 0 and 1")
             object.__setattr__(self, field_name, value)
@@ -151,7 +160,10 @@ class RegressionPolicy:
             "maximum_mean_score_drop",
             "score_regression_tolerance",
         ):
-            value = float(getattr(self, field_name))
+            raw_value = getattr(self, field_name)
+            if isinstance(raw_value, bool):
+                raise TypeError(f"{field_name} must be numeric, not bool")
+            value = float(raw_value)
             if not math.isfinite(value) or value < 0.0:
                 raise ValueError(f"{field_name} must be finite and non-negative")
             object.__setattr__(self, field_name, value)
@@ -200,7 +212,6 @@ class ReplayReport:
         return tuple(
             delta
             for result in self.results
-            if result.error_type is None
             for evaluation in result.evaluations
             if (delta := evaluation.delta) is not None
         )
@@ -224,7 +235,13 @@ class ReplayReport:
             return 0.0
         tolerance = self.policy.score_regression_tolerance
         drops = [0.0 if delta >= -tolerance else -delta for delta in deltas]
-        return sum(drops) / len(deltas)
+        maximum_drop = max(drops)
+        if maximum_drop == 0.0:
+            return 0.0
+        normalized_mean = math.fsum(
+            drop / maximum_drop for drop in drops
+        ) / len(drops)
+        return maximum_drop * normalized_mean
 
     @property
     def violations(self) -> tuple[str, ...]:
@@ -234,20 +251,17 @@ class ReplayReport:
                 f"case count {self.total} is below required "
                 f"{self.policy.minimum_case_count}"
             )
-        if (
-            self.results
-            and self.evaluation_count < self.policy.minimum_evaluation_count
-        ):
+        if self.evaluation_count < self.policy.minimum_evaluation_count:
             violations.append(
                 f"evaluation count {self.evaluation_count} is below required "
                 f"{self.policy.minimum_evaluation_count}"
             )
-        if self.results and self.pass_rate < self.policy.minimum_pass_rate:
+        if self.pass_rate < self.policy.minimum_pass_rate:
             violations.append(
                 f"pass rate {self.pass_rate:.4f} is below required "
                 f"{self.policy.minimum_pass_rate:.4f}"
             )
-        if self.results and self.error_rate > self.policy.maximum_error_rate:
+        if self.error_rate > self.policy.maximum_error_rate:
             violations.append(
                 f"error rate {self.error_rate:.4f} exceeds allowed "
                 f"{self.policy.maximum_error_rate:.4f}"
@@ -328,10 +342,9 @@ class ReplayReport:
                 row["output"] = _safe_report_value(
                     result.output,
                     sensitive_keys=self.sensitive_keys,
-                    include_object_repr=True,
                 )
             if include_error_messages and result.error_message is not None:
-                row["error_message"] = result.error_message
+                row["error_message"] = _redact_text(result.error_message)
             result_rows.append(row)
 
         return {
