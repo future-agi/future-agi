@@ -27,6 +27,7 @@ from claude_agent_sdk import create_sdk_mcp_server, tool
 
 from .. import platform
 from ..catalogue import load_catalogue
+from ..config import ARTIFACTS_ROOT
 from ..scenario_tools import load_scenarios
 from ..tools import schema
 from .call import CASE, place_the_call
@@ -309,7 +310,8 @@ def run_tools(
         schema({"run_id": str, "scenario": str}, []),
     )
     async def read_run(args: dict[str, Any]) -> dict[str, Any]:
-        from .simulation import every_run, read_run as load_run
+        from .simulation import every_run
+        from .simulation import read_run as load_run
 
         run_id = str(args.get("run_id") or "")
         if not run_id:
@@ -507,4 +509,3 @@ def recording_since(started: float, into: Path) -> str:
     landed = into / f"recording{chosen.suffix}"
     shutil.copyfile(chosen, landed)
     return str(landed)
-from ..config import ARTIFACTS_ROOT

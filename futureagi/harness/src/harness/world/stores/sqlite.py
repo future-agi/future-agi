@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import shutil
 import sqlite3
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from . import Records, Snapshot, StoreError
 
@@ -60,7 +61,7 @@ class SqliteStore(Records):
     def query(self, statement: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
         cursor = self.connection.execute(statement, tuple(params))
         columns = [column[0] for column in (cursor.description or [])]
-        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+        return [dict(zip(columns, row, strict=False)) for row in cursor.fetchall()]
 
     # -- records ---------------------------------------------------------------------
 

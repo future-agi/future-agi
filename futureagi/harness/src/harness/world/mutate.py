@@ -20,7 +20,8 @@ Any check worth keeping fails against at least one of those. Most fail against b
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from .runtime import GeneratedWorld
 

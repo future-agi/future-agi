@@ -23,8 +23,9 @@ import json
 import logging
 import os
 import threading
+from collections.abc import Mapping
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, Mapping
+from typing import Any
 
 from ..world.runtime import GeneratedWorld
 
@@ -62,7 +63,7 @@ class WorldWebhook:
         self.port = server.server_address[1]
         self._thread = threading.Thread(target=server.serve_forever, daemon=True)
 
-    def start(self) -> "WorldWebhook":
+    def start(self) -> WorldWebhook:
         self._thread.start()
         logger.info("world webhook listening on port %s", self.port)
         return self
@@ -131,7 +132,7 @@ class WorldWebhook:
         return done.content or ("done" if done.success else "that could not be done")
 
 
-def _handler_for(owner: "WorldWebhook"):
+def _handler_for(owner: WorldWebhook):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args: Any) -> None:  # silence per-request stderr noise
             return

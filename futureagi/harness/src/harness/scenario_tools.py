@@ -18,12 +18,18 @@ from typing import Any
 from claude_agent_sdk import create_sdk_mcp_server, tool
 
 from .amend import add_rule, drop_rule, fix_tool, widen
+from .catalogue import (
+    Catalogue,
+    SubGoal,
+    load_catalogue,
+    save_catalogue,
+    validate_sub_goal,
+)
 from .contract import AgentContract
-from .catalogue import Catalogue, SubGoal, load_catalogue, save_catalogue, validate_sub_goal
-from .simulator import load_simulator_prompt
 from .folder import SCENARIOS, apply_setup, read_all, write_folder, write_index
 from .prove import prepared, prove
 from .scenario import Scenario, validate_scenario
+from .simulator import load_simulator_prompt
 from .tools import brief, schema
 from .world.snapshot import restore
 

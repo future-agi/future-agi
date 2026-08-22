@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Run the harness package's own test suite in its own lane.
+#
+# The harness (futureagi/harness/) is a separate hatchling package with its own
+# pytest configuration; the backend suite deliberately does not collect it
+# (pytest.ini norecursedirs). This script is that lane: an isolated venv with the
+# package installed editable, then pytest inside it.
+#
+#   bin/test-harness             # whole suite
+#   bin/test-harness tests/test_harness.py -k stores   # any pytest args pass through
+
+set -euo pipefail
+
+HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../harness" && pwd)"
+VENV="${HARNESS_TEST_VENV:-$HARNESS_DIR/.venv}"
+
+if [ ! -x "$VENV/bin/python" ]; then
+  if command -v uv >/dev/null 2>&1; then
+    uv venv "$VENV"
+  else
+    python3 -m venv "$VENV"
+  fi
+fi
+
+if command -v uv >/dev/null 2>&1; then
+  VIRTUAL_ENV="$VENV" uv pip install -q -e "$HARNESS_DIR[ui,postgres,dev]"
+else
+  "$VENV/bin/pip" install -q -e "$HARNESS_DIR[ui,postgres,dev]"
+fi
+
+cd "$HARNESS_DIR"
+exec "$VENV/bin/python" -m pytest "$@"

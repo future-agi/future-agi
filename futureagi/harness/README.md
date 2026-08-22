@@ -4,8 +4,7 @@ Point it at an agent. It reads that agent's source, builds a real environment it
 writes test scenarios that are each proved before they are kept, and runs them.
 
 Installs and runs on its own — six third-party packages, no dependency on the rest of this
-repository. `src/harness/README.md` is the deeper reference; this file is about running it as a
-service and about where its boundaries are.
+repository. This file is about running it as a service and about where its boundaries are.
 
 ## Why it exists
 
@@ -68,7 +67,7 @@ around a voice run and swaps which world is bound between scenarios.
   `WorldWebhook(host="127.0.0.1", port=0)` — the OS picks the port, which was fine when a tunnel
   discovered the public URL after binding. It is not fine when a sibling container needs a stable
   address to call: loopback is that container's own, and an ephemeral port cannot be published or
-  configured ahead of time. Both are constructor arguments, so this is a call-site change.
+  configured ahead of time via `HARNESS_WEBHOOK_HOST` / `HARNESS_WEBHOOK_PORT`.
 
 **It is a standalone FastAPI app, not a Django app.** It does not mount into the backend's ASGI
 stack and does not share its middleware, authentication or workspace context. Anything needing
@@ -186,7 +185,7 @@ Complete list of what the harness reads. Anything not here is not consulted.
 | `HARNESS_HOST` | `127.0.0.1` | where the FastAPI server binds. **A container must set `0.0.0.0`** |
 | `HARNESS_PORT` | `8777` | the UI and API port |
 
-The world webhook is **not** configured here — its host and port are constructor arguments, and
+The world webhook binds `HARNESS_WEBHOOK_HOST` / `HARNESS_WEBHOOK_PORT` (compose sets them), and
 it defaults to loopback on an ephemeral port. See "Two servers, two ports".
 
 ### Models
@@ -207,18 +206,9 @@ it defaults to loopback on an ephemeral port. See "Two servers, two ports".
 
 ### Voice
 
-> **This package alone cannot run a voice suite yet.** The settings below are read, but the run
-> shells out to `oss/simulation-acceptance/run_voice_case.py`, a script in the harness's original
-> repository that is **not shipped here** — so a voice run stops at
-> `no voice runner at oss/simulation-acceptance/run_voice_case.py`. Copying the script is not
-> sufficient either: it imports `fi.alk.simulate`, `fi.simulate.evaluation` and
-> `fi.simulate.runtime`, so it needs the full SDK with its LiveKit extra.
->
-> Chat runs are unaffected. To make voice work, either install that SDK alongside this package
-> and bring the script into the image, or replace the subprocess with a LiveKit target that talks
-> to the room directly — the latter is the intended direction and removes the dependency
-> entirely. Until one of those is done, treat voice settings here as configuration for a path
-> that is not yet complete.
+> Voice runs shell out to `voice/run_voice_case.py`, which is shipped in this package and
+> needs the agent-learning-kit SDK with its LiveKit extra installed (the Dockerfile does this).
+> Chat runs need none of that.
 
 | variable | what it does |
 |---|---|
@@ -243,9 +233,12 @@ artifacts/sessions/<session-id>/
     session.json          which agent, which stage, status
     chat.jsonl            every message in the conversation
     contract.json         the agent's tools, arguments, rules, data
+    manifest.json         the world's manifest — its existence means "world built"
     world.py              the generated world
     handlers/<tool>.py    one real implementation per tool
-    state.json            the world's contents
+    state.json            the world's in-memory contents
+    store.json            container/postgres worlds: schema scripts + rows + counters
+    schema.sql            postgres worlds: the applied DDL
     sub_goals.json        what doing this correctly means
     simulator_prompt.md   how the simulated person behaves
     scenarios/<name>/     scenario.json, setup.py, ready.py, checks/
@@ -279,7 +272,7 @@ way that does not obviously point at its cause.
 working chat and a voice run whose tool calls silently never arrive.
 
 **3. Bind on `0.0.0.0`, both servers.** `HARNESS_HOST=0.0.0.0` for the UI. The webhook takes its
-host and port as constructor arguments and defaults to loopback on an ephemeral port; give it a
+host and port from `HARNESS_WEBHOOK_HOST` / `HARNESS_WEBHOOK_PORT`, defaulting to loopback on an ephemeral port; give it a
 fixed port too, or nothing outside can be configured to call it.
 
 **4. Mount a volume for `artifacts/`, and mind the working directory.** Sessions are written to

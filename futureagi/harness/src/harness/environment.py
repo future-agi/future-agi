@@ -9,7 +9,8 @@ editable dependency alone.
 from __future__ import annotations
 
 from abc import ABC
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 try:
     from fi.simulate.environment import (
@@ -50,7 +51,7 @@ except ImportError:  # pragma: no cover - exercised only without the parent's op
                 "content": self.content,
             }
 
-    class EnvironmentAdapter(ABC):
+    class EnvironmentAdapter(ABC):  # noqa: B024 - a protocol stub: overridable surface, nothing abstract
         """The subset of the parent environment protocol the harness needs."""
 
         name = "environment"

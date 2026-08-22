@@ -29,8 +29,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .checks import Outcome, run_check
 from .catalogue import Catalogue
+from .checks import Outcome, run_check
 from .folder import apply_setup, check_ready
 from .scenario import Scenario
 from .world.runtime import Call, GeneratedWorld

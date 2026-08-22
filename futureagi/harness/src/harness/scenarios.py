@@ -10,16 +10,17 @@ of these harder" is the next thing said rather than a regeneration from nothing.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from claude_agent_sdk import ClaudeAgentOptions
 
 from .config import (
-    artifact_dir,
     UNWANTED,
-    gate_hooks,
+    artifact_dir,
     chosen_model,
+    gate_hooks,
     load_skill,
     permission_gate,
     provider_env,

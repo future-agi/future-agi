@@ -26,10 +26,11 @@ import inspect
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from ..contract import AgentContract
 from ..scenario import Scenario
@@ -59,7 +60,7 @@ def spoken_to(contract: AgentContract) -> bool:
 
 
 def new_run_id() -> str:
-    return datetime.now(timezone.utc).strftime("run-%Y%m%d-%H%M%S")
+    return datetime.now(UTC).strftime("run-%Y%m%d-%H%M%S")
 
 
 def run_root(destination: Path, run_id: str) -> Path:
@@ -237,7 +238,7 @@ async def simulate(
         "run_id": run_id,
         "agent": contract.agent,
         "modality": contract.modality or "text",
-        "started": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "started": datetime.now(UTC).isoformat(timespec="seconds"),
         "seconds": round(time.time() - started, 1),
         "concurrency": concurrency,
         "models": roles,
@@ -464,9 +465,9 @@ async def _spoken_to(
     from ..catalogue import load_catalogue
     from .call import place_the_call
     from .conversation import Exchange, Transcript
+    from .evidence import measured, newest_report, spoken_times, tracks_in
     from .grade import checkpoints, grade_sub_goals, judge, judge_suite_evals
     from .live import wire
-    from .evidence import measured, newest_report, spoken_times, tracks_in
     from .tools import missing_prerequisites
 
     stopping = missing_prerequisites()
@@ -599,7 +600,7 @@ def _timed_exchanges(exchanges: list[Any], times: list[dict[str, Any]]) -> list[
     spoken = [{"speaker": turn.speaker, "text": turn.text} for turn in exchanges]
     if len(times) != len(spoken):
         return spoken
-    for turn, when in zip(spoken, times):
+    for turn, when in zip(spoken, times, strict=True):
         if when.get("start_time_ms") is None:
             continue
         turn["start_time_ms"] = when["start_time_ms"]

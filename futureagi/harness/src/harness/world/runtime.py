@@ -17,9 +17,10 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from ..environment import EnvironmentAdapter, EnvironmentSnapshot, ToolExecutionResult
 

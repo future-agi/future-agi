@@ -12,7 +12,8 @@ is a class and a registration; nothing in the gate changes.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping, Protocol, runtime_checkable
+from collections.abc import Callable, Mapping
+from typing import Any, Protocol, runtime_checkable
 
 from .runtime import GeneratedWorld
 
@@ -33,7 +34,7 @@ def _rows(collection: Any) -> list[Any]:
 
 def _identifiers(state: Mapping[str, Any]) -> set[str]:
     found: set[str] = set()
-    for name, collection in state.items():
+    for _name, collection in state.items():
         if isinstance(collection, dict):
             # The keys of a mapping are identifiers in their own right, and usually the ones a
             # tool is called with.

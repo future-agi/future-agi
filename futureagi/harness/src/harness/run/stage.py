@@ -11,16 +11,17 @@ simulated caller that never asked for the thing. Deciding which is reading, not 
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from claude_agent_sdk import ClaudeAgentOptions
 
 from ..config import (
-    artifact_dir,
     UNWANTED,
-    gate_hooks,
+    artifact_dir,
     chosen_model,
+    gate_hooks,
     load_skill,
     permission_gate,
     provider_env,
@@ -29,7 +30,13 @@ from ..contract import AgentContract
 from ..scenario_tools import load_scenarios
 from ..session import Stage
 from ..tools import qualified
-from .tools import RUN_SERVER, TOOL_NAMES, load_results, missing_prerequisites, run_tools
+from .tools import (
+    RUN_SERVER,
+    TOOL_NAMES,
+    load_results,
+    missing_prerequisites,
+    run_tools,
+)
 
 SKILL = "run-scenarios"
 

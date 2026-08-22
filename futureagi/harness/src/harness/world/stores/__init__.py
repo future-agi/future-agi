@@ -25,9 +25,10 @@ container, or against a structure the agent's own code holds, without a line of 
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol, Sequence, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 class StoreError(RuntimeError):

@@ -10,8 +10,9 @@ not the first. Correcting it is the next thing said, not a re-run.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from .config import artifact_dir, load_skill, read_only_session
 from .contract import AgentContract

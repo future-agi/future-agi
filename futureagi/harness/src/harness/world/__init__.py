@@ -5,7 +5,8 @@ small: the runtime a world executes on, the snapshot every scenario restores fro
 suite that decides whether a world is usable at all.
 """
 
-from .kinds import WorldKind, register_kind, supported as supported_kinds
+from .kinds import WorldKind, register_kind
+from .kinds import supported as supported_kinds
 from .probe import EDGE, HAPPY, SEQUENCE, ProbeReport, ProbeResult, dirty_state, probe
 from .runtime import Call, Db, GeneratedWorld, ToolError, WorldSpec
 from .snapshot import apply_overlay, read_manifest, restore, save

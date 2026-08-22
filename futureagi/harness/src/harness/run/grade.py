@@ -23,6 +23,8 @@ from typing import Any
 
 from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, tool
 
+from ..catalogue import Catalogue, SuiteEval
+from ..checks import Outcome, run_check
 from ..config import (
     UNWANTED,
     chosen_model,
@@ -34,8 +36,6 @@ from ..contract import AgentContract
 from ..scenario import Scenario
 from ..session import Stage
 from ..tools import qualified
-from ..checks import Outcome, run_check
-from ..catalogue import Catalogue, SuiteEval
 from ..world.runtime import GeneratedWorld
 from .conversation import Transcript
 

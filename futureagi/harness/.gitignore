@@ -1,0 +1,4 @@
+artifacts/
+*.whl
+__pycache__/
+.venv/

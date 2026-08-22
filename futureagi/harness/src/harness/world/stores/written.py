@@ -15,7 +15,8 @@ is the only reason writing it at build time is safe at all.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from . import Snapshot, StoreError, register_store
 from .container import ContainerStore

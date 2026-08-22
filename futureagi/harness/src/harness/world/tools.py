@@ -23,13 +23,18 @@ from typing import Any
 
 from claude_agent_sdk import create_sdk_mcp_server, tool
 
-from ..catalogue import SubGoal, load_catalogue, save_catalogue, validate_sub_goal
-from ..simulator import load_simulator_prompt, save_simulator_prompt, validate_simulator_prompt
-from ..tools import brief as _brief, schema
 from ..amend import add_rule, drop_rule, fix_tool, set_modality, unreachable, widen
-from ..contract import AgentContract
-from .kinds import for_contract
+from ..catalogue import SubGoal, load_catalogue, save_catalogue, validate_sub_goal
 from ..checks import run_check, run_world_check
+from ..contract import AgentContract
+from ..simulator import (
+    load_simulator_prompt,
+    save_simulator_prompt,
+    validate_simulator_prompt,
+)
+from ..tools import brief as _brief
+from ..tools import schema
+from .kinds import for_contract
 from .mutate import UNDAMAGED, blind, unnoticed
 from .probe import dirty_state, probe
 from .runtime import GeneratedWorld
@@ -992,7 +997,7 @@ def world_tools(
         # has misdiagnosed something will otherwise keep applying the same non-fix, and every
         # round of that costs money and gets no closer.
         stuck = ""
-        if len(scores) >= 3 and len(set(round(s, 2) for s in scores[-3:])) == 1:
+        if len(scores) >= 3 and len({round(s, 2) for s in scores[-3:]}) == 1:
             stuck = (
                 "\n\nThis is the third check with the same score. Whatever you are changing is "
                 "not what is failing. Read the failures above literally and fix one of them, or "
