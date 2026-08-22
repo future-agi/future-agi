@@ -4,7 +4,7 @@ from typing import Any, TypedDict
 import structlog
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import DatabaseError
-from django.db.models import DateTimeField, F, FloatField, Q
+from django.db.models import DateTimeField, F, FloatField, OuterRef, Q, Subquery
 from django.db.models.functions import Cast
 
 from model_hub.constants import ANNOTATION_LABEL_VALUE_KEYS
@@ -12,9 +12,11 @@ from model_hub.models.choices import (
     AnnotatorRole,
     AutomationRuleTriggerFrequency,
     QueueItemSourceType,
+    ScoreSource,
 )
 from simulate.serializers import CallTranscriptSerializer
 from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
+from tracer.models.observation_span import EvalEntryStatus, EvalTargetType
 
 logger = structlog.get_logger(__name__)
 
@@ -1817,7 +1819,307 @@ def calculate_agreement(queue):
         "overall_agreement": round(overall, 3) if overall is not None else None,
         "labels": label_results,
         "annotator_pairs": annotator_pairs,
+        "judge_vs_human": _calculate_judge_human_agreement(queue),
     }
+
+
+def _normalize_eval_output(row, output_type):
+    """Extract and normalise an EvalLogger row value into a human-readable string
+    so it can be compared against annotation scores.
+
+    ``output_type`` is the ``output_type_normalized`` value from the evaluator's
+    template (``pass_fail``, ``percentage``, or ``deterministic``).
+    """
+    if not output_type:
+        return None
+    if output_type == "pass_fail":
+        val = row.get("output_bool")
+        if val is None:
+            return None
+        return "pass" if val else "fail"
+    elif output_type == "percentage":
+        val = row.get("output_float")
+        if val is None:
+            return None
+        return str(round(float(val), 2))
+    else:
+        val = row.get("output_str")
+        if val is not None:
+            return val
+        str_list = row.get("output_str_list")
+        if str_list is not None:
+            return str(sorted(str_list))
+        return None
+
+
+def _majority_value(values):
+    """Return the strict-majority value from a list of annotation values,
+    or ``None`` when there is a tie (no annotator value appears more often
+    than the others).
+
+    Normalises each value through ``_normalize_value`` first so dicts,
+    lists and scalars all compare consistently.  Returns the *original*
+    value (not the normalised form) so the caller can pass it through
+    ``_normalize_value`` for comparison like any other annotation value.
+    """
+    if not values:
+        return None
+    from collections import Counter
+
+    # One annotator → no tie possible.
+    if len(values) == 1:
+        return values[0]
+
+    normalized = [_normalize_value(v) for v in values]
+    top_two = Counter(normalized).most_common(2)
+    # If the top two values have the same count there is no true majority.
+    if len(top_two) >= 2 and top_two[0][1] == top_two[1][1]:
+        return None
+    # Map the winning normalised value back to its first original.
+    winner = top_two[0][0]
+    for orig_val, norm_val in zip(values, normalized, strict=True):
+        if norm_val == winner:
+            return orig_val
+    return values[0]
+
+
+def _calculate_judge_human_agreement(queue):
+    """Calculate agreement between the evaluator linked to *queue* and the
+    human annotators across the queue's trace and observation-span sourced
+    items.
+
+    Returns ``None`` when no evaluator is linked or no overlapping data
+    exists so the caller can distinguish "not configured" from "0 %
+    agreement".
+
+    .. note::
+
+        The caller **must** ensure *queue* was fetched with
+        ``select_related("custom_eval_config__eval_template")`` — otherwise
+        accessing ``queue.custom_eval_config.eval_template`` triggers two
+        extra queries per invocation.
+    """
+    if queue.custom_eval_config_id is None:
+        return None
+
+    from collections import defaultdict
+
+    from model_hub.models.score import Score
+    from tracer.models.observation_span import EvalLogger
+
+    output_type = queue.custom_eval_config.eval_template.output_type_normalized
+    # EvalTemplate.output_type_normalized is nullable; when absent the
+    # normalisation logic has no defined path, so bail early.
+    if output_type is None:
+        return None
+
+    # Compatible annotation label types for this evaluator's output type.
+    # Judge-vs-human comparison is only meaningful when the human label can
+    # produce a value in the same namespace as the judge output; otherwise
+    # the comparison would silently report 0% on every item.
+    comparable_types = _comparable_label_types(output_type)
+
+    # Observation-span-sourced items join EvalLogger directly on the span FK.
+    # Trace-sourced items join on the trace FK (the eval's target_type is
+    # "trace", anchored to the trace's root span).  Dataset-, prototype-run,
+    # call-execution- and trace-session-sourced items have no equivalent eval
+    # path today, so they are excluded.
+    span_rows = list(
+        queue.items.filter(
+            deleted=False,
+            source_type=QueueItemSourceType.OBSERVATION_SPAN.value,
+            observation_span_id__isnull=False,
+        ).values_list("id", "observation_span_id")
+    )
+    trace_rows = list(
+        queue.items.filter(
+            deleted=False,
+            source_type=QueueItemSourceType.TRACE.value,
+            trace_id__isnull=False,
+        ).values_list("id", "trace_id")
+    )
+
+    if not span_rows and not trace_rows:
+        return None
+
+    # Build the join keys (span ids + trace ids) and the item→source map for
+    # both source types in a single pass each.
+    span_ids = [str(sid) for _id, sid in span_rows]
+    trace_ids = [str(tid) for _id, tid in trace_rows]
+    item_source_map: dict[str, tuple[str, str]] = {}  # item_id -> (kind, source_id)
+    for item_id, obs_span_id in span_rows:
+        item_source_map[str(item_id)] = ("span", str(obs_span_id))
+    for item_id, trace_id in trace_rows:
+        item_source_map[str(item_id)] = ("trace", str(trace_id))
+
+    # One latest completed, non-error, non-skipped eval row per source,
+    # filtered to the linked config.  ``skipped`` rows carry a
+    # ``skipped_reason`` and are excluded from completion metrics elsewhere
+    # (see tracer's eval-viewer), so they are excluded here too.
+    def _latest_eval(source_field):
+        return (
+            EvalLogger.objects.filter(
+                **{f"{source_field}_id": OuterRef(source_field)},
+                custom_eval_config_id=queue.custom_eval_config_id,
+                error=False,
+                status=EvalEntryStatus.COMPLETED,
+                skipped_reason__isnull=True,
+                deleted=False,
+            )
+            .order_by("-created_at")
+            .values("id")[:1]
+        )
+
+    eval_rows = []
+    if span_ids:
+        eval_rows += list(
+            EvalLogger.objects.filter(
+                id=Subquery(_latest_eval("observation_span")),
+                observation_span_id__in=span_ids,
+                deleted=False,
+            ).values(
+                "observation_span_id",
+                "output_bool",
+                "output_float",
+                "output_str",
+                "output_str_list",
+            )
+        )
+    if trace_ids:
+        eval_rows += list(
+            EvalLogger.objects.filter(
+                id=Subquery(_latest_eval("trace")),
+                trace_id__in=trace_ids,
+                target_type=EvalTargetType.TRACE,
+                deleted=False,
+            ).values(
+                "trace_id",
+                "output_bool",
+                "output_float",
+                "output_str",
+                "output_str_list",
+            )
+        )
+
+    eval_map = {}
+    for row in eval_rows:
+        # Each row came from either the span query or the trace query.
+        sid = row.get("observation_span_id") or row.get("trace_id")
+        if sid is None:
+            continue
+        eval_map[str(sid)] = _normalize_eval_output(row, output_type)
+
+    # Human scores for those items (any annotator, per-label majority).
+    human_scores = Score.objects.filter(
+        queue_item_id__in=list(item_source_map.keys()),
+        deleted=False,
+        score_source=ScoreSource.HUMAN.value,
+    ).values(
+        "queue_item_id",
+        "label_id",
+        "label__name",
+        "label__type",
+        "value",
+    )
+
+    item_label_human = defaultdict(list)
+    label_info = {}
+    for s in human_scores:
+        key = (s["queue_item_id"], s["label_id"])
+        item_label_human[key].append(s["value"])
+        if s["label_id"] not in label_info:
+            label_info[s["label_id"]] = {
+                "name": s["label__name"],
+                "type": s["label__type"],
+            }
+
+    # Per-label judge-vs-human agreement.  Accumulate agree / total here
+    # so the overall summary is derived from the same loop, not recomputed
+    # from rounded percentages.  Labels whose type is incompatible with the
+    # evaluator's output type are reported as not comparable rather than a
+    # misleading 0%.
+    label_results = {}
+    all_agree = 0
+    all_total = 0
+    for label_id, info in label_info.items():
+        # Incompatible label type → cannot compare judge vs human.
+        if info["type"] not in comparable_types:
+            label_results[str(label_id)] = {
+                "label_name": info["name"],
+                "label_type": info["type"],
+                "judge_human_agreement": None,
+                "total_comparisons": 0,
+                "comparable": False,
+            }
+            continue
+
+        agree = 0
+        total = 0
+        for (qi_id, lid), human_vals in item_label_human.items():
+            if lid != label_id:
+                continue
+            source = item_source_map.get(str(qi_id))
+            if source is None:
+                continue
+            eval_val = eval_map.get(source[1])
+            if eval_val is None:
+                continue
+            human_majority = _majority_value(human_vals)
+            # Skip when annotators are tied — without a clear human
+            # position there is nothing for the judge to be compared with.
+            if human_majority is None:
+                continue
+            total += 1
+            if _normalize_value(eval_val) == _normalize_value(human_majority):
+                agree += 1
+
+        all_agree += agree
+        all_total += total
+
+        label_results[str(label_id)] = {
+            "label_name": info["name"],
+            "label_type": info["type"],
+            "judge_human_agreement": (round(agree / total, 3) if total > 0 else None),
+            "total_comparisons": total,
+            "comparable": True,
+        }
+
+    overall = all_agree / all_total if all_total > 0 else None
+
+    evaluator_name = (
+        queue.custom_eval_config.name
+        or getattr(queue.custom_eval_config.eval_template, "name", "")
+        or str(queue.custom_eval_config_id)
+    )
+
+    return {
+        "evaluator_name": evaluator_name,
+        "overall_agreement": (round(overall, 3) if overall is not None else None),
+        "total_comparisons": int(all_total),
+        "labels": label_results,
+    }
+
+
+def _comparable_label_types(output_type):
+    """Return the set of ``AnnotationTypeChoices`` values whose human label
+    values can be meaningfully compared against a judge output of the given
+    ``output_type_normalized``.
+
+    Without this mapping, e.g. a ``pass_fail`` judge against a Star (1–5) or
+    Numeric label would never match and silently report 0% agreement.  We
+    restrict comparisons to label types that share the judge's value space:
+      * ``pass_fail``  → categorical labels whose values are pass/fail-ish
+      * ``percentage`` → numeric / star labels (compared as rounded floats)
+      * ``deterministic`` → categorical labels (free-form string equality)
+    """
+    if output_type == "pass_fail":
+        # Only categorical labels carry pass/fail-style string values.
+        return {"categorical"}
+    if output_type == "percentage":
+        # Numeric and star labels store numeric values comparable as floats.
+        return {"numeric", "star"}
+    # deterministic → string equality; only categorical labels are strings.
+    return {"categorical"}
 
 
 def _normalize_value(v):
