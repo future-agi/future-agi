@@ -38,6 +38,31 @@ def _err(text: str) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": text}], "is_error": True}
 
 
+def persona_field(name: str) -> dict[str, Any]:
+    """The schema for one persona field, carrying the platform's own values where it has them.
+
+    Offered as an enum so the values arrive right the first time. Without the platform's model
+    to read, it stays a plain string rather than an enum of nothing.
+    """
+    from .persona_guides import offered
+
+    allowed = offered(name)
+    return {"type": "string", "enum": allowed} if allowed else {"type": "string"}
+
+
+def persona_vocabulary_note() -> str:
+    """A sentence about why the persona fields are constrained, when they are."""
+    from .persona_guides import vocabulary
+
+    if not vocabulary():
+        return ""
+    return (
+        " The listed values are the ones the platform understands: they carry behaviour "
+        "guidance into the call and select the caller's voice. Anything else about this person "
+        "goes in metadata, where it is free text."
+    )
+
+
 def write_scenarios(
     scenarios: list[Scenario], destination: Path, catalogue: Catalogue | None = None
 ) -> Path:
@@ -150,22 +175,27 @@ def not_ready(kept: list[Scenario], wanted: int, catalogue: Catalogue) -> list[s
             "is already there, so adding to one always reads like this. If you wrote extra "
             "nobody asked for, drop_scenario takes them off."
         )
-    # Two scenarios claiming the same use case are either the same test twice, or one of them is
-    # mislabelled. Both happened in the same suite: a delivered-order refusal was filed under
-    # "cancel a pending order", which is neither what it tests nor distinguishable afterwards
-    # from the scenario that really does test that. A use case is how coverage is counted, so a
-    # duplicate quietly overstates it.
-    claimed: dict[str, list[str]] = {}
+    # Two scenarios claiming the same use case AND the same branch are either the same test
+    # twice, or one of them is mislabelled. Both happened in the same suite: a delivered-order
+    # refusal was filed under "cancel a pending order", which is neither what it tests nor
+    # distinguishable afterwards from the scenario that really does test that.
+    #
+    # Keyed on the pair, not the use case alone. A use case fans out into several branches and
+    # each is a separate test, so keying on the use case alone caps a suite at one scenario per
+    # use case — which is how a request for forty against fourteen use cases became unsaveable.
+    claimed: dict[tuple[str, str], list[str]] = {}
     for one in kept:
         case = (one.use_case or "").strip().lower()
+        branch = (one.branch or "").strip().lower()
         if case:
-            claimed.setdefault(case, []).append(one.name)
-    for case, names in claimed.items():
+            claimed.setdefault((case, branch), []).append(one.name)
+    for (case, branch), names in claimed.items():
         if len(names) > 1:
+            where = f"{case!r}" if not branch else f"{case!r} / {branch!r}"
             problems.append(
-                f"{' and '.join(names)} both claim the use case {case!r}. Give each the use case "
-                "it actually exercises, or drop the one that duplicates the other. Coverage is "
-                "counted by use case, so two scenarios sharing one hides a gap."
+                f"{' and '.join(names)} both claim {where}. Give each the branch it actually "
+                "exercises, or drop the one that duplicates the other. Coverage is counted by "
+                "use case and branch, so two scenarios sharing both hides a gap."
             )
 
     # Sub-goals are shared so results roll up. A suite where every scenario invents its own is a
@@ -180,10 +210,27 @@ def not_ready(kept: list[Scenario], wanted: int, catalogue: Catalogue) -> list[s
 
 
 def scenario_tools(
-    contract: AgentContract, world_root: Path, destination: Path, *, wanted: int
+    contract: AgentContract,
+    world_root: Path,
+    destination: Path,
+    *,
+    wanted: int,
+    can_save: bool = True,
+    start_from: list[Scenario] | None = None,
 ) -> tuple[Any, list[Scenario]]:
-    """A server for writing scenarios against one built environment."""
-    kept: list[Scenario] = load_scenarios(destination)
+    """A server for writing scenarios against one built environment.
+
+    ``can_save`` is what makes several writers safe at once. Saving rewrites the index and
+    removes any folder not in the saver's own list, so two writers saving concurrently delete
+    each other's work. A writer that only submits keeps its scenarios in ``kept``, and whoever
+    spawned it merges the lists and writes once.
+
+    ``start_from`` seeds that list. A parallel writer starts empty rather than from disk, so it
+    is never counted as already having what a sibling wrote.
+    """
+    kept: list[Scenario] = (
+        list(start_from) if start_from is not None else load_scenarios(destination)
+    )
     catalogue = load_catalogue(destination)
     simulator_prompt = load_simulator_prompt(destination)
     target = {"count": wanted}
@@ -323,6 +370,12 @@ def scenario_tools(
                     "type": "string",
                     "description": "Which of the agent's use cases this belongs to.",
                 },
+                "branch": {
+                    "type": "string",
+                    "description": "The condition that makes this scenario different from the "
+                    "others in the same use case, in one line: what is true here that is not "
+                    "true of its siblings.",
+                },
                 "tests": {
                     "type": "string",
                     "description": "One line: what this scenario is trying to find out.",
@@ -336,18 +389,22 @@ def scenario_tools(
                     "type": "object",
                     "description": "Who the simulated person is, separate from the task. Use "
                     "the established voice-scenario shape and only grounded, test-relevant "
-                    "details. This fills the simulator prompt's persona slot.",
+                    "details. This fills the simulator prompt's persona slot."
+                    + persona_vocabulary_note(),
                     "properties": {
                         "name": {"type": "string"},
-                        "gender": {"type": "string"},
-                        "age_group": {"type": "string"},
-                        "occupation": {"type": "string"},
-                        "location": {"type": "string"},
-                        "personality": {"type": "string"},
-                        "communication_style": {"type": "string"},
+                        "gender": persona_field("gender"),
+                        "age_group": persona_field("age_group"),
+                        "occupation": persona_field("occupation"),
+                        "location": persona_field("location"),
+                        "personality": persona_field("personality"),
+                        "communication_style": persona_field("communication_style"),
                         "keywords": {"type": "array", "items": {"type": "string"}},
-                        "languages": {"type": "array", "items": {"type": "string"}},
-                        "accent": {"type": "string"},
+                        "languages": {
+                            "type": "array",
+                            "items": persona_field("languages"),
+                        },
+                        "accent": persona_field("accent"),
                         "multilingual": {"type": "boolean"},
                         "metadata": {"type": "object"},
                     },
@@ -521,6 +578,51 @@ def scenario_tools(
         return _ok(f"{name} dropped. {len(kept)} left")
 
     @tool(
+        "generate_suite",
+        "Write a whole suite at once by splitting it across the agent's use cases, one writer "
+        "per use case, several running at the same time. Use this when somebody asks for a "
+        "suite rather than a particular scenario: writing twenty or fifty one at a time runs "
+        "out of turns long before it finishes. Everything it produces has cleared the same "
+        "three gates. Saved when it completes.",
+        schema({"count": int, "at_once": int}, ["count"]),
+    )
+    async def generate_suite(args: dict[str, Any]) -> dict[str, Any]:
+        from .scenarios import write_in_parallel
+
+        count = int(args.get("count") or 0)
+        if count < 1:
+            return _err("say how many scenarios the suite should have")
+        at_once = int(args.get("at_once") or 0) or 4
+        cases = [one for one in contract.real_use_cases if one.strip()]
+        if not cases:
+            return _err(
+                "this contract names no use cases, so there is nothing to split the work "
+                "across. Write them one at a time with submit_scenario, or fix the contract."
+            )
+        produced = await write_in_parallel(
+            contract,
+            out=destination,
+            wanted=count,
+            use_cases=cases,
+            at_once=at_once,
+        )
+        # The suite is already on disk. The open session's own list has to be brought level with
+        # it, or a later save_scenarios here would write out the stale list and delete every
+        # folder the fan-out just produced.
+        kept[:] = produced
+        target["count"] = len(produced)
+        by_case: dict[str, int] = {}
+        for one in produced:
+            by_case[one.use_case or "unassigned"] = by_case.get(one.use_case or "unassigned", 0) + 1
+        lines = "\n".join(
+            f"  {count_} x {case[:70]}" for case, count_ in sorted(by_case.items())
+        )
+        return _ok(
+            f"{len(produced)} scenarios across {len(by_case)} use cases, {at_once} writers at a "
+            f"time. Each cleared all three gates and the suite is saved.\n{lines}"
+        )
+
+    @tool(
         "save_scenarios",
         "Write the kept scenarios out. Every one has already been proved by submit_scenario, so "
         "this always saves; anything else worth knowing comes back alongside.",
@@ -551,22 +653,26 @@ def scenario_tools(
             said += "\n\nWorth looking at, none of it stopping the save:\n  - " + "\n  - ".join(noted)
         return _ok(said)
 
+    offered = [
+        inspect_world,
+        try_calls,
+        add_sub_goal,
+        submit_scenario,
+        amend_contract,
+        add_rule_tool,
+        drop_rule_tool,
+        fix_tool_tool,
+        aim_for,
+        drop_scenario,
+    ]
+    # Only the session a person is talking to may fan out. A writer that is itself one slice of
+    # a fan-out calling this would split its own slice again, and so on.
+    if can_save:
+        offered.extend([generate_suite, save_scenarios])
     server = create_sdk_mcp_server(
         name=SCENARIO_SERVER,
         version="0.1.0",
-        tools=[
-            inspect_world,
-            try_calls,
-            add_sub_goal,
-            submit_scenario,
-            amend_contract,
-            add_rule_tool,
-            drop_rule_tool,
-            fix_tool_tool,
-            aim_for,
-            drop_scenario,
-            save_scenarios,
-        ],
+        tools=offered,
     )
     return server, kept
 
@@ -582,6 +688,7 @@ TOOL_NAMES = (
     "fix_tool",
     "aim_for",
     "drop_scenario",
+    "generate_suite",
     "save_scenarios",
 )
 
