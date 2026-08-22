@@ -191,9 +191,11 @@ def calculate_total_cost(
     Supports multiple pricing models:
     - LLM/Chat: Token-based pricing (input/output tokens)
     - Per-1k-character: some Gemini chat/embedding models are priced per 1k
-      characters (input/output). Usage is tracked in tokens, so character
-      counts are used when provided, otherwise token counts are used as a
-      documented approximation (see the per-1k-character branch below).
+      characters (input/output). This branch requires REAL character counts
+      (`input_characters`/`output_characters`) in the usage dict; it never
+      approximates characters from token counts. When only token counts are
+      available the model falls through to the unrecognized-pricing fallback
+      (see the per-1k-character branch below).
     - TTS: Character-based pricing (input characters)
     - STT: Time-based pricing (audio seconds/minutes); accepts the
       `input_per_minute` key and its `per_minute_audio` alias.
@@ -275,14 +277,22 @@ def calculate_total_cost(
 
     # Per-1k-character pricing (some Gemini chat/embedding models).
     #
-    # NOTE (chars-vs-tokens unit consistency): these entries are declared as
-    # mode="chat" in available_models.py yet priced per *character*, while token
-    # usage is tracked in *tokens*. When the usage dict exposes explicit
-    # character counts we use them; otherwise we fall back to the token counts
-    # as a *documented approximation* (treating 1 token ~= 1 char). This keeps
-    # the cost from being a hard $0 but is not exact — see PR discussion. Do not
-    # read this fallback as an assertion that tokens == characters.
-    elif "input_per_1k_characters" in pricing or "output_per_1k_characters" in pricing:
+    # These entries are declared as mode="chat" in available_models.py yet
+    # priced per *character*, while token usage is normally tracked in *tokens*.
+    # Character pricing therefore requires REAL character counts: this branch is
+    # only taken when the usage dict actually supplies `input_characters` /
+    # `output_characters`. We deliberately do NOT approximate characters from
+    # token counts — a 1-token==1-char guess is systematically wrong
+    # (understated and tokenizer/language dependent), and for a normal Gemini
+    # chat response (which reports only token counts) it would run on every
+    # request and return a precise-looking-but-wrong cost, which is worse than
+    # not pricing here. When only token counts are available this branch is
+    # skipped and the model falls through to the unrecognized-pricing fallback
+    # below (a $0/"unknown pricing" result), rather than fabricating a cost.
+    elif ("input_per_1k_characters" in pricing or "output_per_1k_characters" in pricing) and (
+        token_usage.get("input_characters") is not None
+        or token_usage.get("output_characters") is not None
+    ):
         input_cost_per_1k_chars = pricing.get("input_per_1k_characters")
         output_cost_per_1k_chars = pricing.get("output_per_1k_characters")
 
@@ -294,17 +304,12 @@ def calculate_total_cost(
         if not isinstance(output_cost_per_1k_chars, (int, float)):
             output_cost_per_1k_chars = 0.0
 
-        # Prefer explicit character counts; fall back to token counts as a
-        # documented approximation (see NOTE above).
-        input_units = token_usage.get("input_characters")
-        if input_units is None:
-            input_units = token_usage.get("prompt_tokens") or 0
-        output_units = token_usage.get("output_characters")
-        if output_units is None:
-            output_units = token_usage.get("completion_tokens") or 0
+        # Use ONLY real character counts (never token counts).
+        input_characters = token_usage.get("input_characters") or 0
+        output_characters = token_usage.get("output_characters") or 0
 
-        prompt_cost = round((input_units / 1_000) * input_cost_per_1k_chars, 6)
-        completion_cost = round((output_units / 1_000) * output_cost_per_1k_chars, 6)
+        prompt_cost = round((input_characters / 1_000) * input_cost_per_1k_chars, 6)
+        completion_cost = round((output_characters / 1_000) * output_cost_per_1k_chars, 6)
 
     # Minute-based pricing (STT models)
     # Accepts both `input_per_minute` (OpenAI whisper-1) and its
