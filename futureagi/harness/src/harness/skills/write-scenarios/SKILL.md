@@ -165,8 +165,9 @@ through the same three gates. Writing a suite yourself with `submit_scenario` co
 turns per scenario against one budget, so a request for twenty or fifty runs out long before it
 finishes, and what does get written is lost because nothing was saved.
 
-**Pass your plan to it as `slices`.** You have just read the world and know which use cases have
-something in them; the split is the part of this only you can do. Each slice names its use case,
+**Pass your plan to it.** The tool takes the split as an argument, and you have just read the
+world and know which use cases have
+something in them; it is the part of this only you can do. Each slice names its use case,
 the angle it should take, how many scenarios it is worth, and why. Left to itself the work is
 divided evenly, which is how a use case with one real branch pads to three and one with six gets
 three.
