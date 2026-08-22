@@ -16,11 +16,24 @@ const DatetimeCellRenderer = ({
   const isValueArray = Array.isArray(value);
   const isBlankValue = value === null || value === undefined || value === "";
   const isValidDate = !isBlankValue && !isNaN(new Date(value).getTime());
-  const isISODateOnly =
-    typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
-  const hasTimeComponent =
-    typeof value !== "string" || /(?:T|\s)\d{1,2}:\d{2}/.test(value);
-  const parsedDate = isISODateOnly ? parseISO(value) : new Date(value);
+  let parsedDate;
+  let showTime = false;
+
+  if (typeof value === "string") {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      parsedDate = parseISO(value);
+      showTime = false;
+    } else {
+      parsedDate = new Date(value);
+      showTime = /(?:T|\s)\d{1,2}:\d{2}/.test(value);
+    }
+  } else {
+    parsedDate = new Date(value);
+    showTime = !(parsedDate.getUTCHours() === 0 &&
+                parsedDate.getUTCMinutes() === 0 &&
+                parsedDate.getUTCSeconds() === 0 &&
+                parsedDate.getUTCMilliseconds() === 0);
+  }
 
   return (
     <CustomTooltip
@@ -36,7 +49,7 @@ const DatetimeCellRenderer = ({
         {isValueArray ? (
           <GenerateDiffText cellText={value} />
         ) : isValidDate ? (
-          format(parsedDate, hasTimeComponent ? "dd/MM/yyyy HH:mm" : "dd/MM/yyyy")
+          format(parsedDate, showTime ? "dd/MM/yyyy HH:mm" : "dd/MM/yyyy")
         ) : isBlankValue ? (
           ""
         ) : (
